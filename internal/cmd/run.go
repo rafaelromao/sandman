@@ -6,10 +6,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var runCmd = &cobra.Command{
-	Use:   "run [issue-number]",
-	Short: "Run an AFK agent for a specific issue",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Fprintln(cmd.OutOrStdout(), "run is not yet implemented")
-	},
+// NewRunCmd creates the run command.
+func NewRunCmd(deps Dependencies) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "run [issue...]",
+		Short: "Run an AFK agent for specific issues",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), "run is not yet implemented")
+			return nil
+		},
+	}
+	cmd.Flags().Int("parallel", 4, "Limit parallel execution")
+	return cmd
 }
