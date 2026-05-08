@@ -1,7 +1,5 @@
 package config
 
-import "fmt"
-
 // FileLoader loads config from a YAML file path.
 type FileLoader struct {
 	Path string
@@ -9,7 +7,7 @@ type FileLoader struct {
 
 // Load reads and parses the config file.
 func (l *FileLoader) Load() (*Config, error) {
-	return nil, fmt.Errorf("config loading not yet implemented")
+	return Load(l.Path)
 }
 
 // Ensure FileLoader implements Loader.
