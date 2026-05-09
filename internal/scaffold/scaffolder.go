@@ -4,9 +4,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
 )
+
+const promptMdHeader = `# Context
+
+<!-- Use {{KEY}} for variable substitution from promptArgs and issue data. -->
+<!-- Built-in keys: {{ISSUE_NUMBER}}, {{ISSUE_TITLE}}, {{ISSUE_BODY}}, {{SOURCE_BRANCH}}, {{TARGET_BRANCH}} -->
+
+# Task
+
+<!-- Describe what the agent should do. -->
+
+# Done
+
+<!-- When the task is complete, signal termination if your agent supports it. -->
+`
 
 // Options configures the scaffolding behavior.
 type Options struct {
@@ -61,22 +76,31 @@ var languageDetectors = []languageDetector{
 	{fileExists("build.gradle.kts"), "kotlin"},
 }
 
-var dockerfileTemplates = map[string]string{
-	"go":      "FROM golang:latest\nWORKDIR /app\n",
-	"node":    "FROM node:latest\nWORKDIR /app\n",
-	"python":  "FROM python:latest\nWORKDIR /app\n",
-	"rust":    "FROM rust:latest\nWORKDIR /app\n",
-	"java":    "FROM maven:latest\nWORKDIR /app\n",
-	"dotnet":  "FROM mcr.microsoft.com/dotnet/sdk:latest\nWORKDIR /app\n",
-	"php":     "FROM php:latest\nWORKDIR /app\n",
-	"elixir":  "FROM elixir:latest\nWORKDIR /app\n",
-	"zig":     "FROM ziglang/zig:latest\nWORKDIR /app\n",
-	"ruby":    "FROM ruby:latest\nWORKDIR /app\n",
-	"swift":   "FROM swift:latest\nWORKDIR /app\n",
-	"cpp":     "FROM gcc:latest\nWORKDIR /app\n",
-	"clojure": "FROM clojure:latest\nWORKDIR /app\n",
-	"kotlin":  "FROM gradle:latest\nWORKDIR /app\n",
+var baseImages = map[string]string{
+	"go":      "golang:latest",
+	"node":    "node:latest",
+	"python":  "python:latest",
+	"rust":    "rust:latest",
+	"java":    "maven:latest",
+	"dotnet":  "mcr.microsoft.com/dotnet/sdk:latest",
+	"php":     "php:latest",
+	"elixir":  "elixir:latest",
+	"zig":     "ziglang/zig:latest",
+	"ruby":    "ruby:latest",
+	"swift":   "swift:latest",
+	"cpp":     "gcc:latest",
+	"clojure": "clojure:latest",
+	"kotlin":  "gradle:latest",
 }
+
+// KnownLanguages is the ordered list of supported languages for prompts and validation.
+var KnownLanguages = func() []string {
+	langs := make([]string, 0, len(baseImages))
+	for lang := range baseImages {
+		langs = append(langs, lang)
+	}
+	return langs
+}()
 
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
@@ -102,10 +126,10 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 
 	cfg := &config.Config{
-		Agent:           "opencode",
-		DefaultParallel: 1,
-		WorktreeDir:     ".sandman/worktrees",
-		Sandbox:         "worktree",
+		Agent:           config.DefaultAgent,
+		DefaultParallel: config.DefaultParallel,
+		WorktreeDir:     config.DefaultWorktreeDir,
+		Sandbox:         config.DefaultSandbox,
 	}
 
 	configPath := filepath.Join(sandmanDir, "config.yaml")
@@ -125,7 +149,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 
 	promptPath := filepath.Join(sandmanDir, "prompt.md")
-	if err := os.WriteFile(promptPath, []byte{}, 0644); err != nil {
+	if err := os.WriteFile(promptPath, []byte(promptMdHeader), 0644); err != nil {
 		return fmt.Errorf("write prompt.md: %w", err)
 	}
 
@@ -134,6 +158,9 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 
 func (s *Scaffolder) resolveLanguage(repoRoot string, opts Options, p Prompter) (string, error) {
 	if opts.Lang != "" {
+		if _, ok := baseImages[opts.Lang]; !ok {
+			return "", fmt.Errorf("unknown language: %q (supported: %s)", opts.Lang, strings.Join(KnownLanguages, ", "))
+		}
 		return opts.Lang, nil
 	}
 
@@ -152,19 +179,16 @@ func (s *Scaffolder) resolveLanguage(repoRoot string, opts Options, p Prompter) 
 		return p.Select("Multiple languages detected. Choose one:", detected)
 	}
 
-	return p.Select("No language detected. Choose one:", []string{
-		"go", "node", "python", "rust", "java", "dotnet", "php",
-		"elixir", "zig", "ruby", "swift", "cpp", "clojure", "kotlin",
-	})
+	return p.Select("No language detected. Choose one:", KnownLanguages)
 }
 
 func (s *Scaffolder) renderDockerfile(lang, fromImage string) string {
 	if fromImage != "" {
 		return fmt.Sprintf("FROM %s\nWORKDIR /app\n", fromImage)
 	}
-	tmpl, ok := dockerfileTemplates[lang]
+	img, ok := baseImages[lang]
 	if !ok {
 		return "FROM ubuntu:latest\nWORKDIR /app\n"
 	}
-	return tmpl
+	return fmt.Sprintf("FROM %s\nWORKDIR /app\n", img)
 }

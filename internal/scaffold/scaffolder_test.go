@@ -258,3 +258,38 @@ func TestScaffold_FailedDetectionPrompts(t *testing.T) {
 		t.Errorf("expected python base image after selection, got:\n%s", data)
 	}
 }
+
+func TestScaffold_UnknownLang_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{Lang: "goo"}, &fakePrompter{confirm: true})
+	if err == nil {
+		t.Fatal("expected error for unknown language")
+	}
+	if !strings.Contains(err.Error(), "unknown language") {
+		t.Errorf("expected 'unknown language' error, got: %v", err)
+	}
+}
+
+func TestScaffold_PromptMd_IsSeeded(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{Lang: "go"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "prompt.md"))
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# Context") {
+		t.Errorf("prompt.md missing # Context header, got:\n%s", content)
+	}
+	if !strings.Contains(content, "{{ISSUE_NUMBER}}") {
+		t.Errorf("prompt.md missing built-in key example, got:\n%s", content)
+	}
+}

@@ -9,6 +9,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Defaults for optional config fields.
+const (
+	DefaultAgent           = "opencode"
+	DefaultParallel        = 1
+	DefaultWorktreeDir     = ".sandman/worktrees"
+	DefaultSandbox         = "worktree"
+)
+
 // Config holds the loaded Sandman configuration.
 type Config struct {
 	Agent           string           `yaml:"agent"`
@@ -52,13 +60,13 @@ func Load(path string) (*Config, error) {
 	}
 
 	if cfg.DefaultParallel <= 0 {
-		cfg.DefaultParallel = 1
+		cfg.DefaultParallel = DefaultParallel
 	}
 	if cfg.WorktreeDir == "" {
-		cfg.WorktreeDir = ".sandman/worktrees"
+		cfg.WorktreeDir = DefaultWorktreeDir
 	}
 	if cfg.Sandbox == "" {
-		cfg.Sandbox = "worktree"
+		cfg.Sandbox = DefaultSandbox
 	}
 
 	if cfg.Agent == "" {

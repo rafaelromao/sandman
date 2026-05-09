@@ -15,7 +15,8 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	var out bytes.Buffer
 	cmd := NewInitCmd()
 	cmd.SetOut(&out)
-	cmd.SetIn(strings.NewReader("1\n"))
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--lang", "go"})
 
 	err := cmd.Execute()
 	if err != nil {
