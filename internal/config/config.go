@@ -30,8 +30,9 @@ type Config struct {
 
 // GitConfig holds git-specific settings.
 type GitConfig struct {
-	AuthorName  string `yaml:"author_name"`
-	AuthorEmail string `yaml:"author_email"`
+	DefaultBranch string `yaml:"default_branch"`
+	AuthorName    string `yaml:"author_name"`
+	AuthorEmail   string `yaml:"author_email"`
 }
 
 // Agent holds a configured agent provider.
@@ -68,6 +69,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Sandbox == "" {
 		cfg.Sandbox = DefaultSandbox
 	}
+	if cfg.Git.DefaultBranch == "" {
+		cfg.Git.DefaultBranch = "main"
+	}
 
 	if cfg.Agent == "" {
 		return nil, fmt.Errorf("validate config: agent is required")
@@ -101,6 +105,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.PRTemplate, nil
 	case "sandbox":
 		return c.Sandbox, nil
+	case "git.default_branch":
+		return c.Git.DefaultBranch, nil
 	case "git.author_name":
 		return c.Git.AuthorName, nil
 	case "git.author_email":
@@ -130,6 +136,8 @@ func (c *Config) SetValue(key, value string) error {
 		c.PRTemplate = value
 	case "sandbox":
 		c.Sandbox = value
+	case "git.default_branch":
+		c.Git.DefaultBranch = value
 	case "git.author_name":
 		c.Git.AuthorName = value
 	case "git.author_email":

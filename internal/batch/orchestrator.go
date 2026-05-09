@@ -57,7 +57,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 
 		branch := fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
-		wt := sandbox.NewWorktreeSandbox(".", cfg.WorktreeDir, branch, "main")
+		wt := sandbox.NewWorktreeSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch)
 		if err := wt.Start(); err != nil {
 			return nil, fmt.Errorf("start worktree for issue %d: %w", num, err)
 		}
