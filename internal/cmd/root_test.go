@@ -226,8 +226,8 @@ func TestConfigPlaceholder(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "config is not yet implemented") {
-		t.Errorf("config did not print placeholder message")
+	if !strings.Contains(buf.String(), "Available Commands:") {
+		t.Errorf("config did not print subcommand help")
 	}
 }
 

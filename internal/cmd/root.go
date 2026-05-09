@@ -40,7 +40,7 @@ execution, and event logging for automated coding workflows.`,
 	root.AddCommand(NewHistoryCmd(deps.EventReader))
 	root.AddCommand(NewRetryCmd(deps.BatchRunner))
 	root.AddCommand(NewCleanCmd(deps.SandboxManager))
-	root.AddCommand(NewConfigCmd(deps.ConfigLoader))
+	root.AddCommand(NewConfigCmd(deps.ConfigLoader, ".sandman/config.yaml"))
 
 	return root
 }
