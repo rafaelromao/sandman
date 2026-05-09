@@ -86,10 +86,57 @@ func TestScaffold_AutoDetectsLanguages(t *testing.T) {
 		{"package.json", "node", "FROM node:latest"},
 		{"requirements.txt", "python", "FROM python:latest"},
 		{"Cargo.toml", "rust", "FROM rust:latest"},
+		{"pom.xml", "java", "FROM maven:latest"},
+		{"build.gradle", "java", "FROM maven:latest"},
+		{"composer.json", "php", "FROM php:latest"},
+		{"mix.exs", "elixir", "FROM elixir:latest"},
+		{"build.zig", "zig", "FROM ziglang/zig:latest"},
+		{"Gemfile", "ruby", "FROM ruby:latest"},
+		{"Package.swift", "swift", "FROM swift:latest"},
+		{"CMakeLists.txt", "cpp", "FROM gcc:latest"},
+		{"Makefile", "cpp", "FROM gcc:latest"},
+		{"project.clj", "clojure", "FROM clojure:latest"},
+		{"deps.edn", "clojure", "FROM clojure:latest"},
+		{"build.gradle.kts", "kotlin", "FROM gradle:latest"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.lang, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, tt.file), []byte("x"), 0644); err != nil {
+				t.Fatalf("write %s: %v", tt.file, err)
+			}
+			s := &Scaffolder{}
+
+			err := s.Scaffold(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+			data, err := os.ReadFile(dockerfilePath)
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			if !strings.Contains(string(data), tt.expected) {
+				t.Errorf("expected %q in Dockerfile, got:\n%s", tt.expected, data)
+			}
+		})
+	}
+}
+
+func TestScaffold_AutoDetectsDotNet(t *testing.T) {
+	tests := []struct {
+		file     string
+		expected string
+	}{
+		{"app.csproj", "FROM mcr.microsoft.com/dotnet/sdk:latest"},
+		{"app.fsproj", "FROM mcr.microsoft.com/dotnet/sdk:latest"},
+		{"app.sln", "FROM mcr.microsoft.com/dotnet/sdk:latest"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.file, func(t *testing.T) {
 			dir := t.TempDir()
 			if err := os.WriteFile(filepath.Join(dir, tt.file), []byte("x"), 0644); err != nil {
 				t.Fatalf("write %s: %v", tt.file, err)

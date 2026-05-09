@@ -20,21 +20,62 @@ type Prompter interface {
 	Select(msg string, options []string) (string, error)
 }
 
-var languageDetectors = []struct {
-	file string
-	lang string
-}{
-	{"go.mod", "go"},
-	{"package.json", "node"},
-	{"requirements.txt", "python"},
-	{"Cargo.toml", "rust"},
+type languageDetector struct {
+	detect func(string) bool
+	lang   string
+}
+
+func fileExists(name string) func(string) bool {
+	return func(root string) bool {
+		_, err := os.Stat(filepath.Join(root, name))
+		return err == nil
+	}
+}
+
+func globExists(pattern string) func(string) bool {
+	return func(root string) bool {
+		matches, err := filepath.Glob(filepath.Join(root, pattern))
+		return err == nil && len(matches) > 0
+	}
+}
+
+var languageDetectors = []languageDetector{
+	{fileExists("go.mod"), "go"},
+	{fileExists("package.json"), "node"},
+	{fileExists("requirements.txt"), "python"},
+	{fileExists("Cargo.toml"), "rust"},
+	{fileExists("pom.xml"), "java"},
+	{fileExists("build.gradle"), "java"},
+	{globExists("*.csproj"), "dotnet"},
+	{globExists("*.fsproj"), "dotnet"},
+	{globExists("*.sln"), "dotnet"},
+	{fileExists("composer.json"), "php"},
+	{fileExists("mix.exs"), "elixir"},
+	{fileExists("build.zig"), "zig"},
+	{fileExists("Gemfile"), "ruby"},
+	{fileExists("Package.swift"), "swift"},
+	{fileExists("CMakeLists.txt"), "cpp"},
+	{fileExists("Makefile"), "cpp"},
+	{fileExists("project.clj"), "clojure"},
+	{fileExists("deps.edn"), "clojure"},
+	{fileExists("build.gradle.kts"), "kotlin"},
 }
 
 var dockerfileTemplates = map[string]string{
-	"go":     "FROM golang:latest\nWORKDIR /app\n",
-	"node":   "FROM node:latest\nWORKDIR /app\n",
-	"python": "FROM python:latest\nWORKDIR /app\n",
-	"rust":   "FROM rust:latest\nWORKDIR /app\n",
+	"go":      "FROM golang:latest\nWORKDIR /app\n",
+	"node":    "FROM node:latest\nWORKDIR /app\n",
+	"python":  "FROM python:latest\nWORKDIR /app\n",
+	"rust":    "FROM rust:latest\nWORKDIR /app\n",
+	"java":    "FROM maven:latest\nWORKDIR /app\n",
+	"dotnet":  "FROM mcr.microsoft.com/dotnet/sdk:latest\nWORKDIR /app\n",
+	"php":     "FROM php:latest\nWORKDIR /app\n",
+	"elixir":  "FROM elixir:latest\nWORKDIR /app\n",
+	"zig":     "FROM ziglang/zig:latest\nWORKDIR /app\n",
+	"ruby":    "FROM ruby:latest\nWORKDIR /app\n",
+	"swift":   "FROM swift:latest\nWORKDIR /app\n",
+	"cpp":     "FROM gcc:latest\nWORKDIR /app\n",
+	"clojure": "FROM clojure:latest\nWORKDIR /app\n",
+	"kotlin":  "FROM gradle:latest\nWORKDIR /app\n",
 }
 
 // Scaffolder creates the .sandman/ directory and its files.
@@ -98,8 +139,7 @@ func (s *Scaffolder) resolveLanguage(repoRoot string, opts Options, p Prompter) 
 
 	var detected []string
 	for _, d := range languageDetectors {
-		path := filepath.Join(repoRoot, d.file)
-		if _, err := os.Stat(path); err == nil {
+		if d.detect(repoRoot) {
 			detected = append(detected, d.lang)
 		}
 	}
@@ -112,7 +152,10 @@ func (s *Scaffolder) resolveLanguage(repoRoot string, opts Options, p Prompter) 
 		return p.Select("Multiple languages detected. Choose one:", detected)
 	}
 
-	return p.Select("No language detected. Choose one:", []string{"go", "node", "python", "rust"})
+	return p.Select("No language detected. Choose one:", []string{
+		"go", "node", "python", "rust", "java", "dotnet", "php",
+		"elixir", "zig", "ruby", "swift", "cpp", "clojure", "kotlin",
+	})
 }
 
 func (s *Scaffolder) renderDockerfile(lang, fromImage string) string {
