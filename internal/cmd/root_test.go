@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -92,21 +94,24 @@ func TestRootHelpListsAllCommands(t *testing.T) {
 	}
 }
 
-func TestInitPlaceholder(t *testing.T) {
+func TestInitViaRoot_CreatesSandmanFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
 	var buf bytes.Buffer
 	deps := newTestDeps()
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
-	rootCmd.SetArgs([]string{"init"})
+	rootCmd.SetArgs([]string{"init", "--lang", "go"})
 
 	err := rootCmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "init is not yet implemented") {
-		t.Errorf("init did not print placeholder message")
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "config.yaml")); err != nil {
+		t.Errorf("config.yaml not created: %v", err)
 	}
 }
 
@@ -247,8 +252,8 @@ func TestCommandsAreIsolated(t *testing.T) {
 	root2 := NewRootCmd(deps2)
 
 	// Modifying one should not affect the other
-	root1.SetArgs([]string{"init"})
-	root2.SetArgs([]string{"run"})
+	root1.SetArgs([]string{"status"})
+	root2.SetArgs([]string{"history"})
 
 	var buf1, buf2 bytes.Buffer
 	root1.SetOut(&buf1)
@@ -257,10 +262,10 @@ func TestCommandsAreIsolated(t *testing.T) {
 	_ = root1.Execute()
 	_ = root2.Execute()
 
-	if strings.Contains(buf1.String(), "run") {
-		t.Error("root1 output should not contain run command output")
+	if strings.Contains(buf1.String(), "history") {
+		t.Error("root1 output should not contain history command output")
 	}
-	if strings.Contains(buf2.String(), "init") {
-		t.Error("root2 output should not contain init command output")
+	if strings.Contains(buf2.String(), "status") {
+		t.Error("root2 output should not contain status command output")
 	}
 }

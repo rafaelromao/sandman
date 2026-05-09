@@ -30,7 +30,7 @@ in isolated sandboxes. It manages issue tracking, worktrees, containerized
 execution, and event logging for automated coding workflows.`,
 	}
 
-	root.AddCommand(NewInitCmd(deps.ConfigStore))
+	root.AddCommand(NewInitCmd())
 	root.AddCommand(NewRunCmd(deps))
 	root.AddCommand(NewStatusCmd(deps.EventLog))
 	root.AddCommand(NewHistoryCmd(deps.EventLog))

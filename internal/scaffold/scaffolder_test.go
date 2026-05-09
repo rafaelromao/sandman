@@ -1,0 +1,213 @@
+package scaffold
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+type fakePrompter struct {
+	confirm    bool
+	confirmErr error
+	selected   string
+	selectErr  error
+}
+
+func (f *fakePrompter) Confirm(msg string) (bool, error) {
+	return f.confirm, f.confirmErr
+}
+
+func (f *fakePrompter) Select(msg string, options []string) (string, error) {
+	return f.selected, f.selectErr
+}
+
+func TestScaffold_CreatesConfigWithDefaults(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	configPath := filepath.Join(dir, ".sandman", "config.yaml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "agent: opencode") {
+		t.Errorf("config missing default agent, got:\n%s", content)
+	}
+	if !strings.Contains(content, "default_parallel: 1") {
+		t.Errorf("config missing default parallel, got:\n%s", content)
+	}
+	if !strings.Contains(content, "worktree_dir: .sandman/worktrees") {
+		t.Errorf("config missing default worktree dir, got:\n%s", content)
+	}
+	if !strings.Contains(content, "sandbox: worktree") {
+		t.Errorf("config missing default sandbox, got:\n%s", content)
+	}
+}
+
+func TestScaffold_CreatesDockerfileAndPromptMd(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{Lang: "go"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(data), "FROM golang:latest") {
+		t.Errorf("Dockerfile missing expected base image, got:\n%s", data)
+	}
+
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	if _, err := os.Stat(promptPath); os.IsNotExist(err) {
+		t.Errorf("prompt.md not created")
+	}
+}
+
+func TestScaffold_AutoDetectsLanguages(t *testing.T) {
+	tests := []struct {
+		file     string
+		lang     string
+		expected string
+	}{
+		{"go.mod", "go", "FROM golang:latest"},
+		{"package.json", "node", "FROM node:latest"},
+		{"requirements.txt", "python", "FROM python:latest"},
+		{"Cargo.toml", "rust", "FROM rust:latest"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.lang, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, tt.file), []byte("x"), 0644); err != nil {
+				t.Fatalf("write %s: %v", tt.file, err)
+			}
+			s := &Scaffolder{}
+
+			err := s.Scaffold(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+			data, err := os.ReadFile(dockerfilePath)
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			if !strings.Contains(string(data), tt.expected) {
+				t.Errorf("expected %q in Dockerfile, got:\n%s", tt.expected, data)
+			}
+		})
+	}
+}
+
+func TestScaffold_LangOverride(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{Lang: "node"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(data), "FROM node:latest") {
+		t.Errorf("expected node base image, got:\n%s", data)
+	}
+}
+
+func TestScaffold_FromImageOverride(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{Lang: "go", FromImage: "my-image:latest"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(data), "FROM my-image:latest") {
+		t.Errorf("expected custom base image, got:\n%s", data)
+	}
+}
+
+func TestScaffold_ExistingDirectoryBlocksWithoutConfirmation(t *testing.T) {
+	dir := t.TempDir()
+	sandmanDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatalf("create .sandman: %v", err)
+	}
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{}, &fakePrompter{confirm: false})
+	if err == nil {
+		t.Fatal("expected error when user declines overwrite")
+	}
+}
+
+func TestScaffold_AmbiguousDetectionPrompts(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{}, &fakePrompter{confirm: true, selected: "go"})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(data), "FROM golang:latest") {
+		t.Errorf("expected golang base image after selection, got:\n%s", data)
+	}
+}
+
+func TestScaffold_FailedDetectionPrompts(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{}, &fakePrompter{confirm: true, selected: "python"})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(data), "FROM python:latest") {
+		t.Errorf("expected python base image after selection, got:\n%s", data)
+	}
+}
