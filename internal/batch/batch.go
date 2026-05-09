@@ -18,7 +18,8 @@ type AgentRunResult struct {
 	IssueNumber int
 	Status      string
 	Branch      string
-	PRURL       string
+	// TODO: populate PRURL after creating PR.
+	PRURL string
 }
 
 // Runner coordinates parallel execution of AgentRuns.

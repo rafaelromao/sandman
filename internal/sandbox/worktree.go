@@ -56,7 +56,8 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string) error {
 
 // Stop cleans up the worktree.
 func (s *WorktreeSandbox) Stop() error {
-	return fmt.Errorf("worktree sandbox stop not yet implemented")
+	// TODO: implement worktree cleanup.
+	return nil
 }
 
 // WorkDir returns the working directory path of the sandbox.

@@ -27,10 +27,9 @@ func (s *spyBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batc
 func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
-		BatchRunner:    spy,
-		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:       &fakeEventLog{},
-		SandboxManager: &fakeSandbox{},
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
 	}
 
 	var buf bytes.Buffer
@@ -55,10 +54,9 @@ func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 func TestRun_MultipleIssuesInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
-		BatchRunner:    spy,
-		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:       &fakeEventLog{},
-		SandboxManager: &fakeSandbox{},
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
 	}
 
 	var buf bytes.Buffer
@@ -86,10 +84,9 @@ func TestRun_MultipleIssuesInvokesBatchRunner(t *testing.T) {
 func TestRun_ParallelFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
-		BatchRunner:    spy,
-		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:       &fakeEventLog{},
-		SandboxManager: &fakeSandbox{},
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
 	}
 
 	var buf bytes.Buffer
@@ -111,10 +108,9 @@ func TestRun_ParallelFlagPassedToBatchRunner(t *testing.T) {
 func TestRun_LoadConfigError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
-		BatchRunner:    spy,
-		ConfigStore:    &fakeStore{err: errors.New("config not found")},
-		EventLog:       &fakeEventLog{},
-		SandboxManager: &fakeSandbox{},
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{err: errors.New("config not found")},
+		EventLog:    &fakeEventLog{},
 	}
 
 	var buf bytes.Buffer
@@ -135,10 +131,9 @@ func TestRun_LoadConfigError(t *testing.T) {
 func TestRun_NoIssues(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
-		BatchRunner:    spy,
-		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:       &fakeEventLog{},
-		SandboxManager: &fakeSandbox{},
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
 	}
 
 	var buf bytes.Buffer
@@ -159,10 +154,9 @@ func TestRun_NoIssues(t *testing.T) {
 func TestRun_ConfigParallelDefault(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
-		BatchRunner:    spy,
-		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode", DefaultParallel: 8}},
-		EventLog:       &fakeEventLog{},
-		SandboxManager: &fakeSandbox{},
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", DefaultParallel: 8}},
+		EventLog:    &fakeEventLog{},
 	}
 
 	var buf bytes.Buffer

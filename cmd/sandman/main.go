@@ -10,7 +10,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
-	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
 func main() {
@@ -24,7 +23,6 @@ func main() {
 		BatchRunner:    batch.NewOrchestrator(ghClient, renderer, cfgStore, eventLog),
 		ConfigStore:    cfgStore,
 		EventLog:       eventLog,
-		SandboxManager: &sandbox.WorktreeSandbox{},
 		GitHubClient:   ghClient,
 		PromptRenderer: renderer,
 	}
