@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -73,6 +75,58 @@ func Save(path string, cfg *Config) error {
 	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
+}
+
+// GetValue returns the string representation of a config field by its dot-notation key.
+func (c *Config) GetValue(key string) (string, error) {
+	switch strings.ToLower(key) {
+	case "agent":
+		return c.Agent, nil
+	case "default_parallel":
+		return fmt.Sprintf("%d", c.DefaultParallel), nil
+	case "worktree_dir":
+		return c.WorktreeDir, nil
+	case "pr_template":
+		return c.PRTemplate, nil
+	case "sandbox":
+		return c.Sandbox, nil
+	case "git.author_name":
+		return c.Git.AuthorName, nil
+	case "git.author_email":
+		return c.Git.AuthorEmail, nil
+	default:
+		return "", fmt.Errorf("unknown config key: %s", key)
+	}
+}
+
+// SetValue updates a config field by its dot-notation key.
+func (c *Config) SetValue(key, value string) error {
+	switch strings.ToLower(key) {
+	case "agent":
+		c.Agent = value
+	case "default_parallel":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for default_parallel: %w", err)
+		}
+		if n <= 0 {
+			return fmt.Errorf("default_parallel must be greater than 0")
+		}
+		c.DefaultParallel = n
+	case "worktree_dir":
+		c.WorktreeDir = value
+	case "pr_template":
+		c.PRTemplate = value
+	case "sandbox":
+		c.Sandbox = value
+	case "git.author_name":
+		c.Git.AuthorName = value
+	case "git.author_email":
+		c.Git.AuthorEmail = value
+	default:
+		return fmt.Errorf("unknown config key: %s", key)
 	}
 	return nil
 }
