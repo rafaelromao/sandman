@@ -43,7 +43,7 @@ func (s *WorktreeSandbox) Start() error {
 }
 
 // Exec runs a command in the worktree.
-func (s *WorktreeSandbox) Exec(ctx context.Context, worktreePath string, command string) error {
+func (s *WorktreeSandbox) Exec(ctx context.Context, command string) error {
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = s.workDir
 	cmd.Stdout = os.Stdout

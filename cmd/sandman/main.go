@@ -21,7 +21,7 @@ func main() {
 	eventLog := &events.JSONLLogger{Path: ".sandman/events.jsonl"}
 
 	deps := cmd.Dependencies{
-		BatchRunner:    batch.NewOrchestrator(ghClient, renderer, cfgStore, nil, eventLog),
+		BatchRunner:    batch.NewOrchestrator(ghClient, renderer, cfgStore, eventLog),
 		ConfigStore:    cfgStore,
 		EventLog:       eventLog,
 		SandboxManager: &sandbox.WorktreeSandbox{},

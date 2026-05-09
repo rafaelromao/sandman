@@ -55,7 +55,7 @@ func (f *fakeBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*bat
 type fakeSandbox struct{}
 
 func (f *fakeSandbox) Start() error { return nil }
-func (f *fakeSandbox) Exec(ctx context.Context, worktreePath string, command string) error {
+func (f *fakeSandbox) Exec(ctx context.Context, command string) error {
 	return nil
 }
 func (f *fakeSandbox) Stop() error     { return nil }

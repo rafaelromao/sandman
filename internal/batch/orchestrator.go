@@ -20,17 +20,15 @@ type Orchestrator struct {
 	githubClient github.Client
 	renderer     prompt.Renderer
 	configStore  config.Store
-	sandbox      sandbox.Sandbox
 	eventLog     events.EventLog
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
-func NewOrchestrator(githubClient github.Client, renderer prompt.Renderer, configStore config.Store, sandbox sandbox.Sandbox, eventLog events.EventLog) *Orchestrator {
+func NewOrchestrator(githubClient github.Client, renderer prompt.Renderer, configStore config.Store, eventLog events.EventLog) *Orchestrator {
 	return &Orchestrator{
 		githubClient: githubClient,
 		renderer:     renderer,
 		configStore:  configStore,
-		sandbox:      sandbox,
 		eventLog:     eventLog,
 	}
 }
@@ -77,11 +75,14 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("agent provider %q not found in config", cfg.Agent)
 		}
 
+		// TODO: respect req.Parallel for concurrent execution.
+		// TODO: log run started/finished events to eventLog.
 		status := "success"
-		if err := wt.Exec(ctx, wt.WorkDir(), agentCfg.Command); err != nil {
+		if err := wt.Exec(ctx, agentCfg.Command); err != nil {
 			status = "failure"
 			runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: status})
-			return nil, fmt.Errorf("execute agent for issue %d: %w", num, err)
+			// TODO: clean up worktree on partial failure.
+			return &Result{Runs: runs}, fmt.Errorf("execute agent for issue %d: %w", num, err)
 		}
 
 		runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: status})

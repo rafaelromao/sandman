@@ -92,7 +92,7 @@ func TestRunBatch_FetchesSingleIssue(t *testing.T) {
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
 	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil, nil)
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
@@ -118,7 +118,7 @@ func TestRunBatch_FetchesMultipleIssues(t *testing.T) {
 			2: {Number: 2, Title: "B"},
 		},
 	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil, nil)
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}})
 	if err != nil {
@@ -132,7 +132,7 @@ func TestRunBatch_FetchesMultipleIssues(t *testing.T) {
 
 func TestRunBatch_FetchError(t *testing.T) {
 	client := &fakeGitHubClient{err: errors.New("github api error")}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil, nil)
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {
@@ -142,7 +142,7 @@ func TestRunBatch_FetchError(t *testing.T) {
 
 func TestRunBatch_NoIssues(t *testing.T) {
 	client := &fakeGitHubClient{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil, nil)
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{}})
 	if err != nil {
@@ -165,7 +165,7 @@ func TestRunBatch_RendersPromptForIssue(t *testing.T) {
 		},
 	}
 	spy := &spyPromptRenderer{result: "rendered prompt"}
-	o := NewOrchestrator(client, spy, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil, nil)
+	o := NewOrchestrator(client, spy, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
@@ -193,7 +193,7 @@ func TestRunBatch_RenderError(t *testing.T) {
 		},
 	}
 	spy := &spyPromptRenderer{err: errors.New("render failed")}
-	o := NewOrchestrator(client, spy, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil, nil)
+	o := NewOrchestrator(client, spy, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {
@@ -222,7 +222,7 @@ func TestRunBatch_WritesPromptAndExecutesAgent(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, renderer, store, nil, nil)
+	o := NewOrchestrator(client, renderer, store, nil)
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -264,7 +264,7 @@ func TestRunBatch_AgentFailure(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, renderer, store, nil, nil)
+	o := NewOrchestrator(client, renderer, store, nil)
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {
 		t.Fatal("expected error when agent fails")
@@ -299,7 +299,7 @@ agents:
 
 	store := &config.FileStore{Path: configPath}
 	engine := &prompt.Engine{}
-	o := NewOrchestrator(client, engine, store, nil, nil)
+	o := NewOrchestrator(client, engine, store, nil)
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
