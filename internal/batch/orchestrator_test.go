@@ -20,6 +20,7 @@ func initGitRepo(t *testing.T, dir string) {
 		{"git", "init"},
 		{"git", "config", "user.email", "test@test.com"},
 		{"git", "config", "user.name", "Test"},
+		{"git", "checkout", "-b", "main"},
 		{"git", "commit", "--allow-empty", "-m", "init"},
 	}
 	for _, cmd := range cmds {
