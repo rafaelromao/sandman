@@ -9,13 +9,13 @@ import (
 
 // Config holds the loaded Sandman configuration.
 type Config struct {
-	Agent           string            `yaml:"agent"`
-	DefaultParallel int               `yaml:"default_parallel"`
-	WorktreeDir     string            `yaml:"worktree_dir"`
-	PRTemplate      string            `yaml:"pr_template"`
-	Sandbox         string            `yaml:"sandbox"`
-	Git             GitConfig         `yaml:"git"`
-	AgentProviders  map[string]Agent  `yaml:"agents"`
+	Agent           string           `yaml:"agent"`
+	DefaultParallel int              `yaml:"default_parallel"`
+	WorktreeDir     string           `yaml:"worktree_dir"`
+	PRTemplate      string           `yaml:"pr_template"`
+	Sandbox         string           `yaml:"sandbox"`
+	Git             GitConfig        `yaml:"git"`
+	AgentProviders  map[string]Agent `yaml:"agents"`
 }
 
 // GitConfig holds git-specific settings.

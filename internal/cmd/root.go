@@ -1,16 +1,13 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
-
-	"github.com/spf13/cobra"
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/spf13/cobra"
 )
 
 // Dependencies holds the domain adapters injected into CLI commands.
@@ -43,24 +40,4 @@ execution, and event logging for automated coding workflows.`,
 	root.AddCommand(NewConfigCmd(deps.ConfigLoader, ".sandman/config.yaml"))
 
 	return root
-}
-
-// Execute is the legacy entry point used by main.go.
-// It wires real adapters and runs the root command.
-func Execute() {
-	// TODO: move wiring to cmd/sandman/main.go and remove this function
-	deps := Dependencies{
-		BatchRunner:    &batch.Orchestrator{},
-		ConfigLoader:   &config.FileLoader{Path: ".sandman/config.yaml"},
-		EventLogger:    &events.JSONLLogger{Path: ".sandman/events.jsonl"},
-		EventReader:    &events.JSONLLogger{Path: ".sandman/events.jsonl"},
-		SandboxManager: &sandbox.WorktreeSandbox{},
-		GitHubClient:   &github.CLIClient{},
-		PromptRenderer: &prompt.Engine{},
-	}
-	rootCmd := NewRootCmd(deps)
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 }

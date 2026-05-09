@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/spf13/cobra"
 )
 
 // NewInitCmd creates the init command.

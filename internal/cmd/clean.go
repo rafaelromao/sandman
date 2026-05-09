@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/spf13/cobra"
 )
 
 // NewCleanCmd creates the clean command.
