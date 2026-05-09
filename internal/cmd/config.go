@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/spf13/cobra"
 )
 
 // NewConfigCmd creates the config command with get/set subcommands.
@@ -47,10 +47,10 @@ func NewConfigGetCmd(loader config.Loader) *cobra.Command {
 // NewConfigSetCmd creates the config set subcommand.
 func NewConfigSetCmd(path string) *cobra.Command {
 	return &cobra.Command{
-		Use:                   "set <key> <value>",
-		Short:                 "Set a config value",
-		Args:                  cobra.ExactArgs(2),
-		DisableFlagParsing:    true,
+		Use:                "set <key> <value>",
+		Short:              "Set a config value",
+		Args:               cobra.ExactArgs(2),
+		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(path)
 			if err != nil {

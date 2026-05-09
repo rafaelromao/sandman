@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/spf13/cobra"
 )
 
 // NewStatusCmd creates the status command.

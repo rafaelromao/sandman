@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/spf13/cobra"
 )
 
 // NewRetryCmd creates the retry command.
