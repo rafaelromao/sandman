@@ -11,10 +11,10 @@ import (
 
 // Defaults for optional config fields.
 const (
-	DefaultAgent           = "opencode"
-	DefaultParallel        = 1
-	DefaultWorktreeDir     = ".sandman/worktrees"
-	DefaultSandbox         = "worktree"
+	DefaultAgent       = "opencode"
+	DefaultParallel    = 1
+	DefaultWorktreeDir = ".sandman/worktrees"
+	DefaultSandbox     = "worktree"
 )
 
 // Config holds the loaded Sandman configuration.
