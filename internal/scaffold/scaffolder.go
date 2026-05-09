@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -93,12 +94,13 @@ var baseImages = map[string]string{
 	"kotlin":  "gradle:latest",
 }
 
-// KnownLanguages is the ordered list of supported languages for prompts and validation.
+// KnownLanguages is the alphabetically sorted list of supported languages for prompts and validation.
 var KnownLanguages = func() []string {
 	langs := make([]string, 0, len(baseImages))
 	for lang := range baseImages {
 		langs = append(langs, lang)
 	}
+	sort.Strings(langs)
 	return langs
 }()
 
@@ -134,7 +136,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 
 	configPath := filepath.Join(sandmanDir, "config.yaml")
 	if err := config.Save(configPath, cfg); err != nil {
-		return fmt.Errorf("write config: %w", err)
+		return fmt.Errorf("save config: %w", err)
 	}
 
 	lang, err := s.resolveLanguage(repoRoot, opts, p)
