@@ -14,8 +14,7 @@ import (
 type Dependencies struct {
 	BatchRunner    batch.Runner
 	ConfigLoader   config.Loader
-	EventLogger    events.Logger
-	EventReader    events.Reader
+	EventLog       events.EventLog
 	SandboxManager sandbox.Sandbox
 	GitHubClient   github.Client
 	PromptRenderer prompt.Renderer
@@ -33,8 +32,8 @@ execution, and event logging for automated coding workflows.`,
 
 	root.AddCommand(NewInitCmd(deps.ConfigLoader))
 	root.AddCommand(NewRunCmd(deps))
-	root.AddCommand(NewStatusCmd(deps.EventReader))
-	root.AddCommand(NewHistoryCmd(deps.EventReader))
+	root.AddCommand(NewStatusCmd(deps.EventLog))
+	root.AddCommand(NewHistoryCmd(deps.EventLog))
 	root.AddCommand(NewRetryCmd(deps.BatchRunner))
 	root.AddCommand(NewCleanCmd(deps.SandboxManager))
 	root.AddCommand(NewConfigCmd(deps.ConfigLoader, ".sandman/config.yaml"))

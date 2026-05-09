@@ -23,13 +23,14 @@ func (f *fakeLoader) Load() (*config.Config, error) {
 	return f.config, f.err
 }
 
-// fakeEventReader is a test double for events.Reader.
-type fakeEventReader struct {
+// fakeEventLog is a test double for events.EventLog.
+type fakeEventLog struct {
 	events []events.Event
 	err    error
 }
 
-func (f *fakeEventReader) Read() ([]events.Event, error) {
+func (f *fakeEventLog) Log(event events.Event) error { return f.err }
+func (f *fakeEventLog) Read() ([]events.Event, error) {
 	return f.events, f.err
 }
 
@@ -52,13 +53,12 @@ func (f *fakeSandbox) Exec(ctx context.Context, worktreePath string, command str
 }
 func (f *fakeSandbox) Stop() error { return nil }
 
-// newTestDeps returns Dependencies wired with test doubles.
+	// newTestDeps returns Dependencies wired with test doubles.
 func newTestDeps() Dependencies {
 	return Dependencies{
 		BatchRunner:    &fakeBatchRunner{},
 		ConfigLoader:   &fakeLoader{},
-		EventLogger:    &events.JSONLLogger{Path: "/dev/null"},
-		EventReader:    &fakeEventReader{},
+		EventLog:       &fakeEventLog{},
 		SandboxManager: &fakeSandbox{},
 		GitHubClient:   &github.CLIClient{},
 		PromptRenderer: &prompt.Engine{},

@@ -17,6 +17,5 @@ func (l *JSONLLogger) Read() ([]Event, error) {
 	return nil, fmt.Errorf("event reading not yet implemented")
 }
 
-// Ensure JSONLLogger implements both interfaces.
-var _ Logger = (*JSONLLogger)(nil)
-var _ Reader = (*JSONLLogger)(nil)
+// Ensure JSONLLogger implements EventLog.
+var _ EventLog = (*JSONLLogger)(nil)
