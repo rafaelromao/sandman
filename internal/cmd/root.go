@@ -13,9 +13,8 @@ import (
 // Dependencies holds the domain adapters injected into CLI commands.
 type Dependencies struct {
 	BatchRunner    batch.Runner
-	ConfigLoader   config.Loader
-	EventLogger    events.Logger
-	EventReader    events.Reader
+	ConfigStore    config.Store
+	EventLog       events.EventLog
 	SandboxManager sandbox.Sandbox
 	GitHubClient   github.Client
 	PromptRenderer prompt.Renderer
@@ -31,13 +30,13 @@ in isolated sandboxes. It manages issue tracking, worktrees, containerized
 execution, and event logging for automated coding workflows.`,
 	}
 
-	root.AddCommand(NewInitCmd(deps.ConfigLoader))
+	root.AddCommand(NewInitCmd(deps.ConfigStore))
 	root.AddCommand(NewRunCmd(deps))
-	root.AddCommand(NewStatusCmd(deps.EventReader))
-	root.AddCommand(NewHistoryCmd(deps.EventReader))
+	root.AddCommand(NewStatusCmd(deps.EventLog))
+	root.AddCommand(NewHistoryCmd(deps.EventLog))
 	root.AddCommand(NewRetryCmd(deps.BatchRunner))
 	root.AddCommand(NewCleanCmd(deps.SandboxManager))
-	root.AddCommand(NewConfigCmd(deps.ConfigLoader, ".sandman/config.yaml"))
+	root.AddCommand(NewConfigCmd(deps.ConfigStore))
 
 	return root
 }

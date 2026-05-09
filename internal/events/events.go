@@ -11,12 +11,8 @@ type Event struct {
 	Payload   map[string]any `json:"payload,omitempty"`
 }
 
-// Logger writes events to the event log.
-type Logger interface {
+// EventLog is the seam for writing and reading events.
+type EventLog interface {
 	Log(event Event) error
-}
-
-// Reader reads events from the event log.
-type Reader interface {
 	Read() ([]Event, error)
 }

@@ -13,23 +13,29 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
-// fakeLoader is a test double for config.Loader.
-type fakeLoader struct {
+// fakeStore is a test double for config.Store.
+type fakeStore struct {
 	config *config.Config
 	err    error
 }
 
-func (f *fakeLoader) Load() (*config.Config, error) {
+func (f *fakeStore) Load() (*config.Config, error) {
 	return f.config, f.err
 }
 
-// fakeEventReader is a test double for events.Reader.
-type fakeEventReader struct {
+func (f *fakeStore) Save(cfg *config.Config) error {
+	f.config = cfg
+	return f.err
+}
+
+// fakeEventLog is a test double for events.EventLog.
+type fakeEventLog struct {
 	events []events.Event
 	err    error
 }
 
-func (f *fakeEventReader) Read() ([]events.Event, error) {
+func (f *fakeEventLog) Log(event events.Event) error { return f.err }
+func (f *fakeEventLog) Read() ([]events.Event, error) {
 	return f.events, f.err
 }
 
@@ -56,9 +62,8 @@ func (f *fakeSandbox) Stop() error { return nil }
 func newTestDeps() Dependencies {
 	return Dependencies{
 		BatchRunner:    &fakeBatchRunner{},
-		ConfigLoader:   &fakeLoader{},
-		EventLogger:    &events.JSONLLogger{Path: "/dev/null"},
-		EventReader:    &fakeEventReader{},
+		ConfigStore:    &fakeStore{},
+		EventLog:       &fakeEventLog{},
 		SandboxManager: &fakeSandbox{},
 		GitHubClient:   &github.CLIClient{},
 		PromptRenderer: &prompt.Engine{},

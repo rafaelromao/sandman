@@ -12,10 +12,10 @@ import (
 
 func TestConfigGet_Agent(t *testing.T) {
 	var buf bytes.Buffer
-	loader := &fakeLoader{
+	store := &fakeStore{
 		config: &config.Config{Agent: "codex"},
 	}
-	cmd := NewConfigGetCmd(loader)
+	cmd := NewConfigGetCmd(store)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"agent"})
@@ -32,10 +32,10 @@ func TestConfigGet_Agent(t *testing.T) {
 
 func TestConfigGet_UnknownKey_ReturnsError(t *testing.T) {
 	var buf bytes.Buffer
-	loader := &fakeLoader{
+	store := &fakeStore{
 		config: &config.Config{Agent: "codex"},
 	}
-	cmd := NewConfigGetCmd(loader)
+	cmd := NewConfigGetCmd(store)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"unknown_key"})
@@ -56,7 +56,8 @@ func TestConfigSet_Agent_UpdatesFile(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := NewConfigSetCmd(path)
+	store := &config.FileStore{Path: path}
+	cmd := NewConfigSetCmd(store)
 	cmd.SetArgs([]string{"agent", "codex"})
 
 	err := cmd.Execute()
@@ -80,7 +81,8 @@ func TestConfigSet_UnknownKey_ReturnsError(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := NewConfigSetCmd(path)
+	store := &config.FileStore{Path: path}
+	cmd := NewConfigSetCmd(store)
 	cmd.SetArgs([]string{"unknown_key", "value"})
 
 	err := cmd.Execute()
@@ -99,7 +101,8 @@ func TestConfigSet_DefaultParallel_InvalidValue_ReturnsError(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := NewConfigSetCmd(path)
+	store := &config.FileStore{Path: path}
+	cmd := NewConfigSetCmd(store)
 	cmd.SetArgs([]string{"default_parallel", "not-a-number"})
 
 	err := cmd.Execute()
@@ -118,7 +121,8 @@ func TestConfigSet_DefaultParallel_NegativeValue_ReturnsError(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := NewConfigSetCmd(path)
+	store := &config.FileStore{Path: path}
+	cmd := NewConfigSetCmd(store)
 	cmd.SetArgs([]string{"default_parallel", "-1"})
 
 	err := cmd.Execute()
@@ -137,7 +141,8 @@ func TestConfigSet_GitAuthorName_UpdatesFile(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cmd := NewConfigSetCmd(path)
+	store := &config.FileStore{Path: path}
+	cmd := NewConfigSetCmd(store)
 	cmd.SetArgs([]string{"git.author_name", "Alice"})
 
 	err := cmd.Execute()

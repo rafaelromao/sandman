@@ -162,3 +162,83 @@ func TestLoad_InvalidYAML_ReturnsParseError(t *testing.T) {
 		t.Errorf("error message should mention 'parse config', got: %v", err)
 	}
 }
+
+func TestConfig_GetValue(t *testing.T) {
+	cfg := &Config{
+		Agent:           "codex",
+		DefaultParallel: 4,
+		WorktreeDir:     "/tmp/wt",
+		PRTemplate:      ".github/pr.md",
+		Sandbox:         "worktree",
+		Git: GitConfig{
+			AuthorName:  "Dev",
+			AuthorEmail: "dev@example.com",
+		},
+	}
+
+	tests := []struct {
+		key     string
+		want    string
+		wantErr bool
+	}{
+		{"agent", "codex", false},
+		{"default_parallel", "4", false},
+		{"worktree_dir", "/tmp/wt", false},
+		{"pr_template", ".github/pr.md", false},
+		{"sandbox", "worktree", false},
+		{"git.author_name", "Dev", false},
+		{"git.author_email", "dev@example.com", false},
+		{"unknown_key", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got, err := cfg.GetValue(tt.key)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GetValue(%q) error = %v, wantErr %v", tt.key, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("GetValue(%q) = %q, want %q", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfig_SetValue(t *testing.T) {
+	cfg := &Config{Agent: "opencode"}
+
+	tests := []struct {
+		key     string
+		value   string
+		wantErr bool
+	}{
+		{"agent", "codex", false},
+		{"default_parallel", "4", false},
+		{"worktree_dir", "/tmp/wt", false},
+		{"pr_template", ".github/pr.md", false},
+		{"sandbox", "container", false},
+		{"git.author_name", "Alice", false},
+		{"git.author_email", "alice@example.com", false},
+		{"unknown_key", "value", true},
+		{"default_parallel", "not-a-number", true},
+		{"default_parallel", "-1", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key+"_"+tt.value, func(t *testing.T) {
+			// Work on a fresh copy for each test
+			c := &Config{Agent: cfg.Agent}
+			err := c.SetValue(tt.key, tt.value)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("SetValue(%q, %q) error = %v, wantErr %v", tt.key, tt.value, err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			got, _ := c.GetValue(tt.key)
+			if got != tt.value {
+				t.Errorf("after SetValue(%q, %q), GetValue = %q, want %q", tt.key, tt.value, got, tt.value)
+			}
+		})
+	}
+}
