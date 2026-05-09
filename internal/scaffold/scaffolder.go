@@ -166,10 +166,27 @@ func (s *Scaffolder) resolveLanguage(repoRoot string, opts Options, p Prompter) 
 		return opts.Lang, nil
 	}
 
+	seen := make(map[string]bool)
 	var detected []string
 	for _, d := range languageDetectors {
-		if d.detect(repoRoot) {
+		if d.detect(repoRoot) && !seen[d.lang] {
+			seen[d.lang] = true
 			detected = append(detected, d.lang)
+		}
+	}
+
+	// Deprioritize C/C++ from Makefile when other languages are present,
+	// unless CMakeLists.txt also exists (stronger signal for C/C++).
+	if len(detected) > 1 {
+		hasCMakeLists := fileExists("CMakeLists.txt")(repoRoot)
+		if !hasCMakeLists {
+			filtered := make([]string, 0, len(detected))
+			for _, lang := range detected {
+				if lang != "cpp" {
+					filtered = append(filtered, lang)
+				}
+			}
+			detected = filtered
 		}
 	}
 

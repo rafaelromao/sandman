@@ -293,3 +293,55 @@ func TestScaffold_PromptMd_IsSeeded(t *testing.T) {
 		t.Errorf("prompt.md missing built-in key example, got:\n%s", content)
 	}
 }
+
+func TestScaffold_MakefileDeprioritizedWhenOtherLanguageDetected(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("all:\n"), 0644); err != nil {
+		t.Fatalf("write Makefile: %v", err)
+	}
+	s := &Scaffolder{}
+
+	// Should NOT prompt — Makefile is deprioritized when go.mod exists
+	err := s.Scaffold(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(data), "FROM golang:latest") {
+		t.Errorf("expected golang base image when Makefile + go.mod exist, got:\n%s", data)
+	}
+}
+
+func TestScaffold_CMakeListsNotDeprioritizedWhenOtherLanguageDetected(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "CMakeLists.txt"), []byte("cmake_minimum_required(VERSION 3.0)\n"), 0644); err != nil {
+		t.Fatalf("write CMakeLists.txt: %v", err)
+	}
+	s := &Scaffolder{}
+
+	// Should prompt because CMakeLists.txt is a strong C/C++ signal
+	err := s.Scaffold(dir, Options{}, &fakePrompter{confirm: true, selected: "go"})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(data), "FROM golang:latest") {
+		t.Errorf("expected golang after selection, got:\n%s", data)
+	}
+}
