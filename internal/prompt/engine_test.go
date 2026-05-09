@@ -240,6 +240,9 @@ func TestRender_MissingTemplateFlagReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing template file, got nil")
 	}
+	if !strings.Contains(err.Error(), "read template file") {
+		t.Errorf("error should mention template file, got: %v", err)
+	}
 }
 
 func TestRender_MissingPromptFileFallsBack(t *testing.T) {

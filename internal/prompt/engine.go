@@ -37,6 +37,7 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 		if err == nil {
 			template = string(content)
 		}
+		// Missing prompt file silently falls back to default — .sandman/prompt.md is optional.
 	}
 
 	result := template
