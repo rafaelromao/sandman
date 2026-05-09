@@ -51,16 +51,6 @@ func (f *fakeBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*bat
 	return f.result, f.err
 }
 
-// fakeSandbox is a test double for sandbox.Sandbox.
-type fakeSandbox struct{}
-
-func (f *fakeSandbox) Start() error { return nil }
-func (f *fakeSandbox) Exec(ctx context.Context, command string) error {
-	return nil
-}
-func (f *fakeSandbox) Stop() error     { return nil }
-func (f *fakeSandbox) WorkDir() string { return "" }
-
 // newTestDeps returns Dependencies wired with test doubles.
 func newTestDeps() Dependencies {
 	return Dependencies{
