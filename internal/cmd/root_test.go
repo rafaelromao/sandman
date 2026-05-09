@@ -13,14 +13,19 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
-// fakeLoader is a test double for config.Loader.
-type fakeLoader struct {
+// fakeStore is a test double for config.Store.
+type fakeStore struct {
 	config *config.Config
 	err    error
 }
 
-func (f *fakeLoader) Load() (*config.Config, error) {
+func (f *fakeStore) Load() (*config.Config, error) {
 	return f.config, f.err
+}
+
+func (f *fakeStore) Save(cfg *config.Config) error {
+	f.config = cfg
+	return f.err
 }
 
 // fakeEventLog is a test double for events.EventLog.
@@ -53,11 +58,11 @@ func (f *fakeSandbox) Exec(ctx context.Context, worktreePath string, command str
 }
 func (f *fakeSandbox) Stop() error { return nil }
 
-	// newTestDeps returns Dependencies wired with test doubles.
+// newTestDeps returns Dependencies wired with test doubles.
 func newTestDeps() Dependencies {
 	return Dependencies{
 		BatchRunner:    &fakeBatchRunner{},
-		ConfigLoader:   &fakeLoader{},
+		ConfigStore:    &fakeStore{},
 		EventLog:       &fakeEventLog{},
 		SandboxManager: &fakeSandbox{},
 		GitHubClient:   &github.CLIClient{},

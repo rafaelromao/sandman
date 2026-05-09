@@ -33,9 +33,10 @@ type Agent struct {
 	Env     map[string]string `yaml:"env"`
 }
 
-// Loader loads and validates Sandman configuration.
-type Loader interface {
+// Store loads and saves Sandman configuration.
+type Store interface {
 	Load() (*Config, error)
+	Save(cfg *Config) error
 }
 
 // Load reads, parses, validates, and applies defaults to the config file at the given path.

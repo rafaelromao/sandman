@@ -8,24 +8,24 @@ import (
 )
 
 // NewConfigCmd creates the config command with get/set subcommands.
-func NewConfigCmd(loader config.Loader, path string) *cobra.Command {
+func NewConfigCmd(store config.Store) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Manage Sandman configuration",
 	}
-	cmd.AddCommand(NewConfigGetCmd(loader))
-	cmd.AddCommand(NewConfigSetCmd(path))
+	cmd.AddCommand(NewConfigGetCmd(store))
+	cmd.AddCommand(NewConfigSetCmd(store))
 	return cmd
 }
 
 // NewConfigGetCmd creates the config get subcommand.
-func NewConfigGetCmd(loader config.Loader) *cobra.Command {
+func NewConfigGetCmd(store config.Store) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <key>",
 		Short: "Get a config value",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := loader.Load()
+			cfg, err := store.Load()
 			if err != nil {
 				return err
 			}
@@ -42,14 +42,14 @@ func NewConfigGetCmd(loader config.Loader) *cobra.Command {
 }
 
 // NewConfigSetCmd creates the config set subcommand.
-func NewConfigSetCmd(path string) *cobra.Command {
+func NewConfigSetCmd(store config.Store) *cobra.Command {
 	return &cobra.Command{
 		Use:                "set <key> <value>",
 		Short:              "Set a config value",
 		Args:               cobra.ExactArgs(2),
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(path)
+			cfg, err := store.Load()
 			if err != nil {
 				return err
 			}
@@ -58,7 +58,7 @@ func NewConfigSetCmd(path string) *cobra.Command {
 				return err
 			}
 
-			return config.Save(path, cfg)
+			return store.Save(cfg)
 		},
 	}
 }

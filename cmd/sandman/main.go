@@ -17,7 +17,7 @@ func main() {
 	// Composition root: wire real adapters
 	deps := cmd.Dependencies{
 		BatchRunner:    &batch.Orchestrator{},
-		ConfigLoader:   &config.FileLoader{Path: ".sandman/config.yaml"},
+		ConfigStore:    &config.FileStore{Path: ".sandman/config.yaml"},
 		EventLog:       &events.JSONLLogger{Path: ".sandman/events.jsonl"},
 		SandboxManager: &sandbox.WorktreeSandbox{},
 		GitHubClient:   &github.CLIClient{},
