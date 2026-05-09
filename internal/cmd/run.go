@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 
+	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/spf13/cobra"
 )
 
@@ -12,10 +14,45 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 		Use:   "run [issue...]",
 		Short: "Run an AFK agent for specific issues",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintln(cmd.OutOrStdout(), "run is not yet implemented")
+			if len(args) == 0 {
+				return fmt.Errorf("no issues provided")
+			}
+
+			cfg, err := deps.ConfigStore.Load()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+
+			issues := make([]int, len(args))
+			for i, arg := range args {
+				n, err := strconv.Atoi(arg)
+				if err != nil {
+					return fmt.Errorf("invalid issue number %q: %w", arg, err)
+				}
+				issues[i] = n
+			}
+
+			parallel, _ := cmd.Flags().GetInt("parallel")
+			if parallel == 0 {
+				if cfg != nil {
+					parallel = cfg.DefaultParallel
+				}
+			}
+			if parallel == 0 {
+				parallel = 1
+			}
+
+			_, err = deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
+				Issues:   issues,
+				Parallel: parallel,
+			})
+			if err != nil {
+				return fmt.Errorf("run batch: %w", err)
+			}
+
 			return nil
 		},
 	}
-	cmd.Flags().Int("parallel", 4, "Limit parallel execution")
+	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
 	return cmd
 }

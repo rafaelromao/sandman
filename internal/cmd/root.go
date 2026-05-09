@@ -6,7 +6,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
-	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +14,6 @@ type Dependencies struct {
 	BatchRunner    batch.Runner
 	ConfigStore    config.Store
 	EventLog       events.EventLog
-	SandboxManager sandbox.Sandbox
 	GitHubClient   github.Client
 	PromptRenderer prompt.Renderer
 }
@@ -35,7 +33,7 @@ execution, and event logging for automated coding workflows.`,
 	root.AddCommand(NewStatusCmd(deps.EventLog))
 	root.AddCommand(NewHistoryCmd(deps.EventLog))
 	root.AddCommand(NewRetryCmd(deps.BatchRunner))
-	root.AddCommand(NewCleanCmd(deps.SandboxManager))
+	root.AddCommand(NewCleanCmd())
 	root.AddCommand(NewConfigCmd(deps.ConfigStore))
 
 	return root

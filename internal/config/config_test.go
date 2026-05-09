@@ -93,6 +93,9 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	if cfg.Sandbox != "worktree" {
 		t.Errorf("sandbox: got %q, want %q", cfg.Sandbox, "worktree")
 	}
+	if cfg.Git.DefaultBranch != "main" {
+		t.Errorf("git.default_branch: got %q, want %q", cfg.Git.DefaultBranch, "main")
+	}
 }
 
 func TestLoad_NegativeDefaultParallel_DefaultsToOne(t *testing.T) {
@@ -171,8 +174,9 @@ func TestConfig_GetValue(t *testing.T) {
 		PRTemplate:      ".github/pr.md",
 		Sandbox:         "worktree",
 		Git: GitConfig{
-			AuthorName:  "Dev",
-			AuthorEmail: "dev@example.com",
+			DefaultBranch: "main",
+			AuthorName:    "Dev",
+			AuthorEmail:   "dev@example.com",
 		},
 	}
 
@@ -186,6 +190,7 @@ func TestConfig_GetValue(t *testing.T) {
 		{"worktree_dir", "/tmp/wt", false},
 		{"pr_template", ".github/pr.md", false},
 		{"sandbox", "worktree", false},
+		{"git.default_branch", "main", false},
 		{"git.author_name", "Dev", false},
 		{"git.author_email", "dev@example.com", false},
 		{"unknown_key", "", true},
@@ -217,6 +222,7 @@ func TestConfig_SetValue(t *testing.T) {
 		{"worktree_dir", "/tmp/wt", false},
 		{"pr_template", ".github/pr.md", false},
 		{"sandbox", "container", false},
+		{"git.default_branch", "master", false},
 		{"git.author_name", "Alice", false},
 		{"git.author_email", "alice@example.com", false},
 		{"unknown_key", "value", true},
