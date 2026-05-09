@@ -15,13 +15,18 @@ import (
 
 func main() {
 	// Composition root: wire real adapters
+	cfgStore := &config.FileStore{Path: ".sandman/config.yaml"}
+	ghClient := &github.CLIClient{}
+	renderer := &prompt.Engine{}
+	eventLog := &events.JSONLLogger{Path: ".sandman/events.jsonl"}
+
 	deps := cmd.Dependencies{
-		BatchRunner:    &batch.Orchestrator{},
-		ConfigStore:    &config.FileStore{Path: ".sandman/config.yaml"},
-		EventLog:       &events.JSONLLogger{Path: ".sandman/events.jsonl"},
+		BatchRunner:    batch.NewOrchestrator(ghClient, renderer, cfgStore, nil, eventLog),
+		ConfigStore:    cfgStore,
+		EventLog:       eventLog,
 		SandboxManager: &sandbox.WorktreeSandbox{},
-		GitHubClient:   &github.CLIClient{},
-		PromptRenderer: &prompt.Engine{},
+		GitHubClient:   ghClient,
+		PromptRenderer: renderer,
 	}
 
 	rootCmd := cmd.NewRootCmd(deps)

@@ -58,13 +58,14 @@ func (f *fakeSandbox) Start() error { return nil }
 func (f *fakeSandbox) Exec(ctx context.Context, worktreePath string, command string) error {
 	return nil
 }
-func (f *fakeSandbox) Stop() error { return nil }
+func (f *fakeSandbox) Stop() error     { return nil }
+func (f *fakeSandbox) WorkDir() string { return "" }
 
 // newTestDeps returns Dependencies wired with test doubles.
 func newTestDeps() Dependencies {
 	return Dependencies{
 		BatchRunner:    &fakeBatchRunner{},
-		ConfigStore:    &fakeStore{},
+		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode"}},
 		EventLog:       &fakeEventLog{},
 		SandboxManager: &fakeSandbox{},
 		GitHubClient:   &github.CLIClient{},
@@ -124,12 +125,8 @@ func TestRunPlaceholder(t *testing.T) {
 	rootCmd.SetArgs([]string{"run"})
 
 	err := rootCmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(buf.String(), "run is not yet implemented") {
-		t.Errorf("run did not print placeholder message")
+	if err == nil {
+		t.Fatal("expected error when no issues provided")
 	}
 }
 
@@ -141,15 +138,9 @@ func TestRun_ParallelFlagParsed(t *testing.T) {
 	rootCmd.SetErr(&buf)
 	rootCmd.SetArgs([]string{"run", "--parallel", "2", "42"})
 
-	// Execute should not error on flag parsing even though run is a placeholder
 	err := rootCmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// The placeholder runs and prints its message
-	if !strings.Contains(buf.String(), "run is not yet implemented") {
-		t.Errorf("run did not print placeholder message")
 	}
 }
 

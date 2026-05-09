@@ -10,4 +10,6 @@ type Sandbox interface {
 	Exec(ctx context.Context, worktreePath string, command string) error
 	// Stop tears down the sandbox environment.
 	Stop() error
+	// WorkDir returns the working directory path of the sandbox.
+	WorkDir() string
 }
