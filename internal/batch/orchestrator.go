@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -15,10 +16,11 @@ import (
 
 // Orchestrator coordinates parallel AgentRun execution.
 type Orchestrator struct {
-	githubClient github.Client
-	renderer     prompt.Renderer
-	configStore  config.Store
-	eventLog     events.EventLog
+	githubClient    github.Client
+	renderer        prompt.Renderer
+	configStore     config.Store
+	eventLog        events.EventLog
+	runnableFactory RunnableFactory
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -38,47 +40,69 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	var runs []AgentRunResult
-	for _, num := range req.Issues {
-		issue, err := o.githubClient.FetchIssue(num)
-		if err != nil {
-			return nil, fmt.Errorf("fetch issue %d: %w", num, err)
-		}
-
-		branch := fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
-		// TODO: detect repo root instead of hardcoding "."
-		wt := sandbox.NewWorktreeSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch)
-		if err := wt.Start(); err != nil {
-			return nil, fmt.Errorf("start worktree for issue %d: %w", num, err)
-		}
-
-		run := NewAgentRun(issue, branch, wt)
-
-		if err := run.Prepare(o.renderer); err != nil {
-			return nil, fmt.Errorf("prepare agent run for issue %d: %w", num, err)
-		}
-
-		agentCfg, ok := cfg.AgentProviders[cfg.Agent]
-		if !ok {
-			return nil, fmt.Errorf("agent provider %q not found in config", cfg.Agent)
-		}
-
-		// TODO: respect req.Parallel for concurrent execution.
-		// TODO: log run started/finished events to eventLog.
-		if err := run.Execute(ctx, agentCfg.Command); err != nil {
-			runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: "failure"})
-			// TODO: clean up worktree on partial failure.
-			return &Result{Runs: runs}, fmt.Errorf("execute agent for issue %d: %w", num, err)
-		}
-
-		if err := run.Finalize(o.githubClient, cfg.Git.DefaultBranch); err != nil {
-			runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: "failure"})
-			return &Result{Runs: runs}, fmt.Errorf("create PR for issue %d: %w", num, err)
-		}
-
-		runs = append(runs, run.Result())
+	parallel := req.Parallel
+	if parallel == 0 {
+		parallel = 4
 	}
-	return &Result{Runs: runs}, nil
+
+	sem := make(chan struct{}, parallel)
+	var wg sync.WaitGroup
+	results := make([]AgentRunResult, len(req.Issues))
+	var mu sync.Mutex
+	failureCount := 0
+
+	for i, num := range req.Issues {
+		wg.Add(1)
+		go func(idx, issueNum int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			res := o.runSingle(ctx, issueNum, cfg)
+			mu.Lock()
+			results[idx] = res
+			if res.Status == "failure" {
+				failureCount++
+			}
+			mu.Unlock()
+		}(i, num)
+	}
+
+	wg.Wait()
+
+	if failureCount > 0 {
+		return &Result{Runs: results}, fmt.Errorf("%d of %d runs failed", failureCount, len(req.Issues))
+	}
+	return &Result{Runs: results}, nil
+}
+
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config) AgentRunResult {
+	issue, err := o.githubClient.FetchIssue(num)
+	if err != nil {
+		return AgentRunResult{IssueNumber: num, Status: "failure"}
+	}
+
+	branch := fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
+	// TODO: detect repo root instead of hardcoding "."
+	wt := sandbox.NewWorktreeSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch)
+	if err := wt.Start(); err != nil {
+		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+	}
+
+	factory := o.runnableFactory
+	if factory == nil {
+		factory = defaultRunnableFactory{}
+	}
+	runnable := factory.NewRunnable(issue, branch, wt)
+
+	agentCfg, ok := cfg.AgentProviders[cfg.Agent]
+	if !ok {
+		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+	}
+
+	// TODO: log run started/finished events to eventLog.
+	result := runnable.Run(ctx, o.renderer, agentCfg.Command, o.githubClient, cfg.Git.DefaultBranch)
+	return result
 }
 
 func slugify(title string) string {

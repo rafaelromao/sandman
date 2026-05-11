@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/batch"
@@ -148,6 +149,72 @@ func TestRun_NoIssues(t *testing.T) {
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called when no issues provided")
+	}
+}
+
+func TestRun_PrintsSummaryOnSuccess(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{
+		Runs: []batch.AgentRunResult{
+			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
+			{IssueNumber: 43, Status: "success", Branch: "sandman/43-new-feature"},
+		},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "43"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "Summary: 2 succeeded, 0 failed") {
+		t.Errorf("expected success summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
+		t.Errorf("expected issue 42 in summary, got:\n%s", out)
+	}
+}
+
+func TestRun_PrintsSummaryOnPartialFailure(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{
+		Runs: []batch.AgentRunResult{
+			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
+			{IssueNumber: 43, Status: "failure", Branch: "sandman/43-broken"},
+		},
+	}, err: errors.New("1 of 2 runs failed")}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "43"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when some runs fail")
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "Summary: 1 succeeded, 1 failed") {
+		t.Errorf("expected partial failure summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#43  failure  sandman/43-broken") {
+		t.Errorf("expected issue 43 failure in summary, got:\n%s", out)
 	}
 }
 
