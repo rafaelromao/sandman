@@ -16,7 +16,7 @@ Sandman manages the lifecycle of automated coding workflows:
 
 - [Go](https://go.dev/dl/) 1.24 or later
 - [Git](https://git-scm.com/)
-- An AI coding agent such as [opencode](https://opencode.ai/), [Claude Code](https://docs.anthropic.com/en/docs/agents/claude-code), [Codex](https://github.com/openai/codex), or [Pi](https://pi.ai/)
+- An AI coding agent such as [opencode](https://opencode.ai/), [Claude Code](https://claude.com/product/claude-code), [Codex](https://openai.com/codex/), or [Pi](https://pi.dev)
 - [`gh` CLI](https://cli.github.com/) (optional but recommended for GitHub integration)
 
 ## Installation
