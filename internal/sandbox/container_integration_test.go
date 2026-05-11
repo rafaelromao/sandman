@@ -8,9 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+var dockerWarmupOnce sync.Once
 
 func dockerAvailable(t *testing.T) bool {
 	t.Helper()
@@ -19,6 +22,10 @@ func dockerAvailable(t *testing.T) bool {
 		t.Skip("docker not available")
 		return false
 	}
+	dockerWarmupOnce.Do(func() {
+		// Warm up the Docker daemon to avoid first-container delays in CI.
+		_ = exec.Command("docker", "run", "--rm", "alpine", "echo", "ok").Run()
+	})
 	return true
 }
 
