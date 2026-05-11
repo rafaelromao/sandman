@@ -103,7 +103,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg, activeRuns, &activeMu)
+			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, activeRuns, &activeMu)
 			mu.Lock()
 			results[idx] = res
 			if res.Status == "failure" {
@@ -121,7 +121,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	return &Result{Runs: results}, nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure"}
@@ -171,6 +171,11 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, o.githubClient, cfg.Git.DefaultBranch)
 
+	worktreeState := "deleted"
+	if result.Status == "failure" || preserve {
+		worktreeState = "preserved"
+	}
+
 	if o.eventLog != nil {
 		_ = o.eventLog.Log(events.Event{
 			Type:      "run.finished",
@@ -178,14 +183,23 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			RunID:     runID,
 			Issue:     num,
 			Payload: map[string]any{
-				"status": result.Status,
-				"pr_url": result.PRURL,
+				"status":         result.Status,
+				"pr_url":         result.PRURL,
+				"worktree_state": worktreeState,
 			},
 		})
 	}
 
-	if ctx.Err() == nil {
-		wt.Stop()
+	if ctx.Err() == nil && result.Status != "failure" && !preserve {
+		if err := wt.Stop(); err != nil && o.eventLog != nil {
+			_ = o.eventLog.Log(events.Event{
+				Type:      "run.warning",
+				Timestamp: time.Now(),
+				RunID:     runID,
+				Issue:     num,
+				Payload:   map[string]any{"message": err.Error()},
+			})
+		}
 	}
 	return result
 }

@@ -87,6 +87,25 @@ func TestWorktreeSandbox_WritePrompt(t *testing.T) {
 	}
 }
 
+func TestWorktreeSandbox_StopRemovesWorktree(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	worktreePath := s.WorkDir()
+	if err := s.Stop(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Errorf("expected worktree to be removed, but it still exists")
+	}
+}
+
 func TestWorktreeSandbox_ReadRunResult(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)

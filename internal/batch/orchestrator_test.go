@@ -248,6 +248,52 @@ func TestRunBatch_PreservesWorktreeOnInterrupt(t *testing.T) {
 	}
 }
 
+func TestRunBatch_DeletesWorktreeOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Errorf("expected worktree to be deleted on success, but it still exists")
+	}
+}
+
+func TestRunBatch_PreservesWorktreeWithPreserveFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Preserve: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		t.Errorf("expected worktree to be preserved when Preserve=true, but it was deleted")
+	}
+}
+
 func TestRunBatch_CallsStopOnSuccess(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -443,7 +489,7 @@ func TestRunBatch_WritesPromptAndExecutesAgent(t *testing.T) {
 	}
 
 	o := NewOrchestrator(client, renderer, store, nil)
-	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Preserve: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -580,7 +626,7 @@ agents:
 	engine := &prompt.Engine{}
 	o := NewOrchestrator(client, engine, store, nil)
 
-	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Preserve: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -885,6 +931,88 @@ func TestRunBatch_LogsFinishedEventWithPRURL(t *testing.T) {
 	prURL, _ := spyLog.events[1].Payload["pr_url"].(string)
 	if prURL != "https://github.com/owner/repo/pull/99" {
 		t.Errorf("expected pr_url https://github.com/owner/repo/pull/99, got %q", prURL)
+	}
+}
+
+func TestRunBatch_LogsWorktreeStateDeletedOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	state, _ := spyLog.events[1].Payload["worktree_state"].(string)
+	if state != "deleted" {
+		t.Errorf("expected worktree_state deleted, got %q", state)
+	}
+}
+
+func TestRunBatch_LogsWorktreeStatePreservedOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+		createPRError: errors.New("pr create failed"),
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	state, _ := spyLog.events[1].Payload["worktree_state"].(string)
+	if state != "preserved" {
+		t.Errorf("expected worktree_state preserved, got %q", state)
+	}
+}
+
+func TestRunBatch_LogsWorktreeStatePreservedWithPreserveFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Preserve: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	state, _ := spyLog.events[1].Payload["worktree_state"].(string)
+	if state != "preserved" {
+		t.Errorf("expected worktree_state preserved, got %q", state)
 	}
 }
 
