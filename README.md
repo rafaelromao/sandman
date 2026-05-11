@@ -12,10 +12,34 @@ Sandman manages the lifecycle of automated coding workflows:
 - Orchestrates parallel agent execution
 - Logs structured events for observability
 
+## Prerequisites
+
+- [Go](https://go.dev/dl/) 1.24 or later
+- [Git](https://git-scm.com/)
+- [`gh` CLI](https://cli.github.com/) (optional but recommended for GitHub integration)
+
 ## Installation
+
+### Quick install
+
+Install the latest release directly to `$GOPATH/bin`:
 
 ```bash
 go install github.com/rafaelromao/sandman/cmd/sandman@latest
+```
+
+### Build from source
+
+```bash
+# Clone the repository
+git clone https://github.com/rafaelromao/sandman.git
+cd sandman
+
+# Build the binary
+make build
+
+# Optionally install to $GOPATH/bin
+make install
 ```
 
 ## Quick Start
@@ -33,6 +57,8 @@ sandman status
 # View event log
 sandman history
 ```
+
+> **Note:** If you built from source without `make install`, use `./sandman` instead of `sandman`.
 
 ## Configuration
 
@@ -56,6 +82,26 @@ agents:
 
 ## Development
 
+Use the Makefile for common development tasks:
+
+```bash
+# Format, vet, and test
+make check
+
+# Build the binary
+make build
+
+# Install to $GOPATH/bin
+make install
+
+# Clean build artifacts
+make clean
+```
+
+### Alternative: raw Go commands
+
+If you prefer not to use `make`:
+
 ```bash
 # Run tests
 go test ./...
@@ -64,7 +110,7 @@ go test ./...
 go vet ./...
 
 # Format code
-gofmt -w ./...
+gofmt -w .
 ```
 
 ## License
