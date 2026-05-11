@@ -13,6 +13,8 @@ type Request struct {
 	Issues   []int
 	Parallel int
 	Preserve bool
+	Debug    bool
+	Branches map[int]string
 }
 
 // Result describes the outcome of a batch.
@@ -26,6 +28,7 @@ type AgentRunResult struct {
 	Status      string
 	Branch      string
 	PRURL       string
+	DebugInfo   string
 }
 
 // Runnable represents a single agent execution that can be run.

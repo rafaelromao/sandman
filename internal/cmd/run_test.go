@@ -290,6 +290,30 @@ func TestRun_NoParallelFlagDefaultsToZero(t *testing.T) {
 	}
 }
 
+func TestRun_DebugFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--debug", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.req.Debug {
+		t.Errorf("expected Debug=true, got false")
+	}
+}
+
 func TestRun_ConfigParallelDefault(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{

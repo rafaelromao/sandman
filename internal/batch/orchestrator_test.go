@@ -989,6 +989,63 @@ func TestRunBatch_LogsWorktreeStatePreservedOnFailure(t *testing.T) {
 	}
 }
 
+func TestRunBatch_DebugPrintsWorktreePathOnFailure(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+		createPRError: errors.New("pr create failed"),
+	}
+
+	sb := &fakeSandbox{workDir: "/tmp/sandman/42-fix-bug"}
+	factory := &fakeSandboxFactory{sandbox: sb}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = factory
+
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Debug: true})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if len(result.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(result.Runs))
+	}
+	if result.Runs[0].DebugInfo == "" {
+		t.Errorf("expected debug info on failure with debug=true")
+	}
+	if !strings.Contains(result.Runs[0].DebugInfo, "/tmp/sandman/42-fix-bug") {
+		t.Errorf("expected debug info to contain worktree path, got %q", result.Runs[0].DebugInfo)
+	}
+}
+
+func TestRunBatch_NoDebugInfoOnFailureWithoutDebug(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+		createPRError: errors.New("pr create failed"),
+	}
+
+	sb := &fakeSandbox{workDir: "/tmp/sandman/42-fix-bug"}
+	factory := &fakeSandboxFactory{sandbox: sb}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = factory
+
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if len(result.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(result.Runs))
+	}
+	if result.Runs[0].DebugInfo != "" {
+		t.Errorf("expected no debug info on failure without debug flag, got %q", result.Runs[0].DebugInfo)
+	}
+}
+
 func TestRunBatch_LogsWorktreeStatePreservedWithPreserveFlag(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

@@ -32,8 +32,8 @@ execution, and event logging for automated coding workflows.`,
 	root.AddCommand(NewRunCmd(deps))
 	root.AddCommand(NewStatusCmd(deps.EventLog))
 	root.AddCommand(NewHistoryCmd(deps.EventLog))
-	root.AddCommand(NewRetryCmd(deps.BatchRunner))
-	root.AddCommand(NewCleanCmd())
+	root.AddCommand(NewRetryCmd(deps))
+	root.AddCommand(NewCleanCmd(deps))
 	root.AddCommand(NewConfigCmd(deps.ConfigStore))
 
 	return root
