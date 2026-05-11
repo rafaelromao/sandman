@@ -45,15 +45,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("fetch issue %d: %w", num, err)
 		}
 
-		rendered, err := o.renderer.Render(prompt.RenderConfig{}, prompt.IssueData{
-			Number: issue.Number,
-			Title:  issue.Title,
-			Body:   issue.Body,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("render prompt for issue %d: %w", num, err)
-		}
-
 		branch := fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
 		// TODO: detect repo root instead of hardcoding "."
 		wt := sandbox.NewWorktreeSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch)
@@ -61,8 +52,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("start worktree for issue %d: %w", num, err)
 		}
 
-		if err := wt.WritePrompt(rendered); err != nil {
-			return nil, fmt.Errorf("write prompt: %w", err)
+		run := NewAgentRun(issue, branch, wt)
+
+		if err := run.Prepare(o.renderer); err != nil {
+			return nil, fmt.Errorf("prepare agent run for issue %d: %w", num, err)
 		}
 
 		agentCfg, ok := cfg.AgentProviders[cfg.Agent]
@@ -72,35 +65,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 		// TODO: respect req.Parallel for concurrent execution.
 		// TODO: log run started/finished events to eventLog.
-		status := "success"
-		if err := wt.Exec(ctx, agentCfg.Command); err != nil {
-			status = "failure"
-			runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: status})
+		if err := run.Execute(ctx, agentCfg.Command); err != nil {
+			runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: "failure"})
 			// TODO: clean up worktree on partial failure.
 			return &Result{Runs: runs}, fmt.Errorf("execute agent for issue %d: %w", num, err)
 		}
 
-		prTitle := issue.Title
-		prBody := issue.Body
-		if rr, err := wt.ReadRunResult(); err == nil && rr != nil {
-			if rr.Title != "" {
-				prTitle = rr.Title
-			}
-			if rr.Body != "" {
-				prBody = rr.Body
-			}
-		}
-		if issue.Number > 0 {
-			prBody += fmt.Sprintf("\n\nFixes #%d", issue.Number)
-		}
-		prURL, err := o.githubClient.CreatePR(branch, cfg.Git.DefaultBranch, prTitle, prBody)
-		if err != nil {
-			status = "failure"
-			runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: status})
+		if err := run.Finalize(o.githubClient, cfg.Git.DefaultBranch); err != nil {
+			runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: "failure"})
 			return &Result{Runs: runs}, fmt.Errorf("create PR for issue %d: %w", num, err)
 		}
 
-		runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: status, PRURL: prURL})
+		runs = append(runs, run.Result())
 	}
 	return &Result{Runs: runs}, nil
 }
