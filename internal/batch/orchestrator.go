@@ -2,10 +2,7 @@ package batch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -64,11 +61,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("start worktree for issue %d: %w", num, err)
 		}
 
-		promptPath := filepath.Join(wt.WorkDir(), ".sandman", "prompt.md")
-		if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
-			return nil, fmt.Errorf("create prompt dir: %w", err)
-		}
-		if err := os.WriteFile(promptPath, []byte(rendered), 0644); err != nil {
+		if err := wt.WritePrompt(rendered); err != nil {
 			return nil, fmt.Errorf("write prompt: %w", err)
 		}
 
@@ -89,16 +82,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 		prTitle := issue.Title
 		prBody := issue.Body
-		runResultPath := filepath.Join(wt.WorkDir(), ".sandman", "run-result.json")
-		if data, err := os.ReadFile(runResultPath); err == nil {
-			var rr runResult
-			if json.Unmarshal(data, &rr) == nil {
-				if rr.Title != "" {
-					prTitle = rr.Title
-				}
-				if rr.Body != "" {
-					prBody = rr.Body
-				}
+		if rr, err := wt.ReadRunResult(); err == nil && rr != nil {
+			if rr.Title != "" {
+				prTitle = rr.Title
+			}
+			if rr.Body != "" {
+				prBody = rr.Body
 			}
 		}
 		if issue.Number > 0 {
@@ -131,11 +120,6 @@ func slugify(title string) string {
 		result = result[:len(result)-1]
 	}
 	return string(result)
-}
-
-type runResult struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
 }
 
 // Ensure Orchestrator implements Runner.

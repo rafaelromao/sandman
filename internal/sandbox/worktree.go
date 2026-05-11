@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -58,6 +59,32 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string) error {
 func (s *WorktreeSandbox) Stop() error {
 	// TODO: implement worktree cleanup.
 	return nil
+}
+
+// WritePrompt writes the prompt content to .sandman/prompt.md in the worktree.
+func (s *WorktreeSandbox) WritePrompt(content string) error {
+	promptPath := filepath.Join(s.workDir, ".sandman", "prompt.md")
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
+		return fmt.Errorf("create prompt dir: %w", err)
+	}
+	if err := os.WriteFile(promptPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("write prompt: %w", err)
+	}
+	return nil
+}
+
+// ReadRunResult reads .sandman/run-result.json from the worktree.
+func (s *WorktreeSandbox) ReadRunResult() (*RunResult, error) {
+	runResultPath := filepath.Join(s.workDir, ".sandman", "run-result.json")
+	data, err := os.ReadFile(runResultPath)
+	if err != nil {
+		return nil, err
+	}
+	var rr RunResult
+	if err := json.Unmarshal(data, &rr); err != nil {
+		return nil, err
+	}
+	return &rr, nil
 }
 
 // WorkDir returns the working directory path of the sandbox.
