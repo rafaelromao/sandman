@@ -29,7 +29,7 @@ func (r *ContainerRuntime) Start(image, repoPath string) (Container, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve repo path: %w", err)
 	}
-	cmd := exec.Command(r.binary, "run", "-d", "--rm", "-v", absRepo+":/workspace", image, "sleep", "infinity")
+	cmd := exec.Command(r.binary, "run", "-d", "--rm", "-v", absRepo+":/workspace", image, "sleep", "3600")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("start container: %w\n%s", err, out)

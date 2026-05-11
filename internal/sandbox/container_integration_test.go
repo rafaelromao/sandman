@@ -30,6 +30,9 @@ func waitForContainer(t *testing.T, id string) {
 		if err == nil && strings.TrimSpace(string(out)) == "true" {
 			return
 		}
+		if err != nil && strings.Contains(string(out), "No such container") {
+			t.Fatalf("container %s was removed before becoming ready", id)
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatal("container did not become ready")
