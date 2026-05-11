@@ -1,0 +1,43 @@
+# Architectural Decision Records (ADRs)
+
+This directory contains Architectural Decision Records (ADRs) for Sandman.
+
+## What is an ADR?
+
+An ADR is a document that captures an important architectural decision made along with its context and consequences. ADRs are immutable: once accepted or rejected, they are not modified (though they may be superseded by a new ADR).
+
+## When to Write an ADR
+
+Write an ADR when:
+
+- A decision affects more than one module or package
+- A decision is difficult or expensive to reverse
+- A decision introduces a new dependency or technology
+- A decision changes the project's domain vocabulary or agent behavior
+
+## Format
+
+All ADRs follow the MADR-style template established in `0000-use-adr-template.md`:
+
+- Title and number
+- Status (`proposed`, `accepted`, `rejected`, `superseded`)
+- Context (what forces are at play)
+- Decision (what we decided)
+- Consequences (what becomes easier or harder)
+
+## Numbering
+
+ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) is reserved and should not be reused.
+
+## Workflow
+
+1. Create a new ADR file with the next sequential number and status `proposed`.
+2. Open a pull request for discussion.
+3. After review, update the status to `accepted` or `rejected`.
+4. Merge the PR.
+
+## Index
+
+| Number | Title | Status |
+|--------|-------|--------|
+| 0000 | Use MADR-style ADR template | accepted |
