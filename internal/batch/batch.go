@@ -44,6 +44,18 @@ func (d defaultRunnableFactory) NewRunnable(issue *github.Issue, branch string, 
 	return NewAgentRun(issue, branch, sb)
 }
 
+// SandboxFactory creates a Sandbox for a given branch.
+type SandboxFactory interface {
+	NewSandbox(repoPath, worktreeBase, branch, sourceBranch string) sandbox.Sandbox
+}
+
+// defaultSandboxFactory creates WorktreeSandbox instances.
+type defaultSandboxFactory struct{}
+
+func (d defaultSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string) sandbox.Sandbox {
+	return sandbox.NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch)
+}
+
 // Runner coordinates parallel execution of AgentRuns.
 type Runner interface {
 	RunBatch(ctx context.Context, req Request) (*Result, error)

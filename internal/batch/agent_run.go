@@ -3,6 +3,9 @@ package batch
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -45,11 +48,31 @@ func (r *AgentRun) Prepare(renderer prompt.Renderer) error {
 	return nil
 }
 
-// Execute runs the agent command inside the sandbox.
-func (r *AgentRun) Execute(ctx context.Context, command string) error {
-	if err := r.sandbox.Exec(ctx, command); err != nil {
+// Execute runs the agent command inside the sandbox, writing prefixed output to the given writers
+// and un-prefixed output to .sandman/logs/<issue>.log.
+func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	logDir := ".sandman/logs"
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("create log dir: %w", err)
+	}
+	logPath := filepath.Join(logDir, fmt.Sprintf("%d.log", r.issue.Number))
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("create log file: %w", err)
+	}
+	defer logFile.Close()
+
+	prefixedOut := NewLinePrefixWriter(r.issue.Number, stdout)
+	prefixedErr := NewLinePrefixWriter(r.issue.Number, stderr)
+
+	combinedOut := io.MultiWriter(logFile, prefixedOut)
+	combinedErr := io.MultiWriter(logFile, prefixedErr)
+
+	if err := r.sandbox.Exec(ctx, command, combinedOut, combinedErr); err != nil {
 		return fmt.Errorf("execute agent: %w", err)
 	}
+	_ = prefixedOut.Flush()
+	_ = prefixedErr.Flush()
 	return nil
 }
 
@@ -83,7 +106,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 		r.status = "failure"
 		return r.Result()
 	}
-	if err := r.Execute(ctx, command); err != nil {
+	if err := r.Execute(ctx, command, os.Stdout, os.Stderr); err != nil {
 		r.status = "failure"
 		return r.Result()
 	}
