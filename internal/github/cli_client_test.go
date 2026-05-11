@@ -15,10 +15,13 @@ type fakeRunner struct {
 func (f *fakeRunner) Run(name string, arg ...string) *exec.Cmd {
 	f.name = name
 	f.args = arg
+	if f.err != nil {
+		return exec.Command("sh", "-c", "echo error >&2; exit 1")
+	}
 	return exec.Command("echo", f.output)
 }
 
-func TestCLIClient_CreatePR(t *testing.T) {
+func TestCLIClient_CreatePR_Success(t *testing.T) {
 	runner := &fakeRunner{output: "https://github.com/owner/repo/pull/99"}
 	client := &CLIClient{runner: runner}
 
@@ -40,5 +43,15 @@ func TestCLIClient_CreatePR(t *testing.T) {
 		if runner.args[i] != arg {
 			t.Errorf("expected arg[%d] = %q, got %q", i, arg, runner.args[i])
 		}
+	}
+}
+
+func TestCLIClient_CreatePR_Error(t *testing.T) {
+	runner := &fakeRunner{err: exec.ErrNotFound}
+	client := &CLIClient{runner: runner}
+
+	_, err := client.CreatePR("feature-branch", "main", "Fix bug", "Fixes the bug")
+	if err == nil {
+		t.Fatal("expected error when gh pr create fails")
 	}
 }

@@ -429,8 +429,8 @@ func TestRunBatch_UsesRunResultJSONForPR(t *testing.T) {
 	if client.createPRTitle != "Custom Title" {
 		t.Errorf("expected title 'Custom Title', got %q", client.createPRTitle)
 	}
-	if client.createPRBody != "Custom Body" {
-		t.Errorf("expected body 'Custom Body', got %q", client.createPRBody)
+	if client.createPRBody != "Custom Body\n\nFixes #42" {
+		t.Errorf("expected body 'Custom Body\n\nFixes #42', got %q", client.createPRBody)
 	}
 }
 

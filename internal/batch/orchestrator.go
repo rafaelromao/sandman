@@ -89,9 +89,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 		prTitle := issue.Title
 		prBody := issue.Body
-		if issue.Number > 0 {
-			prBody += fmt.Sprintf("\n\nFixes #%d", issue.Number)
-		}
 		runResultPath := filepath.Join(wt.WorkDir(), ".sandman", "run-result.json")
 		if data, err := os.ReadFile(runResultPath); err == nil {
 			var rr runResult
@@ -103,6 +100,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					prBody = rr.Body
 				}
 			}
+		}
+		if issue.Number > 0 {
+			prBody += fmt.Sprintf("\n\nFixes #%d", issue.Number)
 		}
 		prURL, err := o.githubClient.CreatePR(branch, cfg.Git.DefaultBranch, prTitle, prBody)
 		if err != nil {
