@@ -30,6 +30,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			if cfg == nil {
 				cfg = &config.Config{}
 			}
+			if cfg.WorktreeDir == "" {
+				cfg.WorktreeDir = ".sandman/worktrees"
+			}
 
 			eventsList, err := deps.EventLog.Read()
 			if err != nil {
@@ -37,11 +40,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if all {
-				worktreeDir := cfg.WorktreeDir
-				if worktreeDir == "" {
-					worktreeDir = ".sandman/worktrees"
-				}
-				_ = os.RemoveAll(worktreeDir)
+				_ = os.RemoveAll(cfg.WorktreeDir)
 				_ = os.RemoveAll(".sandman/logs")
 				fmt.Fprintln(cmd.OutOrStdout(), "Cleaned all worktrees and logs")
 				return nil
@@ -72,7 +71,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 
 				branch, _ := payload["branch"].(string)
-				if branch != "" && cfg.WorktreeDir != "" {
+				if branch != "" {
 					wtPath := filepath.Join(cfg.WorktreeDir, branch)
 					_ = os.RemoveAll(wtPath)
 				}
