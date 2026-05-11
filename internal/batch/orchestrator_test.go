@@ -7,11 +7,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
 func initGitRepo(t *testing.T, dir string) {
@@ -92,6 +95,59 @@ func (f *fakeGitHubClient) CreatePR(branch, targetBranch, title, body string) (s
 	f.createPRTitle = title
 	f.createPRBody = body
 	return f.createPRResult, f.createPRError
+}
+
+type fakeRunnable struct {
+	result      AgentRunResult
+	delay       time.Duration
+	activeCount *int
+	maxActive   *int
+	mu          *sync.Mutex
+}
+
+func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string) AgentRunResult {
+	if f.mu != nil {
+		f.mu.Lock()
+		*f.activeCount++
+		if *f.activeCount > *f.maxActive {
+			*f.maxActive = *f.activeCount
+		}
+		f.mu.Unlock()
+	}
+
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
+
+	if f.mu != nil {
+		f.mu.Lock()
+		*f.activeCount--
+		f.mu.Unlock()
+	}
+	return f.result
+}
+
+type fakeRunnableFactory struct {
+	created []Runnable
+	results []AgentRunResult
+	delays  []time.Duration
+	active  int
+	max     int
+	mu      sync.Mutex
+}
+
+func (f *fakeRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	f.mu.Lock()
+	idx := len(f.created)
+	res := f.results[idx]
+	delay := time.Duration(0)
+	if idx < len(f.delays) {
+		delay = f.delays[idx]
+	}
+	r := &fakeRunnable{result: res, delay: delay, activeCount: &f.active, maxActive: &f.max, mu: &f.mu}
+	f.created = append(f.created, r)
+	f.mu.Unlock()
+	return r
 }
 
 func TestRunBatch_FetchesSingleIssue(t *testing.T) {
@@ -487,5 +543,129 @@ func TestRunBatch_CreatesPRAfterSuccess(t *testing.T) {
 	}
 	if client.createPRBody != "Users cannot log in.\n\nFixes #42" {
 		t.Errorf("expected body 'Users cannot log in.\n\nFixes #42', got %q", client.createPRBody)
+	}
+}
+
+func TestRunBatch_RespectsParallelLimit(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "A"},
+			2: {Number: 2, Title: "B"},
+			3: {Number: 3, Title: "C"},
+			4: {Number: 4, Title: "D"},
+		},
+	}
+
+	factory := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "success"},
+			{IssueNumber: 3, Status: "success"},
+			{IssueNumber: 4, Status: "success"},
+		},
+		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Parallel: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if factory.max > 2 {
+		t.Errorf("expected max concurrent runs <= 2, got %d", factory.max)
+	}
+}
+
+func TestRunBatch_OneFailureDoesNotAbortOthers(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "A"},
+			2: {Number: 2, Title: "B"},
+			3: {Number: 3, Title: "C"},
+		},
+	}
+
+	factory := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "failure"},
+			{IssueNumber: 3, Status: "success"},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3}, Parallel: 3})
+	if err == nil {
+		t.Fatal("expected error when some runs fail")
+	}
+
+	if len(result.Runs) != 3 {
+		t.Fatalf("expected 3 runs, got %d", len(result.Runs))
+	}
+
+	statuses := make(map[int]string)
+	for _, r := range result.Runs {
+		statuses[r.IssueNumber] = r.Status
+	}
+	if statuses[1] != "success" {
+		t.Errorf("expected issue 1 to succeed, got %s", statuses[1])
+	}
+	if statuses[2] != "failure" {
+		t.Errorf("expected issue 2 to fail, got %s", statuses[2])
+	}
+	if statuses[3] != "success" {
+		t.Errorf("expected issue 3 to succeed, got %s", statuses[3])
+	}
+}
+
+func TestRunBatch_DefaultParallelIsFour(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "A"},
+			2: {Number: 2, Title: "B"},
+			3: {Number: 3, Title: "C"},
+			4: {Number: 4, Title: "D"},
+			5: {Number: 5, Title: "E"},
+		},
+	}
+
+	factory := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "success"},
+			{IssueNumber: 3, Status: "success"},
+			{IssueNumber: 4, Status: "success"},
+			{IssueNumber: 5, Status: "success"},
+		},
+		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4, 5}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if factory.max > 4 {
+		t.Errorf("expected max concurrent runs <= 4 (default), got %d", factory.max)
 	}
 }

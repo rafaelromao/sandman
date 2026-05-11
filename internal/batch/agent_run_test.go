@@ -214,6 +214,80 @@ func TestAgentRun_Finalize_CreatePRError(t *testing.T) {
 	}
 }
 
+func TestAgentRun_Run_Success(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Users cannot log in."}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+	client := &fakeGitHubClientForRun{createPRResult: "https://github.com/owner/repo/pull/99"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	res := run.Run(context.Background(), spy, "echo hello", client, "main")
+
+	if res.Status != "success" {
+		t.Errorf("expected status success, got %s", res.Status)
+	}
+	if res.IssueNumber != 42 {
+		t.Errorf("expected issue 42, got %d", res.IssueNumber)
+	}
+	if res.PRURL != "https://github.com/owner/repo/pull/99" {
+		t.Errorf("expected PRURL, got %q", res.PRURL)
+	}
+	if !spy.called {
+		t.Fatal("expected renderer to be called")
+	}
+	if !sb.execCalled {
+		t.Fatal("expected Exec to be called")
+	}
+}
+
+func TestAgentRun_Run_PrepareFailure(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{err: errors.New("render failed")}
+	client := &fakeGitHubClientForRun{createPRResult: "https://github.com/owner/repo/pull/99"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	res := run.Run(context.Background(), spy, "echo hello", client, "main")
+
+	if res.Status != "failure" {
+		t.Errorf("expected status failure, got %s", res.Status)
+	}
+	if sb.execCalled {
+		t.Error("expected Exec not to be called when Prepare fails")
+	}
+}
+
+func TestAgentRun_Run_ExecuteFailure(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execError: errors.New("agent failed")}
+	spy := &spyRenderer{result: "rendered prompt"}
+	client := &fakeGitHubClientForRun{createPRResult: "https://github.com/owner/repo/pull/99"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	res := run.Run(context.Background(), spy, "exit 1", client, "main")
+
+	if res.Status != "failure" {
+		t.Errorf("expected status failure, got %s", res.Status)
+	}
+	if client.createPRCalled {
+		t.Error("expected CreatePR not to be called when Execute fails")
+	}
+}
+
+func TestAgentRun_Run_FinalizeFailure(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+	client := &fakeGitHubClientForRun{createPRError: errors.New("gh pr create failed")}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	res := run.Run(context.Background(), spy, "echo hello", client, "main")
+
+	if res.Status != "failure" {
+		t.Errorf("expected status failure, got %s", res.Status)
+	}
+}
+
 func TestAgentRun_Result(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{}

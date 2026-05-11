@@ -33,19 +33,18 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			parallel, _ := cmd.Flags().GetInt("parallel")
-			if parallel == 0 {
-				if cfg != nil {
-					parallel = cfg.DefaultParallel
-				}
+			if parallel == 0 && cfg != nil {
+				parallel = cfg.DefaultParallel
 			}
-			if parallel == 0 {
-				parallel = 1
-			}
+			// Let 0 pass through — Orchestrator defaults to 4
 
-			_, err = deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
+			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 				Issues:   issues,
 				Parallel: parallel,
 			})
+			if result != nil {
+				printSummary(cmd, result)
+			}
 			if err != nil {
 				return fmt.Errorf("run batch: %w", err)
 			}
@@ -55,4 +54,20 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	}
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
 	return cmd
+}
+
+func printSummary(cmd *cobra.Command, result *batch.Result) {
+	var successCount, failureCount int
+	for _, run := range result.Runs {
+		if run.Status == "success" {
+			successCount++
+		} else {
+			failureCount++
+		}
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Summary: %d succeeded, %d failed\n", successCount, failureCount)
+	for _, run := range result.Runs {
+		fmt.Fprintf(cmd.OutOrStdout(), "  #%d  %s  %s\n", run.IssueNumber, run.Status, run.Branch)
+	}
 }
