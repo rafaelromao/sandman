@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -86,7 +87,31 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return &Result{Runs: runs}, fmt.Errorf("execute agent for issue %d: %w", num, err)
 		}
 
-		runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: status})
+		prTitle := issue.Title
+		prBody := issue.Body
+		runResultPath := filepath.Join(wt.WorkDir(), ".sandman", "run-result.json")
+		if data, err := os.ReadFile(runResultPath); err == nil {
+			var rr runResult
+			if json.Unmarshal(data, &rr) == nil {
+				if rr.Title != "" {
+					prTitle = rr.Title
+				}
+				if rr.Body != "" {
+					prBody = rr.Body
+				}
+			}
+		}
+		if issue.Number > 0 {
+			prBody += fmt.Sprintf("\n\nFixes #%d", issue.Number)
+		}
+		prURL, err := o.githubClient.CreatePR(branch, cfg.Git.DefaultBranch, prTitle, prBody)
+		if err != nil {
+			status = "failure"
+			runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: status})
+			return &Result{Runs: runs}, fmt.Errorf("create PR for issue %d: %w", num, err)
+		}
+
+		runs = append(runs, AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: status, PRURL: prURL})
 	}
 	return &Result{Runs: runs}, nil
 }
@@ -106,6 +131,11 @@ func slugify(title string) string {
 		result = result[:len(result)-1]
 	}
 	return string(result)
+}
+
+type runResult struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
 }
 
 // Ensure Orchestrator implements Runner.
