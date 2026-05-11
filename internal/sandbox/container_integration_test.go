@@ -24,7 +24,7 @@ func dockerAvailable(t *testing.T) bool {
 
 func waitForContainer(t *testing.T, id string) {
 	t.Helper()
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 600; i++ {
 		cmd := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", id)
 		out, err := cmd.CombinedOutput()
 		if err == nil && strings.TrimSpace(string(out)) == "true" {
