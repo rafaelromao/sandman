@@ -11,5 +11,5 @@ type Issue struct {
 // Client wraps gh CLI for GitHub operations.
 type Client interface {
 	FetchIssue(number int) (*Issue, error)
-	CreatePR(branch string, title string, body string) (string, error)
+	CreatePR(branch, targetBranch, title, body string) (string, error)
 }
