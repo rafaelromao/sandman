@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
@@ -42,6 +43,9 @@ func NewStatusCmd(log events.EventLog) *cobra.Command {
 				return nil
 			}
 
+			sort.Slice(active, func(i, j int) bool {
+				return active[i].Issue < active[j].Issue
+			})
 			fmt.Fprintln(cmd.OutOrStdout(), "Active runs:")
 			for _, e := range active {
 				elapsed := time.Since(e.Timestamp).Round(time.Second)
