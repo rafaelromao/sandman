@@ -59,8 +59,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	activeRuns := make(map[int]sandbox.Sandbox)
 
 	// Graceful shutdown: on context cancel, SIGTERM all processes, wait 10s, then SIGKILL.
+	shutdownDone := make(chan struct{})
+	defer close(shutdownDone)
+
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-shutdownDone:
+			return
+		}
 		timeout := o.killTimeout
 		if timeout == 0 {
 			timeout = 10 * time.Second

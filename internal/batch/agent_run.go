@@ -56,7 +56,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		return fmt.Errorf("create log dir: %w", err)
 	}
 	logPath := filepath.Join(logDir, fmt.Sprintf("%d.log", r.issue.Number))
-	logFile, err := os.Create(logPath)
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("create log file: %w", err)
 	}
@@ -71,6 +71,8 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 	if err := r.sandbox.Exec(ctx, command, combinedOut, combinedErr); err != nil {
 		return fmt.Errorf("execute agent: %w", err)
 	}
+	_ = prefixedOut.Flush()
+	_ = prefixedErr.Flush()
 	return nil
 }
 
