@@ -76,7 +76,11 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stde
 
 // Stop cleans up the worktree.
 func (s *WorktreeSandbox) Stop() error {
-	// TODO: implement worktree cleanup.
+	cmd := exec.Command("git", "worktree", "remove", "--force", s.workDir)
+	cmd.Dir = s.repoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git worktree remove: %w\n%s", err, out)
+	}
 	return nil
 }
 

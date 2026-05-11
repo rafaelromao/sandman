@@ -12,6 +12,7 @@ import (
 type Request struct {
 	Issues   []int
 	Parallel int
+	Preserve bool
 }
 
 // Result describes the outcome of a batch.

@@ -38,9 +38,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			// Let 0 pass through — Orchestrator defaults to 4
 
+			preserve, _ := cmd.Flags().GetBool("preserve")
+
 			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 				Issues:   issues,
 				Parallel: parallel,
+				Preserve: preserve,
 			})
 			if result != nil {
 				printSummary(cmd, result)
@@ -53,6 +56,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 		},
 	}
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
+	cmd.Flags().Bool("preserve", false, "Preserve worktrees after successful runs")
 	return cmd
 }
 

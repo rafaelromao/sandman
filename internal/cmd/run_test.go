@@ -218,6 +218,54 @@ func TestRun_PrintsSummaryOnPartialFailure(t *testing.T) {
 	}
 }
 
+func TestRun_PreserveFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--preserve", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.req.Preserve {
+		t.Errorf("expected Preserve=true, got false")
+	}
+}
+
+func TestRun_NoPreserveFlagDefaultsToFalse(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Preserve {
+		t.Errorf("expected Preserve=false, got true")
+	}
+}
+
 func TestRun_NoParallelFlagDefaultsToZero(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
