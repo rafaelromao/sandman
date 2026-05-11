@@ -191,7 +191,15 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	}
 
 	if ctx.Err() == nil && result.Status != "failure" && !preserve {
-		wt.Stop()
+		if err := wt.Stop(); err != nil && o.eventLog != nil {
+			_ = o.eventLog.Log(events.Event{
+				Type:      "run.warning",
+				Timestamp: time.Now(),
+				RunID:     runID,
+				Issue:     num,
+				Payload:   map[string]any{"message": err.Error()},
+			})
+		}
 	}
 	return result
 }
