@@ -218,6 +218,30 @@ func TestRun_PrintsSummaryOnPartialFailure(t *testing.T) {
 	}
 }
 
+func TestRun_NoParallelFlagDefaultsToZero(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Parallel != 0 {
+		t.Errorf("expected parallel=0 to pass through to orchestrator, got %d", spy.req.Parallel)
+	}
+}
+
 func TestRun_ConfigParallelDefault(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{

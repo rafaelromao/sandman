@@ -33,14 +33,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			parallel, _ := cmd.Flags().GetInt("parallel")
-			if parallel == 0 {
-				if cfg != nil {
-					parallel = cfg.DefaultParallel
-				}
+			if parallel == 0 && cfg != nil {
+				parallel = cfg.DefaultParallel
 			}
-			if parallel == 0 {
-				parallel = 1
-			}
+			// Let 0 pass through — Orchestrator defaults to 4
 
 			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 				Issues:   issues,
