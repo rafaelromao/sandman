@@ -133,7 +133,7 @@ func TestRun_ParallelFlagParsed(t *testing.T) {
 	}
 }
 
-func TestStatusPlaceholder(t *testing.T) {
+func TestStatusNoActiveRuns(t *testing.T) {
 	var buf bytes.Buffer
 	deps := newTestDeps()
 	rootCmd := NewRootCmd(deps)
@@ -146,12 +146,12 @@ func TestStatusPlaceholder(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "status is not yet implemented") {
-		t.Errorf("status did not print placeholder message")
+	if !strings.Contains(buf.String(), "No active runs") {
+		t.Errorf("expected 'No active runs', got:\n%s", buf.String())
 	}
 }
 
-func TestHistoryPlaceholder(t *testing.T) {
+func TestHistoryNoCompletedRuns(t *testing.T) {
 	var buf bytes.Buffer
 	deps := newTestDeps()
 	rootCmd := NewRootCmd(deps)
@@ -164,8 +164,8 @@ func TestHistoryPlaceholder(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "history is not yet implemented") {
-		t.Errorf("history did not print placeholder message")
+	if !strings.Contains(buf.String(), "No completed runs") {
+		t.Errorf("expected 'No completed runs', got:\n%s", buf.String())
 	}
 }
 

@@ -16,6 +16,10 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
+func generateRunID(issueNum int) string {
+	return fmt.Sprintf("run-%d-%d", issueNum, time.Now().UnixNano())
+}
+
 // Orchestrator coordinates parallel AgentRun execution.
 type Orchestrator struct {
 	githubClient    github.Client
@@ -154,8 +158,32 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 	}
 
-	// TODO: log run started/finished events to eventLog.
+	runID := generateRunID(num)
+	if o.eventLog != nil {
+		_ = o.eventLog.Log(events.Event{
+			Type:      "run.started",
+			Timestamp: time.Now(),
+			RunID:     runID,
+			Issue:     num,
+			Payload:   map[string]any{"branch": branch},
+		})
+	}
+
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, o.githubClient, cfg.Git.DefaultBranch)
+
+	if o.eventLog != nil {
+		_ = o.eventLog.Log(events.Event{
+			Type:      "run.finished",
+			Timestamp: time.Now(),
+			RunID:     runID,
+			Issue:     num,
+			Payload: map[string]any{
+				"status": result.Status,
+				"pr_url": result.PRURL,
+			},
+		})
+	}
+
 	if ctx.Err() == nil {
 		wt.Stop()
 	}

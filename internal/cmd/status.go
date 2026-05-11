@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/spf13/cobra"
@@ -13,11 +14,39 @@ func NewStatusCmd(log events.EventLog) *cobra.Command {
 		Use:   "status",
 		Short: "Show the status of current and recent agent runs",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := log.Read()
+			eventsList, err := log.Read()
 			if err != nil {
-				// For the placeholder, we ignore the error
+				return fmt.Errorf("read event log: %w", err)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "status is not yet implemented")
+
+			started := make(map[string]events.Event)
+			finished := make(map[string]bool)
+			for _, e := range eventsList {
+				switch e.Type {
+				case "run.started":
+					started[e.RunID] = e
+				case "run.finished":
+					finished[e.RunID] = true
+				}
+			}
+
+			var active []events.Event
+			for runID, e := range started {
+				if !finished[runID] {
+					active = append(active, e)
+				}
+			}
+
+			if len(active) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No active runs")
+				return nil
+			}
+
+			fmt.Fprintln(cmd.OutOrStdout(), "Active runs:")
+			for _, e := range active {
+				elapsed := time.Since(e.Timestamp).Round(time.Second)
+				fmt.Fprintf(cmd.OutOrStdout(), "  #%d  elapsed %s\n", e.Issue, elapsed)
+			}
 			return nil
 		},
 	}
