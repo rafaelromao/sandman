@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ type WorktreeSandbox struct {
 	branch       string
 	sourceBranch string
 	workDir      string
+	cmd          *exec.Cmd
 }
 
 // NewWorktreeSandbox creates a WorktreeSandbox for the given repo and branch.
@@ -43,16 +45,33 @@ func (s *WorktreeSandbox) Start() error {
 	return nil
 }
 
-// Exec runs a command in the worktree.
-func (s *WorktreeSandbox) Exec(ctx context.Context, command string) error {
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+// Exec runs a command in the worktree, writing stdout and stderr to the given writers.
+func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = s.workDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("exec: %w", err)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("exec start: %w", err)
 	}
-	return nil
+	s.cmd = cmd
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("exec: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		<-done
+		return ctx.Err()
+	}
 }
 
 // Stop cleans up the worktree.
@@ -90,6 +109,14 @@ func (s *WorktreeSandbox) ReadRunResult() (*RunResult, error) {
 // WorkDir returns the working directory path of the sandbox.
 func (s *WorktreeSandbox) WorkDir() string {
 	return s.workDir
+}
+
+// Process returns the running OS process, or nil if no process is active.
+func (s *WorktreeSandbox) Process() Process {
+	if s.cmd == nil || s.cmd.Process == nil {
+		return nil
+	}
+	return s.cmd.Process
 }
 
 // Ensure WorktreeSandbox implements Sandbox.

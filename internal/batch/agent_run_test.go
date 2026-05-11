@@ -1,14 +1,37 @@
 package batch
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
+
+type fakeProcess struct {
+	sigTermCalled bool
+	killCalled    bool
+}
+
+func (p *fakeProcess) Signal(sig os.Signal) error {
+	if sig == syscall.SIGTERM {
+		p.sigTermCalled = true
+	}
+	return nil
+}
+
+func (p *fakeProcess) Kill() error {
+	p.killCalled = true
+	return nil
+}
 
 type fakeSandbox struct {
 	writePromptCalled  bool
@@ -21,15 +44,28 @@ type fakeSandbox struct {
 	execCalled  bool
 	execCommand string
 	execError   error
+	execStdout  string
+	execStderr  string
+	process     *fakeProcess
+	stopCalled  bool
 }
 
 func (f *fakeSandbox) Start() error { return nil }
-func (f *fakeSandbox) Exec(ctx context.Context, command string) error {
+func (f *fakeSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	f.execCalled = true
 	f.execCommand = command
+	if stdout != nil && f.execStdout != "" {
+		stdout.Write([]byte(f.execStdout))
+	}
+	if stderr != nil && f.execStderr != "" {
+		stderr.Write([]byte(f.execStderr))
+	}
 	return f.execError
 }
-func (f *fakeSandbox) Stop() error     { return nil }
+func (f *fakeSandbox) Stop() error {
+	f.stopCalled = true
+	return nil
+}
 func (f *fakeSandbox) WorkDir() string { return "" }
 func (f *fakeSandbox) WritePrompt(content string) error {
 	f.writePromptCalled = true
@@ -38,6 +74,10 @@ func (f *fakeSandbox) WritePrompt(content string) error {
 }
 func (f *fakeSandbox) ReadRunResult() (*sandbox.RunResult, error) {
 	return f.readRunResultResult, f.readRunResultError
+}
+
+func (f *fakeSandbox) Process() sandbox.Process {
+	return f.process
 }
 
 type spyRenderer struct {
@@ -136,7 +176,7 @@ func TestAgentRun_Execute_RunsCommand(t *testing.T) {
 	sb := &fakeSandbox{}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	if err := run.Execute(context.Background(), "echo hello"); err != nil {
+	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -153,8 +193,66 @@ func TestAgentRun_Execute_Failure(t *testing.T) {
 	sb := &fakeSandbox{execError: errors.New("agent failed")}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	if err := run.Execute(context.Background(), "exit 1"); err == nil {
+	if err := run.Execute(context.Background(), "exit 1", io.Discard, io.Discard); err == nil {
 		t.Fatal("expected error when exec fails")
+	}
+}
+
+func TestAgentRun_Execute_PrefixesOutput(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execStdout: "hello world\n"}
+	var outBuf bytes.Buffer
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	if err := run.Execute(context.Background(), "echo hello", &outBuf, io.Discard); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := outBuf.String()
+	if !strings.Contains(output, "[issue-42]") {
+		t.Errorf("expected output to contain issue prefix, got %q", output)
+	}
+	if !strings.Contains(output, "hello world") {
+		t.Errorf("expected output to contain agent text, got %q", output)
+	}
+	lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "[issue-42]") {
+			t.Errorf("expected every line to start with [issue-42], got %q", line)
+		}
+	}
+}
+
+func TestAgentRun_Execute_WritesLogFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execStdout: "hello world\n", execStderr: "error line\n"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("expected log file to exist: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "hello world") {
+		t.Errorf("expected log to contain stdout, got %q", content)
+	}
+	if !strings.Contains(content, "error line") {
+		t.Errorf("expected log to contain stderr, got %q", content)
+	}
+	if strings.Contains(content, "[issue-42]") {
+		t.Errorf("expected log to be un-prefixed, got %q", content)
 	}
 }
 

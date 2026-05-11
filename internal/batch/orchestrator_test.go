@@ -150,6 +150,143 @@ func (f *fakeRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb
 	return r
 }
 
+type fakeSandboxFactory struct {
+	sandbox *fakeSandbox
+}
+
+func (f *fakeSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string) sandbox.Sandbox {
+	return f.sandbox
+}
+
+type blockingRunnable struct {
+	delayAfterCancel time.Duration
+}
+
+func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string) AgentRunResult {
+	<-ctx.Done()
+	time.Sleep(b.delayAfterCancel)
+	return AgentRunResult{IssueNumber: 42, Status: "failure"}
+}
+
+type blockingRunnableFactory struct {
+	runnable *blockingRunnable
+}
+
+func (f *blockingRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return f.runnable
+}
+
+func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+
+	proc := &fakeProcess{}
+	sb := &fakeSandbox{process: proc}
+	factory := &fakeSandboxFactory{sandbox: sb}
+	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = factory
+	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	_, _ = o.RunBatch(ctx, Request{Issues: []int{42}})
+
+	if !proc.sigTermCalled {
+		t.Error("expected SIGTERM to be sent to process")
+	}
+}
+
+func TestRunBatch_PreservesWorktreeOnInterrupt(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+
+	proc := &fakeProcess{}
+	sb := &fakeSandbox{process: proc}
+	factory := &fakeSandboxFactory{sandbox: sb}
+	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = factory
+	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	_, _ = o.RunBatch(ctx, Request{Issues: []int{42}})
+
+	if sb.stopCalled {
+		t.Error("expected Stop not to be called on interrupted run")
+	}
+}
+
+func TestRunBatch_CallsStopOnSuccess(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+
+	sb := &fakeSandbox{}
+	factory := &fakeSandboxFactory{sandbox: sb}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = factory
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !sb.stopCalled {
+		t.Error("expected Stop to be called on successful run")
+	}
+}
+
+func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+
+	proc := &fakeProcess{}
+	sb := &fakeSandbox{process: proc}
+	factory := &fakeSandboxFactory{sandbox: sb}
+	blockRunnable := &blockingRunnable{delayAfterCancel: 300 * time.Millisecond}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = factory
+	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+	o.killTimeout = 100 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	_, _ = o.RunBatch(ctx, Request{Issues: []int{42}})
+
+	if !proc.killCalled {
+		t.Error("expected SIGKILL to be sent to process after timeout")
+	}
+}
+
 func TestRunBatch_FetchesSingleIssue(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

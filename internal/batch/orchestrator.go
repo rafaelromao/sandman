@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 	"unicode"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -21,6 +23,8 @@ type Orchestrator struct {
 	configStore     config.Store
 	eventLog        events.EventLog
 	runnableFactory RunnableFactory
+	sandboxFactory  SandboxFactory
+	killTimeout     time.Duration
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -51,6 +55,36 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	var mu sync.Mutex
 	failureCount := 0
 
+	var activeMu sync.Mutex
+	activeRuns := make(map[int]sandbox.Sandbox)
+
+	// Graceful shutdown: on context cancel, SIGTERM all processes, wait 10s, then SIGKILL.
+	go func() {
+		<-ctx.Done()
+		timeout := o.killTimeout
+		if timeout == 0 {
+			timeout = 10 * time.Second
+		}
+
+		activeMu.Lock()
+		for _, sb := range activeRuns {
+			if p := sb.Process(); p != nil {
+				p.Signal(syscall.SIGTERM)
+			}
+		}
+		activeMu.Unlock()
+
+		time.Sleep(timeout)
+
+		activeMu.Lock()
+		for _, sb := range activeRuns {
+			if p := sb.Process(); p != nil {
+				p.Kill()
+			}
+		}
+		activeMu.Unlock()
+	}()
+
 	for i, num := range req.Issues {
 		wg.Add(1)
 		go func(idx, issueNum int) {
@@ -58,7 +92,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg)
+			res := o.runSingle(ctx, issueNum, cfg, activeRuns, &activeMu)
 			mu.Lock()
 			results[idx] = res
 			if res.Status == "failure" {
@@ -76,7 +110,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	return &Result{Runs: results}, nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure"}
@@ -84,10 +118,23 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	branch := fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
 	// TODO: detect repo root instead of hardcoding "."
-	wt := sandbox.NewWorktreeSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch)
+	sbFactory := o.sandboxFactory
+	if sbFactory == nil {
+		sbFactory = defaultSandboxFactory{}
+	}
+	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch)
 	if err := wt.Start(); err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 	}
+
+	activeMu.Lock()
+	activeRuns[num] = wt
+	activeMu.Unlock()
+	defer func() {
+		activeMu.Lock()
+		delete(activeRuns, num)
+		activeMu.Unlock()
+	}()
 
 	factory := o.runnableFactory
 	if factory == nil {
@@ -102,6 +149,9 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	// TODO: log run started/finished events to eventLog.
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, o.githubClient, cfg.Git.DefaultBranch)
+	if ctx.Err() == nil {
+		wt.Stop()
+	}
 	return result
 }
 
