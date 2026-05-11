@@ -169,7 +169,7 @@ func TestHistoryNoCompletedRuns(t *testing.T) {
 	}
 }
 
-func TestRetryPlaceholder(t *testing.T) {
+func TestRetry_NoIssueReturnsError(t *testing.T) {
 	var buf bytes.Buffer
 	deps := newTestDeps()
 	rootCmd := NewRootCmd(deps)
@@ -178,16 +178,12 @@ func TestRetryPlaceholder(t *testing.T) {
 	rootCmd.SetArgs([]string{"retry"})
 
 	err := rootCmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(buf.String(), "retry is not yet implemented") {
-		t.Errorf("retry did not print placeholder message")
+	if err == nil {
+		t.Fatal("expected error when no issue provided")
 	}
 }
 
-func TestCleanPlaceholder(t *testing.T) {
+func TestClean_NoFlagsReturnsErrorFromRoot(t *testing.T) {
 	var buf bytes.Buffer
 	deps := newTestDeps()
 	rootCmd := NewRootCmd(deps)
@@ -196,12 +192,8 @@ func TestCleanPlaceholder(t *testing.T) {
 	rootCmd.SetArgs([]string{"clean"})
 
 	err := rootCmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(buf.String(), "clean is not yet implemented") {
-		t.Errorf("clean did not print placeholder message")
+	if err == nil {
+		t.Fatal("expected error when no filter flag provided")
 	}
 }
 

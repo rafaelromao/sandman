@@ -37,6 +37,10 @@ func (s *WorktreeSandbox) Start() error {
 	}
 
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
+	if _, err := os.Stat(s.workDir); err == nil {
+		return nil
+	}
+
 	cmd := exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.sourceBranch)
 	cmd.Dir = s.repoPath
 	if out, err := cmd.CombinedOutput(); err != nil {

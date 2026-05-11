@@ -103,7 +103,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, activeRuns, &activeMu)
+			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, activeRuns, &activeMu)
 			mu.Lock()
 			results[idx] = res
 			if res.Status == "failure" {
@@ -121,13 +121,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	return &Result{Runs: results}, nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, debug bool, branches map[int]string, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure"}
 	}
 
-	branch := fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
+	branch := branches[num]
+	if branch == "" {
+		branch = fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
+	}
 	// TODO: detect repo root instead of hardcoding "."
 	sbFactory := o.sandboxFactory
 	if sbFactory == nil {
@@ -188,6 +191,10 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 				"worktree_state": worktreeState,
 			},
 		})
+	}
+
+	if debug && result.Status == "failure" {
+		result.DebugInfo = fmt.Sprintf("Debug: worktree preserved at %s\nRun: cd %s && sh\n", wt.WorkDir(), wt.WorkDir())
 	}
 
 	if ctx.Err() == nil && result.Status != "failure" && !preserve {

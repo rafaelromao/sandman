@@ -106,6 +106,38 @@ func TestWorktreeSandbox_StopRemovesWorktree(t *testing.T) {
 	}
 }
 
+func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error on first start: %v", err)
+	}
+
+	worktreePath := s.WorkDir()
+	if err := os.WriteFile(filepath.Join(worktreePath, "marker.txt"), []byte("preserved"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s2.Start(); err != nil {
+		t.Fatalf("unexpected error on second start: %v", err)
+	}
+
+	if s2.WorkDir() != worktreePath {
+		t.Errorf("expected same workdir, got %q", s2.WorkDir())
+	}
+
+	data, err := os.ReadFile(filepath.Join(worktreePath, "marker.txt"))
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	if string(data) != "preserved" {
+		t.Errorf("expected preserved marker, got %q", string(data))
+	}
+}
+
 func TestWorktreeSandbox_ReadRunResult(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)

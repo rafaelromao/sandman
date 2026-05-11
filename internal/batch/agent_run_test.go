@@ -48,6 +48,7 @@ type fakeSandbox struct {
 	execStderr  string
 	process     *fakeProcess
 	stopCalled  bool
+	workDir     string
 }
 
 func (f *fakeSandbox) Start() error { return nil }
@@ -66,7 +67,7 @@ func (f *fakeSandbox) Stop() error {
 	f.stopCalled = true
 	return nil
 }
-func (f *fakeSandbox) WorkDir() string { return "" }
+func (f *fakeSandbox) WorkDir() string { return f.workDir }
 func (f *fakeSandbox) WritePrompt(content string) error {
 	f.writePromptCalled = true
 	f.writePromptContent = content
