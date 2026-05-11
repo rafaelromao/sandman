@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -156,6 +157,19 @@ type fakeSandboxFactory struct {
 
 func (f *fakeSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string) sandbox.Sandbox {
 	return f.sandbox
+}
+
+type spyEventLog struct {
+	events []events.Event
+}
+
+func (s *spyEventLog) Log(e events.Event) error {
+	s.events = append(s.events, e)
+	return nil
+}
+
+func (s *spyEventLog) Read() ([]events.Event, error) {
+	return s.events, nil
 }
 
 type blockingRunnable struct {
@@ -804,5 +818,100 @@ func TestRunBatch_DefaultParallelIsFour(t *testing.T) {
 
 	if factory.max > 4 {
 		t.Errorf("expected max concurrent runs <= 4 (default), got %d", factory.max)
+	}
+}
+
+func TestRunBatch_LogsStartedAndFinishedEvents(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	if spyLog.events[0].Type != "run.started" {
+		t.Errorf("expected first event run.started, got %q", spyLog.events[0].Type)
+	}
+	if spyLog.events[0].Issue != 42 {
+		t.Errorf("expected started event issue 42, got %d", spyLog.events[0].Issue)
+	}
+	if spyLog.events[1].Type != "run.finished" {
+		t.Errorf("expected second event run.finished, got %q", spyLog.events[1].Type)
+	}
+	if spyLog.events[1].Issue != 42 {
+		t.Errorf("expected finished event issue 42, got %d", spyLog.events[1].Issue)
+	}
+	status, _ := spyLog.events[1].Payload["status"].(string)
+	if status != "success" {
+		t.Errorf("expected finished status success, got %q", status)
+	}
+}
+
+func TestRunBatch_LogsFinishedEventWithPRURL(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+		createPRResult: "https://github.com/owner/repo/pull/99",
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	prURL, _ := spyLog.events[1].Payload["pr_url"].(string)
+	if prURL != "https://github.com/owner/repo/pull/99" {
+		t.Errorf("expected pr_url https://github.com/owner/repo/pull/99, got %q", prURL)
+	}
+}
+
+func TestRunBatch_LogsFinishedEventOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+		createPRError: errors.New("pr create failed"),
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	status, _ := spyLog.events[1].Payload["status"].(string)
+	if status != "failure" {
+		t.Errorf("expected finished status failure, got %q", status)
 	}
 }
