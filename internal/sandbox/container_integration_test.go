@@ -24,7 +24,7 @@ func dockerAvailable(t *testing.T) bool {
 	}
 	dockerWarmupOnce.Do(func() {
 		// Warm up the Docker daemon to avoid first-container delays in CI.
-		_ = exec.Command("docker", "run", "--rm", "alpine", "echo", "ok").Run()
+		_ = exec.Command("docker", "run", "--rm", DefaultContainerImage, "echo", "ok").Run()
 	})
 	return true
 }
@@ -51,7 +51,7 @@ func TestContainerRuntime_Start_CreatesRunningContainer(t *testing.T) {
 	}
 	dir := t.TempDir()
 	rt := NewContainerRuntime("docker")
-	c, err := rt.Start("alpine", dir)
+	c, err := rt.Start(DefaultContainerImage, dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestContainerRuntime_Start_MountsRepo(t *testing.T) {
 	}
 
 	rt := NewContainerRuntime("docker")
-	c, err := rt.Start("alpine", dir)
+	c, err := rt.Start(DefaultContainerImage, dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestContainer_Stop_StopsContainer(t *testing.T) {
 	}
 	dir := t.TempDir()
 	rt := NewContainerRuntime("docker")
-	c, err := rt.Start("alpine", dir)
+	c, err := rt.Start(DefaultContainerImage, dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestContainerSandbox_Exec_Integration(t *testing.T) {
 	}
 	dir := t.TempDir()
 	rt := NewContainerRuntime("docker")
-	c, err := rt.Start("alpine", dir)
+	c, err := rt.Start(DefaultContainerImage, dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestSharedContainerSandbox_Exec_Integration(t *testing.T) {
 	}
 	dir := t.TempDir()
 	rt := NewContainerRuntime("docker")
-	c, err := rt.Start("alpine", dir)
+	c, err := rt.Start(DefaultContainerImage, dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

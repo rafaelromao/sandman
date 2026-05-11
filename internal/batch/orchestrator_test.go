@@ -1100,3 +1100,33 @@ func TestRunBatch_LogsFinishedEventOnFailure(t *testing.T) {
 		t.Errorf("expected finished status failure, got %q", status)
 	}
 }
+
+func TestRunBatch_SharedContainer_ReturnsErrorWhenDockerUnavailable(t *testing.T) {
+	t.Setenv("PATH", "")
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
+	if err == nil {
+		t.Fatal("expected error when docker is unavailable")
+	}
+}
+
+func TestRunBatch_IsolatedContainer_ReturnsErrorWhenDockerUnavailable(t *testing.T) {
+	t.Setenv("PATH", "")
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker", IsolatedContainers: true})
+	if err == nil {
+		t.Fatal("expected error when docker is unavailable")
+	}
+}

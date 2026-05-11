@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// DefaultContainerImage is the image used for sandbox containers.
+const DefaultContainerImage = "alpine"
+
 // Container represents a running Docker or Podman container.
 type Container interface {
 	ID() string
@@ -35,19 +38,19 @@ func (r *ContainerRuntime) Start(image, repoPath string) (Container, error) {
 		return nil, fmt.Errorf("start container: %w\n%s", err, out)
 	}
 	id := strings.TrimSpace(string(out))
-	return &dockerContainer{id: id, binary: r.binary}, nil
+	return &runningContainer{id: id, binary: r.binary}, nil
 }
 
-type dockerContainer struct {
+type runningContainer struct {
 	id     string
 	binary string
 }
 
-func (c *dockerContainer) ID() string {
+func (c *runningContainer) ID() string {
 	return c.id
 }
 
-func (c *dockerContainer) Stop() error {
+func (c *runningContainer) Stop() error {
 	cmd := exec.Command(c.binary, "stop", c.id)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("stop container: %w\n%s", err, out)

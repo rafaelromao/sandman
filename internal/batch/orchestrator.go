@@ -70,7 +70,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	var sharedContainer sandbox.Container
 	if (sandboxMode == "docker" || sandboxMode == "podman") && !req.IsolatedContainers {
 		rt := sandbox.NewContainerRuntime(sandboxMode)
-		c, err := rt.Start("alpine", ".")
+		c, err := rt.Start(sandbox.DefaultContainerImage, ".")
 		if err != nil {
 			return nil, fmt.Errorf("start shared container: %w", err)
 		}
@@ -165,7 +165,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	var container sandbox.Container
 	if (sandboxMode == "docker" || sandboxMode == "podman") && isolated {
 		rt := sandbox.NewContainerRuntime(sandboxMode)
-		c, err := rt.Start("alpine", ".")
+		c, err := rt.Start(sandbox.DefaultContainerImage, ".")
 		if err != nil {
 			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 		}
