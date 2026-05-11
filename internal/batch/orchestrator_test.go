@@ -155,7 +155,7 @@ type fakeSandboxFactory struct {
 	sandbox *fakeSandbox
 }
 
-func (f *fakeSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string) sandbox.Sandbox {
+func (f *fakeSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
 	return f.sandbox
 }
 

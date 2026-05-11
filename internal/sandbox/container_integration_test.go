@@ -1,0 +1,176 @@
+package sandbox
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func dockerAvailable(t *testing.T) bool {
+	t.Helper()
+	cmd := exec.Command("docker", "version")
+	if err := cmd.Run(); err != nil {
+		t.Skip("docker not available")
+		return false
+	}
+	return true
+}
+
+func waitForContainer(t *testing.T, id string) {
+	t.Helper()
+	for i := 0; i < 30; i++ {
+		cmd := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", id)
+		out, err := cmd.CombinedOutput()
+		if err == nil && strings.TrimSpace(string(out)) == "true" {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("container did not become ready")
+}
+
+func TestContainerRuntime_Start_CreatesRunningContainer(t *testing.T) {
+	if !dockerAvailable(t) {
+		return
+	}
+	dir := t.TempDir()
+	rt := NewContainerRuntime("docker")
+	c, err := rt.Start("alpine", dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer c.Stop()
+	waitForContainer(t, c.ID())
+
+	verifyCmd := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", c.ID())
+	out, err := verifyCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("container not running: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "true" {
+		t.Fatalf("expected container to be running, got %q", out)
+	}
+}
+
+func TestContainerRuntime_Start_MountsRepo(t *testing.T) {
+	if !dockerAvailable(t) {
+		return
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "marker.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := NewContainerRuntime("docker")
+	c, err := rt.Start("alpine", dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer c.Stop()
+	waitForContainer(t, c.ID())
+
+	execCmd := exec.Command("docker", "exec", c.ID(), "cat", "/workspace/marker.txt")
+	out, err := execCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(out) != "hello" {
+		t.Errorf("expected hello, got %q", out)
+	}
+}
+
+func TestContainerRuntime_Start_ReturnsErrorForInvalidImage(t *testing.T) {
+	if !dockerAvailable(t) {
+		return
+	}
+	dir := t.TempDir()
+	rt := NewContainerRuntime("docker")
+	_, err := rt.Start("nonexistent-image-12345", dir)
+	if err == nil {
+		t.Fatal("expected error for invalid image")
+	}
+}
+
+func TestContainer_Stop_StopsContainer(t *testing.T) {
+	if !dockerAvailable(t) {
+		return
+	}
+	dir := t.TempDir()
+	rt := NewContainerRuntime("docker")
+	c, err := rt.Start("alpine", dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	waitForContainer(t, c.ID())
+
+	if err := c.Stop(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	verifyCmd := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", c.ID())
+	out, err := verifyCmd.CombinedOutput()
+	if err != nil {
+		return // container removed, which means it stopped
+	}
+	if strings.TrimSpace(string(out)) == "true" {
+		t.Error("expected container to be stopped")
+	}
+}
+
+func TestContainerSandbox_Exec_Integration(t *testing.T) {
+	if !dockerAvailable(t) {
+		return
+	}
+	dir := t.TempDir()
+	rt := NewContainerRuntime("docker")
+	c, err := rt.Start("alpine", dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer c.Stop()
+
+	waitForContainer(t, c.ID())
+
+	wt := &fakeWorktreeForContainer{workDir: dir}
+	sb := NewContainerSandbox(wt, c, "docker", dir)
+
+	var out bytes.Buffer
+	if err := sb.Exec(context.Background(), "echo hello from container", &out, io.Discard); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "hello from container") {
+		t.Errorf("expected output to contain hello, got %q", out.String())
+	}
+}
+
+func TestSharedContainerSandbox_Exec_Integration(t *testing.T) {
+	if !dockerAvailable(t) {
+		return
+	}
+	dir := t.TempDir()
+	rt := NewContainerRuntime("docker")
+	c, err := rt.Start("alpine", dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer c.Stop()
+
+	waitForContainer(t, c.ID())
+
+	wt := &fakeWorktreeForContainer{workDir: dir}
+	sb := NewSharedContainerSandbox(wt, c, "docker", dir)
+
+	var out bytes.Buffer
+	if err := sb.Exec(context.Background(), "echo hello from shared", &out, io.Discard); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "hello from shared") {
+		t.Errorf("expected output to contain hello, got %q", out.String())
+	}
+}

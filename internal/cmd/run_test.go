@@ -337,3 +337,54 @@ func TestRun_ConfigParallelDefault(t *testing.T) {
 		t.Errorf("expected parallel=8 from config default, got %d", spy.req.Parallel)
 	}
 }
+
+func TestRun_SandboxFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--sandbox", "docker", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Sandbox != "docker" {
+		t.Errorf("expected sandbox=docker, got %q", spy.req.Sandbox)
+	}
+}
+
+func TestRun_IsolatedContainersFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--sandbox", "docker", "--isolated-containers", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.req.IsolatedContainers {
+		t.Errorf("expected IsolatedContainers=true, got false")
+	}
+	if spy.req.Sandbox != "docker" {
+		t.Errorf("expected sandbox=docker, got %q", spy.req.Sandbox)
+	}
+}
