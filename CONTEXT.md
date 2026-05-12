@@ -4,6 +4,10 @@ Domain vocabulary for Sandman, a terminal-native CLI tool that orchestrates AFK 
 
 ## Language
 
+**BlockedBy**:
+The set of issue numbers that must complete successfully before an AgentRun for this issue can start. Derived from the union of body references and GitHub native dependency fields.
+_Avoid_: dependencies, prerequisites.
+
 **Agent**:
 An external AI coding tool (OpenCode, Codex, Cloud Code, Pi) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
 _Avoid_: AI model, LLM, copilot.
@@ -15,6 +19,10 @@ _Avoid_: Agent type, runner.
 **AgentRun**:
 One execution of an agent against one issue, producing commits on a branch. The unit of work within a batch.
 _Avoid_: Run, job, task.
+
+**DependencyResolver**:
+The component that fetches issues, extracts their BlockedBy relationships, validates the dependency graph (detecting cycles and missing blockers), and produces a topologically sorted ResolvedBatch.
+_Avoid_: scheduler, planner.
 
 **Batch**:
 The set of AgentRuns triggered by a single `sandman run` invocation. Coordinated for parallel execution with a concurrency limit.
@@ -40,6 +48,10 @@ _Avoid_: Ticket, story.
 The generated instruction file passed to an agent, rendered from a template with issue metadata and built-in substitutions.
 _Avoid_: Instructions, query.
 
+**ResolvedBatch**:
+A batch where all issues have been fetched, their BlockedBy relationships resolved, and the execution order topologically sorted. Ready for the Orchestrator.
+_Avoid_: planned batch, execution plan.
+
 **Sandbox**:
 The abstract isolation mechanism within which an AgentRun executes. Hides whether isolation is provided by a worktree, a shared container, or an isolated container.
 _Avoid_: Environment, boundary, boundary context.
@@ -56,6 +68,10 @@ _Avoid_: Local sandbox.
 
 - A **Batch** contains one or more **AgentRuns**
 - An **AgentRun** targets exactly one **Issue** and produces exactly one **Branch**
+- An **Issue** may have **BlockedBy** relationships to other **Issues**
+- A **DependencyResolver** produces a **ResolvedBatch** from a set of **Issues**
+- An **Orchestrator** executes a **ResolvedBatch**, respecting **BlockedBy** ordering
+- An **AgentRun** may be **blocked** if any of its **BlockedBy** issues failed
 - A **Sandbox** provides isolation for one or more **AgentRuns**
 - In worktree mode, each **AgentRun** gets its own **Sandbox** (a **WorktreeSandbox**)
 - In shared-container mode, a single **Sandbox** (a **ContainerSandbox**) contains multiple **Worktrees**, each hosting one **AgentRun**
