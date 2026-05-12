@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/rafaelromao/sandman/internal/batch"
@@ -24,9 +25,23 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			label, _ := cmd.Flags().GetString("label")
 			query, _ := cmd.Flags().GetString("query")
 			interactive, _ := cmd.Flags().GetBool("interactive")
+			nextFlag := cmd.Flags().Lookup("next")
+			nextProvided := nextFlag != nil && nextFlag.Changed
+			nextCount, _ := cmd.Flags().GetInt("next")
 
 			var issues []int
-			if len(args) > 0 {
+			if nextProvided {
+				if len(args) > 0 || label != "" || query != "" {
+					return fmt.Errorf("cannot combine --next with issue arguments, --label or --query")
+				}
+				if nextCount <= 0 {
+					return fmt.Errorf("--next count must be at least 1")
+				}
+				issues, err = resolveNextIssues(cmd.Context(), deps.GitHubClient, nextCount)
+				if err != nil {
+					return err
+				}
+			} else if len(args) > 0 {
 				if label != "" || query != "" {
 					return fmt.Errorf("cannot combine issue arguments with --label or --query")
 				}
@@ -111,6 +126,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("interactive", false, "Run the agent in interactive mode")
 	cmd.Flags().String("label", "", "Select issues by label")
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")
+
+	cmd.Flags().Int("next", 0, "Delegate the N lowest-numbered open issues labeled ready-for-agent")
+	if pf := cmd.Flags().Lookup("next"); pf != nil {
+		pf.NoOptDefVal = "1"
+	}
+
 	return cmd
 }
 
@@ -122,6 +143,30 @@ func resolveIssues(ctx context.Context, client github.Client, query string) ([]i
 	numbers := make([]int, len(ghIssues))
 	for i, issue := range ghIssues {
 		numbers[i] = issue.Number
+	}
+	return numbers, nil
+}
+
+func resolveNextIssues(ctx context.Context, client github.Client, count int) ([]int, error) {
+	ghIssues, err := client.SearchIssues("label:ready-for-agent is:open")
+	if err != nil {
+		return nil, fmt.Errorf("search issues: %w", err)
+	}
+	if len(ghIssues) == 0 {
+		return nil, fmt.Errorf("no issues ready for agent")
+	}
+
+	sort.Slice(ghIssues, func(i, j int) bool {
+		return ghIssues[i].Number < ghIssues[j].Number
+	})
+
+	if count > len(ghIssues) {
+		count = len(ghIssues)
+	}
+
+	numbers := make([]int, count)
+	for i := 0; i < count; i++ {
+		numbers[i] = ghIssues[i].Number
 	}
 	return numbers, nil
 }
