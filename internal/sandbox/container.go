@@ -68,7 +68,11 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 	}
 
 	if opts.SSH {
-		sshPath := filepath.Join(os.Getenv("HOME"), ".ssh")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("resolve home dir for ssh mount: %w", err)
+		}
+		sshPath := filepath.Join(home, ".ssh")
 		args = append(args, "-v", sshPath+":/.ssh")
 	}
 
