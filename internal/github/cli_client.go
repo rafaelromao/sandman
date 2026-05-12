@@ -63,10 +63,15 @@ type dependencySummary struct {
 type issueEventPayload struct {
 	Event         string              `json:"event"`
 	BlockingIssue *dependencyIssueRef `json:"blocking_issue"`
+	Source        *eventSource        `json:"source"`
 }
 
 type dependencyIssueRef struct {
 	Number int `json:"number"`
+}
+
+type eventSource struct {
+	Issue *dependencyIssueRef `json:"issue"`
 }
 
 func (c *CLIClient) command(name string, arg ...string) *exec.Cmd {
@@ -174,9 +179,6 @@ func (c *CLIClient) fetchIssueDependencies(owner, repo string, number int, issue
 	if len(blockedBy) > 0 {
 		return blockedBy, nil
 	}
-	if issue.IssueDependenciesSummary.BlockedBy == 0 && issue.IssueDependenciesSummary.TotalBlockedBy == 0 {
-		return nil, nil
-	}
 
 	cmd := c.command("gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d/events", owner, repo, number))
 	out, err := cmd.CombinedOutput()
@@ -281,6 +283,11 @@ func parseDependencyEvents(events []issueEventPayload) []int {
 				continue
 			}
 			blockedBy = removeIssueNumber(blockedBy, event.BlockingIssue.Number)
+		case "cross-referenced":
+			if event.Source == nil || event.Source.Issue == nil || event.Source.Issue.Number == 0 {
+				continue
+			}
+			blockedBy = mergeIssueNumbers(blockedBy, []int{event.Source.Issue.Number})
 		}
 	}
 	if len(blockedBy) == 0 {
