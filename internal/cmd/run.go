@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
 )
 
@@ -94,6 +96,18 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			sandboxMode, _ := cmd.Flags().GetString("sandbox")
 			isolatedContainers, _ := cmd.Flags().GetBool("isolated-containers")
 
+			promptFlag, _ := cmd.Flags().GetString("prompt")
+			templateFlag, _ := cmd.Flags().GetString("template")
+			promptArgsRaw, _ := cmd.Flags().GetStringArray("prompt-arg")
+			promptArgs := make(map[string]string)
+			for _, arg := range promptArgsRaw {
+				parts := strings.SplitN(arg, "=", 2)
+				if len(parts) != 2 {
+					return fmt.Errorf("invalid --prompt-arg format %q: expected KEY=VALUE", arg)
+				}
+				promptArgs[parts[0]] = parts[1]
+			}
+
 			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 				Issues:             issues,
 				Parallel:           parallel,
@@ -102,6 +116,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				Sandbox:            sandboxMode,
 				IsolatedContainers: isolatedContainers,
 				Interactive:        interactive,
+				PromptConfig: prompt.RenderConfig{
+					PromptFlag:   promptFlag,
+					TemplateFlag: templateFlag,
+					PromptArgs:   promptArgs,
+				},
 			})
 			if result != nil {
 				printSummary(cmd, result)
@@ -126,6 +145,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("interactive", false, "Run the agent in interactive mode")
 	cmd.Flags().String("label", "", "Select issues by label")
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")
+	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md)")
+	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md)")
+	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
 
 	cmd.Flags().Int("next", 0, "Delegate the N lowest-numbered open issues labeled ready-for-agent")
 	if pf := cmd.Flags().Lookup("next"); pf != nil {
