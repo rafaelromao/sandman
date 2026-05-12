@@ -37,6 +37,10 @@ func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
 	return nil, nil
 }
 
+func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
+	return nil, nil
+}
+
 func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	f.searchIssuesQuery = query
 	return f.searchIssuesResult, f.searchIssuesError
