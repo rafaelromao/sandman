@@ -2,10 +2,11 @@ package github
 
 // Issue holds metadata fetched from GitHub.
 type Issue struct {
-	Number int
-	Title  string
-	Body   string
-	Labels []string
+	Number    int
+	Title     string
+	Body      string
+	Labels    []string
+	BlockedBy []int
 }
 
 // Client wraps gh CLI for GitHub operations.

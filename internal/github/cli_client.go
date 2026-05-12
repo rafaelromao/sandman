@@ -4,8 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"sync"
 )
+
+var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)\s+#(\d+)\b`)
 
 // execRunner abstracts os/exec for testability.
 type execRunner interface {
@@ -31,6 +35,15 @@ type repoRef struct {
 	override string
 	owner    string
 	name     string
+}
+
+type issuePayload struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
 }
 
 func (c *CLIClient) command(name string, arg ...string) *exec.Cmd {
@@ -76,7 +89,54 @@ func (c *CLIClient) resolveRepo() (string, string, error) {
 
 // FetchIssue fetches issue metadata via gh CLI.
 func (c *CLIClient) FetchIssue(number int) (*Issue, error) {
-	return nil, fmt.Errorf("GitHub issue fetching not yet implemented")
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := c.command("gh", "api", fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh api issue: %w\n%s", err, out)
+	}
+
+	var issue issuePayload
+	if err := json.Unmarshal(out, &issue); err != nil {
+		return nil, fmt.Errorf("parse issue: %w", err)
+	}
+
+	return &Issue{
+		Number:    issue.Number,
+		Title:     issue.Title,
+		Body:      issue.Body,
+		Labels:    labelNames(issue.Labels),
+		BlockedBy: parseBlockedBy(issue.Body),
+	}, nil
+}
+
+func parseBlockedBy(body string) []int {
+	matches := blockedByPattern.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	blockedBy := make([]int, 0, len(matches))
+	seen := make(map[int]struct{}, len(matches))
+	for _, match := range matches {
+		number, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[number]; ok {
+			continue
+		}
+		seen[number] = struct{}{}
+		blockedBy = append(blockedBy, number)
+	}
+	if len(blockedBy) == 0 {
+		return nil
+	}
+	return blockedBy
 }
 
 // SearchIssues searches for issues via gh CLI.
@@ -86,11 +146,35 @@ func (c *CLIClient) SearchIssues(query string) ([]Issue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gh issue list: %w\n%s", err, out)
 	}
-	var issues []Issue
-	if err := json.Unmarshal(out, &issues); err != nil {
+	var payloads []issuePayload
+	if err := json.Unmarshal(out, &payloads); err != nil {
 		return nil, fmt.Errorf("parse issues: %w", err)
 	}
+
+	issues := make([]Issue, 0, len(payloads))
+	for _, payload := range payloads {
+		issues = append(issues, Issue{
+			Number: payload.Number,
+			Title:  payload.Title,
+			Body:   payload.Body,
+			Labels: labelNames(payload.Labels),
+		})
+	}
 	return issues, nil
+}
+
+func labelNames(labels []struct {
+	Name string `json:"name"`
+}) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(labels))
+	for _, label := range labels {
+		names = append(names, label.Name)
+	}
+	return names
 }
 
 // Ensure CLIClient implements Client.

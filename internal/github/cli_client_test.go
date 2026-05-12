@@ -2,6 +2,7 @@ package github
 
 import (
 	"os/exec"
+	"reflect"
 	"testing"
 )
 
@@ -33,7 +34,7 @@ func (f *fakeRunner) Run(name string, arg ...string) *exec.Cmd {
 }
 
 func TestCLIClient_SearchIssues_Success(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":1,"title":"Bug","body":"bug body","labels":["bug"]},{"number":2,"title":"Feature","body":"feat body","labels":[]}]`}}}
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":1,"title":"Bug","body":"bug body","labels":[{"name":"bug"}]},{"number":2,"title":"Feature","body":"feat body","labels":[]}]`}}}
 	client := &CLIClient{runner: runner}
 
 	issues, err := client.SearchIssues("is:open label:bug")
@@ -159,5 +160,116 @@ func TestCLIClient_ResolveRepo_Error(t *testing.T) {
 	_, _, err := client.resolveRepo()
 	if err == nil {
 		t.Fatal("expected error when gh repo view fails")
+	}
+}
+
+func TestCLIClient_FetchIssue_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":61,"title":"Implement FetchIssue","body":"Blocked by #60\nDepends on #7","labels":[{"name":"enhancement"},{"name":"ready-for-agent"}]}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	issue, err := client.FetchIssue(61)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if issue.Number != 61 {
+		t.Fatalf("expected issue 61, got %d", issue.Number)
+	}
+	if issue.Title != "Implement FetchIssue" {
+		t.Fatalf("expected title %q, got %q", "Implement FetchIssue", issue.Title)
+	}
+	if issue.Body != "Blocked by #60\nDepends on #7" {
+		t.Fatalf("expected body to round-trip, got %q", issue.Body)
+	}
+	if !reflect.DeepEqual(issue.Labels, []string{"enhancement", "ready-for-agent"}) {
+		t.Fatalf("expected labels to be mapped, got %v", issue.Labels)
+	}
+	if !reflect.DeepEqual(issue.BlockedBy, []int{60, 7}) {
+		t.Fatalf("expected blocked-by references [60 7], got %v", issue.BlockedBy)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
+	}
+	expectedArgs := []string{"api", "repos/rafaelromao/sandman/issues/61"}
+	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
+		t.Fatalf("expected fetch args %v, got %v", expectedArgs, runner.calls[1].args)
+	}
+}
+
+func TestCLIClient_FetchIssue_CachesResolvedRepo(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":61,"title":"Issue 61","body":"","labels":[]}`},
+		{output: `{"number":62,"title":"Issue 62","body":"","labels":[]}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	if _, err := client.FetchIssue(61); err != nil {
+		t.Fatalf("unexpected error on first fetch: %v", err)
+	}
+	if _, err := client.FetchIssue(62); err != nil {
+		t.Fatalf("unexpected error on second fetch: %v", err)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("expected 3 commands, got %d", len(runner.calls))
+	}
+	if !reflect.DeepEqual(runner.calls[1].args, []string{"api", "repos/rafaelromao/sandman/issues/61"}) {
+		t.Fatalf("unexpected first fetch args: %v", runner.calls[1].args)
+	}
+	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "repos/rafaelromao/sandman/issues/62"}) {
+		t.Fatalf("unexpected second fetch args: %v", runner.calls[2].args)
+	}
+}
+
+func TestCLIClient_FetchIssue_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	_, err := client.FetchIssue(61)
+	if err == nil {
+		t.Fatal("expected error when gh api fails")
+	}
+}
+
+func TestParseBlockedBy(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want []int
+	}{
+		{
+			name: "matches accepted phrases case-insensitively",
+			body: "Depends on #7\nblocked by #60\nblocked-by #12",
+			want: []int{7, 60, 12},
+		},
+		{
+			name: "deduplicates repeated issue references",
+			body: "Blocked by #60\nblocked by #60",
+			want: []int{60},
+		},
+		{
+			name: "ignores plain issue references without phrase",
+			body: "## Blocked by\n- #60",
+			want: nil,
+		},
+		{
+			name: "ignores partial phrase matches",
+			body: "notblocked by #60",
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseBlockedBy(tt.body)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+		})
 	}
 }
