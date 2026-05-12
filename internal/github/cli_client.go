@@ -94,7 +94,7 @@ func (c *CLIClient) FetchIssue(number int) (*Issue, error) {
 		return nil, err
 	}
 
-	cmd := c.command("gh", "api", fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number))
+	cmd := c.command("gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("gh api issue: %w\n%s", err, out)

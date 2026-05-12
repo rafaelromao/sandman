@@ -192,7 +192,7 @@ func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	if len(runner.calls) != 2 {
 		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
 	}
-	expectedArgs := []string{"api", "repos/rafaelromao/sandman/issues/61"}
+	expectedArgs := []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61"}
 	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
 		t.Fatalf("expected fetch args %v, got %v", expectedArgs, runner.calls[1].args)
 	}
@@ -215,10 +215,10 @@ func TestCLIClient_FetchIssue_CachesResolvedRepo(t *testing.T) {
 	if len(runner.calls) != 3 {
 		t.Fatalf("expected 3 commands, got %d", len(runner.calls))
 	}
-	if !reflect.DeepEqual(runner.calls[1].args, []string{"api", "repos/rafaelromao/sandman/issues/61"}) {
+	if !reflect.DeepEqual(runner.calls[1].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61"}) {
 		t.Fatalf("unexpected first fetch args: %v", runner.calls[1].args)
 	}
-	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "repos/rafaelromao/sandman/issues/62"}) {
+	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62"}) {
 		t.Fatalf("unexpected second fetch args: %v", runner.calls[2].args)
 	}
 }
