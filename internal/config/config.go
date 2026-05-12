@@ -22,7 +22,6 @@ type Config struct {
 	Agent           string           `yaml:"agent"`
 	DefaultParallel int              `yaml:"default_parallel"`
 	WorktreeDir     string           `yaml:"worktree_dir"`
-	PRTemplate      string           `yaml:"pr_template"`
 	Sandbox         string           `yaml:"sandbox"`
 	Git             GitConfig        `yaml:"git"`
 	AgentProviders  map[string]Agent `yaml:"agents"`
@@ -103,8 +102,6 @@ func (c *Config) GetValue(key string) (string, error) {
 		return fmt.Sprintf("%d", c.DefaultParallel), nil
 	case "worktree_dir":
 		return c.WorktreeDir, nil
-	case "pr_template":
-		return c.PRTemplate, nil
 	case "sandbox":
 		return c.Sandbox, nil
 	case "git.default_branch":
@@ -134,8 +131,6 @@ func (c *Config) SetValue(key, value string) error {
 		c.DefaultParallel = n
 	case "worktree_dir":
 		c.WorktreeDir = value
-	case "pr_template":
-		c.PRTemplate = value
 	case "sandbox":
 		c.Sandbox = value
 	case "git.default_branch":

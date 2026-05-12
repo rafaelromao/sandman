@@ -32,9 +32,9 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 ## Workflow
 
 1. Create a new ADR file with the next sequential number and status `proposed`.
-2. Open a pull request for discussion.
+2. Open a discussion for feedback.
 3. After review, update the status to `accepted` or `rejected`.
-4. Merge the PR.
+4. Merge the change.
 
 ## Index
 

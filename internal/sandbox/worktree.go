@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -106,20 +105,6 @@ func (s *WorktreeSandbox) WritePrompt(content string) error {
 		return fmt.Errorf("write prompt: %w", err)
 	}
 	return nil
-}
-
-// ReadRunResult reads .sandman/run-result.json from the worktree.
-func (s *WorktreeSandbox) ReadRunResult() (*RunResult, error) {
-	runResultPath := filepath.Join(s.workDir, ".sandman", "run-result.json")
-	data, err := os.ReadFile(runResultPath)
-	if err != nil {
-		return nil, err
-	}
-	var rr RunResult
-	if err := json.Unmarshal(data, &rr); err != nil {
-		return nil, err
-	}
-	return &rr, nil
 }
 
 // WorkDir returns the working directory path of the sandbox.

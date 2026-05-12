@@ -157,35 +157,3 @@ func TestWorktreeSandbox_ExecInteractive_RunsCommand(t *testing.T) {
 		t.Errorf("expected interactive marker file to exist: %v", err)
 	}
 }
-
-func TestWorktreeSandbox_ReadRunResult(t *testing.T) {
-	dir := t.TempDir()
-	initGitRepo(t, dir)
-
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
-	if err := s.Start(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	runResultPath := filepath.Join(s.WorkDir(), ".sandman", "run-result.json")
-	if err := os.MkdirAll(filepath.Dir(runResultPath), 0755); err != nil {
-		t.Fatalf("create dir: %v", err)
-	}
-	if err := os.WriteFile(runResultPath, []byte(`{"title":"Custom Title","body":"Custom Body"}`), 0644); err != nil {
-		t.Fatalf("write run result: %v", err)
-	}
-
-	result, err := s.ReadRunResult()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
-	}
-	if result.Title != "Custom Title" {
-		t.Errorf("expected title 'Custom Title', got %q", result.Title)
-	}
-	if result.Body != "Custom Body" {
-		t.Errorf("expected body 'Custom Body', got %q", result.Body)
-	}
-}

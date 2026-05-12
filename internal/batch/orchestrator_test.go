@@ -71,15 +71,8 @@ func (s *spyPromptRenderer) Render(cfg prompt.RenderConfig, data prompt.IssueDat
 }
 
 type fakeGitHubClient struct {
-	issues               map[int]*github.Issue
-	err                  error
-	createPRCalled       bool
-	createPRBranch       string
-	createPRTargetBranch string
-	createPRTitle        string
-	createPRBody         string
-	createPRResult       string
-	createPRError        error
+	issues map[int]*github.Issue
+	err    error
 }
 
 func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
@@ -87,15 +80,6 @@ func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
 		return nil, f.err
 	}
 	return f.issues[number], nil
-}
-
-func (f *fakeGitHubClient) CreatePR(branch, targetBranch, title, body string) (string, error) {
-	f.createPRCalled = true
-	f.createPRBranch = branch
-	f.createPRTargetBranch = targetBranch
-	f.createPRTitle = title
-	f.createPRBody = body
-	return f.createPRResult, f.createPRError
 }
 
 func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
@@ -110,7 +94,7 @@ type fakeRunnable struct {
 	mu          *sync.Mutex
 }
 
-func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string, interactive bool) AgentRunResult {
+func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool) AgentRunResult {
 	if f.mu != nil {
 		f.mu.Lock()
 		*f.activeCount++
@@ -180,7 +164,7 @@ type blockingRunnable struct {
 	delayAfterCancel time.Duration
 }
 
-func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string, interactive bool) AgentRunResult {
+func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool) AgentRunResult {
 	<-ctx.Done()
 	time.Sleep(b.delayAfterCancel)
 	return AgentRunResult{IssueNumber: 42, Status: "failure"}
@@ -513,7 +497,7 @@ func TestRunBatch_WritesPromptAndExecutesAgent(t *testing.T) {
 	}
 }
 
-func TestRunBatch_PRCreationFailure(t *testing.T) {
+func TestRunBatch_PopulatesBranch(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -522,37 +506,6 @@ func TestRunBatch_PRCreationFailure(t *testing.T) {
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
-		createPRError: errors.New("gh pr create failed"),
-	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-
-	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
-	if err == nil {
-		t.Fatal("expected error when PR creation fails")
-	}
-	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "failure" {
-		t.Errorf("expected failure status in result, got %+v", result)
-	}
-	if result.Runs[0].PRURL != "" {
-		t.Errorf("expected empty PRURL, got %q", result.Runs[0].PRURL)
-	}
-
-	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
-		t.Errorf("expected worktree to be preserved")
-	}
-}
-
-func TestRunBatch_PopulatesPRURL(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	initGitRepo(t, dir)
-
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-		},
-		createPRResult: "https://github.com/owner/repo/pull/99",
 	}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 
@@ -563,8 +516,8 @@ func TestRunBatch_PopulatesPRURL(t *testing.T) {
 	if len(result.Runs) != 1 {
 		t.Fatalf("expected 1 run, got %d", len(result.Runs))
 	}
-	if result.Runs[0].PRURL != "https://github.com/owner/repo/pull/99" {
-		t.Errorf("expected PRURL https://github.com/owner/repo/pull/99, got %q", result.Runs[0].PRURL)
+	if result.Runs[0].Branch != "sandman/42-fix-bug" {
+		t.Errorf("expected branch sandman/42-fix-bug, got %q", result.Runs[0].Branch)
 	}
 }
 
@@ -660,90 +613,6 @@ agents:
 	markerPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-login-bug", "agent-ran.txt")
 	if _, err := os.Stat(markerPath); err != nil {
 		t.Errorf("agent marker not found: %v", err)
-	}
-}
-
-func TestRunBatch_UsesRunResultJSONForPR(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	initGitRepo(t, dir)
-
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-		},
-	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: `mkdir -p .sandman && echo '{"title":"Custom Title","body":"Custom Body"}' > .sandman/run-result.json`}}}}, nil)
-
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !client.createPRCalled {
-		t.Fatal("expected CreatePR to be called")
-	}
-	if client.createPRTitle != "Custom Title" {
-		t.Errorf("expected title 'Custom Title', got %q", client.createPRTitle)
-	}
-	if client.createPRBody != "Custom Body\n\nFixes #42" {
-		t.Errorf("expected body 'Custom Body\n\nFixes #42', got %q", client.createPRBody)
-	}
-}
-
-func TestRunBatch_PRBodyReferencesIssue(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	initGitRepo(t, dir)
-
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-		},
-	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(client.createPRBody, "Fixes #42") {
-		t.Errorf("expected PR body to reference issue, got %q", client.createPRBody)
-	}
-}
-
-func TestRunBatch_CreatesPRAfterSuccess(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	initGitRepo(t, dir)
-
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-		},
-	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !client.createPRCalled {
-		t.Fatal("expected CreatePR to be called")
-	}
-	if client.createPRBranch != "sandman/42-fix-bug" {
-		t.Errorf("expected branch sandman/42-fix-bug, got %s", client.createPRBranch)
-	}
-	if client.createPRTargetBranch != "main" {
-		t.Errorf("expected target branch main, got %s", client.createPRTargetBranch)
-	}
-	if client.createPRTitle != "Fix bug" {
-		t.Errorf("expected title 'Fix bug', got %q", client.createPRTitle)
-	}
-	if client.createPRBody != "Users cannot log in.\n\nFixes #42" {
-		t.Errorf("expected body 'Users cannot log in.\n\nFixes #42', got %q", client.createPRBody)
 	}
 }
 
@@ -910,7 +779,7 @@ func TestRunBatch_LogsStartedAndFinishedEvents(t *testing.T) {
 	}
 }
 
-func TestRunBatch_LogsFinishedEventWithPRURL(t *testing.T) {
+func TestRunBatch_LogsFinishedEventWithBranch(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -919,7 +788,6 @@ func TestRunBatch_LogsFinishedEventWithPRURL(t *testing.T) {
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},
 		},
-		createPRResult: "https://github.com/owner/repo/pull/99",
 	}
 	spyLog := &spyEventLog{}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
@@ -932,9 +800,9 @@ func TestRunBatch_LogsFinishedEventWithPRURL(t *testing.T) {
 	if len(spyLog.events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
 	}
-	prURL, _ := spyLog.events[1].Payload["pr_url"].(string)
-	if prURL != "https://github.com/owner/repo/pull/99" {
-		t.Errorf("expected pr_url https://github.com/owner/repo/pull/99, got %q", prURL)
+	branch, _ := spyLog.events[1].Payload["branch"].(string)
+	if branch != "sandman/42-fix-bug" {
+		t.Errorf("expected branch sandman/42-fix-bug, got %q", branch)
 	}
 }
 
@@ -974,10 +842,9 @@ func TestRunBatch_LogsWorktreeStatePreservedOnFailure(t *testing.T) {
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},
 		},
-		createPRError: errors.New("pr create failed"),
 	}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "exit 1"}}}}, spyLog)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {
@@ -998,7 +865,6 @@ func TestRunBatch_DebugPrintsWorktreePathOnFailure(t *testing.T) {
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},
 		},
-		createPRError: errors.New("pr create failed"),
 	}
 
 	sb := &fakeSandbox{workDir: "/tmp/sandman/42-fix-bug"}
@@ -1006,6 +872,9 @@ func TestRunBatch_DebugPrintsWorktreePathOnFailure(t *testing.T) {
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.sandboxFactory = factory
+	o.runnableFactory = &fakeRunnableFactory{
+		results: []AgentRunResult{{IssueNumber: 42, Status: "failure"}},
+	}
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Debug: true})
 	if err == nil {
@@ -1028,7 +897,6 @@ func TestRunBatch_NoDebugInfoOnFailureWithoutDebug(t *testing.T) {
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},
 		},
-		createPRError: errors.New("pr create failed"),
 	}
 
 	sb := &fakeSandbox{workDir: "/tmp/sandman/42-fix-bug"}
@@ -1036,6 +904,9 @@ func TestRunBatch_NoDebugInfoOnFailureWithoutDebug(t *testing.T) {
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.sandboxFactory = factory
+	o.runnableFactory = &fakeRunnableFactory{
+		results: []AgentRunResult{{IssueNumber: 42, Status: "failure"}},
+	}
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {
@@ -1086,10 +957,9 @@ func TestRunBatch_LogsFinishedEventOnFailure(t *testing.T) {
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},
 		},
-		createPRError: errors.New("pr create failed"),
 	}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "exit 1"}}}}, spyLog)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {

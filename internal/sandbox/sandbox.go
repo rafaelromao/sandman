@@ -7,12 +7,6 @@ import (
 	"os/exec"
 )
 
-// RunResult captures structured output produced by an agent run.
-type RunResult struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
-}
-
 // Process represents a running OS process that can be signalled.
 type Process interface {
 	Signal(sig os.Signal) error
@@ -33,8 +27,6 @@ type Sandbox interface {
 	WorkDir() string
 	// WritePrompt writes the prompt content to the sandbox.
 	WritePrompt(content string) error
-	// ReadRunResult reads the run result produced by the agent.
-	ReadRunResult() (*RunResult, error)
 	// Process returns the running OS process, or nil if no process is active.
 	Process() Process
 }

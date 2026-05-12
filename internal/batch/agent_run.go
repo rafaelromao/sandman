@@ -18,7 +18,6 @@ type AgentRun struct {
 	branch  string
 	sandbox sandbox.Sandbox
 	status  string
-	prURL   string
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -76,32 +75,8 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 	return nil
 }
 
-// Finalize reads the run result, creates a PR, and records the PR URL.
-func (r *AgentRun) Finalize(client github.Client, defaultBranch string) error {
-	prTitle := r.issue.Title
-	prBody := r.issue.Body
-	if rr, err := r.sandbox.ReadRunResult(); err == nil && rr != nil {
-		if rr.Title != "" {
-			prTitle = rr.Title
-		}
-		if rr.Body != "" {
-			prBody = rr.Body
-		}
-	}
-	if r.issue.Number > 0 {
-		prBody += fmt.Sprintf("\n\nFixes #%d", r.issue.Number)
-	}
-
-	prURL, err := client.CreatePR(r.branch, defaultBranch, prTitle, prBody)
-	if err != nil {
-		return fmt.Errorf("create PR: %w", err)
-	}
-	r.prURL = prURL
-	return nil
-}
-
 // Run executes the full lifecycle of the AgentRun and returns the result.
-func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string, interactive bool) AgentRunResult {
+func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool) AgentRunResult {
 	if err := r.Prepare(renderer); err != nil {
 		r.status = "failure"
 		return r.Result()
@@ -117,10 +92,6 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 			return r.Result()
 		}
 	}
-	if err := r.Finalize(client, defaultBranch); err != nil {
-		r.status = "failure"
-		return r.Result()
-	}
 	return r.Result()
 }
 
@@ -130,6 +101,5 @@ func (r *AgentRun) Result() AgentRunResult {
 		IssueNumber: r.issue.Number,
 		Status:      r.status,
 		Branch:      r.branch,
-		PRURL:       r.prURL,
 	}
 }
