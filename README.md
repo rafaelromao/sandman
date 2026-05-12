@@ -81,6 +81,16 @@ agents:
       API_KEY: ${API_KEY}
 ```
 
+### Agent Command Templates
+
+The `command` field supports Go `text/template` syntax. The following keys are available:
+
+| Key | Description |
+| --- | --- |
+| `{{.Worktree}}` | Absolute path to the sandbox working directory for the issue |
+
+Commands without template placeholders are passed through unchanged.
+
 ## Development
 
 Use the Makefile for common development tasks:
