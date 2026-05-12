@@ -3,6 +3,8 @@ package batch
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,13 +24,14 @@ func generateRunID(issueNum int) string {
 
 // Orchestrator coordinates parallel AgentRun execution.
 type Orchestrator struct {
-	githubClient    github.Client
-	renderer        prompt.Renderer
-	configStore     config.Store
-	eventLog        events.EventLog
-	runnableFactory RunnableFactory
-	sandboxFactory  SandboxFactory
-	killTimeout     time.Duration
+	githubClient            github.Client
+	renderer                prompt.Renderer
+	configStore             config.Store
+	eventLog                events.EventLog
+	runnableFactory         RunnableFactory
+	sandboxFactory          SandboxFactory
+	containerRuntimeFactory ContainerRuntimeFactory
+	killTimeout             time.Duration
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -53,6 +56,14 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		sandboxMode = cfg.Sandbox
 	}
 
+	agentCfg, ok := cfg.AgentProviders[cfg.Agent]
+	if !ok {
+		return nil, fmt.Errorf("agent %q not found in config", cfg.Agent)
+	}
+	if err := sandbox.ValidateAgentConfig(agentCfg); err != nil {
+		return nil, err
+	}
+
 	sbFactory := o.sandboxFactory
 	if sbFactory == nil {
 		switch sandboxMode {
@@ -67,10 +78,25 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
+	startOpts, err := buildStartOptions(agentCfg)
+	if err != nil {
+		return nil, err
+	}
+	remoteScheme := sandbox.DetectRemoteScheme(".")
+	if remoteScheme == "ssh" {
+		startOpts.SSH = true
+	}
+	startOpts.RemoteScheme = remoteScheme
+
+	containerFactory := o.containerRuntimeFactory
+	if containerFactory == nil {
+		containerFactory = defaultContainerRuntimeFactory{}
+	}
+
 	var sharedContainer sandbox.Container
 	if (sandboxMode == "docker" || sandboxMode == "podman") && !req.IsolatedContainers {
-		rt := sandbox.NewContainerRuntime(sandboxMode)
-		c, err := rt.Start(sandbox.DefaultContainerImage, ".")
+		starter := containerFactory.New(sandboxMode)
+		c, err := starter.Start(sandbox.DefaultContainerImage, ".", startOpts)
 		if err != nil {
 			return nil, fmt.Errorf("start shared container: %w", err)
 		}
@@ -133,7 +159,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, activeRuns, &activeMu, sbFactory, sandboxMode, req.IsolatedContainers, sharedContainer)
+			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, activeRuns, &activeMu, sbFactory, sandboxMode, req.IsolatedContainers, sharedContainer, containerFactory, startOpts)
 			mu.Lock()
 			results[idx] = res
 			if res.Status == "failure" {
@@ -151,7 +177,42 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	return &Result{Runs: results}, nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, debug bool, branches map[int]string, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, sandboxMode string, isolated bool, sharedContainer sandbox.Container) AgentRunResult {
+func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
+	opts := sandbox.StartOptions{}
+
+	if uid := os.Getuid(); uid >= 0 {
+		opts.UserID = fmt.Sprintf("%d", uid)
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		opts.GitConfigPath = filepath.Join(home, ".gitconfig")
+	}
+
+	for _, dir := range agentCfg.ConfigDirs {
+		expanded, err := expandPath(dir)
+		if err != nil {
+			return sandbox.StartOptions{}, fmt.Errorf("expand config dir %q: %w", dir, err)
+		}
+		if expanded != "" {
+			opts.AgentConfigDirs = append(opts.AgentConfigDirs, expanded)
+		}
+	}
+
+	return opts, nil
+}
+
+func expandPath(path string) (string, error) {
+	if !strings.HasPrefix(path, "~") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, path[1:]), nil
+}
+
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, debug bool, branches map[int]string, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, sandboxMode string, isolated bool, sharedContainer sandbox.Container, containerFactory ContainerRuntimeFactory, startOpts sandbox.StartOptions) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure"}
@@ -164,8 +225,8 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	// TODO: detect repo root instead of hardcoding "."
 	var container sandbox.Container
 	if (sandboxMode == "docker" || sandboxMode == "podman") && isolated {
-		rt := sandbox.NewContainerRuntime(sandboxMode)
-		c, err := rt.Start(sandbox.DefaultContainerImage, ".")
+		starter := containerFactory.New(sandboxMode)
+		c, err := starter.Start(sandbox.DefaultContainerImage, ".", startOpts)
 		if err != nil {
 			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 		}

@@ -24,6 +24,9 @@ agents:
     command: "codex --worktree {{.Worktree}}"
     env:
       API_KEY: secret
+    config_dirs:
+      - ~/.config/codex
+      - ~/.local/share/codex
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -67,6 +70,40 @@ agents:
 	}
 	if agent.Env["API_KEY"] != "secret" {
 		t.Errorf("agents.codex.env[API_KEY]: got %q, want %q", agent.Env["API_KEY"], "secret")
+	}
+	if len(agent.ConfigDirs) != 2 || agent.ConfigDirs[0] != "~/.config/codex" || agent.ConfigDirs[1] != "~/.local/share/codex" {
+		t.Errorf("agents.codex.config_dirs: got %v, want [~/.config/codex ~/.local/share/codex]", agent.ConfigDirs)
+	}
+	if agent.KeychainAuth {
+		t.Error("agents.codex.keychain_auth: expected false")
+	}
+}
+
+func TestLoad_AgentWithKeychainAuth(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+agents:
+  opencode:
+    name: opencode
+    command: "opencode"
+    keychain_auth: true
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	agent, ok := cfg.AgentProviders["opencode"]
+	if !ok {
+		t.Fatalf("agents.opencode: missing")
+	}
+	if !agent.KeychainAuth {
+		t.Error("agents.opencode.keychain_auth: expected true")
 	}
 }
 

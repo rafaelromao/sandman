@@ -37,9 +37,11 @@ type GitConfig struct {
 
 // Agent holds a configured agent provider.
 type Agent struct {
-	Name    string            `yaml:"name"`
-	Command string            `yaml:"command"`
-	Env     map[string]string `yaml:"env"`
+	Name         string            `yaml:"name"`
+	Command      string            `yaml:"command"`
+	Env          map[string]string `yaml:"env"`
+	ConfigDirs   []string          `yaml:"config_dirs"`
+	KeychainAuth bool              `yaml:"keychain_auth"`
 }
 
 // Store loads and saves Sandman configuration.

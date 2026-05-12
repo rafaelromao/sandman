@@ -51,7 +51,7 @@ func TestContainerRuntime_Start_CreatesRunningContainer(t *testing.T) {
 	}
 	dir := t.TempDir()
 	rt := NewContainerRuntime("docker")
-	c, err := rt.Start(DefaultContainerImage, dir)
+	c, err := rt.Start(DefaultContainerImage, dir, StartOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestContainerRuntime_Start_MountsRepo(t *testing.T) {
 	}
 
 	rt := NewContainerRuntime("docker")
-	c, err := rt.Start(DefaultContainerImage, dir)
+	c, err := rt.Start(DefaultContainerImage, dir, StartOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestContainerRuntime_Start_ReturnsErrorForInvalidImage(t *testing.T) {
 	}
 	dir := t.TempDir()
 	rt := NewContainerRuntime("docker")
-	_, err := rt.Start("nonexistent-image-12345", dir)
+	_, err := rt.Start("nonexistent-image-12345", dir, StartOptions{})
 	if err == nil {
 		t.Fatal("expected error for invalid image")
 	}
@@ -113,7 +113,7 @@ func TestContainer_Stop_StopsContainer(t *testing.T) {
 	}
 	dir := t.TempDir()
 	rt := NewContainerRuntime("docker")
-	c, err := rt.Start(DefaultContainerImage, dir)
+	c, err := rt.Start(DefaultContainerImage, dir, StartOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestContainerSandbox_Exec_Integration(t *testing.T) {
 	}
 	dir := t.TempDir()
 	rt := NewContainerRuntime("docker")
-	c, err := rt.Start(DefaultContainerImage, dir)
+	c, err := rt.Start(DefaultContainerImage, dir, StartOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestSharedContainerSandbox_Exec_Integration(t *testing.T) {
 	}
 	dir := t.TempDir()
 	rt := NewContainerRuntime("docker")
-	c, err := rt.Start(DefaultContainerImage, dir)
+	c, err := rt.Start(DefaultContainerImage, dir, StartOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

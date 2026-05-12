@@ -84,6 +84,17 @@ func (f SharedContainerSandboxFactory) NewSandbox(repoPath, worktreeBase, branch
 	return sandbox.NewSharedContainerSandbox(wt, container, f.Binary, f.RepoPath)
 }
 
+// ContainerRuntimeFactory creates container starters.
+type ContainerRuntimeFactory interface {
+	New(binary string) sandbox.ContainerStarter
+}
+
+type defaultContainerRuntimeFactory struct{}
+
+func (d defaultContainerRuntimeFactory) New(binary string) sandbox.ContainerStarter {
+	return sandbox.NewContainerRuntime(binary)
+}
+
 // Runner coordinates parallel execution of AgentRuns.
 type Runner interface {
 	RunBatch(ctx context.Context, req Request) (*Result, error)
