@@ -41,3 +41,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | Number | Title | Status |
 |--------|-------|--------|
 | 0000 | Use MADR-style ADR template | accepted |
+| 0001 | Remove PR creation from agent workflow | accepted |
