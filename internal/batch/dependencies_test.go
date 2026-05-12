@@ -129,3 +129,29 @@ func TestDependencyResolverResolve_WarnsWhenExpansionGetsLarge(t *testing.T) {
 		t.Fatalf("expected expansion warning, got %q", warnings.String())
 	}
 }
+
+func TestDependencyResolverResolve_DoesNotWarnForLargeExplicitBatch(t *testing.T) {
+	issues := make(map[int]*github.Issue, 51)
+	requested := make([]int, 0, 51)
+	for issue := 1; issue <= 51; issue++ {
+		issues[issue] = &github.Issue{Number: issue, Title: "Issue"}
+		requested = append(requested, issue)
+	}
+
+	client := &fakeGitHubClient{issues: issues}
+	var warnings bytes.Buffer
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &warnings
+
+	resolved, err := resolver.Resolve(context.Background(), requested, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved.Issues) != 51 {
+		t.Fatalf("expected 51 resolved issues, got %d", len(resolved.Issues))
+	}
+	if warnings.Len() != 0 {
+		t.Fatalf("expected no expansion warning, got %q", warnings.String())
+	}
+}
