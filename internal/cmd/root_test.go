@@ -67,7 +67,7 @@ func newTestDeps() Dependencies {
 		BatchRunner:    &fakeBatchRunner{},
 		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode"}},
 		EventLog:       &fakeEventLog{},
-		GitHubClient:   &github.CLIClient{},
+		GitHubClient:   &fakeGitHubClient{},
 		PromptRenderer: &prompt.Engine{},
 		IssuePicker:    &fakeIssuePicker{},
 		IsTTY:          func() bool { return false },

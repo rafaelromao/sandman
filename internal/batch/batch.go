@@ -10,7 +10,9 @@ import (
 
 // Request describes a batch of AgentRuns to execute.
 type Request struct {
-	Issues             []int
+	Issues []int
+	// Dependencies maps each issue to its resolved BlockedBy set.
+	Dependencies       map[int][]int
 	Parallel           int
 	Preserve           bool
 	Debug              bool
