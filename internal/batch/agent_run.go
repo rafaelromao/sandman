@@ -81,13 +81,20 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 		r.status = "failure"
 		return r.Result()
 	}
+
+	renderedCmd, err := RenderCommand(command, CommandData{Worktree: r.sandbox.WorkDir()})
+	if err != nil {
+		r.status = "failure"
+		return r.Result()
+	}
+
 	if interactive {
-		if err := r.sandbox.ExecInteractive(ctx, command); err != nil {
+		if err := r.sandbox.ExecInteractive(ctx, renderedCmd); err != nil {
 			r.status = "failure"
 			return r.Result()
 		}
 	} else {
-		if err := r.Execute(ctx, command, os.Stdout, os.Stderr); err != nil {
+		if err := r.Execute(ctx, renderedCmd, os.Stdout, os.Stderr); err != nil {
 			r.status = "failure"
 			return r.Result()
 		}
