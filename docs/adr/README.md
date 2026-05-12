@@ -42,3 +42,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 |--------|-------|--------|
 | 0000 | Use MADR-style ADR template | accepted |
 | 0001 | Remove PR creation from agent workflow | accepted |
+| 0002 | Make shared container execution the default sandbox mode | accepted |

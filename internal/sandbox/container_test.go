@@ -235,6 +235,91 @@ func TestContainerRuntime_Start_RunsGhAuthSetupGitForHTTPS(t *testing.T) {
 	}
 }
 
+func TestResolveRuntime_PodmanAvailable_ReturnsPodman(t *testing.T) {
+	dir := t.TempDir()
+	podmanPath := filepath.Join(dir, "podman")
+	if err := os.WriteFile(podmanPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write podman: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	got, err := ResolveRuntime("podman")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "podman" {
+		t.Errorf("expected podman, got %q", got)
+	}
+}
+
+func TestResolveRuntime_PodmanMissingDockerAvailable_ReturnsDocker(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	got, err := ResolveRuntime("podman")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "docker" {
+		t.Errorf("expected docker, got %q", got)
+	}
+}
+
+func TestResolveRuntime_EmptyDefaultsToPodman(t *testing.T) {
+	dir := t.TempDir()
+	podmanPath := filepath.Join(dir, "podman")
+	if err := os.WriteFile(podmanPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write podman: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	got, err := ResolveRuntime("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "podman" {
+		t.Errorf("expected podman, got %q", got)
+	}
+}
+
+func TestResolveRuntime_NeitherAvailable_ReturnsError(t *testing.T) {
+	t.Setenv("PATH", "")
+
+	_, err := ResolveRuntime("podman")
+	if err == nil {
+		t.Fatal("expected error when neither runtime is available")
+	}
+	if !strings.Contains(err.Error(), "podman") || !strings.Contains(err.Error(), "docker") {
+		t.Errorf("expected error to mention podman and docker, got: %v", err)
+	}
+}
+
+func TestResolveRuntime_DockerExplicitlyRequested_Missing_ReturnsError(t *testing.T) {
+	t.Setenv("PATH", "")
+
+	_, err := ResolveRuntime("docker")
+	if err == nil {
+		t.Fatal("expected error when docker is unavailable")
+	}
+	if !strings.Contains(err.Error(), "docker") {
+		t.Errorf("expected error to mention docker, got: %v", err)
+	}
+}
+
+func TestResolveRuntime_Worktree_ReturnsWorktree(t *testing.T) {
+	got, err := ResolveRuntime("worktree")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "worktree" {
+		t.Errorf("expected worktree, got %q", got)
+	}
+}
+
 func TestContainerRuntime_Start_ReturnsErrorWhenGhAuthFails(t *testing.T) {
 	rt := NewContainerRuntime("docker")
 	var commands [][]string

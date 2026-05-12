@@ -47,7 +47,7 @@ func TestScaffold_CreatesConfigWithDefaults(t *testing.T) {
 	if !strings.Contains(content, "worktree_dir: .sandman/worktrees") {
 		t.Errorf("config missing default worktree dir, got:\n%s", content)
 	}
-	if !strings.Contains(content, "sandbox: worktree") {
+	if !strings.Contains(content, "sandbox: podman") {
 		t.Errorf("config missing default sandbox, got:\n%s", content)
 	}
 }

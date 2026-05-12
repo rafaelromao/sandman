@@ -50,7 +50,7 @@ _Avoid_: Working directory, checkout, clone.
 
 **WorktreeSandbox**:
 A sandbox adapter that uses only a git worktree for isolation, with no container. One worktree per AgentRun.
-_Avoid_: Default sandbox, local sandbox.
+_Avoid_: Local sandbox.
 
 ## Relationships
 
@@ -65,7 +65,7 @@ _Avoid_: Default sandbox, local sandbox.
 ## Example dialogue
 
 > **Dev:** "When a **Batch** contains three **AgentRuns**, do they all share one **Sandbox**?"
-> **Domain expert:** "Only in shared-container mode. By default each **AgentRun** gets its own **WorktreeSandbox**, so three sandboxes. With `--isolated-containers` each **AgentRun** still gets its own **ContainerSandbox**. Only the shared-container mode puts multiple **Worktrees** inside one **ContainerSandbox**."
+> **Domain expert:** "By default, yes. Shared container mode is the default — a single **ContainerSandbox** hosts all three **Worktrees**. With `--isolated-containers` each **AgentRun** gets its own **ContainerSandbox**. With `sandbox: worktree` each **AgentRun** gets its own **WorktreeSandbox**."
 
 > **Dev:** "Does the **Sandbox** interface expose the worktree path?"
 > **Domain expert:** "Yes — the **Sandbox** contract returns a working directory path, but callers must not assume it is a git worktree. That detail belongs to the adapter."

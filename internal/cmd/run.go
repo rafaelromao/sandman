@@ -106,7 +106,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
 	cmd.Flags().Bool("preserve", false, "Preserve worktrees after successful runs")
 	cmd.Flags().Bool("debug", false, "Print worktree path and instructions after failure")
-	cmd.Flags().String("sandbox", "", "Sandbox mode: worktree, docker, or podman")
+	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Bool("isolated-containers", false, "Use one container per agent instead of a shared container")
 	cmd.Flags().Bool("interactive", false, "Run the agent in interactive mode")
 	cmd.Flags().String("label", "", "Select issues by label")

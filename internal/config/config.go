@@ -14,7 +14,7 @@ const (
 	DefaultAgent       = "opencode"
 	DefaultParallel    = 1
 	DefaultWorktreeDir = ".sandman/worktrees"
-	DefaultSandbox     = "worktree"
+	DefaultSandbox     = "podman"
 )
 
 // Config holds the loaded Sandman configuration.

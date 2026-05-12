@@ -131,6 +131,33 @@ func ValidateAgentConfig(agent config.Agent) error {
 	return nil
 }
 
+// ResolveRuntime detects the available container runtime.
+// If preferred is "worktree", it returns "worktree" without probing.
+// If preferred is "podman" or empty, it probes for podman first, then docker.
+// If preferred is "docker", it probes for docker only.
+// If neither runtime is found, it returns an error.
+func ResolveRuntime(preferred string) (string, error) {
+	if preferred == "worktree" {
+		return "worktree", nil
+	}
+	if preferred == "podman" || preferred == "" {
+		if _, err := exec.LookPath("podman"); err == nil {
+			return "podman", nil
+		}
+		if _, err := exec.LookPath("docker"); err == nil {
+			return "docker", nil
+		}
+		return "", fmt.Errorf("neither podman nor docker found; install a container runtime or set sandbox: worktree")
+	}
+	if preferred == "docker" {
+		if _, err := exec.LookPath("docker"); err == nil {
+			return "docker", nil
+		}
+		return "", fmt.Errorf("docker not found; install docker or set sandbox: worktree")
+	}
+	return preferred, nil
+}
+
 // DetectRemoteScheme returns "ssh" or "https" for the origin remote.
 func DetectRemoteScheme(repoPath string) string {
 	cmd := exec.Command("git", "remote", "get-url", "origin")
