@@ -555,6 +555,306 @@ func TestRun_CombineArgsWithLabelReturnsError(t *testing.T) {
 	}
 }
 
+func TestRun_NextFlagDelegatesLowestIssue(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 3, Title: "Feature C"},
+			{Number: 1, Title: "Feature A"},
+			{Number: 2, Title: "Feature B"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--next"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{1}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	if spy.req.Issues[0] != 1 {
+		t.Errorf("expected issue 1, got %d", spy.req.Issues[0])
+	}
+	if gh.searchIssuesQuery != "label:ready-for-agent is:open" {
+		t.Errorf("expected search query 'label:ready-for-agent is:open', got %q", gh.searchIssuesQuery)
+	}
+}
+
+func TestRun_NextFlagWithCountDelegatesN(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 5, Title: "Feature E"},
+			{Number: 2, Title: "Feature B"},
+			{Number: 3, Title: "Feature C"},
+			{Number: 1, Title: "Feature A"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--next=2"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{1, 2}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+}
+
+func TestRun_NextFlagWithFewerAvailableDelegatesAll(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 2, Title: "Feature B"},
+			{Number: 1, Title: "Feature A"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--next=5"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{1, 2}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+}
+
+func TestRun_NextFlagNoIssuesReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--next"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no ready-for-agent issues")
+	}
+	if spy.called {
+		t.Error("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "no issues ready for agent") {
+		t.Errorf("expected 'no issues ready for agent' error, got: %v", err)
+	}
+}
+
+func TestRun_NextFlagZeroCountReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+		IsTTY:       func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--next=0"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --next 0")
+	}
+	if spy.called {
+		t.Error("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "--next count must be at least 1") {
+		t.Errorf("expected '--next count must be at least 1' error, got: %v", err)
+	}
+}
+
+func TestRun_NextFlagWithArgsReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+		IsTTY:       func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--next", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when combining --next with args")
+	}
+	if spy.called {
+		t.Error("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "cannot combine --next with issue arguments") {
+		t.Errorf("expected mutual exclusivity error, got: %v", err)
+	}
+}
+
+func TestRun_NextFlagWithLabelReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+		IsTTY:       func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--next", "--label", "bug"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when combining --next with --label")
+	}
+	if spy.called {
+		t.Error("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "cannot combine --next with issue arguments, --label or --query") {
+		t.Errorf("expected mutual exclusivity error, got: %v", err)
+	}
+}
+
+func TestRun_NextFlagWithQueryReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+		IsTTY:       func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--next", "--query", "is:open"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when combining --next with --query")
+	}
+	if spy.called {
+		t.Error("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "cannot combine --next with issue arguments, --label or --query") {
+		t.Errorf("expected mutual exclusivity error, got: %v", err)
+	}
+}
+
+func TestRun_InteractiveWithNextGreaterThanOneReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A"},
+			{Number: 2, Title: "Feature B"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--interactive", "--next=2"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --interactive with --next 2")
+	}
+	if spy.called {
+		t.Error("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "--interactive requires exactly one issue") {
+		t.Errorf("expected interactive error, got: %v", err)
+	}
+}
+
 func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
