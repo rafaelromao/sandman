@@ -30,13 +30,12 @@ type AgentRunResult struct {
 	IssueNumber int
 	Status      string
 	Branch      string
-	PRURL       string
 	DebugInfo   string
 }
 
 // Runnable represents a single agent execution that can be run.
 type Runnable interface {
-	Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string, interactive bool) AgentRunResult
+	Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool) AgentRunResult
 }
 
 // RunnableFactory creates a Runnable for a given issue.

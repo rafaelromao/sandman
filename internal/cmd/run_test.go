@@ -37,10 +37,6 @@ func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) CreatePR(branch, targetBranch, title, body string) (string, error) {
-	return "", nil
-}
-
 func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	f.searchIssuesQuery = query
 	return f.searchIssuesResult, f.searchIssuesError

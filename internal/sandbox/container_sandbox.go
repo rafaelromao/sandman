@@ -112,11 +112,6 @@ func (s *ContainerSandbox) WritePrompt(content string) error {
 	return s.worktree.WritePrompt(content)
 }
 
-// ReadRunResult reads the run result produced by the agent.
-func (s *ContainerSandbox) ReadRunResult() (*RunResult, error) {
-	return s.worktree.ReadRunResult()
-}
-
 // Process returns the running OS process, or nil if no process is active.
 func (s *ContainerSandbox) Process() Process {
 	if s.cmd == nil || s.cmd.Process == nil {

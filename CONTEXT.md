@@ -21,7 +21,7 @@ The set of AgentRuns triggered by a single `sandman run` invocation. Coordinated
 _Avoid_: Batch run, invocation.
 
 **Branch**:
-A git branch named `sandman/<issue-number>-<slugified-title>`, created per AgentRun. The human reviews the branch via a pull request.
+A git branch named `sandman/<issue-number>-<slugified-title>`, created per AgentRun.
 _Avoid_: Feature branch, PR branch.
 
 **ContainerSandbox**:

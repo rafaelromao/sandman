@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git worktree sandboxing for isolated agent execution
 - Parallel batch execution with configurable concurrency
 - Event logging to JSONL
-- Integration with `gh` CLI for issue fetching and PR creation
+- Integration with `gh` CLI for issue fetching
 - Prompt template rendering for AI agents
 - Support for custom agent providers via configuration
 

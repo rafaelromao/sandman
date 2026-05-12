@@ -272,7 +272,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		})
 	}
 
-	result := runnable.Run(ctx, o.renderer, agentCfg.Command, o.githubClient, cfg.Git.DefaultBranch, interactive)
+	result := runnable.Run(ctx, o.renderer, agentCfg.Command, interactive)
 
 	worktreeState := "deleted"
 	if result.Status == "failure" || preserve {
@@ -287,7 +287,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			Issue:     num,
 			Payload: map[string]any{
 				"status":         result.Status,
-				"pr_url":         result.PRURL,
+				"branch":         result.Branch,
 				"worktree_state": worktreeState,
 			},
 		})

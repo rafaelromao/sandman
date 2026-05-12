@@ -13,7 +13,6 @@ func TestLoad_ValidConfig(t *testing.T) {
 	content := `agent: codex
 default_parallel: 3
 worktree_dir: /tmp/wt
-pr_template: .github/pull_request_template.md
 sandbox: worktree
 git:
   author_name: Dev
@@ -45,9 +44,6 @@ agents:
 	}
 	if cfg.WorktreeDir != "/tmp/wt" {
 		t.Errorf("worktree_dir: got %q, want %q", cfg.WorktreeDir, "/tmp/wt")
-	}
-	if cfg.PRTemplate != ".github/pull_request_template.md" {
-		t.Errorf("pr_template: got %q, want %q", cfg.PRTemplate, ".github/pull_request_template.md")
 	}
 	if cfg.Sandbox != "worktree" {
 		t.Errorf("sandbox: got %q, want %q", cfg.Sandbox, "worktree")
@@ -208,7 +204,6 @@ func TestConfig_GetValue(t *testing.T) {
 		Agent:           "codex",
 		DefaultParallel: 4,
 		WorktreeDir:     "/tmp/wt",
-		PRTemplate:      ".github/pr.md",
 		Sandbox:         "worktree",
 		Git: GitConfig{
 			DefaultBranch: "main",
@@ -225,7 +220,6 @@ func TestConfig_GetValue(t *testing.T) {
 		{"agent", "codex", false},
 		{"default_parallel", "4", false},
 		{"worktree_dir", "/tmp/wt", false},
-		{"pr_template", ".github/pr.md", false},
 		{"sandbox", "worktree", false},
 		{"git.default_branch", "main", false},
 		{"git.author_name", "Dev", false},
@@ -257,7 +251,6 @@ func TestConfig_SetValue(t *testing.T) {
 		{"agent", "codex", false},
 		{"default_parallel", "4", false},
 		{"worktree_dir", "/tmp/wt", false},
-		{"pr_template", ".github/pr.md", false},
 		{"sandbox", "container", false},
 		{"git.default_branch", "master", false},
 		{"git.author_name", "Alice", false},

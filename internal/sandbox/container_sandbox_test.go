@@ -9,20 +9,18 @@ import (
 )
 
 type fakeWorktreeForContainer struct {
-	startCalled         bool
-	startError          error
-	stopCalled          bool
-	stopError           error
-	workDir             string
-	writePromptCalled   bool
-	writePromptContent  string
-	writePromptError    error
-	readRunResultResult *RunResult
-	readRunResultError  error
-	execCalled          bool
-	execCommand         string
-	execError           error
-	process             Process
+	startCalled        bool
+	startError         error
+	stopCalled         bool
+	stopError          error
+	workDir            string
+	writePromptCalled  bool
+	writePromptContent string
+	writePromptError   error
+	execCalled         bool
+	execCommand        string
+	execError          error
+	process            Process
 }
 
 func (f *fakeWorktreeForContainer) Start() error {
@@ -43,10 +41,6 @@ func (f *fakeWorktreeForContainer) WritePrompt(content string) error {
 	f.writePromptCalled = true
 	f.writePromptContent = content
 	return f.writePromptError
-}
-
-func (f *fakeWorktreeForContainer) ReadRunResult() (*RunResult, error) {
-	return f.readRunResultResult, f.readRunResultError
 }
 
 func (f *fakeWorktreeForContainer) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
@@ -152,21 +146,6 @@ func TestContainerSandbox_WritePrompt_DelegatesToWorktree(t *testing.T) {
 	}
 	if wt.writePromptContent != "prompt content" {
 		t.Errorf("expected prompt content %q, got %q", "prompt content", wt.writePromptContent)
-	}
-}
-
-func TestContainerSandbox_ReadRunResult_DelegatesToWorktree(t *testing.T) {
-	expected := &RunResult{Title: "Custom", Body: "Body"}
-	wt := &fakeWorktreeForContainer{readRunResultResult: expected}
-	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
-
-	result, err := sb.ReadRunResult()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != expected {
-		t.Error("expected worktree.ReadRunResult to be delegated")
 	}
 }
 
