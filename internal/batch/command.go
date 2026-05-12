@@ -20,7 +20,7 @@ func RenderCommand(command string, data CommandData) (string, error) {
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("render command template: %w", err)
+		return "", fmt.Errorf("execute command template: %w", err)
 	}
 	return buf.String(), nil
 }
