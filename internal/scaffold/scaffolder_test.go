@@ -50,6 +50,15 @@ func TestScaffold_CreatesConfigWithDefaults(t *testing.T) {
 	if !strings.Contains(content, "sandbox: podman") {
 		t.Errorf("config missing default sandbox, got:\n%s", content)
 	}
+	if !strings.Contains(content, "agents:") {
+		t.Errorf("config missing agents section, got:\n%s", content)
+	}
+	if !strings.Contains(content, "name: opencode") {
+		t.Errorf("config missing default agent name, got:\n%s", content)
+	}
+	if !strings.Contains(content, "command: opencode") {
+		t.Errorf("config missing default agent command, got:\n%s", content)
+	}
 }
 
 func TestScaffold_CreatesDockerfileAndPromptMd(t *testing.T) {
