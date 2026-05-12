@@ -48,6 +48,36 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
+	sandboxMode := req.Sandbox
+	if sandboxMode == "" {
+		sandboxMode = cfg.Sandbox
+	}
+
+	sbFactory := o.sandboxFactory
+	if sbFactory == nil {
+		switch sandboxMode {
+		case "docker", "podman":
+			if req.IsolatedContainers {
+				sbFactory = ContainerSandboxFactory{Binary: sandboxMode, RepoPath: "."}
+			} else {
+				sbFactory = SharedContainerSandboxFactory{Binary: sandboxMode, RepoPath: "."}
+			}
+		default:
+			sbFactory = defaultSandboxFactory{}
+		}
+	}
+
+	var sharedContainer sandbox.Container
+	if (sandboxMode == "docker" || sandboxMode == "podman") && !req.IsolatedContainers {
+		rt := sandbox.NewContainerRuntime(sandboxMode)
+		c, err := rt.Start(sandbox.DefaultContainerImage, ".")
+		if err != nil {
+			return nil, fmt.Errorf("start shared container: %w", err)
+		}
+		sharedContainer = c
+		defer sharedContainer.Stop()
+	}
+
 	parallel := req.Parallel
 	if parallel == 0 {
 		parallel = 4
@@ -103,7 +133,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, activeRuns, &activeMu)
+			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, activeRuns, &activeMu, sbFactory, sandboxMode, req.IsolatedContainers, sharedContainer)
 			mu.Lock()
 			results[idx] = res
 			if res.Status == "failure" {
@@ -121,7 +151,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	return &Result{Runs: results}, nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, debug bool, branches map[int]string, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, debug bool, branches map[int]string, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, sandboxMode string, isolated bool, sharedContainer sandbox.Container) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure"}
@@ -132,11 +162,20 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		branch = fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
 	}
 	// TODO: detect repo root instead of hardcoding "."
-	sbFactory := o.sandboxFactory
-	if sbFactory == nil {
-		sbFactory = defaultSandboxFactory{}
+	var container sandbox.Container
+	if (sandboxMode == "docker" || sandboxMode == "podman") && isolated {
+		rt := sandbox.NewContainerRuntime(sandboxMode)
+		c, err := rt.Start(sandbox.DefaultContainerImage, ".")
+		if err != nil {
+			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+		}
+		container = c
+		defer container.Stop()
+	} else {
+		container = sharedContainer
 	}
-	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch)
+
+	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch, container)
 	if err := wt.Start(); err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 	}

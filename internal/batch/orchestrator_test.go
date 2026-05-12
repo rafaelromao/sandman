@@ -155,7 +155,7 @@ type fakeSandboxFactory struct {
 	sandbox *fakeSandbox
 }
 
-func (f *fakeSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string) sandbox.Sandbox {
+func (f *fakeSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
 	return f.sandbox
 }
 
@@ -1098,5 +1098,35 @@ func TestRunBatch_LogsFinishedEventOnFailure(t *testing.T) {
 	status, _ := spyLog.events[1].Payload["status"].(string)
 	if status != "failure" {
 		t.Errorf("expected finished status failure, got %q", status)
+	}
+}
+
+func TestRunBatch_SharedContainer_ReturnsErrorWhenDockerUnavailable(t *testing.T) {
+	t.Setenv("PATH", "")
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
+	if err == nil {
+		t.Fatal("expected error when docker is unavailable")
+	}
+}
+
+func TestRunBatch_IsolatedContainer_ReturnsErrorWhenDockerUnavailable(t *testing.T) {
+	t.Setenv("PATH", "")
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker", IsolatedContainers: true})
+	if err == nil {
+		t.Fatal("expected error when docker is unavailable")
 	}
 }

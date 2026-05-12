@@ -10,11 +10,13 @@ import (
 
 // Request describes a batch of AgentRuns to execute.
 type Request struct {
-	Issues   []int
-	Parallel int
-	Preserve bool
-	Debug    bool
-	Branches map[int]string
+	Issues             []int
+	Parallel           int
+	Preserve           bool
+	Debug              bool
+	Branches           map[int]string
+	Sandbox            string
+	IsolatedContainers bool
 }
 
 // Result describes the outcome of a batch.
@@ -50,14 +52,36 @@ func (d defaultRunnableFactory) NewRunnable(issue *github.Issue, branch string, 
 
 // SandboxFactory creates a Sandbox for a given branch.
 type SandboxFactory interface {
-	NewSandbox(repoPath, worktreeBase, branch, sourceBranch string) sandbox.Sandbox
+	NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox
 }
 
 // defaultSandboxFactory creates WorktreeSandbox instances.
 type defaultSandboxFactory struct{}
 
-func (d defaultSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string) sandbox.Sandbox {
+func (d defaultSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
 	return sandbox.NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch)
+}
+
+// ContainerSandboxFactory creates ContainerSandbox instances (isolated mode).
+type ContainerSandboxFactory struct {
+	Binary   string
+	RepoPath string
+}
+
+func (f ContainerSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+	wt := sandbox.NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch)
+	return sandbox.NewContainerSandbox(wt, container, f.Binary, f.RepoPath)
+}
+
+// SharedContainerSandboxFactory creates SharedContainerSandbox instances (shared mode).
+type SharedContainerSandboxFactory struct {
+	Binary   string
+	RepoPath string
+}
+
+func (f SharedContainerSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+	wt := sandbox.NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch)
+	return sandbox.NewSharedContainerSandbox(wt, container, f.Binary, f.RepoPath)
 }
 
 // Runner coordinates parallel execution of AgentRuns.

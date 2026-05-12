@@ -40,12 +40,16 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			preserve, _ := cmd.Flags().GetBool("preserve")
 			debug, _ := cmd.Flags().GetBool("debug")
+			sandboxMode, _ := cmd.Flags().GetString("sandbox")
+			isolatedContainers, _ := cmd.Flags().GetBool("isolated-containers")
 
 			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
-				Issues:   issues,
-				Parallel: parallel,
-				Preserve: preserve,
-				Debug:    debug,
+				Issues:             issues,
+				Parallel:           parallel,
+				Preserve:           preserve,
+				Debug:              debug,
+				Sandbox:            sandboxMode,
+				IsolatedContainers: isolatedContainers,
 			})
 			if result != nil {
 				printSummary(cmd, result)
@@ -65,6 +69,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
 	cmd.Flags().Bool("preserve", false, "Preserve worktrees after successful runs")
 	cmd.Flags().Bool("debug", false, "Print worktree path and instructions after failure")
+	cmd.Flags().String("sandbox", "", "Sandbox mode: worktree, docker, or podman")
+	cmd.Flags().Bool("isolated-containers", false, "Use one container per agent instead of a shared container")
 	return cmd
 }
 
