@@ -17,6 +17,7 @@ type Request struct {
 	Branches           map[int]string
 	Sandbox            string
 	IsolatedContainers bool
+	Interactive        bool
 }
 
 // Result describes the outcome of a batch.
@@ -35,7 +36,7 @@ type AgentRunResult struct {
 
 // Runnable represents a single agent execution that can be run.
 type Runnable interface {
-	Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string) AgentRunResult
+	Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string, interactive bool) AgentRunResult
 }
 
 // RunnableFactory creates a Runnable for a given issue.

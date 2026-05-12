@@ -24,6 +24,8 @@ type Sandbox interface {
 	Start() error
 	// Exec runs a command inside the sandbox, writing stdout and stderr to the given writers.
 	Exec(ctx context.Context, command string, stdout, stderr io.Writer) error
+	// ExecInteractive runs a command inside the sandbox attached to the user's terminal.
+	ExecInteractive(ctx context.Context, command string) error
 	// Stop tears down the sandbox environment.
 	Stop() error
 	// WorkDir returns the working directory path of the sandbox.

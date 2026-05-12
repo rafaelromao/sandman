@@ -55,6 +55,12 @@ func (f *fakeWorktreeForContainer) Exec(ctx context.Context, command string, std
 	return f.execError
 }
 
+func (f *fakeWorktreeForContainer) ExecInteractive(ctx context.Context, command string) error {
+	f.execCalled = true
+	f.execCommand = command
+	return f.execError
+}
+
 func (f *fakeWorktreeForContainer) Process() Process {
 	return f.process
 }

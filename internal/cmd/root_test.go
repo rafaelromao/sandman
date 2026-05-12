@@ -51,6 +51,16 @@ func (f *fakeBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*bat
 	return f.result, f.err
 }
 
+// fakeIssuePicker is a test double for IssuePicker.
+type fakeIssuePicker struct {
+	issues []int
+	err    error
+}
+
+func (f *fakeIssuePicker) Select(issues []github.Issue) ([]int, error) {
+	return f.issues, f.err
+}
+
 // newTestDeps returns Dependencies wired with test doubles.
 func newTestDeps() Dependencies {
 	return Dependencies{
@@ -59,6 +69,8 @@ func newTestDeps() Dependencies {
 		EventLog:       &fakeEventLog{},
 		GitHubClient:   &github.CLIClient{},
 		PromptRenderer: &prompt.Engine{},
+		IssuePicker:    &fakeIssuePicker{},
+		IsTTY:          func() bool { return false },
 	}
 }
 

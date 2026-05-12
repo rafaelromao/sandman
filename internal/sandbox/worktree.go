@@ -78,6 +78,36 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stde
 	}
 }
 
+// ExecInteractive runs a command in the worktree attached to the user's terminal.
+func (s *WorktreeSandbox) ExecInteractive(ctx context.Context, command string) error {
+	cmd := exec.Command("sh", "-c", command)
+	cmd.Dir = s.workDir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("exec start: %w", err)
+	}
+	s.cmd = cmd
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("exec: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		<-done
+		return ctx.Err()
+	}
+}
+
 // Stop cleans up the worktree.
 func (s *WorktreeSandbox) Stop() error {
 	cmd := exec.Command("git", "worktree", "remove", "--force", s.workDir)

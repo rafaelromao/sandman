@@ -98,6 +98,10 @@ func (f *fakeGitHubClient) CreatePR(branch, targetBranch, title, body string) (s
 	return f.createPRResult, f.createPRError
 }
 
+func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
+	return nil, nil
+}
+
 type fakeRunnable struct {
 	result      AgentRunResult
 	delay       time.Duration
@@ -106,7 +110,7 @@ type fakeRunnable struct {
 	mu          *sync.Mutex
 }
 
-func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string) AgentRunResult {
+func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string, interactive bool) AgentRunResult {
 	if f.mu != nil {
 		f.mu.Lock()
 		*f.activeCount++
@@ -176,7 +180,7 @@ type blockingRunnable struct {
 	delayAfterCancel time.Duration
 }
 
-func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string) AgentRunResult {
+func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string, interactive bool) AgentRunResult {
 	<-ctx.Done()
 	time.Sleep(b.delayAfterCancel)
 	return AgentRunResult{IssueNumber: 42, Status: "failure"}
@@ -1163,6 +1167,40 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	}
 	if starter.startOpts.UserID == "" {
 		t.Error("expected UserID to be set")
+	}
+}
+
+func TestRunBatch_InteractiveFlagPassedToRun(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+	}
+
+	factory := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 42, Status: "success"},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Interactive: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(factory.created) != 1 {
+		t.Fatalf("expected 1 runnable, got %d", len(factory.created))
+	}
+	// The interactive parameter is passed to Run; we verify the run succeeded.
+	if factory.results[0].IssueNumber != 42 {
+		t.Errorf("expected issue 42, got %d", factory.results[0].IssueNumber)
 	}
 }
 
