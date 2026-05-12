@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 )
 
-// ContainerExecSandbox provides isolation via a container and a git worktree.
+// ContainerSandbox provides isolation via a container and a git worktree.
 // In isolated mode each sandbox owns its container; in shared mode the container
 // lifecycle is managed by the caller.
-type ContainerExecSandbox struct {
+type ContainerSandbox struct {
 	worktree      Sandbox
 	container     Container
 	binary        string
@@ -23,8 +23,8 @@ type ContainerExecSandbox struct {
 }
 
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
-func NewContainerSandbox(worktree Sandbox, container Container, binary, repoPath string) *ContainerExecSandbox {
-	return &ContainerExecSandbox{
+func NewContainerSandbox(worktree Sandbox, container Container, binary, repoPath string) *ContainerSandbox {
+	return &ContainerSandbox{
 		worktree:      worktree,
 		container:     container,
 		binary:        binary,
@@ -35,8 +35,8 @@ func NewContainerSandbox(worktree Sandbox, container Container, binary, repoPath
 }
 
 // NewSharedContainerSandbox creates a SharedContainerSandbox that borrows the given container.
-func NewSharedContainerSandbox(worktree Sandbox, container Container, binary, repoPath string) *ContainerExecSandbox {
-	return &ContainerExecSandbox{
+func NewSharedContainerSandbox(worktree Sandbox, container Container, binary, repoPath string) *ContainerSandbox {
+	return &ContainerSandbox{
 		worktree:      worktree,
 		container:     container,
 		binary:        binary,
@@ -46,7 +46,7 @@ func NewSharedContainerSandbox(worktree Sandbox, container Container, binary, re
 	}
 }
 
-func (s *ContainerExecSandbox) containerWorkDir() string {
+func (s *ContainerSandbox) containerWorkDir() string {
 	wd := s.worktree.WorkDir()
 	rel, err := filepath.Rel(s.repoPath, wd)
 	if err != nil {
@@ -56,12 +56,12 @@ func (s *ContainerExecSandbox) containerWorkDir() string {
 }
 
 // Start initializes the worktree.
-func (s *ContainerExecSandbox) Start() error {
+func (s *ContainerSandbox) Start() error {
 	return s.worktree.Start()
 }
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
-func (s *ContainerExecSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
+func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	cmd := s.execFn(s.binary, "exec", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -88,7 +88,7 @@ func (s *ContainerExecSandbox) Exec(ctx context.Context, command string, stdout,
 }
 
 // Stop tears down the worktree and, in isolated mode, the container.
-func (s *ContainerExecSandbox) Stop() error {
+func (s *ContainerSandbox) Stop() error {
 	if s.ownsContainer {
 		return errors.Join(s.container.Stop(), s.worktree.Stop())
 	}
@@ -96,27 +96,27 @@ func (s *ContainerExecSandbox) Stop() error {
 }
 
 // WorkDir returns the working directory path of the sandbox.
-func (s *ContainerExecSandbox) WorkDir() string {
+func (s *ContainerSandbox) WorkDir() string {
 	return s.worktree.WorkDir()
 }
 
 // WritePrompt writes the prompt content to the sandbox.
-func (s *ContainerExecSandbox) WritePrompt(content string) error {
+func (s *ContainerSandbox) WritePrompt(content string) error {
 	return s.worktree.WritePrompt(content)
 }
 
 // ReadRunResult reads the run result produced by the agent.
-func (s *ContainerExecSandbox) ReadRunResult() (*RunResult, error) {
+func (s *ContainerSandbox) ReadRunResult() (*RunResult, error) {
 	return s.worktree.ReadRunResult()
 }
 
 // Process returns the running OS process, or nil if no process is active.
-func (s *ContainerExecSandbox) Process() Process {
+func (s *ContainerSandbox) Process() Process {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return nil
 	}
 	return s.cmd.Process
 }
 
-// Ensure ContainerExecSandbox implements Sandbox.
-var _ Sandbox = (*ContainerExecSandbox)(nil)
+// Ensure ContainerSandbox implements Sandbox.
+var _ Sandbox = (*ContainerSandbox)(nil)
