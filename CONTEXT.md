@@ -50,7 +50,7 @@ _Avoid_: Working directory, checkout, clone.
 
 **WorktreeSandbox**:
 A sandbox adapter that uses only a git worktree for isolation, with no container. One worktree per AgentRun.
-_Avoid_: Default sandbox, local sandbox.
+_Avoid_: Local sandbox.
 
 ## Relationships
 

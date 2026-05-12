@@ -1015,6 +1015,13 @@ func (f *fakeContainerRuntimeFactory) New(binary string) sandbox.ContainerStarte
 }
 
 func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},
