@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 )
 
 // RunResult captures structured output produced by an agent run.
@@ -36,4 +37,20 @@ type Sandbox interface {
 	ReadRunResult() (*RunResult, error)
 	// Process returns the running OS process, or nil if no process is active.
 	Process() Process
+}
+
+// waitCmd waits for cmd to finish, returning ctx.Err() if the context is cancelled first.
+func waitCmd(ctx context.Context, cmd *exec.Cmd) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		<-done
+		return ctx.Err()
+	}
 }

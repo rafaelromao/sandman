@@ -61,21 +61,10 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stde
 	}
 	s.cmd = cmd
 
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("exec: %w", err)
-		}
-		return nil
-	case <-ctx.Done():
-		<-done
-		return ctx.Err()
+	if err := waitCmd(ctx, cmd); err != nil {
+		return fmt.Errorf("exec: %w", err)
 	}
+	return nil
 }
 
 // ExecInteractive runs a command in the worktree attached to the user's terminal.
@@ -91,21 +80,10 @@ func (s *WorktreeSandbox) ExecInteractive(ctx context.Context, command string) e
 	}
 	s.cmd = cmd
 
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("exec: %w", err)
-		}
-		return nil
-	case <-ctx.Done():
-		<-done
-		return ctx.Err()
+	if err := waitCmd(ctx, cmd); err != nil {
+		return fmt.Errorf("exec: %w", err)
 	}
+	return nil
 }
 
 // Stop cleans up the worktree.

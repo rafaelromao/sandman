@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,6 +136,25 @@ func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
 	}
 	if string(data) != "preserved" {
 		t.Errorf("expected preserved marker, got %q", string(data))
+	}
+}
+
+func TestWorktreeSandbox_ExecInteractive_RunsCommand(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := s.ExecInteractive(context.Background(), "touch interactive-ran.txt"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	markerPath := filepath.Join(s.WorkDir(), "interactive-ran.txt")
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Errorf("expected interactive marker file to exist: %v", err)
 	}
 }
 
