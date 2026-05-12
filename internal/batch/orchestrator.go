@@ -56,6 +56,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		sandboxMode = cfg.Sandbox
 	}
 
+	resolvedMode, err := sandbox.ResolveRuntime(sandboxMode)
+	if err != nil {
+		return nil, fmt.Errorf("resolve runtime: %w", err)
+	}
+	sandboxMode = resolvedMode
+
 	agentCfg, ok := cfg.AgentProviders[cfg.Agent]
 	if !ok {
 		return nil, fmt.Errorf("agent %q not found in config", cfg.Agent)

@@ -123,8 +123,8 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	if cfg.WorktreeDir != ".sandman/worktrees" {
 		t.Errorf("worktree_dir: got %q, want %q", cfg.WorktreeDir, ".sandman/worktrees")
 	}
-	if cfg.Sandbox != "worktree" {
-		t.Errorf("sandbox: got %q, want %q", cfg.Sandbox, "worktree")
+	if cfg.Sandbox != "podman" {
+		t.Errorf("sandbox: got %q, want %q", cfg.Sandbox, "podman")
 	}
 	if cfg.Git.DefaultBranch != "main" {
 		t.Errorf("git.default_branch: got %q, want %q", cfg.Git.DefaultBranch, "main")
@@ -204,7 +204,7 @@ func TestConfig_GetValue(t *testing.T) {
 		Agent:           "codex",
 		DefaultParallel: 4,
 		WorktreeDir:     "/tmp/wt",
-		Sandbox:         "worktree",
+		Sandbox:         "podman",
 		Git: GitConfig{
 			DefaultBranch: "main",
 			AuthorName:    "Dev",
@@ -220,7 +220,7 @@ func TestConfig_GetValue(t *testing.T) {
 		{"agent", "codex", false},
 		{"default_parallel", "4", false},
 		{"worktree_dir", "/tmp/wt", false},
-		{"sandbox", "worktree", false},
+		{"sandbox", "podman", false},
 		{"git.default_branch", "main", false},
 		{"git.author_name", "Dev", false},
 		{"git.author_email", "dev@example.com", false},
@@ -251,7 +251,7 @@ func TestConfig_SetValue(t *testing.T) {
 		{"agent", "codex", false},
 		{"default_parallel", "4", false},
 		{"worktree_dir", "/tmp/wt", false},
-		{"sandbox", "container", false},
+		{"sandbox", "podman", false},
 		{"git.default_branch", "master", false},
 		{"git.author_name", "Alice", false},
 		{"git.author_email", "alice@example.com", false},

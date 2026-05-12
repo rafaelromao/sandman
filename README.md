@@ -69,7 +69,7 @@ Sandman reads configuration from `.sandman/config.yaml`:
 agent: opencode
 default_parallel: 4
 worktree_dir: .sandman/worktrees
-sandbox: worktree
+sandbox: podman
 git:
   author_name: Dev
   author_email: dev@example.com
