@@ -6,6 +6,8 @@ type Issue struct {
 	Title  string
 	Body   string
 	Labels []string
+	// BlockedBy is populated by FetchIssue. SearchIssues leaves it empty.
+	BlockedBy []int
 }
 
 // Client wraps gh CLI for GitHub operations.
