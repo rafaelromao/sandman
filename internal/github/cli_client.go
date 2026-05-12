@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sync"
 )
 
 // execRunner abstracts os/exec for testability.
@@ -20,14 +21,57 @@ func (r *realRunner) Run(name string, arg ...string) *exec.Cmd {
 
 // CLIClient wraps the gh CLI for GitHub operations.
 type CLIClient struct {
-	runner execRunner
+	runner       execRunner
+	RepoOverride string
+	mu           sync.Mutex
+	repo         *repoRef
+}
+
+type repoRef struct {
+	override string
+	owner    string
+	name     string
 }
 
 func (c *CLIClient) command(name string, arg ...string) *exec.Cmd {
+	if name == "gh" && c.RepoOverride != "" {
+		arg = append(arg, "--repo", c.RepoOverride)
+	}
 	if c.runner != nil {
 		return c.runner.Run(name, arg...)
 	}
 	return exec.Command(name, arg...)
+}
+
+func (c *CLIClient) resolveRepo() (string, string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.repo != nil && c.repo.override == c.RepoOverride {
+		return c.repo.owner, c.repo.name, nil
+	}
+
+	cmd := c.command("gh", "repo", "view", "--json", "owner,name")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", "", fmt.Errorf("gh repo view: %w\n%s", err, out)
+	}
+
+	var repo struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+	}
+	if err := json.Unmarshal(out, &repo); err != nil {
+		return "", "", fmt.Errorf("parse repo: %w", err)
+	}
+	if repo.Owner.Login == "" || repo.Name == "" {
+		return "", "", fmt.Errorf("parse repo: missing owner or name")
+	}
+
+	c.repo = &repoRef{override: c.RepoOverride, owner: repo.Owner.Login, name: repo.Name}
+	return c.repo.owner, c.repo.name, nil
 }
 
 // FetchIssue fetches issue metadata via gh CLI.
