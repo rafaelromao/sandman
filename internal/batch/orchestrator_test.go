@@ -1101,6 +1101,88 @@ func TestRunBatch_LogsFinishedEventOnFailure(t *testing.T) {
 	}
 }
 
+type fakeContainerForOrchestrator struct {
+	id         string
+	stopCalled bool
+	stopError  error
+}
+
+func (f *fakeContainerForOrchestrator) ID() string {
+	return f.id
+}
+
+func (f *fakeContainerForOrchestrator) Stop() error {
+	f.stopCalled = true
+	return f.stopError
+}
+
+type fakeContainerStarter struct {
+	startCalled bool
+	startOpts   sandbox.StartOptions
+	container   sandbox.Container
+	err         error
+}
+
+func (f *fakeContainerStarter) Start(image, repoPath string, opts sandbox.StartOptions) (sandbox.Container, error) {
+	f.startCalled = true
+	f.startOpts = opts
+	return f.container, f.err
+}
+
+type fakeContainerRuntimeFactory struct {
+	starter *fakeContainerStarter
+}
+
+func (f *fakeContainerRuntimeFactory) New(binary string) sandbox.ContainerStarter {
+	return f.starter
+}
+
+func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+
+	starter := &fakeContainerStarter{container: &fakeContainerForOrchestrator{id: "shared123"}}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true", ConfigDirs: []string{"~/.config/test"}}}}}, nil)
+	o.containerRuntimeFactory = factory
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
+
+	if !starter.startCalled {
+		t.Fatal("expected container starter to be called")
+	}
+	if starter.startOpts.GitConfigPath == "" {
+		t.Error("expected GitConfigPath to be set")
+	}
+	if len(starter.startOpts.AgentConfigDirs) != 1 {
+		t.Errorf("expected 1 agent config dir, got %d", len(starter.startOpts.AgentConfigDirs))
+	}
+	if starter.startOpts.UserID == "" {
+		t.Error("expected UserID to be set")
+	}
+}
+
+func TestRunBatch_RejectsKeychainAuthAgent(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Name: "opencode", Command: "opencode", KeychainAuth: true}}}}, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err == nil {
+		t.Fatal("expected error for keychain auth agent")
+	}
+	if !strings.Contains(err.Error(), "keychain") {
+		t.Errorf("expected error to mention keychain, got: %v", err)
+	}
+}
+
 func TestRunBatch_SharedContainer_ReturnsErrorWhenDockerUnavailable(t *testing.T) {
 	t.Setenv("PATH", "")
 	client := &fakeGitHubClient{
