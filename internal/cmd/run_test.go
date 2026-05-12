@@ -855,6 +855,33 @@ func TestRun_InteractiveWithNextGreaterThanOneReturnsError(t *testing.T) {
 	}
 }
 
+func TestRun_NextFlagNegativeCountReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+		IsTTY:       func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--next=-1"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --next -1")
+	}
+	if spy.called {
+		t.Error("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "--next count must be at least 1") {
+		t.Errorf("expected '--next count must be at least 1' error, got: %v", err)
+	}
+}
+
 func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{

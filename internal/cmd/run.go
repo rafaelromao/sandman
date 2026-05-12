@@ -25,17 +25,16 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			label, _ := cmd.Flags().GetString("label")
 			query, _ := cmd.Flags().GetString("query")
 			interactive, _ := cmd.Flags().GetBool("interactive")
-			nextCount, nextProvided, err := getNextCount(cmd)
-			if err != nil {
-				return err
-			}
+			nextFlag := cmd.Flags().Lookup("next")
+			nextProvided := nextFlag != nil && nextFlag.Changed
+			nextCount, _ := cmd.Flags().GetInt("next")
 
 			var issues []int
 			if nextProvided {
 				if len(args) > 0 || label != "" || query != "" {
 					return fmt.Errorf("cannot combine --next with issue arguments, --label or --query")
 				}
-				if nextCount == 0 {
+				if nextCount <= 0 {
 					return fmt.Errorf("--next count must be at least 1")
 				}
 				issues, err = resolveNextIssues(cmd.Context(), deps.GitHubClient, nextCount)
@@ -128,11 +127,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("label", "", "Select issues by label")
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")
 
-	f := cmd.Flags().String("next", "", "Delegate the N lowest-numbered open issues labeled ready-for-agent")
+	cmd.Flags().Int("next", 0, "Delegate the N lowest-numbered open issues labeled ready-for-agent")
 	if pf := cmd.Flags().Lookup("next"); pf != nil {
 		pf.NoOptDefVal = "1"
 	}
-	_ = f
 
 	return cmd
 }
@@ -147,25 +145,6 @@ func resolveIssues(ctx context.Context, client github.Client, query string) ([]i
 		numbers[i] = issue.Number
 	}
 	return numbers, nil
-}
-
-func getNextCount(cmd *cobra.Command) (int, bool, error) {
-	flag := cmd.Flags().Lookup("next")
-	if flag == nil {
-		return 0, false, nil
-	}
-	if !flag.Changed {
-		return 0, false, nil
-	}
-	s := flag.Value.String()
-	if s == "" {
-		return 0, false, nil
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, false, fmt.Errorf("invalid --next count: %w", err)
-	}
-	return n, true, nil
 }
 
 func resolveNextIssues(ctx context.Context, client github.Client, count int) ([]int, error) {
