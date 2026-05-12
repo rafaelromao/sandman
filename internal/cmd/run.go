@@ -90,6 +90,18 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("--interactive requires exactly one issue")
 			}
 
+			promptFlag, _ := cmd.Flags().GetString("prompt")
+			templateFlag, _ := cmd.Flags().GetString("template")
+			promptArgsRaw, _ := cmd.Flags().GetStringArray("prompt-arg")
+			promptArgs := make(map[string]string)
+			for _, arg := range promptArgsRaw {
+				parts := strings.SplitN(arg, "=", 2)
+				if len(parts) != 2 {
+					return fmt.Errorf("invalid --prompt-arg format %q: expected KEY=VALUE", arg)
+				}
+				promptArgs[parts[0]] = parts[1]
+			}
+
 			resolvedBatch, err := batch.NewDependencyResolver(deps.GitHubClient).Resolve(cmd.Context(), issues, includeDependencies)
 			if err != nil {
 				return fmt.Errorf("resolve dependencies: %w", err)
@@ -105,18 +117,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			debug, _ := cmd.Flags().GetBool("debug")
 			sandboxMode, _ := cmd.Flags().GetString("sandbox")
 			isolatedContainers, _ := cmd.Flags().GetBool("isolated-containers")
-
-			promptFlag, _ := cmd.Flags().GetString("prompt")
-			templateFlag, _ := cmd.Flags().GetString("template")
-			promptArgsRaw, _ := cmd.Flags().GetStringArray("prompt-arg")
-			promptArgs := make(map[string]string)
-			for _, arg := range promptArgsRaw {
-				parts := strings.SplitN(arg, "=", 2)
-				if len(parts) != 2 {
-					return fmt.Errorf("invalid --prompt-arg format %q: expected KEY=VALUE", arg)
-				}
-				promptArgs[parts[0]] = parts[1]
-			}
 
 			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 				Issues:             resolvedBatch.Issues,

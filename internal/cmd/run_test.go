@@ -1113,6 +1113,32 @@ func TestRun_PromptArgFlagInvalidFormat(t *testing.T) {
 	}
 }
 
+func TestRun_PromptArgValidationHappensBeforeDependencyResolution(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch issue should not run")}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt-arg", "NOEQUALSSIGN", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid --prompt-arg format")
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "--prompt-arg") {
+		t.Fatalf("expected prompt-arg validation error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "fetch issue should not run") {
+		t.Fatalf("expected prompt-arg validation before dependency resolution, got %v", err)
+	}
+}
+
 func TestRun_PromptConfigDefaultsEmpty(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
