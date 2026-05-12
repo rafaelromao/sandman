@@ -3,6 +3,7 @@ package github
 import (
 	"os/exec"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -195,6 +196,105 @@ func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	expectedArgs := []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61"}
 	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
 		t.Fatalf("expected fetch args %v, got %v", expectedArgs, runner.calls[1].args)
+	}
+}
+
+func TestCLIClient_FetchIssueDependencies_FromIssuePayload(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":62,"title":"Native dependencies","body":"","labels":[],"blocked_by":[{"number":60},{"number":7}]}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	blockedBy, err := client.FetchIssueDependencies(62)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(blockedBy, []int{60, 7}) {
+		t.Fatalf("expected direct native blockers [60 7], got %v", blockedBy)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
+	}
+	if !reflect.DeepEqual(runner.calls[1].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62"}) {
+		t.Fatalf("unexpected issue fetch args: %v", runner.calls[1].args)
+	}
+}
+
+func TestCLIClient_FetchIssueDependencies_FallsBackToEvents(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":62,"title":"Native dependencies","body":"","labels":[],"issue_dependencies_summary":{"blocked_by":2,"total_blocked_by":2,"blocking":0,"total_blocking":0}}`},
+		{output: `[{"event":"labeled"},{"event":"blocked_by_added","blocking_issue":{"number":60}},{"event":"blocked_by_added","blocking_issue":{"number":7}},{"event":"blocked_by_removed","blocking_issue":{"number":7}}]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	blockedBy, err := client.FetchIssueDependencies(62)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(blockedBy, []int{60}) {
+		t.Fatalf("expected event-derived blockers [60], got %v", blockedBy)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("expected 3 commands, got %d", len(runner.calls))
+	}
+	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62/events"}) {
+		t.Fatalf("unexpected events fetch args: %v", runner.calls[2].args)
+	}
+}
+
+func TestCLIClient_FetchIssueDependencies_IgnoresSummaryCountsInsidePayload(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":62,"title":"Native dependencies","body":"","labels":[],"blocked_by":{"total_count":2,"nodes":[{"number":60},{"number":7}]}}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	blockedBy, err := client.FetchIssueDependencies(62)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := append([]int(nil), blockedBy...)
+	want := []int{7, 60}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected payload blockers %v, got %v", want, blockedBy)
+	}
+}
+
+func TestCLIClient_FetchIssue_UnionBodyAndNativeDependencies(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":62,"title":"Native dependencies","body":"Blocked by #60\nDepends on #7","labels":[{"name":"enhancement"}],"blocked_by":[{"number":7},{"number":99}]}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	issue, err := client.FetchIssue(62)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(issue.BlockedBy, []int{60, 7, 99}) {
+		t.Fatalf("expected unioned blockers [60 7 99], got %v", issue.BlockedBy)
+	}
+}
+
+func TestCLIClient_FetchIssue_GracefullyFallsBackToBodyOnly(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":62,"title":"Native dependencies","body":"Blocked by #60","labels":[],"issue_dependencies_summary":{"blocked_by":1,"total_blocked_by":1,"blocking":0,"total_blocking":0}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	issue, err := client.FetchIssue(62)
+	if err != nil {
+		t.Fatalf("expected body-only fallback, got error: %v", err)
+	}
+	if !reflect.DeepEqual(issue.BlockedBy, []int{60}) {
+		t.Fatalf("expected body-only blockers [60], got %v", issue.BlockedBy)
 	}
 }
 

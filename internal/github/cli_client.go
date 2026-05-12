@@ -38,12 +38,35 @@ type repoRef struct {
 }
 
 type issuePayload struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	Labels []struct {
+	Number                   int                      `json:"number"`
+	Title                    string                   `json:"title"`
+	Body                     string                   `json:"body"`
+	BlockedBy                json.RawMessage          `json:"blocked_by"`
+	IssueDependencies        issueDependenciesPayload `json:"issue_dependencies"`
+	IssueDependenciesSummary dependencySummary        `json:"issue_dependencies_summary"`
+	Labels                   []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+}
+
+type issueDependenciesPayload struct {
+	BlockedBy json.RawMessage `json:"blocked_by"`
+}
+
+type dependencySummary struct {
+	BlockedBy      int `json:"blocked_by"`
+	TotalBlockedBy int `json:"total_blocked_by"`
+	Blocking       int `json:"blocking"`
+	TotalBlocking  int `json:"total_blocking"`
+}
+
+type issueEventPayload struct {
+	Event         string              `json:"event"`
+	BlockingIssue *dependencyIssueRef `json:"blocking_issue"`
+}
+
+type dependencyIssueRef struct {
+	Number int `json:"number"`
 }
 
 func (c *CLIClient) command(name string, arg ...string) *exec.Cmd {
@@ -94,15 +117,14 @@ func (c *CLIClient) FetchIssue(number int) (*Issue, error) {
 		return nil, err
 	}
 
-	cmd := c.command("gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number))
-	out, err := cmd.CombinedOutput()
+	issue, err := c.fetchIssuePayload(owner, repo, number)
 	if err != nil {
-		return nil, fmt.Errorf("gh api issue: %w\n%s", err, out)
+		return nil, err
 	}
 
-	var issue issuePayload
-	if err := json.Unmarshal(out, &issue); err != nil {
-		return nil, fmt.Errorf("parse issue: %w", err)
+	blockedBy := parseBlockedBy(issue.Body)
+	if nativeBlockedBy, err := c.fetchIssueDependencies(owner, repo, number, issue); err == nil {
+		blockedBy = mergeIssueNumbers(blockedBy, nativeBlockedBy)
 	}
 
 	return &Issue{
@@ -110,8 +132,64 @@ func (c *CLIClient) FetchIssue(number int) (*Issue, error) {
 		Title:     issue.Title,
 		Body:      issue.Body,
 		Labels:    labelNames(issue.Labels),
-		BlockedBy: parseBlockedBy(issue.Body),
+		BlockedBy: blockedBy,
 	}, nil
+}
+
+// FetchIssueDependencies fetches native GitHub issue dependencies via gh CLI.
+func (c *CLIClient) FetchIssueDependencies(number int) ([]int, error) {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return nil, err
+	}
+
+	issue, err := c.fetchIssuePayload(owner, repo, number)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.fetchIssueDependencies(owner, repo, number, issue)
+}
+
+func (c *CLIClient) fetchIssuePayload(owner, repo string, number int) (issuePayload, error) {
+	cmd := c.command("gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return issuePayload{}, fmt.Errorf("gh api issue: %w\n%s", err, out)
+	}
+
+	var issue issuePayload
+	if err := json.Unmarshal(out, &issue); err != nil {
+		return issuePayload{}, fmt.Errorf("parse issue: %w", err)
+	}
+
+	return issue, nil
+}
+
+func (c *CLIClient) fetchIssueDependencies(owner, repo string, number int, issue issuePayload) ([]int, error) {
+	blockedBy := mergeIssueNumbers(
+		parseDependencyIssueNumbers(issue.BlockedBy),
+		parseDependencyIssueNumbers(issue.IssueDependencies.BlockedBy),
+	)
+	if len(blockedBy) > 0 {
+		return blockedBy, nil
+	}
+	if issue.IssueDependenciesSummary.BlockedBy == 0 && issue.IssueDependenciesSummary.TotalBlockedBy == 0 {
+		return nil, nil
+	}
+
+	cmd := c.command("gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d/events", owner, repo, number))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh api issue events: %w\n%s", err, out)
+	}
+
+	var events []issueEventPayload
+	if err := json.Unmarshal(out, &events); err != nil {
+		return nil, fmt.Errorf("parse issue events: %w", err)
+	}
+
+	return parseDependencyEvents(events), nil
 }
 
 func parseBlockedBy(body string) []int {
@@ -137,6 +215,110 @@ func parseBlockedBy(body string) []int {
 		return nil
 	}
 	return blockedBy
+}
+
+func parseDependencyIssueNumbers(raw json.RawMessage) []int {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil
+	}
+
+	var numbers []int
+	collectDependencyIssueNumbers(value, &numbers)
+	return mergeIssueNumbers(numbers)
+}
+
+func collectDependencyIssueNumbers(value any, numbers *[]int) {
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			if number, ok := issueNumberFromAny(item); ok {
+				*numbers = append(*numbers, number)
+				continue
+			}
+			collectDependencyIssueNumbers(item, numbers)
+		}
+	case map[string]any:
+		if number, ok := issueNumberFromAny(typed["number"]); ok {
+			*numbers = append(*numbers, number)
+			return
+		}
+		for _, nested := range typed {
+			switch nested.(type) {
+			case []any, map[string]any:
+				collectDependencyIssueNumbers(nested, numbers)
+			}
+		}
+	}
+}
+
+func issueNumberFromAny(value any) (int, bool) {
+	number, ok := value.(float64)
+	if !ok {
+		return 0, false
+	}
+	if number <= 0 || float64(int(number)) != number {
+		return 0, false
+	}
+	return int(number), true
+}
+
+func parseDependencyEvents(events []issueEventPayload) []int {
+	var blockedBy []int
+	for _, event := range events {
+		switch event.Event {
+		case "blocked_by_added":
+			if event.BlockingIssue == nil || event.BlockingIssue.Number == 0 {
+				continue
+			}
+			blockedBy = mergeIssueNumbers(blockedBy, []int{event.BlockingIssue.Number})
+		case "blocked_by_removed":
+			if event.BlockingIssue == nil || event.BlockingIssue.Number == 0 {
+				continue
+			}
+			blockedBy = removeIssueNumber(blockedBy, event.BlockingIssue.Number)
+		}
+	}
+	if len(blockedBy) == 0 {
+		return nil
+	}
+	return blockedBy
+}
+
+func mergeIssueNumbers(groups ...[]int) []int {
+	var merged []int
+	seen := make(map[int]struct{})
+	for _, group := range groups {
+		for _, number := range group {
+			if _, ok := seen[number]; ok {
+				continue
+			}
+			seen[number] = struct{}{}
+			merged = append(merged, number)
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func removeIssueNumber(numbers []int, target int) []int {
+	filtered := numbers[:0]
+	for _, number := range numbers {
+		if number == target {
+			continue
+		}
+		filtered = append(filtered, number)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 // SearchIssues searches for issues via gh CLI.
