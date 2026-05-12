@@ -21,17 +21,22 @@ func (r *realRunner) Run(name string, arg ...string) *exec.Cmd {
 
 // CLIClient wraps the gh CLI for GitHub operations.
 type CLIClient struct {
-	runner execRunner
-	mu     sync.Mutex
-	repo   *repoRef
+	runner       execRunner
+	RepoOverride string
+	mu           sync.Mutex
+	repo         *repoRef
 }
 
 type repoRef struct {
-	owner string
-	name  string
+	override string
+	owner    string
+	name     string
 }
 
 func (c *CLIClient) command(name string, arg ...string) *exec.Cmd {
+	if name == "gh" && c.RepoOverride != "" {
+		arg = append(arg, "--repo", c.RepoOverride)
+	}
 	if c.runner != nil {
 		return c.runner.Run(name, arg...)
 	}
@@ -42,7 +47,7 @@ func (c *CLIClient) resolveRepo() (string, string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.repo != nil {
+	if c.repo != nil && c.repo.override == c.RepoOverride {
 		return c.repo.owner, c.repo.name, nil
 	}
 
@@ -65,7 +70,7 @@ func (c *CLIClient) resolveRepo() (string, string, error) {
 		return "", "", fmt.Errorf("parse repo: missing owner or name")
 	}
 
-	c.repo = &repoRef{owner: repo.Owner.Login, name: repo.Name}
+	c.repo = &repoRef{override: c.RepoOverride, owner: repo.Owner.Login, name: repo.Name}
 	return c.repo.owner, c.repo.name, nil
 }
 

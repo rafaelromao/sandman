@@ -130,6 +130,28 @@ func TestCLIClient_ResolveRepo_CachesResult(t *testing.T) {
 	}
 }
 
+func TestCLIClient_ResolveRepo_UsesRepoOverride(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`}}}
+	client := &CLIClient{runner: runner, RepoOverride: "octo/sandman"}
+
+	_, _, err := client.resolveRepo()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(runner.calls))
+	}
+	expectedArgs := []string{"repo", "view", "--json", "owner,name", "--repo", "octo/sandman"}
+	if len(runner.calls[0].args) != len(expectedArgs) {
+		t.Fatalf("expected args %v, got %v", expectedArgs, runner.calls[0].args)
+	}
+	for i, arg := range expectedArgs {
+		if runner.calls[0].args[i] != arg {
+			t.Errorf("expected arg[%d] = %q, got %q", i, arg, runner.calls[0].args[i])
+		}
+	}
+}
+
 func TestCLIClient_ResolveRepo_Error(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{err: exec.ErrNotFound}}}
 	client := &CLIClient{runner: runner}
