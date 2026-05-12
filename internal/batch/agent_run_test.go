@@ -98,9 +98,10 @@ func TestAgentRun_Prepare_RendersAndWritesPrompt(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Users cannot log in."}
 	sb := &fakeSandbox{}
 	spy := &spyRenderer{result: "rendered prompt"}
+	renderCfg := prompt.RenderConfig{PromptFile: ".sandman/prompt.md"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	if err := run.Prepare(spy); err != nil {
+	if err := run.Prepare(spy, renderCfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -115,6 +116,9 @@ func TestAgentRun_Prepare_RendersAndWritesPrompt(t *testing.T) {
 	}
 	if spy.data.Body != "Users cannot log in." {
 		t.Errorf("expected body 'Users cannot log in.', got %q", spy.data.Body)
+	}
+	if spy.cfg.PromptFile != ".sandman/prompt.md" {
+		t.Errorf("expected PromptFile in render config, got %q", spy.cfg.PromptFile)
 	}
 
 	if !sb.writePromptCalled {
@@ -131,7 +135,7 @@ func TestAgentRun_Prepare_RenderError(t *testing.T) {
 	spy := &spyRenderer{err: errors.New("render failed")}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	if err := run.Prepare(spy); err == nil {
+	if err := run.Prepare(spy, prompt.RenderConfig{}); err == nil {
 		t.Fatal("expected error when render fails")
 	}
 }
@@ -142,7 +146,7 @@ func TestAgentRun_Prepare_WritePromptError(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	if err := run.Prepare(spy); err == nil {
+	if err := run.Prepare(spy, prompt.RenderConfig{}); err == nil {
 		t.Fatal("expected error when WritePrompt fails")
 	}
 }
@@ -236,9 +240,10 @@ func TestAgentRun_Run_Success(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Users cannot log in."}
 	sb := &fakeSandbox{}
 	spy := &spyRenderer{result: "rendered prompt"}
+	renderCfg := prompt.RenderConfig{}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "echo hello", false)
+	res := run.Run(context.Background(), spy, "echo hello", false, renderCfg)
 
 	if res.Status != "success" {
 		t.Errorf("expected status success, got %s", res.Status)
@@ -260,7 +265,7 @@ func TestAgentRun_Run_PrepareFailure(t *testing.T) {
 	spy := &spyRenderer{err: errors.New("render failed")}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "echo hello", false)
+	res := run.Run(context.Background(), spy, "echo hello", false, prompt.RenderConfig{})
 
 	if res.Status != "failure" {
 		t.Errorf("expected status failure, got %s", res.Status)
@@ -276,7 +281,7 @@ func TestAgentRun_Run_ExecuteFailure(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "exit 1", false)
+	res := run.Run(context.Background(), spy, "exit 1", false, prompt.RenderConfig{})
 
 	if res.Status != "failure" {
 		t.Errorf("expected status failure, got %s", res.Status)
@@ -289,7 +294,7 @@ func TestAgentRun_Run_InteractiveUsesExecInteractive(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "echo hello", true)
+	res := run.Run(context.Background(), spy, "echo hello", true, prompt.RenderConfig{})
 
 	if res.Status != "success" {
 		t.Errorf("expected status success, got %s", res.Status)
@@ -308,7 +313,7 @@ func TestAgentRun_Run_RendersCommandTemplate(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "opencode --worktree {{.Worktree}}", false)
+	res := run.Run(context.Background(), spy, "opencode --worktree {{.Worktree}}", false, prompt.RenderConfig{})
 
 	if res.Status != "success" {
 		t.Errorf("expected status success, got %s", res.Status)
@@ -324,13 +329,35 @@ func TestAgentRun_Run_TemplateErrorCausesFailure(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "opencode {{.Unknown}}", false)
+	res := run.Run(context.Background(), spy, "opencode {{.Unknown}}", false, prompt.RenderConfig{})
 
 	if res.Status != "failure" {
 		t.Errorf("expected status failure, got %s", res.Status)
 	}
 	if sb.execCalled {
 		t.Error("expected Exec not to be called when template rendering fails")
+	}
+}
+
+func TestAgentRun_Prepare_PassesRenderConfigToRenderer(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Users cannot log in."}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+	renderCfg := prompt.RenderConfig{
+		PromptFlag: "custom inline template",
+		PromptArgs: map[string]string{"FOO": "bar"},
+	}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	if err := run.Prepare(spy, renderCfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.cfg.PromptFlag != "custom inline template" {
+		t.Errorf("expected PromptFlag 'custom inline template', got %q", spy.cfg.PromptFlag)
+	}
+	if spy.cfg.PromptArgs["FOO"] != "bar" {
+		t.Errorf("expected PromptArgs FOO=bar, got %q", spy.cfg.PromptArgs["FOO"])
 	}
 }
 

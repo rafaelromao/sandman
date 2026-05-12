@@ -18,6 +18,7 @@ type Request struct {
 	Sandbox            string
 	IsolatedContainers bool
 	Interactive        bool
+	PromptConfig       prompt.RenderConfig
 }
 
 // Result describes the outcome of a batch.
@@ -35,7 +36,7 @@ type AgentRunResult struct {
 
 // Runnable represents a single agent execution that can be run.
 type Runnable interface {
-	Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool) AgentRunResult
+	Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult
 }
 
 // RunnableFactory creates a Runnable for a given issue.

@@ -94,7 +94,7 @@ type fakeRunnable struct {
 	mu          *sync.Mutex
 }
 
-func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool) AgentRunResult {
+func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult {
 	if f.mu != nil {
 		f.mu.Lock()
 		*f.activeCount++
@@ -164,7 +164,7 @@ type blockingRunnable struct {
 	delayAfterCancel time.Duration
 }
 
-func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool) AgentRunResult {
+func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult {
 	<-ctx.Done()
 	time.Sleep(b.delayAfterCancel)
 	return AgentRunResult{IssueNumber: 42, Status: "failure"}

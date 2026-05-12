@@ -945,3 +945,164 @@ func TestRun_IsolatedContainersFlagPassedToBatchRunner(t *testing.T) {
 		t.Errorf("expected sandbox=docker, got %q", spy.req.Sandbox)
 	}
 }
+
+func TestRun_PromptFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt", "custom template", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.PromptConfig.PromptFlag != "custom template" {
+		t.Errorf("expected PromptFlag='custom template', got %q", spy.req.PromptConfig.PromptFlag)
+	}
+}
+
+func TestRun_TemplateFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--template", "./my-prompt.md", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.PromptConfig.TemplateFlag != "./my-prompt.md" {
+		t.Errorf("expected TemplateFlag='./my-prompt.md', got %q", spy.req.PromptConfig.TemplateFlag)
+	}
+}
+
+func TestRun_PromptArgFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt-arg", "FOO=bar", "--prompt-arg", "BAZ=qux", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spy.req.PromptConfig.PromptArgs) != 2 {
+		t.Fatalf("expected 2 prompt args, got %d", len(spy.req.PromptConfig.PromptArgs))
+	}
+	if spy.req.PromptConfig.PromptArgs["FOO"] != "bar" {
+		t.Errorf("expected FOO=bar, got FOO=%q", spy.req.PromptConfig.PromptArgs["FOO"])
+	}
+	if spy.req.PromptConfig.PromptArgs["BAZ"] != "qux" {
+		t.Errorf("expected BAZ=qux, got BAZ=%q", spy.req.PromptConfig.PromptArgs["BAZ"])
+	}
+}
+
+func TestRun_PromptArgFlagInvalidFormat(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt-arg", "NOEQUALSSIGN", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid --prompt-arg format")
+	}
+	if !strings.Contains(err.Error(), "--prompt-arg") {
+		t.Errorf("expected error about --prompt-arg, got: %v", err)
+	}
+}
+
+func TestRun_PromptConfigDefaultsEmpty(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.PromptConfig.PromptFlag != "" {
+		t.Errorf("expected empty PromptFlag, got %q", spy.req.PromptConfig.PromptFlag)
+	}
+	if spy.req.PromptConfig.TemplateFlag != "" {
+		t.Errorf("expected empty TemplateFlag, got %q", spy.req.PromptConfig.TemplateFlag)
+	}
+	if len(spy.req.PromptConfig.PromptArgs) != 0 {
+		t.Errorf("expected empty PromptArgs, got %v", spy.req.PromptConfig.PromptArgs)
+	}
+}
+
+func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:    &fakeEventLog{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt", "inline", "--template", "./t.md", "--prompt-arg", "K=V", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.PromptConfig.PromptFlag != "inline" {
+		t.Errorf("expected PromptFlag='inline', got %q", spy.req.PromptConfig.PromptFlag)
+	}
+	if spy.req.PromptConfig.TemplateFlag != "./t.md" {
+		t.Errorf("expected TemplateFlag='./t.md', got %q", spy.req.PromptConfig.TemplateFlag)
+	}
+	if spy.req.PromptConfig.PromptArgs["K"] != "V" {
+		t.Errorf("expected K=V, got K=%q", spy.req.PromptConfig.PromptArgs["K"])
+	}
+}

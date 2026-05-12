@@ -165,7 +165,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, req.Interactive, activeRuns, &activeMu, sbFactory, sandboxMode, req.IsolatedContainers, sharedContainer, containerFactory, startOpts)
+			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, req.Interactive, req.PromptConfig, activeRuns, &activeMu, sbFactory, sandboxMode, req.IsolatedContainers, sharedContainer, containerFactory, startOpts)
 			mu.Lock()
 			results[idx] = res
 			if res.Status == "failure" {
@@ -218,7 +218,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, debug bool, branches map[int]string, interactive bool, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, sandboxMode string, isolated bool, sharedContainer sandbox.Container, containerFactory ContainerRuntimeFactory, startOpts sandbox.StartOptions) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, debug bool, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, sandboxMode string, isolated bool, sharedContainer sandbox.Container, containerFactory ContainerRuntimeFactory, startOpts sandbox.StartOptions) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure"}
@@ -278,7 +278,11 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		})
 	}
 
-	result := runnable.Run(ctx, o.renderer, agentCfg.Command, interactive)
+	if renderCfg.PromptFile == "" {
+		renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
+	}
+
+	result := runnable.Run(ctx, o.renderer, agentCfg.Command, interactive, renderCfg)
 
 	worktreeState := "deleted"
 	if result.Status == "failure" || preserve {
