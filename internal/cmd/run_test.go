@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -28,16 +29,27 @@ func (s *spyBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batc
 
 // fakeGitHubClient is a test double for github.Client.
 type fakeGitHubClient struct {
+	issues             map[int]*github.Issue
+	fetchIssueError    error
 	searchIssuesQuery  string
 	searchIssuesResult []github.Issue
 	searchIssuesError  error
 }
 
 func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
-	return nil, nil
+	if f.fetchIssueError != nil {
+		return nil, f.fetchIssueError
+	}
+	if issue, ok := f.issues[number]; ok {
+		return issue, nil
+	}
+	return &github.Issue{Number: number}, nil
 }
 
 func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
+	if issue, ok := f.issues[number]; ok {
+		return issue.BlockedBy, nil
+	}
 	return nil, nil
 }
 
@@ -46,13 +58,18 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	return f.searchIssuesResult, f.searchIssuesError
 }
 
+func newRunDeps(runner batch.Runner) Dependencies {
+	return Dependencies{
+		BatchRunner:  runner,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: &fakeGitHubClient{},
+	}
+}
+
 func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -75,11 +92,7 @@ func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 
 func TestRun_MultipleIssuesInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -105,11 +118,7 @@ func TestRun_MultipleIssuesInvokesBatchRunner(t *testing.T) {
 
 func TestRun_ParallelFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -129,11 +138,8 @@ func TestRun_ParallelFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_LoadConfigError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{err: errors.New("config not found")},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{err: errors.New("config not found")}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -152,11 +158,7 @@ func TestRun_LoadConfigError(t *testing.T) {
 
 func TestRun_NoIssues(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -180,11 +182,7 @@ func TestRun_PrintsSummaryOnSuccess(t *testing.T) {
 			{IssueNumber: 43, Status: "success", Branch: "sandman/43-new-feature"},
 		},
 	}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -213,11 +211,7 @@ func TestRun_PrintsSummaryOnPartialFailure(t *testing.T) {
 			{IssueNumber: 43, Status: "failure", Branch: "sandman/43-broken"},
 		},
 	}, err: errors.New("1 of 2 runs failed")}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -241,11 +235,7 @@ func TestRun_PrintsSummaryOnPartialFailure(t *testing.T) {
 
 func TestRun_PreserveFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -265,11 +255,7 @@ func TestRun_PreserveFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_NoPreserveFlagDefaultsToFalse(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -289,11 +275,7 @@ func TestRun_NoPreserveFlagDefaultsToFalse(t *testing.T) {
 
 func TestRun_NoParallelFlagDefaultsToZero(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -313,11 +295,7 @@ func TestRun_NoParallelFlagDefaultsToZero(t *testing.T) {
 
 func TestRun_DebugFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -337,11 +315,8 @@ func TestRun_DebugFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_ConfigParallelDefault(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", DefaultParallel: 8}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultParallel: 8}}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -361,11 +336,7 @@ func TestRun_ConfigParallelDefault(t *testing.T) {
 
 func TestRun_SandboxFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -385,11 +356,7 @@ func TestRun_SandboxFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_InteractiveFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -404,6 +371,121 @@ func TestRun_InteractiveFlagPassedToBatchRunner(t *testing.T) {
 
 	if !spy.req.Interactive {
 		t.Errorf("expected Interactive=true, got false")
+	}
+}
+
+func TestRun_IncludeDependenciesWithInteractiveReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--interactive", "--include-dependencies", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when combining --include-dependencies with --interactive")
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "cannot combine --include-dependencies with --interactive") {
+		t.Fatalf("expected mutual exclusivity error, got %v", err)
+	}
+}
+
+func TestRun_IncludeDependenciesResolvesBatchBeforeRunning(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
+			42:  {Number: 42, Title: "Refactor", BlockedBy: []int{7}},
+			7:   {Number: 7, Title: "Groundwork"},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--include-dependencies", "100"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if !reflect.DeepEqual(spy.req.Issues, []int{7, 42, 100}) {
+		t.Fatalf("expected resolved issues [7 42 100], got %v", spy.req.Issues)
+	}
+	wantDeps := map[int][]int{
+		7:   nil,
+		42:  {7},
+		100: {42},
+	}
+	if !reflect.DeepEqual(spy.req.Dependencies, wantDeps) {
+		t.Fatalf("expected dependencies %v, got %v", wantDeps, spy.req.Dependencies)
+	}
+}
+
+func TestRun_MissingBlockersWithoutIncludeDependenciesReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
+			42:  {Number: 42, Title: "Refactor"},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"100"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected missing blockers error")
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "missing blockers: #42") {
+		t.Fatalf("expected missing blocker error, got %v", err)
+	}
+}
+
+func TestRun_DependencyCycleReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
+			42:  {Number: 42, Title: "Refactor", BlockedBy: []int{100}},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--include-dependencies", "100"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected dependency cycle error")
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "dependency cycle detected: #42 -> #100 -> #42") {
+		t.Fatalf("expected dependency cycle error, got %v", err)
 	}
 }
 
@@ -925,11 +1007,7 @@ func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 
 func TestRun_IsolatedContainersFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -952,11 +1030,7 @@ func TestRun_IsolatedContainersFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_PromptFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -976,11 +1050,7 @@ func TestRun_PromptFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_TemplateFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1000,11 +1070,7 @@ func TestRun_TemplateFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_PromptArgFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1030,11 +1096,7 @@ func TestRun_PromptArgFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_PromptArgFlagInvalidFormat(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1053,11 +1115,7 @@ func TestRun_PromptArgFlagInvalidFormat(t *testing.T) {
 
 func TestRun_PromptConfigDefaultsEmpty(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1083,11 +1141,7 @@ func TestRun_PromptConfigDefaultsEmpty(t *testing.T) {
 
 func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
+	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)

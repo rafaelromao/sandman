@@ -27,6 +27,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			label, _ := cmd.Flags().GetString("label")
 			query, _ := cmd.Flags().GetString("query")
 			interactive, _ := cmd.Flags().GetBool("interactive")
+			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
 			nextFlag := cmd.Flags().Lookup("next")
 			nextProvided := nextFlag != nil && nextFlag.Changed
 			nextCount, _ := cmd.Flags().GetInt("next")
@@ -81,8 +82,17 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("no issues selected")
 			}
 
+			if interactive && includeDependencies {
+				return fmt.Errorf("cannot combine --include-dependencies with --interactive")
+			}
+
 			if interactive && len(issues) > 1 {
 				return fmt.Errorf("--interactive requires exactly one issue")
+			}
+
+			resolvedBatch, err := batch.NewDependencyResolver(deps.GitHubClient).Resolve(cmd.Context(), issues, includeDependencies)
+			if err != nil {
+				return fmt.Errorf("resolve dependencies: %w", err)
 			}
 
 			parallel, _ := cmd.Flags().GetInt("parallel")
@@ -109,7 +119,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
-				Issues:             issues,
+				Issues:             resolvedBatch.Issues,
+				Dependencies:       resolvedBatch.Deps,
 				Parallel:           parallel,
 				Preserve:           preserve,
 				Debug:              debug,
@@ -143,6 +154,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Bool("isolated-containers", false, "Use one container per agent instead of a shared container")
 	cmd.Flags().Bool("interactive", false, "Run the agent in interactive mode")
+	cmd.Flags().Bool("include-dependencies", false, "Expand the batch to include transitive blockers")
 	cmd.Flags().String("label", "", "Select issues by label")
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")
 	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md)")

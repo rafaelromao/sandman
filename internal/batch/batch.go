@@ -11,6 +11,7 @@ import (
 // Request describes a batch of AgentRuns to execute.
 type Request struct {
 	Issues             []int
+	Dependencies       map[int][]int
 	Parallel           int
 	Preserve           bool
 	Debug              bool
