@@ -12,7 +12,7 @@ import (
 // Defaults for optional config fields.
 const (
 	DefaultAgent       = "opencode"
-	DefaultParallel    = 1
+	DefaultParallel    = 4
 	DefaultWorktreeDir = ".sandman/worktrees"
 	DefaultSandbox     = "podman"
 )

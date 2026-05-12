@@ -41,7 +41,7 @@ func TestScaffold_CreatesConfigWithDefaults(t *testing.T) {
 	if !strings.Contains(content, "agent: opencode") {
 		t.Errorf("config missing default agent, got:\n%s", content)
 	}
-	if !strings.Contains(content, "default_parallel: 1") {
+	if !strings.Contains(content, "default_parallel: 4") {
 		t.Errorf("config missing default parallel, got:\n%s", content)
 	}
 	if !strings.Contains(content, "worktree_dir: .sandman/worktrees") {

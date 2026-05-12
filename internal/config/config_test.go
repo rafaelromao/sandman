@@ -117,8 +117,8 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultParallel != 1 {
-		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 1)
+	if cfg.DefaultParallel != 4 {
+		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 4)
 	}
 	if cfg.WorktreeDir != ".sandman/worktrees" {
 		t.Errorf("worktree_dir: got %q, want %q", cfg.WorktreeDir, ".sandman/worktrees")
@@ -131,7 +131,7 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	}
 }
 
-func TestLoad_NegativeDefaultParallel_DefaultsToOne(t *testing.T) {
+func TestLoad_NegativeDefaultParallel_DefaultsToFour(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: codex
@@ -146,8 +146,8 @@ default_parallel: -2
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultParallel != 1 {
-		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 1)
+	if cfg.DefaultParallel != 4 {
+		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 4)
 	}
 }
 
