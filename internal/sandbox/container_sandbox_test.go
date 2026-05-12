@@ -55,6 +55,12 @@ func (f *fakeWorktreeForContainer) Exec(ctx context.Context, command string, std
 	return f.execError
 }
 
+func (f *fakeWorktreeForContainer) ExecInteractive(ctx context.Context, command string) error {
+	f.execCalled = true
+	f.execCommand = command
+	return f.execError
+}
+
 func (f *fakeWorktreeForContainer) Process() Process {
 	return f.process
 }
@@ -268,6 +274,58 @@ func TestSharedContainerSandbox_Stop_DoesNotStopContainer(t *testing.T) {
 	}
 	if !wt.stopCalled {
 		t.Error("expected worktree.Stop to be called")
+	}
+}
+
+func TestContainerSandbox_ExecInteractive_RunsContainerExec(t *testing.T) {
+	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	ctr := &fakeContainer{id: "abc123"}
+	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	var captured []string
+	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("true")
+	}
+
+	if err := sb.ExecInteractive(context.Background(), "echo hello"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(captured) == 0 {
+		t.Fatal("expected exec command to be built")
+	}
+	if captured[0] != "docker" {
+		t.Errorf("expected binary docker, got %q", captured[0])
+	}
+	if captured[1] != "exec" {
+		t.Errorf("expected subcommand exec, got %q", captured[1])
+	}
+	if captured[2] != "-it" {
+		t.Errorf("expected flag -it, got %q", captured[2])
+	}
+	if captured[3] != "-w" {
+		t.Errorf("expected flag -w, got %q", captured[3])
+	}
+	if captured[4] != "/workspace/.sandman/worktrees/branch" {
+		t.Errorf("expected workdir /workspace/.sandman/worktrees/branch, got %q", captured[4])
+	}
+	if captured[5] != "abc123" {
+		t.Errorf("expected container id abc123, got %q", captured[5])
+	}
+}
+
+func TestContainerSandbox_ExecInteractive_ReturnsErrorOnStartFailure(t *testing.T) {
+	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	ctr := &fakeContainer{id: "abc123"}
+	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+		return exec.Command("nonexistent-command-that-fails")
+	}
+
+	if err := sb.ExecInteractive(context.Background(), "echo hello"); err == nil {
+		t.Fatal("expected error when exec start fails")
 	}
 }
 

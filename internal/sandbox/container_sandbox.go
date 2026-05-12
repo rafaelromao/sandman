@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 )
@@ -70,21 +71,27 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	}
 	s.cmd = cmd
 
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("container exec: %w", err)
-		}
-		return nil
-	case <-ctx.Done():
-		<-done
-		return ctx.Err()
+	if err := waitCmd(ctx, cmd); err != nil {
+		return fmt.Errorf("container exec: %w", err)
 	}
+	return nil
+}
+
+// ExecInteractive runs a command inside the container attached to the user's terminal.
+func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) error {
+	cmd := s.execFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("container exec start: %w", err)
+	}
+	s.cmd = cmd
+
+	if err := waitCmd(ctx, cmd); err != nil {
+		return fmt.Errorf("container exec: %w", err)
+	}
+	return nil
 }
 
 // Stop tears down the worktree and, in isolated mode, the container.

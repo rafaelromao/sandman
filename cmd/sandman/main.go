@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"syscall"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/cmd"
@@ -11,6 +12,14 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
+
+func isStdoutTTY() bool {
+	var st syscall.Stat_t
+	if err := syscall.Fstat(int(os.Stdout.Fd()), &st); err != nil {
+		return false
+	}
+	return st.Mode&syscall.S_IFMT == syscall.S_IFCHR
+}
 
 func main() {
 	// Composition root: wire real adapters
@@ -25,6 +34,8 @@ func main() {
 		EventLog:       eventLog,
 		GitHubClient:   ghClient,
 		PromptRenderer: renderer,
+		IssuePicker:    &cmd.SimpleIssuePicker{},
+		IsTTY:          isStdoutTTY,
 	}
 
 	rootCmd := cmd.NewRootCmd(deps)

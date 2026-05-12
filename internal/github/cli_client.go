@@ -1,6 +1,7 @@
 package github
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -43,6 +44,20 @@ func (c *CLIClient) CreatePR(branch, targetBranch, title, body string) (string, 
 		return "", fmt.Errorf("gh pr create: %w\n%s", err, out)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// SearchIssues searches for issues via gh CLI.
+func (c *CLIClient) SearchIssues(query string) ([]Issue, error) {
+	cmd := c.command("gh", "issue", "list", "--search", query, "--json", "number,title,body,labels", "--limit", "100")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh issue list: %w\n%s", err, out)
+	}
+	var issues []Issue
+	if err := json.Unmarshal(out, &issues); err != nil {
+		return nil, fmt.Errorf("parse issues: %w", err)
+	}
+	return issues, nil
 }
 
 // Ensure CLIClient implements Client.

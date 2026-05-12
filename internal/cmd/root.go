@@ -9,6 +9,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// IssuePicker selects issues interactively from a list.
+type IssuePicker interface {
+	Select(issues []github.Issue) ([]int, error)
+}
+
 // Dependencies holds the domain adapters injected into CLI commands.
 type Dependencies struct {
 	BatchRunner    batch.Runner
@@ -16,6 +21,8 @@ type Dependencies struct {
 	EventLog       events.EventLog
 	GitHubClient   github.Client
 	PromptRenderer prompt.Renderer
+	IssuePicker    IssuePicker
+	IsTTY          func() bool
 }
 
 // NewRootCmd constructs the command tree with injected dependencies.

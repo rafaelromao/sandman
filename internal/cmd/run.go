@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/spf13/cobra"
 )
 
@@ -14,22 +16,56 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 		Use:   "run [issue...]",
 		Short: "Run an AFK agent for specific issues",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return fmt.Errorf("no issues provided")
-			}
-
 			cfg, err := deps.ConfigStore.Load()
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			issues := make([]int, len(args))
-			for i, arg := range args {
-				n, err := strconv.Atoi(arg)
-				if err != nil {
-					return fmt.Errorf("invalid issue number %q: %w", arg, err)
+			label, _ := cmd.Flags().GetString("label")
+			query, _ := cmd.Flags().GetString("query")
+			interactive, _ := cmd.Flags().GetBool("interactive")
+
+			var issues []int
+			if len(args) > 0 {
+				if label != "" || query != "" {
+					return fmt.Errorf("cannot combine issue arguments with --label or --query")
 				}
-				issues[i] = n
+				issues = make([]int, len(args))
+				for i, arg := range args {
+					n, err := strconv.Atoi(arg)
+					if err != nil {
+						return fmt.Errorf("invalid issue number %q: %w", arg, err)
+					}
+					issues[i] = n
+				}
+			} else if label != "" {
+				searchQuery := "label:" + label + " is:open"
+				issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, searchQuery)
+				if err != nil {
+					return err
+				}
+			} else if query != "" {
+				issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, query)
+				if err != nil {
+					return err
+				}
+			} else {
+				if deps.IsTTY != nil && deps.IsTTY() {
+					issues, err = pickIssues(cmd.Context(), deps.GitHubClient, deps.IssuePicker)
+					if err != nil {
+						return err
+					}
+				} else {
+					return fmt.Errorf("no issues provided")
+				}
+			}
+
+			if len(issues) == 0 {
+				return fmt.Errorf("no issues selected")
+			}
+
+			if interactive && len(issues) > 1 {
+				return fmt.Errorf("--interactive requires exactly one issue")
 			}
 
 			parallel, _ := cmd.Flags().GetInt("parallel")
@@ -50,6 +86,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				Debug:              debug,
 				Sandbox:            sandboxMode,
 				IsolatedContainers: isolatedContainers,
+				Interactive:        interactive,
 			})
 			if result != nil {
 				printSummary(cmd, result)
@@ -71,7 +108,30 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("debug", false, "Print worktree path and instructions after failure")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: worktree, docker, or podman")
 	cmd.Flags().Bool("isolated-containers", false, "Use one container per agent instead of a shared container")
+	cmd.Flags().Bool("interactive", false, "Run the agent in interactive mode")
+	cmd.Flags().String("label", "", "Select issues by label")
+	cmd.Flags().String("query", "", "Select issues by GitHub search query")
 	return cmd
+}
+
+func resolveIssues(ctx context.Context, client github.Client, query string) ([]int, error) {
+	ghIssues, err := client.SearchIssues(query)
+	if err != nil {
+		return nil, fmt.Errorf("search issues: %w", err)
+	}
+	numbers := make([]int, len(ghIssues))
+	for i, issue := range ghIssues {
+		numbers[i] = issue.Number
+	}
+	return numbers, nil
+}
+
+func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) ([]int, error) {
+	ghIssues, err := client.SearchIssues("is:open")
+	if err != nil {
+		return nil, fmt.Errorf("list open issues: %w", err)
+	}
+	return picker.Select(ghIssues)
 }
 
 func printSummary(cmd *cobra.Command, result *batch.Result) {

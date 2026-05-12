@@ -101,14 +101,21 @@ func (r *AgentRun) Finalize(client github.Client, defaultBranch string) error {
 }
 
 // Run executes the full lifecycle of the AgentRun and returns the result.
-func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string) AgentRunResult {
+func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command string, client github.Client, defaultBranch string, interactive bool) AgentRunResult {
 	if err := r.Prepare(renderer); err != nil {
 		r.status = "failure"
 		return r.Result()
 	}
-	if err := r.Execute(ctx, command, os.Stdout, os.Stderr); err != nil {
-		r.status = "failure"
-		return r.Result()
+	if interactive {
+		if err := r.sandbox.ExecInteractive(ctx, command); err != nil {
+			r.status = "failure"
+			return r.Result()
+		}
+	} else {
+		if err := r.Execute(ctx, command, os.Stdout, os.Stderr); err != nil {
+			r.status = "failure"
+			return r.Result()
+		}
 	}
 	if err := r.Finalize(client, defaultBranch); err != nil {
 		r.status = "failure"
