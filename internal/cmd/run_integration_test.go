@@ -73,6 +73,8 @@ func executeRunCommand(t *testing.T, deps Dependencies, args ...string) (string,
 
 func issueAwareAgentCommand(body string) string {
 	return strings.TrimSpace(`
+# The agent command is shared across AgentRuns, so infer the issue number
+# from the worktree directory each run executes inside.
 repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")")
 issue_dir=$(basename "$PWD")
 issue=${issue_dir%%-*}
@@ -286,6 +288,9 @@ func TestRun_DependencyAwareBatch_TwoLevelDAGPreservesParallelismWithinLevels(t 
 	t.Chdir(dir)
 	initRunIntegrationRepo(t, dir)
 
+	// ADR-0003 only requires each AgentRun to wait for its own BlockedBy set.
+	// This test still proves both blockers start before dependents and that
+	// same-level AgentRuns preserve concurrency in both phases.
 	deps := newRunIntegrationDeps(issueAwareAgentCommand(`
 state_dir="$repo_root/.sandman/dag"
 mkdir -p "$state_dir"
