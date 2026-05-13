@@ -158,6 +158,12 @@ func (f *fakeSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBr
 	return f.sandbox
 }
 
+type freshSandboxFactory struct{}
+
+func (f *freshSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+	return &fakeSandbox{}
+}
+
 type spyEventLog struct {
 	events []events.Event
 }
@@ -708,6 +714,7 @@ func TestRunBatch_RespectsParallelLimit(t *testing.T) {
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.runnableFactory = factory
+	o.sandboxFactory = &freshSandboxFactory{}
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Parallel: 2})
 	if err != nil {
@@ -795,6 +802,7 @@ func TestRunBatch_DefaultParallelIsFour(t *testing.T) {
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.runnableFactory = factory
+	o.sandboxFactory = &freshSandboxFactory{}
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4, 5}})
 	if err != nil {

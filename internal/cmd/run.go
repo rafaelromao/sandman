@@ -214,16 +214,22 @@ func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) (
 }
 
 func printSummary(cmd *cobra.Command, result *batch.Result) {
-	var successCount, failureCount int
+	var successCount, failureCount, blockedCount int
 	for _, run := range result.Runs {
 		if run.Status == "success" {
 			successCount++
+		} else if run.Status == "blocked" {
+			blockedCount++
 		} else {
 			failureCount++
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Summary: %d succeeded, %d failed\n", successCount, failureCount)
+	if blockedCount > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "Summary: %d succeeded, %d failed, %d blocked\n", successCount, failureCount, blockedCount)
+	} else {
+		fmt.Fprintf(cmd.OutOrStdout(), "Summary: %d succeeded, %d failed\n", successCount, failureCount)
+	}
 	for _, run := range result.Runs {
 		fmt.Fprintf(cmd.OutOrStdout(), "  #%d  %s  %s\n", run.IssueNumber, run.Status, run.Branch)
 	}
