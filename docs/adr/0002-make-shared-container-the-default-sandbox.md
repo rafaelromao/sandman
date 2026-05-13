@@ -1,5 +1,7 @@
 # ADR-0002: Make shared container execution the default sandbox mode
 
+> Historical note: this ADR records the accepted decision at the time it was made. For current user-facing vocabulary, treat references to shared-container and isolated-container modes as superseded by the capacity-based model proposed in ADR-0005.
+
 ## Status
 
 accepted
