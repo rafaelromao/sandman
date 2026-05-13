@@ -37,10 +37,6 @@ func (s *WorktreeSandbox) Start() error {
 		return nil
 	}
 
-	if err := s.syncSourceBranch(); err != nil {
-		return err
-	}
-
 	if err := os.MkdirAll(s.worktreeBase, 0755); err != nil {
 		return fmt.Errorf("create worktree base: %w", err)
 	}
@@ -53,33 +49,34 @@ func (s *WorktreeSandbox) Start() error {
 	return nil
 }
 
-func (s *WorktreeSandbox) syncSourceBranch() error {
-	if out, err := runGitCommand(s.repoPath, "fetch", "origin", s.sourceBranch); err != nil {
-		return fmt.Errorf("sync default branch %q: %w\n%s", s.sourceBranch, err, out)
+// SyncDefaultBranch fast-forwards the local default branch from origin.
+func SyncDefaultBranch(repoPath, sourceBranch string) error {
+	if out, err := runGitCommand(repoPath, "fetch", "origin", sourceBranch); err != nil {
+		return fmt.Errorf("sync default branch %q: %w\n%s", sourceBranch, err, out)
 	}
 
-	remoteRef := "refs/remotes/origin/" + s.sourceBranch
-	localRef := "refs/heads/" + s.sourceBranch
+	remoteRef := "refs/remotes/origin/" + sourceBranch
+	localRef := "refs/heads/" + sourceBranch
 
-	remoteHash, err := gitRevParse(s.repoPath, remoteRef)
+	remoteHash, err := gitRevParse(repoPath, remoteRef)
 	if err != nil {
-		return fmt.Errorf("sync default branch %q: resolve %s: %w", s.sourceBranch, remoteRef, err)
+		return fmt.Errorf("sync default branch %q: resolve %s: %w", sourceBranch, remoteRef, err)
 	}
 
-	localHash, err := gitRevParse(s.repoPath, "--verify", localRef)
+	localHash, err := gitRevParse(repoPath, "--verify", localRef)
 	if err != nil {
-		if out, updateErr := runGitCommand(s.repoPath, "update-ref", localRef, remoteHash); updateErr != nil {
-			return fmt.Errorf("sync default branch %q: %w\n%s", s.sourceBranch, updateErr, out)
+		if out, updateErr := runGitCommand(repoPath, "update-ref", localRef, remoteHash); updateErr != nil {
+			return fmt.Errorf("sync default branch %q: %w\n%s", sourceBranch, updateErr, out)
 		}
 		return nil
 	}
 
-	if out, err := runGitCommand(s.repoPath, "merge-base", "--is-ancestor", localHash, remoteHash); err != nil {
-		return fmt.Errorf("sync default branch %q: %w\n%s", s.sourceBranch, err, out)
+	if out, err := runGitCommand(repoPath, "merge-base", "--is-ancestor", localHash, remoteHash); err != nil {
+		return fmt.Errorf("sync default branch %q: %w\n%s", sourceBranch, err, out)
 	}
 
-	if out, err := runGitCommand(s.repoPath, "update-ref", localRef, remoteHash, localHash); err != nil {
-		return fmt.Errorf("sync default branch %q: %w\n%s", s.sourceBranch, err, out)
+	if out, err := runGitCommand(repoPath, "update-ref", localRef, remoteHash, localHash); err != nil {
+		return fmt.Errorf("sync default branch %q: %w\n%s", sourceBranch, err, out)
 	}
 
 	return nil

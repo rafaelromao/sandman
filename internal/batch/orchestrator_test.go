@@ -179,6 +179,21 @@ func (f *fakeSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBr
 	return f.sandbox
 }
 
+type syncTrackingSandboxFactory struct {
+	mu         sync.Mutex
+	synced     bool
+	beforeSync bool
+}
+
+func (f *syncTrackingSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.synced {
+		f.beforeSync = true
+	}
+	return &fakeSandbox{}
+}
+
 type freshSandboxFactory struct{}
 
 func (f *freshSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
@@ -507,6 +522,50 @@ func TestRunBatch_NoIssues(t *testing.T) {
 
 	if len(result.Runs) != 0 {
 		t.Errorf("expected 0 runs, got %d", len(result.Runs))
+	}
+}
+
+func TestRunBatch_SyncsDefaultBranchOnceBeforeCreatingWorktrees(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+		},
+	}
+	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
+
+	var mu sync.Mutex
+	syncCalls := 0
+	tracker := &syncTrackingSandboxFactory{}
+	o.defaultBranchSync = func(repoPath, sourceBranch string) error {
+		mu.Lock()
+		syncCalls++
+		tracker.mu.Lock()
+		tracker.synced = true
+		tracker.mu.Unlock()
+		mu.Unlock()
+		return nil
+	}
+	o.sandboxFactory = tracker
+	o.runnableFactory = &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}}}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Parallel: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	if syncCalls != 1 {
+		t.Fatalf("expected one sync, got %d", syncCalls)
+	}
+	mu.Unlock()
+
+	tracker.mu.Lock()
+	beforeSync := tracker.beforeSync
+	tracker.mu.Unlock()
+	if beforeSync {
+		t.Fatal("expected worktrees to be created after default branch sync")
 	}
 }
 
@@ -1390,6 +1449,7 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true", ConfigDirs: []string{"~/.config/test"}}}}}, nil)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.containerRuntimeFactory = factory
 
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
@@ -1984,6 +2044,7 @@ func TestRunBatch_DefaultSandbox_ResolvesToPodman(t *testing.T) {
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.containerRuntimeFactory = factory
 
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
@@ -2010,6 +2071,7 @@ func TestRunBatch_PodmanMissingFallsBackToDocker(t *testing.T) {
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.containerRuntimeFactory = factory
 
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})

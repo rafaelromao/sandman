@@ -81,7 +81,7 @@ func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 	}
 }
 
-func TestWorktreeSandbox_StartSyncsDefaultBranchBeforeAddingWorktree(t *testing.T) {
+func TestSyncDefaultBranchFastForwardsDefaultBranchBeforeAddingWorktree(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
 	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
@@ -96,15 +96,19 @@ func TestWorktreeSandbox_StartSyncsDefaultBranchBeforeAddingWorktree(t *testing.
 	commitGitFile(t, seedDir, "tracked.txt", "remote\n", "remote update")
 	runGit(t, seedDir, "push", "origin", "main")
 
-	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
-	if err := s.Start(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err := SyncDefaultBranch(localDir, "main"); err != nil {
+		t.Fatalf("unexpected sync error: %v", err)
 	}
 
 	localMain := runGit(t, localDir, "rev-parse", "main")
 	remoteMain := runGit(t, remoteDir, "rev-parse", "main")
 	if localMain != remoteMain {
 		t.Fatalf("expected local main to sync to remote main, got %q and %q", localMain, remoteMain)
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
 	trackedPath := filepath.Join(s.WorkDir(), "tracked.txt")
@@ -121,7 +125,7 @@ func TestWorktreeSandbox_StartSyncsDefaultBranchBeforeAddingWorktree(t *testing.
 	}
 }
 
-func TestWorktreeSandbox_StartFailsWhenDefaultBranchCannotFastForward(t *testing.T) {
+func TestSyncDefaultBranchFailsWhenDefaultBranchCannotFastForward(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
 	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
@@ -137,12 +141,13 @@ func TestWorktreeSandbox_StartFailsWhenDefaultBranchCannotFastForward(t *testing
 	commitGitFile(t, seedDir, "remote-only.txt", "remote\n", "remote divergence")
 	runGit(t, seedDir, "push", "origin", "main")
 
-	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
-	if err := s.Start(); err == nil {
+	if err := SyncDefaultBranch(localDir, "main"); err == nil {
 		t.Fatal("expected sync failure when default branch cannot fast-forward")
 	} else if !strings.Contains(err.Error(), "sync default branch") {
 		t.Fatalf("expected sync error, got %v", err)
 	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 
 	if _, err := os.Stat(s.WorkDir()); !os.IsNotExist(err) {
 		t.Fatalf("expected no worktree to be created, got %v", err)
