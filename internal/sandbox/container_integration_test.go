@@ -19,6 +19,9 @@ func podmanAvailable(t *testing.T) bool {
 	t.Helper()
 	cmd := exec.Command("podman", "version")
 	if err := cmd.Run(); err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("podman not available in CI: %v", err)
+		}
 		t.Skip("podman not available")
 		return false
 	}
