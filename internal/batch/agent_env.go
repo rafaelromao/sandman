@@ -17,11 +17,11 @@ func applyAgentEnv(command string, env map[string]string) string {
 	sort.Strings(keys)
 
 	var b strings.Builder
-	b.WriteString("export ")
 	for i, key := range keys {
 		if i > 0 {
-			b.WriteByte(' ')
+			b.WriteString("; ")
 		}
+		b.WriteString("export ")
 		b.WriteString(key)
 		b.WriteByte('=')
 		b.WriteString(shellQuote(env[key]))
