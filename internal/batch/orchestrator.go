@@ -34,6 +34,153 @@ type Orchestrator struct {
 	killTimeout             time.Duration
 }
 
+type containerLease struct {
+	container sandbox.Container
+	release   func()
+}
+
+func (l *containerLease) Release() {
+	if l != nil && l.release != nil {
+		l.release()
+	}
+}
+
+type containerAllocator interface {
+	Acquire() (*containerLease, error)
+}
+
+type pooledContainer struct {
+	container sandbox.Container
+	active    int
+}
+
+type containerPool struct {
+	starter       sandbox.ContainerStarter
+	image         string
+	repoPath      string
+	startOpts     sandbox.StartOptions
+	capacity      int
+	maxContainers int
+
+	mu       sync.Mutex
+	cond     *sync.Cond
+	starting int
+	live     int
+	shared   []*pooledContainer
+}
+
+func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, startOpts sandbox.StartOptions, capacity, maxContainers int) *containerPool {
+	p := &containerPool{
+		starter:       starter,
+		image:         image,
+		repoPath:      repoPath,
+		startOpts:     startOpts,
+		capacity:      capacity,
+		maxContainers: maxContainers,
+	}
+	p.cond = sync.NewCond(&p.mu)
+	return p
+}
+
+func (p *containerPool) Acquire() (*containerLease, error) {
+	if p.capacity == 1 {
+		return p.acquireIsolated()
+	}
+	return p.acquireShared()
+}
+
+func (p *containerPool) acquireIsolated() (*containerLease, error) {
+	p.mu.Lock()
+	for p.maxContainers > 0 && p.live+p.starting >= p.maxContainers {
+		p.cond.Wait()
+	}
+	p.starting++
+	p.mu.Unlock()
+
+	container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
+
+	p.mu.Lock()
+	p.starting--
+	if err != nil {
+		p.cond.Broadcast()
+		p.mu.Unlock()
+		return nil, err
+	}
+	p.live++
+	p.mu.Unlock()
+
+	return &containerLease{
+		container: container,
+		release: func() {
+			_ = container.Stop()
+			p.mu.Lock()
+			p.live--
+			p.cond.Broadcast()
+			p.mu.Unlock()
+		},
+	}, nil
+}
+
+func (p *containerPool) acquireShared() (*containerLease, error) {
+	p.mu.Lock()
+	for {
+		for _, entry := range p.shared {
+			if entry.active < p.capacity {
+				entry.active++
+				container := entry.container
+				p.mu.Unlock()
+				return &containerLease{container: container, release: func() { p.releaseShared(entry) }}, nil
+			}
+		}
+
+		if p.maxContainers == 0 || len(p.shared)+p.starting < p.maxContainers {
+			p.starting++
+			p.mu.Unlock()
+
+			container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
+
+			p.mu.Lock()
+			p.starting--
+			if err != nil {
+				p.cond.Broadcast()
+				p.mu.Unlock()
+				return nil, err
+			}
+
+			entry := &pooledContainer{container: container, active: 1}
+			p.shared = append(p.shared, entry)
+			p.live++
+			p.mu.Unlock()
+
+			return &containerLease{container: container, release: func() { p.releaseShared(entry) }}, nil
+		}
+
+		p.cond.Wait()
+	}
+}
+
+func (p *containerPool) releaseShared(entry *pooledContainer) {
+	p.mu.Lock()
+	entry.active--
+	if entry.active > 0 {
+		p.cond.Broadcast()
+		p.mu.Unlock()
+		return
+	}
+
+	for i, candidate := range p.shared {
+		if candidate == entry {
+			p.shared = append(p.shared[:i], p.shared[i+1:]...)
+			break
+		}
+	}
+	p.live--
+	p.cond.Broadcast()
+	p.mu.Unlock()
+
+	_ = entry.container.Stop()
+}
+
 // NewOrchestrator creates an Orchestrator with the given dependencies.
 func NewOrchestrator(githubClient github.Client, renderer prompt.Renderer, configStore config.Store, eventLog events.EventLog) *Orchestrator {
 	return &Orchestrator{
@@ -62,6 +209,25 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 	sandboxMode = resolvedMode
 
+	containerCapacity := cfg.ContainerCapacity
+	if containerCapacity == 0 {
+		containerCapacity = config.DefaultContainerCapacity
+	}
+	if req.ContainerCapacitySet {
+		containerCapacity = req.ContainerCapacity
+	}
+	if containerCapacity < 1 {
+		return nil, fmt.Errorf("container_capacity must be at least 1")
+	}
+
+	maxContainers := cfg.MaxContainers
+	if req.MaxContainersSet {
+		maxContainers = req.MaxContainers
+	}
+	if maxContainers < 0 {
+		return nil, fmt.Errorf("max_containers must be 0 or greater")
+	}
+
 	agentCfg, ok := cfg.AgentProviders[cfg.Agent]
 	if !ok {
 		return nil, fmt.Errorf("agent %q not found in config", cfg.Agent)
@@ -74,11 +240,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if sbFactory == nil {
 		switch sandboxMode {
 		case "docker", "podman":
-			if req.IsolatedContainers {
-				sbFactory = ContainerSandboxFactory{Binary: sandboxMode, RepoPath: "."}
-			} else {
-				sbFactory = SharedContainerSandboxFactory{Binary: sandboxMode, RepoPath: "."}
-			}
+			sbFactory = SharedContainerSandboxFactory{Binary: sandboxMode, RepoPath: "."}
 		default:
 			sbFactory = defaultSandboxFactory{}
 		}
@@ -99,15 +261,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		containerFactory = defaultContainerRuntimeFactory{}
 	}
 
-	var sharedContainer sandbox.Container
-	if (sandboxMode == "docker" || sandboxMode == "podman") && !req.IsolatedContainers {
-		starter := containerFactory.New(sandboxMode)
-		c, err := starter.Start(sandbox.DefaultContainerImage, ".", startOpts)
-		if err != nil {
-			return nil, fmt.Errorf("start shared container: %w", err)
-		}
-		sharedContainer = c
-		defer sharedContainer.Stop()
+	var containerAlloc containerAllocator
+	if sandboxMode == "docker" || sandboxMode == "podman" {
+		containerAlloc = newContainerPool(containerFactory.New(sandboxMode), sandbox.DefaultContainerImage, ".", startOpts, containerCapacity, maxContainers)
 	}
 
 	parallel := req.Parallel
@@ -203,7 +359,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, req.Interactive, req.PromptConfig, activeRuns, &activeMu, sbFactory, sandboxMode, req.IsolatedContainers, sharedContainer, containerFactory, startOpts)
+			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, req.Interactive, req.PromptConfig, activeRuns, &activeMu, sbFactory, containerAlloc)
 			mu.Lock()
 			results[idx] = res
 			statuses[issueNum] = res.Status
@@ -270,7 +426,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, debug bool, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, sandboxMode string, isolated bool, sharedContainer sandbox.Container, containerFactory ContainerRuntimeFactory, startOpts sandbox.StartOptions) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, debug bool, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure"}
@@ -280,18 +436,14 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	if branch == "" {
 		branch = fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
 	}
-	// TODO: detect repo root instead of hardcoding "."
 	var container sandbox.Container
-	if (sandboxMode == "docker" || sandboxMode == "podman") && isolated {
-		starter := containerFactory.New(sandboxMode)
-		c, err := starter.Start(sandbox.DefaultContainerImage, ".", startOpts)
+	if containerAlloc != nil {
+		lease, err := containerAlloc.Acquire()
 		if err != nil {
 			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 		}
-		container = c
-		defer container.Stop()
-	} else {
-		container = sharedContainer
+		container = lease.container
+		defer lease.Release()
 	}
 
 	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch, container)

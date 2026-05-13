@@ -131,6 +131,69 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoad_MissingContainerSettings_AppliesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: codex
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.ContainerCapacity != 4 {
+		t.Errorf("container_capacity: got %d, want %d", cfg.ContainerCapacity, 4)
+	}
+	if cfg.MaxContainers != 0 {
+		t.Errorf("max_containers: got %d, want %d", cfg.MaxContainers, 0)
+	}
+}
+
+func TestLoad_InvalidContainerSettings_ReturnValidationError(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		wantErr string
+	}{
+		{
+			name: "container capacity less than one",
+			content: `agent: codex
+container_capacity: 0
+`,
+			wantErr: "container_capacity must be at least 1",
+		},
+		{
+			name: "negative max containers",
+			content: `agent: codex
+max_containers: -1
+`,
+			wantErr: "max_containers must be 0 or greater",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			_, err := Load(path)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestLoad_NegativeDefaultParallel_DefaultsToFour(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -201,10 +264,12 @@ func TestLoad_InvalidYAML_ReturnsParseError(t *testing.T) {
 
 func TestConfig_GetValue(t *testing.T) {
 	cfg := &Config{
-		Agent:           "codex",
-		DefaultParallel: 4,
-		WorktreeDir:     "/tmp/wt",
-		Sandbox:         "podman",
+		Agent:             "codex",
+		DefaultParallel:   4,
+		ContainerCapacity: 3,
+		MaxContainers:     0,
+		WorktreeDir:       "/tmp/wt",
+		Sandbox:           "podman",
 		Git: GitConfig{
 			DefaultBranch: "main",
 			AuthorName:    "Dev",
@@ -219,6 +284,8 @@ func TestConfig_GetValue(t *testing.T) {
 	}{
 		{"agent", "codex", false},
 		{"default_parallel", "4", false},
+		{"container_capacity", "3", false},
+		{"max_containers", "0", false},
 		{"worktree_dir", "/tmp/wt", false},
 		{"sandbox", "podman", false},
 		{"git.default_branch", "main", false},
@@ -250,6 +317,8 @@ func TestConfig_SetValue(t *testing.T) {
 	}{
 		{"agent", "codex", false},
 		{"default_parallel", "4", false},
+		{"container_capacity", "4", false},
+		{"max_containers", "0", false},
 		{"worktree_dir", "/tmp/wt", false},
 		{"sandbox", "podman", false},
 		{"git.default_branch", "master", false},
@@ -258,6 +327,10 @@ func TestConfig_SetValue(t *testing.T) {
 		{"unknown_key", "value", true},
 		{"default_parallel", "not-a-number", true},
 		{"default_parallel", "-1", true},
+		{"container_capacity", "0", true},
+		{"container_capacity", "not-a-number", true},
+		{"max_containers", "-1", true},
+		{"max_containers", "not-a-number", true},
 	}
 
 	for _, tt := range tests {

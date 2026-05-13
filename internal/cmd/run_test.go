@@ -1065,7 +1065,7 @@ func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 	}
 }
 
-func TestRun_IsolatedContainersFlagPassedToBatchRunner(t *testing.T) {
+func TestRun_ContainerFlagsPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
 
@@ -1073,18 +1073,93 @@ func TestRun_IsolatedContainersFlagPassedToBatchRunner(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--sandbox", "docker", "--isolated-containers", "42"})
+	cmd.SetArgs([]string{"--sandbox", "docker", "--container-capacity", "1", "--max-containers", "2", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !spy.req.IsolatedContainers {
-		t.Errorf("expected IsolatedContainers=true, got false")
+	if !spy.req.ContainerCapacitySet {
+		t.Fatal("expected ContainerCapacitySet=true")
+	}
+	if spy.req.ContainerCapacity != 1 {
+		t.Errorf("expected container_capacity=1, got %d", spy.req.ContainerCapacity)
+	}
+	if !spy.req.MaxContainersSet {
+		t.Fatal("expected MaxContainersSet=true")
+	}
+	if spy.req.MaxContainers != 2 {
+		t.Errorf("expected max_containers=2, got %d", spy.req.MaxContainers)
 	}
 	if spy.req.Sandbox != "docker" {
 		t.Errorf("expected sandbox=docker, got %q", spy.req.Sandbox)
+	}
+}
+
+func TestRun_MaxContainersAutoFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--max-containers", "0", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.req.MaxContainersSet {
+		t.Fatal("expected MaxContainersSet=true")
+	}
+	if spy.req.MaxContainers != 0 {
+		t.Errorf("expected max_containers=0, got %d", spy.req.MaxContainers)
+	}
+}
+
+func TestRun_InvalidContainerFlagsReturnError(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "container capacity less than one",
+			args:    []string{"--container-capacity", "0", "42"},
+			wantErr: "container_capacity must be at least 1",
+		},
+		{
+			name:    "negative max containers",
+			args:    []string{"--max-containers", "-1", "42"},
+			wantErr: "max_containers must be 0 or greater",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(spy)
+
+			var buf bytes.Buffer
+			cmd := NewRunCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+			if spy.called {
+				t.Fatal("expected batch runner not to be called")
+			}
+		})
 	}
 }
 
