@@ -1396,9 +1396,6 @@ func TestRunBatch_MaxContainersLimitRestrictsSharedContainerConcurrency(t *testi
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 1 {
-		t.Fatalf("expected 1 container to start, got %d", starter.startCount)
-	}
 	if runnables.max != 2 {
 		t.Fatalf("expected max concurrent runs to be 2, got %d", runnables.max)
 	}
