@@ -197,13 +197,17 @@ func (f *blockingRunnableFactory) NewRunnable(issue *github.Issue, branch string
 }
 
 type controlledRunnable struct {
-	result  AgentRunResult
-	started chan struct{}
-	release <-chan struct{}
-	once    sync.Once
+	result   AgentRunResult
+	started  chan struct{}
+	finished chan struct{}
+	release  <-chan struct{}
+	once     sync.Once
 }
 
 func (r *controlledRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult {
+	if r.finished != nil {
+		defer close(r.finished)
+	}
 	if r.started != nil {
 		r.once.Do(func() { close(r.started) })
 	}
@@ -1295,6 +1299,46 @@ func (f *fakeContainerRuntimeFactory) New(binary string) sandbox.ContainerStarte
 	return f.starter
 }
 
+type trackingSandbox struct {
+	fakeSandbox
+	containerID string
+}
+
+type trackingSandboxFactory struct{}
+
+func (f *trackingSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+	sb := &trackingSandbox{}
+	if container != nil {
+		sb.containerID = container.ID()
+	}
+	return sb
+}
+
+type trackingRunnableFactory struct {
+	mu               sync.Mutex
+	results          map[int]AgentRunResult
+	runnables        map[int]Runnable
+	containerByIssue map[int]string
+}
+
+func (f *trackingRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if ts, ok := sb.(*trackingSandbox); ok {
+		if f.containerByIssue == nil {
+			f.containerByIssue = make(map[int]string)
+		}
+		f.containerByIssue[issue.Number] = ts.containerID
+	}
+	if r := f.runnables[issue.Number]; r != nil {
+		return r
+	}
+	if res, ok := f.results[issue.Number]; ok {
+		return &fakeRunnable{result: res}
+	}
+	return &fakeRunnable{result: AgentRunResult{IssueNumber: issue.Number, Status: "failure"}}
+}
+
 func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	dir := t.TempDir()
 	dockerPath := filepath.Join(dir, "docker")
@@ -1331,7 +1375,143 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	}
 }
 
-func TestRunBatch_ContainerCapacityOneStartsOneContainerPerRun(t *testing.T) {
+func TestRunBatch_ReusesIdleContainerWithinBatchAndStopsItAtEnd(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+		},
+	}
+	first := &fakeContainerForOrchestrator{id: "container-1"}
+	second := &fakeContainerForOrchestrator{id: "container-2"}
+	starter := &fakeContainerStarter{containers: []sandbox.Container{first, second}}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+	runnables := &trackingRunnableFactory{results: map[int]AgentRunResult{
+		1: {IssueNumber: 1, Status: "success"},
+		2: {IssueNumber: 2, Status: "success"},
+	}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 1, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if starter.startCount != 1 {
+		t.Fatalf("expected 1 container to start, got %d", starter.startCount)
+	}
+	if got := runnables.containerByIssue[1]; got == "" {
+		t.Fatal("expected first run to receive a container")
+	}
+	if runnables.containerByIssue[1] != runnables.containerByIssue[2] {
+		t.Fatalf("expected both runs to reuse the same container, got %q and %q", runnables.containerByIssue[1], runnables.containerByIssue[2])
+	}
+	if !first.stopCalled {
+		t.Fatal("expected pooled container to stop when the batch finishes")
+	}
+}
+
+func TestRunBatch_PrefersLeastLoadedContainerWhenReusingIdleCapacity(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+			3: {Number: 3, Title: "Three"},
+			4: {Number: 4, Title: "Four"},
+		},
+	}
+	starter := &fakeContainerStarter{containers: []sandbox.Container{
+		&fakeContainerForOrchestrator{id: "container-1"},
+		&fakeContainerForOrchestrator{id: "container-2"},
+	}}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	release1 := make(chan struct{})
+	release2 := make(chan struct{})
+	release3 := make(chan struct{})
+	release4 := make(chan struct{})
+	started1 := make(chan struct{})
+	started2 := make(chan struct{})
+	started3 := make(chan struct{})
+	started4 := make(chan struct{})
+	finished2 := make(chan struct{})
+	finished3 := make(chan struct{})
+	runnables := &trackingRunnableFactory{runnables: map[int]Runnable{
+		1: &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}, started: started1, release: release1},
+		2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started2, finished: finished2, release: release2},
+		3: &controlledRunnable{result: AgentRunResult{IssueNumber: 3, Status: "success"}, started: started3, finished: finished3, release: release3},
+		4: &controlledRunnable{result: AgentRunResult{IssueNumber: 4, Status: "success"}, started: started4, release: release4},
+	}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{
+			Issues:               []int{1, 2, 3, 4},
+			Dependencies:         map[int][]int{4: {3}},
+			Sandbox:              "docker",
+			Parallel:             4,
+			ContainerCapacity:    2,
+			ContainerCapacitySet: true,
+			MaxContainers:        2,
+			MaxContainersSet:     true,
+		})
+		errCh <- err
+	}()
+
+	waitForSignal(t, started1, "expected issue 1 to start")
+	waitForSignal(t, started2, "expected issue 2 to start")
+	waitForSignal(t, started3, "expected issue 3 to start")
+	assertNoSignal(t, started4, "issue 4 should wait for issue 3 to finish")
+
+	close(release2)
+	waitForSignal(t, finished2, "expected issue 2 to finish")
+	assertNoSignal(t, started4, "issue 4 should still be blocked by issue 3")
+
+	close(release3)
+	waitForSignal(t, finished3, "expected issue 3 to finish")
+	waitForSignal(t, started4, "expected issue 4 to start after issue 3 finishes")
+
+	if runnables.containerByIssue[1] != runnables.containerByIssue[2] {
+		t.Fatalf("expected issues 1 and 2 to share a container, got %q and %q", runnables.containerByIssue[1], runnables.containerByIssue[2])
+	}
+	if runnables.containerByIssue[3] == runnables.containerByIssue[1] {
+		t.Fatalf("expected issue 3 to run in a different container from issue 1")
+	}
+	if runnables.containerByIssue[4] != runnables.containerByIssue[3] {
+		t.Fatalf("expected issue 4 to reuse the least-loaded container %q, got %q", runnables.containerByIssue[3], runnables.containerByIssue[4])
+	}
+
+	close(release1)
+	close(release4)
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *testing.T) {
 	dir := t.TempDir()
 	dockerPath := filepath.Join(dir, "docker")
 	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
@@ -1347,7 +1527,10 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerRun(t *testing.T) {
 	}
 	starter := &fakeContainerStarter{}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
-	runnables := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}}}
+	runnables := &fakeRunnableFactory{
+		results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}},
+		delays:  []time.Duration{50 * time.Millisecond, 50 * time.Millisecond},
+	}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.containerRuntimeFactory = factory
@@ -1455,7 +1638,10 @@ func TestRunBatch_UsesConfigContainerSettingsWhenRequestUnset(t *testing.T) {
 	}
 	starter := &fakeContainerStarter{}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
-	runnables := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}}}
+	runnables := &fakeRunnableFactory{
+		results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}},
+		delays:  []time.Duration{50 * time.Millisecond, 50 * time.Millisecond},
+	}
 	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", ContainerCapacity: 1, MaxContainers: 0, Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}
 
 	o := NewOrchestrator(client, &noopRenderer{}, store, nil)

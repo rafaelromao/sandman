@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,9 +84,6 @@ func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, 
 }
 
 func (p *containerPool) Acquire() (*containerLease, error) {
-	if p.capacity == 1 {
-		return p.acquireIsolated()
-	}
 	return p.acquireShared()
 }
 
@@ -124,13 +122,20 @@ func (p *containerPool) acquireIsolated() (*containerLease, error) {
 func (p *containerPool) acquireShared() (*containerLease, error) {
 	p.mu.Lock()
 	for {
+		var best *pooledContainer
 		for _, entry := range p.shared {
-			if entry.active < p.capacity {
-				entry.active++
-				container := entry.container
-				p.mu.Unlock()
-				return &containerLease{container: container, release: func() { p.releaseShared(entry) }}, nil
+			if entry.active >= p.capacity {
+				continue
 			}
+			if best == nil || entry.active < best.active {
+				best = entry
+			}
+		}
+		if best != nil {
+			best.active++
+			container := best.container
+			p.mu.Unlock()
+			return &containerLease{container: container, release: func() { p.releaseShared(best) }}, nil
 		}
 
 		if p.maxContainers == 0 || len(p.shared)+p.starting < p.maxContainers {
@@ -162,23 +167,25 @@ func (p *containerPool) acquireShared() (*containerLease, error) {
 func (p *containerPool) releaseShared(entry *pooledContainer) {
 	p.mu.Lock()
 	entry.active--
-	if entry.active > 0 {
-		p.cond.Broadcast()
-		p.mu.Unlock()
-		return
-	}
-
-	for i, candidate := range p.shared {
-		if candidate == entry {
-			p.shared = append(p.shared[:i], p.shared[i+1:]...)
-			break
-		}
-	}
-	p.live--
 	p.cond.Broadcast()
 	p.mu.Unlock()
+}
 
-	_ = entry.container.Stop()
+func (p *containerPool) Close() error {
+	p.mu.Lock()
+	containers := make([]sandbox.Container, 0, len(p.shared))
+	for _, entry := range p.shared {
+		containers = append(containers, entry.container)
+	}
+	p.shared = nil
+	p.live = 0
+	p.mu.Unlock()
+
+	var err error
+	for _, container := range containers {
+		err = errors.Join(err, container.Stop())
+	}
+	return err
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -262,8 +269,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	var containerAlloc containerAllocator
+	var pool *containerPool
 	if sandboxMode == "docker" || sandboxMode == "podman" {
-		containerAlloc = newContainerPool(containerFactory.New(sandboxMode), sandbox.DefaultContainerImage, ".", startOpts, containerCapacity, maxContainers)
+		pool = newContainerPool(containerFactory.New(sandboxMode), sandbox.DefaultContainerImage, ".", startOpts, containerCapacity, maxContainers)
+		containerAlloc = pool
+		defer func() {
+			if pool != nil {
+				_ = pool.Close()
+			}
+		}()
 	}
 
 	parallel := req.Parallel
