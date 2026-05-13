@@ -33,17 +33,21 @@ func initRunIntegrationRepo(t *testing.T, dir string) {
 	}
 }
 
-func newRunIntegrationDeps(agentCommand string, gh *fakeGitHubClient) Dependencies {
+func newRunIntegrationDepsWithAgent(agent config.Agent, gh *fakeGitHubClient) Dependencies {
+	if agent.Name == "" {
+		agent.Name = "test-agent"
+	}
+	if agent.Command == "" {
+		agent.Command = "true"
+	}
+
 	store := &fakeStore{config: &config.Config{
 		Agent:       "test-agent",
 		WorktreeDir: ".sandman/worktrees",
 		Sandbox:     "worktree",
 		Git:         config.GitConfig{DefaultBranch: "main"},
 		AgentProviders: map[string]config.Agent{
-			"test-agent": {
-				Name:    "test-agent",
-				Command: agentCommand,
-			},
+			"test-agent": agent,
 		},
 	}}
 
@@ -56,6 +60,13 @@ func newRunIntegrationDeps(agentCommand string, gh *fakeGitHubClient) Dependenci
 		PromptRenderer: &prompt.Engine{},
 		IsTTY:          func() bool { return false },
 	}
+}
+
+func newRunIntegrationDeps(agentCommand string, gh *fakeGitHubClient) Dependencies {
+	return newRunIntegrationDepsWithAgent(config.Agent{
+		Name:    "test-agent",
+		Command: agentCommand,
+	}, gh)
 }
 
 func executeRunCommand(t *testing.T, deps Dependencies, args ...string) (string, error) {
@@ -316,6 +327,36 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
 	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
 		t.Fatalf("expected worktree to be removed, got: %v", err)
+	}
+}
+
+func TestRun_WorktreeSandboxSingleIssuePropagatesAgentEnvToLog(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initRunIntegrationRepo(t, dir)
+
+	deps := newRunIntegrationDepsWithAgent(config.Agent{
+		Name:    "test-agent",
+		Command: "printenv AGENT_TOKEN",
+		Env: map[string]string{
+			"AGENT_TOKEN": "token with spaces",
+		},
+	}, &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+	}})
+
+	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(logData), "token with spaces") {
+		t.Fatalf("expected env-derived value in log, got:\n%s", logData)
 	}
 }
 

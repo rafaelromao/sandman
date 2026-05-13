@@ -18,6 +18,7 @@ type AgentRun struct {
 	branch  string
 	sandbox sandbox.Sandbox
 	status  string
+	env     map[string]string
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -87,6 +88,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 		r.status = "failure"
 		return r.Result()
 	}
+	renderedCmd = applyAgentEnv(renderedCmd, r.env)
 
 	if interactive {
 		if err := r.sandbox.ExecInteractive(ctx, renderedCmd); err != nil {

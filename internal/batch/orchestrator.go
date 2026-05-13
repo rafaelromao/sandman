@@ -483,15 +483,18 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		activeMu.Unlock()
 	}()
 
+	agentCfg, ok := cfg.AgentProviders[cfg.Agent]
+	if !ok {
+		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+	}
+
 	factory := o.runnableFactory
 	if factory == nil {
 		factory = defaultRunnableFactory{}
 	}
 	runnable := factory.NewRunnable(issue, branch, wt)
-
-	agentCfg, ok := cfg.AgentProviders[cfg.Agent]
-	if !ok {
-		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+	if agentRun, ok := runnable.(*AgentRun); ok {
+		agentRun.env = agentCfg.Env
 	}
 
 	runID := generateRunID(num)
