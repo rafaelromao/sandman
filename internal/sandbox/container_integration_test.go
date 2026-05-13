@@ -120,6 +120,7 @@ func TestContainer_Stop_StopsContainer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	t.Cleanup(func() { _ = c.Stop() })
 	waitForContainer(t, c.ID())
 
 	if err := c.Stop(); err != nil {
