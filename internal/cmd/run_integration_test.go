@@ -363,10 +363,11 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 		t.Fatalf("add origin remote: %v: %s", err, out)
 	}
 
-	homeDir := filepath.Join(dir, "home")
-	if err := os.MkdirAll(homeDir, 0755); err != nil {
+	homeDir, err := os.MkdirTemp("", "sandman-podman-home-")
+	if err != nil {
 		t.Fatalf("create home dir: %v", err)
 	}
+	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
 	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
 		t.Fatalf("create ssh dir: %v", err)
 	}
@@ -374,6 +375,9 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 		t.Fatalf("write gitconfig: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
+		t.Fatalf("warm podman image for test home: %v: %s", err, out)
+	}
 
 	store := &fakeStore{config: &config.Config{
 		Agent:       "test-agent",
