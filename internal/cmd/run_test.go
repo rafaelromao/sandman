@@ -263,6 +263,36 @@ func TestRun_PrintsSummaryWithBlockedRuns(t *testing.T) {
 	}
 }
 
+func TestRun_PrintsSummaryWithBlockedRunsAndNoFailures(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{
+		Runs: []batch.AgentRunResult{
+			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
+			{IssueNumber: 100, Status: "blocked", Branch: "sandman/100-dependent"},
+			{IssueNumber: 101, Status: "blocked", Branch: "sandman/101-another-dependent"},
+		},
+	}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "100", "101"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed, 2 blocked") {
+		t.Errorf("expected blocked summary without failures, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#101  blocked  sandman/101-another-dependent") {
+		t.Errorf("expected issue 101 blocked in summary, got:\n%s", out)
+	}
+}
+
 func TestRun_PreserveFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
