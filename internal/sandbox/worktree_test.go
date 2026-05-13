@@ -89,6 +89,8 @@ func TestSyncDefaultBranchFastForwardsDefaultBranchBeforeAddingWorktree(t *testi
 
 	localDir := t.TempDir()
 	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
 	runGit(t, localDir, "checkout", "-b", "feature")
 	commitGitFile(t, localDir, "feature-only.txt", "feature\n", "feature")
 	writeGitFile(t, localDir, "untracked.txt", "keep me out of the worktree\n")
