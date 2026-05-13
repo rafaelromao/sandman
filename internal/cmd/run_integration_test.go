@@ -350,6 +350,67 @@ func TestRun_WorktreeSandboxSingleIssuePreservesWorktreeOnFailure(t *testing.T) 
 	}
 }
 
+func TestRun_WorktreeSandboxSingleIssuePreservesRenderedCliPrompt(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initRunIntegrationRepo(t, dir)
+
+	deps := newRunIntegrationDeps(`
+set -e
+prompt_path=".sandman/prompt.md"
+test -f "$prompt_path"
+grep -Fq "Issue #42: Fix bug" "$prompt_path"
+grep -Fq "Users cannot log in." "$prompt_path"
+grep -Fq "Priority: urgent" "$prompt_path"
+touch agent-ran.txt
+`, &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+	}})
+
+	promptTemplate := `# Task
+
+Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
+
+{{ISSUE_BODY}}
+
+Priority: {{PRIORITY}}
+`
+
+	out, err := executeRunCommand(t, deps,
+		"--sandbox", "worktree",
+		"--preserve",
+		"--prompt", promptTemplate,
+		"--prompt-arg", "PRIORITY=urgent",
+		"42",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
+		t.Fatalf("expected branch string in summary, got:\n%s", out)
+	}
+
+	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug", ".sandman", "prompt.md")
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read prompt: %v", err)
+	}
+
+	wantPrompt := "# Task\n\nIssue #42: Fix bug\n\nUsers cannot log in.\n\nPriority: urgent\n"
+	if got := string(data); got != wantPrompt {
+		t.Fatalf("unexpected prompt content:\nwant:\n%s\ngot:\n%s", wantPrompt, got)
+	}
+
+	markerPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug", "agent-ran.txt")
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("expected agent marker file, got: %v", err)
+	}
+}
+
 func TestRun_DependencyAwareBatch_TwoLevelDAGPreservesParallelismWithinLevels(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
