@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -52,6 +53,8 @@ type containerAllocator interface {
 type pooledContainer struct {
 	container sandbox.Container
 	active    int
+	ready     bool
+	startErr  error
 }
 
 type containerPool struct {
@@ -62,11 +65,9 @@ type containerPool struct {
 	capacity      int
 	maxContainers int
 
-	mu       sync.Mutex
-	cond     *sync.Cond
-	starting int
-	live     int
-	shared   []*pooledContainer
+	mu     sync.Mutex
+	cond   *sync.Cond
+	shared []*pooledContainer
 }
 
 func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, startOpts sandbox.StartOptions, capacity, maxContainers int) *containerPool {
@@ -83,73 +84,76 @@ func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, 
 }
 
 func (p *containerPool) Acquire() (*containerLease, error) {
-	if p.capacity == 1 {
-		return p.acquireIsolated()
-	}
 	return p.acquireShared()
-}
-
-func (p *containerPool) acquireIsolated() (*containerLease, error) {
-	p.mu.Lock()
-	for p.maxContainers > 0 && p.live+p.starting >= p.maxContainers {
-		p.cond.Wait()
-	}
-	p.starting++
-	p.mu.Unlock()
-
-	container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
-
-	p.mu.Lock()
-	p.starting--
-	if err != nil {
-		p.cond.Broadcast()
-		p.mu.Unlock()
-		return nil, err
-	}
-	p.live++
-	p.mu.Unlock()
-
-	return &containerLease{
-		container: container,
-		release: func() {
-			_ = container.Stop()
-			p.mu.Lock()
-			p.live--
-			p.cond.Broadcast()
-			p.mu.Unlock()
-		},
-	}, nil
 }
 
 func (p *containerPool) acquireShared() (*containerLease, error) {
 	p.mu.Lock()
 	for {
+		var best *pooledContainer
+		var pending *pooledContainer
 		for _, entry := range p.shared {
-			if entry.active < p.capacity {
-				entry.active++
-				container := entry.container
-				p.mu.Unlock()
-				return &containerLease{container: container, release: func() { p.releaseShared(entry) }}, nil
+			if entry.startErr != nil || entry.active >= p.capacity {
+				continue
+			}
+			if !entry.ready {
+				if pending == nil || entry.active < pending.active {
+					pending = entry
+				}
+				continue
+			}
+			if best == nil || entry.active < best.active {
+				best = entry
 			}
 		}
+		if best != nil {
+			best.active++
+			container := best.container
+			p.mu.Unlock()
+			return &containerLease{container: container, release: func() { p.releaseShared(best) }}, nil
+		}
+		if pending != nil {
+			pending.active++
+			for !pending.ready && pending.startErr == nil {
+				p.cond.Wait()
+			}
+			if pending.startErr != nil {
+				err := pending.startErr
+				pending.active--
+				if pending.active == 0 {
+					p.removeShared(pending)
+					p.cond.Broadcast()
+				}
+				p.mu.Unlock()
+				return nil, err
+			}
+			container := pending.container
+			p.mu.Unlock()
+			return &containerLease{container: container, release: func() { p.releaseShared(pending) }}, nil
+		}
 
-		if p.maxContainers == 0 || len(p.shared)+p.starting < p.maxContainers {
-			p.starting++
+		if p.maxContainers == 0 || len(p.shared) < p.maxContainers {
+			entry := &pooledContainer{active: 1}
+			p.shared = append(p.shared, entry)
 			p.mu.Unlock()
 
 			container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
 
 			p.mu.Lock()
-			p.starting--
 			if err != nil {
+				entry.startErr = err
 				p.cond.Broadcast()
+				entry.active--
+				if entry.active == 0 {
+					p.removeShared(entry)
+				}
 				p.mu.Unlock()
 				return nil, err
 			}
 
-			entry := &pooledContainer{container: container, active: 1}
-			p.shared = append(p.shared, entry)
-			p.live++
+			entry.container = container
+			entry.ready = true
+			p.cond.Broadcast()
 			p.mu.Unlock()
 
 			return &containerLease{container: container, release: func() { p.releaseShared(entry) }}, nil
@@ -162,23 +166,35 @@ func (p *containerPool) acquireShared() (*containerLease, error) {
 func (p *containerPool) releaseShared(entry *pooledContainer) {
 	p.mu.Lock()
 	entry.active--
-	if entry.active > 0 {
-		p.cond.Broadcast()
-		p.mu.Unlock()
-		return
-	}
+	p.cond.Broadcast()
+	p.mu.Unlock()
+}
 
+func (p *containerPool) removeShared(entry *pooledContainer) {
 	for i, candidate := range p.shared {
 		if candidate == entry {
 			p.shared = append(p.shared[:i], p.shared[i+1:]...)
-			break
+			return
 		}
 	}
-	p.live--
-	p.cond.Broadcast()
+}
+
+func (p *containerPool) Close() error {
+	p.mu.Lock()
+	containers := make([]sandbox.Container, 0, len(p.shared))
+	for _, entry := range p.shared {
+		if entry.container != nil {
+			containers = append(containers, entry.container)
+		}
+	}
+	p.shared = nil
 	p.mu.Unlock()
 
-	_ = entry.container.Stop()
+	var err error
+	for _, container := range containers {
+		err = errors.Join(err, container.Stop())
+	}
+	return err
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -208,25 +224,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, fmt.Errorf("resolve runtime: %w", err)
 	}
 	sandboxMode = resolvedMode
-
-	containerCapacity := cfg.ContainerCapacity
-	if containerCapacity == 0 {
-		containerCapacity = config.DefaultContainerCapacity
-	}
-	if req.ContainerCapacitySet {
-		containerCapacity = req.ContainerCapacity
-	}
-	if containerCapacity < 1 {
-		return nil, fmt.Errorf("container_capacity must be at least 1")
-	}
-
-	maxContainers := cfg.MaxContainers
-	if req.MaxContainersSet {
-		maxContainers = req.MaxContainers
-	}
-	if maxContainers < 0 {
-		return nil, fmt.Errorf("max_containers must be 0 or greater")
-	}
 
 	agentCfg, ok := cfg.AgentProviders[cfg.Agent]
 	if !ok {
@@ -262,8 +259,34 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	var containerAlloc containerAllocator
+	var pool *containerPool
 	if sandboxMode == "docker" || sandboxMode == "podman" {
-		containerAlloc = newContainerPool(containerFactory.New(sandboxMode), sandbox.DefaultContainerImage, ".", startOpts, containerCapacity, maxContainers)
+		containerCapacity := cfg.ContainerCapacity
+		if containerCapacity == 0 {
+			containerCapacity = config.DefaultContainerCapacity
+		}
+		if req.ContainerCapacitySet {
+			containerCapacity = req.ContainerCapacity
+		}
+		if containerCapacity < 1 {
+			return nil, fmt.Errorf("container_capacity must be at least 1")
+		}
+
+		maxContainers := cfg.MaxContainers
+		if req.MaxContainersSet {
+			maxContainers = req.MaxContainers
+		}
+		if maxContainers < 0 {
+			return nil, fmt.Errorf("max_containers must be 0 or greater")
+		}
+
+		pool = newContainerPool(containerFactory.New(sandboxMode), sandbox.DefaultContainerImage, ".", startOpts, containerCapacity, maxContainers)
+		containerAlloc = pool
+		defer func() {
+			if pool != nil {
+				_ = pool.Close()
+			}
+		}()
 	}
 
 	parallel := req.Parallel

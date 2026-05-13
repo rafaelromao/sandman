@@ -73,13 +73,17 @@ func (s *spyPromptRenderer) Render(cfg prompt.RenderConfig, data prompt.IssueDat
 }
 
 type fakeGitHubClient struct {
-	issues map[int]*github.Issue
-	err    error
+	issues       map[int]*github.Issue
+	fetchRelease map[int]<-chan struct{}
+	err          error
 }
 
 func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
 	if f.err != nil {
 		return nil, f.err
+	}
+	if release := f.fetchRelease[number]; release != nil {
+		<-release
 	}
 	return f.issues[number], nil
 }
@@ -197,13 +201,17 @@ func (f *blockingRunnableFactory) NewRunnable(issue *github.Issue, branch string
 }
 
 type controlledRunnable struct {
-	result  AgentRunResult
-	started chan struct{}
-	release <-chan struct{}
-	once    sync.Once
+	result   AgentRunResult
+	started  chan struct{}
+	finished chan struct{}
+	release  <-chan struct{}
+	once     sync.Once
 }
 
 func (r *controlledRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult {
+	if r.finished != nil {
+		defer close(r.finished)
+	}
 	if r.started != nil {
 		r.once.Do(func() { close(r.started) })
 	}
@@ -246,6 +254,15 @@ func assertNoSignal(t *testing.T, signal <-chan struct{}, message string) {
 		t.Fatal(message)
 	case <-time.After(50 * time.Millisecond):
 	}
+}
+
+func containsInt(values []int, want int) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {
@@ -1265,6 +1282,7 @@ func (f *fakeContainerForOrchestrator) Stop() error {
 type fakeContainerStarter struct {
 	startCalled bool
 	startCount  int
+	startDelay  time.Duration
 	startOpts   sandbox.StartOptions
 	container   sandbox.Container
 	containers  []sandbox.Container
@@ -1275,6 +1293,9 @@ func (f *fakeContainerStarter) Start(image, repoPath string, opts sandbox.StartO
 	f.startCalled = true
 	f.startCount++
 	f.startOpts = opts
+	if f.startDelay > 0 {
+		time.Sleep(f.startDelay)
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -1293,6 +1314,46 @@ type fakeContainerRuntimeFactory struct {
 
 func (f *fakeContainerRuntimeFactory) New(binary string) sandbox.ContainerStarter {
 	return f.starter
+}
+
+type trackingSandbox struct {
+	fakeSandbox
+	containerID string
+}
+
+type trackingSandboxFactory struct{}
+
+func (f *trackingSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+	sb := &trackingSandbox{}
+	if container != nil {
+		sb.containerID = container.ID()
+	}
+	return sb
+}
+
+type trackingRunnableFactory struct {
+	mu               sync.Mutex
+	results          map[int]AgentRunResult
+	runnables        map[int]Runnable
+	containerByIssue map[int]string
+}
+
+func (f *trackingRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if ts, ok := sb.(*trackingSandbox); ok {
+		if f.containerByIssue == nil {
+			f.containerByIssue = make(map[int]string)
+		}
+		f.containerByIssue[issue.Number] = ts.containerID
+	}
+	if r := f.runnables[issue.Number]; r != nil {
+		return r
+	}
+	if res, ok := f.results[issue.Number]; ok {
+		return &fakeRunnable{result: res}
+	}
+	return &fakeRunnable{result: AgentRunResult{IssueNumber: issue.Number, Status: "failure"}}
 }
 
 func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
@@ -1331,7 +1392,189 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	}
 }
 
-func TestRunBatch_ContainerCapacityOneStartsOneContainerPerRun(t *testing.T) {
+func TestRunBatch_ReusesIdleContainerWithinBatchAndStopsItAtEnd(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+		},
+	}
+	first := &fakeContainerForOrchestrator{id: "container-1"}
+	second := &fakeContainerForOrchestrator{id: "container-2"}
+	starter := &fakeContainerStarter{containers: []sandbox.Container{first, second}}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+	runnables := &trackingRunnableFactory{results: map[int]AgentRunResult{
+		1: {IssueNumber: 1, Status: "success"},
+		2: {IssueNumber: 2, Status: "success"},
+	}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 1, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if starter.startCount != 1 {
+		t.Fatalf("expected 1 container to start, got %d", starter.startCount)
+	}
+	if got := runnables.containerByIssue[1]; got == "" {
+		t.Fatal("expected first run to receive a container")
+	}
+	if runnables.containerByIssue[1] != runnables.containerByIssue[2] {
+		t.Fatalf("expected both runs to reuse the same container, got %q and %q", runnables.containerByIssue[1], runnables.containerByIssue[2])
+	}
+	if !first.stopCalled {
+		t.Fatal("expected pooled container to stop when the batch finishes")
+	}
+}
+
+func TestRunBatch_MaxContainersAutoDoesNotOverprovisionWhileContainerStarts(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+		},
+	}
+	first := &fakeContainerForOrchestrator{id: "container-1"}
+	second := &fakeContainerForOrchestrator{id: "container-2"}
+	// Keep the first container start in flight long enough for a second Acquire call.
+	starter := &fakeContainerStarter{startDelay: 200 * time.Millisecond, containers: []sandbox.Container{first, second}}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+	runnables := &trackingRunnableFactory{results: map[int]AgentRunResult{
+		1: {IssueNumber: 1, Status: "success"},
+		2: {IssueNumber: 2, Status: "success"},
+	}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 2, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if starter.startCount != 1 {
+		t.Fatalf("expected auto mode to start 1 container, got %d", starter.startCount)
+	}
+	if runnables.containerByIssue[1] != runnables.containerByIssue[2] {
+		t.Fatalf("expected concurrent runs to share the same started container, got %q and %q", runnables.containerByIssue[1], runnables.containerByIssue[2])
+	}
+}
+
+func TestRunBatch_PrefersLeastLoadedContainerWhenReusingIdleCapacity(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+			3: {Number: 3, Title: "Three"},
+			4: {Number: 4, Title: "Four"},
+		},
+		fetchRelease: map[int]<-chan struct{}{},
+	}
+	releaseIssue3Fetch := make(chan struct{})
+	client.fetchRelease[3] = releaseIssue3Fetch
+	starter := &fakeContainerStarter{containers: []sandbox.Container{
+		&fakeContainerForOrchestrator{id: "container-1"},
+		&fakeContainerForOrchestrator{id: "container-2"},
+	}}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	release1 := make(chan struct{})
+	release2 := make(chan struct{})
+	release3 := make(chan struct{})
+	release4 := make(chan struct{})
+	started1 := make(chan struct{})
+	started2 := make(chan struct{})
+	started3 := make(chan struct{})
+	started4 := make(chan struct{})
+	finished2 := make(chan struct{})
+	finished3 := make(chan struct{})
+	runnables := &trackingRunnableFactory{runnables: map[int]Runnable{
+		1: &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}, started: started1, release: release1},
+		2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started2, finished: finished2, release: release2},
+		3: &controlledRunnable{result: AgentRunResult{IssueNumber: 3, Status: "success"}, started: started3, finished: finished3, release: release3},
+		4: &controlledRunnable{result: AgentRunResult{IssueNumber: 4, Status: "success"}, started: started4, release: release4},
+	}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{
+			Issues:               []int{1, 2, 3, 4},
+			Dependencies:         map[int][]int{4: {3}},
+			Sandbox:              "docker",
+			Parallel:             4,
+			ContainerCapacity:    2,
+			ContainerCapacitySet: true,
+			MaxContainers:        2,
+			MaxContainersSet:     true,
+		})
+		errCh <- err
+	}()
+
+	waitForSignal(t, started1, "expected issue 1 to start")
+	waitForSignal(t, started2, "expected issue 2 to start")
+	close(releaseIssue3Fetch)
+	waitForSignal(t, started3, "expected issue 3 to start")
+	assertNoSignal(t, started4, "issue 4 should wait for issue 3 to finish")
+
+	close(release2)
+	waitForSignal(t, finished2, "expected issue 2 to finish")
+	assertNoSignal(t, started4, "issue 4 should still be blocked by issue 3")
+
+	close(release3)
+	waitForSignal(t, finished3, "expected issue 3 to finish")
+	waitForSignal(t, started4, "expected issue 4 to start after issue 3 finishes")
+
+	if runnables.containerByIssue[1] != runnables.containerByIssue[2] {
+		t.Fatalf("expected issues 1 and 2 to share a container, got %q and %q", runnables.containerByIssue[1], runnables.containerByIssue[2])
+	}
+	if runnables.containerByIssue[3] == runnables.containerByIssue[1] {
+		t.Fatalf("expected issue 3 to run in a different container from issue 1")
+	}
+	if runnables.containerByIssue[4] != runnables.containerByIssue[3] {
+		t.Fatalf("expected issue 4 to reuse the least-loaded container %q, got %q", runnables.containerByIssue[3], runnables.containerByIssue[4])
+	}
+
+	close(release1)
+	close(release4)
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunBatch_QueuesEligibleRunsWhenAllContainerSlotsAreOccupied(t *testing.T) {
 	dir := t.TempDir()
 	dockerPath := filepath.Join(dir, "docker")
 	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
@@ -1347,7 +1590,113 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerRun(t *testing.T) {
 	}
 	starter := &fakeContainerStarter{}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
-	runnables := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}}}
+
+	release1 := make(chan struct{})
+	release2 := make(chan struct{})
+	started1 := make(chan struct{})
+	started2 := make(chan struct{})
+	runnables := &trackingRunnableFactory{runnables: map[int]Runnable{
+		1: &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}, started: started1, release: release1},
+		2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started2, release: release2},
+	}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 2, ContainerCapacity: 1, ContainerCapacitySet: true, MaxContainers: 1, MaxContainersSet: true})
+		errCh <- err
+	}()
+
+	firstIssue := 0
+	select {
+	case <-started1:
+		firstIssue = 1
+		assertNoSignal(t, started2, "expected issue 2 to stay queued while the only container slot is occupied")
+	case <-started2:
+		firstIssue = 2
+		assertNoSignal(t, started1, "expected issue 1 to stay queued while the only container slot is occupied")
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected one issue to start")
+	}
+
+	if firstIssue == 1 {
+		close(release1)
+		waitForSignal(t, started2, "expected issue 2 to start after the container slot is released")
+		close(release2)
+	} else {
+		close(release2)
+		waitForSignal(t, started1, "expected issue 1 to start after the container slot is released")
+		close(release1)
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunBatch_StartFailureWakesQueuedWaiters(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+			3: {Number: 3, Title: "Three"},
+		},
+	}
+	starter := &fakeContainerStarter{startDelay: 50 * time.Millisecond, err: errors.New("start failed")}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}, {IssueNumber: 3, Status: "success"}}}
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3}, Sandbox: "docker", Parallel: 3, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 1, MaxContainersSet: true})
+		errCh <- err
+	}()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected start failure to be returned")
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected queued waiters to wake up after container start failure")
+	}
+}
+
+func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+		},
+	}
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+	runnables := &fakeRunnableFactory{
+		results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}},
+		delays:  []time.Duration{50 * time.Millisecond, 50 * time.Millisecond},
+	}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.containerRuntimeFactory = factory
@@ -1381,23 +1730,71 @@ func TestRunBatch_MaxContainersLimitRestrictsSharedContainerConcurrency(t *testi
 	}
 	starter := &fakeContainerStarter{}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
-	runnables := &fakeRunnableFactory{
-		results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}, {IssueNumber: 3, Status: "success"}},
-		delays:  []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
-	}
+
+	release1 := make(chan struct{})
+	release2 := make(chan struct{})
+	release3 := make(chan struct{})
+	started1 := make(chan struct{})
+	started2 := make(chan struct{})
+	started3 := make(chan struct{})
+	runnables := &trackingRunnableFactory{runnables: map[int]Runnable{
+		1: &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}, started: started1, release: release1},
+		2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started2, release: release2},
+		3: &controlledRunnable{result: AgentRunResult{IssueNumber: 3, Status: "success"}, started: started3, release: release3},
+	}}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.containerRuntimeFactory = factory
 	o.runnableFactory = runnables
-	o.sandboxFactory = &freshSandboxFactory{}
+	o.sandboxFactory = &trackingSandboxFactory{}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3}, Sandbox: "docker", Parallel: 3, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 1, MaxContainersSet: true})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3}, Sandbox: "docker", Parallel: 3, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 1, MaxContainersSet: true})
+		errCh <- err
+	}()
+
+	started := map[int]chan struct{}{1: started1, 2: started2, 3: started3}
+	released := map[int]chan struct{}{1: release1, 2: release2, 3: release3}
+	startedIssues := make([]int, 0, 2)
+	for len(startedIssues) < 2 {
+		select {
+		case <-started1:
+			if !containsInt(startedIssues, 1) {
+				startedIssues = append(startedIssues, 1)
+			}
+		case <-started2:
+			if !containsInt(startedIssues, 2) {
+				startedIssues = append(startedIssues, 2)
+			}
+		case <-started3:
+			if !containsInt(startedIssues, 3) {
+				startedIssues = append(startedIssues, 3)
+			}
+		case <-time.After(250 * time.Millisecond):
+			t.Fatal("expected two issues to start")
+		}
 	}
 
-	if runnables.max != 2 {
-		t.Fatalf("expected max concurrent runs to be 2, got %d", runnables.max)
+	queuedIssue := 0
+	for _, issue := range []int{1, 2, 3} {
+		if !containsInt(startedIssues, issue) {
+			queuedIssue = issue
+			break
+		}
+	}
+	assertNoSignal(t, started[queuedIssue], "expected the third issue to stay queued while both container slots are occupied")
+
+	close(released[startedIssues[0]])
+	waitForSignal(t, started[queuedIssue], "expected the queued issue to start after a container slot is released")
+
+	for _, issue := range []int{1, 2, 3} {
+		if issue != startedIssues[0] {
+			close(released[issue])
+		}
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -1455,7 +1852,10 @@ func TestRunBatch_UsesConfigContainerSettingsWhenRequestUnset(t *testing.T) {
 	}
 	starter := &fakeContainerStarter{}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
-	runnables := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}}}
+	runnables := &fakeRunnableFactory{
+		results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}},
+		delays:  []time.Duration{50 * time.Millisecond, 50 * time.Millisecond},
+	}
 	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", ContainerCapacity: 1, MaxContainers: 0, Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}
 
 	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
@@ -1488,7 +1888,9 @@ func TestRunBatch_WorktreeSandboxIgnoresContainerSettings(t *testing.T) {
 	o.runnableFactory = runnables
 	o.sandboxFactory = &freshSandboxFactory{}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "worktree", ContainerCapacity: 1, ContainerCapacitySet: true, MaxContainers: 1, MaxContainersSet: true})
+	// Worktree mode should ignore container-only settings, even when those values
+	// would be invalid for a container-backed batch.
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "worktree", ContainerCapacity: 0, ContainerCapacitySet: true, MaxContainers: -1, MaxContainersSet: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
