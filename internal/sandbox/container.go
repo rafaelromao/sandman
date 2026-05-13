@@ -160,9 +160,14 @@ func ResolveRuntime(preferred string) (string, error) {
 
 // DetectRemoteScheme returns "ssh" or "https" for the origin remote.
 func DetectRemoteScheme(repoPath string) string {
-	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
+	if err != nil {
+		cmd = exec.Command("git", "remote", "get-url", "origin")
+		cmd.Dir = repoPath
+		out, err = cmd.Output()
+	}
 	if err != nil {
 		return "https"
 	}

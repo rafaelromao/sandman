@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -26,9 +27,44 @@ func initGitRepo(t *testing.T, dir string) {
 	}
 }
 
+func initGitRepoWithRemote(t *testing.T, dir string) string {
+	t.Helper()
+	initGitRepo(t, dir)
+	remoteDir := t.TempDir()
+	runGit(t, remoteDir, "init", "--bare")
+	runGit(t, dir, "remote", "add", "origin", remoteDir)
+	runGit(t, dir, "push", "-u", "origin", "main")
+	return remoteDir
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
+func writeGitFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+func commitGitFile(t *testing.T, dir, name, content, message string) {
+	t.Helper()
+	writeGitFile(t, dir, name, content)
+	runGit(t, dir, "add", name)
+	runGit(t, dir, "commit", "-m", message)
+}
+
 func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 	dir := t.TempDir()
-	initGitRepo(t, dir)
+	_ = initGitRepoWithRemote(t, dir)
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	if err := s.Start(); err != nil {
@@ -42,6 +78,74 @@ func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 
 	if _, err := os.Stat(worktreePath); err != nil {
 		t.Errorf("worktree directory does not exist: %v", err)
+	}
+}
+
+func TestWorktreeSandbox_StartSyncsDefaultBranchBeforeAddingWorktree(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "checkout", "-b", "feature")
+	commitGitFile(t, localDir, "feature-only.txt", "feature\n", "feature")
+	writeGitFile(t, localDir, "untracked.txt", "keep me out of the worktree\n")
+
+	commitGitFile(t, seedDir, "tracked.txt", "remote\n", "remote update")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	localMain := runGit(t, localDir, "rev-parse", "main")
+	remoteMain := runGit(t, remoteDir, "rev-parse", "main")
+	if localMain != remoteMain {
+		t.Fatalf("expected local main to sync to remote main, got %q and %q", localMain, remoteMain)
+	}
+
+	trackedPath := filepath.Join(s.WorkDir(), "tracked.txt")
+	data, err := os.ReadFile(trackedPath)
+	if err != nil {
+		t.Fatalf("read synced tracked file: %v", err)
+	}
+	if string(data) != "remote\n" {
+		t.Fatalf("expected worktree to be created from synced default branch, got %q", string(data))
+	}
+
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "untracked.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected untracked file to stay out of the worktree, got %v", err)
+	}
+}
+
+func TestWorktreeSandbox_StartFailsWhenDefaultBranchCannotFastForward(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+	commitGitFile(t, localDir, "local-only.txt", "local\n", "local divergence")
+	runGit(t, localDir, "checkout", "-b", "feature")
+
+	commitGitFile(t, seedDir, "remote-only.txt", "remote\n", "remote divergence")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err == nil {
+		t.Fatal("expected sync failure when default branch cannot fast-forward")
+	} else if !strings.Contains(err.Error(), "sync default branch") {
+		t.Fatalf("expected sync error, got %v", err)
+	}
+
+	if _, err := os.Stat(s.WorkDir()); !os.IsNotExist(err) {
+		t.Fatalf("expected no worktree to be created, got %v", err)
 	}
 }
 
@@ -66,7 +170,7 @@ func TestWorktreeSandbox_WorkDirBeforeStart(t *testing.T) {
 
 func TestWorktreeSandbox_WritePrompt(t *testing.T) {
 	dir := t.TempDir()
-	initGitRepo(t, dir)
+	_ = initGitRepoWithRemote(t, dir)
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	if err := s.Start(); err != nil {
@@ -90,7 +194,7 @@ func TestWorktreeSandbox_WritePrompt(t *testing.T) {
 
 func TestWorktreeSandbox_StopRemovesWorktree(t *testing.T) {
 	dir := t.TempDir()
-	initGitRepo(t, dir)
+	_ = initGitRepoWithRemote(t, dir)
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	if err := s.Start(); err != nil {
@@ -109,7 +213,7 @@ func TestWorktreeSandbox_StopRemovesWorktree(t *testing.T) {
 
 func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
 	dir := t.TempDir()
-	initGitRepo(t, dir)
+	_ = initGitRepoWithRemote(t, dir)
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	if err := s.Start(); err != nil {
@@ -141,7 +245,7 @@ func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
 
 func TestWorktreeSandbox_ExecInteractive_RunsCommand(t *testing.T) {
 	dir := t.TempDir()
-	initGitRepo(t, dir)
+	_ = initGitRepoWithRemote(t, dir)
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	if err := s.Start(); err != nil {

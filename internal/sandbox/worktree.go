@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // WorktreeSandbox provides isolation via git worktree only.
@@ -31,21 +32,71 @@ func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *Wo
 
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
-	if err := os.MkdirAll(s.worktreeBase, 0755); err != nil {
-		return fmt.Errorf("create worktree base: %w", err)
-	}
-
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
 	if _, err := os.Stat(s.workDir); err == nil {
 		return nil
 	}
 
-	cmd := exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.sourceBranch)
-	cmd.Dir = s.repoPath
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if err := s.syncSourceBranch(); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(s.worktreeBase, 0755); err != nil {
+		return fmt.Errorf("create worktree base: %w", err)
+	}
+
+	addCmd := exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.sourceBranch)
+	addCmd.Dir = s.repoPath
+	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git worktree add: %w\n%s", err, out)
 	}
 	return nil
+}
+
+func (s *WorktreeSandbox) syncSourceBranch() error {
+	if out, err := runGitCommand(s.repoPath, "fetch", "origin", s.sourceBranch); err != nil {
+		return fmt.Errorf("sync default branch %q: %w\n%s", s.sourceBranch, err, out)
+	}
+
+	remoteRef := "refs/remotes/origin/" + s.sourceBranch
+	localRef := "refs/heads/" + s.sourceBranch
+
+	remoteHash, err := gitRevParse(s.repoPath, remoteRef)
+	if err != nil {
+		return fmt.Errorf("sync default branch %q: resolve %s: %w", s.sourceBranch, remoteRef, err)
+	}
+
+	localHash, err := gitRevParse(s.repoPath, "--verify", localRef)
+	if err != nil {
+		if out, updateErr := runGitCommand(s.repoPath, "update-ref", localRef, remoteHash); updateErr != nil {
+			return fmt.Errorf("sync default branch %q: %w\n%s", s.sourceBranch, updateErr, out)
+		}
+		return nil
+	}
+
+	if out, err := runGitCommand(s.repoPath, "merge-base", "--is-ancestor", localHash, remoteHash); err != nil {
+		return fmt.Errorf("sync default branch %q: %w\n%s", s.sourceBranch, err, out)
+	}
+
+	if out, err := runGitCommand(s.repoPath, "update-ref", localRef, remoteHash, localHash); err != nil {
+		return fmt.Errorf("sync default branch %q: %w\n%s", s.sourceBranch, err, out)
+	}
+
+	return nil
+}
+
+func runGitCommand(dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.CombinedOutput()
+}
+
+func gitRevParse(dir string, args ...string) (string, error) {
+	out, err := runGitCommand(dir, append([]string{"rev-parse"}, args...)...)
+	if err != nil {
+		return "", fmt.Errorf("%w\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // Exec runs a command in the worktree, writing stdout and stderr to the given writers.

@@ -22,6 +22,12 @@ import (
 
 func initGitRepo(t *testing.T, dir string) {
 	t.Helper()
+	remoteDir := t.TempDir()
+	cmd := exec.Command("git", "init", "--bare")
+	cmd.Dir = remoteDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
 	cmds := [][]string{
 		{"git", "init"},
 		{"git", "config", "user.email", "test@test.com"},
@@ -35,6 +41,16 @@ func initGitRepo(t *testing.T, dir string) {
 		if out, err := c.CombinedOutput(); err != nil {
 			t.Fatalf("%v: %s", err, out)
 		}
+	}
+	addRemote := exec.Command("git", "remote", "add", "origin", remoteDir)
+	addRemote.Dir = dir
+	if out, err := addRemote.CombinedOutput(); err != nil {
+		t.Fatalf("add remote: %v: %s", err, out)
+	}
+	push := exec.Command("git", "push", "-u", "origin", "main")
+	push.Dir = dir
+	if out, err := push.CombinedOutput(); err != nil {
+		t.Fatalf("push main: %v: %s", err, out)
 	}
 }
 

@@ -36,6 +36,43 @@ func initRunIntegrationRepo(t *testing.T, dir string) {
 	}
 }
 
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
+func initRunIntegrationRepoWithRemote(t *testing.T, dir string) string {
+	t.Helper()
+	initRunIntegrationRepo(t, dir)
+
+	remoteDir := t.TempDir()
+	cmd := exec.Command("git", "init", "--bare")
+	cmd.Dir = remoteDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("init bare remote: %v: %s", err, out)
+	}
+
+	addRemote := exec.Command("git", "remote", "add", "origin", remoteDir)
+	addRemote.Dir = dir
+	if out, err := addRemote.CombinedOutput(); err != nil {
+		t.Fatalf("add origin remote: %v: %s", err, out)
+	}
+
+	push := exec.Command("git", "push", "-u", "origin", "main")
+	push.Dir = dir
+	if out, err := push.CombinedOutput(); err != nil {
+		t.Fatalf("push main: %v: %s", err, out)
+	}
+
+	return remoteDir
+}
+
 func newRunIntegrationDepsWithAgent(agent config.Agent, gh *fakeGitHubClient) Dependencies {
 	return newRunIntegrationDepsWithSandbox(agent, "worktree", gh)
 }
@@ -170,7 +207,7 @@ issue=${issue_dir%%-*}
 func TestRun_DependencyAwareBatch_IncludeDependenciesExecutesTransitiveChain(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
 
 	deps := newRunIntegrationDeps(issueAwareAgentCommand(`
 state_dir="$repo_root/.sandman/chain"
@@ -275,7 +312,7 @@ touch "$state_dir/$issue"
 func TestRun_DependencyAwareBatch_BlocksDependentsAfterFailure(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
 
 	deps := newRunIntegrationDeps(issueAwareAgentCommand(`
 state_dir="$repo_root/.sandman/blocked"
@@ -320,7 +357,7 @@ touch "$state_dir/ran-$issue"
 func TestRun_DependencyAwareBatch_NoDependenciesRemainConcurrent(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
 
 	deps := newRunIntegrationDeps(issueAwareAgentCommand(`
 state_dir="$repo_root/.sandman/no-deps"
@@ -372,7 +409,7 @@ touch "$state_dir/finish-$issue"
 func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
 
 	deps := newRunIntegrationDeps(`printf '%s\n' "agent stdout"`, &fakeGitHubClient{issues: map[int]*github.Issue{
 		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
@@ -417,7 +454,7 @@ func TestRun_DefaultSandboxSingleIssue_InvalidImageFailsBeforeAgentRunBegins(t *
 
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
 
 	homeDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte("[user]\n\tname = Test\n"), 0644); err != nil {
@@ -474,12 +511,8 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
-	originCmd := exec.Command("git", "remote", "add", "origin", "git@github.com:rafaelromao/sandman.git")
-	originCmd.Dir = dir
-	if out, err := originCmd.CombinedOutput(); err != nil {
-		t.Fatalf("add origin remote: %v: %s", err, out)
-	}
+	remoteDir := initRunIntegrationRepoWithRemote(t, dir)
+	runGit(t, dir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
 	homeDir, err := os.MkdirTemp("", "sandman-podman-home-")
 	if err != nil {
@@ -489,7 +522,8 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
 		t.Fatalf("create ssh dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte("[user]\n\tname = Test\n"), 0644); err != nil {
+	gitConfig := fmt.Sprintf("[user]\n\tname = Test\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfig), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
@@ -541,12 +575,8 @@ func TestRun_DefaultSandboxTwoIssuesReuseContainerAndSeparateWorktrees(t *testin
 
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
-	originCmd := exec.Command("git", "remote", "add", "origin", "git@github.com:rafaelromao/sandman.git")
-	originCmd.Dir = dir
-	if out, err := originCmd.CombinedOutput(); err != nil {
-		t.Fatalf("add origin remote: %v: %s", err, out)
-	}
+	remoteDir := initRunIntegrationRepoWithRemote(t, dir)
+	runGit(t, dir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
 	homeDir, err := os.MkdirTemp("", "sandman-podman-home-")
 	if err != nil {
@@ -556,7 +586,8 @@ func TestRun_DefaultSandboxTwoIssuesReuseContainerAndSeparateWorktrees(t *testin
 	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
 		t.Fatalf("create ssh dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte("[user]\n\tname = Test\n"), 0644); err != nil {
+	gitConfig := fmt.Sprintf("[user]\n\tname = Test\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfig), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
@@ -636,12 +667,8 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
-	originCmd := exec.Command("git", "remote", "add", "origin", "git@github.com:rafaelromao/sandman.git")
-	originCmd.Dir = dir
-	if out, err := originCmd.CombinedOutput(); err != nil {
-		t.Fatalf("add origin remote: %v: %s", err, out)
-	}
+	remoteDir := initRunIntegrationRepoWithRemote(t, dir)
+	runGit(t, dir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
 	homeDir, err := os.MkdirTemp("", "sandman-podman-home-")
 	if err != nil {
@@ -651,7 +678,8 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
 		t.Fatalf("create ssh dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte("[user]\n\tname = Test\n"), 0644); err != nil {
+	gitConfig := fmt.Sprintf("[user]\n\tname = Test\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfig), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
@@ -813,12 +841,8 @@ func TestRun_DefaultSandboxFourIssuesAutoModeStartsMinimumContainersAndKeepsWork
 
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
-	originCmd := exec.Command("git", "remote", "add", "origin", "git@github.com:rafaelromao/sandman.git")
-	originCmd.Dir = dir
-	if out, err := originCmd.CombinedOutput(); err != nil {
-		t.Fatalf("add origin remote: %v: %s", err, out)
-	}
+	remoteDir := initRunIntegrationRepoWithRemote(t, dir)
+	runGit(t, dir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
 	homeDir, err := os.MkdirTemp("", "sandman-podman-home-")
 	if err != nil {
@@ -828,7 +852,8 @@ func TestRun_DefaultSandboxFourIssuesAutoModeStartsMinimumContainersAndKeepsWork
 	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
 		t.Fatalf("create ssh dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte("[user]\n\tname = Test\n"), 0644); err != nil {
+	gitConfig := fmt.Sprintf("[user]\n\tname = Test\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfig), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
@@ -913,7 +938,7 @@ sleep 1
 func TestRun_WorktreeSandboxSingleIssuePropagatesAgentEnvToLog(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
 
 	deps := newRunIntegrationDepsWithAgent(config.Agent{
 		Name:    "test-agent",
@@ -943,7 +968,7 @@ func TestRun_WorktreeSandboxSingleIssuePropagatesAgentEnvToLog(t *testing.T) {
 func TestRun_WorktreeSandboxSingleIssuePreservesWorktreeOnFailure(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
 
 	deps := newRunIntegrationDeps(`exit 1`, &fakeGitHubClient{issues: map[int]*github.Issue{
 		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
@@ -974,7 +999,7 @@ func TestRun_WorktreeSandboxSingleIssuePreservesWorktreeOnFailure(t *testing.T) 
 func TestRun_WorktreeSandboxSingleIssuePreservesRenderedCliPrompt(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
 
 	deps := newRunIntegrationDeps(`
 set -e
@@ -1035,7 +1060,7 @@ Priority: {{PRIORITY}}
 func TestRun_DependencyAwareBatch_TwoLevelDAGPreservesParallelismWithinLevels(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
 
 	// ADR-0003 only requires each AgentRun to wait for its own BlockedBy set.
 	// This test still proves both blockers start before dependents and that
