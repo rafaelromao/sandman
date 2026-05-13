@@ -89,38 +89,6 @@ func (p *containerPool) Acquire() (*containerLease, error) {
 	return p.acquireShared()
 }
 
-func (p *containerPool) acquireIsolated() (*containerLease, error) {
-	p.mu.Lock()
-	for p.maxContainers > 0 && p.live+p.starting >= p.maxContainers {
-		p.cond.Wait()
-	}
-	p.starting++
-	p.mu.Unlock()
-
-	container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
-
-	p.mu.Lock()
-	p.starting--
-	if err != nil {
-		p.cond.Broadcast()
-		p.mu.Unlock()
-		return nil, err
-	}
-	p.live++
-	p.mu.Unlock()
-
-	return &containerLease{
-		container: container,
-		release: func() {
-			_ = container.Stop()
-			p.mu.Lock()
-			p.live--
-			p.cond.Broadcast()
-			p.mu.Unlock()
-		},
-	}, nil
-}
-
 func (p *containerPool) acquireShared() (*containerLease, error) {
 	p.mu.Lock()
 	for {
