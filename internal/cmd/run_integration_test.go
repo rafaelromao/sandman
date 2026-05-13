@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -691,6 +692,110 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 	}
 	if got, want := events[3], "finished-"+followerIssue; got != want {
 		t.Fatalf("expected follower finish fourth, got %q\n%s", got, followerLog)
+	}
+}
+
+func TestRun_DefaultSandboxFourIssuesAutoModeStartsMinimumContainersAndKeepsWorktreesSeparate(t *testing.T) {
+	if !podmanAvailable(t) {
+		return
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initRunIntegrationRepo(t, dir)
+	originCmd := exec.Command("git", "remote", "add", "origin", "git@github.com:rafaelromao/sandman.git")
+	originCmd.Dir = dir
+	if out, err := originCmd.CombinedOutput(); err != nil {
+		t.Fatalf("add origin remote: %v: %s", err, out)
+	}
+
+	homeDir, err := os.MkdirTemp("", "sandman-podman-home-")
+	if err != nil {
+		t.Fatalf("create home dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
+	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
+		t.Fatalf("create ssh dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte("[user]\n\tname = Test\n"), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	// Re-warm podman with the isolated HOME so the image cache lives outside the repo tree.
+	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
+		t.Fatalf("warm podman image for test home: %v: %s", err, out)
+	}
+
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
+		11: {Number: 11, Title: "Alpha Task", Body: "First concurrent run."},
+		12: {Number: 12, Title: "Beta Task", Body: "Second concurrent run."},
+		13: {Number: 13, Title: "Gamma Task", Body: "Third concurrent run."},
+		14: {Number: 14, Title: "Delta Task", Body: "Fourth concurrent run."},
+	}}
+	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: `
+set -eu
+printf 'container-identity=%s\n' "$(hostname)"
+printf 'container-workdir=%s\n' "$PWD"
+sleep 1
+`}, "podman", gh)
+
+	out, err := executeRunCommand(t, deps,
+		"--sandbox", "podman",
+		"--parallel", "4",
+		"--container-capacity", "2",
+		"--max-containers", "0",
+		"11", "12", "13", "14",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 4 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+
+	extract := func(logData []byte, prefix string) (string, bool) {
+		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
+			if strings.HasPrefix(line, prefix) {
+				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+			}
+		}
+		return "", false
+	}
+
+	expectedSlugs := map[int]string{
+		11: "alpha-task",
+		12: "beta-task",
+		13: "gamma-task",
+		14: "delta-task",
+	}
+
+	hostnames := map[string]struct{}{}
+	for _, issue := range []int{11, 12, 13, 14} {
+		logPath := filepath.Join(dir, ".sandman", "logs", fmt.Sprintf("%d.log", issue))
+		logData, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("read log for issue %d: %v", issue, err)
+		}
+
+		hostname, ok := extract(logData, "container-identity=")
+		if !ok || hostname == "" {
+			t.Fatalf("missing container identity for issue %d", issue)
+		}
+		hostnames[hostname] = struct{}{}
+
+		workdir, ok := extract(logData, "container-workdir=")
+		if !ok || workdir == "" {
+			t.Fatalf("missing container workdir for issue %d", issue)
+		}
+		wantWorkdir := fmt.Sprintf("/workspace/.sandman/worktrees/sandman/%d-%s", issue, expectedSlugs[issue])
+		if workdir != wantWorkdir {
+			t.Fatalf("expected issue %d worktree %q, got %q", issue, wantWorkdir, workdir)
+		}
+	}
+
+	if got := len(hostnames); got != 2 {
+		t.Fatalf("expected exactly 2 container hostnames, got %d: %v", got, hostnames)
 	}
 }
 
