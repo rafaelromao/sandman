@@ -294,10 +294,7 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 
 	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "42")
 	if err != nil {
-		if out != "" {
-			t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
-		}
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
 	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
