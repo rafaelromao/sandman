@@ -35,32 +35,7 @@ func initRunIntegrationRepo(t *testing.T, dir string) {
 }
 
 func newRunIntegrationDepsWithAgent(agent config.Agent, gh *fakeGitHubClient) Dependencies {
-	if agent.Name == "" {
-		agent.Name = "test-agent"
-	}
-	if agent.Command == "" {
-		agent.Command = "true"
-	}
-
-	store := &fakeStore{config: &config.Config{
-		Agent:       "test-agent",
-		WorktreeDir: ".sandman/worktrees",
-		Sandbox:     "worktree",
-		Git:         config.GitConfig{DefaultBranch: "main"},
-		AgentProviders: map[string]config.Agent{
-			"test-agent": agent,
-		},
-	}}
-
-	runner := batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil)
-	return Dependencies{
-		BatchRunner:    runner,
-		ConfigStore:    store,
-		EventLog:       &fakeEventLog{},
-		GitHubClient:   gh,
-		PromptRenderer: &prompt.Engine{},
-		IsTTY:          func() bool { return false },
-	}
+	return newRunIntegrationDepsWithSandbox(agent, "worktree", gh)
 }
 
 func newRunIntegrationDeps(agentCommand string, gh *fakeGitHubClient) Dependencies {
@@ -96,9 +71,40 @@ func podmanAvailable(t *testing.T) bool {
 		return false
 	}
 	podmanWarmupOnce.Do(func() {
-		_ = exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").Run()
+		if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
+			t.Logf("podman warmup failed: %v: %s", err, out)
+		}
 	})
 	return true
+}
+
+func newRunIntegrationDepsWithSandbox(agent config.Agent, sandboxMode string, gh *fakeGitHubClient) Dependencies {
+	if agent.Name == "" {
+		agent.Name = "test-agent"
+	}
+	if agent.Command == "" {
+		agent.Command = "true"
+	}
+
+	store := &fakeStore{config: &config.Config{
+		Agent:       "test-agent",
+		WorktreeDir: ".sandman/worktrees",
+		Sandbox:     sandboxMode,
+		Git:         config.GitConfig{DefaultBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"test-agent": agent,
+		},
+	}}
+
+	runner := batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil)
+	return Dependencies{
+		BatchRunner:    runner,
+		ConfigStore:    store,
+		EventLog:       &fakeEventLog{},
+		GitHubClient:   gh,
+		PromptRenderer: &prompt.Engine{},
+		IsTTY:          func() bool { return false },
+	}
 }
 
 func issueAwareAgentCommand(body string) string {
@@ -375,30 +381,15 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 		t.Fatalf("write gitconfig: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	// Re-warm podman with the isolated HOME so the image cache lives outside the repo tree.
 	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
 		t.Fatalf("warm podman image for test home: %v: %s", err, out)
 	}
 
-	store := &fakeStore{config: &config.Config{
-		Agent:       "test-agent",
-		WorktreeDir: ".sandman/worktrees",
-		Git:         config.GitConfig{DefaultBranch: "main"},
-		AgentProviders: map[string]config.Agent{
-			"test-agent": {Name: "test-agent", Command: "pwd"},
-		},
-	}}
-
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
 		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 	}}
-	deps := Dependencies{
-		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
-		ConfigStore:    store,
-		EventLog:       &fakeEventLog{},
-		GitHubClient:   gh,
-		PromptRenderer: &prompt.Engine{},
-		IsTTY:          func() bool { return false },
-	}
+	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: "pwd"}, "", gh)
 
 	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
 
