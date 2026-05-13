@@ -31,6 +31,7 @@ type Orchestrator struct {
 	eventLog                events.EventLog
 	runnableFactory         RunnableFactory
 	sandboxFactory          SandboxFactory
+	defaultBranchSync       func(repoPath, sourceBranch string) error
 	containerRuntimeFactory ContainerRuntimeFactory
 	killTimeout             time.Duration
 }
@@ -300,6 +301,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 	if _, err := topologicalIssues(dependencies); err != nil {
 		return nil, err
+	}
+
+	if len(req.Issues) > 0 && (o.sandboxFactory == nil || o.defaultBranchSync != nil) {
+		syncFn := o.defaultBranchSync
+		if syncFn == nil {
+			syncFn = sandbox.SyncDefaultBranch
+		}
+		if err := syncFn(".", cfg.Git.DefaultBranch); err != nil {
+			return nil, err
+		}
 	}
 
 	sem := make(chan struct{}, parallel)
