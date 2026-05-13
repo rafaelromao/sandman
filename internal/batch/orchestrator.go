@@ -115,11 +115,24 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		parallel = 4
 	}
 
+	dependencies := make(map[int][]int, len(req.Issues))
+	for _, num := range req.Issues {
+		dependencies[num] = uniqueSortedIssues(req.Dependencies[num])
+	}
+	if _, err := topologicalIssues(dependencies); err != nil {
+		return nil, err
+	}
+
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
 	results := make([]AgentRunResult, len(req.Issues))
 	var mu sync.Mutex
 	failureCount := 0
+	statuses := make(map[int]string, len(req.Issues))
+	completed := make(map[int]chan struct{}, len(req.Issues))
+	for _, num := range req.Issues {
+		completed[num] = make(chan struct{})
+	}
 
 	var activeMu sync.Mutex
 	activeRuns := make(map[int]sandbox.Sandbox)
@@ -160,19 +173,45 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	for i, num := range req.Issues {
 		wg.Add(1)
-		go func(idx, issueNum int) {
+		go func(idx, issueNum int, blockers []int) {
 			defer wg.Done()
+			defer close(completed[issueNum])
+
+			for _, blocker := range blockers {
+				<-completed[blocker]
+			}
+
+			blockedBy := make([]int, 0, len(blockers))
+			mu.Lock()
+			for _, blocker := range blockers {
+				if statuses[blocker] != "success" {
+					blockedBy = append(blockedBy, blocker)
+				}
+			}
+			mu.Unlock()
+			if len(blockedBy) > 0 {
+				res := AgentRunResult{IssueNumber: issueNum, Status: "blocked", Branch: req.Branches[issueNum]}
+				o.logBlocked(issueNum, blockedBy)
+
+				mu.Lock()
+				results[idx] = res
+				statuses[issueNum] = res.Status
+				mu.Unlock()
+				return
+			}
+
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
 			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, req.Interactive, req.PromptConfig, activeRuns, &activeMu, sbFactory, sandboxMode, req.IsolatedContainers, sharedContainer, containerFactory, startOpts)
 			mu.Lock()
 			results[idx] = res
+			statuses[issueNum] = res.Status
 			if res.Status == "failure" {
 				failureCount++
 			}
 			mu.Unlock()
-		}(i, num)
+		}(i, num, dependencies[num])
 	}
 
 	wg.Wait()
@@ -181,6 +220,19 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return &Result{Runs: results}, fmt.Errorf("%d of %d runs failed", failureCount, len(req.Issues))
 	}
 	return &Result{Runs: results}, nil
+}
+
+func (o *Orchestrator) logBlocked(issueNum int, blockers []int) {
+	if o.eventLog == nil {
+		return
+	}
+	_ = o.eventLog.Log(events.Event{
+		Type:      "run.blocked",
+		Timestamp: time.Now(),
+		RunID:     generateRunID(issueNum),
+		Issue:     issueNum,
+		Payload:   map[string]any{"blocked_by": blockers},
+	})
 }
 
 func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
