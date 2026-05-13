@@ -33,8 +33,16 @@ A git branch named `sandman/<issue-number>-<slugified-title>`, created per Agent
 _Avoid_: Feature branch, PR branch.
 
 **ContainerSandbox**:
-A Docker or Podman container providing filesystem and process isolation for one or more AgentRuns. May contain multiple worktrees.
+A Docker or Podman container providing filesystem and process isolation for one or more AgentRuns. A Batch may scale a pool of ContainerSandboxes up or down within configured limits.
 _Avoid_: Docker container, sandbox container.
+
+**ContainerCapacity**:
+The maximum number of AgentRuns that may execute concurrently inside one ContainerSandbox. When capacity is full, additional AgentRuns wait for another container or for capacity to free up.
+_Avoid_: shared mode, isolated mode.
+
+**MaxContainers**:
+The maximum number of ContainerSandboxes Sandman may create for one Batch. `max_containers=0` means auto mode: create up to the minimum number of containers needed for the currently active AgentRuns, based on ContainerCapacity.
+_Avoid_: isolated container toggle, fixed pool size.
 
 **Event**:
 A single structured log entry in the append-only JSONL event log (`.sandman/events.jsonl`). Examples: `run.started`, `agent.stdout`, `run.finished`.
@@ -53,7 +61,7 @@ A batch where all issues have been fetched, their BlockedBy relationships resolv
 _Avoid_: planned batch, execution plan.
 
 **Sandbox**:
-The abstract isolation mechanism within which an AgentRun executes. Hides whether isolation is provided by a worktree, a shared container, or an isolated container.
+The abstract isolation mechanism within which an AgentRun executes. Hides whether isolation is provided by a worktree or by a container-backed sandbox strategy.
 _Avoid_: Environment, boundary, boundary context.
 
 **Worktree**:
@@ -73,15 +81,22 @@ _Avoid_: Local sandbox.
 - An **Orchestrator** executes a **ResolvedBatch**, respecting **BlockedBy** ordering
 - An **AgentRun** may be **blocked** if any of its **BlockedBy** issues failed
 - A **Sandbox** provides isolation for one or more **AgentRuns**
-- In worktree mode, each **AgentRun** gets its own **Sandbox** (a **WorktreeSandbox**)
-- In shared-container mode, a single **Sandbox** (a **ContainerSandbox**) contains multiple **Worktrees**, each hosting one **AgentRun**
+- In `sandbox: worktree`, each **AgentRun** gets its own **Sandbox** (a **WorktreeSandbox**)
+- In a container-backed sandbox strategy, each **ContainerSandbox** may host up to **ContainerCapacity** **AgentRuns** at once
+- A **Batch** may create multiple **ContainerSandboxes**, up to **MaxContainers**, to satisfy concurrent **AgentRuns**
+- If all containers are full and the **Batch** is already at **MaxContainers**, additional **AgentRuns** wait in a queue until capacity becomes available
+- If `max_containers=0`, Sandman auto-scales the container pool up to the minimum number of containers needed for active **AgentRuns**
+- Container pooling is batch-scoped: idle **ContainerSandboxes** may be reused by later **AgentRuns** in the same **Batch**, and are stopped when that **Batch** completes
 - An **AgentRun** generates many **Events**
 - A **Prompt** is rendered per **AgentRun** from an **Agent Provider** config
 
 ## Example dialogue
 
 > **Dev:** "When a **Batch** contains three **AgentRuns**, do they all share one **Sandbox**?"
-> **Domain expert:** "By default, yes. Shared container mode is the default — a single **ContainerSandbox** hosts all three **Worktrees**. With `--isolated-containers` each **AgentRun** gets its own **ContainerSandbox**. With `sandbox: worktree` each **AgentRun** gets its own **WorktreeSandbox**."
+> **Domain expert:** "Not necessarily. With `sandbox: worktree`, each **AgentRun** gets its own **WorktreeSandbox**. With container-backed sandboxing, Sandman packs runs into **ContainerSandboxes** up to **ContainerCapacity**, then creates more containers up to **MaxContainers**. If `max_containers=0`, the pool auto-scales to the minimum number of containers needed for the active **AgentRuns**."
+
+> **Dev:** "What happens if the batch has more runnable work than the container pool can hold right now?"
+> **Domain expert:** "Extra **AgentRuns** wait in a queue. Idle containers can be reused later in the same **Batch**, but Sandman stops them when the **Batch** finishes. Cross-batch warm-container reuse is out of scope for this model."
 
 > **Dev:** "Does the **Sandbox** interface expose the worktree path?"
 > **Domain expert:** "Yes — the **Sandbox** contract returns a working directory path, but callers must not assume it is a git worktree. That detail belongs to the adapter."
