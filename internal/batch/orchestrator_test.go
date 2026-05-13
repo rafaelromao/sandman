@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -186,6 +187,58 @@ type blockingRunnableFactory struct {
 
 func (f *blockingRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
 	return f.runnable
+}
+
+type controlledRunnable struct {
+	result  AgentRunResult
+	started chan struct{}
+	release <-chan struct{}
+	once    sync.Once
+}
+
+func (r *controlledRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult {
+	if r.started != nil {
+		r.once.Do(func() { close(r.started) })
+	}
+	if r.release != nil {
+		<-r.release
+	}
+	return r.result
+}
+
+type controlledRunnableFactory struct {
+	mu        sync.Mutex
+	created   []int
+	runnables map[int]Runnable
+}
+
+func (f *controlledRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	f.mu.Lock()
+	f.created = append(f.created, issue.Number)
+	r := f.runnables[issue.Number]
+	f.mu.Unlock()
+	if r == nil {
+		return &fakeRunnable{result: AgentRunResult{IssueNumber: issue.Number, Status: "failure"}}
+	}
+	return r
+}
+
+func waitForSignal(t *testing.T, signal <-chan struct{}, message string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal(message)
+	}
+}
+
+func assertNoSignal(t *testing.T, signal <-chan struct{}, message string) {
+	t.Helper()
+	select {
+	case <-signal:
+		t.Fatal(message)
+	case <-time.After(50 * time.Millisecond):
+	}
 }
 
 func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {
@@ -751,6 +804,203 @@ func TestRunBatch_DefaultParallelIsFour(t *testing.T) {
 	if factory.max > 4 {
 		t.Errorf("expected max concurrent runs <= 4 (default), got %d", factory.max)
 	}
+}
+
+func TestRunBatch_WaitsForBlockersBeforeStartingDependents(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+		},
+	}
+
+	blockerStarted := make(chan struct{})
+	dependentStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 42, Status: "success"},
+				started: blockerStarted,
+				release: releaseBlocker,
+			},
+			100: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 100, Status: "success"},
+				started: dependentStarted,
+			},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{
+			Issues:       []int{42, 100},
+			Dependencies: map[int][]int{100: {42}},
+			Parallel:     2,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+	assertNoSignal(t, dependentStarted, "dependent started before blocker completed")
+
+	close(releaseBlocker)
+	waitForSignal(t, dependentStarted, "expected dependent to start after blocker completed")
+	waitForSignal(t, done, "expected batch to complete")
+	if len(factory.created) != 2 {
+		t.Fatalf("expected both runnables to be created, got %v", factory.created)
+	}
+}
+
+func TestRunBatch_SkipsDependentsWhenBlockerFails(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+		},
+	}
+
+	blockerStarted := make(chan struct{})
+	spyLog := &spyEventLog{}
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 42, Status: "failure"},
+				started: blockerStarted,
+			},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.runnableFactory = factory
+
+	result, err := o.RunBatch(context.Background(), Request{
+		Issues:       []int{42, 100},
+		Dependencies: map[int][]int{100: {42}},
+		Parallel:     2,
+	})
+	if err == nil {
+		t.Fatal("expected error when blocker fails")
+	}
+
+	waitForSignal(t, blockerStarted, "expected blocker to run")
+	if len(result.Runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(result.Runs))
+	}
+
+	statuses := make(map[int]string)
+	for _, run := range result.Runs {
+		statuses[run.IssueNumber] = run.Status
+	}
+	if statuses[42] != "failure" {
+		t.Fatalf("expected blocker failure, got %q", statuses[42])
+	}
+	if statuses[100] != "blocked" {
+		t.Fatalf("expected dependent to be blocked, got %q", statuses[100])
+	}
+	if len(factory.created) != 1 || factory.created[0] != 42 {
+		t.Fatalf("expected only blocker runnable to be created, got %v", factory.created)
+	}
+
+	var dependentStartedEvent bool
+	var blockedEvent *events.Event
+	for i := range spyLog.events {
+		e := spyLog.events[i]
+		if e.Type == "run.started" && e.Issue == 100 {
+			dependentStartedEvent = true
+		}
+		if e.Type == "run.blocked" && e.Issue == 100 {
+			blockedEvent = &e
+		}
+	}
+	if dependentStartedEvent {
+		t.Fatal("expected blocked issue not to emit run.started")
+	}
+	if blockedEvent == nil {
+		t.Fatal("expected run.blocked event for blocked issue")
+	}
+	blockedBy, ok := blockedEvent.Payload["blocked_by"].([]int)
+	if !ok || !reflect.DeepEqual(blockedBy, []int{42}) {
+		t.Fatalf("expected blocked_by [42], got %#v", blockedEvent.Payload["blocked_by"])
+	}
+}
+
+func TestRunBatch_PreservesParallelismWithinDependencyLevel(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Blocker"},
+			3: {Number: 3, Title: "Dependent A", BlockedBy: []int{1}},
+			4: {Number: 4, Title: "Dependent B", BlockedBy: []int{1}},
+		},
+	}
+
+	blockerStarted := make(chan struct{})
+	dependentAStarted := make(chan struct{})
+	dependentBStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+	releaseDependentA := make(chan struct{})
+	releaseDependentB := make(chan struct{})
+
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			1: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 1, Status: "success"},
+				started: blockerStarted,
+				release: releaseBlocker,
+			},
+			3: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 3, Status: "success"},
+				started: dependentAStarted,
+				release: releaseDependentA,
+			},
+			4: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 4, Status: "success"},
+				started: dependentBStarted,
+				release: releaseDependentB,
+			},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{
+			Issues:       []int{1, 3, 4},
+			Dependencies: map[int][]int{3: {1}, 4: {1}},
+			Parallel:     2,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+	assertNoSignal(t, dependentAStarted, "dependent A started before blocker completed")
+	assertNoSignal(t, dependentBStarted, "dependent B started before blocker completed")
+
+	close(releaseBlocker)
+	waitForSignal(t, dependentAStarted, "expected dependent A to start after blocker completed")
+	waitForSignal(t, dependentBStarted, "expected dependent B to start after blocker completed")
+
+	close(releaseDependentA)
+	close(releaseDependentB)
+	waitForSignal(t, done, "expected batch to complete")
 }
 
 func TestRunBatch_LogsStartedAndFinishedEvents(t *testing.T) {
