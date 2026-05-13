@@ -319,6 +319,37 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 	}
 }
 
+func TestRun_WorktreeSandboxSingleIssuePreservesWorktreeOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initRunIntegrationRepo(t, dir)
+
+	deps := newRunIntegrationDeps(`exit 1`, &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+	}})
+
+	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "42")
+	if err == nil {
+		t.Fatal("expected worktree run to fail")
+	}
+	if !strings.Contains(err.Error(), "1 of 1 runs failed") {
+		t.Fatalf("expected batch failure, got: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected failure output with at least two lines, got:\n%s", out)
+	}
+	if got, want := strings.Join(lines[:2], "\n"), "Summary: 0 succeeded, 1 failed\n  #42  failure  sandman/42-fix-bug"; got != want {
+		t.Fatalf("expected failure output %q, got %q", want, got)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected failed worktree to remain, got: %v", err)
+	}
+}
+
 func TestRun_DependencyAwareBatch_TwoLevelDAGPreservesParallelismWithinLevels(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
