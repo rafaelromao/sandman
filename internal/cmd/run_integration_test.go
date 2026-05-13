@@ -12,6 +12,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
@@ -77,6 +78,54 @@ func podmanAvailable(t *testing.T) bool {
 		}
 	})
 	return true
+}
+
+type recordingEventLog struct {
+	events []events.Event
+}
+
+func (l *recordingEventLog) Log(event events.Event) error {
+	l.events = append(l.events, event)
+	return nil
+}
+
+func (l *recordingEventLog) Read() ([]events.Event, error) {
+	return append([]events.Event(nil), l.events...), nil
+}
+
+func writePodmanInvalidImageWrapper(t *testing.T, realPodman string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	script := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+
+real_podman=%q
+
+if [[ "${1:-}" == "version" ]]; then
+  exec "$real_podman" "$@"
+fi
+
+if [[ "${1:-}" == "run" ]]; then
+  shift
+  args=(run --pull=never "$@")
+  for i in "${!args[@]}"; do
+    if [[ "${args[$i]}" == "alpine" ]]; then
+      args[$i]="nonexistent-image-12345"
+      break
+    fi
+  done
+  exec "$real_podman" "${args[@]}"
+fi
+
+exec "$real_podman" "$@"
+`, realPodman)
+
+	if err := os.WriteFile(filepath.Join(dir, "podman"), []byte(script), 0755); err != nil {
+		t.Fatalf("write podman wrapper: %v", err)
+	}
+
+	return dir
 }
 
 func newRunIntegrationDepsWithSandbox(agent config.Agent, sandboxMode string, gh *fakeGitHubClient) Dependencies {
@@ -353,6 +402,68 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
 	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
 		t.Fatalf("expected worktree to be removed, got: %v", err)
+	}
+}
+
+func TestRun_DefaultSandboxSingleIssue_InvalidImageFailsBeforeAgentRunBegins(t *testing.T) {
+	if !podmanAvailable(t) {
+		return
+	}
+
+	realPodman, err := exec.LookPath("podman")
+	if err != nil {
+		t.Skip("podman not available")
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initRunIntegrationRepo(t, dir)
+
+	homeDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte("[user]\n\tname = Test\n"), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	wrapperDir := writePodmanInvalidImageWrapper(t, realPodman)
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+origPath)
+
+	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: issueAwareAgentCommand(`
+touch "$repo_root/.sandman/agent-executed"
+`)}, "podman", &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+	}})
+	eventLog := &recordingEventLog{}
+	deps.EventLog = eventLog
+
+	out, err := executeRunCommand(t, deps, "42")
+	if err == nil {
+		t.Fatal("expected invalid image failure")
+	}
+	if !strings.Contains(err.Error(), "1 of 1 runs failed") {
+		t.Fatalf("expected aggregate failure, got %v", err)
+	}
+	if !strings.Contains(out, "Summary: 0 succeeded, 1 failed") {
+		t.Fatalf("expected failure summary, got:\n%s", out)
+	}
+	if len(eventLog.events) != 0 {
+		t.Fatalf("expected no run events, got %d", len(eventLog.events))
+	}
+
+	markerPath := filepath.Join(dir, ".sandman", "agent-executed")
+	if _, statErr := os.Stat(markerPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no agent marker, got %v", statErr)
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	if _, statErr := os.Stat(logPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no agent log, got %v", statErr)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+	if _, statErr := os.Stat(worktreePath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no worktree, got %v", statErr)
 	}
 }
 
