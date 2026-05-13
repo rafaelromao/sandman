@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/batch"
@@ -80,6 +81,24 @@ func executeRunCommand(t *testing.T, deps Dependencies, args ...string) (string,
 
 	err := cmd.Execute()
 	return buf.String(), err
+}
+
+var podmanWarmupOnce sync.Once
+
+func podmanAvailable(t *testing.T) bool {
+	t.Helper()
+	cmd := exec.Command("podman", "version")
+	if err := cmd.Run(); err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("podman not available in CI: %v", err)
+		}
+		t.Skip("podman not available")
+		return false
+	}
+	podmanWarmupOnce.Do(func() {
+		_ = exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").Run()
+	})
+	return true
 }
 
 func issueAwareAgentCommand(body string) string {
@@ -322,6 +341,84 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 	}
 	if !strings.Contains(string(logData), "agent stdout") {
 		t.Fatalf("expected agent stdout in log, got:\n%s", logData)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree to be removed, got: %v", err)
+	}
+}
+
+func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t *testing.T) {
+	if !podmanAvailable(t) {
+		return
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initRunIntegrationRepo(t, dir)
+	originCmd := exec.Command("git", "remote", "add", "origin", "git@github.com:rafaelromao/sandman.git")
+	originCmd.Dir = dir
+	if out, err := originCmd.CombinedOutput(); err != nil {
+		t.Fatalf("add origin remote: %v: %s", err, out)
+	}
+
+	homeDir := filepath.Join(dir, "home")
+	if err := os.MkdirAll(homeDir, 0755); err != nil {
+		t.Fatalf("create home dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
+		t.Fatalf("create ssh dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte("[user]\n\tname = Test\n"), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	store := &fakeStore{config: &config.Config{
+		Agent:       "test-agent",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{DefaultBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"test-agent": {Name: "test-agent", Command: "pwd"},
+		},
+	}}
+
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+	}}
+	deps := Dependencies{
+		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		ConfigStore:    store,
+		EventLog:       &fakeEventLog{},
+		GitHubClient:   gh,
+		PromptRenderer: &prompt.Engine{},
+		IsTTY:          func() bool { return false },
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+
+	out, err := executeRunCommand(t, deps, "42")
+	if err != nil {
+		if logData, logErr := os.ReadFile(logPath); logErr == nil {
+			t.Fatalf("unexpected error: %v\noutput:\n%s\nlog:\n%s", err, out, logData)
+		}
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
+		t.Fatalf("expected branch string in summary, got:\n%s", out)
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(logData), "/workspace/.sandman/worktrees/sandman/42-fix-bug") {
+		t.Fatalf("expected container workdir in log, got:\n%s", logData)
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
