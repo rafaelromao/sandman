@@ -422,6 +422,101 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 	}
 }
 
+func TestRun_DefaultSandboxTwoIssuesReuseContainerAndSeparateWorktrees(t *testing.T) {
+	if !podmanAvailable(t) {
+		return
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initRunIntegrationRepo(t, dir)
+	originCmd := exec.Command("git", "remote", "add", "origin", "git@github.com:rafaelromao/sandman.git")
+	originCmd.Dir = dir
+	if out, err := originCmd.CombinedOutput(); err != nil {
+		t.Fatalf("add origin remote: %v: %s", err, out)
+	}
+
+	homeDir, err := os.MkdirTemp("", "sandman-podman-home-")
+	if err != nil {
+		t.Fatalf("create home dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
+	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
+		t.Fatalf("create ssh dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte("[user]\n\tname = Test\n"), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	// Re-warm podman with the isolated HOME so the image cache lives outside the repo tree.
+	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
+		t.Fatalf("warm podman image for test home: %v: %s", err, out)
+	}
+
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
+		42:  {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		100: {Number: 100, Title: "Add feature", Body: "Two runs should share one container."},
+	}}
+	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: `
+set -eu
+printf 'container-identity=%s\n' "$(hostname)"
+printf 'container-workdir=%s\n' "$PWD"
+`}, "", gh)
+
+	out, err := executeRunCommand(t, deps, "--parallel", "2", "42", "100")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 2 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+
+	log42, err := os.ReadFile(filepath.Join(dir, ".sandman", "logs", "42.log"))
+	if err != nil {
+		t.Fatalf("read log for issue 42: %v", err)
+	}
+	log100, err := os.ReadFile(filepath.Join(dir, ".sandman", "logs", "100.log"))
+	if err != nil {
+		t.Fatalf("read log for issue 100: %v", err)
+	}
+	extract := func(logData []byte, prefix string) (string, bool) {
+		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
+			if strings.HasPrefix(line, prefix) {
+				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+			}
+		}
+		return "", false
+	}
+	identity42, ok := extract(log42, "container-identity=")
+	if !ok || identity42 == "" {
+		t.Fatal("missing container identity for issue 42")
+	}
+	identity100, ok := extract(log100, "container-identity=")
+	if !ok || identity100 == "" {
+		t.Fatal("missing container identity for issue 100")
+	}
+	if got, want := identity42, identity100; got != want {
+		t.Fatalf("expected the same container hostname, got %q and %q", got, want)
+	}
+
+	workdir42, ok := extract(log42, "container-workdir=")
+	if !ok || workdir42 == "" {
+		t.Fatal("missing container workdir for issue 42")
+	}
+	if got, want := workdir42, "/workspace/.sandman/worktrees/sandman/42-fix-bug"; got != want {
+		t.Fatalf("expected issue 42 worktree %q, got %q", want, got)
+	}
+
+	workdir100, ok := extract(log100, "container-workdir=")
+	if !ok || workdir100 == "" {
+		t.Fatal("missing container workdir for issue 100")
+	}
+	if got, want := workdir100, "/workspace/.sandman/worktrees/sandman/100-add-feature"; got != want {
+		t.Fatalf("expected issue 100 worktree %q, got %q", want, got)
+	}
+}
+
 func TestRun_WorktreeSandboxSingleIssuePropagatesAgentEnvToLog(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
