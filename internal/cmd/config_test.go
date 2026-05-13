@@ -30,6 +30,46 @@ func TestConfigGet_Agent(t *testing.T) {
 	}
 }
 
+func TestConfigGet_MaxContainers(t *testing.T) {
+	var buf bytes.Buffer
+	store := &fakeStore{
+		config: &config.Config{Agent: "codex", MaxContainers: 0},
+	}
+	cmd := NewConfigGetCmd(store)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"max_containers"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "0") {
+		t.Errorf("expected output to contain '0', got: %q", buf.String())
+	}
+}
+
+func TestConfigGet_ContainerCapacity(t *testing.T) {
+	var buf bytes.Buffer
+	store := &fakeStore{
+		config: &config.Config{Agent: "codex", ContainerCapacity: 4},
+	}
+	cmd := NewConfigGetCmd(store)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"container_capacity"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "4") {
+		t.Errorf("expected output to contain '4', got: %q", buf.String())
+	}
+}
+
 func TestConfigGet_UnknownKey_ReturnsError(t *testing.T) {
 	var buf bytes.Buffer
 	store := &fakeStore{
@@ -156,5 +196,55 @@ func TestConfigSet_GitAuthorName_UpdatesFile(t *testing.T) {
 	}
 	if cfg.Git.AuthorName != "Alice" {
 		t.Errorf("git.author_name: got %q, want %q", cfg.Git.AuthorName, "Alice")
+	}
+}
+
+func TestConfigSet_MaxContainers_AutoModeUpdatesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("agent: opencode\ncontainer_capacity: 4\nmax_containers: 2\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	store := &config.FileStore{Path: path}
+	cmd := NewConfigSetCmd(store)
+	cmd.SetArgs([]string{"max_containers", "0"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.MaxContainers != 0 {
+		t.Errorf("max_containers: got %d, want %d", cfg.MaxContainers, 0)
+	}
+}
+
+func TestConfigSet_ContainerCapacity_UpdatesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("agent: opencode\ncontainer_capacity: 4\nmax_containers: 0\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	store := &config.FileStore{Path: path}
+	cmd := NewConfigSetCmd(store)
+	cmd.SetArgs([]string{"container_capacity", "2"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.ContainerCapacity != 2 {
+		t.Errorf("container_capacity: got %d, want %d", cfg.ContainerCapacity, 2)
 	}
 }

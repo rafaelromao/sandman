@@ -44,6 +44,12 @@ func TestScaffold_CreatesConfigWithDefaults(t *testing.T) {
 	if !strings.Contains(content, "default_parallel: 4") {
 		t.Errorf("config missing default parallel, got:\n%s", content)
 	}
+	if !strings.Contains(content, "container_capacity: 4") {
+		t.Errorf("config missing container capacity, got:\n%s", content)
+	}
+	if !strings.Contains(content, "max_containers: 0") {
+		t.Errorf("config missing max containers, got:\n%s", content)
+	}
 	if !strings.Contains(content, "worktree_dir: .sandman/worktrees") {
 		t.Errorf("config missing default worktree dir, got:\n%s", content)
 	}

@@ -128,10 +128,12 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 
 	cfg := &config.Config{
-		Agent:           config.DefaultAgent,
-		DefaultParallel: config.DefaultParallel,
-		WorktreeDir:     config.DefaultWorktreeDir,
-		Sandbox:         config.DefaultSandbox,
+		Agent:             config.DefaultAgent,
+		DefaultParallel:   config.DefaultParallel,
+		ContainerCapacity: config.DefaultContainerCapacity,
+		MaxContainers:     config.DefaultMaxContainers,
+		WorktreeDir:       config.DefaultWorktreeDir,
+		Sandbox:           config.DefaultSandbox,
 		AgentProviders: map[string]config.Agent{
 			config.DefaultAgent: {
 				Name:    config.DefaultAgent,

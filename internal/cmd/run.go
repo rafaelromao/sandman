@@ -116,17 +116,31 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			preserve, _ := cmd.Flags().GetBool("preserve")
 			debug, _ := cmd.Flags().GetBool("debug")
 			sandboxMode, _ := cmd.Flags().GetString("sandbox")
-			isolatedContainers, _ := cmd.Flags().GetBool("isolated-containers")
+			containerCapacityFlag := cmd.Flags().Lookup("container-capacity")
+			containerCapacitySet := containerCapacityFlag != nil && containerCapacityFlag.Changed
+			containerCapacity, _ := cmd.Flags().GetInt("container-capacity")
+			maxContainersFlag := cmd.Flags().Lookup("max-containers")
+			maxContainersSet := maxContainersFlag != nil && maxContainersFlag.Changed
+			maxContainers, _ := cmd.Flags().GetInt("max-containers")
+			if containerCapacitySet && containerCapacity < 1 {
+				return fmt.Errorf("container_capacity must be at least 1")
+			}
+			if maxContainersSet && maxContainers < 0 {
+				return fmt.Errorf("max_containers must be 0 or greater")
+			}
 
 			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
-				Issues:             resolvedBatch.Issues,
-				Dependencies:       resolvedBatch.Deps,
-				Parallel:           parallel,
-				Preserve:           preserve,
-				Debug:              debug,
-				Sandbox:            sandboxMode,
-				IsolatedContainers: isolatedContainers,
-				Interactive:        interactive,
+				Issues:               resolvedBatch.Issues,
+				Dependencies:         resolvedBatch.Deps,
+				Parallel:             parallel,
+				Preserve:             preserve,
+				Debug:                debug,
+				Sandbox:              sandboxMode,
+				ContainerCapacity:    containerCapacity,
+				ContainerCapacitySet: containerCapacitySet,
+				MaxContainers:        maxContainers,
+				MaxContainersSet:     maxContainersSet,
+				Interactive:          interactive,
 				PromptConfig: prompt.RenderConfig{
 					PromptFlag:   promptFlag,
 					TemplateFlag: templateFlag,
@@ -152,7 +166,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("preserve", false, "Preserve worktrees after successful runs")
 	cmd.Flags().Bool("debug", false, "Print worktree path and instructions after failure")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
-	cmd.Flags().Bool("isolated-containers", false, "Use one container per agent instead of a shared container")
+	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 1 means isolated container execution")
+	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")
 	cmd.Flags().Bool("interactive", false, "Run the agent in interactive mode")
 	cmd.Flags().Bool("include-dependencies", false, "Expand the batch to include transitive blockers")
 	cmd.Flags().String("label", "", "Select issues by label")

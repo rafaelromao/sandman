@@ -11,20 +11,24 @@ import (
 
 // Defaults for optional config fields.
 const (
-	DefaultAgent       = "opencode"
-	DefaultParallel    = 4
-	DefaultWorktreeDir = ".sandman/worktrees"
-	DefaultSandbox     = "podman"
+	DefaultAgent             = "opencode"
+	DefaultParallel          = 4
+	DefaultContainerCapacity = 4
+	DefaultMaxContainers     = 0
+	DefaultWorktreeDir       = ".sandman/worktrees"
+	DefaultSandbox           = "podman"
 )
 
 // Config holds the loaded Sandman configuration.
 type Config struct {
-	Agent           string           `yaml:"agent"`
-	DefaultParallel int              `yaml:"default_parallel"`
-	WorktreeDir     string           `yaml:"worktree_dir"`
-	Sandbox         string           `yaml:"sandbox"`
-	Git             GitConfig        `yaml:"git"`
-	AgentProviders  map[string]Agent `yaml:"agents"`
+	Agent             string           `yaml:"agent"`
+	DefaultParallel   int              `yaml:"default_parallel"`
+	ContainerCapacity int              `yaml:"container_capacity"`
+	MaxContainers     int              `yaml:"max_containers"`
+	WorktreeDir       string           `yaml:"worktree_dir"`
+	Sandbox           string           `yaml:"sandbox"`
+	Git               GitConfig        `yaml:"git"`
+	AgentProviders    map[string]Agent `yaml:"agents"`
 }
 
 // GitConfig holds git-specific settings.
@@ -56,13 +60,47 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	type rawConfig struct {
+		Agent             string           `yaml:"agent"`
+		DefaultParallel   int              `yaml:"default_parallel"`
+		ContainerCapacity *int             `yaml:"container_capacity"`
+		MaxContainers     *int             `yaml:"max_containers"`
+		WorktreeDir       string           `yaml:"worktree_dir"`
+		Sandbox           string           `yaml:"sandbox"`
+		Git               GitConfig        `yaml:"git"`
+		AgentProviders    map[string]Agent `yaml:"agents"`
+	}
+
+	var raw rawConfig
+	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	cfg := Config{
+		Agent:           raw.Agent,
+		DefaultParallel: raw.DefaultParallel,
+		WorktreeDir:     raw.WorktreeDir,
+		Sandbox:         raw.Sandbox,
+		Git:             raw.Git,
+		AgentProviders:  raw.AgentProviders,
 	}
 
 	if cfg.DefaultParallel <= 0 {
 		cfg.DefaultParallel = DefaultParallel
+	}
+	if raw.ContainerCapacity == nil {
+		cfg.ContainerCapacity = DefaultContainerCapacity
+	} else if *raw.ContainerCapacity <= 0 {
+		return nil, fmt.Errorf("validate config: container_capacity must be at least 1")
+	} else {
+		cfg.ContainerCapacity = *raw.ContainerCapacity
+	}
+	if raw.MaxContainers == nil {
+		cfg.MaxContainers = DefaultMaxContainers
+	} else if *raw.MaxContainers < 0 {
+		return nil, fmt.Errorf("validate config: max_containers must be 0 or greater")
+	} else {
+		cfg.MaxContainers = *raw.MaxContainers
 	}
 	if cfg.WorktreeDir == "" {
 		cfg.WorktreeDir = DefaultWorktreeDir
@@ -100,6 +138,10 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.Agent, nil
 	case "default_parallel":
 		return fmt.Sprintf("%d", c.DefaultParallel), nil
+	case "container_capacity":
+		return fmt.Sprintf("%d", c.ContainerCapacity), nil
+	case "max_containers":
+		return fmt.Sprintf("%d", c.MaxContainers), nil
 	case "worktree_dir":
 		return c.WorktreeDir, nil
 	case "sandbox":
@@ -129,6 +171,24 @@ func (c *Config) SetValue(key, value string) error {
 			return fmt.Errorf("default_parallel must be greater than 0")
 		}
 		c.DefaultParallel = n
+	case "container_capacity":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for container_capacity: %w", err)
+		}
+		if n <= 0 {
+			return fmt.Errorf("container_capacity must be at least 1")
+		}
+		c.ContainerCapacity = n
+	case "max_containers":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for max_containers: %w", err)
+		}
+		if n < 0 {
+			return fmt.Errorf("max_containers must be 0 or greater")
+		}
+		c.MaxContainers = n
 	case "worktree_dir":
 		c.WorktreeDir = value
 	case "sandbox":

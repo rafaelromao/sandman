@@ -12,15 +12,18 @@ import (
 type Request struct {
 	Issues []int
 	// Dependencies maps each issue to its resolved BlockedBy set.
-	Dependencies       map[int][]int
-	Parallel           int
-	Preserve           bool
-	Debug              bool
-	Branches           map[int]string
-	Sandbox            string
-	IsolatedContainers bool
-	Interactive        bool
-	PromptConfig       prompt.RenderConfig
+	Dependencies         map[int][]int
+	Parallel             int
+	Preserve             bool
+	Debug                bool
+	Branches             map[int]string
+	Sandbox              string
+	ContainerCapacity    int
+	ContainerCapacitySet bool
+	MaxContainers        int
+	MaxContainersSet     bool
+	Interactive          bool
+	PromptConfig         prompt.RenderConfig
 }
 
 // Result describes the outcome of a batch.
