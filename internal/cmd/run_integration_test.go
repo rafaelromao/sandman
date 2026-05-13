@@ -283,6 +283,42 @@ touch "$state_dir/finish-$issue"
 	}
 }
 
+func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initRunIntegrationRepo(t, dir)
+
+	deps := newRunIntegrationDeps(`printf '%s\n' "agent stdout"`, &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+	}})
+
+	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
+		t.Fatalf("expected branch string in summary, got:\n%s", out)
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(logData), "agent stdout") {
+		t.Fatalf("expected agent stdout in log, got:\n%s", logData)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree to be removed, got: %v", err)
+	}
+}
+
 func TestRun_DependencyAwareBatch_TwoLevelDAGPreservesParallelismWithinLevels(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
