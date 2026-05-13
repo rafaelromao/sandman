@@ -65,11 +65,9 @@ type containerPool struct {
 	capacity      int
 	maxContainers int
 
-	mu       sync.Mutex
-	cond     *sync.Cond
-	starting int
-	live     int
-	shared   []*pooledContainer
+	mu     sync.Mutex
+	cond   *sync.Cond
+	shared []*pooledContainer
 }
 
 func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, startOpts sandbox.StartOptions, capacity, maxContainers int) *containerPool {
@@ -124,6 +122,7 @@ func (p *containerPool) acquireShared() (*containerLease, error) {
 				pending.active--
 				if pending.active == 0 {
 					p.removeShared(pending)
+					p.cond.Broadcast()
 				}
 				p.mu.Unlock()
 				return nil, err
@@ -136,13 +135,11 @@ func (p *containerPool) acquireShared() (*containerLease, error) {
 		if p.maxContainers == 0 || len(p.shared) < p.maxContainers {
 			entry := &pooledContainer{active: 1}
 			p.shared = append(p.shared, entry)
-			p.starting++
 			p.mu.Unlock()
 
 			container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
 
 			p.mu.Lock()
-			p.starting--
 			if err != nil {
 				entry.startErr = err
 				p.cond.Broadcast()
@@ -156,7 +153,6 @@ func (p *containerPool) acquireShared() (*containerLease, error) {
 
 			entry.container = container
 			entry.ready = true
-			p.live++
 			p.cond.Broadcast()
 			p.mu.Unlock()
 
@@ -192,7 +188,6 @@ func (p *containerPool) Close() error {
 		}
 	}
 	p.shared = nil
-	p.live = 0
 	p.mu.Unlock()
 
 	var err error
