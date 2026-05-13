@@ -336,11 +336,12 @@ func TestRun_WorktreeSandboxSingleIssuePreservesWorktreeOnFailure(t *testing.T) 
 		t.Fatalf("expected batch failure, got: %v", err)
 	}
 
-	if !strings.Contains(out, "Summary: 0 succeeded, 1 failed") {
-		t.Fatalf("expected failure summary, got:\n%s", out)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected failure output with at least two lines, got:\n%s", out)
 	}
-	if !strings.Contains(out, "#42  failure  sandman/42-fix-bug") {
-		t.Fatalf("expected branch string in failure summary, got:\n%s", out)
+	if got, want := strings.Join(lines[:2], "\n"), "Summary: 0 succeeded, 1 failed\n  #42  failure  sandman/42-fix-bug"; got != want {
+		t.Fatalf("expected failure output %q, got %q", want, got)
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
