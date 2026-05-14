@@ -12,14 +12,14 @@ import (
 
 func TestValidateAgentConfig_AcceptsFileBasedAuth(t *testing.T) {
 	agent := config.Agent{Name: "opencode", Command: "opencode", KeychainAuth: false}
-	if err := ValidateAgentConfig(agent); err != nil {
+	if err := ValidateAgentConfig("opencode", agent); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestValidateAgentConfig_RejectsKeychainAuth(t *testing.T) {
 	agent := config.Agent{Name: "opencode", Command: "opencode", KeychainAuth: true}
-	err := ValidateAgentConfig(agent)
+	err := ValidateAgentConfig("opencode", agent)
 	if err == nil {
 		t.Fatal("expected error for keychain auth agent")
 	}

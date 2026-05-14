@@ -124,9 +124,9 @@ func toContainerPath(hostPath string) string {
 }
 
 // ValidateAgentConfig rejects agents that rely on OS keychain auth.
-func ValidateAgentConfig(agent config.Agent) error {
+func ValidateAgentConfig(name string, agent config.Agent) error {
 	if agent.KeychainAuth {
-		return fmt.Errorf("agent %q uses OS keychain auth, which is not supported in containers; switch to file-based auth", agent.Name)
+		return fmt.Errorf("agent %q uses OS keychain auth, which is not supported in containers; switch to file-based auth", name)
 	}
 	return nil
 }
