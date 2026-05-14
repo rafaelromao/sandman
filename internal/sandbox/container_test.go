@@ -141,6 +141,31 @@ func TestContainerRuntime_Start_SetsContainerUser(t *testing.T) {
 	}
 }
 
+func TestContainerRuntime_Start_UsesKeepIDForPodmanUser(t *testing.T) {
+	rt := NewContainerRuntime("podman")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "abc123")
+	}
+
+	_, err := rt.Start("alpine", ".", StartOptions{UserID: "1000"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundKeepID := false
+	for i := 0; i < len(captured)-1; i++ {
+		if captured[i] == "--userns" && captured[i+1] == "keep-id" {
+			foundKeepID = true
+			break
+		}
+	}
+	if !foundKeepID {
+		t.Errorf("expected --userns keep-id for podman, got args: %v", captured)
+	}
+}
+
 func expandTilde(p string) string {
 	home, _ := os.UserHomeDir()
 	if strings.HasPrefix(p, "~/") {
