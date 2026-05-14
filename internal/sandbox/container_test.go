@@ -226,6 +226,16 @@ func TestContainerRuntime_Start_MountsAgentConfigDirs(t *testing.T) {
 		t.Skip("cannot determine home dir")
 	}
 
+	configDir := filepath.Join(home, ".config", "sandman-test-dir")
+	localDir := filepath.Join(home, ".local", "share", "sandman-test-dir")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		t.Fatalf("mkdir local dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(configDir); os.RemoveAll(localDir) })
+
 	rt := NewContainerRuntime("docker")
 	var captured []string
 	rt.execFn = func(name string, arg ...string) *exec.Cmd {
@@ -233,8 +243,6 @@ func TestContainerRuntime_Start_MountsAgentConfigDirs(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	configDir := filepath.Join(home, ".config", "opencode")
-	localDir := filepath.Join(home, ".local", "share", "opencode")
 	_, err = rt.Start("alpine", ".", StartOptions{AgentConfigDirs: []string{configDir, localDir}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -243,10 +251,10 @@ func TestContainerRuntime_Start_MountsAgentConfigDirs(t *testing.T) {
 	foundConfig := false
 	foundLocal := false
 	for i := 0; i < len(captured)-1; i++ {
-		if captured[i] == "-v" && captured[i+1] == configDir+":/.config/opencode" {
+		if captured[i] == "-v" && captured[i+1] == configDir+":/.config/sandman-test-dir" {
 			foundConfig = true
 		}
-		if captured[i] == "-v" && captured[i+1] == localDir+":/.local/share/opencode" {
+		if captured[i] == "-v" && captured[i+1] == localDir+":/.local/share/sandman-test-dir" {
 			foundLocal = true
 		}
 	}
@@ -506,5 +514,41 @@ func TestContainerRuntime_BuildImage_BuildFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "build image from .sandman/Dockerfile") {
 		t.Errorf("expected error to mention build failure, got: %v", err)
+	}
+}
+
+func TestToContainerPath_MapsDirectory(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir")
+	}
+
+	hostPath := filepath.Join(home, ".config", "sandman")
+	got := toContainerPath(hostPath)
+	want := "/.config/sandman"
+	if got != want {
+		t.Errorf("toContainerPath(%q) = %q, want %q", hostPath, got, want)
+	}
+}
+
+func TestToContainerPath_MapsFile(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir")
+	}
+
+	hostPath := filepath.Join(home, ".claude.json")
+	got := toContainerPath(hostPath)
+	want := "/.claude.json"
+	if got != want {
+		t.Errorf("toContainerPath(%q) = %q, want %q", hostPath, got, want)
+	}
+}
+
+func TestToContainerPath_ReturnsHostPathWhenNotUnderHome(t *testing.T) {
+	got := toContainerPath("/opt/custom/path")
+	want := "/opt/custom/path"
+	if got != want {
+		t.Errorf("toContainerPath(%q) = %q, want %q", "/opt/custom/path", got, want)
 	}
 }
