@@ -52,6 +52,7 @@ func NewInitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			lang, _ := cmd.Flags().GetString("lang")
 			fromImage, _ := cmd.Flags().GetString("from-image")
+			agent, _ := cmd.Flags().GetString("agent")
 
 			s := &scaffold.Scaffolder{}
 			prompter := &cliPrompter{
@@ -67,12 +68,14 @@ func NewInitCmd() *cobra.Command {
 			return s.Scaffold(wd, scaffold.Options{
 				Lang:      lang,
 				FromImage: fromImage,
+				Agent:     agent,
 			}, prompter)
 		},
 	}
 
 	cmd.Flags().String("lang", "", "Override language detection")
 	cmd.Flags().String("from-image", "", "Custom base Docker image")
+	cmd.Flags().String("agent", "", "Built-in agent preset (opencode, claude-code, codex, pi)")
 
 	return cmd
 }
