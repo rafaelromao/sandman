@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,9 +10,6 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/config"
 )
-
-// DefaultContainerImage is the image used for sandbox containers.
-const DefaultContainerImage = "alpine"
 
 // Container represents a running Docker or Podman container.
 type Container interface {
@@ -22,6 +20,7 @@ type Container interface {
 // ContainerStarter is the interface for starting containers.
 type ContainerStarter interface {
 	Start(image, repoPath string, opts StartOptions) (Container, error)
+	BuildImage(repoPath string) (string, error)
 }
 
 // StartOptions configures container startup.
@@ -94,6 +93,38 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 	}
 
 	return &runningContainer{id: id, binary: r.binary, execFn: r.execFn}, nil
+}
+
+// BuildImage builds a container image from .sandman/Dockerfile.
+// The tag is scoped to the repo path to prevent collisions when sandman
+// manages multiple repositories concurrently. Layer caching by the
+// container engine may speed up subsequent builds; no explicit cache
+// invalidation is performed.
+func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
+	dockerfile := filepath.Join(repoPath, ".sandman", "Dockerfile")
+	if _, err := os.Stat(dockerfile); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf(".sandman/Dockerfile not found at %s; container mode requires a Dockerfile in the .sandman directory", dockerfile)
+		}
+		return "", fmt.Errorf("check .sandman/Dockerfile: %w", err)
+	}
+
+	absPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo path: %w", err)
+	}
+
+	h := sha256.Sum256([]byte(absPath))
+	tag := fmt.Sprintf("sandman-custom-%x:latest", h[:8])
+
+	args := []string{"build", "-t", tag, "-f", dockerfile, repoPath}
+	cmd := r.execFn(r.binary, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("build image from .sandman/Dockerfile: %w\n%s", err, out)
+	}
+
+	return tag, nil
 }
 
 type runningContainer struct {

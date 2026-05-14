@@ -281,7 +281,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("max_containers must be 0 or greater")
 		}
 
-		pool = newContainerPool(containerFactory.New(sandboxMode), sandbox.DefaultContainerImage, ".", startOpts, containerCapacity, maxContainers)
+		starter := containerFactory.New(sandboxMode)
+		image, err := starter.BuildImage(".")
+		if err != nil {
+			return nil, fmt.Errorf("build container image: %w", err)
+		}
+		pool = newContainerPool(starter, image, ".", startOpts, containerCapacity, maxContainers)
 		containerAlloc = pool
 		defer func() {
 			if pool != nil {

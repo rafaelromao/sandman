@@ -1355,18 +1355,34 @@ func (f *fakeContainerForOrchestrator) Stop() error {
 }
 
 type fakeContainerStarter struct {
-	startCalled bool
-	startCount  int
-	startDelay  time.Duration
-	startOpts   sandbox.StartOptions
-	container   sandbox.Container
-	containers  []sandbox.Container
-	err         error
+	startCalled     bool
+	startCount      int
+	startImage      string
+	startDelay      time.Duration
+	startOpts       sandbox.StartOptions
+	container       sandbox.Container
+	containers      []sandbox.Container
+	err             error
+	buildImageTag   string
+	buildImageErr   error
+	buildImageCount int
+}
+
+func (f *fakeContainerStarter) BuildImage(repoPath string) (string, error) {
+	f.buildImageCount++
+	if f.buildImageErr != nil {
+		return "", f.buildImageErr
+	}
+	if f.buildImageTag != "" {
+		return f.buildImageTag, nil
+	}
+	return "sandman-custom:latest", nil
 }
 
 func (f *fakeContainerStarter) Start(image, repoPath string, opts sandbox.StartOptions) (sandbox.Container, error) {
 	f.startCalled = true
 	f.startCount++
+	f.startImage = image
 	f.startOpts = opts
 	if f.startDelay > 0 {
 		time.Sleep(f.startDelay)
@@ -1465,6 +1481,12 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	}
 	if starter.startOpts.UserID == "" {
 		t.Error("expected UserID to be set")
+	}
+	if starter.startImage != "sandman-custom:latest" {
+		t.Errorf(`expected image "sandman-custom:latest", got %q`, starter.startImage)
+	}
+	if starter.buildImageCount != 1 {
+		t.Errorf("expected BuildImage to be called once, got %d", starter.buildImageCount)
 	}
 }
 
@@ -2112,6 +2134,31 @@ func TestRunBatch_SharedContainer_ReturnsErrorWhenDockerUnavailable(t *testing.T
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
 	if err == nil {
 		t.Fatal("expected error when docker is unavailable")
+	}
+}
+
+func TestRunBatch_ReturnsErrorWhenBuildImageFails(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	starter := &fakeContainerStarter{buildImageErr: errors.New("build failed")}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
+	if err == nil {
+		t.Fatal("expected error when build image fails")
+	}
+	if !strings.Contains(err.Error(), "build container image") {
+		t.Errorf("expected error to mention build container image, got: %v", err)
+	}
+	if starter.buildImageCount != 1 {
+		t.Errorf("expected BuildImage to be called once, got %d", starter.buildImageCount)
 	}
 }
 
