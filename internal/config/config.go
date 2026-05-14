@@ -63,7 +63,7 @@ type AgentPreset struct {
 var BuiltInAgentPresets = map[string]AgentPreset{
 	"opencode": {
 		DisplayName: "OpenCode",
-		Command:     "opencode",
+		Command:     `opencode run "$(cat {{.PromptFile}})"`,
 		ConfigDirs: []string{
 			"~/.config/opencode",
 			"~/.local/share/opencode",
@@ -71,7 +71,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 	},
 	"claude-code": {
 		DisplayName: "Claude Code",
-		Command:     "claude",
+		Command:     `claude --print "$(cat {{.PromptFile}})"`,
 		ConfigDirs: []string{
 			"~/.claude",
 		},
@@ -81,7 +81,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 	},
 	"codex": {
 		DisplayName: "Codex",
-		Command:     "codex",
+		Command:     `codex exec "$(cat {{.PromptFile}})"`,
 		ConfigDirs: []string{
 			"~/.config/codex",
 			"~/.local/share/codex",
@@ -89,7 +89,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 	},
 	"pi": {
 		DisplayName: "Pi",
-		Command:     "pi",
+		Command:     `pi --print "$(cat {{.PromptFile}})"`,
 		ConfigDirs: []string{
 			"~/.pi",
 		},

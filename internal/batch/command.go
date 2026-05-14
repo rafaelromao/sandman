@@ -8,7 +8,6 @@ import (
 
 // CommandData holds template variables available for agent command rendering.
 type CommandData struct {
-	Worktree   string
 	PromptFile string
 }
 

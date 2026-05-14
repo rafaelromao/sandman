@@ -80,8 +80,9 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 	if agent.Preset != "opencode" {
 		t.Errorf("preset: got %q, want %q", agent.Preset, "opencode")
 	}
-	if agent.Command != "opencode" {
-		t.Errorf("command: got %q, want %q", agent.Command, "opencode")
+	wantCmd := `opencode run "$(cat {{.PromptFile}})"`
+	if agent.Command != wantCmd {
+		t.Errorf("command: got %q, want %q", agent.Command, wantCmd)
 	}
 	wantDirs := []string{"~/.config/opencode", "~/.local/share/opencode"}
 	if !reflect.DeepEqual(agent.ConfigDirs, wantDirs) {
@@ -95,7 +96,7 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 func TestConfig_ResolveAgentProvider_CustomProvider(t *testing.T) {
 	cfg := &Config{AgentProviders: map[string]Agent{
 		"custom": {
-			Command: "custom --worktree {{.Worktree}}",
+			Command: "custom --prompt {{.PromptFile}}",
 		},
 	}}
 
@@ -107,8 +108,8 @@ func TestConfig_ResolveAgentProvider_CustomProvider(t *testing.T) {
 	if agent.Preset != "" {
 		t.Errorf("preset: got %q, want empty", agent.Preset)
 	}
-	if agent.Command != "custom --worktree {{.Worktree}}" {
-		t.Errorf("command: got %q, want %q", agent.Command, "custom --worktree {{.Worktree}}")
+	if agent.Command != "custom --prompt {{.PromptFile}}" {
+		t.Errorf("command: got %q, want %q", agent.Command, "custom --prompt {{.PromptFile}}")
 	}
 }
 

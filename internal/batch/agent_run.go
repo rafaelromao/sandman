@@ -87,7 +87,6 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 	}
 
 	renderedCmd, err := RenderCommand(command, CommandData{
-		Worktree:   r.sandbox.WorkDir(),
 		PromptFile: renderCfg.PromptFile,
 	})
 	if err != nil {
