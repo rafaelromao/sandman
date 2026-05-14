@@ -80,8 +80,9 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 	if agent.Preset != "opencode" {
 		t.Errorf("preset: got %q, want %q", agent.Preset, "opencode")
 	}
-	if agent.Command != "opencode" {
-		t.Errorf("command: got %q, want %q", agent.Command, "opencode")
+	wantCmd := `opencode run "$(cat {{.PromptFile}})"`
+	if agent.Command != wantCmd {
+		t.Errorf("command: got %q, want %q", agent.Command, wantCmd)
 	}
 	wantDirs := []string{"~/.config/opencode", "~/.local/share/opencode"}
 	if !reflect.DeepEqual(agent.ConfigDirs, wantDirs) {
@@ -230,6 +231,16 @@ agents:
 	}
 	if !agent.KeychainAuth {
 		t.Error("agents.opencode.keychain_auth: expected true")
+	}
+}
+
+func TestBuiltInPresets_NoWorktreeFlag(t *testing.T) {
+	for key, preset := range BuiltInAgentPresets {
+		t.Run(key, func(t *testing.T) {
+			if strings.Contains(preset.Command, "{{.Worktree}}") {
+				t.Errorf("preset %q command contains {{.Worktree}}, but Sandman manages worktrees", key)
+			}
+		})
 	}
 }
 

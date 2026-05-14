@@ -56,3 +56,59 @@ func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "opencode")
 	}
 }
+
+func TestRenderCommand_BuiltInPresetOpenCode(t *testing.T) {
+	got, err := RenderCommand(`opencode run "$(cat {{.PromptFile}})"`, CommandData{
+		Worktree:   "/tmp/worktrees/fix-bug",
+		PromptFile: ".sandman/prompt.md",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `opencode run "$(cat .sandman/prompt.md)"`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderCommand_BuiltInPresetClaudeCode(t *testing.T) {
+	got, err := RenderCommand(`claude --print "$(cat {{.PromptFile}})"`, CommandData{
+		Worktree:   "/tmp/worktrees/fix-bug",
+		PromptFile: ".sandman/prompt.md",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `claude --print "$(cat .sandman/prompt.md)"`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderCommand_BuiltInPresetCodex(t *testing.T) {
+	got, err := RenderCommand(`codex exec "$(cat {{.PromptFile}})"`, CommandData{
+		Worktree:   "/tmp/worktrees/fix-bug",
+		PromptFile: ".sandman/prompt.md",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `codex exec "$(cat .sandman/prompt.md)"`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderCommand_BuiltInPresetPi(t *testing.T) {
+	got, err := RenderCommand(`pi --print "$(cat {{.PromptFile}})"`, CommandData{
+		Worktree:   "/tmp/worktrees/fix-bug",
+		PromptFile: ".sandman/prompt.md",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `pi --print "$(cat .sandman/prompt.md)"`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
