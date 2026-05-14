@@ -22,6 +22,7 @@ type Container interface {
 // ContainerStarter is the interface for starting containers.
 type ContainerStarter interface {
 	Start(image, repoPath string, opts StartOptions) (Container, error)
+	BuildImage(repoPath string) (string, error)
 }
 
 // StartOptions configures container startup.
@@ -94,6 +95,28 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 	}
 
 	return &runningContainer{id: id, binary: r.binary, execFn: r.execFn}, nil
+}
+
+const CustomImageTag = "sandman-custom:latest"
+
+// BuildImage builds a container image from .sandman/Dockerfile.
+func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
+	dockerfile := filepath.Join(repoPath, ".sandman", "Dockerfile")
+	if _, err := os.Stat(dockerfile); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf(".sandman/Dockerfile not found at %s; container mode requires a Dockerfile in the .sandman directory", dockerfile)
+		}
+		return "", fmt.Errorf("check .sandman/Dockerfile: %w", err)
+	}
+
+	args := []string{"build", "-t", CustomImageTag, "-f", dockerfile, repoPath}
+	cmd := r.execFn(r.binary, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("build image from .sandman/Dockerfile: %w\n%s", err, out)
+	}
+
+	return CustomImageTag, nil
 }
 
 type runningContainer struct {

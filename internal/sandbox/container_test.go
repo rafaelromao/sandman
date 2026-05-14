@@ -342,3 +342,81 @@ func TestContainerRuntime_Start_ReturnsErrorWhenGhAuthFails(t *testing.T) {
 		t.Errorf("expected error to mention gh auth setup-git, got: %v", err)
 	}
 }
+
+func TestContainerRuntime_BuildImage_BuildsFromDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	dockerfileDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(dockerfileDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dockerfileDir, "Dockerfile"), []byte("FROM alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := NewContainerRuntime("docker")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "success")
+	}
+
+	tag, err := rt.BuildImage(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tag == "" {
+		t.Fatal("expected non-empty image tag")
+	}
+
+	if len(captured) < 5 {
+		t.Fatalf("expected build command, got %v", captured)
+	}
+	if captured[0] != "docker" {
+		t.Errorf("expected docker, got %q", captured[0])
+	}
+	if captured[1] != "build" {
+		t.Errorf("expected build, got %q", captured[1])
+	}
+	if captured[2] != "-t" {
+		t.Errorf("expected -t, got %q", captured[2])
+	}
+	if captured[3] != tag {
+		t.Errorf("expected tag %q, got %q", tag, captured[3])
+	}
+}
+
+func TestContainerRuntime_BuildImage_MissingDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	rt := NewContainerRuntime("docker")
+	_, err := rt.BuildImage(dir)
+	if err == nil {
+		t.Fatal("expected error for missing .sandman/Dockerfile")
+	}
+	if !strings.Contains(err.Error(), ".sandman/Dockerfile not found") {
+		t.Errorf("expected error to mention .sandman/Dockerfile not found, got: %v", err)
+	}
+}
+
+func TestContainerRuntime_BuildImage_BuildFailure(t *testing.T) {
+	dir := t.TempDir()
+	dockerfileDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(dockerfileDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dockerfileDir, "Dockerfile"), []byte("FROM alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := NewContainerRuntime("docker")
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		return exec.Command("false")
+	}
+
+	_, err := rt.BuildImage(dir)
+	if err == nil {
+		t.Fatal("expected error when build fails")
+	}
+	if !strings.Contains(err.Error(), "build image from .sandman/Dockerfile") {
+		t.Errorf("expected error to mention build failure, got: %v", err)
+	}
+}
