@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -97,13 +98,15 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 	return &runningContainer{id: id, binary: r.binary, execFn: r.execFn}, nil
 }
 
+// CustomImageTag is the default image tag used in tests and by fake starters
+// when no specific repo-scoped tag has been configured.
 const CustomImageTag = "sandman-custom:latest"
 
 // BuildImage builds a container image from .sandman/Dockerfile.
-// The image is always tagged "sandman-custom:latest" and the build command
-// is invoked on every batch. Layer caching by the container engine may
-// still speed up subsequent builds; no explicit cache invalidation is
-// performed.
+// The tag is scoped to the repo path to prevent collisions when sandman
+// manages multiple repositories concurrently. Layer caching by the
+// container engine may speed up subsequent builds; no explicit cache
+// invalidation is performed.
 func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
 	dockerfile := filepath.Join(repoPath, ".sandman", "Dockerfile")
 	if _, err := os.Stat(dockerfile); err != nil {
@@ -113,14 +116,22 @@ func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
 		return "", fmt.Errorf("check .sandman/Dockerfile: %w", err)
 	}
 
-	args := []string{"build", "-t", CustomImageTag, "-f", dockerfile, repoPath}
+	absPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo path: %w", err)
+	}
+
+	h := sha256.Sum256([]byte(absPath))
+	tag := fmt.Sprintf("sandman-custom-%x:latest", h[:8])
+
+	args := []string{"build", "-t", tag, "-f", dockerfile, repoPath}
 	cmd := r.execFn(r.binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("build image from .sandman/Dockerfile: %w\n%s", err, out)
 	}
 
-	return CustomImageTag, nil
+	return tag, nil
 }
 
 type runningContainer struct {

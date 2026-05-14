@@ -383,6 +383,12 @@ func TestContainerRuntime_BuildImage_BuildsFromDockerfile(t *testing.T) {
 	if captured[3] != tag {
 		t.Errorf("expected tag %q, got %q", tag, captured[3])
 	}
+	if !strings.HasPrefix(tag, "sandman-custom-") || !strings.HasSuffix(tag, ":latest") {
+		t.Errorf("expected tag format sandman-custom-<hash>:latest, got %q", tag)
+	}
+	if len(tag) != len("sandman-custom-")+16+len(":latest") {
+		t.Errorf("expected 16-char hex hash in tag, got %q (len %d)", tag, len(tag))
+	}
 }
 
 func TestContainerRuntime_BuildImage_MissingDockerfile(t *testing.T) {
