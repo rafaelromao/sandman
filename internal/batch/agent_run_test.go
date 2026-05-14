@@ -345,6 +345,58 @@ func TestAgentRun_Run_InjectsPromptFileIntoCommandTemplate(t *testing.T) {
 	}
 }
 
+func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
+	issue := &github.Issue{Number: 7, Title: "Fix auth", Body: "OAuth is broken."}
+	sb := &fakeSandbox{workDir: "/tmp/worktrees/fix-auth"}
+	spy := &spyRenderer{result: "rendered prompt for auth fix"}
+
+	run := NewAgentRun(issue, "sandman/7-fix-auth", sb)
+	run.defaultBranch = "main"
+	run.env = map[string]string{"API_KEY": "sk-test123", "MODEL": "gpt-4"}
+
+	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", false, prompt.RenderConfig{
+		PromptFile: ".sandman/prompt.md",
+	})
+
+	if res.Status != "success" {
+		t.Errorf("expected status success, got %s", res.Status)
+	}
+
+	if !spy.called {
+		t.Fatal("expected renderer to be called")
+	}
+	if spy.data.Number != 7 {
+		t.Errorf("expected issue number 7, got %d", spy.data.Number)
+	}
+	if spy.data.Title != "Fix auth" {
+		t.Errorf("expected title 'Fix auth', got %q", spy.data.Title)
+	}
+	if spy.data.Body != "OAuth is broken." {
+		t.Errorf("expected body 'OAuth is broken.', got %q", spy.data.Body)
+	}
+	if spy.data.SourceBranch != "sandman/7-fix-auth" {
+		t.Errorf("expected SourceBranch 'sandman/7-fix-auth', got %q", spy.data.SourceBranch)
+	}
+	if spy.data.TargetBranch != "main" {
+		t.Errorf("expected TargetBranch 'main', got %q", spy.data.TargetBranch)
+	}
+
+	if !sb.writePromptCalled {
+		t.Fatal("expected WritePrompt to be called")
+	}
+	if sb.writePromptContent != "rendered prompt for auth fix" {
+		t.Errorf("expected prompt content %q, got %q", "rendered prompt for auth fix", sb.writePromptContent)
+	}
+
+	if !sb.execCalled {
+		t.Fatal("expected Exec to be called")
+	}
+	wantPrefix := "export API_KEY='sk-test123'; export MODEL='gpt-4'; opencode run .sandman/prompt.md"
+	if sb.execCommand != wantPrefix {
+		t.Errorf("exec command:\ngot:  %q\nwant: %q", sb.execCommand, wantPrefix)
+	}
+}
+
 func TestAgentRun_Run_TemplateErrorCausesFailure(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{}

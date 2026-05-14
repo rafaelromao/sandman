@@ -1,10 +1,25 @@
 package batch
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
 )
+
+func TestCommandData_ExposesOnlyPromptFile(t *testing.T) {
+	typ := reflect.TypeOf(CommandData{})
+	if typ.NumField() != 1 {
+		t.Errorf("expected exactly 1 field in CommandData, got %d", typ.NumField())
+	}
+	field, ok := typ.FieldByName("PromptFile")
+	if !ok {
+		t.Fatal("expected PromptFile field in CommandData")
+	}
+	if field.Type.Kind() != reflect.String {
+		t.Errorf("expected PromptFile to be string, got %s", field.Type)
+	}
+}
 
 func TestRenderCommand_InvalidTemplateReturnsError(t *testing.T) {
 	_, err := RenderCommand("opencode {{.Unknown", CommandData{})
