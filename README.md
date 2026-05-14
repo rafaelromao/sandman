@@ -127,6 +127,18 @@ go vet ./...
 gofmt -w .
 ```
 
+### Smoke tests
+
+Opt-in smoke tests are build-tagged and env-gated:
+
+```bash
+SANDMAN_SMOKE_PROVIDERS=opencode,claude-code,codex,pi go test -tags smoke ./internal/cmd -run Smoke
+```
+
+Prereqs: `git`, Podman or Docker, network access for the provider installers, and file-backed auth under `HOME` for the selected provider(s).
+
+The selected provider CLIs must also be installed on the host: `opencode`, `claude`, `codex`, and/or `pi`.
+
 ## License
 
 MIT
