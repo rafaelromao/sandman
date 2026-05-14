@@ -317,6 +317,17 @@ func TestScaffold_PromptMd_IsSeeded(t *testing.T) {
 	}
 }
 
+func TestScaffold_AllPresetsHaveInstallCommands(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		if _, ok := agentInstallCommands[agent]; !ok {
+			t.Errorf("agent %q has no install command in agentInstallCommands map", agent)
+		}
+	}
+	if len(agentInstallCommands) != len(config.BuiltInAgentPresets) {
+		t.Errorf("agentInstallCommands has %d entries but BuiltInAgentPresets has %d", len(agentInstallCommands), len(config.BuiltInAgentPresets))
+	}
+}
+
 func TestScaffold_InvalidAgent_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
