@@ -30,4 +30,4 @@ jobs:
         env:
           FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
         with:
-          model: fireworks-ai/accounts/fireworks/models/kimi-k2-instruct
+          model: accounts/fireworks/models/kimi-k2p6
