@@ -14,11 +14,12 @@ import (
 
 // AgentRun orchestrates the lifecycle of a single agent execution for an issue.
 type AgentRun struct {
-	issue   *github.Issue
-	branch  string
-	sandbox sandbox.Sandbox
-	status  string
-	env     map[string]string
+	issue         *github.Issue
+	branch        string
+	defaultBranch string
+	sandbox       sandbox.Sandbox
+	status        string
+	env           map[string]string
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -34,9 +35,11 @@ func NewAgentRun(issue *github.Issue, branch string, sandbox sandbox.Sandbox) *A
 // Prepare renders the prompt for the issue and writes it to the sandbox.
 func (r *AgentRun) Prepare(renderer prompt.Renderer, cfg prompt.RenderConfig) error {
 	rendered, err := renderer.Render(cfg, prompt.IssueData{
-		Number: r.issue.Number,
-		Title:  r.issue.Title,
-		Body:   r.issue.Body,
+		Number:       r.issue.Number,
+		Title:        r.issue.Title,
+		Body:         r.issue.Body,
+		SourceBranch: r.branch,
+		TargetBranch: r.defaultBranch,
 	})
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)
@@ -83,7 +86,10 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 		return r.Result()
 	}
 
-	renderedCmd, err := RenderCommand(command, CommandData{Worktree: r.sandbox.WorkDir()})
+	renderedCmd, err := RenderCommand(command, CommandData{
+		Worktree:   r.sandbox.WorkDir(),
+		PromptFile: renderCfg.PromptFile,
+	})
 	if err != nil {
 		r.status = "failure"
 		return r.Result()

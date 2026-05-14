@@ -31,6 +31,20 @@ func TestRenderCommand_UnknownFieldReturnsError(t *testing.T) {
 	}
 }
 
+func TestRenderCommand_SubstitutesPromptFile(t *testing.T) {
+	got, err := RenderCommand("opencode --prompt-file {{.PromptFile}}", CommandData{
+		Worktree:   "/tmp/sandman/worktrees/fix-bug",
+		PromptFile: ".sandman/prompt.md",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "opencode --prompt-file .sandman/prompt.md"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 	got, err := RenderCommand("opencode", CommandData{
 		Worktree: "/tmp/worktree",

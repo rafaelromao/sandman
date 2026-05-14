@@ -94,6 +94,26 @@ func (s *spyRenderer) Render(cfg prompt.RenderConfig, data prompt.IssueData) (st
 	return s.result, s.err
 }
 
+func TestAgentRun_Prepare_PopulatesBranchFields(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Users cannot log in."}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.defaultBranch = "main"
+
+	if err := run.Prepare(spy, prompt.RenderConfig{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.data.SourceBranch != "sandman/42-fix-bug" {
+		t.Errorf("expected SourceBranch 'sandman/42-fix-bug', got %q", spy.data.SourceBranch)
+	}
+	if spy.data.TargetBranch != "main" {
+		t.Errorf("expected TargetBranch 'main', got %q", spy.data.TargetBranch)
+	}
+}
+
 func TestAgentRun_Prepare_RendersAndWritesPrompt(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Users cannot log in."}
 	sb := &fakeSandbox{}
@@ -304,6 +324,24 @@ func TestAgentRun_Run_InteractiveUsesExecInteractive(t *testing.T) {
 	}
 	if sb.execCommand != "echo hello" {
 		t.Errorf("expected command 'echo hello', got %q", sb.execCommand)
+	}
+}
+
+func TestAgentRun_Run_InjectsPromptFileIntoCommandTemplate(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{workDir: "/tmp/worktrees/fix-bug"}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	res := run.Run(context.Background(), spy, "opencode --prompt-file {{.PromptFile}}", false, prompt.RenderConfig{
+		PromptFile: ".sandman/prompt.md",
+	})
+
+	if res.Status != "success" {
+		t.Errorf("expected status success, got %s", res.Status)
+	}
+	if sb.execCommand != "opencode --prompt-file .sandman/prompt.md" {
+		t.Errorf("expected rendered command with prompt file, got %q", sb.execCommand)
 	}
 }
 

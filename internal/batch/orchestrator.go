@@ -501,6 +501,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	runnable := factory.NewRunnable(issue, branch, wt)
 	if agentRun, ok := runnable.(*AgentRun); ok {
 		agentRun.env = agentCfg.Env
+		agentRun.defaultBranch = cfg.Git.DefaultBranch
 	}
 
 	runID := generateRunID(num)
