@@ -47,3 +47,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0004 | Use GitHub REST API via `gh api` for native dependency queries | accepted |
 | 0005 | Replace isolated container toggle with container capacity | proposed |
 | 0006 | Built-in agent presets and Claude Code naming | proposed |
+| 0007 | BuildToolsPreset and pinned init scaffolding | proposed |

@@ -32,6 +32,10 @@ _Avoid_: Batch run, invocation.
 A git branch named `sandman/<issue-number>-<slugified-title>`, created per AgentRun.
 _Avoid_: Feature branch, PR branch.
 
+**BuildToolsPreset**:
+A scaffold-time recipe chosen during `sandman init` that seeds a pinned container image definition with shared baseline tools, stack tooling, and built-in agent installation defaults.
+_Avoid_: language, stack, base image.
+
 **ContainerSandbox**:
 A Docker or Podman container providing filesystem and process isolation for one or more AgentRuns. A Batch may scale a pool of ContainerSandboxes up or down within configured limits.
 _Avoid_: Docker container, sandbox container.
@@ -105,3 +109,4 @@ _Avoid_: Local sandbox.
 
 - "run" was used to mean both the CLI command (`sandman run`) and a single agent execution. Resolved: the CLI command triggers a **Batch**; each execution is an **AgentRun**.
 - "sandbox" was used interchangeably with "worktree" and "container." Resolved: **Sandbox** is the abstract isolation contract; **WorktreeSandbox** and **ContainerSandbox** are the concrete adapters. A **Worktree** is a git concept — a dedicated checkout that lives inside a sandbox.
+- "language" was used to mean both repo detection and scaffold recipe choice. Resolved: **BuildToolsPreset** is the scaffold-time recipe term; avoid "language" for that choice.
