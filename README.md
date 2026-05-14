@@ -77,7 +77,7 @@ agents:
   opencode:
     preset: opencode
   custom-agent:
-    command: "custom-agent --worktree {{.Worktree}}"
+    command: "custom-agent --prompt {{.PromptFile}}"
     env:
       API_KEY: ${API_KEY}
 ```
@@ -90,7 +90,6 @@ The `command` field supports Go `text/template` syntax. The following keys are a
 
 | Key | Description |
 | --- | --- |
-| `{{.Worktree}}` | Absolute path to the sandbox working directory for the issue |
 | `{{.PromptFile}}` | Relative path to the rendered prompt file (e.g., `.sandman/prompt.md`) |
 
 Commands without template placeholders are passed through unchanged.

@@ -96,7 +96,7 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 func TestConfig_ResolveAgentProvider_CustomProvider(t *testing.T) {
 	cfg := &Config{AgentProviders: map[string]Agent{
 		"custom": {
-			Command: "custom --worktree {{.Worktree}}",
+			Command: "custom --prompt {{.PromptFile}}",
 		},
 	}}
 
@@ -108,8 +108,8 @@ func TestConfig_ResolveAgentProvider_CustomProvider(t *testing.T) {
 	if agent.Preset != "" {
 		t.Errorf("preset: got %q, want empty", agent.Preset)
 	}
-	if agent.Command != "custom --worktree {{.Worktree}}" {
-		t.Errorf("command: got %q, want %q", agent.Command, "custom --worktree {{.Worktree}}")
+	if agent.Command != "custom --prompt {{.PromptFile}}" {
+		t.Errorf("command: got %q, want %q", agent.Command, "custom --prompt {{.PromptFile}}")
 	}
 }
 
@@ -231,16 +231,6 @@ agents:
 	}
 	if !agent.KeychainAuth {
 		t.Error("agents.opencode.keychain_auth: expected true")
-	}
-}
-
-func TestBuiltInPresets_NoWorktreeFlag(t *testing.T) {
-	for key, preset := range BuiltInAgentPresets {
-		t.Run(key, func(t *testing.T) {
-			if strings.Contains(preset.Command, "{{.Worktree}}") {
-				t.Errorf("preset %q command contains {{.Worktree}}, but Sandman manages worktrees", key)
-			}
-		})
 	}
 }
 

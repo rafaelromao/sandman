@@ -345,22 +345,6 @@ func TestAgentRun_Run_InjectsPromptFileIntoCommandTemplate(t *testing.T) {
 	}
 }
 
-func TestAgentRun_Run_RendersCommandTemplate(t *testing.T) {
-	issue := &github.Issue{Number: 42, Title: "Fix bug"}
-	sb := &fakeSandbox{workDir: "/tmp/worktrees/fix-bug"}
-	spy := &spyRenderer{result: "rendered prompt"}
-
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "opencode --worktree {{.Worktree}}", false, prompt.RenderConfig{})
-
-	if res.Status != "success" {
-		t.Errorf("expected status success, got %s", res.Status)
-	}
-	if sb.execCommand != "opencode --worktree /tmp/worktrees/fix-bug" {
-		t.Errorf("expected rendered command, got %q", sb.execCommand)
-	}
-}
-
 func TestAgentRun_Run_TemplateErrorCausesFailure(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{}
