@@ -152,24 +152,44 @@ func expandTilde(p string) string {
 func TestContainerMount_RendersBuiltInAgentPaths(t *testing.T) {
 	for name, preset := range config.BuiltInAgentPresets {
 		t.Run(name, func(t *testing.T) {
+			dirsToCreate := make(map[string]bool)
 			var expandedDirs []string
 			for _, d := range preset.ConfigDirs {
 				expanded := expandTilde(d)
+				if _, err := os.Stat(expanded); os.IsNotExist(err) {
+					dirsToCreate[expanded] = true
+				}
 				if err := os.MkdirAll(expanded, 0755); err != nil {
 					t.Fatalf("mkdir %s: %v", expanded, err)
 				}
 				expandedDirs = append(expandedDirs, expanded)
-				t.Cleanup(func() { os.RemoveAll(expanded) })
+				t.Cleanup(func(p string) func() {
+					return func() {
+						if dirsToCreate[p] {
+							os.RemoveAll(p)
+						}
+					}
+				}(expanded))
 			}
 
+			filesToCreate := make(map[string]bool)
 			var expandedFiles []string
 			for _, f := range preset.ConfigFiles {
 				expanded := expandTilde(f)
+				if _, err := os.Stat(expanded); os.IsNotExist(err) {
+					filesToCreate[expanded] = true
+				}
 				if err := os.WriteFile(expanded, []byte("{}"), 0644); err != nil {
 					t.Fatalf("write %s: %v", expanded, err)
 				}
 				expandedFiles = append(expandedFiles, expanded)
-				t.Cleanup(func() { os.Remove(expanded) })
+				t.Cleanup(func(p string) func() {
+					return func() {
+						if filesToCreate[p] {
+							os.Remove(p)
+						}
+					}
+				}(expanded))
 			}
 
 			rt := NewContainerRuntime("docker")
