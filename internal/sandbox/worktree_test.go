@@ -62,6 +62,44 @@ func commitGitFile(t *testing.T, dir, name, content, message string) {
 	runGit(t, dir, "commit", "-m", message)
 }
 
+func TestWorktreeSandbox_CreatesBranchFromSourceBranchWithTrackedFilesOnly(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "initial\n", "first tracked file")
+	commitGitFile(t, seedDir, "another.txt", "data\n", "second tracked file")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+	writeGitFile(t, localDir, "untracked.txt", "should not appear\n")
+
+	if err := SyncDefaultBranch(localDir, "main"); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/99-test", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("start error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "tracked.txt")); err != nil {
+		t.Errorf("expected tracked.txt in worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "another.txt")); err != nil {
+		t.Errorf("expected another.txt in worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "untracked.txt")); !os.IsNotExist(err) {
+		t.Errorf("expected untracked.txt to NOT be in worktree, got %v", err)
+	}
+
+	branchesOut := runGit(t, localDir, "branch", "--list", "sandman/99-test")
+	if branchesOut == "" {
+		t.Error("expected branch sandman/99-test to exist")
+	}
+}
+
 func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)

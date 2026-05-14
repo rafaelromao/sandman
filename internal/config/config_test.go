@@ -137,6 +137,66 @@ func TestBuiltInAgentPresets_IncludeExpectedProviders(t *testing.T) {
 	}
 }
 
+func TestBuiltInPresets_Metadata(t *testing.T) {
+	tests := []struct {
+		key          string
+		wantCommand  string
+		wantDirs     []string
+		wantFiles    []string
+		wantKeychain bool
+	}{
+		{
+			key:          "opencode",
+			wantCommand:  `opencode run "$(cat {{.PromptFile}})"`,
+			wantDirs:     []string{"~/.config/opencode", "~/.local/share/opencode"},
+			wantFiles:    nil,
+			wantKeychain: false,
+		},
+		{
+			key:          "claude-code",
+			wantCommand:  `claude --print "$(cat {{.PromptFile}})"`,
+			wantDirs:     []string{"~/.claude"},
+			wantFiles:    []string{"~/.claude.json"},
+			wantKeychain: false,
+		},
+		{
+			key:          "codex",
+			wantCommand:  `codex exec "$(cat {{.PromptFile}})"`,
+			wantDirs:     []string{"~/.config/codex", "~/.local/share/codex"},
+			wantFiles:    nil,
+			wantKeychain: false,
+		},
+		{
+			key:          "pi",
+			wantCommand:  `pi --print "$(cat {{.PromptFile}})"`,
+			wantDirs:     []string{"~/.pi"},
+			wantFiles:    nil,
+			wantKeychain: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			preset, ok := BuiltInAgentPresets[tt.key]
+			if !ok {
+				t.Fatalf("missing built-in preset %q", tt.key)
+			}
+			if preset.Command != tt.wantCommand {
+				t.Errorf("Command: got %q, want %q", preset.Command, tt.wantCommand)
+			}
+			if !reflect.DeepEqual(preset.ConfigDirs, tt.wantDirs) {
+				t.Errorf("ConfigDirs: got %v, want %v", preset.ConfigDirs, tt.wantDirs)
+			}
+			if !reflect.DeepEqual(preset.ConfigFiles, tt.wantFiles) {
+				t.Errorf("ConfigFiles: got %v, want %v", preset.ConfigFiles, tt.wantFiles)
+			}
+			if preset.KeychainAuth != tt.wantKeychain {
+				t.Errorf("KeychainAuth: got %v, want %v", preset.KeychainAuth, tt.wantKeychain)
+			}
+		})
+	}
+}
+
 func TestBuiltInAgentPresets_ClaudeCodeHasConfigFiles(t *testing.T) {
 	preset, ok := BuiltInAgentPresets["claude-code"]
 	if !ok {

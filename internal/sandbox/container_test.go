@@ -141,6 +141,85 @@ func TestContainerRuntime_Start_SetsContainerUser(t *testing.T) {
 	}
 }
 
+func expandTilde(p string) string {
+	home, _ := os.UserHomeDir()
+	if strings.HasPrefix(p, "~/") {
+		return filepath.Join(home, p[2:])
+	}
+	return p
+}
+
+func TestContainerMount_RendersBuiltInAgentPaths(t *testing.T) {
+	for name, preset := range config.BuiltInAgentPresets {
+		t.Run(name, func(t *testing.T) {
+			var expandedDirs []string
+			for _, d := range preset.ConfigDirs {
+				expanded := expandTilde(d)
+				if err := os.MkdirAll(expanded, 0755); err != nil {
+					t.Fatalf("mkdir %s: %v", expanded, err)
+				}
+				expandedDirs = append(expandedDirs, expanded)
+				t.Cleanup(func() { os.RemoveAll(expanded) })
+			}
+
+			var expandedFiles []string
+			for _, f := range preset.ConfigFiles {
+				expanded := expandTilde(f)
+				if err := os.WriteFile(expanded, []byte("{}"), 0644); err != nil {
+					t.Fatalf("write %s: %v", expanded, err)
+				}
+				expandedFiles = append(expandedFiles, expanded)
+				t.Cleanup(func() { os.Remove(expanded) })
+			}
+
+			rt := NewContainerRuntime("docker")
+			var captured []string
+			rt.execFn = func(name string, arg ...string) *exec.Cmd {
+				captured = append([]string{name}, arg...)
+				return exec.Command("echo", "abc123")
+			}
+
+			_, err := rt.Start("alpine", ".", StartOptions{
+				AgentConfigDirs:  expandedDirs,
+				AgentConfigFiles: expandedFiles,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			for _, expanded := range expandedDirs {
+				containerPath := toContainerPath(expanded)
+				expected := expanded + ":" + containerPath
+				found := false
+				for i := 0; i < len(captured)-1; i++ {
+					if captured[i] == "-v" && captured[i+1] == expected {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("missing mount for ConfigDir %q (expected %q), args: %v", expanded, expected, captured)
+				}
+			}
+
+			for _, expanded := range expandedFiles {
+				containerPath := toContainerPath(expanded)
+				expected := expanded + ":" + containerPath
+				found := false
+				for i := 0; i < len(captured)-1; i++ {
+					if captured[i] == "-v" && captured[i+1] == expected {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("missing mount for ConfigFile %q (expected %q), args: %v", expanded, expected, captured)
+				}
+			}
+		})
+	}
+}
+
 func TestContainerRuntime_Start_MountsAgentConfigFiles(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -430,6 +509,44 @@ func TestContainerRuntime_Start_ReturnsErrorWhenGhAuthFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "gh auth setup-git") {
 		t.Errorf("expected error to mention gh auth setup-git, got: %v", err)
+	}
+}
+
+func TestContainerRuntime_BuildImage_ResolvesSandmanDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	dockerfileDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(dockerfileDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dockerfileDir, "Dockerfile"), []byte("FROM alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := NewContainerRuntime("docker")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "success")
+	}
+
+	tag, err := rt.BuildImage(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tag == "" {
+		t.Fatal("expected non-empty image tag")
+	}
+
+	if len(captured) < 6 {
+		t.Fatalf("expected full build command, got %v", captured)
+	}
+
+	expectedDockerfile := filepath.Join(dir, ".sandman", "Dockerfile")
+	if captured[4] != "-f" {
+		t.Errorf("expected -f flag, got %q", captured[4])
+	}
+	if captured[5] != expectedDockerfile {
+		t.Errorf("expected dockerfile path %q, got %q", expectedDockerfile, captured[5])
 	}
 }
 
