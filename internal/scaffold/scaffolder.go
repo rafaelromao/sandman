@@ -135,10 +135,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		WorktreeDir:       config.DefaultWorktreeDir,
 		Sandbox:           config.DefaultSandbox,
 		AgentProviders: map[string]config.Agent{
-			config.DefaultAgent: {
-				Name:    config.DefaultAgent,
-				Command: config.DefaultAgent,
-			},
+			config.DefaultAgent: {Preset: config.DefaultAgent},
 		},
 	}
 

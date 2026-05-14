@@ -226,11 +226,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 	sandboxMode = resolvedMode
 
-	agentCfg, ok := cfg.AgentProviders[cfg.Agent]
-	if !ok {
-		return nil, fmt.Errorf("agent %q not found in config", cfg.Agent)
+	agentCfg, err := cfg.ResolveAgentProvider(cfg.Agent)
+	if err != nil {
+		return nil, err
 	}
-	if err := sandbox.ValidateAgentConfig(agentCfg); err != nil {
+	if err := sandbox.ValidateAgentConfig(cfg.Agent, agentCfg); err != nil {
 		return nil, err
 	}
 
@@ -393,7 +393,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg, req.Preserve, req.Debug, req.Branches, req.Interactive, req.PromptConfig, activeRuns, &activeMu, sbFactory, containerAlloc)
+			res := o.runSingle(ctx, issueNum, cfg, agentCfg, req.Preserve, req.Debug, req.Branches, req.Interactive, req.PromptConfig, activeRuns, &activeMu, sbFactory, containerAlloc)
 			mu.Lock()
 			results[idx] = res
 			statuses[issueNum] = res.Status
@@ -460,7 +460,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, preserve bool, debug bool, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, preserve bool, debug bool, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure"}
@@ -493,11 +493,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		delete(activeRuns, num)
 		activeMu.Unlock()
 	}()
-
-	agentCfg, ok := cfg.AgentProviders[cfg.Agent]
-	if !ok {
-		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
-	}
 
 	factory := o.runnableFactory
 	if factory == nil {

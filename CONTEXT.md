@@ -9,7 +9,7 @@ The set of issue numbers that must complete successfully before an AgentRun for 
 _Avoid_: dependencies, prerequisites.
 
 **Agent**:
-An external AI coding tool (OpenCode, Codex, Cloud Code, Pi) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
+An external AI coding tool (OpenCode, Codex, Claude Code, Pi) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
 _Avoid_: AI model, LLM, copilot.
 
 **Agent Provider**:

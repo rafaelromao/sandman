@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -19,13 +20,9 @@ git:
   author_email: dev@example.com
 agents:
   codex:
-    name: codex
-    command: "codex --worktree {{.Worktree}}"
+    preset: codex
     env:
       API_KEY: secret
-    config_dirs:
-      - ~/.config/codex
-      - ~/.local/share/codex
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -58,20 +55,84 @@ agents:
 	if !ok {
 		t.Fatalf("agents.codex: missing")
 	}
-	if agent.Name != "codex" {
-		t.Errorf("agents.codex.name: got %q, want %q", agent.Name, "codex")
+	if agent.Preset != "codex" {
+		t.Errorf("agents.codex.preset: got %q, want %q", agent.Preset, "codex")
 	}
-	if agent.Command != "codex --worktree {{.Worktree}}" {
-		t.Errorf("agents.codex.command: got %q, want %q", agent.Command, "codex --worktree {{.Worktree}}")
+	if agent.Command != "" {
+		t.Errorf("agents.codex.command: got %q, want empty", agent.Command)
+	}
+	if len(agent.ConfigDirs) != 0 {
+		t.Errorf("agents.codex.config_dirs: got %v, want empty", agent.ConfigDirs)
 	}
 	if agent.Env["API_KEY"] != "secret" {
 		t.Errorf("agents.codex.env[API_KEY]: got %q, want %q", agent.Env["API_KEY"], "secret")
 	}
-	if len(agent.ConfigDirs) != 2 || agent.ConfigDirs[0] != "~/.config/codex" || agent.ConfigDirs[1] != "~/.local/share/codex" {
-		t.Errorf("agents.codex.config_dirs: got %v, want [~/.config/codex ~/.local/share/codex]", agent.ConfigDirs)
+}
+
+func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
+	cfg := &Config{}
+
+	agent, err := cfg.ResolveAgentProvider("opencode")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if agent.Preset != "opencode" {
+		t.Errorf("preset: got %q, want %q", agent.Preset, "opencode")
+	}
+	if agent.Command != "opencode" {
+		t.Errorf("command: got %q, want %q", agent.Command, "opencode")
+	}
+	wantDirs := []string{"~/.config/opencode", "~/.local/share/opencode"}
+	if !reflect.DeepEqual(agent.ConfigDirs, wantDirs) {
+		t.Errorf("config_dirs: got %v, want %v", agent.ConfigDirs, wantDirs)
 	}
 	if agent.KeychainAuth {
-		t.Error("agents.codex.keychain_auth: expected false")
+		t.Error("keychain_auth: expected false")
+	}
+}
+
+func TestConfig_ResolveAgentProvider_CustomProvider(t *testing.T) {
+	cfg := &Config{AgentProviders: map[string]Agent{
+		"custom": {
+			Command: "custom --worktree {{.Worktree}}",
+		},
+	}}
+
+	agent, err := cfg.ResolveAgentProvider("custom")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if agent.Preset != "" {
+		t.Errorf("preset: got %q, want empty", agent.Preset)
+	}
+	if agent.Command != "custom --worktree {{.Worktree}}" {
+		t.Errorf("command: got %q, want %q", agent.Command, "custom --worktree {{.Worktree}}")
+	}
+}
+
+func TestBuiltInAgentPresets_IncludeExpectedProviders(t *testing.T) {
+	tests := []struct {
+		key         string
+		displayName string
+	}{
+		{key: "opencode", displayName: "OpenCode"},
+		{key: "claude-code", displayName: "Claude Code"},
+		{key: "codex", displayName: "Codex"},
+		{key: "pi", displayName: "Pi"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			preset, ok := BuiltInAgentPresets[tt.key]
+			if !ok {
+				t.Fatalf("missing built-in preset %q", tt.key)
+			}
+			if preset.DisplayName != tt.displayName {
+				t.Errorf("display name: got %q, want %q", preset.DisplayName, tt.displayName)
+			}
+		})
 	}
 }
 
@@ -81,7 +142,6 @@ func TestLoad_AgentWithKeychainAuth(t *testing.T) {
 	content := `agent: opencode
 agents:
   opencode:
-    name: opencode
     command: "opencode"
     keychain_auth: true
 `
@@ -97,6 +157,12 @@ agents:
 	agent, ok := cfg.AgentProviders["opencode"]
 	if !ok {
 		t.Fatalf("agents.opencode: missing")
+	}
+	if agent.Command != "opencode" {
+		t.Errorf("agents.opencode.command: got %q, want %q", agent.Command, "opencode")
+	}
+	if agent.Preset != "" {
+		t.Errorf("agents.opencode.preset: got %q, want empty", agent.Preset)
 	}
 	if !agent.KeychainAuth {
 		t.Error("agents.opencode.keychain_auth: expected true")

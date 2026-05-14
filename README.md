@@ -75,11 +75,14 @@ git:
   author_email: dev@example.com
 agents:
   opencode:
-    name: opencode
-    command: "opencode --worktree {{.Worktree}}"
+    preset: opencode
+  custom-agent:
+    command: "custom-agent --worktree {{.Worktree}}"
     env:
       API_KEY: ${API_KEY}
 ```
+
+Use `preset` for built-in providers such as `opencode`, `claude-code`, `codex`, and `pi`. Use `command` only for custom providers.
 
 ### Agent Command Templates
 

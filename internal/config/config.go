@@ -28,7 +28,7 @@ type Config struct {
 	WorktreeDir       string           `yaml:"worktree_dir"`
 	Sandbox           string           `yaml:"sandbox"`
 	Git               GitConfig        `yaml:"git"`
-	AgentProviders    map[string]Agent `yaml:"agents"`
+	AgentProviders    map[string]Agent `yaml:"agents,omitempty"`
 }
 
 // GitConfig holds git-specific settings.
@@ -38,13 +38,58 @@ type GitConfig struct {
 	AuthorEmail   string `yaml:"author_email"`
 }
 
-// Agent holds a configured agent provider.
+// Agent holds a configured agent provider or a custom override.
 type Agent struct {
-	Name         string            `yaml:"name"`
-	Command      string            `yaml:"command"`
-	Env          map[string]string `yaml:"env"`
-	ConfigDirs   []string          `yaml:"config_dirs"`
-	KeychainAuth bool              `yaml:"keychain_auth"`
+	Name         string            `yaml:"name,omitempty"`
+	Preset       string            `yaml:"preset,omitempty"`
+	Command      string            `yaml:"command,omitempty"`
+	Env          map[string]string `yaml:"env,omitempty"`
+	ConfigDirs   []string          `yaml:"config_dirs,omitempty"`
+	KeychainAuth bool              `yaml:"keychain_auth,omitempty"`
+}
+
+// AgentPreset defines the built-in defaults for a provider preset.
+type AgentPreset struct {
+	DisplayName  string
+	Command      string
+	Env          map[string]string
+	ConfigDirs   []string
+	KeychainAuth bool
+}
+
+// BuiltInAgentPresets lists the provider presets Sandman knows about without repo-specific config.
+var BuiltInAgentPresets = map[string]AgentPreset{
+	"opencode": {
+		DisplayName: "OpenCode",
+		Command:     "opencode",
+		ConfigDirs: []string{
+			"~/.config/opencode",
+			"~/.local/share/opencode",
+		},
+	},
+	"claude-code": {
+		DisplayName: "Claude Code",
+		Command:     "claude",
+		ConfigDirs: []string{
+			"~/.claude",
+			"~/.claude.json",
+		},
+	},
+	"codex": {
+		DisplayName: "Codex",
+		Command:     "codex",
+		ConfigDirs: []string{
+			"~/.config/codex",
+			"~/.local/share/codex",
+		},
+	},
+	"pi": {
+		DisplayName: "Pi",
+		Command:     "pi",
+		ConfigDirs: []string{
+			"~/.pi",
+		},
+	},
 }
 
 // Store loads and saves Sandman configuration.
@@ -115,6 +160,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Agent == "" {
 		return nil, fmt.Errorf("validate config: agent is required")
 	}
+	if _, err := cfg.ResolveAgentProvider(cfg.Agent); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
+	}
 
 	return &cfg, nil
 }
@@ -129,6 +177,86 @@ func Save(path string, cfg *Config) error {
 		return fmt.Errorf("write config: %w", err)
 	}
 	return nil
+}
+
+// ResolveAgentProvider returns the configured agent provider, applying preset defaults when needed.
+func (c *Config) ResolveAgentProvider(name string) (Agent, error) {
+	if c != nil && c.AgentProviders != nil {
+		if agent, ok := c.AgentProviders[name]; ok {
+			return resolveAgentProvider(name, agent)
+		}
+	}
+
+	if preset, ok := BuiltInAgentPresets[name]; ok {
+		return preset.Agent(name), nil
+	}
+
+	return Agent{}, fmt.Errorf("agent %q not found in config", name)
+}
+
+func resolveAgentProvider(name string, agent Agent) (Agent, error) {
+	if agent.Preset == "" {
+		if agent.Command != "" {
+			return agent, nil
+		}
+
+		if preset, ok := BuiltInAgentPresets[name]; ok {
+			return preset.AgentWithOverrides(name, agent), nil
+		}
+
+		return Agent{}, fmt.Errorf("agent %q must define preset or command", name)
+	}
+
+	preset, ok := BuiltInAgentPresets[agent.Preset]
+	if !ok {
+		return Agent{}, fmt.Errorf("agent %q uses unknown preset %q", name, agent.Preset)
+	}
+
+	return preset.AgentWithOverrides(agent.Preset, agent), nil
+}
+
+func (p AgentPreset) Agent(preset string) Agent {
+	return Agent{
+		Preset:       preset,
+		Command:      p.Command,
+		Env:          copyStringMap(p.Env),
+		ConfigDirs:   append([]string(nil), p.ConfigDirs...),
+		KeychainAuth: p.KeychainAuth,
+	}
+}
+
+func (p AgentPreset) AgentWithOverrides(preset string, override Agent) Agent {
+	agent := p.Agent(preset)
+	if override.Name != "" {
+		agent.Name = override.Name
+	}
+	if override.Preset != "" {
+		agent.Preset = override.Preset
+	}
+	if override.Command != "" {
+		agent.Command = override.Command
+	}
+	if len(override.Env) > 0 {
+		agent.Env = copyStringMap(override.Env)
+	}
+	if len(override.ConfigDirs) > 0 {
+		agent.ConfigDirs = append([]string(nil), override.ConfigDirs...)
+	}
+	if override.KeychainAuth {
+		agent.KeychainAuth = true
+	}
+	return agent
+}
+
+func copyStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 // GetValue returns the string representation of a config field by its dot-notation key.
