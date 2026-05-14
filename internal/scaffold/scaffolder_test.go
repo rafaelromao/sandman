@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rafaelromao/sandman/internal/config"
 )
 
 type fakePrompter struct {
@@ -306,6 +308,121 @@ func TestScaffold_PromptMd_IsSeeded(t *testing.T) {
 	}
 	if !strings.Contains(content, "{{ISSUE_NUMBER}}") {
 		t.Errorf("prompt.md missing built-in key example, got:\n%s", content)
+	}
+	if !strings.Contains(content, "{{.PromptFile}}") {
+		t.Errorf("prompt.md missing prompt file contract, got:\n%s", content)
+	}
+	if !strings.Contains(content, "promptArgs") {
+		t.Errorf("prompt.md missing promptArgs mention, got:\n%s", content)
+	}
+}
+
+func TestScaffold_AllPresetsHaveInstallCommands(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		if _, ok := agentInstallCommands[agent]; !ok {
+			t.Errorf("agent %q has no install command in agentInstallCommands map", agent)
+		}
+	}
+	if len(agentInstallCommands) != len(config.BuiltInAgentPresets) {
+		t.Errorf("agentInstallCommands has %d entries but BuiltInAgentPresets has %d", len(agentInstallCommands), len(config.BuiltInAgentPresets))
+	}
+}
+
+func TestScaffold_InvalidAgent_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{Lang: "go", Agent: "unknown"}, &fakePrompter{confirm: true})
+	if err == nil {
+		t.Fatal("expected error for unknown agent")
+	}
+	if !strings.Contains(err.Error(), "unknown agent") {
+		t.Errorf("expected 'unknown agent' error, got: %v", err)
+	}
+}
+
+func TestScaffold_AgentDockerfileHasInstall(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{Lang: "go", Agent: "claude-code"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "claude-code") {
+		t.Errorf("Dockerfile missing claude-code install, got:\n%s", content)
+	}
+}
+
+func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+
+			err := s.Scaffold(dir, Options{Lang: "go", Agent: agent}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.Agent != agent {
+				t.Errorf("expected agent %q, got %q", agent, cfg.Agent)
+			}
+			resolved, err := cfg.ResolveAgentProvider(agent)
+			if err != nil {
+				t.Fatalf("resolve agent %q: %v", agent, err)
+			}
+			if resolved.Preset != agent {
+				t.Errorf("expected preset %q, got %q", agent, resolved.Preset)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, agent) {
+				t.Errorf("Dockerfile missing %q, got:\n%s", agent, content)
+			}
+			if !strings.Contains(content, "FROM golang:latest") {
+				t.Errorf("Dockerfile missing base image, got:\n%s", content)
+			}
+		})
+	}
+}
+
+func TestScaffold_AgentFlagSelectsConfigPreset(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{Lang: "go", Agent: "claude-code"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	configPath := filepath.Join(dir, ".sandman", "config.yaml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "preset: claude-code") {
+		t.Errorf("config missing expected preset, got:\n%s", content)
+	}
+	if strings.Contains(content, "preset: opencode") {
+		t.Errorf("config should not contain default preset, got:\n%s", content)
 	}
 }
 

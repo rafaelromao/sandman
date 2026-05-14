@@ -12,8 +12,17 @@ import (
 
 const promptMdHeader = `# Context
 
-<!-- Use {{KEY}} for variable substitution from promptArgs and issue data. -->
-<!-- Built-in keys: {{ISSUE_NUMBER}}, {{ISSUE_TITLE}}, {{ISSUE_BODY}}, {{SOURCE_BRANCH}}, {{TARGET_BRANCH}} -->
+<!--
+  Sandman substitutes these built-in keys before the agent runs:
+  {{ISSUE_NUMBER}}   -> the issue number
+  {{ISSUE_TITLE}}    -> the issue title
+  {{ISSUE_BODY}}     -> the issue body
+  {{SOURCE_BRANCH}}  -> the source branch name
+  {{TARGET_BRANCH}}  -> the target branch name
+
+  Add custom keys in config.yaml under promptArgs and use them as {{KEY_NAME}}.
+  The agent command references the rendered prompt file path as {{.PromptFile}}.
+-->
 
 # Task
 
@@ -28,6 +37,7 @@ const promptMdHeader = `# Context
 type Options struct {
 	Lang      string // --lang override
 	FromImage string // --from-image override
+	Agent     string // --agent override
 }
 
 // Prompter asks the user for confirmation or selection interactively.
@@ -75,6 +85,23 @@ var languageDetectors = []languageDetector{
 	{fileExists("project.clj"), "clojure"},
 	{fileExists("deps.edn"), "clojure"},
 	{fileExists("build.gradle.kts"), "kotlin"},
+}
+
+// KnownAgents is the sorted list of built-in agent preset keys.
+var KnownAgents = func() []string {
+	agents := make([]string, 0, len(config.BuiltInAgentPresets))
+	for name := range config.BuiltInAgentPresets {
+		agents = append(agents, name)
+	}
+	sort.Strings(agents)
+	return agents
+}()
+
+var agentInstallCommands = map[string]string{
+	"opencode":    `RUN curl -fsSL https://opencode.ai/install.sh | sh`,
+	"claude-code": `RUN npm install -g @anthropic-ai/claude-code`,
+	"codex":       `RUN npm install -g codex`,
+	"pi":          `RUN pip install pi`,
 }
 
 var baseImages = map[string]string{
@@ -127,15 +154,20 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("create .sandman: %w", err)
 	}
 
+	agent, err := s.resolveAgent(opts, p)
+	if err != nil {
+		return err
+	}
+
 	cfg := &config.Config{
-		Agent:             config.DefaultAgent,
+		Agent:             agent,
 		DefaultParallel:   config.DefaultParallel,
 		ContainerCapacity: config.DefaultContainerCapacity,
 		MaxContainers:     config.DefaultMaxContainers,
 		WorktreeDir:       config.DefaultWorktreeDir,
 		Sandbox:           config.DefaultSandbox,
 		AgentProviders: map[string]config.Agent{
-			config.DefaultAgent: {Preset: config.DefaultAgent},
+			agent: {Preset: agent},
 		},
 	}
 
@@ -149,7 +181,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return err
 	}
 
-	dockerfile := s.renderDockerfile(lang, opts.FromImage)
+	dockerfile := s.renderDockerfile(lang, opts.FromImage, agent)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -161,6 +193,16 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 
 	return nil
+}
+
+func (s *Scaffolder) resolveAgent(opts Options, p Prompter) (string, error) {
+	if opts.Agent != "" {
+		if _, ok := config.BuiltInAgentPresets[opts.Agent]; !ok {
+			return "", fmt.Errorf("unknown agent: %q (supported: %s)", opts.Agent, strings.Join(KnownAgents, ", "))
+		}
+		return opts.Agent, nil
+	}
+	return config.DefaultAgent, nil
 }
 
 func (s *Scaffolder) resolveLanguage(repoRoot string, opts Options, p Prompter) (string, error) {
@@ -206,13 +248,18 @@ func (s *Scaffolder) resolveLanguage(repoRoot string, opts Options, p Prompter) 
 	return p.Select("No language detected. Choose one:", KnownLanguages)
 }
 
-func (s *Scaffolder) renderDockerfile(lang, fromImage string) string {
+func (s *Scaffolder) renderDockerfile(lang, fromImage, agent string) string {
+	var out string
 	if fromImage != "" {
-		return fmt.Sprintf("FROM %s\nWORKDIR /app\n", fromImage)
+		out = fmt.Sprintf("FROM %s\n", fromImage)
+	} else if img, ok := baseImages[lang]; ok {
+		out = fmt.Sprintf("FROM %s\n", img)
+	} else {
+		out = "FROM ubuntu:latest\n"
 	}
-	img, ok := baseImages[lang]
-	if !ok {
-		return "FROM ubuntu:latest\nWORKDIR /app\n"
+	out += "WORKDIR /app\n"
+	if cmd, ok := agentInstallCommands[agent]; ok {
+		out += cmd + "\n"
 	}
-	return fmt.Sprintf("FROM %s\nWORKDIR /app\n", img)
+	return out
 }
