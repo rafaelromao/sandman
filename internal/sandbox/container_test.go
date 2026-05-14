@@ -147,7 +147,7 @@ func TestContainerRuntime_Start_MountsAgentConfigFiles(t *testing.T) {
 		t.Skip("cannot determine home dir")
 	}
 
-	configFile := filepath.Join(home, ".config", "test.json")
+	configFile := filepath.Join(home, ".config", "sandman-test-file.json")
 	if err := os.WriteFile(configFile, []byte("{}"), 0644); err != nil {
 		t.Fatalf("write test config file: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestContainerRuntime_Start_MountsAgentConfigFiles(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	expected := configFile + ":/.config/test.json"
+	expected := configFile + ":/.config/sandman-test-file.json"
 	found := false
 	for i := 0; i < len(captured)-1; i++ {
 		if captured[i] == "-v" && captured[i+1] == expected {
