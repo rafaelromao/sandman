@@ -432,13 +432,21 @@ touch "$repo_root/.sandman/agent-executed"
 `)}, "podman", &fakeGitHubClient{issues: map[int]*github.Issue{
 		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 	}})
+	eventLog := &recordingEventLog{}
+	deps.EventLog = eventLog
 
-	_, err := executeRunCommand(t, deps, "42")
+	out, err := executeRunCommand(t, deps, "42")
 	if err == nil {
 		t.Fatal("expected failure when .sandman/Dockerfile is missing")
 	}
 	if !strings.Contains(err.Error(), ".sandman/Dockerfile") {
 		t.Fatalf("expected error about missing Dockerfile, got: %v", err)
+	}
+	if strings.Contains(out, "Summary:") {
+		t.Fatalf("expected no summary output before agent run, got:\n%s", out)
+	}
+	if len(eventLog.events) != 0 {
+		t.Fatalf("expected no run events, got %d", len(eventLog.events))
 	}
 
 	markerPath := filepath.Join(dir, ".sandman", "agent-executed")

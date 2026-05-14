@@ -100,6 +100,9 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 const CustomImageTag = "sandman-custom:latest"
 
 // BuildImage builds a container image from .sandman/Dockerfile.
+// The image is always tagged "sandman-custom:latest" and rebuilt on every
+// invocation; no caching or hash-based dedup is performed. Callers should
+// expect a full build each time.
 func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
 	dockerfile := filepath.Join(repoPath, ".sandman", "Dockerfile")
 	if _, err := os.Stat(dockerfile); err != nil {
