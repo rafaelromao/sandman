@@ -113,33 +113,10 @@ func TestConfig_ResolveAgentProvider_CustomProvider(t *testing.T) {
 	}
 }
 
-func TestBuiltInAgentPresets_IncludeExpectedProviders(t *testing.T) {
-	tests := []struct {
-		key         string
-		displayName string
-	}{
-		{key: "opencode", displayName: "OpenCode"},
-		{key: "claude-code", displayName: "Claude Code"},
-		{key: "codex", displayName: "Codex"},
-		{key: "pi", displayName: "Pi"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.key, func(t *testing.T) {
-			preset, ok := BuiltInAgentPresets[tt.key]
-			if !ok {
-				t.Fatalf("missing built-in preset %q", tt.key)
-			}
-			if preset.DisplayName != tt.displayName {
-				t.Errorf("display name: got %q, want %q", preset.DisplayName, tt.displayName)
-			}
-		})
-	}
-}
-
 func TestBuiltInPresets_Metadata(t *testing.T) {
 	tests := []struct {
 		key          string
+		wantDisplay  string
 		wantCommand  string
 		wantDirs     []string
 		wantFiles    []string
@@ -147,6 +124,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 	}{
 		{
 			key:          "opencode",
+			wantDisplay:  "OpenCode",
 			wantCommand:  `opencode run "$(cat {{.PromptFile}})"`,
 			wantDirs:     []string{"~/.config/opencode", "~/.local/share/opencode"},
 			wantFiles:    nil,
@@ -154,6 +132,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 		},
 		{
 			key:          "claude-code",
+			wantDisplay:  "Claude Code",
 			wantCommand:  `claude --print "$(cat {{.PromptFile}})"`,
 			wantDirs:     []string{"~/.claude"},
 			wantFiles:    []string{"~/.claude.json"},
@@ -161,6 +140,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 		},
 		{
 			key:          "codex",
+			wantDisplay:  "Codex",
 			wantCommand:  `codex exec "$(cat {{.PromptFile}})"`,
 			wantDirs:     []string{"~/.config/codex", "~/.local/share/codex"},
 			wantFiles:    nil,
@@ -168,6 +148,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 		},
 		{
 			key:          "pi",
+			wantDisplay:  "Pi",
 			wantCommand:  `pi --print "$(cat {{.PromptFile}})"`,
 			wantDirs:     []string{"~/.pi"},
 			wantFiles:    nil,
@@ -180,6 +161,9 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 			preset, ok := BuiltInAgentPresets[tt.key]
 			if !ok {
 				t.Fatalf("missing built-in preset %q", tt.key)
+			}
+			if preset.DisplayName != tt.wantDisplay {
+				t.Errorf("DisplayName: got %q, want %q", preset.DisplayName, tt.wantDisplay)
 			}
 			if preset.Command != tt.wantCommand {
 				t.Errorf("Command: got %q, want %q", preset.Command, tt.wantCommand)
@@ -194,21 +178,6 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 				t.Errorf("KeychainAuth: got %v, want %v", preset.KeychainAuth, tt.wantKeychain)
 			}
 		})
-	}
-}
-
-func TestBuiltInAgentPresets_ClaudeCodeHasConfigFiles(t *testing.T) {
-	preset, ok := BuiltInAgentPresets["claude-code"]
-	if !ok {
-		t.Fatal("missing built-in preset claude-code")
-	}
-
-	if len(preset.ConfigFiles) != 1 || preset.ConfigFiles[0] != "~/.claude.json" {
-		t.Errorf("claude-code ConfigFiles: got %v, want [\"~/.claude.json\"]", preset.ConfigFiles)
-	}
-
-	if len(preset.ConfigDirs) != 1 || preset.ConfigDirs[0] != "~/.claude" {
-		t.Errorf("claude-code ConfigDirs: got %v, want [\"~/.claude\"]", preset.ConfigDirs)
 	}
 }
 
