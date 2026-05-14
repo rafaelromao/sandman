@@ -451,6 +451,16 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 		}
 	}
 
+	for _, file := range agentCfg.ConfigFiles {
+		expanded, err := expandPath(file)
+		if err != nil {
+			return sandbox.StartOptions{}, fmt.Errorf("expand config file %q: %w", file, err)
+		}
+		if expanded != "" {
+			opts.AgentConfigFiles = append(opts.AgentConfigFiles, expanded)
+		}
+	}
+
 	return opts, nil
 }
 

@@ -136,6 +136,70 @@ func TestBuiltInAgentPresets_IncludeExpectedProviders(t *testing.T) {
 	}
 }
 
+func TestBuiltInAgentPresets_ClaudeCodeHasConfigFiles(t *testing.T) {
+	preset, ok := BuiltInAgentPresets["claude-code"]
+	if !ok {
+		t.Fatal("missing built-in preset claude-code")
+	}
+
+	if len(preset.ConfigFiles) != 1 || preset.ConfigFiles[0] != "~/.claude.json" {
+		t.Errorf("claude-code ConfigFiles: got %v, want [\"~/.claude.json\"]", preset.ConfigFiles)
+	}
+
+	if len(preset.ConfigDirs) != 1 || preset.ConfigDirs[0] != "~/.claude" {
+		t.Errorf("claude-code ConfigDirs: got %v, want [\"~/.claude\"]", preset.ConfigDirs)
+	}
+}
+
+func TestAgent_ConfigFilesCopiedFromPreset(t *testing.T) {
+	preset := AgentPreset{
+		DisplayName: "test",
+		Command:     "test",
+		ConfigDirs:  []string{"~/.config/test"},
+		ConfigFiles: []string{"~/.config/test.json"},
+	}
+
+	agent := preset.Agent("test")
+	if len(agent.ConfigFiles) != 1 || agent.ConfigFiles[0] != "~/.config/test.json" {
+		t.Errorf("ConfigFiles: got %v, want [\"~/.config/test.json\"]", agent.ConfigFiles)
+	}
+}
+
+func TestAgentWithOverrides_ConfigFilesOverridden(t *testing.T) {
+	preset := AgentPreset{
+		DisplayName: "test",
+		Command:     "test",
+		ConfigDirs:  []string{"~/.config/test"},
+		ConfigFiles: []string{"~/.config/test.json"},
+	}
+
+	override := Agent{
+		ConfigFiles: []string{"~/.custom.json"},
+	}
+
+	agent := preset.AgentWithOverrides("test", override)
+	if len(agent.ConfigFiles) != 1 || agent.ConfigFiles[0] != "~/.custom.json" {
+		t.Errorf("ConfigFiles: got %v, want [\"~/.custom.json\"]", agent.ConfigFiles)
+	}
+}
+
+func TestResolveAgentProvider_IncludesConfigFiles(t *testing.T) {
+	cfg := &Config{}
+
+	agent, err := cfg.ResolveAgentProvider("claude-code")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(agent.ConfigFiles) != 1 || agent.ConfigFiles[0] != "~/.claude.json" {
+		t.Errorf("ConfigFiles: got %v, want [\"~/.claude.json\"]", agent.ConfigFiles)
+	}
+
+	if len(agent.ConfigDirs) != 1 || agent.ConfigDirs[0] != "~/.claude" {
+		t.Errorf("ConfigDirs: got %v, want [\"~/.claude\"]", agent.ConfigDirs)
+	}
+}
+
 func TestLoad_AgentWithKeychainAuth(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

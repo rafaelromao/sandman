@@ -45,6 +45,7 @@ type Agent struct {
 	Command      string            `yaml:"command,omitempty"`
 	Env          map[string]string `yaml:"env,omitempty"`
 	ConfigDirs   []string          `yaml:"config_dirs,omitempty"`
+	ConfigFiles  []string          `yaml:"config_files,omitempty"`
 	KeychainAuth bool              `yaml:"keychain_auth,omitempty"`
 }
 
@@ -54,6 +55,7 @@ type AgentPreset struct {
 	Command      string
 	Env          map[string]string
 	ConfigDirs   []string
+	ConfigFiles  []string
 	KeychainAuth bool
 }
 
@@ -72,6 +74,8 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		Command:     "claude",
 		ConfigDirs: []string{
 			"~/.claude",
+		},
+		ConfigFiles: []string{
 			"~/.claude.json",
 		},
 	},
@@ -221,6 +225,7 @@ func (p AgentPreset) Agent(preset string) Agent {
 		Command:      p.Command,
 		Env:          copyStringMap(p.Env),
 		ConfigDirs:   append([]string(nil), p.ConfigDirs...),
+		ConfigFiles:  append([]string(nil), p.ConfigFiles...),
 		KeychainAuth: p.KeychainAuth,
 	}
 }
@@ -241,6 +246,9 @@ func (p AgentPreset) AgentWithOverrides(preset string, override Agent) Agent {
 	}
 	if len(override.ConfigDirs) > 0 {
 		agent.ConfigDirs = append([]string(nil), override.ConfigDirs...)
+	}
+	if len(override.ConfigFiles) > 0 {
+		agent.ConfigFiles = append([]string(nil), override.ConfigFiles...)
 	}
 	if override.KeychainAuth {
 		agent.KeychainAuth = true

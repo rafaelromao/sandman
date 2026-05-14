@@ -25,11 +25,12 @@ type ContainerStarter interface {
 
 // StartOptions configures container startup.
 type StartOptions struct {
-	GitConfigPath   string
-	AgentConfigDirs []string
-	UserID          string
-	SSH             bool
-	RemoteScheme    string
+	GitConfigPath    string
+	AgentConfigDirs  []string
+	AgentConfigFiles []string
+	UserID           string
+	SSH              bool
+	RemoteScheme     string
 }
 
 // ContainerRuntime starts and manages containers.
@@ -62,8 +63,19 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 	}
 
 	for _, dir := range opts.AgentConfigDirs {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		}
 		containerPath := toContainerPath(dir)
 		args = append(args, "-v", dir+":"+containerPath)
+	}
+
+	for _, file := range opts.AgentConfigFiles {
+		if _, err := os.Stat(file); os.IsNotExist(err) {
+			continue
+		}
+		containerPath := toContainerPath(file)
+		args = append(args, "-v", file+":"+containerPath)
 	}
 
 	if opts.SSH {
