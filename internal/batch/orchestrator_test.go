@@ -1464,7 +1464,7 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	starter := &fakeContainerStarter{container: &fakeContainerForOrchestrator{id: "shared123"}}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true", ConfigDirs: []string{"~/.config/test"}}}}}, nil)
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true", ConfigDirs: []string{"~/.config/test"}, ConfigFiles: []string{"~/.config/test.json"}}}}}, nil)
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.containerRuntimeFactory = factory
 
@@ -1478,6 +1478,9 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	}
 	if len(starter.startOpts.AgentConfigDirs) != 1 {
 		t.Errorf("expected 1 agent config dir, got %d", len(starter.startOpts.AgentConfigDirs))
+	}
+	if len(starter.startOpts.AgentConfigFiles) != 1 {
+		t.Errorf("expected 1 agent config file, got %d", len(starter.startOpts.AgentConfigFiles))
 	}
 	if starter.startOpts.UserID == "" {
 		t.Error("expected UserID to be set")

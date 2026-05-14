@@ -141,6 +141,85 @@ func TestContainerRuntime_Start_SetsContainerUser(t *testing.T) {
 	}
 }
 
+func TestContainerRuntime_Start_MountsAgentConfigFiles(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir")
+	}
+
+	configFile := filepath.Join(home, ".config", "test.json")
+	if err := os.WriteFile(configFile, []byte("{}"), 0644); err != nil {
+		t.Fatalf("write test config file: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(configFile) })
+
+	rt := NewContainerRuntime("docker")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "abc123")
+	}
+
+	_, err = rt.Start("alpine", ".", StartOptions{AgentConfigFiles: []string{configFile}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := configFile + ":/.config/test.json"
+	found := false
+	for i := 0; i < len(captured)-1; i++ {
+		if captured[i] == "-v" && captured[i+1] == expected {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected file mount %q, got args: %v", expected, captured)
+	}
+}
+
+func TestContainerRuntime_Start_SkipsMissingAgentConfigDirs(t *testing.T) {
+	rt := NewContainerRuntime("docker")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "abc123")
+	}
+
+	missingDir := "/nonexistent/path/for/sandman-test"
+	_, err := rt.Start("alpine", ".", StartOptions{AgentConfigDirs: []string{missingDir}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for i := 0; i < len(captured)-1; i++ {
+		if captured[i] == "-v" && strings.Contains(captured[i+1], missingDir) {
+			t.Errorf("expected missing dir %q to be skipped, got mount: %v", missingDir, captured[i+1])
+		}
+	}
+}
+
+func TestContainerRuntime_Start_SkipsMissingAgentConfigFiles(t *testing.T) {
+	rt := NewContainerRuntime("docker")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "abc123")
+	}
+
+	missingFile := "/nonexistent/path/for/sandman-test.json"
+	_, err := rt.Start("alpine", ".", StartOptions{AgentConfigFiles: []string{missingFile}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for i := 0; i < len(captured)-1; i++ {
+		if captured[i] == "-v" && strings.Contains(captured[i+1], missingFile) {
+			t.Errorf("expected missing file %q to be skipped, got mount: %v", missingFile, captured[i+1])
+		}
+	}
+}
+
 func TestContainerRuntime_Start_MountsAgentConfigDirs(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
