@@ -11,9 +11,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 )
 
-// DefaultContainerImage is the image used for sandbox containers.
-const DefaultContainerImage = "alpine"
-
 // Container represents a running Docker or Podman container.
 type Container interface {
 	ID() string
@@ -97,10 +94,6 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 
 	return &runningContainer{id: id, binary: r.binary, execFn: r.execFn}, nil
 }
-
-// CustomImageTag is the default image tag used in tests and by fake starters
-// when no specific repo-scoped tag has been configured.
-const CustomImageTag = "sandman-custom:latest"
 
 // BuildImage builds a container image from .sandman/Dockerfile.
 // The tag is scoped to the repo path to prevent collisions when sandman

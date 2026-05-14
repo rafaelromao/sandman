@@ -1376,7 +1376,7 @@ func (f *fakeContainerStarter) BuildImage(repoPath string) (string, error) {
 	if f.buildImageTag != "" {
 		return f.buildImageTag, nil
 	}
-	return sandbox.CustomImageTag, nil
+	return "sandman-custom:latest", nil
 }
 
 func (f *fakeContainerStarter) Start(image, repoPath string, opts sandbox.StartOptions) (sandbox.Container, error) {
@@ -1482,8 +1482,8 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	if starter.startOpts.UserID == "" {
 		t.Error("expected UserID to be set")
 	}
-	if starter.startImage != sandbox.CustomImageTag {
-		t.Errorf("expected image %q, got %q", sandbox.CustomImageTag, starter.startImage)
+	if starter.startImage != "sandman-custom:latest" {
+		t.Errorf(`expected image "sandman-custom:latest", got %q`, starter.startImage)
 	}
 	if starter.buildImageCount != 1 {
 		t.Errorf("expected BuildImage to be called once, got %d", starter.buildImageCount)

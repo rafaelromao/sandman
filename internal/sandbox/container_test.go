@@ -10,6 +10,9 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 )
 
+const DefaultContainerImage = "alpine"
+const CustomImageTag = "sandman-custom:latest"
+
 func TestValidateAgentConfig_AcceptsFileBasedAuth(t *testing.T) {
 	agent := config.Agent{Name: "opencode", Command: "opencode", KeychainAuth: false}
 	if err := ValidateAgentConfig("opencode", agent); err != nil {
