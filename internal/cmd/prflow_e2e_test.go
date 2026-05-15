@@ -5,6 +5,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,6 +26,11 @@ import (
 const (
 	prFlowIssueNumber = 1
 	prFlowBranch      = "sandman/1-fix-failing-test"
+
+	parallelIssue150  = 150
+	parallelIssue151  = 151
+	parallelBranch150 = "sandman/150-fix-150"
+	parallelBranch151 = "sandman/151-fix-151"
 )
 
 func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
@@ -907,6 +913,669 @@ printf 'unexpected gh command: %s\n' "$*" >&2
 exit 1
 `, "__SHIM_DIR__", dir)
 	ghPath := filepath.Join(dir, "gh")
+	if err := os.WriteFile(ghPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+}
+
+func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("skip e2e in CI")
+	}
+
+	allowed, err := parseE2EProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed["opencode"] {
+		t.Skip("set SANDMAN_E2E_PROVIDERS=opencode and run `go test -tags e2e ./internal/cmd -run PRFlow`")
+	}
+
+	realHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("resolve home dir: %v", err)
+	}
+	if !hasOpenCodeAuth(realHome) {
+		t.Skipf("skip opencode e2e: missing auth under %s", realHome)
+	}
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skipf("skip opencode e2e: host CLI unavailable: %v", err)
+	}
+	if _, err := exec.LookPath("podman"); err != nil {
+		t.Skipf("skip podman e2e: podman unavailable: %v", err)
+	}
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init")
+	if err != nil {
+		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+
+	// Create the bare remote inside the repo so it's accessible inside the container.
+	remoteDir := filepath.Join(repoDir, ".sandman", "remote")
+	if err := os.MkdirAll(remoteDir, 0755); err != nil {
+		t.Fatalf("create remote dir: %v", err)
+	}
+	bareInit := exec.Command("git", "init", "--bare")
+	bareInit.Dir = remoteDir
+	if out, err := bareInit.CombinedOutput(); err != nil {
+		t.Fatalf("init bare remote: %v: %s", err, out)
+	}
+	runGit(t, repoDir, "remote", "add", "origin", remoteDir)
+	runGit(t, repoDir, "push", "-u", "origin", "main")
+
+	seedParallelPRFlowRepo(t, repoDir)
+	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-parallel-")
+	if err != nil {
+		t.Fatalf("create home dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
+	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
+		t.Fatalf("create ssh dir: %v", err)
+	}
+	absRepo, _ := filepath.Abs(repoDir)
+	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
+		"file://"+filepath.Join(absRepo, ".sandman", "remote"))
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	for _, dir := range []string{".config/opencode", ".local/share/opencode"} {
+		src := filepath.Join(realHome, dir)
+		dst := filepath.Join(homeDir, dir)
+		if _, err := os.Stat(src); os.IsNotExist(err) {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			t.Fatalf("create parent for %s: %v", dst, err)
+		}
+		if err := os.Symlink(src, dst); err != nil {
+			t.Fatalf("link %s: %v", dir, err)
+		}
+	}
+	t.Setenv("HOME", homeDir)
+	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
+		t.Fatalf("warm podman image for test home: %v: %s", err, out)
+	}
+
+	ghShimDir := t.TempDir()
+	writeFakeGHShimParallel(t, ghShimDir)
+	prependPath(t, ghShimDir)
+
+	containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
+	writeFakeGHShimForContainerParallel(t, containerGhShimDir)
+
+	buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect-parallel", "-f",
+		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build image for model detection: %v: %s", err, out)
+	}
+	modelOut, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel",
+		"opencode", "models").Output()
+	if err != nil {
+		t.Fatalf("detect model in container: %v", err)
+	}
+	containerModel := pickModel(strings.TrimSpace(string(modelOut)))
+	if containerModel == "" {
+		t.Fatal("no model available in container")
+	}
+	t.Logf("using container model: %s", containerModel)
+
+	customizeOpenCodeAgentForContainerWithEcho(t, repoDir, containerModel)
+	writeParallelPRFlowPrompt(t, repoDir)
+
+	out, err = runSandmanBinary(t, binPath, repoDir, "run",
+		"--sandbox", "podman",
+		"--preserve",
+		"--parallel", "2",
+		"--container-capacity", "2",
+		"--max-containers", "1",
+		strconv.Itoa(parallelIssue150), strconv.Itoa(parallelIssue151))
+	t.Logf("sandman run returned err=%v output=%s", err, out)
+
+	// ---- Assertions ----
+
+	// 1. Event timeline: both run.started before first run.finished
+	eventsPath := filepath.Join(repoDir, ".sandman", "events.jsonl")
+	eventsData, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var started, finished []time.Time
+	for _, line := range strings.Split(strings.TrimSpace(string(eventsData)), "\n") {
+		if line == "" {
+			continue
+		}
+		var evt events.Event
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			t.Fatalf("parse event: %v: %s", err, line)
+		}
+		switch evt.Type {
+		case "run.started":
+			started = append(started, evt.Timestamp)
+		case "run.finished":
+			finished = append(finished, evt.Timestamp)
+		}
+	}
+	if len(started) != 2 {
+		t.Fatalf("expected 2 run.started events, got %d", len(started))
+	}
+	if len(finished) != 2 {
+		t.Fatalf("expected 2 run.finished events, got %d", len(finished))
+	}
+	lastStarted := started[0]
+	if started[1].After(started[0]) {
+		lastStarted = started[1]
+	}
+	firstFinished := finished[0]
+	if finished[1].Before(finished[0]) {
+		firstFinished = finished[1]
+	}
+	if !lastStarted.Before(firstFinished) {
+		t.Fatal("expected both run.started events before first run.finished — runs did not overlap")
+	}
+
+	// 2. Shared container identity + different workdirs
+	for _, issue := range []int{parallelIssue150, parallelIssue151} {
+		logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", issue))
+		logData, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("read log for issue %d: %v", issue, err)
+		}
+		if !strings.Contains(string(logData), "containerhostname=") {
+			t.Fatalf("expected container hostname in log for issue %d, got:\n%s", issue, logData)
+		}
+		if !strings.Contains(string(logData), "containerworkdir=") {
+			t.Fatalf("expected container workdir in log for issue %d, got:\n%s", issue, logData)
+		}
+	}
+
+	extract := func(logData []byte, prefix string) (string, bool) {
+		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
+			if strings.HasPrefix(line, prefix) {
+				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+			}
+		}
+		return "", false
+	}
+
+	log150, _ := os.ReadFile(filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", parallelIssue150)))
+	log151, _ := os.ReadFile(filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", parallelIssue151)))
+
+	hostname150, _ := extract(log150, "containerhostname=")
+	hostname151, _ := extract(log151, "containerhostname=")
+	if hostname150 == "" || hostname151 == "" {
+		t.Fatal("missing container hostname in one or both logs")
+	}
+	if hostname150 != hostname151 {
+		t.Fatalf("expected same container hostname, got %q and %q", hostname150, hostname151)
+	}
+
+	workdir150, _ := extract(log150, "containerworkdir=")
+	workdir151, _ := extract(log151, "containerworkdir=")
+	if workdir150 == "" || workdir151 == "" {
+		t.Fatal("missing container workdir in one or both logs")
+	}
+	if workdir150 == workdir151 {
+		t.Fatalf("expected different workdirs, got same %q", workdir150)
+	}
+	if !strings.Contains(workdir150, "150-fix-150") {
+		t.Fatalf("expected issue 150 branch in workdir, got %q", workdir150)
+	}
+	if !strings.Contains(workdir151, "151-fix-151") {
+		t.Fatalf("expected issue 151 branch in workdir, got %q", workdir151)
+	}
+
+	// 3. Both branches pushed beyond baseline
+	for _, branch := range []string{parallelBranch150, parallelBranch151} {
+		branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", branch))
+		if branchHash == baselineHash {
+			t.Fatalf("expected branch %s commit beyond baseline, got %s", branch, branchHash)
+		}
+		if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
+			t.Fatalf("expected branch %s to descend from baseline: %v\n%s", branch, err, out)
+		}
+		remoteHash := strings.TrimSpace(runGit(t, repoDir, "ls-remote", "origin", "refs/heads/"+branch))
+		if remoteHash == "" {
+			t.Fatalf("expected pushed remote branch %s", branch)
+		}
+		fields := strings.Fields(remoteHash)
+		if len(fields) == 0 || fields[0] != branchHash {
+			t.Fatalf("remote branch %s hash mismatch: got %q, want %q", branch, remoteHash, branchHash)
+		}
+	}
+
+	// 4. Branch-local correctness: check out each branch in a temp dir
+	for _, tc := range []struct {
+		issue      int
+		branch     string
+		wantReturn string
+		wantTest   string
+		failTest   string
+	}{
+		{parallelIssue150, parallelBranch150, "5", "TestDoubleFor150", "TestDoubleFor151"},
+		{parallelIssue151, parallelBranch151, "7", "TestDoubleFor151", "TestDoubleFor150"},
+	} {
+		checkoutDir := t.TempDir()
+		clone := exec.Command("git", "clone", "--branch", tc.branch, "--single-branch", remoteDir, checkoutDir)
+		if out, err := clone.CombinedOutput(); err != nil {
+			t.Fatalf("clone branch %s: %v: %s", tc.branch, err, out)
+		}
+
+		// Verify same-hunk edit
+		doubleSrc, err := os.ReadFile(filepath.Join(checkoutDir, "double.go"))
+		if err != nil {
+			t.Fatalf("read double.go on branch %s: %v", tc.branch, err)
+		}
+		if !strings.Contains(string(doubleSrc), "return "+tc.wantReturn) {
+			t.Fatalf("branch %s double.go: expected return %s, got:\n%s", tc.branch, tc.wantReturn, doubleSrc)
+		}
+
+		// Verify test passes for own test function
+		testCmd := exec.Command("go", "test", "-run", tc.wantTest, "./...")
+		testCmd.Dir = checkoutDir
+		if out, err := testCmd.CombinedOutput(); err != nil {
+			t.Fatalf("branch %s test %s failed: %v: %s", tc.branch, tc.wantTest, err, out)
+		}
+
+		// Verify test fails for other test function
+		testFailCmd := exec.Command("go", "test", "-run", tc.failTest, "./...")
+		testFailCmd.Dir = checkoutDir
+		if err := testFailCmd.Run(); err == nil {
+			t.Fatalf("branch %s test %s should have failed but passed", tc.branch, tc.failTest)
+		}
+	}
+
+	// 5. Exactly two gh pr create calls
+	for i := 1; i <= 2; i++ {
+		argsFile := filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i))
+		if _, err := os.Stat(argsFile); err != nil {
+			t.Fatalf("missing pr-create.args.%d: %v", i, err)
+		}
+	}
+	countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
+	if err != nil {
+		t.Fatalf("read pr create count: %v", err)
+	}
+	if got := strings.TrimSpace(string(countData)); got != "2" {
+		t.Fatalf("expected exactly two pr create invocations, got %q", got)
+	}
+
+	for _, tc := range []struct {
+		index  int
+		branch string
+	}{
+		{1, parallelBranch150},
+		{2, parallelBranch151},
+	} {
+		argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", tc.index)))
+		if err != nil {
+			t.Fatalf("read pr create args.%d: %v", tc.index, err)
+		}
+		args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+		if got := prFlowFlagValue(args, "--base"); got != "main" {
+			t.Fatalf("pr create %d --base: got %q, want %q", tc.index, got, "main")
+		}
+		if got := prFlowFlagValue(args, "--head"); got != tc.branch {
+			t.Fatalf("pr create %d --head: got %q, want %q", tc.index, got, tc.branch)
+		}
+		if got := prFlowFlagValue(args, "--title"); got != fmt.Sprintf("Fix %d", tc.index+149) {
+			t.Fatalf("pr create %d --title: got %q, want %q", tc.index, got, fmt.Sprintf("Fix %d", tc.index+149))
+		}
+
+		bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.body.%d", tc.index)))
+		if err != nil {
+			t.Fatalf("read pr create body.%d: %v", tc.index, err)
+		}
+		if got := strings.TrimSpace(string(bodyData)); got != fmt.Sprintf("Fixes #%d", tc.index+149) {
+			t.Fatalf("pr create body.%d: got %q, want %q", tc.index, got, fmt.Sprintf("Fixes #%d", tc.index+149))
+		}
+	}
+}
+
+func seedParallelPRFlowRepo(t *testing.T, dir string) {
+	t.Helper()
+
+	files := map[string]string{
+		"go.mod": `module example.com/prflow
+
+go 1.24
+`,
+		"double.go": `package prflow
+
+func Double(n int) int {
+	return 0
+}
+`,
+		"double_test.go": `package prflow
+
+import "testing"
+
+func TestDoubleFor150(t *testing.T) {
+	if got := Double(2); got != 5 {
+		t.Fatalf("Double(2) = %d, want 5", got)
+	}
+}
+
+func TestDoubleFor151(t *testing.T) {
+	if got := Double(2); got != 7 {
+		t.Fatalf("Double(2) = %d, want 7", got)
+	}
+}
+`,
+	}
+
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-m", "feat: seed parallel failing tests")
+	runGit(t, dir, "push", "origin", "main")
+}
+
+func writeParallelPRFlowPrompt(t *testing.T, repoDir string) {
+	t.Helper()
+
+	promptPath := filepath.Join(repoDir, ".sandman", "prompt.md")
+	prompt := `# Task
+
+Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
+
+{{ISSUE_BODY}}
+
+Fix only what is needed.
+When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{TARGET_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, and print the PR URL.
+`
+	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+}
+
+func customizeOpenCodeAgentForContainerWithEcho(t *testing.T, repoDir, model string) {
+	t.Helper()
+
+	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	agent, err := cfg.ResolveAgentProvider("opencode")
+	if err != nil {
+		t.Fatalf("resolve opencode agent: %v", err)
+	}
+	agent.Command = fmt.Sprintf(`echo "containerhostname=$(hostname) containerworkdir=$(pwd)" && PATH=/workspace/.sandman/bin:${PATH} opencode run --pure -m %s "$(cat {{.PromptFile}})"`, model)
+	if cfg.AgentProviders == nil {
+		cfg.AgentProviders = map[string]config.Agent{}
+	}
+	cfg.AgentProviders["opencode"] = agent
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+}
+
+func writeFakeGHShimParallel(t *testing.T, dir string) {
+	t.Helper()
+
+	script := fmt.Sprintf(`#!/bin/sh
+set -eu
+
+shim_dir="%s"
+
+case "$1" in
+  repo)
+    if [ "${2:-}" = "view" ]; then
+      cat <<'JSON'
+{"name":"sandbox","owner":{"login":"example"}}
+JSON
+      exit 0
+    fi
+    ;;
+  pr)
+    if [ "${2:-}" = "create" ]; then
+      shift 2
+      count_file="$shim_dir/pr-create.count"
+      args_file="$shim_dir/pr-create.args"
+      body_file="$shim_dir/pr-create.body"
+
+      count=0
+      if [ -f "$count_file" ]; then
+        count=$(cat "$count_file")
+      fi
+      count=$((count + 1))
+      printf '%%s\n' "$count" > "$count_file"
+      if [ "$count" -gt 2 ]; then
+        printf 'unexpected gh pr create invocation #%%s\n' "$count" >&2
+        exit 1
+      fi
+
+      printf '%%s\n' "$@" > "$args_file"
+
+      body=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --body)
+            shift
+            body="${1:-}"
+            ;;
+          --body-file)
+            shift
+            body="$(cat "$1")"
+            ;;
+        esac
+        shift
+      done
+
+      printf '%%s' "$body" > "$body_file"
+      printf 'https://example.test/example/sandbox/pull/%%s\n' "$count"
+      exit 0
+    fi
+    ;;
+  api)
+    path=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -H)
+          shift 2
+          ;;
+        --repo)
+          shift 2
+          ;;
+        repos/*)
+          path="$1"
+          shift
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    case "$path" in
+      repos/example/sandbox/issues/150)
+        cat <<'JSON'
+{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5.","labels":[{"name":"ready-for-agent"}]}
+JSON
+        exit 0
+        ;;
+      repos/example/sandbox/issues/150/events)
+        printf '[]\n'
+        exit 0
+        ;;
+      repos/example/sandbox/issues/151)
+        cat <<'JSON'
+{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7.","labels":[{"name":"ready-for-agent"}]}
+JSON
+        exit 0
+        ;;
+      repos/example/sandbox/issues/151/events)
+        printf '[]\n'
+        exit 0
+        ;;
+    esac
+    printf 'unexpected gh api path: %%s\n' "$path" >&2
+    exit 1
+    ;;
+  auth)
+    if [ "${2:-}" = "status" ]; then
+      cat <<'JSON'
+github.com
+  ✓ Logged in to github.com as test-user (keyring)
+  ✓ Git operations for github.com configured to use https protocol.
+  ✓ Token: ghp_xxxxxxxxxxxxxxxxxxxx
+JSON
+      exit 0
+    fi
+    if [ "${2:-}" = "setup-git" ]; then
+      exit 0
+    fi
+    ;;
+esac
+
+printf 'unexpected gh command: %%s\n' "$*" >&2
+exit 1
+`, dir)
+	ghPath := filepath.Join(dir, "gh")
+	if err := os.WriteFile(ghPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+}
+
+func writeFakeGHShimForContainerParallel(t *testing.T, hostDir string) {
+	t.Helper()
+
+	containerShimDir := "/workspace/.sandman/bin"
+	script := strings.ReplaceAll(`#!/bin/sh
+set -eu
+
+shim_dir="__SHIM_DIR__"
+
+case "$1" in
+  repo)
+    if [ "${2:-}" = "view" ]; then
+      cat <<'JSON'
+{"name":"sandbox","owner":{"login":"example"}}
+JSON
+      exit 0
+    fi
+    ;;
+  pr)
+    if [ "${2:-}" = "create" ]; then
+      shift 2
+      count_file="$shim_dir/pr-create.count"
+      current=$(cat "$count_file" 2>/dev/null || echo 0)
+      current=$((current + 1))
+      printf '%s\n' "$current" > "$count_file"
+      if [ "$current" -gt 2 ]; then
+        printf 'unexpected gh pr create invocation #%s\n' "$current" >&2
+        exit 1
+      fi
+
+      args_file="$shim_dir/pr-create.args.$current"
+      body_file="$shim_dir/pr-create.body.$current"
+
+      printf '%s\n' "$@" > "$args_file"
+
+      body=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --body)
+            shift
+            body="${1:-}"
+            ;;
+          --body-file)
+            shift
+            body="$(cat "$1")"
+            ;;
+        esac
+        shift
+      done
+
+      printf '%s' "$body" > "$body_file"
+      printf 'https://example.test/example/sandbox/pull/%s\n' "$current"
+      exit 0
+    fi
+    ;;
+  api)
+    path=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -H)
+          shift 2
+          ;;
+        --repo)
+          shift 2
+          ;;
+        repos/*)
+          path="$1"
+          shift
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    case "$path" in
+      repos/example/sandbox/issues/150)
+        cat <<'JSON'
+{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5.","labels":[{"name":"ready-for-agent"}]}
+JSON
+        exit 0
+        ;;
+      repos/example/sandbox/issues/150/events)
+        printf '[]\n'
+        exit 0
+        ;;
+      repos/example/sandbox/issues/151)
+        cat <<'JSON'
+{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7.","labels":[{"name":"ready-for-agent"}]}
+JSON
+        exit 0
+        ;;
+      repos/example/sandbox/issues/151/events)
+        printf '[]\n'
+        exit 0
+        ;;
+    esac
+    printf 'unexpected gh api path: %s\n' "$path" >&2
+    exit 1
+    ;;
+  auth)
+    if [ "${2:-}" = "status" ]; then
+      cat <<'JSON'
+github.com
+  ✓ Logged in to github.com as test-user (keyring)
+  ✓ Git operations for github.com configured to use https protocol.
+  ✓ Token: ghp_xxxxxxxxxxxxxxxxxxxx
+JSON
+      exit 0
+    fi
+    if [ "${2:-}" = "setup-git" ]; then
+      exit 0
+    fi
+    ;;
+esac
+
+printf 'unexpected gh command: %s\n' "$*" >&2
+exit 1
+`, "__SHIM_DIR__", containerShimDir)
+	if err := os.MkdirAll(hostDir, 0755); err != nil {
+		t.Fatalf("create gh shim dir: %v", err)
+	}
+	ghPath := filepath.Join(hostDir, "gh")
 	if err := os.WriteFile(ghPath, []byte(script), 0755); err != nil {
 		t.Fatalf("write gh shim: %v", err)
 	}
