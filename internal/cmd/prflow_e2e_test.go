@@ -391,12 +391,14 @@ func e2eContext(t *testing.T) context.Context {
 	if deadline, ok := t.Deadline(); ok {
 		timeout := time.Until(deadline) - 30*time.Second
 		if timeout > 0 {
-			ctx, _ := context.WithTimeout(context.Background(), timeout)
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			t.Cleanup(cancel)
 			return ctx
 		}
 	}
 
-	ctx, _ := context.WithTimeout(context.Background(), 20*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	t.Cleanup(cancel)
 	return ctx
 }
 
