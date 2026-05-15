@@ -263,7 +263,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	var containerAlloc containerAllocator
 	var pool *containerPool
 	if sandboxMode == "docker" || sandboxMode == "podman" {
-		if err := scaffold.ValidateDockerfileMetadata(".", cfg.Agent); err != nil {
+		if err := scaffold.ValidateDockerfileMetadata(".", cfg.BuildTools, cfg.Agent); err != nil {
 			return nil, err
 		}
 

@@ -50,6 +50,26 @@ func TestConfigGet_MaxContainers(t *testing.T) {
 	}
 }
 
+func TestConfigGet_BuildTools(t *testing.T) {
+	var buf bytes.Buffer
+	store := &fakeStore{
+		config: &config.Config{Agent: "codex", BuildTools: "go"},
+	}
+	cmd := NewConfigGetCmd(store)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"build_tools"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "go") {
+		t.Errorf("expected output to contain 'go', got: %q", buf.String())
+	}
+}
+
 func TestConfigGet_ContainerCapacity(t *testing.T) {
 	var buf bytes.Buffer
 	store := &fakeStore{
@@ -111,6 +131,31 @@ func TestConfigSet_Agent_UpdatesFile(t *testing.T) {
 	}
 	if cfg.Agent != "codex" {
 		t.Errorf("agent: got %q, want %q", cfg.Agent, "codex")
+	}
+}
+
+func TestConfigSet_BuildTools_UpdatesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	store := &config.FileStore{Path: path}
+	cmd := NewConfigSetCmd(store)
+	cmd.SetArgs([]string{"build_tools", "go"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.BuildTools != "go" {
+		t.Errorf("build_tools: got %q, want %q", cfg.BuildTools, "go")
 	}
 }
 
