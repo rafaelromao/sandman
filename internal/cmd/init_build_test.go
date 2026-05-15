@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -49,22 +48,4 @@ func TestInit_GoPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 			})
 		})
 	}
-}
-
-func miseLatestGoVersion(t *testing.T, selector string) string {
-	t.Helper()
-
-	args := []string{"latest", "go"}
-	if selector != "" {
-		args[1] = "go@" + selector
-	}
-	out, err := exec.Command("mise", args...).Output()
-	if err != nil {
-		t.Fatalf("resolve go version %q: %v", selector, err)
-	}
-	version := strings.TrimSpace(string(out))
-	if version == "" {
-		t.Fatalf("resolve go version %q: empty output", selector)
-	}
-	return version
 }
