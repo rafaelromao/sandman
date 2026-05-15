@@ -76,8 +76,8 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/"+scaffold.DefaultMISEVersion+"/mise-"+scaffold.DefaultMISEVersion+"-linux-x64.tar.gz") {
-		t.Fatalf("Dockerfile missing mise install, got:\n%s", dockerfile)
+	if !strings.Contains(dockerfile, "RUN MISE_VERSION="+scaffold.DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@"+scaffold.DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", dockerfile)
@@ -128,8 +128,9 @@ func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman build-tools: go") {
 		t.Fatalf("Dockerfile missing go build-tools metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN mise use -g --pin go@1.24") {
-		t.Fatalf("Dockerfile missing pinned go install, got:\n%s", dockerfile)
+	wantGoVersion := miseLatestGoVersion(t, "1.24")
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin go@"+wantGoVersion) {
+		t.Fatalf("Dockerfile missing pinned go install %q, got:\n%s", wantGoVersion, dockerfile)
 	}
 }
 

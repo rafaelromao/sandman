@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -140,6 +142,13 @@ var builtInAgentVersionCatalog = map[string][]string{
 	"pi":          {"0.1.2", "0.1.1", "0.1.0"},
 }
 
+var bundledGoVersionCatalog = map[string]string{
+	"latest":      "1.26.3",
+	"1.25":        "1.25.13",
+	"1.24":        "1.24.13",
+	"prefix:1.20": "1.20.14",
+}
+
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
 
@@ -259,17 +268,26 @@ func (s *Scaffolder) resolveGoVersion(repoRoot, selector string, p Prompter) (st
 	choice := strings.TrimSpace(selector)
 	if choice == "" {
 		if found {
-			return hint, nil
-		}
-		if p != nil {
-			selected, err := p.Select("Choose a Go version:", []string{"latest", "lts"})
-			if err == nil {
-				choice = strings.TrimSpace(selected)
+			if p != nil {
+				selected, err := p.Select(fmt.Sprintf("Choose a Go version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = normalizeGoVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if p != nil {
+				selected, err := p.Select("Choose a Go version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = normalizeGoVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
 			}
 		}
-	}
-	if choice == "" {
-		choice = "latest"
 	}
 
 	resolved, err := resolveGoVersionChoice(choice, hint, found)
@@ -290,20 +308,90 @@ func resolveGoVersionChoice(choice, hint string, hintFound bool) (string, error)
 		if !hintFound {
 			return "", fmt.Errorf("no repo Go version hint found")
 		}
-		return normalizeGoVersionSelector(hint), nil
+		return resolveMiseGoVersion(normalizeGoVersionSelector(hint))
 	case "latest", "lts":
-		return strings.ToLower(choice), nil
+		if strings.ToLower(choice) == "latest" {
+			return resolveMiseGoVersion("latest")
+		}
+		latest, err := resolveMiseGoVersion("latest")
+		if err != nil {
+			return "", err
+		}
+		prefix, err := goPreviousMinorPrefix(latest)
+		if err != nil {
+			return "", err
+		}
+		return resolveMiseGoVersion(prefix)
 	}
 
-	return choice, nil
+	return resolveMiseGoVersion(choice)
 }
 
 func normalizeGoVersionSelector(selector string) string {
 	selector = strings.TrimSpace(selector)
+	if len(selector) > 2 && strings.HasPrefix(strings.ToLower(selector), "go") && selector[2] >= '0' && selector[2] <= '9' {
+		return selector[2:]
+	}
 	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
 		return selector[1:]
 	}
 	return selector
+}
+
+func resolveMiseGoVersion(selector string) (string, error) {
+	selector = normalizeGoVersionSelector(selector)
+	args := []string{"latest"}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		args = append(args, "go")
+	} else {
+		args = append(args, "go@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledGoVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledGoVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	return "", fmt.Errorf("resolve go version %q: %w", selector, err)
+}
+
+func goPreviousMinorPrefix(version string) (string, error) {
+	version = normalizeGoVersionSelector(version)
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected Go version %q", version)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("parse Go major version %q: %w", version, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("parse Go minor version %q: %w", version, err)
+	}
+	if minor == 0 {
+		return "", fmt.Errorf("unexpected Go version %q", version)
+	}
+	minor--
+
+	prefix := fmt.Sprintf("%d.%d", major, minor)
+	if major == 1 && minor <= 20 {
+		return "prefix:" + prefix, nil
+	}
+	return prefix, nil
 }
 
 func readGoVersionHint(repoRoot string) (string, bool, error) {
@@ -431,7 +519,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "FROM %s\n", preset.BaseImage)
 	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(preset.SharedPackages, " "))
-	fmt.Fprintf(&out, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/%s/mise-%s-linux-x64.tar.gz | tar -xz -C /usr/local/bin mise\n", preset.MiseVersion, preset.MiseVersion)
+	fmt.Fprintf(&out, "RUN MISE_VERSION=%s curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "ENV PATH=\"/root/.local/share/mise/bin:/root/.local/share/mise/shims:/root/.local/bin:$PATH\"\n")
 	out.WriteString("WORKDIR /app\n")
 	if preset.Name == goBuildToolsPreset {
@@ -454,7 +542,7 @@ func renderAgentInstallCommand(agent, version string) string {
 	case "codex":
 		return fmt.Sprintf("RUN npm install -g @openai/codex@%s\n", version)
 	case "pi":
-		return fmt.Sprintf("RUN python3 -m pip install pi==%s\n", version)
+		return fmt.Sprintf("RUN python3 -m pip install --break-system-packages pi==%s\n", version)
 	default:
 		return ""
 	}

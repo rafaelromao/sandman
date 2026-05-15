@@ -54,8 +54,8 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/"+DefaultMISEVersion+"/mise-"+DefaultMISEVersion+"-linux-x64.tar.gz") {
-		t.Fatalf("Dockerfile missing mise install, got:\n%s", content)
+	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
 
 	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
@@ -165,8 +165,8 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 			if !strings.Contains(content, "FROM debian:bookworm-slim") {
 				t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/"+DefaultMISEVersion+"/mise-"+DefaultMISEVersion+"-linux-x64.tar.gz") {
-				t.Fatalf("Dockerfile missing mise install, got:\n%s", content)
+			if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+				t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 			}
 		})
 	}
@@ -177,9 +177,12 @@ func TestScaffold_AllAgentPresets_GenerateGoPresetFiles(t *testing.T) {
 		t.Run(agent, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
-
-			err := s.Scaffold(dir, Options{BuildTools: "go", Agent: agent}, &fakePrompter{confirm: true})
+			wantGoVersion, err := s.resolveGoVersion(dir, "", &fakePrompter{confirm: true})
 			if err != nil {
+				t.Fatalf("resolve go version: %v", err)
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "go", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
 				t.Fatalf("scaffold: %v", err)
 			}
 
@@ -200,8 +203,8 @@ func TestScaffold_AllAgentPresets_GenerateGoPresetFiles(t *testing.T) {
 			if !strings.Contains(content, "# sandman build-tools: go") {
 				t.Fatalf("Dockerfile missing go build-tools metadata, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN mise use -g --pin go@latest") {
-				t.Fatalf("Dockerfile missing pinned go install, got:\n%s", content)
+			if !strings.Contains(content, "RUN mise use -g --pin go@"+wantGoVersion) {
+				t.Fatalf("Dockerfile missing pinned go install %q, got:\n%s", wantGoVersion, content)
 			}
 		})
 	}
