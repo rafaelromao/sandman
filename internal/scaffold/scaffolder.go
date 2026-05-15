@@ -324,6 +324,7 @@ type dockerfileMetadata struct {
 	BuildToolsPreset string
 	AgentProvider    string
 	ToolVersion      string
+	MiseVersion      string
 }
 
 func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
@@ -372,6 +373,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.AgentProvider = strings.TrimSpace(value)
 		case "tool-version":
 			meta.ToolVersion = strings.TrimSpace(value)
+		case "mise-version":
+			meta.MiseVersion = strings.TrimSpace(value)
 		}
 	}
 	if err := scanner.Err(); err != nil {

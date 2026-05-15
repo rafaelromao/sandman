@@ -68,6 +68,26 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	}
 }
 
+func TestReadDockerfileMetadata_ParsesMiseVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Dockerfile")
+	content := "# sandman build-tools: generic\n# sandman agent-provider: opencode\n# sandman tool-version: 1.15.0\n# sandman mise-version: " + DefaultMISEVersion + "\nFROM debian:bookworm-slim\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+
+	meta, found, err := readDockerfileMetadata(path)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	if !found {
+		t.Fatal("expected metadata to be found")
+	}
+	if meta.MiseVersion != DefaultMISEVersion {
+		t.Fatalf("expected mise version %q, got %q", DefaultMISEVersion, meta.MiseVersion)
+	}
+}
+
 func TestScaffold_ResolvesToolVersionSelectors(t *testing.T) {
 	tests := []struct {
 		name     string
