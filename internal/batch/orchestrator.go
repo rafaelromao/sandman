@@ -443,7 +443,10 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 	}
 
 	if home, err := os.UserHomeDir(); err == nil {
-		opts.GitConfigPath = filepath.Join(home, ".gitconfig")
+		gitConfig := filepath.Join(home, ".gitconfig")
+		if _, err := os.Stat(gitConfig); err == nil {
+			opts.GitConfigPath = gitConfig
+		}
 	}
 
 	for _, dir := range agentCfg.ConfigDirs {
