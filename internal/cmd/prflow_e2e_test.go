@@ -1198,7 +1198,7 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 		}
 	}
 
-	// 5. Exactly two gh pr create calls
+	// 5. Exactly two gh pr create calls (order-independent)
 	for i := 1; i <= 2; i++ {
 		argsFile := filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i))
 		if _, err := os.Stat(argsFile); err != nil {
@@ -1213,35 +1213,52 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 		t.Fatalf("expected exactly two pr create invocations, got %q", got)
 	}
 
-	for _, tc := range []struct {
-		index  int
+	type prCreateCall struct {
 		branch string
-	}{
-		{1, parallelBranch150},
-		{2, parallelBranch151},
-	} {
-		argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", tc.index)))
+		title  string
+		body   string
+	}
+	expected := map[string]prCreateCall{
+		parallelBranch150: {parallelBranch150, "Fix 150", "Fixes #150"},
+		parallelBranch151: {parallelBranch151, "Fix 151", "Fixes #151"},
+	}
+	seen := make(map[string]bool)
+	for i := 1; i <= 2; i++ {
+		argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i)))
 		if err != nil {
-			t.Fatalf("read pr create args.%d: %v", tc.index, err)
+			t.Fatalf("read pr create args.%d: %v", i, err)
 		}
 		args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+		head := prFlowFlagValue(args, "--head")
+		if head == "" {
+			t.Fatalf("pr create %d: missing --head flag in args:\n%s", i, argsData)
+		}
+		if seen[head] {
+			t.Fatalf("pr create %d: duplicate branch %q", i, head)
+		}
+		seen[head] = true
+
+		call, ok := expected[head]
+		if !ok {
+			t.Fatalf("pr create %d: unexpected --head %q, expected one of %q or %q", i, head, parallelBranch150, parallelBranch151)
+		}
 		if got := prFlowFlagValue(args, "--base"); got != "main" {
-			t.Fatalf("pr create %d --base: got %q, want %q", tc.index, got, "main")
+			t.Fatalf("pr create %d (%s): --base got %q, want %q", i, head, got, "main")
 		}
-		if got := prFlowFlagValue(args, "--head"); got != tc.branch {
-			t.Fatalf("pr create %d --head: got %q, want %q", tc.index, got, tc.branch)
-		}
-		if got := prFlowFlagValue(args, "--title"); got != fmt.Sprintf("Fix %d", tc.index+149) {
-			t.Fatalf("pr create %d --title: got %q, want %q", tc.index, got, fmt.Sprintf("Fix %d", tc.index+149))
+		if got := prFlowFlagValue(args, "--title"); got != call.title {
+			t.Fatalf("pr create %d (%s): --title got %q, want %q", i, head, got, call.title)
 		}
 
-		bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.body.%d", tc.index)))
+		bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.body.%d", i)))
 		if err != nil {
-			t.Fatalf("read pr create body.%d: %v", tc.index, err)
+			t.Fatalf("read pr create body.%d: %v", i, err)
 		}
-		if got := strings.TrimSpace(string(bodyData)); got != fmt.Sprintf("Fixes #%d", tc.index+149) {
-			t.Fatalf("pr create body.%d: got %q, want %q", tc.index, got, fmt.Sprintf("Fixes #%d", tc.index+149))
+		if got := strings.TrimSpace(string(bodyData)); got != call.body {
+			t.Fatalf("pr create %d (%s): body got %q, want %q", i, head, got, call.body)
 		}
+	}
+	if len(seen) != 2 {
+		t.Fatalf("expected pr creates for both branches, got %v", seen)
 	}
 }
 
