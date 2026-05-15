@@ -1331,10 +1331,10 @@ func customizeOpenCodeAgentForContainerWithEcho(t *testing.T, repoDir, model str
 func writeFakeGHShimParallel(t *testing.T, dir string) {
 	t.Helper()
 
-	script := fmt.Sprintf(`#!/bin/sh
+	script := strings.ReplaceAll(`#!/bin/sh
 set -eu
 
-shim_dir="%s"
+shim_dir="__SHIM_DIR__"
 
 case "$1" in
   repo)
@@ -1357,13 +1357,13 @@ JSON
         count=$(cat "$count_file")
       fi
       count=$((count + 1))
-      printf '%%s\n' "$count" > "$count_file"
+      printf '%s\n' "$count" > "$count_file"
       if [ "$count" -gt 2 ]; then
-        printf 'unexpected gh pr create invocation #%%s\n' "$count" >&2
+        printf 'unexpected gh pr create invocation #%s\n' "$count" >&2
         exit 1
       fi
 
-      printf '%%s\n' "$@" > "$args_file"
+      printf '%s\n' "$@" > "$args_file"
 
       body=""
       while [ $# -gt 0 ]; do
@@ -1380,8 +1380,8 @@ JSON
         shift
       done
 
-      printf '%%s' "$body" > "$body_file"
-      printf 'https://example.test/example/sandbox/pull/%%s\n' "$count"
+      printf '%s' "$body" > "$body_file"
+      printf 'https://example.test/example/sandbox/pull/%s\n' "$count"
       exit 0
     fi
     ;;
@@ -1426,7 +1426,7 @@ JSON
         exit 0
         ;;
     esac
-    printf 'unexpected gh api path: %%s\n' "$path" >&2
+    printf 'unexpected gh api path: %s\n' "$path" >&2
     exit 1
     ;;
   auth)
@@ -1445,9 +1445,9 @@ JSON
     ;;
 esac
 
-printf 'unexpected gh command: %%s\n' "$*" >&2
+printf 'unexpected gh command: %s\n' "$*" >&2
 exit 1
-`, dir)
+`, "__SHIM_DIR__", dir)
 	ghPath := filepath.Join(dir, "gh")
 	if err := os.WriteFile(ghPath, []byte(script), 0755); err != nil {
 		t.Fatalf("write gh shim: %v", err)
