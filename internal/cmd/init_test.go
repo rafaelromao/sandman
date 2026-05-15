@@ -128,7 +128,7 @@ func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman build-tools: go") {
 		t.Fatalf("Dockerfile missing go build-tools metadata, got:\n%s", dockerfile)
 	}
-	wantGoVersion := miseLatestGoVersion(t, "1.24")
+	wantGoVersion := "1.24.13"
 	if !strings.Contains(dockerfile, "RUN mise use -g --pin go@"+wantGoVersion) {
 		t.Fatalf("Dockerfile missing pinned go install %q, got:\n%s", wantGoVersion, dockerfile)
 	}
