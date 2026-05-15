@@ -43,8 +43,6 @@ const promptMdHeader = `# Context
 
 // Options configures the scaffolding behavior.
 type Options struct {
-	Lang        string // legacy language override
-	FromImage   string // legacy custom base image override
 	BuildTools  string // --build-tools override
 	ToolVersion string // --tool-version override
 	Agent       string // --agent override
@@ -64,47 +62,6 @@ type Prompter interface {
 	Select(msg string, options []string) (string, error)
 }
 
-type languageDetector struct {
-	detect func(string) bool
-	lang   string
-}
-
-func fileExists(name string) func(string) bool {
-	return func(root string) bool {
-		_, err := os.Stat(filepath.Join(root, name))
-		return err == nil
-	}
-}
-
-func globExists(pattern string) func(string) bool {
-	return func(root string) bool {
-		matches, err := filepath.Glob(filepath.Join(root, pattern))
-		return err == nil && len(matches) > 0
-	}
-}
-
-var languageDetectors = []languageDetector{
-	{fileExists("go.mod"), "go"},
-	{fileExists("package.json"), "node"},
-	{fileExists("requirements.txt"), "python"},
-	{fileExists("Cargo.toml"), "rust"},
-	{fileExists("pom.xml"), "java"},
-	{fileExists("build.gradle"), "java"},
-	{globExists("*.csproj"), "dotnet"},
-	{globExists("*.fsproj"), "dotnet"},
-	{globExists("*.sln"), "dotnet"},
-	{fileExists("composer.json"), "php"},
-	{fileExists("mix.exs"), "elixir"},
-	{fileExists("build.zig"), "zig"},
-	{fileExists("Gemfile"), "ruby"},
-	{fileExists("Package.swift"), "swift"},
-	{fileExists("CMakeLists.txt"), "cpp"},
-	{fileExists("Makefile"), "cpp"},
-	{fileExists("project.clj"), "clojure"},
-	{fileExists("deps.edn"), "clojure"},
-	{fileExists("build.gradle.kts"), "kotlin"},
-}
-
 // KnownAgents is the sorted list of built-in agent preset keys.
 var KnownAgents = func() []string {
 	agents := make([]string, 0, len(config.BuiltInAgentPresets))
@@ -114,13 +71,6 @@ var KnownAgents = func() []string {
 	sort.Strings(agents)
 	return agents
 }()
-
-var agentInstallCommands = map[string]string{
-	"opencode":    `RUN npm install -g opencode-ai`,
-	"claude-code": `RUN npm install -g @anthropic-ai/claude-code`,
-	"codex":       `RUN npm install -g @openai/codex`,
-	"pi":          `RUN python3 -m pip install pi`,
-}
 
 var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 	defaultBuildToolsPreset: {
@@ -168,33 +118,6 @@ var builtInAgentVersionCatalog = map[string][]string{
 	"codex":       {"0.130.0", "0.129.0", "0.128.0"},
 	"pi":          {"0.1.2", "0.1.1", "0.1.0"},
 }
-
-var baseImages = map[string]string{
-	"go":      "golang:latest",
-	"node":    "node:latest",
-	"python":  "python:latest",
-	"rust":    "rust:latest",
-	"java":    "maven:latest",
-	"dotnet":  "mcr.microsoft.com/dotnet/sdk:latest",
-	"php":     "php:latest",
-	"elixir":  "elixir:latest",
-	"zig":     "ziglang/zig:latest",
-	"ruby":    "ruby:latest",
-	"swift":   "swift:latest",
-	"cpp":     "gcc:latest",
-	"clojure": "clojure:latest",
-	"kotlin":  "gradle:latest",
-}
-
-// KnownLanguages is the alphabetically sorted list of supported languages for prompts and validation.
-var KnownLanguages = func() []string {
-	langs := make([]string, 0, len(baseImages))
-	for lang := range baseImages {
-		langs = append(langs, lang)
-	}
-	sort.Strings(langs)
-	return langs
-}()
 
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
@@ -377,6 +300,8 @@ func renderAgentInstallCommand(agent, version string) string {
 
 // ValidateDockerfileMetadata fails when scaffold metadata drift is detected.
 // Metadata-free Dockerfiles are treated as opaque custom files.
+// tool-version and mise-version are intentionally not validated here because
+// runtime config has no canonical pinned value to compare against.
 func ValidateDockerfileMetadata(repoRoot, expectedAgent string) error {
 	dockerfilePath := filepath.Join(repoRoot, ".sandman", "Dockerfile")
 	meta, found, err := readDockerfileMetadata(dockerfilePath)
@@ -453,65 +378,4 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 		return dockerfileMetadata{}, false, fmt.Errorf("scan Dockerfile metadata: %w", err)
 	}
 	return meta, found, nil
-}
-
-// TODO: remove legacy language-based scaffold helpers after old init path is fully retired.
-func (s *Scaffolder) resolveLanguage(repoRoot string, opts Options, p Prompter) (string, error) {
-	if opts.Lang != "" {
-		if _, ok := baseImages[opts.Lang]; !ok {
-			return "", fmt.Errorf("unknown language: %q (supported: %s)", opts.Lang, strings.Join(KnownLanguages, ", "))
-		}
-		return opts.Lang, nil
-	}
-
-	seen := make(map[string]bool)
-	var detected []string
-	for _, d := range languageDetectors {
-		if d.detect(repoRoot) && !seen[d.lang] {
-			seen[d.lang] = true
-			detected = append(detected, d.lang)
-		}
-	}
-
-	// Deprioritize C/C++ from Makefile when other languages are present,
-	// unless CMakeLists.txt also exists (stronger signal for C/C++).
-	if len(detected) > 1 {
-		hasCMakeLists := fileExists("CMakeLists.txt")(repoRoot)
-		if !hasCMakeLists {
-			filtered := make([]string, 0, len(detected))
-			for _, lang := range detected {
-				if lang != "cpp" {
-					filtered = append(filtered, lang)
-				}
-			}
-			detected = filtered
-		}
-	}
-
-	if len(detected) == 1 {
-		return detected[0], nil
-	}
-
-	if len(detected) > 1 {
-		return p.Select("Multiple languages detected. Choose one:", detected)
-	}
-
-	return p.Select("No language detected. Choose one:", KnownLanguages)
-}
-
-// TODO: remove legacy Dockerfile renderer after old init path is fully retired.
-func (s *Scaffolder) renderDockerfile(lang, fromImage, agent string) string {
-	var out string
-	if fromImage != "" {
-		out = fmt.Sprintf("FROM %s\n", fromImage)
-	} else if img, ok := baseImages[lang]; ok {
-		out = fmt.Sprintf("FROM %s\n", img)
-	} else {
-		out = "FROM ubuntu:latest\n"
-	}
-	out += "WORKDIR /app\n"
-	if cmd, ok := agentInstallCommands[agent]; ok {
-		out += cmd + "\n"
-	}
-	return out
 }
