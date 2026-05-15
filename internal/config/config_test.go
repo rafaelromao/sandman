@@ -12,6 +12,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: codex
+build_tools: go
 default_parallel: 3
 worktree_dir: /tmp/wt
 sandbox: worktree
@@ -35,6 +36,9 @@ agents:
 
 	if cfg.Agent != "codex" {
 		t.Errorf("agent: got %q, want %q", cfg.Agent, "codex")
+	}
+	if cfg.BuildTools != "go" {
+		t.Errorf("build_tools: got %q, want %q", cfg.BuildTools, "go")
 	}
 	if cfg.DefaultParallel != 3 {
 		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 3)
@@ -280,6 +284,9 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	if cfg.DefaultParallel != 4 {
 		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 4)
 	}
+	if cfg.BuildTools != DefaultBuildToolsPreset {
+		t.Errorf("build_tools: got %q, want %q", cfg.BuildTools, DefaultBuildToolsPreset)
+	}
 	if cfg.WorktreeDir != ".sandman/worktrees" {
 		t.Errorf("worktree_dir: got %q, want %q", cfg.WorktreeDir, ".sandman/worktrees")
 	}
@@ -425,6 +432,7 @@ func TestLoad_InvalidYAML_ReturnsParseError(t *testing.T) {
 func TestConfig_GetValue(t *testing.T) {
 	cfg := &Config{
 		Agent:             "codex",
+		BuildTools:        "go",
 		DefaultParallel:   4,
 		ContainerCapacity: 3,
 		MaxContainers:     0,
@@ -443,6 +451,7 @@ func TestConfig_GetValue(t *testing.T) {
 		wantErr bool
 	}{
 		{"agent", "codex", false},
+		{"build_tools", "go", false},
 		{"default_parallel", "4", false},
 		{"container_capacity", "3", false},
 		{"max_containers", "0", false},
@@ -476,6 +485,7 @@ func TestConfig_SetValue(t *testing.T) {
 		wantErr bool
 	}{
 		{"agent", "codex", false},
+		{"build_tools", "go", false},
 		{"default_parallel", "4", false},
 		{"container_capacity", "4", false},
 		{"max_containers", "0", false},

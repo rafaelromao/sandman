@@ -172,6 +172,41 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 	}
 }
 
+func TestScaffold_AllAgentPresets_GenerateGoPresetFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+
+			err := s.Scaffold(dir, Options{BuildTools: "go", Agent: agent}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.BuildTools != "go" {
+				t.Errorf("expected build tools %q, got %q", "go", cfg.BuildTools)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman build-tools: go") {
+				t.Fatalf("Dockerfile missing go build-tools metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin go@latest") {
+				t.Fatalf("Dockerfile missing pinned go install, got:\n%s", content)
+			}
+		})
+	}
+}
+
 func TestScaffold_UnknownBuildToolsPreset_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
@@ -182,5 +217,20 @@ func TestScaffold_UnknownBuildToolsPreset_ReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown build-tools preset") {
 		t.Fatalf("expected unknown build-tools preset error, got: %v", err)
+	}
+}
+
+func TestValidateDockerfileMetadata_AllowsGoPreset(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
+		t.Fatalf("create .sandman: %v", err)
+	}
+	content := "# sandman build-tools: go\n# sandman agent-provider: opencode\n# sandman go-version: 1.24\n# sandman tool-version: 1.15.0\n# sandman mise-version: " + DefaultMISEVersion + "\nFROM debian:bookworm-slim\n"
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte(content), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+
+	if err := ValidateDockerfileMetadata(dir, "go", "opencode"); err != nil {
+		t.Fatalf("validate metadata: %v", err)
 	}
 }

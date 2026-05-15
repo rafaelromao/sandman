@@ -120,6 +120,19 @@ var smokeProviderCases = []smokeProviderCase{
 }
 
 func TestSmoke_RealAgentCLIs(t *testing.T) {
+	runSmokeProviderCases(t, smokeProviderCases)
+}
+
+func TestSmoke_RealAgentCLIs_GoPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "go"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
 	allowed, err := parseSmokeProviders()
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +141,7 @@ func TestSmoke_RealAgentCLIs(t *testing.T) {
 		t.Skip("set SANDMAN_SMOKE_PROVIDERS=opencode,claude-code,codex,pi and run `go test -tags smoke ./internal/cmd -run Smoke`")
 	}
 
-	for _, tc := range smokeProviderCases {
+	for _, tc := range cases {
 		tc := tc
 		if !allowed[tc.name] {
 			continue

@@ -14,6 +14,8 @@ import (
 
 const defaultBuildToolsPreset = "generic"
 
+const goBuildToolsPreset = "go"
+
 const DefaultMISEVersion = "v2026.5.8"
 
 const promptMdHeader = `# Context
@@ -92,6 +94,25 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		},
 		MiseVersion: DefaultMISEVersion,
 	},
+	goBuildToolsPreset: {
+		Name:      goBuildToolsPreset,
+		BaseImage: "debian:bookworm-slim",
+		SharedPackages: []string{
+			"bash",
+			"build-essential",
+			"ca-certificates",
+			"curl",
+			"file",
+			"git",
+			"nodejs",
+			"npm",
+			"python3",
+			"python3-pip",
+			"unzip",
+			"xz-utils",
+		},
+		MiseVersion: DefaultMISEVersion,
+	},
 }
 
 // DefaultBuiltInAgentVersion returns the latest bundled version pin for a built-in agent.
@@ -147,18 +168,28 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return err
 	}
 
-	preset, err := s.resolveBuildToolsPreset(opts, p)
+	preset, err := s.resolveBuildToolsPreset(repoRoot, opts, p)
 	if err != nil {
 		return err
 	}
 
-	agentVersion, err := s.resolveAgentVersion(agent, opts.ToolVersion, p)
-	if err != nil {
-		return err
+	goVersion := ""
+	agentVersion := DefaultBuiltInAgentVersion(agent)
+	if preset.Name == goBuildToolsPreset {
+		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else {
+		agentVersion, err = s.resolveAgentVersion(agent, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
 	}
 
 	cfg := &config.Config{
 		Agent:             agent,
+		BuildTools:        preset.Name,
 		DefaultParallel:   config.DefaultParallel,
 		ContainerCapacity: config.DefaultContainerCapacity,
 		MaxContainers:     config.DefaultMaxContainers,
@@ -174,7 +205,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -198,16 +229,137 @@ func (s *Scaffolder) resolveAgent(opts Options, p Prompter) (string, error) {
 	return config.DefaultAgent, nil
 }
 
-func (s *Scaffolder) resolveBuildToolsPreset(opts Options, p Prompter) (BuildToolsPreset, error) {
+func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Prompter) (BuildToolsPreset, error) {
 	name := strings.ToLower(strings.TrimSpace(opts.BuildTools))
 	if name == "" {
-		name = defaultBuildToolsPreset
+		if hasGoRepoHint(repoRoot) {
+			name = goBuildToolsPreset
+		} else {
+			name = defaultBuildToolsPreset
+		}
 	}
 	preset, ok := builtInBuildToolsPresets[name]
 	if !ok {
 		return BuildToolsPreset{}, fmt.Errorf("unknown build-tools preset: %q (supported: %s)", opts.BuildTools, strings.Join(KnownBuildToolsPresets, ", "))
 	}
 	return preset, nil
+}
+
+func hasGoRepoHint(repoRoot string) bool {
+	_, found, err := readGoVersionHint(repoRoot)
+	return err == nil && found
+}
+
+func (s *Scaffolder) resolveGoVersion(repoRoot, selector string, p Prompter) (string, error) {
+	hint, found, err := readGoVersionHint(repoRoot)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "" {
+		if found {
+			return hint, nil
+		}
+		if p != nil {
+			selected, err := p.Select("Choose a Go version:", []string{"latest", "lts"})
+			if err == nil {
+				choice = strings.TrimSpace(selected)
+			}
+		}
+	}
+	if choice == "" {
+		choice = "latest"
+	}
+
+	resolved, err := resolveGoVersionChoice(choice, hint, found)
+	if err != nil {
+		return "", fmt.Errorf("resolve go version: %w", err)
+	}
+	return resolved, nil
+}
+
+func resolveGoVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = normalizeGoVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Go version hint found")
+		}
+		return normalizeGoVersionSelector(hint), nil
+	case "latest", "lts":
+		return strings.ToLower(choice), nil
+	}
+
+	return choice, nil
+}
+
+func normalizeGoVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	return selector
+}
+
+func readGoVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{".go-version", "go.mod", "go.work", ".tool-versions"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Go version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseGoVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseGoVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case ".go-version":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			return line, true
+		}
+	case ".tool-versions":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "go" {
+				return fields[1], true
+			}
+		}
+	default:
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(line, "go ") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					return fields[1], true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 func (s *Scaffolder) resolveAgentVersion(agent, selector string, p Prompter) (string, error) {
@@ -268,10 +420,13 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman agent-provider: %s\n", agent)
+	if preset.Name == goBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman go-version: %s\n", goVersion)
+	}
 	fmt.Fprintf(&out, "# sandman tool-version: %s\n", agentVersion)
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "FROM %s\n", preset.BaseImage)
@@ -279,8 +434,15 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	fmt.Fprintf(&out, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/%s/mise-%s-linux-x64.tar.gz | tar -xz -C /usr/local/bin mise\n", preset.MiseVersion, preset.MiseVersion)
 	fmt.Fprintf(&out, "ENV PATH=\"/root/.local/share/mise/bin:/root/.local/share/mise/shims:/root/.local/bin:$PATH\"\n")
 	out.WriteString("WORKDIR /app\n")
+	if preset.Name == goBuildToolsPreset {
+		out.WriteString(renderGoInstallCommand(goVersion))
+	}
 	out.WriteString(renderAgentInstallCommand(agent, agentVersion))
 	return out.String()
+}
+
+func renderGoInstallCommand(version string) string {
+	return fmt.Sprintf("RUN mise use -g --pin go@%s\n", version)
 }
 
 func renderAgentInstallCommand(agent, version string) string {
@@ -302,7 +464,10 @@ func renderAgentInstallCommand(agent, version string) string {
 // Metadata-free Dockerfiles are treated as opaque custom files.
 // tool-version and mise-version are intentionally not validated here because
 // runtime config has no canonical pinned value to compare against.
-func ValidateDockerfileMetadata(repoRoot, expectedAgent string) error {
+func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedAgent string) error {
+	if strings.TrimSpace(expectedBuildTools) == "" {
+		expectedBuildTools = defaultBuildToolsPreset
+	}
 	dockerfilePath := filepath.Join(repoRoot, ".sandman", "Dockerfile")
 	meta, found, err := readDockerfileMetadata(dockerfilePath)
 	if err != nil {
@@ -311,8 +476,8 @@ func ValidateDockerfileMetadata(repoRoot, expectedAgent string) error {
 	if !found {
 		return nil
 	}
-	if meta.BuildToolsPreset != defaultBuildToolsPreset {
-		return fmt.Errorf("scaffold metadata drift: Dockerfile build-tools %q does not match expected %q", meta.BuildToolsPreset, defaultBuildToolsPreset)
+	if meta.BuildToolsPreset != expectedBuildTools {
+		return fmt.Errorf("scaffold metadata drift: Dockerfile build-tools %q does not match expected %q", meta.BuildToolsPreset, expectedBuildTools)
 	}
 	if meta.AgentProvider != expectedAgent {
 		return fmt.Errorf("scaffold metadata drift: Dockerfile agent-provider %q does not match config agent %q", meta.AgentProvider, expectedAgent)
@@ -323,6 +488,7 @@ func ValidateDockerfileMetadata(repoRoot, expectedAgent string) error {
 type dockerfileMetadata struct {
 	BuildToolsPreset string
 	AgentProvider    string
+	GoVersion        string
 	ToolVersion      string
 	MiseVersion      string
 }
@@ -373,6 +539,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.AgentProvider = strings.TrimSpace(value)
 		case "tool-version":
 			meta.ToolVersion = strings.TrimSpace(value)
+		case "go-version":
+			meta.GoVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
 		}

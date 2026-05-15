@@ -51,6 +51,14 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: generic") {
+		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
+	}
+
 	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
@@ -85,6 +93,46 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	}
 }
 
+func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: go") {
+		t.Fatalf("config missing go build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: go") {
+		t.Fatalf("Dockerfile missing go build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin go@1.24") {
+		t.Fatalf("Dockerfile missing pinned go install, got:\n%s", dockerfile)
+	}
+}
+
 func TestInit_AgentFlagSelectsConfigPreset(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -103,6 +151,9 @@ func TestInit_AgentFlagSelectsConfigPreset(t *testing.T) {
 	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
 	if err != nil {
 		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: generic") {
+		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
 	}
 	if !strings.Contains(string(configData), "preset: claude-code") {
 		t.Errorf("config missing claude-code preset, got:\n%s", configData)
