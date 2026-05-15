@@ -23,6 +23,7 @@ type ContainerSandbox struct {
 	cmd           *exec.Cmd
 	execFn        func(name string, arg ...string) *exec.Cmd
 	origGitDir    string // original .git file content, restored on Stop
+	origGitConfig string // original .gitconfig content, restored on Stop
 }
 
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
@@ -86,11 +87,12 @@ func (s *ContainerSandbox) rewriteGitPaths() error {
 		}
 	}
 
-	// Rewrite the host gitconfig (mounted as /tmp/.gitconfig inside the container)
-	// so the insteadOf URL rewrites to the container path.
+	// Rewrite the host gitconfig so the insteadOf URL rewrites to the
+	// container path /workspace/…; save the original for Stop() to restore.
 	if home, _ := os.UserHomeDir(); home != "" {
 		cfg := filepath.Join(home, ".gitconfig")
 		if data, readErr := os.ReadFile(cfg); readErr == nil && strings.Contains(string(data), absRepo) {
+			s.origGitConfig = string(data)
 			updated := strings.Replace(string(data), absRepo, "/workspace", -1)
 			if werr := os.WriteFile(cfg, []byte(updated), 0644); werr != nil {
 				return werr
@@ -139,6 +141,11 @@ func (s *ContainerSandbox) Stop() error {
 	if s.origGitDir != "" {
 		gitFile := filepath.Join(s.worktree.WorkDir(), ".git")
 		_ = os.WriteFile(gitFile, []byte(s.origGitDir), 0644)
+	}
+	if s.origGitConfig != "" {
+		if home, _ := os.UserHomeDir(); home != "" {
+			_ = os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(s.origGitConfig), 0644)
+		}
 	}
 	if s.ownsContainer {
 		return errors.Join(s.container.Stop(), s.worktree.Stop())

@@ -128,8 +128,6 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
 	writeFakeGHShimForContainer(t, containerGhShimDir)
 
-	patchDockerfileToHostOpenCodeVersion(t, repoDir)
-
 	// Build the image and detect the model from inside the container (models
 	// available may differ from the host's cached model list).
 	buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect", "-f",
@@ -590,32 +588,6 @@ exit 1
 	ghPath := filepath.Join(hostDir, "gh")
 	if err := os.WriteFile(ghPath, []byte(script), 0755); err != nil {
 		t.Fatalf("write gh shim: %v", err)
-	}
-}
-
-func patchDockerfileToHostOpenCodeVersion(t *testing.T, repoDir string) {
-	t.Helper()
-
-	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
-	data, err := os.ReadFile(dockerfilePath)
-	if err != nil {
-		t.Fatalf("read Dockerfile: %v", err)
-	}
-
-	cmd := exec.Command("opencode", "--version")
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("detect opencode version: %v", err)
-	}
-	hostVersion := strings.TrimSpace(string(out))
-
-	content := string(data)
-	oldPin := "opencode-ai@" + scaffold.DefaultBuiltInAgentVersion("opencode")
-	newPin := "opencode-ai@" + hostVersion
-	content = strings.ReplaceAll(content, oldPin, newPin)
-
-	if err := os.WriteFile(dockerfilePath, []byte(content), 0644); err != nil {
-		t.Fatalf("write patched Dockerfile: %v", err)
 	}
 }
 
