@@ -364,7 +364,10 @@ func resolveMiseGoVersion(selector string) (string, error) {
 			return version, nil
 		}
 	}
-	return "", fmt.Errorf("resolve go version %q: %w", selector, err)
+	if err != nil {
+		return "", fmt.Errorf("resolve go version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve go version %q: mise returned empty output and no bundled fallback", selector)
 }
 
 func goPreviousMinorPrefix(version string) (string, error) {

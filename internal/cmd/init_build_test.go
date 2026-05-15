@@ -1,3 +1,5 @@
+//go:build smoke
+
 package cmd
 
 import (
