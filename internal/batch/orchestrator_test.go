@@ -1524,6 +1524,14 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	}
 	t.Setenv("PATH", dir)
 
+	// Ensure a .gitconfig exists so buildStartOptions includes it.
+	home, _ := os.UserHomeDir()
+	gitconfigPath := filepath.Join(home, ".gitconfig")
+	if _, err := os.Stat(gitconfigPath); os.IsNotExist(err) {
+		_ = os.WriteFile(gitconfigPath, []byte("[user]\n\tname = Test\n\temail = test@test.com\n"), 0644)
+		t.Cleanup(func() { os.Remove(gitconfigPath) })
+	}
+
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // ContainerSandbox provides isolation via a container and a git worktree.
@@ -21,6 +22,7 @@ type ContainerSandbox struct {
 	ownsContainer bool
 	cmd           *exec.Cmd
 	execFn        func(name string, arg ...string) *exec.Cmd
+	origGitDir    string // original .git file content, restored on Stop
 }
 
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
@@ -56,9 +58,47 @@ func (s *ContainerSandbox) containerWorkDir() string {
 	return filepath.Join("/workspace", rel)
 }
 
-// Start initializes the worktree.
+// Start initializes the worktree and rewrites paths so git commands
+// issued inside the container resolve correctly.
 func (s *ContainerSandbox) Start() error {
-	return s.worktree.Start()
+	if err := s.worktree.Start(); err != nil {
+		return err
+	}
+	return s.rewriteGitPaths()
+}
+
+// rewriteGitPaths rewrites the worktree's .git pointer and the main repo's
+// git config so that paths resolve inside the container (/workspace/…)
+// instead of pointing to host-absolute paths.
+func (s *ContainerSandbox) rewriteGitPaths() error {
+	absRepo, err := filepath.Abs(s.repoPath)
+	if err != nil {
+		return nil
+	}
+
+	// Rewrite the worktree .git pointer so git resolves inside the container.
+	gitFile := filepath.Join(s.worktree.WorkDir(), ".git")
+	if data, readErr := os.ReadFile(gitFile); readErr == nil {
+		s.origGitDir = string(data)
+		updated := strings.Replace(string(data), absRepo, "/workspace", 1)
+		if werr := os.WriteFile(gitFile, []byte(updated), 0644); werr != nil {
+			return werr
+		}
+	}
+
+	// Rewrite the host gitconfig (mounted as /tmp/.gitconfig inside the container)
+	// so the insteadOf URL rewrites to the container path.
+	if home, _ := os.UserHomeDir(); home != "" {
+		cfg := filepath.Join(home, ".gitconfig")
+		if data, readErr := os.ReadFile(cfg); readErr == nil && strings.Contains(string(data), absRepo) {
+			updated := strings.Replace(string(data), absRepo, "/workspace", -1)
+			if werr := os.WriteFile(cfg, []byte(updated), 0644); werr != nil {
+				return werr
+			}
+		}
+	}
+
+	return nil
 }
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
@@ -96,6 +136,10 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 
 // Stop tears down the worktree and, in isolated mode, the container.
 func (s *ContainerSandbox) Stop() error {
+	if s.origGitDir != "" {
+		gitFile := filepath.Join(s.worktree.WorkDir(), ".git")
+		_ = os.WriteFile(gitFile, []byte(s.origGitDir), 0644)
+	}
 	if s.ownsContainer {
 		return errors.Join(s.container.Stop(), s.worktree.Stop())
 	}
