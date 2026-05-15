@@ -1407,6 +1407,75 @@ func (f *fakeContainerRuntimeFactory) New(binary string) sandbox.ContainerStarte
 	return f.starter
 }
 
+func TestOrchestrator_ContainerMetadataDriftFailsBeforeBuild(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
+		t.Fatalf("create .sandman: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte("# sandman build-tools: generic\n# sandman agent-provider: codex\nFROM debian:bookworm-slim\n"), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+
+	starter := &fakeContainerStarter{}
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:       "opencode",
+		Sandbox:     "podman",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{DefaultBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Command: "true"},
+		},
+	}}, nil)
+	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: starter}
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "podman"})
+	if err == nil {
+		t.Fatal("expected metadata drift error")
+	}
+	if !strings.Contains(err.Error(), "scaffold metadata drift") {
+		t.Fatalf("expected drift error, got: %v", err)
+	}
+	if starter.buildImageCount != 0 {
+		t.Fatalf("expected BuildImage not to run, got %d calls", starter.buildImageCount)
+	}
+}
+
+func TestOrchestrator_MetadataFreeDockerfileSkipsDriftValidation(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
+		t.Fatalf("create .sandman: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte("FROM debian:bookworm-slim\n"), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+
+	starter := &fakeContainerStarter{buildImageTag: "sandman-custom:latest"}
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:       "opencode",
+		Sandbox:     "podman",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{DefaultBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Command: "true"},
+		},
+	}}, nil)
+	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: starter}
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+
+	_, err := o.RunBatch(context.Background(), Request{Sandbox: "podman"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if starter.buildImageCount != 1 {
+		t.Fatalf("expected BuildImage to run once, got %d calls", starter.buildImageCount)
+	}
+}
+
 type trackingSandbox struct {
 	fakeSandbox
 	containerID string

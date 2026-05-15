@@ -50,8 +50,8 @@ func NewInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Initialize a new Sandman project in the current directory",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			lang, _ := cmd.Flags().GetString("lang")
-			fromImage, _ := cmd.Flags().GetString("from-image")
+			buildTools, _ := cmd.Flags().GetString("build-tools")
+			toolVersion, _ := cmd.Flags().GetString("tool-version")
 			agent, _ := cmd.Flags().GetString("agent")
 
 			s := &scaffold.Scaffolder{}
@@ -66,15 +66,15 @@ func NewInitCmd() *cobra.Command {
 			}
 
 			return s.Scaffold(wd, scaffold.Options{
-				Lang:      lang,
-				FromImage: fromImage,
-				Agent:     agent,
+				BuildTools:  buildTools,
+				ToolVersion: toolVersion,
+				Agent:       agent,
 			}, prompter)
 		},
 	}
 
-	cmd.Flags().String("lang", "", "Override language detection")
-	cmd.Flags().String("from-image", "", "Custom base Docker image")
+	cmd.Flags().String("build-tools", "", "Build tools preset (generic)")
+	cmd.Flags().String("tool-version", "", "Logical built-in agent version selector (latest, lts, or semver shorthand)")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode, claude-code, codex, pi)")
 
 	return cmd
