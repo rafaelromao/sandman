@@ -102,6 +102,40 @@ func TestPRFlow_WorktreeSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	if !strings.Contains(log, "ok") && !strings.Contains(log, "PASS") {
 		t.Fatalf("expected passing go test output in log, got:\n%s", log)
 	}
+	if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
+		t.Fatalf("expected fake PR URL in log, got:\n%s", log)
+	}
+
+	argsData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.args"))
+	if err != nil {
+		t.Fatalf("read pr create args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+	if got := prFlowFlagValue(args, "--base"); got != "main" {
+		t.Fatalf("pr create --base: got %q, want %q", got, "main")
+	}
+	if got := prFlowFlagValue(args, "--head"); got != prFlowBranch {
+		t.Fatalf("pr create --head: got %q, want %q", got, prFlowBranch)
+	}
+	if got := prFlowFlagValue(args, "--title"); got != "Fix failing test" {
+		t.Fatalf("pr create --title: got %q, want %q", got, "Fix failing test")
+	}
+
+	bodyData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.body"))
+	if err != nil {
+		t.Fatalf("read pr create body: %v", err)
+	}
+	if got := strings.TrimSpace(string(bodyData)); got != "Fixes #1" {
+		t.Fatalf("pr create body: got %q, want %q", got, "Fixes #1")
+	}
+
+	countData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.count"))
+	if err != nil {
+		t.Fatalf("read pr create count: %v", err)
+	}
+	if got := strings.TrimSpace(string(countData)); got != "1" {
+		t.Fatalf("expected exactly one pr create invocation, got %q", got)
+	}
 
 	branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", prFlowBranch))
 	if branchHash == baselineHash {
@@ -214,7 +248,7 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 
 Run ` + "`go test ./...`" + `.
 Fix only what is needed.
-When green, create one commit and push ` + "`{{SOURCE_BRANCH}}`" + ` to origin.
+When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{TARGET_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, and print the PR URL.
 `
 	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
 		t.Fatalf("write prompt: %v", err)
@@ -224,8 +258,10 @@ When green, create one commit and push ` + "`{{SOURCE_BRANCH}}`" + ` to origin.
 func writeFakeGHShim(t *testing.T, dir string) {
 	t.Helper()
 
-	script := `#!/bin/sh
+	script := strings.ReplaceAll(`#!/bin/sh
 set -eu
+
+shim_dir="__SHIM_DIR__"
 
 case "$1" in
   repo)
@@ -233,6 +269,46 @@ case "$1" in
       cat <<'JSON'
 {"name":"sandbox","owner":{"login":"example"}}
 JSON
+      exit 0
+    fi
+    ;;
+  pr)
+    if [ "${2:-}" = "create" ]; then
+      shift 2
+      count_file="$shim_dir/pr-create.count"
+      args_file="$shim_dir/pr-create.args"
+      body_file="$shim_dir/pr-create.body"
+
+      count=0
+      if [ -f "$count_file" ]; then
+        count=$(cat "$count_file")
+      fi
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$count_file"
+      if [ "$count" -ne 1 ]; then
+        printf 'unexpected gh pr create invocation #%s\n' "$count" >&2
+        exit 1
+      fi
+
+      printf '%s\n' "$@" > "$args_file"
+
+      body=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --body)
+            shift
+            body="${1:-}"
+            ;;
+          --body-file)
+            shift
+            body="$(cat "$1")"
+            ;;
+        esac
+        shift
+      done
+
+      printf '%s' "$body" > "$body_file"
+      printf 'https://example.test/example/sandbox/pull/1\n'
       exit 0
     fi
     ;;
@@ -274,11 +350,20 @@ esac
 
 printf 'unexpected gh command: %s\n' "$*" >&2
 exit 1
-`
+`, "__SHIM_DIR__", dir)
 	ghPath := filepath.Join(dir, "gh")
 	if err := os.WriteFile(ghPath, []byte(script), 0755); err != nil {
 		t.Fatalf("write gh shim: %v", err)
 	}
+}
+
+func prFlowFlagValue(args []string, flag string) string {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 func prependPath(t *testing.T, dir string) {
