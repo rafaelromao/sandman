@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rafaelromao/sandman/internal/scaffold"
 )
 
 func TestInit_CreatesSandmanFiles(t *testing.T) {
@@ -60,16 +62,16 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman agent-provider: opencode") {
 		t.Fatalf("Dockerfile missing agent metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "# sandman tool-version: 1.15.0") {
+	if !strings.Contains(dockerfile, "# sandman tool-version: "+scaffold.DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned agent version, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/v2026.5.8/mise-v2026.5.8-linux-x64.tar.gz") {
+	if !strings.Contains(dockerfile, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/"+scaffold.DefaultMISEVersion+"/mise-"+scaffold.DefaultMISEVersion+"-linux-x64.tar.gz") {
 		t.Fatalf("Dockerfile missing mise install, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@1.15.0") {
+	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@"+scaffold.DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", dockerfile)
 	}
 
@@ -110,7 +112,7 @@ func TestInit_AgentFlagSelectsConfigPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
-	if !strings.Contains(string(dockerfileData), "@anthropic-ai/claude-code@2.1.142") {
+	if !strings.Contains(string(dockerfileData), "@anthropic-ai/claude-code@"+scaffold.DefaultBuiltInAgentVersion("claude-code")) {
 		t.Errorf("Dockerfile missing pinned claude-code install, got:\n%s", dockerfileData)
 	}
 }

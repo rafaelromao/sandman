@@ -45,16 +45,16 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "# sandman agent-provider: opencode") {
 		t.Fatalf("Dockerfile missing agent metadata, got:\n%s", content)
 	}
-	if !strings.Contains(content, "# sandman tool-version: 1.15.0") {
+	if !strings.Contains(content, "# sandman tool-version: "+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned version, got:\n%s", content)
 	}
 	if !strings.Contains(content, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN npm install -g opencode-ai@1.15.0") {
+	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/v2026.5.8/mise-v2026.5.8-linux-x64.tar.gz") {
+	if !strings.Contains(content, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/"+DefaultMISEVersion+"/mise-"+DefaultMISEVersion+"-linux-x64.tar.gz") {
 		t.Fatalf("Dockerfile missing mise install, got:\n%s", content)
 	}
 
@@ -74,9 +74,9 @@ func TestScaffold_ResolvesToolVersionSelectors(t *testing.T) {
 		selector string
 		wantPin  string
 	}{
-		{name: "latest", selector: "latest", wantPin: "0.130.0"},
-		{name: "lts", selector: "lts", wantPin: "0.129.0"},
-		{name: "semver shorthand", selector: "0.130", wantPin: "0.130.0"},
+		{name: "latest", selector: "latest", wantPin: DefaultBuiltInAgentVersion("codex")},
+		{name: "lts", selector: "lts", wantPin: builtInAgentVersionCatalog["codex"][1]},
+		{name: "semver shorthand", selector: "0.130", wantPin: DefaultBuiltInAgentVersion("codex")},
 	}
 
 	for _, tt := range tests {
@@ -145,7 +145,7 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 			if !strings.Contains(content, "FROM debian:bookworm-slim") {
 				t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/v2026.5.8/mise-v2026.5.8-linux-x64.tar.gz") {
+			if !strings.Contains(content, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/"+DefaultMISEVersion+"/mise-"+DefaultMISEVersion+"-linux-x64.tar.gz") {
 				t.Fatalf("Dockerfile missing mise install, got:\n%s", content)
 			}
 		})

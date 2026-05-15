@@ -14,7 +14,7 @@ import (
 
 const defaultBuildToolsPreset = "generic"
 
-const defaultMISEVersion = "v2026.5.8"
+const DefaultMISEVersion = "v2026.5.8"
 
 const promptMdHeader = `# Context
 
@@ -140,8 +140,17 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 			"unzip",
 			"xz-utils",
 		},
-		MiseVersion: defaultMISEVersion,
+		MiseVersion: DefaultMISEVersion,
 	},
+}
+
+// DefaultBuiltInAgentVersion returns the latest bundled version pin for a built-in agent.
+func DefaultBuiltInAgentVersion(agent string) string {
+	versions := builtInAgentVersionCatalog[agent]
+	if len(versions) == 0 {
+		return ""
+	}
+	return versions[0]
 }
 
 var KnownBuildToolsPresets = func() []string {
@@ -446,6 +455,7 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 	return meta, found, nil
 }
 
+// TODO: remove legacy language-based scaffold helpers after old init path is fully retired.
 func (s *Scaffolder) resolveLanguage(repoRoot string, opts Options, p Prompter) (string, error) {
 	if opts.Lang != "" {
 		if _, ok := baseImages[opts.Lang]; !ok {
@@ -489,6 +499,7 @@ func (s *Scaffolder) resolveLanguage(repoRoot string, opts Options, p Prompter) 
 	return p.Select("No language detected. Choose one:", KnownLanguages)
 }
 
+// TODO: remove legacy Dockerfile renderer after old init path is fully retired.
 func (s *Scaffolder) renderDockerfile(lang, fromImage, agent string) string {
 	var out string
 	if fromImage != "" {
