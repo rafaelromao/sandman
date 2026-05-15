@@ -20,7 +20,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
-	"github.com/rafaelromao/sandman/internal/scaffold"
 )
 
 const (
