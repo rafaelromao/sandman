@@ -105,7 +105,8 @@ func TestInitViaRoot_CreatesSandmanFiles(t *testing.T) {
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
-	rootCmd.SetArgs([]string{"init", "--lang", "go"})
+	rootCmd.SetIn(strings.NewReader(""))
+	rootCmd.SetArgs([]string{"init", "--build-tools", "generic"})
 
 	err := rootCmd.Execute()
 	if err != nil {

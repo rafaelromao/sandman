@@ -17,6 +17,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/scaffold"
 )
 
 func generateRunID(issueNum int) string {
@@ -262,6 +263,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	var containerAlloc containerAllocator
 	var pool *containerPool
 	if sandboxMode == "docker" || sandboxMode == "podman" {
+		if err := scaffold.ValidateDockerfileMetadata(".", cfg.Agent); err != nil {
+			return nil, err
+		}
+
 		containerCapacity := cfg.ContainerCapacity
 		if containerCapacity == 0 {
 			containerCapacity = config.DefaultContainerCapacity

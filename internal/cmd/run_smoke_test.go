@@ -34,7 +34,7 @@ Return exactly SMOKE_OK and do not modify files.
 type smokeProviderCase struct {
 	name         string
 	hostCLI      string
-	lang         string
+	buildTools   string
 	issue        github.Issue
 	requiredAuth []string
 	authPaths    []string
@@ -53,9 +53,9 @@ func (smokePrompter) Select(string, []string) (string, error) {
 
 var smokeProviderCases = []smokeProviderCase{
 	{
-		name:    "opencode",
-		hostCLI: "opencode",
-		lang:    "node",
+		name:       "opencode",
+		hostCLI:    "opencode",
+		buildTools: "generic",
 		issue: github.Issue{
 			Number: 421,
 			Title:  "Smoke opencode",
@@ -71,9 +71,9 @@ var smokeProviderCases = []smokeProviderCase{
 		},
 	},
 	{
-		name:    "claude-code",
-		hostCLI: "claude",
-		lang:    "node",
+		name:       "claude-code",
+		hostCLI:    "claude",
+		buildTools: "generic",
 		issue: github.Issue{
 			Number: 422,
 			Title:  "Smoke claude code",
@@ -89,9 +89,9 @@ var smokeProviderCases = []smokeProviderCase{
 		},
 	},
 	{
-		name:    "codex",
-		hostCLI: "codex",
-		lang:    "node",
+		name:       "codex",
+		hostCLI:    "codex",
+		buildTools: "generic",
 		issue: github.Issue{
 			Number: 423,
 			Title:  "Smoke codex",
@@ -104,9 +104,9 @@ var smokeProviderCases = []smokeProviderCase{
 		},
 	},
 	{
-		name:    "pi",
-		hostCLI: "pi",
-		lang:    "python",
+		name:       "pi",
+		hostCLI:    "pi",
+		buildTools: "generic",
 		issue: github.Issue{
 			Number: 424,
 			Title:  "Smoke pi",
@@ -217,7 +217,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	warmSmokeRuntime(t, runtime)
 
 	s := &scaffold.Scaffolder{}
-	if err := s.Scaffold(repoDir, scaffold.Options{Lang: tc.lang, Agent: tc.name}, smokePrompter{}); err != nil {
+	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: tc.buildTools, Agent: tc.name}, smokePrompter{}); err != nil {
 		t.Fatalf("scaffold repo: %v", err)
 	}
 	if err := addSmokeDockerDeps(repoDir, tc.name); err != nil {
@@ -456,22 +456,10 @@ func addSmokeDockerDeps(repoDir, provider string) error {
 	if err != nil {
 		return err
 	}
-	const deps = "RUN apt-get update && apt-get install -y bash curl git ca-certificates && rm -rf /var/lib/apt/lists/*\n"
-	updated := strings.Replace(string(data), "WORKDIR /app\n", "WORKDIR /app\n"+deps, 1)
-	if updated == string(data) {
-		return fmt.Errorf("missing WORKDIR /app in Dockerfile")
-	}
 	if provider == "opencode" {
-		oldInstall := "RUN curl -fsSL https://opencode.ai/install.sh | sh\n"
-		newInstall := "RUN npm install -g opencode-ai\n"
-		if replaced := strings.Replace(updated, oldInstall, newInstall, 1); replaced == updated {
-			return fmt.Errorf("missing opencode install command")
-		} else {
-			updated = replaced
-		}
-		updated += "RUN command -v opencode >/dev/null\n"
+		data = append(data, []byte("RUN command -v opencode >/dev/null\n")...)
 	}
-	return os.WriteFile(dockerfilePath, []byte(updated), 0644)
+	return os.WriteFile(dockerfilePath, data, 0644)
 }
 
 func customizeSmokeConfig(repoDir, provider, opencodeModel string) error {

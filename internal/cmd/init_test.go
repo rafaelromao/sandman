@@ -16,7 +16,7 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	cmd := NewInitCmd()
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
-	cmd.SetArgs([]string{"--lang", "go"})
+	cmd.SetArgs([]string{"--build-tools", "generic"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -34,7 +34,7 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	}
 }
 
-func TestInit_LangFlag(t *testing.T) {
+func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -42,23 +42,48 @@ func TestInit_LangFlag(t *testing.T) {
 	cmd := NewInitCmd()
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
-	cmd.SetArgs([]string{"--lang", "go"})
+	cmd.SetArgs([]string{"--build-tools", "generic"})
 
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
-	if !strings.Contains(string(data), "FROM golang:latest") {
-		t.Errorf("expected golang image, got:\n%s", data)
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: generic") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman agent-provider: opencode") {
+		t.Fatalf("Dockerfile missing agent metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman tool-version: 1.15.0") {
+		t.Fatalf("Dockerfile missing pinned agent version, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
+		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN curl -fsSL https://github.com/jdx/mise/releases/download/v2026.5.8/mise-v2026.5.8-linux-x64.tar.gz") {
+		t.Fatalf("Dockerfile missing mise install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@1.15.0") {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", dockerfile)
+	}
+
+	promptData, err := os.ReadFile(filepath.Join(dir, ".sandman", "prompt.md"))
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	prompt := string(promptData)
+	if !strings.Contains(prompt, "mise first") {
+		t.Fatalf("prompt.md missing mise guidance, got:\n%s", prompt)
 	}
 }
 
-func TestInit_FromImageFlag(t *testing.T) {
+func TestInit_AgentFlagSelectsConfigPreset(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -66,31 +91,7 @@ func TestInit_FromImageFlag(t *testing.T) {
 	cmd := NewInitCmd()
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
-	cmd.SetArgs([]string{"--lang", "go", "--from-image", "custom:latest"})
-
-	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
-	if err != nil {
-		t.Fatalf("read Dockerfile: %v", err)
-	}
-	if !strings.Contains(string(data), "FROM custom:latest") {
-		t.Errorf("expected custom image, got:\n%s", data)
-	}
-}
-
-func TestInit_AgentFlag(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-
-	var out bytes.Buffer
-	cmd := NewInitCmd()
-	cmd.SetOut(&out)
-	cmd.SetIn(strings.NewReader(""))
-	cmd.SetArgs([]string{"--lang", "go", "--agent", "claude-code"})
+	cmd.SetArgs([]string{"--build-tools", "generic", "--agent", "claude-code"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -109,8 +110,8 @@ func TestInit_AgentFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
-	if !strings.Contains(string(dockerfileData), "claude-code") {
-		t.Errorf("Dockerfile missing claude-code install, got:\n%s", dockerfileData)
+	if !strings.Contains(string(dockerfileData), "@anthropic-ai/claude-code@2.1.142") {
+		t.Errorf("Dockerfile missing pinned claude-code install, got:\n%s", dockerfileData)
 	}
 }
 
@@ -125,7 +126,7 @@ func TestInit_ExistingDirectoryPrompts(t *testing.T) {
 	cmd := NewInitCmd()
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader("n\n"))
-	cmd.SetArgs([]string{"--lang", "go"})
+	cmd.SetArgs([]string{"--build-tools", "generic"})
 
 	err := cmd.Execute()
 	if err == nil {
