@@ -4,6 +4,7 @@
 *.so
 *.dylib
 *.test
+/sandman
 
 # Output of the go coverage tool
 *.out
