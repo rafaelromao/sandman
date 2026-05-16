@@ -13,7 +13,7 @@ Sandman includes built-in presets for four AI coding agents. This guide document
 
 ## Compatibility matrix
 
-| Preset | Worktree | Container | Keychain Auth | Host Config Mounts |
+| Preset | Worktree | Container | Keychain Auth | Host Config Paths |
 |--------|----------|-----------|---------------|-------------------|
 | `opencode` | Yes | Yes | No | `~/.config/opencode`, `~/.local/share/opencode` |
 | `claude-code` | Yes | Yes | No | `~/.claude`, `~/.claude.json` |
@@ -30,9 +30,9 @@ To use an agent inside a container:
 
 1. Disable OS keychain integration for the agent CLI
 2. Use file-based authentication (e.g., API keys stored in config files)
-3. Mount the config files and directories into the container (Sandman does this automatically based on the preset config)
+3. Sandman resolves config files and directories into the container via a temporary copy (see ADR-0008)
 
-For example, Claude Code stores its session tokens in `~/.claude` and `~/.claude.json`. Sandman mounts these paths into the container automatically when using the `claude-code` preset, and the agent should be configured to use file-based auth.
+For example, Claude Code stores its session tokens in `~/.claude` and `~/.claude.json`. Sandman resolves these paths into the container automatically when using the `claude-code` preset, and the agent should be configured to use file-based auth.
 
 ## Worktree management
 
@@ -48,6 +48,6 @@ Agents should work within the current directory and use standard git operations 
 ## Container mode specifics
 
 - Container mode is Linux-first. On macOS or Windows, container runtimes (Docker/Podman) must be configured to run Linux containers
-- Config directories and files with `~` are expanded to the user's home directory on the host before being mounted into the container
+- Config directories and files with `~` are expanded to the user's home directory on the host before being resolved into a temporary copy for the container
 - Missing config directories and files are silently skipped (no error if an optional config path does not exist)
 - Container images are built from `.sandman/Dockerfile` at project initialization
