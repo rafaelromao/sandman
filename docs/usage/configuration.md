@@ -75,6 +75,20 @@ agents:
 
 The `command` field supports Go `text/template` syntax with the key `{{.PromptFile}}` (resolved to the relative path of the rendered prompt file). Commands without template placeholders are passed through unchanged.
 
+### Prompt templates
+
+The default prompt template lives at `.sandman/prompt.md` and is rendered per `AgentRun` before the agent starts. The following built-in substitution keys are available:
+
+| Key | Description |
+|-----|-------------|
+| `{{ISSUE_NUMBER}}` | GitHub issue number |
+| `{{ISSUE_TITLE}}` | Issue title |
+| `{{ISSUE_BODY}}` | Issue body |
+| `{{SOURCE_BRANCH}}` | Branch the agent starts from |
+| `{{TARGET_BRANCH}}` | Branch the agent will commit to |
+
+Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
+
 ### Overriding preset defaults
 
 You can override specific fields of a preset while keeping the defaults for others:
