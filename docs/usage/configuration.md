@@ -1,0 +1,139 @@
+# Configuration
+
+Sandman reads configuration from `.sandman/config.yaml` in the project root. You can also read and write individual fields via `sandman config get/set`.
+
+## Full schema
+
+```yaml
+# Default agent provider name (maps to an entry under `agents` or a built-in preset).
+agent: opencode
+
+# Build tools preset for the container image (generic, go).
+build_tools: generic
+
+# Maximum number of concurrent agent runs.
+default_parallel: 4
+
+# Maximum concurrent agent runs per ContainerSandbox.
+container_capacity: 4
+
+# Maximum number of ContainerSandbox instances.
+# 0 means auto mode: create the minimum needed for active runs.
+max_containers: 0
+
+# Directory for git worktrees.
+worktree_dir: .sandman/worktrees
+
+# Sandbox mode: podman (default), docker, or worktree.
+sandbox: podman
+
+# Git configuration for agent commits.
+git:
+  author_name: Dev
+  author_email: dev@example.com
+  default_branch: main
+
+# Agent provider definitions.
+agents:
+  opencode:
+    preset: opencode
+  claude-code:
+    preset: claude-code
+    config_dirs:
+      - ~/.claude
+    config_files:
+      - ~/.claude.json
+  custom-agent:
+    command: "custom-agent --prompt {{.PromptFile}}"
+    env:
+      API_KEY: ${API_KEY}
+```
+
+## Agent providers
+
+Each entry under `agents` defines how Sandman invokes an AI coding agent.
+
+### Using a built-in preset
+
+```yaml
+agents:
+  opencode:
+    preset: opencode
+```
+
+Available presets: `opencode`, `claude-code`, `codex`, `pi`. Each preset provides a default command template, config directories, and config files.
+
+### Custom agent command
+
+```yaml
+agents:
+  my-agent:
+    command: "my-agent --file {{.PromptFile}}"
+    env:
+      MY_KEY: ${MY_KEY}
+```
+
+The `command` field supports Go `text/template` syntax with the key `{{.PromptFile}}` (resolved to the relative path of the rendered prompt file). Commands without template placeholders are passed through unchanged.
+
+### Prompt templates
+
+The default prompt template lives at `.sandman/prompt.md` and is rendered per `AgentRun` before the agent starts. The following built-in substitution keys are available:
+
+| Key | Description |
+|-----|-------------|
+| `{{ISSUE_NUMBER}}` | GitHub issue number |
+| `{{ISSUE_TITLE}}` | Issue title |
+| `{{ISSUE_BODY}}` | Issue body |
+| `{{SOURCE_BRANCH}}` | Branch the agent starts from |
+| `{{TARGET_BRANCH}}` | Branch the agent will commit to |
+
+Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
+
+### Overriding preset defaults
+
+You can override specific fields of a preset while keeping the defaults for others:
+
+```yaml
+agents:
+  opencode:
+    preset: opencode
+    config_dirs:
+      - ~/.config/opencode
+      - /shared/opencode-config
+```
+
+### Agent provider fields
+
+| Field | Description |
+|-------|-------------|
+| `preset` | Built-in preset name to use as a base (opencode, claude-code, codex, pi) |
+| `command` | Custom command template; overrides the preset command |
+| `env` | Environment variables to set when running the agent. Supports `${VAR}` substitution from the host environment |
+| `config_dirs` | Directories to mount into the container sandbox (e.g., `~/.claude`). `~` is expanded to the user's home directory. Missing directories are silently skipped |
+| `config_files` | Individual files to mount into the container sandbox (e.g., `~/.claude.json`). `~` is expanded to the user's home directory. Missing files are silently skipped |
+| `keychain_auth` | Whether the agent requires OS keychain access. **Not supported in container mode** — Sandman rejects the batch with an error. Use file-based auth instead |
+
+## Container scheduling configuration
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `container_capacity` | `4` | Max concurrent agent runs per `ContainerSandbox`. `1` means isolated execution (one agent per container) |
+| `max_containers` | `0` | Max `ContainerSandbox` instances. `0` = auto mode: create the minimum needed for active runs given `container_capacity`. An explicit positive value caps total container-backed concurrency |
+
+When `max_containers=0` and `container_capacity=4` with 6 active runs, Sandman creates 2 containers (4 + 2). When the `max_containers` limit is reached and all containers are at capacity, additional runs queue until capacity frees up.
+
+See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
+
+## CLI config commands
+
+Use `sandman config get` and `sandman config set` to read and write individual fields:
+
+```bash
+sandman config get default_parallel
+# 4
+
+sandman config set container_capacity 2
+sandman config set git.author_name "My Name"
+```
+
+See [Commands Reference](commands.md) for the full list of supported dot-notation keys.
