@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -287,9 +288,10 @@ func copyResolved(src, dst string, depth int) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
 		if os.IsNotExist(err) {
+			log.Printf("warning: broken symlink skipped: %s", src)
 			return nil
 		}
-		// Circular/broken symlink at entry point — skip
+		log.Printf("warning: cannot stat %s: %v — skipping", src, err)
 		return nil
 	}
 

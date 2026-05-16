@@ -817,15 +817,25 @@ func TestResolveConfigMounts_CleanedUp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, cleanup, err := ResolveConfigMounts([]string{dir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts([]string{dir}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+
+	tmpDir := filepath.Dir(mounts[0].Source)
+	if _, err := os.Stat(tmpDir); err != nil {
+		t.Fatalf("expected temp dir to exist before cleanup: %v", err)
+	}
+
 	cleanup()
 
-	// The temp dir should be gone, but we can't check it directly since we don't have the path
-	// Just verify cleanup doesn't error (already called successfully)
+	if _, err := os.Stat(tmpDir); !os.IsNotExist(err) {
+		t.Errorf("expected temp dir to be removed after cleanup, but it still exists")
+	}
 }
 
 func TestResolveConfigMounts_MissingDir(t *testing.T) {
