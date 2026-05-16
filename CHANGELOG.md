@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub issue templates for bug reports, feature requests, and agent improvements
 - GitHub pull request template
 - Architectural Decision Record (ADR) convention with template
-- Container capacity and max_containers config and CLI flags
+- Container capacity and max_containers configuration model
 - Pooled container sandbox with auto-scaling (`max_containers=0`) and queueing
 - Dependency-aware batch execution with topological sort and cycle detection
 - `--include-dependencies` CLI flag for transitive blocker expansion
