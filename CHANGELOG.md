@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub issue templates for bug reports, feature requests, and agent improvements
 - GitHub pull request template
 - Architectural Decision Record (ADR) convention with template
+- Container capacity and max_containers config and CLI flags
+- Pooled container sandbox with auto-scaling (`max_containers=0`) and queueing
+- Dependency-aware batch execution with topological sort and cycle detection
+- `--include-dependencies` CLI flag for transitive blocker expansion
+- `run.blocked` event type and blocked status
+- Built-in agent presets (opencode, claude-code, codex, pi) with config resolver
+- `--prompt`, `--template`, `--prompt-arg` CLI flags for prompt customization
+- BuildToolsPreset scaffold-time recipe with pinned versioning and mise
+- `--sandbox`, `--container-capacity`, `--max-containers` CLI flags
+- Event log: `run.warning` event type
 
 ## [0.1.0] - 2026-05-09
 
