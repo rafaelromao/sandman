@@ -79,6 +79,12 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "RUN MISE_VERSION="+scaffold.DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", dockerfile)
 	}
+	if !strings.Contains(dockerfile, " gh ") {
+		t.Fatalf("Dockerfile missing gh shared package, got:\n%s", dockerfile)
+	}
+	if strings.Contains(dockerfile, "/root/.local/share/mise") {
+		t.Fatalf("Dockerfile should not depend on /root mise paths, got:\n%s", dockerfile)
+	}
 	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@"+scaffold.DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", dockerfile)
 	}
@@ -138,6 +144,9 @@ func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	}
 	if !strings.Contains(dockerfile, "RUN MISE_VERSION="+scaffold.DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, " gh ") {
+		t.Fatalf("Dockerfile missing gh shared package, got:\n%s", dockerfile)
 	}
 
 	promptData, err := os.ReadFile(filepath.Join(dir, ".sandman", "prompt.md"))
@@ -234,6 +243,12 @@ func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
 	wantGoVersion := "1.24.13"
 	if !strings.Contains(dockerfile, "RUN mise use -g --pin go@"+wantGoVersion) {
 		t.Fatalf("Dockerfile missing pinned go install %q, got:\n%s", wantGoVersion, dockerfile)
+	}
+	if !strings.Contains(dockerfile, "ENV GOPATH=\"/.local/share/go\"") {
+		t.Fatalf("Dockerfile missing GOPATH env, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "ENV GOMODCACHE=\"/.cache/go/pkg/mod\"") {
+		t.Fatalf("Dockerfile missing GOMODCACHE env, got:\n%s", dockerfile)
 	}
 }
 

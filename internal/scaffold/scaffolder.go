@@ -88,6 +88,7 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 			"ca-certificates",
 			"curl",
 			"file",
+			"gh",
 			"git",
 			"nodejs",
 			"npm",
@@ -107,6 +108,7 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 			"ca-certificates",
 			"curl",
 			"file",
+			"gh",
 			"git",
 			"nodejs",
 			"npm",
@@ -126,6 +128,7 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 			"ca-certificates",
 			"curl",
 			"file",
+			"gh",
 			"git",
 			"nodejs",
 			"npm",
@@ -574,9 +577,16 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	fmt.Fprintf(&out, "FROM %s\n", preset.BaseImage)
 	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(preset.SharedPackages, " "))
 	fmt.Fprintf(&out, "RUN MISE_VERSION=%s curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh\n", preset.MiseVersion)
-	fmt.Fprintf(&out, "ENV PATH=\"/root/.local/share/mise/bin:/root/.local/share/mise/shims:/root/.local/bin:$PATH\"\n")
+	out.WriteString("ENV MISE_GLOBAL_CONFIG_FILE=\"/etc/mise/config.toml\"\n")
+	out.WriteString("ENV MISE_CONFIG_DIR=\"/etc/mise\"\n")
+	out.WriteString("ENV MISE_DATA_DIR=\"/usr/local/share/mise\"\n")
+	out.WriteString("ENV MISE_STATE_DIR=\"/.local/state/mise\"\n")
+	out.WriteString("ENV MISE_CACHE_DIR=\"/.cache/mise\"\n")
+	out.WriteString("ENV PATH=\"/usr/local/share/mise/shims:/usr/local/share/mise/bin:$PATH\"\n")
 	out.WriteString("WORKDIR /app\n")
 	if preset.Name == goBuildToolsPreset {
+		out.WriteString("ENV GOPATH=\"/.local/share/go\"\n")
+		out.WriteString("ENV GOMODCACHE=\"/.cache/go/pkg/mod\"\n")
 		out.WriteString(renderGoInstallCommand(goVersion))
 	}
 	if preset.Name == pythonBuildToolsPreset {
