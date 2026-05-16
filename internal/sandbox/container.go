@@ -105,7 +105,7 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 		args = append(args, "-v", sshPath+":/.ssh")
 	}
 
-	args = append(args, "--mount", "type=tmpfs,destination=/.local", "--mount", "type=tmpfs,destination=/.cache", "-v", absRepo+":/workspace", image, "sleep", "3600")
+	args = append(args, "--mount", "type=tmpfs,destination=/.config", "--mount", "type=tmpfs,destination=/.local", "--mount", "type=tmpfs,destination=/.cache", "-v", absRepo+":/workspace", image, "sleep", "3600")
 
 	cmd := r.execFn(r.binary, args...)
 	out, err := cmd.CombinedOutput()
