@@ -115,5 +115,5 @@ func buildPresetImage(t *testing.T, runtime, tag, dockerfile, contextDir string)
 		time.Sleep(time.Duration(attempt) * time.Second)
 	}
 
-	t.Fatalf("podman build failed after retries: %v\n%s", lastErr, lastOut)
+	t.Fatalf("%s build failed after retries: %v\n%s", runtime, lastErr, lastOut)
 }
