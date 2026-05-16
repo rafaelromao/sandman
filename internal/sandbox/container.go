@@ -63,10 +63,9 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 	args := []string{"run", "-d", "--rm"}
 
 	if opts.UserID != "" {
-		if r.binary == "podman" {
-			args = append(args, "--userns", "keep-id")
+		if r.binary != "podman" {
+			args = append(args, "--user", opts.UserID)
 		}
-		args = append(args, "--user", opts.UserID)
 		args = append(args, "--env", "HOME=/")
 	}
 
