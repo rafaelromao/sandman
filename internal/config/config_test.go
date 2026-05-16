@@ -88,7 +88,7 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 	if agent.Command != wantCmd {
 		t.Errorf("command: got %q, want %q", agent.Command, wantCmd)
 	}
-	wantDirs := []string{"~/.config/opencode", "~/.local/share/opencode"}
+	wantDirs := []string{"~/.config/opencode", "~/.local/share/opencode", "~/.claude"}
 	if !reflect.DeepEqual(agent.ConfigDirs, wantDirs) {
 		t.Errorf("config_dirs: got %v, want %v", agent.ConfigDirs, wantDirs)
 	}
@@ -130,7 +130,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 			key:          "opencode",
 			wantDisplay:  "OpenCode",
 			wantCommand:  `opencode run "$(cat {{.PromptFile}})"`,
-			wantDirs:     []string{"~/.config/opencode", "~/.local/share/opencode"},
+			wantDirs:     []string{"~/.config/opencode", "~/.local/share/opencode", "~/.claude"},
 			wantFiles:    nil,
 			wantKeychain: false,
 		},

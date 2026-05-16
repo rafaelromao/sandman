@@ -2,24 +2,6 @@
 
 A terminal-native CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 
-## Quick Start
-
-```bash
-# Prerequisites: Go 1.24+, Git, gh CLI, and an AI agent (opencode, claude-code, codex, pi)
-# 1. Install
-go install github.com/rafaelromao/sandman/cmd/sandman@latest
-
-# 2. Initialize a project
-cd my-repo && sandman init
-
-# 3. Run agents for GitHub issues
-sandman run 42 43
-
-# 4. Check progress
-sandman status
-sandman history
-```
-
 ## Overview
 
 Sandman manages the lifecycle of automated coding workflows:
@@ -27,31 +9,67 @@ Sandman manages the lifecycle of automated coding workflows:
 - Fetches GitHub issues via the `gh` CLI
 - Renders prompt templates for AI coding agents
 - Creates isolated sandboxes (git worktrees or containers)
-- Orchestrates parallel agent execution with dependency-aware scheduling
+- Orchestrates parallel agent execution
 - Logs structured events for observability
 
-## Documentation
+## Prerequisites
 
-| Guide | Description |
-|-------|-------------|
-| [Getting Started](docs/usage/getting-started.md) | Prerequisites, installation, and first project setup |
-| [Commands Reference](docs/usage/commands.md) | All CLI commands, flags, and issue selection modes |
-| [Configuration](docs/usage/configuration.md) | Full config schema, agent providers, and CLI config |
-| [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
-| [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, retry and cleanup |
-| [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and troubleshooting |
-| [Agent Compatibility](docs/usage/agent-compatibility.md) | Built-in agent presets and container auth model |
+- [Go](https://go.dev/dl/) 1.24 or later
+- [Git](https://git-scm.com/)
+- An AI coding agent such as [opencode](https://opencode.ai/), [Claude Code](https://claude.com/product/claude-code), [Codex](https://openai.com/codex/), or [Pi](https://pi.dev)
+- [`gh` CLI](https://cli.github.com/) (optional but recommended for GitHub integration)
 
-## Config Overview
+## Installation
 
-Sandman reads from `.sandman/config.yaml`. Key fields:
+### Quick install
+
+Install the latest release directly to `$GOPATH/bin`:
+
+```bash
+go install github.com/rafaelromao/sandman/cmd/sandman@latest
+```
+
+### Build from source
+
+```bash
+# Clone the repository
+git clone https://github.com/rafaelromao/sandman.git
+cd sandman
+
+# Build the binary
+make build
+
+# Optionally install to $GOPATH/bin
+make install
+```
+
+## Quick Start
+
+```bash
+# Initialize a Sandman project in the current directory
+sandman init
+
+# Run an AFK agent for specific issues
+sandman run 42 43 44
+
+# Check status of current and recent agent runs
+sandman status
+
+# View event log
+sandman history
+```
+
+> **Note:** If you built from source without `make install`, use `./sandman` instead of `sandman`.
+
+## Configuration
+
+Sandman reads configuration from `.sandman/config.yaml`:
 
 ```yaml
 agent: opencode
 default_parallel: 4
-sandbox: podman              # podman, docker, or worktree
-container_capacity: 4        # agent runs per container
-max_containers: 0            # auto mode; or set a fixed limit
+worktree_dir: .sandman/worktrees
+sandbox: podman
 git:
   author_name: Dev
   author_email: dev@example.com
@@ -64,21 +82,62 @@ agents:
       API_KEY: ${API_KEY}
 ```
 
-See [Configuration](docs/usage/configuration.md) for the full schema.
+Use `preset` for built-in providers such as `opencode`, `claude-code`, `codex`, and `pi`. Use `command` only for custom providers.
+
+### Agent Command Templates
+
+The `command` field supports Go `text/template` syntax. The following keys are available:
+
+| Key | Description |
+| --- | --- |
+| `{{.PromptFile}}` | Relative path to the rendered prompt file (e.g., `.sandman/prompt.md`) |
+
+Commands without template placeholders are passed through unchanged.
 
 ## Development
 
-```bash
-make check    # Format, vet, test
-make build    # Build binary
-make install  # Install to $GOPATH/bin
-```
-
-Smoke tests (opt-in):
+Use the Makefile for common development tasks:
 
 ```bash
-SANDMAN_SMOKE_PROVIDERS=opencode,claude-code go test -tags smoke ./internal/cmd -run Smoke
+# Format, vet, and test
+make check
+
+# Build the binary
+make build
+
+# Install to $GOPATH/bin
+make install
+
+# Clean build artifacts
+make clean
 ```
+
+### Alternative: raw Go commands
+
+If you prefer not to use `make`:
+
+```bash
+# Run tests
+go test ./...
+
+# Run linter and vet
+go vet ./...
+
+# Format code
+gofmt -w .
+```
+
+### Smoke tests
+
+Opt-in smoke tests are build-tagged and env-gated:
+
+```bash
+SANDMAN_SMOKE_PROVIDERS=opencode,claude-code,codex,pi go test -tags smoke ./internal/cmd -run Smoke
+```
+
+Prereqs: `git`, Podman or Docker, network access for the provider installers, and file-backed auth under `HOME` for the selected provider(s).
+
+The selected provider CLIs must also be installed on the host: `opencode`, `claude`, `codex`, and/or `pi`.
 
 ## License
 
