@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/scaffold"
 )
 
@@ -93,9 +94,9 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read prompt.md: %v", err)
 	}
-	prompt := string(promptData)
-	if !strings.Contains(prompt, "mise first") {
-		t.Fatalf("prompt.md missing mise guidance, got:\n%s", prompt)
+	promptText := string(promptData)
+	if want := prompt.DefaultPrompt(); promptText != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, promptText)
 	}
 }
 
@@ -153,9 +154,9 @@ func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read prompt.md: %v", err)
 	}
-	prompt := string(promptData)
-	if !strings.Contains(prompt, "mise first") {
-		t.Fatalf("prompt.md missing mise guidance, got:\n%s", prompt)
+	promptText := string(promptData)
+	if want := prompt.DefaultPrompt(); promptText != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, promptText)
 	}
 }
 

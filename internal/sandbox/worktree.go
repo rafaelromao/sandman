@@ -143,9 +143,9 @@ func (s *WorktreeSandbox) Stop() error {
 	return nil
 }
 
-// WritePrompt writes the prompt content to .sandman/prompt.md in the worktree.
+// WritePrompt writes the prompt content to .sandman/rendered-prompt.md in the worktree.
 func (s *WorktreeSandbox) WritePrompt(content string) error {
-	promptPath := filepath.Join(s.workDir, ".sandman", "prompt.md")
+	promptPath := filepath.Join(s.workDir, ".sandman", "rendered-prompt.md")
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		return fmt.Errorf("create prompt dir: %w", err)
 	}

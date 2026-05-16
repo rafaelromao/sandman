@@ -37,12 +37,12 @@ func TestRenderCommand_UnknownFieldReturnsError(t *testing.T) {
 
 func TestRenderCommand_SubstitutesPromptFile(t *testing.T) {
 	got, err := RenderCommand("opencode --prompt-file {{.PromptFile}}", CommandData{
-		PromptFile: ".sandman/prompt.md",
+		PromptFile: ".sandman/rendered-prompt.md",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "opencode --prompt-file .sandman/prompt.md"
+	want := "opencode --prompt-file .sandman/rendered-prompt.md"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -60,10 +60,10 @@ func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 
 func TestRenderCommand_BuiltInPresets(t *testing.T) {
 	presets := map[string]string{
-		"opencode":    `opencode run "$(cat .sandman/prompt.md)"`,
-		"claude-code": `claude --print "$(cat .sandman/prompt.md)"`,
-		"codex":       `codex exec "$(cat .sandman/prompt.md)"`,
-		"pi":          `pi --print "$(cat .sandman/prompt.md)"`,
+		"opencode":    `opencode run "$(cat .sandman/rendered-prompt.md)"`,
+		"claude-code": `claude --print "$(cat .sandman/rendered-prompt.md)"`,
+		"codex":       `codex exec "$(cat .sandman/rendered-prompt.md)"`,
+		"pi":          `pi --print "$(cat .sandman/rendered-prompt.md)"`,
 	}
 
 	for key, want := range presets {
@@ -74,7 +74,7 @@ func TestRenderCommand_BuiltInPresets(t *testing.T) {
 			}
 
 			got, err := RenderCommand(preset.Command, CommandData{
-				PromptFile: ".sandman/prompt.md",
+				PromptFile: ".sandman/rendered-prompt.md",
 			})
 			if err != nil {
 				t.Fatalf("RenderCommand: %v", err)

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 const defaultBuildToolsPreset = "generic"
@@ -21,31 +22,6 @@ const goBuildToolsPreset = "go"
 const pythonBuildToolsPreset = "python"
 
 const DefaultMISEVersion = "v2026.5.8"
-
-const promptMdHeader = `# Context
-
-<!--
-  Sandman substitutes these built-in keys before the agent runs:
-  {{ISSUE_NUMBER}}   -> the issue number
-  {{ISSUE_TITLE}}    -> the issue title
-  {{ISSUE_BODY}}     -> the issue body
-  {{SOURCE_BRANCH}}  -> the source branch name
-  {{TARGET_BRANCH}}  -> the target branch name
-
-  Add custom keys in config.yaml under promptArgs and use them as {{KEY_NAME}}.
-  The agent command references the rendered prompt file path as {{.PromptFile}}.
-
-  If a toolchain is missing, use mise first before adding ad hoc installs.
--->
-
-# Task
-
-<!-- Describe what the agent should do. -->
-
-# Done
-
-<!-- When the task is complete, signal termination if your agent supports it. -->
-`
 
 // Options configures the scaffolding behavior.
 type Options struct {
@@ -261,7 +237,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 
 	promptPath := filepath.Join(sandmanDir, "prompt.md")
-	if err := os.WriteFile(promptPath, []byte(promptMdHeader), 0644); err != nil {
+	if err := os.WriteFile(promptPath, []byte(prompt.DefaultPrompt()), 0644); err != nil {
 		return fmt.Errorf("write prompt.md: %w", err)
 	}
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 type fakePrompter struct {
@@ -81,8 +82,8 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read prompt.md: %v", err)
 	}
-	if !strings.Contains(string(promptData), "mise first") {
-		t.Fatalf("prompt.md missing mise guidance, got:\n%s", promptData)
+	if got, want := string(promptData), prompt.DefaultPrompt(); got != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, got)
 	}
 }
 
@@ -298,8 +299,8 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read prompt.md: %v", err)
 	}
-	if !strings.Contains(string(promptData), "mise first") {
-		t.Fatalf("prompt.md missing mise guidance, got:\n%s", promptData)
+	if got, want := string(promptData), prompt.DefaultPrompt(); got != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, got)
 	}
 }
 

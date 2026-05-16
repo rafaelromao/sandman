@@ -227,7 +227,7 @@ func TestWorktreeSandbox_WritePrompt(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	promptPath := filepath.Join(s.WorkDir(), ".sandman", "prompt.md")
+	promptPath := filepath.Join(s.WorkDir(), ".sandman", "rendered-prompt.md")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		t.Fatalf("read prompt: %v", err)

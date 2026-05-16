@@ -972,7 +972,7 @@ func TestRun_WorktreeSandboxSingleIssuePreservesRenderedCliPrompt(t *testing.T) 
 
 	deps := newRunIntegrationDeps(`
 set -e
-prompt_path=".sandman/prompt.md"
+prompt_path=".sandman/rendered-prompt.md"
 test -f "$prompt_path"
 grep -Fq "Issue #42: Fix bug" "$prompt_path"
 grep -Fq "Users cannot log in." "$prompt_path"
@@ -1009,7 +1009,7 @@ Priority: {{PRIORITY}}
 		t.Fatalf("expected branch string in summary, got:\n%s", out)
 	}
 
-	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug", ".sandman", "prompt.md")
+	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug", ".sandman", "rendered-prompt.md")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		t.Fatalf("read prompt: %v", err)
