@@ -12,7 +12,7 @@ _Avoid_: dependencies, prerequisites.
 An external AI coding tool (OpenCode, Codex, Claude Code, Pi) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
 _Avoid_: AI model, LLM, copilot.
 
-**Agent Preset**:
+**AgentPreset**:
 A built-in command, config mount, and auth profile for a known AI coding tool keyed by name (opencode, claude-code, codex, pi). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
 _Avoid_: Provider template, agent type.
 
