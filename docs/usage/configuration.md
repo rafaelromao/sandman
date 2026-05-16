@@ -109,8 +109,8 @@ agents:
 | `preset` | Built-in preset name to use as a base (opencode, claude-code, codex, pi) |
 | `command` | Custom command template; overrides the preset command |
 | `env` | Environment variables to set when running the agent. Supports `${VAR}` substitution from the host environment |
-| `config_dirs` | Directories to mount into the container sandbox (e.g., `~/.claude`). `~` is expanded to the user's home directory. Missing directories are silently skipped |
-| `config_files` | Individual files to mount into the container sandbox (e.g., `~/.claude.json`). `~` is expanded to the user's home directory. Missing files are silently skipped |
+| `config_dirs` | Directories to resolve into the container sandbox via a temporary copy (e.g., `~/.claude`). Symlinks are dereferenced during the copy (see ADR-0008). `~` is expanded to the user's home directory. Missing directories are silently skipped |
+| `config_files` | Individual files to resolve into the container sandbox via a temporary copy (e.g., `~/.claude.json`). Symlinks are dereferenced during the copy (see ADR-0008). `~` is expanded to the user's home directory. Missing files are silently skipped |
 | `keychain_auth` | Whether the agent requires OS keychain access. **Not supported in container mode** — Sandman rejects the batch with an error. Use file-based auth instead |
 
 ## Container scheduling configuration

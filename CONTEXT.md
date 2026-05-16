@@ -13,11 +13,11 @@ An external AI coding tool (OpenCode, Codex, Claude Code, Pi) invoked by Sandman
 _Avoid_: AI model, LLM, copilot.
 
 **AgentPreset**:
-A built-in command, config mount, and auth profile for a known AI coding tool keyed by name (opencode, claude-code, codex, pi). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
+A built-in command, config source, and auth profile for a known AI coding tool keyed by name (opencode, claude-code, codex, pi). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
 _Avoid_: Provider template, agent type.
 
 **Agent Provider**:
-A configured agent type declared in `.sandman/config.yaml`, with a command template, env map, and known config mount paths.
+A configured agent type declared in `.sandman/config.yaml`, with a command template, env map, and known config source paths.
 _Avoid_: Agent type, runner.
 
 **AgentRun**:
@@ -40,8 +40,12 @@ _Avoid_: Feature branch, PR branch.
 A scaffold-time recipe chosen during `sandman init` that seeds a pinned container image definition with shared baseline tools, stack tooling, and built-in agent installation defaults.
 _Avoid_: language, stack, base image.
 
+**ConfigDirs**:
+Directories resolved into a container sandbox via a temporary copy for agent configuration. Before mounting, Sandman creates a batch-scoped copy of each directory with symlinks resolved (following ADR-0008). Paths starting with `~` are expanded to the user's home directory. Missing directories are silently skipped.
+_Avoid_: mounted config directories.
+
 **ConfigFiles**:
-Individual files mounted into a container sandbox for agent configuration. Distinct from ConfigDirs (which mounts whole directories). Paths starting with `~` are expanded to the user's home directory. Missing files are silently skipped.
+Individual files resolved into a container sandbox via a temporary copy for agent configuration. Before mounting, Sandman creates a batch-scoped copy of each file with symlinks resolved (following ADR-0008). Paths starting with `~` are expanded to the user's home directory. Missing files are silently skipped.
 _Avoid_: config paths, settings files.
 
 **ContainerSandbox**:

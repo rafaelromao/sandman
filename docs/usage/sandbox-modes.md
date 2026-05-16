@@ -86,5 +86,5 @@ Each container hosts exactly one `AgentRun`. This provides the strongest per-run
 | Setup | None | Requires container runtime |
 | Isolation | None beyond git | Filesystem and process isolation |
 | Overhead | Minimal | Container startup and resource usage |
-| Sharing | Runs directly on host | Config dirs and files mounted from host |
+| Sharing | Runs directly on host | Config dirs and files resolved via temporary copy |
 | Auth | Supports keychain auth | File-based auth only (keychain rejected) |
