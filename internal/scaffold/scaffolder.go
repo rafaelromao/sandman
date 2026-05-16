@@ -171,13 +171,13 @@ var bundledGoVersionCatalog = map[string]string{
 }
 
 var bundledPythonVersionCatalog = map[string]string{
-	"latest":      "3.13.3",
-	"3.14":        "3.14.3",
-	"3.13":        "3.13.3",
-	"3.12":        "3.12.9",
-	"prefix:3.9":  "3.9.21",
-	"prefix:3.10": "3.10.16",
-	"prefix:3.11": "3.11.11",
+	"latest": "3.13.3",
+	"3.14":   "3.14.3",
+	"3.13":   "3.13.3",
+	"3.12":   "3.12.9",
+	"3.11":   "3.11.11",
+	"3.10":   "3.10.16",
+	"3.9":    "3.9.21",
 }
 
 // Scaffolder creates the .sandman/ directory and its files.
@@ -644,7 +644,7 @@ func resolvePythonVersionChoice(choice, hint string, hintFound bool) (string, er
 		if err != nil {
 			return "", err
 		}
-		prefix, err := goPreviousMinorPrefix(latest)
+		prefix, err := pythonPreviousMinorPrefix(latest)
 		if err != nil {
 			return "", err
 		}
@@ -695,6 +695,29 @@ func resolveMisePythonVersion(selector string) (string, error) {
 		return "", fmt.Errorf("resolve python version %q: %w", selector, err)
 	}
 	return "", fmt.Errorf("resolve python version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func pythonPreviousMinorPrefix(version string) (string, error) {
+	version = normalizePythonVersionSelector(version)
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected Python version %q", version)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("parse Python major version %q: %w", version, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("parse Python minor version %q: %w", version, err)
+	}
+	if minor == 0 {
+		return "", fmt.Errorf("unexpected Python version %q", version)
+	}
+	minor--
+
+	return fmt.Sprintf("%d.%d", major, minor), nil
 }
 
 func readPythonVersionHint(repoRoot string) (string, bool, error) {

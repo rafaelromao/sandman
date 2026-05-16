@@ -345,6 +345,13 @@ func TestScaffold_PythonRepoAutoDetect(t *testing.T) {
 			want: "python",
 		},
 		{
+			name: "setup.cfg",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "setup.cfg"), []byte("[metadata]\nname = demo\n"), 0644)
+			},
+			want: "python",
+		},
+		{
 			name: ".python-version",
 			setupFn: func(dir string) {
 				os.WriteFile(filepath.Join(dir, ".python-version"), []byte("3.12\n"), 0644)
