@@ -12,6 +12,10 @@ _Avoid_: dependencies, prerequisites.
 An external AI coding tool (OpenCode, Codex, Claude Code, Pi) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
 _Avoid_: AI model, LLM, copilot.
 
+**AgentPreset**:
+A built-in command, config mount, and auth profile for a known AI coding tool keyed by name (opencode, claude-code, codex, pi). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
+_Avoid_: Provider template, agent type.
+
 **Agent Provider**:
 A configured agent type declared in `.sandman/config.yaml`, with a command template, env map, and known config mount paths.
 _Avoid_: Agent type, runner.
@@ -36,6 +40,10 @@ _Avoid_: Feature branch, PR branch.
 A scaffold-time recipe chosen during `sandman init` that seeds a pinned container image definition with shared baseline tools, stack tooling, and built-in agent installation defaults.
 _Avoid_: language, stack, base image.
 
+**ConfigFiles**:
+Individual files mounted into a container sandbox for agent configuration. Distinct from ConfigDirs (which mounts whole directories). Paths starting with `~` are expanded to the user's home directory. Missing files are silently skipped.
+_Avoid_: config paths, settings files.
+
 **ContainerSandbox**:
 A Docker or Podman container providing filesystem and process isolation for one or more AgentRuns. A Batch may scale a pool of ContainerSandboxes up or down within configured limits.
 _Avoid_: Docker container, sandbox container.
@@ -59,6 +67,12 @@ _Avoid_: Ticket, story.
 **Prompt**:
 The generated instruction file passed to an agent, rendered from a template with issue metadata and built-in substitutions.
 _Avoid_: Instructions, query.
+
+**Prompt keys**:
+The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{TARGET_BRANCH}}`. Custom keys are supported via `promptArgs` in config.
+
+**Command template key**:
+The `{{.PromptFile}}` key available in agent command templates, resolved to the relative path of the rendered prompt file.
 
 **ResolvedBatch**:
 A batch where all issues have been fetched, their BlockedBy relationships resolved, and the execution order topologically sorted. Ready for the Orchestrator.
