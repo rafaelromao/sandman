@@ -370,6 +370,44 @@ func TestContainerRuntime_Start_MountsAgentConfigDirs(t *testing.T) {
 	}
 }
 
+func TestContainerRuntime_Start_MountsConfigTmpfs(t *testing.T) {
+	rt := NewContainerRuntime("docker")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "abc123")
+	}
+
+	_, err := rt.Start("alpine", ".", StartOptions{UserID: "1000"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundConfig := false
+	foundLocal := false
+	foundCache := false
+	for i := 0; i < len(captured)-1; i++ {
+		if captured[i] == "--mount" && captured[i+1] == "type=tmpfs,destination=/.config" {
+			foundConfig = true
+		}
+		if captured[i] == "--mount" && captured[i+1] == "type=tmpfs,destination=/.local" {
+			foundLocal = true
+		}
+		if captured[i] == "--mount" && captured[i+1] == "type=tmpfs,destination=/.cache" {
+			foundCache = true
+		}
+	}
+	if !foundConfig {
+		t.Errorf("expected --mount type=tmpfs,destination=/.config, got args: %v", captured)
+	}
+	if !foundLocal {
+		t.Errorf("expected --mount type=tmpfs,destination=/.local, got args: %v", captured)
+	}
+	if !foundCache {
+		t.Errorf("expected --mount type=tmpfs,destination=/.cache, got args: %v", captured)
+	}
+}
+
 func TestContainerRuntime_Start_MountsSSHForSSHRemotes(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
