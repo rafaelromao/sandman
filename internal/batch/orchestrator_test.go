@@ -1532,6 +1532,15 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 		t.Cleanup(func() { os.Remove(gitconfigPath) })
 	}
 
+	// Ensure ~/.config/gh exists so buildStartOptions includes it.
+	ghConfigDir := filepath.Join(home, ".config", "gh")
+	if _, err := os.Stat(ghConfigDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(ghConfigDir, 0755); err != nil {
+			t.Fatalf("create gh config dir: %v", err)
+		}
+		t.Cleanup(func() { os.RemoveAll(ghConfigDir) })
+	}
+
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},
@@ -1553,8 +1562,8 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	if starter.startOpts.GitConfigPath == "" {
 		t.Error("expected GitConfigPath to be set")
 	}
-	if len(starter.startOpts.AgentConfigDirs) != 1 {
-		t.Errorf("expected 1 agent config dir, got %d", len(starter.startOpts.AgentConfigDirs))
+	if len(starter.startOpts.AgentConfigDirs) != 2 {
+		t.Errorf("expected 2 agent config dirs (preset + gh), got %d", len(starter.startOpts.AgentConfigDirs))
 	}
 	if len(starter.startOpts.AgentConfigFiles) != 1 {
 		t.Errorf("expected 1 agent config file, got %d", len(starter.startOpts.AgentConfigFiles))

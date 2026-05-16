@@ -69,6 +69,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		ConfigDirs: []string{
 			"~/.config/opencode",
 			"~/.local/share/opencode",
+			"~/.claude",
 		},
 	},
 	"claude-code": {

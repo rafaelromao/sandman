@@ -447,6 +447,11 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 		if _, err := os.Stat(gitConfig); err == nil {
 			opts.GitConfigPath = gitConfig
 		}
+
+		ghConfig := filepath.Join(home, ".config", "gh")
+		if _, err := os.Stat(ghConfig); err == nil {
+			opts.AgentConfigDirs = append(opts.AgentConfigDirs, ghConfig)
+		}
 	}
 
 	for _, dir := range agentCfg.ConfigDirs {
