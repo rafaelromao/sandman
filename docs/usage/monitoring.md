@@ -22,7 +22,7 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 
 | Field | Description |
 |-------|-------------|
-| `type` | Event type (e.g. `run.started`, `run.finished`, `run.blocked`, `run.warning`, `agent.stdout`) |
+| `type` | Event type (e.g. `run.started`, `run.finished`, `run.blocked`, `run.warning`) |
 | `timestamp` | ISO 8601 timestamp |
 | `run_id` | Unique run identifier |
 | `issue` | GitHub issue number |
@@ -38,7 +38,7 @@ Each agent run writes its output to `.sandman/logs/<issue>.log`. This file captu
 sandman run --debug 42
 ```
 
-When an agent run fails with `--debug` enabled, Sandman prints the worktree path and instructions for manual inspection instead of cleaning up. This lets you examine the agent's partial output and diagnose issues.
+When enabled, Sandman prints the worktree path and instructions for manual inspection alongside failure output. Worktrees are always preserved on failure (regardless of `--debug`), so you can examine the agent's partial output and diagnose issues.
 
 ## Preserve mode
 

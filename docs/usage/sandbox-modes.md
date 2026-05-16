@@ -65,13 +65,13 @@ max_containers: 3
 
 Sandman creates up to 3 containers, each hosting up to 2 concurrent runs (max 6 concurrent). If the batch has 8 runnable issues, the last 2 queue until capacity frees up.
 
-#### Isolated containers (`container_capacity: 1`)
+#### Capacity of 1 (`container_capacity: 1`)
 
 ```yaml
 container_capacity: 1
 ```
 
-Each container hosts exactly one `AgentRun`. This provides the strongest isolation at the cost of higher overhead per run.
+Each container hosts exactly one `AgentRun`. This provides the strongest per-run isolation at the cost of higher overhead.
 
 ### Setup requirements
 

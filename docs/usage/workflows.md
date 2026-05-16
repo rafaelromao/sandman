@@ -67,10 +67,11 @@ Sandman can detect dependencies between issues and execute them in the correct o
 
 ### How dependency detection works
 
-Sandman discovers `BlockedBy` relationships from two sources:
+Sandman discovers `BlockedBy` relationships from three sources:
 
 1. **Body references** — issue bodies containing `blocked by #N` or `depends on #N`
-2. **GitHub native fields** — issue dependency events (`blocked_by_added`, cross-references)
+2. **GitHub REST API** — native `issue.blocked_by` and `issue.issue_dependencies.blocked_by` fields
+3. **Issue events** — `blocked_by_added`, `blocked_by_removed`, and cross-reference events
 
 ### Strict mode (default)
 
