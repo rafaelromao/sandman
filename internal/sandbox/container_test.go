@@ -694,3 +694,237 @@ func TestToContainerPath_ReturnsHostPathWhenNotUnderHome(t *testing.T) {
 		t.Errorf("toContainerPath(%q) = %q, want %q", "/opt/custom/path", got, want)
 	}
 }
+
+func TestResolveConfigMounts_ResolvesFileSymlink(t *testing.T) {
+	realFile := filepath.Join(t.TempDir(), "real.json")
+	if err := os.WriteFile(realFile, []byte(`{"key": "value"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	symFile := filepath.Join(t.TempDir(), "link.json")
+	if err := os.Symlink(realFile, symFile); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts, cleanup, err := ResolveConfigMounts(nil, []string{symFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+
+	data, err := os.ReadFile(mounts[0].Source)
+	if err != nil {
+		t.Fatalf("read resolved content: %v", err)
+	}
+	if string(data) != `{"key": "value"}` {
+		t.Errorf("expected content %q, got %q", `{"key": "value"}`, string(data))
+	}
+}
+
+func TestResolveConfigMounts_InternalSymlinks(t *testing.T) {
+	realDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realDir, "a.txt"), []byte("aaa"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Internal symlink: b.txt -> a.txt
+	if err := os.Symlink("a.txt", filepath.Join(realDir, "b.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts, cleanup, err := ResolveConfigMounts([]string{realDir}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+
+	source := mounts[0].Source
+	data, err := os.ReadFile(filepath.Join(source, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a.txt: %v", err)
+	}
+	if string(data) != "aaa" {
+		t.Errorf("expected 'aaa', got %q", string(data))
+	}
+
+	bData, err := os.ReadFile(filepath.Join(source, "b.txt"))
+	if err != nil {
+		t.Fatalf("read b.txt: %v", err)
+	}
+	if string(bData) != "aaa" {
+		t.Errorf("expected 'aaa' for resolved symlink, got %q", string(bData))
+	}
+}
+
+func TestResolveConfigMounts_BrokenSymlink(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "valid.txt"), []byte("ok"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/nonexistent/target", filepath.Join(dir, "broken")); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts, cleanup, err := ResolveConfigMounts([]string{dir}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	source := mounts[0].Source
+	validContent, err := os.ReadFile(filepath.Join(source, "valid.txt"))
+	if err != nil {
+		t.Fatalf("read valid.txt: %v", err)
+	}
+	if string(validContent) != "ok" {
+		t.Errorf("expected 'ok', got %q", string(validContent))
+	}
+
+	if _, err := os.Stat(filepath.Join(source, "broken")); !os.IsNotExist(err) {
+		t.Errorf("expected broken symlink to be skipped, but it exists or other error: %v", err)
+	}
+}
+
+func TestResolveConfigMounts_CircularSymlink(t *testing.T) {
+	dir := t.TempDir()
+	// Create a -> b -> a circular chain
+	aPath := filepath.Join(dir, "a")
+	bPath := filepath.Join(dir, "b")
+	if err := os.Symlink(bPath, aPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(aPath, bPath); err != nil {
+		t.Fatal(err)
+	}
+
+	_, cleanup, err := ResolveConfigMounts([]string{dir}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+}
+
+func TestResolveConfigMounts_CleanedUp(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, cleanup, err := ResolveConfigMounts([]string{dir}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cleanup()
+
+	// The temp dir should be gone, but we can't check it directly since we don't have the path
+	// Just verify cleanup doesn't error (already called successfully)
+}
+
+func TestResolveConfigMounts_MissingDir(t *testing.T) {
+	mounts, cleanup, err := ResolveConfigMounts([]string{"/nonexistent/test-dir"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	if len(mounts) != 0 {
+		t.Errorf("expected 0 mounts for missing dirs, got %d", len(mounts))
+	}
+}
+
+func TestContainerRuntime_Start_UsesConfigMounts(t *testing.T) {
+	mountsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(mountsDir, "cfg.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts, cleanup, err := ResolveConfigMounts([]string{mountsDir}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	rt := NewContainerRuntime("docker")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "abc123")
+	}
+
+	_, err = rt.Start("alpine", ".", StartOptions{
+		ConfigMounts:     mounts,
+		AgentConfigDirs:  []string{"/should/not/be/mounted"},
+		AgentConfigFiles: []string{"/should/not/be/mounted.json"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify only ConfigMounts are used, not AgentConfigDirs/Files
+	mountCount := 0
+	for i := 0; i < len(captured); i++ {
+		if captured[i] == "-v" {
+			mountCount++
+		}
+	}
+	// Should have 1 mount from ConfigMounts, not 2 from the ignored fields
+	if mountCount < 1 {
+		t.Fatalf("expected at least 1 mount from ConfigMounts, got %d", mountCount)
+	}
+
+	for i := 0; i < len(captured)-1; i++ {
+		if captured[i] == "-v" && strings.Contains(captured[i+1], "/should/not/be/mounted") {
+			t.Errorf("AgentConfigDirs/Files should not be mounted when ConfigMounts is set")
+		}
+	}
+}
+
+func TestResolveConfigMounts_ResolvesDirSymlink(t *testing.T) {
+	realDir := t.TempDir()
+	realContent := filepath.Join(realDir, "config.json")
+	if err := os.WriteFile(realContent, []byte(`{"key": "value"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	symDir := filepath.Join(t.TempDir(), "config-link")
+	if err := os.Symlink(realDir, symDir); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts, cleanup, err := ResolveConfigMounts([]string{symDir}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+
+	source := mounts[0].Source
+	resolvedContent := filepath.Join(source, "config.json")
+	data, err := os.ReadFile(resolvedContent)
+	if err != nil {
+		t.Fatalf("read resolved content: %v", err)
+	}
+	if string(data) != `{"key": "value"}` {
+		t.Errorf("expected content %q, got %q", `{"key": "value"}`, string(data))
+	}
+
+	// Verify source is not a symlink
+	info, err := os.Lstat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Error("expected resolved source to not be a symlink")
+	}
+}

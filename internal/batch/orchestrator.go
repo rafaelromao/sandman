@@ -286,6 +286,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("max_containers must be 0 or greater")
 		}
 
+		if len(startOpts.AgentConfigDirs) > 0 || len(startOpts.AgentConfigFiles) > 0 {
+			mounts, cleanup, err := sandbox.ResolveConfigMounts(startOpts.AgentConfigDirs, startOpts.AgentConfigFiles)
+			if err != nil {
+				return nil, fmt.Errorf("resolve config mounts: %w", err)
+			}
+			startOpts.ConfigMounts = mounts
+			defer cleanup()
+		}
+
 		starter := containerFactory.New(sandboxMode)
 		image, err := starter.BuildImage(".")
 		if err != nil {
