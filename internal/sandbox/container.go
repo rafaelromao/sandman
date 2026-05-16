@@ -232,6 +232,7 @@ func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
 	cleanup := func() { os.RemoveAll(tmpDir) }
 
 	var mounts []ConfigMount
+	used := make(map[string]int)
 
 	for _, dir := range dirs {
 		info, err := os.Stat(dir)
@@ -245,12 +246,13 @@ func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
 		if !info.IsDir() {
 			continue
 		}
-		dst := filepath.Join(tmpDir, filepath.Base(dir))
+		target := uniqueTarget(used, filepath.Base(dir))
+		dst := filepath.Join(tmpDir, target)
 		if err := copyResolved(dir, dst, 0); err != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("copy config dir %q: %w", dir, err)
 		}
-		mounts = append(mounts, ConfigMount{Source: dst, Target: "/" + filepath.Base(dir)})
+		mounts = append(mounts, ConfigMount{Source: dst, Target: "/" + target})
 	}
 
 	for _, file := range files {
@@ -265,15 +267,25 @@ func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
 		if info.IsDir() {
 			continue
 		}
-		dst := filepath.Join(tmpDir, filepath.Base(file))
+		target := uniqueTarget(used, filepath.Base(file))
+		dst := filepath.Join(tmpDir, target)
 		if err := copyResolved(file, dst, 0); err != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("copy config file %q: %w", file, err)
 		}
-		mounts = append(mounts, ConfigMount{Source: dst, Target: "/" + filepath.Base(file)})
+		mounts = append(mounts, ConfigMount{Source: dst, Target: "/" + target})
 	}
 
 	return mounts, cleanup, nil
+}
+
+func uniqueTarget(used map[string]int, base string) string {
+	if n, ok := used[base]; ok {
+		used[base] = n + 1
+		return fmt.Sprintf("%s-%d", base, n)
+	}
+	used[base] = 1
+	return base
 }
 
 // copyResolved copies src to dst, resolving symlinks. If src is a
@@ -323,11 +335,16 @@ func copyResolvedDir(src, dst string, depth int) error {
 }
 
 func copyResolvedFile(src, dst string) error {
-	srcFile, err := os.Open(src)
+	srcInfo, err := os.Stat(src)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
+		return err
+	}
+
+	srcFile, err := os.Open(src)
+	if err != nil {
 		return err
 	}
 	defer srcFile.Close()
@@ -338,8 +355,10 @@ func copyResolvedFile(src, dst string) error {
 	}
 	defer dstFile.Close()
 
-	_, err = io.Copy(dstFile, srcFile)
-	return err
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return err
+	}
+	return os.Chmod(dst, srcInfo.Mode().Perm())
 }
 
 // DetectRemoteScheme returns "ssh" or "https" for the origin remote.
