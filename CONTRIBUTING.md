@@ -111,6 +111,44 @@ Sandman's agent-facing documentation (`CLAUDE.md`, `CONTEXT.md`, `docs/agents/`,
 - ADRs are sequential; use the next available number.
 - ADR status starts as `proposed` and moves to `accepted` or `rejected` after discussion.
 
+## Project Structure
+
+Sandman follows a ports-and-adapters (hexagonal) architecture. The core domain lives in `internal/`:
+
+```
+cmd/sandman/main.go          # Composition root — wires interfaces to concrete adapters
+internal/
+  cmd/                       # Cobra CLI commands (run, init, status, history, retry, clean, config)
+  batch/                     # Core domain: Orchestrator, AgentRun, DependencyResolver
+  sandbox/                   # Sandbox interface + WorktreeSandbox and ContainerSandbox adapters
+  config/                    # Config model, file store, built-in agent presets
+  github/                    # GitHub client interface + gh CLI implementation
+  prompt/                    # Prompt template engine and renderers
+  events/                    # Event log interface + JSONL implementation
+  scaffold/                  # sandman init scaffolding logic
+```
+
+### Key interfaces
+
+| Interface | Package | Purpose |
+|-----------|---------|---------|
+| `Runner` | `batch` | Coordinates parallel execution of `AgentRun`s |
+| `Runnable` | `batch` | Single agent execution lifecycle |
+| `Sandbox` | `sandbox` | Execution isolation (worktree or container) |
+| `ContainerStarter` | `sandbox` | Starts Docker/Podman containers |
+| `Store` | `config` | Loads and saves `.sandman/config.yaml` |
+| `Client` | `github` | Fetches issues and dependencies from GitHub |
+| `Renderer` | `prompt` | Renders agent prompt templates |
+| `EventLog` | `events` | Append-only structured event log |
+
+### Data flow
+
+1. `sandman run` parses CLI flags, selects issues (by number, label, query, `--next`, or interactive picker)
+2. `DependencyResolver` fetches each issue's `BlockedBy` relationships, validates the graph (cycle detection, missing blockers), and produces a topologically sorted `ResolvedBatch`
+3. `Orchestrator` executes the `ResolvedBatch` — creating sandboxes, running agents, respecting `BlockedBy` ordering and `Parallel`/`ContainerCapacity`/`MaxContainers` limits
+4. Each `AgentRun` renders a prompt, executes the agent command inside its sandbox, and logs structured events
+5. Results are written to `.sandman/events.jsonl` for status/history queries
+
 ## Getting Help
 
 If you have questions about contributing, feel free to open a [discussion](https://github.com/rafaelromao/sandman/discussions) or ask in an existing issue.
