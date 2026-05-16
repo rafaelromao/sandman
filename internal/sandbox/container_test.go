@@ -141,7 +141,7 @@ func TestContainerRuntime_Start_SetsContainerUser(t *testing.T) {
 	}
 }
 
-func TestContainerRuntime_Start_UsesKeepIDForPodmanUser(t *testing.T) {
+func TestContainerRuntime_Start_DoesNotSetUserForPodman(t *testing.T) {
 	rt := NewContainerRuntime("podman")
 	var captured []string
 	rt.execFn = func(name string, arg ...string) *exec.Cmd {
@@ -154,15 +154,24 @@ func TestContainerRuntime_Start_UsesKeepIDForPodmanUser(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	foundKeepID := false
 	for i := 0; i < len(captured)-1; i++ {
-		if captured[i] == "--userns" && captured[i+1] == "keep-id" {
-			foundKeepID = true
+		if captured[i] == "--user" {
+			t.Errorf("unexpected --user flag for podman, got args: %v", captured)
+		}
+		if captured[i] == "--userns" {
+			t.Errorf("unexpected --userns flag for podman, got args: %v", captured)
+		}
+	}
+
+	foundHome := false
+	for i := 0; i < len(captured)-1; i++ {
+		if captured[i] == "--env" && captured[i+1] == "HOME=/" {
+			foundHome = true
 			break
 		}
 	}
-	if !foundKeepID {
-		t.Errorf("expected --userns keep-id for podman, got args: %v", captured)
+	if !foundHome {
+		t.Errorf("expected HOME=/ env for podman, got args: %v", captured)
 	}
 }
 
