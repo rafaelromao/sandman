@@ -214,12 +214,181 @@ func TestScaffold_UnknownBuildToolsPreset_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
 
-	err := s.Scaffold(dir, Options{BuildTools: "python"}, &fakePrompter{confirm: true})
+	err := s.Scaffold(dir, Options{BuildTools: "nonexistent"}, &fakePrompter{confirm: true})
 	if err == nil {
 		t.Fatal("expected error for unknown build-tools preset")
 	}
 	if !strings.Contains(err.Error(), "unknown build-tools preset") {
 		t.Fatalf("expected unknown build-tools preset error, got: %v", err)
+	}
+}
+
+func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{BuildTools: "python"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: python") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman agent-provider: opencode") {
+		t.Fatalf("Dockerfile missing agent metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman python-version:") {
+		t.Fatalf("Dockerfile missing python-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman tool-version: "+DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned version, got:\n%s", content)
+	}
+	if !strings.Contains(content, "FROM debian:bookworm-slim") {
+		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin python@") {
+		t.Fatalf("Dockerfile missing pinned python install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN pip3 install uv") {
+		t.Fatalf("Dockerfile missing uv install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
+	}
+
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	promptData, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	if !strings.Contains(string(promptData), "mise first") {
+		t.Fatalf("prompt.md missing mise guidance, got:\n%s", promptData)
+	}
+}
+
+func TestScaffold_AllAgentPresets_GeneratePythonPresetFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+			wantPythonVersion, err := s.resolvePythonVersion(dir, "", &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve python version: %v", err)
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "python", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.BuildTools != "python" {
+				t.Errorf("expected build tools %q, got %q", "python", cfg.BuildTools)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman build-tools: python") {
+				t.Fatalf("Dockerfile missing python build-tools metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin python@"+wantPythonVersion) {
+				t.Fatalf("Dockerfile missing pinned python install %q, got:\n%s", wantPythonVersion, content)
+			}
+			if !strings.Contains(content, "RUN pip3 install uv") {
+				t.Fatalf("Dockerfile missing uv install, got:\n%s", content)
+			}
+		})
+	}
+}
+
+func TestScaffold_PythonRepoAutoDetect(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    string
+	}{
+		{
+			name: "pyproject.toml",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\nname = \"demo\"\n"), 0644)
+			},
+			want: "python",
+		},
+		{
+			name: "setup.py",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "setup.py"), []byte("from setuptools import setup\n"), 0644)
+			},
+			want: "python",
+		},
+		{
+			name: "Pipfile",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "Pipfile"), []byte("[packages]\n"), 0644)
+			},
+			want: "python",
+		},
+		{
+			name: "setup.cfg",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "setup.cfg"), []byte("[metadata]\nname = demo\n"), 0644)
+			},
+			want: "python",
+		},
+		{
+			name: ".python-version",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".python-version"), []byte("3.12\n"), 0644)
+			},
+			want: "python",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			s := &Scaffolder{}
+			preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve build tools preset: %v", err)
+			}
+			if preset.Name != tt.want {
+				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
+			}
+		})
+	}
+}
+
+func TestScaffold_GoPresetTakesPriorityOverPython(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\nname = \"demo\"\n"), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "go" {
+		t.Errorf("expected Go preset to take priority over Python, got %q", preset.Name)
 	}
 }
 
