@@ -57,6 +57,24 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
+	if !strings.Contains(content, " gh ") {
+		t.Fatalf("Dockerfile missing gh shared package, got:\n%s", content)
+	}
+	if strings.Contains(content, "/root/.local/share/mise") {
+		t.Fatalf("Dockerfile should not depend on /root mise paths, got:\n%s", content)
+	}
+	for _, envLine := range []string{
+		"ENV MISE_GLOBAL_CONFIG_FILE=\"/etc/mise/config.toml\"",
+		"ENV MISE_CONFIG_DIR=\"/etc/mise\"",
+		"ENV MISE_DATA_DIR=\"/usr/local/share/mise\"",
+		"ENV MISE_STATE_DIR=\"/.local/state/mise\"",
+		"ENV MISE_CACHE_DIR=\"/.cache/mise\"",
+		"ENV PATH=\"/usr/local/share/mise/shims:/usr/local/share/mise/bin:$PATH\"",
+	} {
+		if !strings.Contains(content, envLine) {
+			t.Fatalf("Dockerfile missing %q, got:\n%s", envLine, content)
+		}
+	}
 
 	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
 	promptData, err := os.ReadFile(promptPath)
@@ -168,6 +186,9 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 			if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 				t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 			}
+			if !strings.Contains(content, " gh ") {
+				t.Fatalf("Dockerfile missing gh shared package, got:\n%s", content)
+			}
 		})
 	}
 }
@@ -205,6 +226,12 @@ func TestScaffold_AllAgentPresets_GenerateGoPresetFiles(t *testing.T) {
 			}
 			if !strings.Contains(content, "RUN mise use -g --pin go@"+wantGoVersion) {
 				t.Fatalf("Dockerfile missing pinned go install %q, got:\n%s", wantGoVersion, content)
+			}
+			if !strings.Contains(content, "ENV GOPATH=\"/.local/share/go\"") {
+				t.Fatalf("Dockerfile missing GOPATH env, got:\n%s", content)
+			}
+			if !strings.Contains(content, "ENV GOMODCACHE=\"/.cache/go/pkg/mod\"") {
+				t.Fatalf("Dockerfile missing GOMODCACHE env, got:\n%s", content)
 			}
 		})
 	}

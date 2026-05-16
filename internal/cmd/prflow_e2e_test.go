@@ -620,9 +620,12 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 
 {{ISSUE_BODY}}
 
+Run ` + "`gh issue view {{ISSUE_NUMBER}}`" + `.
 Run ` + "`go test ./...`" + `.
+Run ` + "`go vet ./...`" + `.
+Run ` + "`gofmt -w .`" + `.
 Fix only what is needed.
-When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{TARGET_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, and print the PR URL.
+When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{TARGET_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, then run ` + "`gh pr checks`" + `, ` + "`gh pr comment --body \"ready\"`" + `, ` + "`gh pr view`" + `, and print the PR URL.
 `
 	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
 		t.Fatalf("write prompt: %v", err)
@@ -668,6 +671,14 @@ set -eu
 shim_dir="__SHIM_DIR__"
 
 case "$1" in
+  issue)
+    if [ "${2:-}" = "view" ]; then
+      cat <<'JSON'
+{"number":1,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4."}
+JSON
+      exit 0
+    fi
+    ;;
   repo)
     if [ "${2:-}" = "view" ]; then
       cat <<'JSON'
@@ -712,6 +723,18 @@ JSON
       done
 
       printf '%s' "$body" > "$body_file"
+      printf 'https://example.test/example/sandbox/pull/1\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "checks" ]; then
+      printf 'all checks passed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "comment" ]; then
+      printf 'commented\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "view" ]; then
       printf 'https://example.test/example/sandbox/pull/1\n'
       exit 0
     fi
@@ -811,6 +834,14 @@ set -eu
 shim_dir="__SHIM_DIR__"
 
 case "$1" in
+  issue)
+    if [ "${2:-}" = "view" ]; then
+      cat <<'JSON'
+{"number":1,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4."}
+JSON
+      exit 0
+    fi
+    ;;
   repo)
     if [ "${2:-}" = "view" ]; then
       cat <<'JSON'
@@ -855,6 +886,18 @@ JSON
       done
 
       printf '%s' "$body" > "$body_file"
+      printf 'https://example.test/example/sandbox/pull/1\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "checks" ]; then
+      printf 'all checks passed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "comment" ]; then
+      printf 'commented\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "view" ]; then
       printf 'https://example.test/example/sandbox/pull/1\n'
       exit 0
     fi

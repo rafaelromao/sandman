@@ -249,7 +249,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 		t.Fatalf("update config: %v", err)
 	}
 	imageTag := preflightSmokeImage(t, runtime, repoDir, tc.name)
-	preflightSmokeContainer(t, runtime, imageTag, repoDir, homeDir, tc.name, tc.authPaths)
+	preflightSmokeContainer(t, runtime, imageTag, repoDir, homeDir, tc.name, tc.buildTools, tc.authPaths)
 	preflightSmokeWorktree(t, repoDir, tc.wantBranch)
 
 	issue := tc.issue
@@ -607,7 +607,7 @@ func preflightSmokeImage(t *testing.T, runtime, repoDir, provider string) string
 	return tag
 }
 
-func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, provider string, authPaths []string) {
+func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, provider, buildTools string, authPaths []string) {
 	t.Helper()
 
 	startOpts := sandbox.StartOptions{
@@ -642,7 +642,19 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 	if err != nil {
 		t.Skipf("skip %s smoke: container start unavailable: %v", provider, err)
 	}
-	_ = container.Stop()
+	defer container.Stop()
+
+	assertCmd := "set -eu; command -v gh >/dev/null; test -w /.cache; test -w /.local; test -w /.config"
+	if buildTools == "go" {
+		assertCmd += "; command -v go >/dev/null; go env GOPATH | grep -q '^/.local/share/go$'; go env GOMODCACHE | grep -q '^/.cache/go/pkg/mod$'; mkdir -p /.cache/go/pkg/mod /.local/share/go; test -w /.cache/go/pkg/mod; test -w /.local/share/go"
+	}
+	if buildTools == "python" {
+		assertCmd += "; command -v python >/dev/null"
+	}
+	check := exec.Command(runtime, "exec", container.ID(), "sh", "-lc", assertCmd)
+	if out, err := check.CombinedOutput(); err != nil {
+		t.Fatalf("preflight assertions failed for %s/%s: %v\n%s", provider, buildTools, err, out)
+	}
 }
 
 func preflightSmokeWorktree(t *testing.T, repoDir, branch string) {
