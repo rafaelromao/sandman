@@ -37,8 +37,6 @@ Before mounting, Sandman will copy each config directory and file to a batch-sco
 - All three symlink scenarios work correctly — the resolved copy is a plain tree with no symlinks.
 - The mental model is simpler: "config paths are resolved to a snapshot, then mounted." No need to reason about symlink behavior inside bind-mounts.
 - The mechanism is portable across container runtimes (Docker and Podman behave identically).
-- Isolation is strengthened: config files cannot accidentally escape the container or modify host files through symlink traversal.
-
 ### Negative
 
 - Extra I/O at container start: every config directory and file must be copied before the container starts. For large config directories (e.g., cached agent data), this adds measurable latency to batch startup.
@@ -48,4 +46,5 @@ Before mounting, Sandman will copy each config directory and file to a batch-sco
 
 - The copy-resolve step is batch-scoped: one copy per config path per batch, shared across all AgentRuns in that batch.
 - The temporary directory is cleaned up when the batch completes, regardless of success or failure.
+- Isolation is strengthened: config files cannot accidentally escape the container or modify host files through symlink traversal.
 - Large config directories should be reviewed: users with multi-GB config trees may want to exclude cache-like subdirectories from `config_dirs`.
