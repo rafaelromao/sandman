@@ -1577,6 +1577,20 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	if starter.buildImageCount != 1 {
 		t.Errorf("expected BuildImage to be called once, got %d", starter.buildImageCount)
 	}
+	if len(starter.startOpts.ConfigMounts) == 0 {
+		t.Error("expected ConfigMounts to be populated when agent configs exist")
+	}
+	for _, mount := range starter.startOpts.ConfigMounts {
+		if mount.Source == "" {
+			t.Error("expected non-empty Source in ConfigMount")
+		}
+		if mount.Target == "" {
+			t.Error("expected non-empty Target in ConfigMount")
+		}
+		if !filepath.IsAbs(mount.Source) {
+			t.Errorf("expected absolute Source path, got %q", mount.Source)
+		}
+	}
 }
 
 func TestRunBatch_ReusesIdleContainerWithinBatchAndStopsItAtEnd(t *testing.T) {

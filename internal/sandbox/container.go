@@ -3,6 +3,8 @@ package sandbox
 import (
 	"crypto/sha256"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,11 +25,18 @@ type ContainerStarter interface {
 	BuildImage(repoPath string) (string, error)
 }
 
+// ConfigMount represents a bind mount from a resolved host path to a container path.
+type ConfigMount struct {
+	Source string
+	Target string
+}
+
 // StartOptions configures container startup.
 type StartOptions struct {
 	GitConfigPath    string
 	AgentConfigDirs  []string
 	AgentConfigFiles []string
+	ConfigMounts     []ConfigMount
 	UserID           string
 	SSH              bool
 	RemoteScheme     string
@@ -65,20 +74,26 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 		args = append(args, "-v", opts.GitConfigPath+":/.gitconfig")
 	}
 
-	for _, dir := range opts.AgentConfigDirs {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			continue
+	if opts.ConfigMounts != nil {
+		for _, mount := range opts.ConfigMounts {
+			args = append(args, "-v", mount.Source+":"+mount.Target)
 		}
-		containerPath := toContainerPath(dir)
-		args = append(args, "-v", dir+":"+containerPath)
-	}
+	} else {
+		for _, dir := range opts.AgentConfigDirs {
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				continue
+			}
+			containerPath := toContainerPath(dir)
+			args = append(args, "-v", dir+":"+containerPath)
+		}
 
-	for _, file := range opts.AgentConfigFiles {
-		if _, err := os.Stat(file); os.IsNotExist(err) {
-			continue
+		for _, file := range opts.AgentConfigFiles {
+			if _, err := os.Stat(file); os.IsNotExist(err) {
+				continue
+			}
+			containerPath := toContainerPath(file)
+			args = append(args, "-v", file+":"+containerPath)
 		}
-		containerPath := toContainerPath(file)
-		args = append(args, "-v", file+":"+containerPath)
 	}
 
 	if opts.SSH {
@@ -202,6 +217,148 @@ func ResolveRuntime(preferred string) (string, error) {
 		return "", fmt.Errorf("docker not found; install docker or set sandbox: worktree")
 	}
 	return preferred, nil
+}
+
+const maxCopyDepth = 50
+
+// ResolveConfigMounts creates a temp directory and copies each dir/file
+// from the given lists into it, resolving symlinks. Returns the mount
+// pairs and a cleanup function to remove the temp directory.
+func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
+	tmpDir, err := os.MkdirTemp("", "sandman-config-*")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create config temp dir: %w", err)
+	}
+	cleanup := func() { os.RemoveAll(tmpDir) }
+
+	var mounts []ConfigMount
+	used := make(map[string]int)
+
+	for _, dir := range dirs {
+		info, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("stat config dir %q: %w", dir, err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+		target := uniqueTarget(used, filepath.Base(dir))
+		dst := filepath.Join(tmpDir, target)
+		if err := copyResolved(dir, dst, 0); err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("copy config dir %q: %w", dir, err)
+		}
+		mounts = append(mounts, ConfigMount{Source: dst, Target: "/" + target})
+	}
+
+	for _, file := range files {
+		info, err := os.Stat(file)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("stat config file %q: %w", file, err)
+		}
+		if info.IsDir() {
+			continue
+		}
+		target := uniqueTarget(used, filepath.Base(file))
+		dst := filepath.Join(tmpDir, target)
+		if err := copyResolved(file, dst, 0); err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("copy config file %q: %w", file, err)
+		}
+		mounts = append(mounts, ConfigMount{Source: dst, Target: "/" + target})
+	}
+
+	return mounts, cleanup, nil
+}
+
+func uniqueTarget(used map[string]int, base string) string {
+	if n, ok := used[base]; ok {
+		used[base] = n + 1
+		return fmt.Sprintf("%s-%d", base, n)
+	}
+	used[base] = 1
+	return base
+}
+
+// copyResolved copies src to dst, resolving symlinks. If src is a
+// directory, it is copied recursively. Broken symlinks are logged and
+// skipped. Depth is bounded by maxCopyDepth to guard against circular
+// symlinks.
+func copyResolved(src, dst string, depth int) error {
+	if depth >= maxCopyDepth {
+		return fmt.Errorf("max copy depth %d reached", maxCopyDepth)
+	}
+
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("warning: broken symlink skipped: %s", src)
+			return nil
+		}
+		log.Printf("warning: cannot stat %s: %v — skipping", src, err)
+		return nil
+	}
+
+	if srcInfo.IsDir() {
+		return copyResolvedDir(src, dst, depth)
+	}
+
+	return copyResolvedFile(src, dst)
+}
+
+func copyResolvedDir(src, dst string, depth int) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		if err := copyResolved(srcPath, dstPath, depth+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyResolvedFile(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return err
+	}
+	return os.Chmod(dst, srcInfo.Mode().Perm())
 }
 
 // DetectRemoteScheme returns "ssh" or "https" for the origin remote.
