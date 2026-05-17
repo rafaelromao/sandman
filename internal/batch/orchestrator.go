@@ -332,6 +332,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
+	if req.PromptConfig.PromptFile == "" {
+		req.PromptConfig.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
+	}
+	if req.PromptConfig.RenderedPromptFile == "" {
+		req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+	}
+	if err := prompt.MaterializePromptFile(req.PromptConfig); err != nil {
+		return nil, fmt.Errorf("materialize prompt template: %w", err)
+	}
+
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
 	results := make([]AgentRunResult, len(req.Issues))
