@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/batch"
-	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
@@ -108,9 +107,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if strings.TrimSpace(reviewCommandFlag) != "" {
 				reviewCommand = reviewCommandFlag
 			}
-			if reviewCommand != config.DefaultReviewCommand {
-				promptArgs["REVIEW_COMMAND"] = reviewCommand
-			}
 
 			resolvedBatch, err := batch.NewDependencyResolver(deps.GitHubClient).Resolve(cmd.Context(), issues, includeDependencies)
 			if err != nil {
@@ -152,9 +148,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				MaxContainersSet:     maxContainersSet,
 				Interactive:          interactive,
 				PromptConfig: prompt.RenderConfig{
-					PromptFlag:   promptFlag,
-					TemplateFlag: templateFlag,
-					PromptArgs:   promptArgs,
+					PromptFlag:    promptFlag,
+					TemplateFlag:  templateFlag,
+					ReviewCommand: reviewCommand,
+					PromptArgs:    promptArgs,
 				},
 			})
 			if result != nil {

@@ -1298,6 +1298,9 @@ func TestRun_PromptConfigDefaultsEmpty(t *testing.T) {
 	if len(spy.req.PromptConfig.PromptArgs) != 0 {
 		t.Errorf("expected empty PromptArgs, got %v", spy.req.PromptConfig.PromptArgs)
 	}
+	if spy.req.PromptConfig.ReviewCommand != "/oc review" {
+		t.Errorf("expected default ReviewCommand, got %q", spy.req.PromptConfig.ReviewCommand)
+	}
 }
 
 func TestRun_ReviewCommandFromConfigPassedToBatchRunner(t *testing.T) {
@@ -1316,8 +1319,8 @@ func TestRun_ReviewCommandFromConfigPassedToBatchRunner(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.req.PromptConfig.PromptArgs["REVIEW_COMMAND"] != "/config review" {
-		t.Fatalf("expected config review command, got %q", spy.req.PromptConfig.PromptArgs["REVIEW_COMMAND"])
+	if spy.req.PromptConfig.ReviewCommand != "/config review" {
+		t.Fatalf("expected config review command, got %q", spy.req.PromptConfig.ReviewCommand)
 	}
 }
 
@@ -1337,8 +1340,8 @@ func TestRun_ReviewCommandFlagOverridesConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.req.PromptConfig.PromptArgs["REVIEW_COMMAND"] != "/cli review" {
-		t.Fatalf("expected CLI review command, got %q", spy.req.PromptConfig.PromptArgs["REVIEW_COMMAND"])
+	if spy.req.PromptConfig.ReviewCommand != "/cli review" {
+		t.Fatalf("expected CLI review command, got %q", spy.req.PromptConfig.ReviewCommand)
 	}
 }
 

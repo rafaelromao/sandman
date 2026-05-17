@@ -52,9 +52,11 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 	for k, v := range cfg.PromptArgs {
 		result = strings.ReplaceAll(result, fmt.Sprintf("{{%s}}", k), v)
 	}
-	if strings.Contains(result, "{{REVIEW_COMMAND}}") {
-		result = strings.ReplaceAll(result, "{{REVIEW_COMMAND}}", config.DefaultReviewCommand)
+	reviewCommand := strings.TrimSpace(cfg.ReviewCommand)
+	if reviewCommand == "" {
+		reviewCommand = config.DefaultReviewCommand
 	}
+	result = strings.ReplaceAll(result, "{{REVIEW_COMMAND}}", reviewCommand)
 
 	if unmatched := keyPattern.FindAllString(result, -1); len(unmatched) > 0 {
 		return "", fmt.Errorf("missing substitution keys: %s", strings.Join(unmatched, ", "))
