@@ -44,6 +44,9 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 	result = strings.ReplaceAll(result, "{{ISSUE_BODY}}", data.Body)
 	result = strings.ReplaceAll(result, "{{SOURCE_BRANCH}}", data.SourceBranch)
 	result = strings.ReplaceAll(result, "{{TARGET_BRANCH}}", data.TargetBranch)
+	result = strings.ReplaceAll(result, "{{BRANCH}}", data.SourceBranch)
+	result = strings.ReplaceAll(result, "{{DEFAULT_BRANCH}}", data.TargetBranch)
+	result = strings.ReplaceAll(result, "{{REVIEW_COMMAND}}", "/oc review")
 
 	for k, v := range cfg.PromptArgs {
 		result = strings.ReplaceAll(result, fmt.Sprintf("{{%s}}", k), v)
