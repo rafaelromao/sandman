@@ -40,6 +40,7 @@ git:
 agents:
   opencode:
     preset: opencode
+    model: gpt-4.1
   claude-code:
     preset: claude-code
     config_dirs:
@@ -65,6 +66,32 @@ agents:
 ```
 
 Available presets: `opencode`, `claude-code`, `codex`, `pi`. Each preset provides a default command template, config directories, and config files.
+
+### Agent models
+
+`agents.<name>.model` sets the `AgentModel` for a built-in preset.
+
+```yaml
+agents:
+  opencode:
+    preset: opencode
+    model: gpt-4.1
+```
+
+Precedence:
+
+- `sandman run --model` overrides `agents.<name>.model`
+- If neither is set, Sandman leaves the agent's own default model alone
+- `model` is only valid for built-in presets; custom command providers manage model selection themselves
+
+Use `sandman config get` and `sandman config set` for the active top-level agent selection before you edit `agents.<name>.model` in `.sandman/config.yaml`:
+
+```bash
+sandman config get agent
+# opencode
+
+sandman config set agent claude-code
+```
 
 ### Custom agent command
 
@@ -102,6 +129,7 @@ The following built-in substitution keys are available in prompt templates:
 Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
 
 `sandman retry` replays the stored prompt source, prompt args, and review command when the prior run recorded them.
+It also replays the stored `AgentModel`, so retries use the same model as the original run when one was recorded.
 
 ### Overriding preset defaults
 
@@ -149,5 +177,7 @@ sandman config get default_parallel
 sandman config set container_capacity 2
 sandman config set git.author_name "My Name"
 ```
+
+Use `sandman config get` and `sandman config set` for top-level config keys; edit `.sandman/config.yaml` directly for nested agent settings like `agents.<name>.model`.
 
 See [Commands Reference](commands.md) for the full list of supported dot-notation keys.

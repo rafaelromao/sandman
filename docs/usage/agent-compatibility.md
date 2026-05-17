@@ -11,6 +11,14 @@ Sandman includes built-in presets for four AI coding agents. This guide document
 | `codex` | Codex | `codex exec "$(cat {{.PromptFile}})"` |
 | `pi` | Pi | `pi --print "$(cat {{.PromptFile}})"` |
 
+## Model selection
+
+Sandman only wires `AgentModel` for built-in presets. If `agents.<name>.model` is set, Sandman passes it through for `opencode`, `claude-code`, `codex`, and `pi`; custom command providers keep their own defaults.
+
+`sandman run --model` takes precedence over `agents.<name>.model`.
+
+Sandman does not hardcode default models for built-in agents because those defaults vary by tool, account, and provider.
+
 ## Compatibility matrix
 
 | Preset | Worktree | Container | Keychain Auth | Host Config Paths |

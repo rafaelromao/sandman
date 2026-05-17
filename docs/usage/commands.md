@@ -55,6 +55,7 @@ Exactly one selection mode is required:
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--review-command` | — | Review command injected into `{{REVIEW_COMMAND}}` |
+| `--model` | — | Override the `AgentModel` for built-in presets |
 
 ### Flag interactions
 
@@ -64,6 +65,7 @@ Exactly one selection mode is required:
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means auto-scale
+- `--model` only applies to built-in presets and overrides any `agents.<name>.model` value
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 
 ## `sandman status`
@@ -94,7 +96,7 @@ Retry the last agent run for a given issue.
 sandman retry <issue-number>
 ```
 
-Reuses the previously created branch. Useful after a transient failure.
+Reuses the previously created branch and recorded `AgentModel`. Useful after a transient failure.
 
 ## `sandman clean`
 
