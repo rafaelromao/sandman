@@ -121,6 +121,99 @@ func TestConfig_ResolveAgentProvider_CustomProvider(t *testing.T) {
 	}
 }
 
+func TestConfig_ResolveAgentProvider_BuiltInPresetWithModel(t *testing.T) {
+	cfg := &Config{AgentProviders: map[string]Agent{
+		"opencode": {
+			Preset: "opencode",
+			Model:  "gpt-4.1",
+		},
+	}}
+
+	agent, err := cfg.ResolveAgentProvider("opencode")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if agent.Model != "gpt-4.1" {
+		t.Errorf("model: got %q, want %q", agent.Model, "gpt-4.1")
+	}
+	if agent.Preset != "opencode" {
+		t.Errorf("preset: got %q, want %q", agent.Preset, "opencode")
+	}
+}
+
+func TestLoad_AgentModelForBuiltInPreset(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+agents:
+  opencode:
+    preset: opencode
+    model: gpt-4.1
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	agent, err := cfg.ResolveAgentProvider("opencode")
+	if err != nil {
+		t.Fatalf("unexpected resolve error: %v", err)
+	}
+
+	if agent.Model != "gpt-4.1" {
+		t.Errorf("model: got %q, want %q", agent.Model, "gpt-4.1")
+	}
+}
+
+func TestLoad_ModelOnCustomCommandProvider_ReturnsValidationError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: custom
+agents:
+  custom:
+    command: custom --prompt {{.PromptFile}}
+    model: gpt-4.1
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "model is only supported for built-in presets") {
+		t.Fatalf("expected error containing %q, got %v", "model is only supported for built-in presets", err)
+	}
+}
+
+func TestLoad_EmptyModel_ReturnsValidationError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+agents:
+  opencode:
+    preset: opencode
+    model: "   "
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "model must not be empty") {
+		t.Fatalf("expected error containing %q, got %v", "model must not be empty", err)
+	}
+}
+
 func TestBuiltInPresets_Metadata(t *testing.T) {
 	tests := []struct {
 		key          string

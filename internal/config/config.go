@@ -47,6 +47,18 @@ type Agent struct {
 	Name         string            `yaml:"name,omitempty"`
 	Preset       string            `yaml:"preset,omitempty"`
 	Command      string            `yaml:"command,omitempty"`
+	Model        string            `yaml:"model,omitempty"`
+	Env          map[string]string `yaml:"env,omitempty"`
+	ConfigDirs   []string          `yaml:"config_dirs,omitempty"`
+	ConfigFiles  []string          `yaml:"config_files,omitempty"`
+	KeychainAuth bool              `yaml:"keychain_auth,omitempty"`
+}
+
+type rawAgentConfig struct {
+	Name         string            `yaml:"name,omitempty"`
+	Preset       string            `yaml:"preset,omitempty"`
+	Command      string            `yaml:"command,omitempty"`
+	Model        *string           `yaml:"model,omitempty"`
 	Env          map[string]string `yaml:"env,omitempty"`
 	ConfigDirs   []string          `yaml:"config_dirs,omitempty"`
 	ConfigFiles  []string          `yaml:"config_files,omitempty"`
@@ -115,16 +127,16 @@ func Load(path string) (*Config, error) {
 	}
 
 	type rawConfig struct {
-		Agent             string           `yaml:"agent"`
-		BuildTools        string           `yaml:"build_tools"`
-		ReviewCommand     string           `yaml:"review_command"`
-		DefaultParallel   int              `yaml:"default_parallel"`
-		ContainerCapacity *int             `yaml:"container_capacity"`
-		MaxContainers     *int             `yaml:"max_containers"`
-		WorktreeDir       string           `yaml:"worktree_dir"`
-		Sandbox           string           `yaml:"sandbox"`
-		Git               GitConfig        `yaml:"git"`
-		AgentProviders    map[string]Agent `yaml:"agents"`
+		Agent             string                    `yaml:"agent"`
+		BuildTools        string                    `yaml:"build_tools"`
+		ReviewCommand     string                    `yaml:"review_command"`
+		DefaultParallel   int                       `yaml:"default_parallel"`
+		ContainerCapacity *int                      `yaml:"container_capacity"`
+		MaxContainers     *int                      `yaml:"max_containers"`
+		WorktreeDir       string                    `yaml:"worktree_dir"`
+		Sandbox           string                    `yaml:"sandbox"`
+		Git               GitConfig                 `yaml:"git"`
+		AgentProviders    map[string]rawAgentConfig `yaml:"agents"`
 	}
 
 	var raw rawConfig
@@ -140,8 +152,16 @@ func Load(path string) (*Config, error) {
 		WorktreeDir:     raw.WorktreeDir,
 		Sandbox:         raw.Sandbox,
 		Git:             raw.Git,
-		AgentProviders:  raw.AgentProviders,
 	}
+
+	agentProviders := make(map[string]Agent, len(raw.AgentProviders))
+	for name, rawAgent := range raw.AgentProviders {
+		if err := rawAgent.validate(name); err != nil {
+			return nil, fmt.Errorf("validate config: %w", err)
+		}
+		agentProviders[name] = rawAgent.Agent()
+	}
+	cfg.AgentProviders = agentProviders
 
 	if cfg.DefaultParallel <= 0 {
 		cfg.DefaultParallel = DefaultParallel
@@ -256,6 +276,9 @@ func (p AgentPreset) AgentWithOverrides(preset string, override Agent) Agent {
 	if override.Command != "" {
 		agent.Command = override.Command
 	}
+	if override.Model != "" {
+		agent.Model = override.Model
+	}
 	if len(override.Env) > 0 {
 		agent.Env = copyStringMap(override.Env)
 	}
@@ -269,6 +292,36 @@ func (p AgentPreset) AgentWithOverrides(preset string, override Agent) Agent {
 		agent.KeychainAuth = true
 	}
 	return agent
+}
+
+func (r rawAgentConfig) Agent() Agent {
+	model := ""
+	if r.Model != nil {
+		model = *r.Model
+	}
+	return Agent{
+		Name:         r.Name,
+		Preset:       r.Preset,
+		Command:      r.Command,
+		Model:        model,
+		Env:          copyStringMap(r.Env),
+		ConfigDirs:   append([]string(nil), r.ConfigDirs...),
+		ConfigFiles:  append([]string(nil), r.ConfigFiles...),
+		KeychainAuth: r.KeychainAuth,
+	}
+}
+
+func (r rawAgentConfig) validate(name string) error {
+	if r.Model == nil {
+		return nil
+	}
+	if strings.TrimSpace(*r.Model) == "" {
+		return fmt.Errorf("agent %q model must not be empty", name)
+	}
+	if r.Preset == "" && r.Command != "" {
+		return fmt.Errorf("agent %q model is only supported for built-in presets", name)
+	}
+	return nil
 }
 
 func copyStringMap(src map[string]string) map[string]string {
