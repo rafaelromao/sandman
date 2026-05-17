@@ -645,7 +645,7 @@ func TestRunBatch_WritesPromptAndExecutesAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug", ".sandman", "prompt.md")
+	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug", ".sandman", "rendered-prompt.md")
 	if _, err := os.Stat(promptPath); err != nil {
 		t.Errorf("prompt file not found: %v", err)
 	}
@@ -766,7 +766,7 @@ agents:
 		t.Errorf("expected branch sandman/42-fix-login-bug, got %s", result.Runs[0].Branch)
 	}
 
-	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-login-bug", ".sandman", "prompt.md")
+	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-login-bug", ".sandman", "rendered-prompt.md")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		t.Fatalf("read prompt: %v", err)

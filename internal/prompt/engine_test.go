@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,14 +24,15 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(result, "42") {
-		t.Errorf("result missing issue number, got:\n%s", result)
-	}
-	if !strings.Contains(result, "Fix login bug") {
-		t.Errorf("result missing issue title, got:\n%s", result)
-	}
-	if !strings.Contains(result, "Users cannot log in with OAuth.") {
-		t.Errorf("result missing issue body, got:\n%s", result)
+	want := DefaultPrompt()
+	want = strings.ReplaceAll(want, "{{ISSUE_NUMBER}}", fmt.Sprintf("%d", data.Number))
+	want = strings.ReplaceAll(want, "{{ISSUE_TITLE}}", data.Title)
+	want = strings.ReplaceAll(want, "{{ISSUE_BODY}}", data.Body)
+	want = strings.ReplaceAll(want, "{{SOURCE_BRANCH}}", data.SourceBranch)
+	want = strings.ReplaceAll(want, "{{TARGET_BRANCH}}", data.TargetBranch)
+
+	if result != want {
+		t.Errorf("unexpected rendered prompt\nwant:\n%s\ngot:\n%s", want, result)
 	}
 }
 

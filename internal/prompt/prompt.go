@@ -2,10 +2,11 @@ package prompt
 
 // RenderConfig holds template source preferences.
 type RenderConfig struct {
-	PromptFlag   string            // --prompt: inline template
-	TemplateFlag string            // --template: path to template file
-	PromptFile   string            // .sandman/prompt.md path
-	PromptArgs   map[string]string // arbitrary keys from config
+	PromptFlag         string            // --prompt: inline template
+	TemplateFlag       string            // --template: path to template file
+	PromptFile         string            // .sandman/prompt.md project template path
+	RenderedPromptFile string            // .sandman/rendered-prompt.md rendered prompt path
+	PromptArgs         map[string]string // arbitrary keys from config
 }
 
 // IssueData holds the issue metadata needed for prompt rendering.

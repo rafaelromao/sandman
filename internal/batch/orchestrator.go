@@ -555,6 +555,9 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	if renderCfg.PromptFile == "" {
 		renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
 	}
+	if renderCfg.RenderedPromptFile == "" {
+		renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+	}
 
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, interactive, renderCfg)
 

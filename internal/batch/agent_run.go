@@ -86,8 +86,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 		return r.Result()
 	}
 
+	renderedPromptFile := renderCfg.RenderedPromptFile
+	if renderedPromptFile == "" {
+		renderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+	}
+
 	renderedCmd, err := RenderCommand(command, CommandData{
-		PromptFile: renderCfg.PromptFile,
+		PromptFile: renderedPromptFile,
 	})
 	if err != nil {
 		r.status = "failure"

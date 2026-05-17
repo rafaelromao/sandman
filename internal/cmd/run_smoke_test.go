@@ -268,7 +268,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	if err != nil {
 		logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", issue.Number))
 		worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", tc.wantBranch)
-		promptPath := filepath.Join(worktreePath, ".sandman", "prompt.md")
+		promptPath := filepath.Join(worktreePath, ".sandman", "rendered-prompt.md")
 		if _, statErr := os.Stat(worktreePath); statErr == nil {
 			if promptData, promptErr := os.ReadFile(promptPath); promptErr == nil {
 				t.Fatalf("unexpected error: %v\noutput:\n%s\nworktree exists: %s\nprompt:\n%s", err, out, worktreePath, promptData)

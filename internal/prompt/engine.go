@@ -1,20 +1,18 @@
 package prompt
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
 )
 
-const defaultTemplate = `# Task
+//go:embed default_prompt.md
+var defaultPrompt string
 
-Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
-
-{{ISSUE_BODY}}
-
-Please analyze and implement the necessary changes. Create focused commits with clear messages.
-`
+// DefaultPrompt returns Sandman's canonical prompt template.
+func DefaultPrompt() string { return defaultPrompt }
 
 var keyPattern = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
@@ -23,7 +21,7 @@ type Engine struct{}
 
 // Render produces a prompt string from a template.
 func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
-	template := defaultTemplate
+	template := defaultPrompt
 	if cfg.PromptFlag != "" {
 		template = cfg.PromptFlag
 	} else if cfg.TemplateFlag != "" {

@@ -340,7 +340,7 @@ func TestAgentRun_Run_InjectsPromptFileIntoCommandTemplate(t *testing.T) {
 	if res.Status != "success" {
 		t.Errorf("expected status success, got %s", res.Status)
 	}
-	if sb.execCommand != "opencode --prompt-file .sandman/prompt.md" {
+	if sb.execCommand != "opencode --prompt-file .sandman/rendered-prompt.md" {
 		t.Errorf("expected rendered command with prompt file, got %q", sb.execCommand)
 	}
 }
@@ -391,7 +391,7 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	if !sb.execCalled {
 		t.Fatal("expected Exec to be called")
 	}
-	wantPrefix := "export API_KEY='sk-test123'; export MODEL='gpt-4'; opencode run .sandman/prompt.md"
+	wantPrefix := "export API_KEY='sk-test123'; export MODEL='gpt-4'; opencode run .sandman/rendered-prompt.md"
 	if sb.execCommand != wantPrefix {
 		t.Errorf("exec command:\ngot:  %q\nwant: %q", sb.execCommand, wantPrefix)
 	}
