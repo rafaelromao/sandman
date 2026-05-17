@@ -20,6 +20,10 @@ _Avoid_: Provider template, agent type.
 A configured agent type declared in `.sandman/config.yaml`, with a command template, env map, and known config source paths.
 _Avoid_: Agent type, runner.
 
+**AgentModel**:
+A provider-specific model identifier configured under `agents.<name>.model` for a built-in preset.
+_Avoid_: agent model, default model.
+
 **AgentRun**:
 One execution of an agent against one issue, producing commits on a branch. The unit of work within a batch.
 _Avoid_: Run, job, task.
