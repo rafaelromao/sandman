@@ -585,6 +585,9 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		if renderCfg.ReviewCommandSet {
 			payload["review_command"] = renderCfg.ReviewCommand
 		}
+		if model := strings.TrimSpace(agentCfg.Model); model != "" {
+			payload["model"] = model
+		}
 		_ = o.eventLog.Log(events.Event{
 			Type:      "run.started",
 			Timestamp: time.Now(),

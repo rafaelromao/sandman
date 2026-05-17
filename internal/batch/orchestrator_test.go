@@ -1239,6 +1239,51 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 	}
 }
 
+func TestRunBatch_LogsModelOnStartedEvent(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfgModel  string
+		reqModel  string
+		wantModel string
+	}{
+		{
+			name:      "config model",
+			cfgModel:  "gpt-config",
+			wantModel: "gpt-config",
+		},
+		{
+			name:      "request override",
+			cfgModel:  "gpt-config",
+			reqModel:  "gpt-override",
+			wantModel: "gpt-override",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &fakeGitHubClient{
+				issues: map[int]*github.Issue{
+					42: {Number: 42, Title: "Fix bug"},
+				},
+			}
+			spyLog := &spyEventLog{}
+			o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Model: tt.cfgModel}}}}, spyLog)
+			o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+			o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
+
+			_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Model: tt.reqModel})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			started := spyLog.events[0]
+			if got := started.Payload["model"]; got != tt.wantModel {
+				t.Fatalf("expected model metadata %q, got %#v", tt.wantModel, got)
+			}
+		})
+	}
+}
+
 func TestRunBatch_LogsFinishedEventWithBranch(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
