@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -63,6 +64,25 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 	}
 
 	return result, nil
+}
+
+// MaterializePromptFile creates the project prompt template if it is missing
+// and no prompt/template override is active.
+func MaterializePromptFile(cfg RenderConfig) error {
+	if cfg.PromptFlag != "" || cfg.TemplateFlag != "" {
+		return nil
+	}
+	if cfg.PromptFile == "" {
+		return nil
+	}
+	if _, err := os.Stat(cfg.PromptFile); err == nil {
+		return nil
+	}
+	dir := filepath.Dir(cfg.PromptFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create prompt directory: %w", err)
+	}
+	return os.WriteFile(cfg.PromptFile, []byte(DefaultPrompt()), 0644)
 }
 
 // Ensure Engine implements Renderer.

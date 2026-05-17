@@ -311,6 +311,96 @@ func TestRender_MissingTemplateFlagReturnsError(t *testing.T) {
 	}
 }
 
+func TestMaterializePromptFile_EmptyPromptFileIsNoOp(t *testing.T) {
+	cfg := RenderConfig{}
+	err := MaterializePromptFile(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMaterializePromptFile_ExistingFileLeftUntouched(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
+		t.Fatalf("create dir: %v", err)
+	}
+	existingContent := "existing content"
+	if err := os.WriteFile(promptPath, []byte(existingContent), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	cfg := RenderConfig{PromptFile: promptPath}
+
+	err := MaterializePromptFile(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("file should still exist: %v", err)
+	}
+	if got := string(data); got != existingContent {
+		t.Fatalf("content should not change\nwant:\n%s\ngot:\n%s", existingContent, got)
+	}
+}
+
+func TestMaterializePromptFile_NoCreateWhenTemplateFlagSet(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	cfg := RenderConfig{
+		TemplateFlag: "/path/to/template.md",
+		PromptFile:   promptPath,
+	}
+
+	err := MaterializePromptFile(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(promptPath); err == nil {
+		t.Fatal("file should not have been created when TemplateFlag is set")
+	}
+}
+
+func TestMaterializePromptFile_NoCreateWhenPromptFlagSet(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	cfg := RenderConfig{
+		PromptFlag: "inline template",
+		PromptFile: promptPath,
+	}
+
+	err := MaterializePromptFile(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(promptPath); err == nil {
+		t.Fatal("file should not have been created when PromptFlag is set")
+	}
+}
+
+func TestMaterializePromptFile_CreatesMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	cfg := RenderConfig{PromptFile: promptPath}
+
+	err := MaterializePromptFile(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+	if got := string(data); got != DefaultPrompt() {
+		t.Fatalf("content mismatch\nwant:\n%s\ngot:\n%s", DefaultPrompt(), got)
+	}
+}
+
 func TestRender_MissingPromptFileFallsBack(t *testing.T) {
 	engine := &Engine{}
 	cfg := RenderConfig{
