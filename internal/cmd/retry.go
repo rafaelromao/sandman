@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -65,6 +66,11 @@ func NewRetryCmd(deps Dependencies) *cobra.Command {
 				Issues:       []int{issueNum},
 				Branches:     map[int]string{issueNum: branch},
 				PromptConfig: promptCfg,
+			}
+			if model, ok := payloadString(lastRun.Payload, "model"); ok {
+				if model = strings.TrimSpace(model); model != "" {
+					req.Model = model
+				}
 			}
 			result, err := deps.BatchRunner.RunBatch(cmd.Context(), req)
 			if result != nil {

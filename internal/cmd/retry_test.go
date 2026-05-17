@@ -260,6 +260,60 @@ func TestRetry_UsesCurrentConfigWhenNoPromptOverrides(t *testing.T) {
 	}
 }
 
+func TestRetry_ReplaysStoredModelFromConfig(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "model": "gpt-config"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/current review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Model: "gpt-new"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRetryCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Model != "gpt-config" {
+		t.Fatalf("expected stored model replay, got %q", spy.req.Model)
+	}
+}
+
+func TestRetry_ReplaysStoredModelFromOverride(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "model": "gpt-override"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/current review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Model: "gpt-config"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRetryCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Model != "gpt-override" {
+		t.Fatalf("expected stored override replay, got %q", spy.req.Model)
+	}
+}
+
 func TestRetry_FailsWhenStoredTemplateMissing(t *testing.T) {
 	log := &fakeEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{
