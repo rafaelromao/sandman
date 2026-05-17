@@ -57,4 +57,4 @@ gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}
 - Classify feedback: blockers (must fix), suggestions (fix if straightforward), nits (fix if trivial)
 - Apply fixes, run tests/formatting, commit, push
 - Repeat from step 2 until approved or max 10 passes
-- **Do NOT review your own PR** — delegate exclusively to opencode
+- **Do NOT review your own PR** — delegate exclusively to {{REVIEW_COMMAND}}
