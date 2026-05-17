@@ -38,7 +38,7 @@ This scaffolds the `.sandman/` directory with:
 
 - **`.sandman/config.yaml`** — Sandman configuration with the selected agent preset
 - **`.sandman/Dockerfile`** — Container image definition for container-backed sandboxing
-- **`.sandman/prompt.md`** — Default agent prompt template
+- **`.sandman/prompt.md`** — Project Prompt Template seeded from Sandman's Default Prompt
 
 The `init` command interactively prompts you for:
 
@@ -64,7 +64,7 @@ Sandman will:
 
 1. Fetch issue #42 from GitHub
 2. Create a git worktree at `.sandman/worktrees/sandman/42-<slugified-title>`
-3. Render the prompt template with issue metadata
+3. Render the Project Prompt Template with issue metadata
 4. Launch the configured AI agent inside the sandbox
 5. Stream agent output to the terminal, prefixed with `[#42]`
 6. Log structured events to `.sandman/events.jsonl`

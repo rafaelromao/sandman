@@ -49,7 +49,7 @@ Runs the agent in interactive (TTY-attached) mode for a single issue. The agent 
 sandman retry 42
 ```
 
-Reruns the last agent for issue #42, reusing the previously created branch. Useful after transient failures.
+Reruns the last agent for issue #42, reusing the previously created branch. If the prior run recorded prompt inputs, retry replays the same prompt/template source, prompt args, and review command. Useful after transient failures.
 
 ## Cleaning up
 

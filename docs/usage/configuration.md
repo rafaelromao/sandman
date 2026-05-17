@@ -11,6 +11,9 @@ agent: opencode
 # Build tools preset for the container image (generic, go).
 build_tools: generic
 
+# Review command injected into the prompt template.
+review_command: /oc review
+
 # Maximum number of concurrent agent runs.
 default_parallel: 4
 
@@ -77,7 +80,13 @@ The `command` field supports Go `text/template` syntax with the key `{{.PromptFi
 
 ### Prompt templates
 
-The default prompt template lives at `.sandman/prompt.md` and is rendered per `AgentRun` before the agent starts. The following built-in substitution keys are available:
+Sandman's prompt lifecycle has three steps:
+
+- **Default Prompt** — the embedded canonical template in `internal/prompt/default_prompt.md`
+- **Project Prompt Template** — `.sandman/prompt.md`, created from the Default Prompt by `sandman init` and materialized on run when missing
+- **Prompt** — `.sandman/rendered-prompt.md`, the rendered instruction file passed to the agent
+
+The following built-in substitution keys are available in prompt templates:
 
 | Key | Description |
 |-----|-------------|
@@ -86,8 +95,13 @@ The default prompt template lives at `.sandman/prompt.md` and is rendered per `A
 | `{{ISSUE_BODY}}` | Issue body |
 | `{{SOURCE_BRANCH}}` | Branch the agent starts from |
 | `{{TARGET_BRANCH}}` | Branch the agent will commit to |
+| `{{BRANCH}}` | Alias for `{{SOURCE_BRANCH}}` |
+| `{{DEFAULT_BRANCH}}` | Alias for `{{TARGET_BRANCH}}` |
+| `{{REVIEW_COMMAND}}` | Review command from config or `--review-command` |
 
 Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
+
+`sandman retry` replays the stored prompt source, prompt args, and review command when the prior run recorded them.
 
 ### Overriding preset defaults
 
