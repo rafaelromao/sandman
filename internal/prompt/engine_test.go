@@ -39,38 +39,16 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 	}
 }
 
-func TestDefaultPrompt_UsesSandmanWorktreeContract(t *testing.T) {
-	got := DefaultPrompt()
-
-	for _, want := range []string{
-		"Work in the current Sandman-created worktree on `{{BRANCH}}`.",
-		"Do not run `gh issue view {{ISSUE_NUMBER}}`, `git checkout main`, `git pull`, or create a new branch.",
-		"Use parallel subagents whenever a stage has independent reads or fixes.",
-		"Never parallelize the TDD implementation loop.",
-		"Run parallel readers:",
-		"Reader A: issue/spec/docs plus domain glossary.",
-		"Reader B: codebase and test surface.",
-		"Run parallel reviewers:",
-		"Standards reviewer: repo standards, glossary, ADRs, and coding guidance.",
-		"Spec reviewer: issue, linked context, and expected behavior.",
-		"gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"",
-		"gh pr comment <N> --body \"{{REVIEW_COMMAND}}\"",
-		"If no review response arrives in time, stop and report the PR as still open.",
-		"When feedback arrives, cluster independent comments and fix them in parallel where possible.",
-		"Only merge when all of these are true:",
-		"Merge with squash.",
-		"If approval is not achieved after 10 review cycles, leave the PR open and report the final blockers.",
-		"Return:",
-		"PR URL",
-		"number of review cycles used",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("default prompt missing %q\n%s", want, got)
-		}
+func TestDefaultPrompt_EmbeddedPromptMatchesTemplate(t *testing.T) {
+	data, err := os.ReadFile("default_prompt.md")
+	if err != nil {
+		t.Fatalf("read default prompt template: %v", err)
 	}
 
-	if strings.Contains(got, "Source branch:") || strings.Contains(got, "Target branch:") {
-		t.Fatalf("default prompt still uses old branch wording\n%s", got)
+	want := strings.TrimSpace(string(data))
+	got := strings.TrimSpace(DefaultPrompt())
+	if got != want {
+		t.Fatalf("default prompt drifted\nwant:\n%s\ngot:\n%s", want, got)
 	}
 }
 
