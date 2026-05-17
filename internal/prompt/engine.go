@@ -6,6 +6,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/config"
 )
 
 //go:embed default_prompt.md
@@ -46,11 +48,15 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 	result = strings.ReplaceAll(result, "{{TARGET_BRANCH}}", data.TargetBranch)
 	result = strings.ReplaceAll(result, "{{BRANCH}}", data.SourceBranch)
 	result = strings.ReplaceAll(result, "{{DEFAULT_BRANCH}}", data.TargetBranch)
-	result = strings.ReplaceAll(result, "{{REVIEW_COMMAND}}", "/oc review")
 
 	for k, v := range cfg.PromptArgs {
 		result = strings.ReplaceAll(result, fmt.Sprintf("{{%s}}", k), v)
 	}
+	reviewCommand := strings.TrimSpace(cfg.ReviewCommand)
+	if reviewCommand == "" {
+		reviewCommand = config.DefaultReviewCommand
+	}
+	result = strings.ReplaceAll(result, "{{REVIEW_COMMAND}}", reviewCommand)
 
 	if unmatched := keyPattern.FindAllString(result, -1); len(unmatched) > 0 {
 		return "", fmt.Errorf("missing substitution keys: %s", strings.Join(unmatched, ", "))

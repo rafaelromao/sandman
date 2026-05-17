@@ -13,6 +13,7 @@ import (
 const (
 	DefaultAgent             = "opencode"
 	DefaultBuildToolsPreset  = "generic"
+	DefaultReviewCommand     = "/oc review"
 	DefaultParallel          = 4
 	DefaultContainerCapacity = 4
 	DefaultMaxContainers     = 0
@@ -24,6 +25,7 @@ const (
 type Config struct {
 	Agent             string           `yaml:"agent"`
 	BuildTools        string           `yaml:"build_tools"`
+	ReviewCommand     string           `yaml:"review_command"`
 	DefaultParallel   int              `yaml:"default_parallel"`
 	ContainerCapacity int              `yaml:"container_capacity"`
 	MaxContainers     int              `yaml:"max_containers"`
@@ -115,6 +117,7 @@ func Load(path string) (*Config, error) {
 	type rawConfig struct {
 		Agent             string           `yaml:"agent"`
 		BuildTools        string           `yaml:"build_tools"`
+		ReviewCommand     string           `yaml:"review_command"`
 		DefaultParallel   int              `yaml:"default_parallel"`
 		ContainerCapacity *int             `yaml:"container_capacity"`
 		MaxContainers     *int             `yaml:"max_containers"`
@@ -132,6 +135,7 @@ func Load(path string) (*Config, error) {
 	cfg := Config{
 		Agent:           raw.Agent,
 		BuildTools:      raw.BuildTools,
+		ReviewCommand:   raw.ReviewCommand,
 		DefaultParallel: raw.DefaultParallel,
 		WorktreeDir:     raw.WorktreeDir,
 		Sandbox:         raw.Sandbox,
@@ -144,6 +148,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.BuildTools == "" {
 		cfg.BuildTools = DefaultBuildToolsPreset
+	}
+	if strings.TrimSpace(cfg.ReviewCommand) == "" {
+		cfg.ReviewCommand = DefaultReviewCommand
 	}
 	if raw.ContainerCapacity == nil {
 		cfg.ContainerCapacity = DefaultContainerCapacity
@@ -282,6 +289,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.Agent, nil
 	case "build_tools":
 		return c.EffectiveBuildTools(), nil
+	case "review_command":
+		return c.EffectiveReviewCommand(), nil
 	case "default_parallel":
 		return fmt.Sprintf("%d", c.DefaultParallel), nil
 	case "container_capacity":
@@ -310,6 +319,8 @@ func (c *Config) SetValue(key, value string) error {
 		c.Agent = value
 	case "build_tools":
 		c.BuildTools = value
+	case "review_command":
+		c.ReviewCommand = value
 	case "default_parallel":
 		n, err := strconv.Atoi(value)
 		if err != nil {
@@ -359,4 +370,12 @@ func (c *Config) EffectiveBuildTools() string {
 		return DefaultBuildToolsPreset
 	}
 	return c.BuildTools
+}
+
+// EffectiveReviewCommand returns the configured review command, defaulting to /oc review.
+func (c *Config) EffectiveReviewCommand() string {
+	if c == nil || strings.TrimSpace(c.ReviewCommand) == "" {
+		return DefaultReviewCommand
+	}
+	return c.ReviewCommand
 }

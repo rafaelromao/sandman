@@ -1298,6 +1298,51 @@ func TestRun_PromptConfigDefaultsEmpty(t *testing.T) {
 	if len(spy.req.PromptConfig.PromptArgs) != 0 {
 		t.Errorf("expected empty PromptArgs, got %v", spy.req.PromptConfig.PromptArgs)
 	}
+	if spy.req.PromptConfig.ReviewCommand != "/oc review" {
+		t.Errorf("expected default ReviewCommand, got %q", spy.req.PromptConfig.ReviewCommand)
+	}
+}
+
+func TestRun_ReviewCommandFromConfigPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/config review"}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.PromptConfig.ReviewCommand != "/config review" {
+		t.Fatalf("expected config review command, got %q", spy.req.PromptConfig.ReviewCommand)
+	}
+}
+
+func TestRun_ReviewCommandFlagOverridesConfig(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/config review"}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--review-command", "/cli review", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.PromptConfig.ReviewCommand != "/cli review" {
+		t.Fatalf("expected CLI review command, got %q", spy.req.PromptConfig.ReviewCommand)
+	}
 }
 
 func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
