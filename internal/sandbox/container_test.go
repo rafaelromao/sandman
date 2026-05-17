@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -414,6 +415,99 @@ func TestContainerRuntime_Start_MountsConfigTmpfs(t *testing.T) {
 	}
 	if !foundCache {
 		t.Errorf("expected --mount type=tmpfs,destination=/.cache, got args: %v", captured)
+	}
+}
+
+func TestContainerRuntime_Start_SkipsTmpfsForMountedRootConfigDirs(t *testing.T) {
+	rt := NewContainerRuntime("docker")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "abc123")
+	}
+
+	_, err := rt.Start("alpine", ".", StartOptions{ConfigMounts: []ConfigMount{{Source: "/tmp/config", Target: "/.config"}, {Source: "/tmp/cache", Target: "/.cache"}}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundConfig := false
+	foundLocal := false
+	foundCache := false
+	for i := 0; i < len(captured)-1; i++ {
+		if captured[i] != "--mount" {
+			continue
+		}
+		switch captured[i+1] {
+		case "type=tmpfs,destination=/.config":
+			foundConfig = true
+		case "type=tmpfs,destination=/.local":
+			foundLocal = true
+		case "type=tmpfs,destination=/.cache":
+			foundCache = true
+		}
+	}
+	if foundConfig {
+		t.Errorf("expected /.config tmpfs to be skipped, got args: %v", captured)
+	}
+	if !foundLocal {
+		t.Errorf("expected /.local tmpfs to remain, got args: %v", captured)
+	}
+	if foundCache {
+		t.Errorf("expected /.cache tmpfs to be skipped, got args: %v", captured)
+	}
+}
+
+func TestContainerRuntime_Start_RewritesMountedGitConfigCopy(t *testing.T) {
+	repoDir := t.TempDir()
+	gitConfig := filepath.Join(t.TempDir(), ".gitconfig")
+	original := fmt.Sprintf("[url \"file://%s/.sandman/remote\"]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", repoDir)
+	if err := os.WriteFile(gitConfig, []byte(original), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+
+	rt := NewContainerRuntime("docker")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "abc123")
+	}
+
+	container, err := rt.Start("alpine", repoDir, StartOptions{GitConfigPath: gitConfig})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mountedPath := ""
+	for i := 0; i < len(captured)-1; i++ {
+		if captured[i] == "-v" && strings.HasSuffix(captured[i+1], ":/.gitconfig") {
+			mountedPath = strings.TrimSuffix(captured[i+1], ":/.gitconfig")
+			break
+		}
+	}
+	if mountedPath == "" {
+		t.Fatalf("expected mounted gitconfig path, got args: %v", captured)
+	}
+	if mountedPath == gitConfig {
+		t.Fatalf("expected mounted gitconfig copy, got original path %q", mountedPath)
+	}
+
+	data, err := os.ReadFile(mountedPath)
+	if err != nil {
+		t.Fatalf("read mounted gitconfig copy: %v", err)
+	}
+	if strings.Contains(string(data), repoDir) {
+		t.Fatalf("expected mounted gitconfig to rewrite host repo path, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "/workspace/.sandman/remote") {
+		t.Fatalf("expected mounted gitconfig to target /workspace path, got:\n%s", data)
+	}
+
+	if err := container.Stop(); err != nil {
+		t.Fatalf("stop container: %v", err)
+	}
+	if _, err := os.Stat(mountedPath); !os.IsNotExist(err) {
+		t.Fatalf("expected mounted gitconfig copy cleanup, got err=%v", err)
 	}
 }
 
@@ -894,6 +988,36 @@ func TestResolveConfigMounts_MissingDir(t *testing.T) {
 
 	if len(mounts) != 0 {
 		t.Errorf("expected 0 mounts for missing dirs, got %d", len(mounts))
+	}
+}
+
+func TestResolveConfigMounts_PreservesContainerTargets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	configDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	configFile := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(configFile, []byte("{}"), 0644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	mounts, cleanup, err := ResolveConfigMounts([]string{configDir}, []string{configFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	seen := map[string]bool{}
+	for _, mount := range mounts {
+		seen[mount.Target] = true
+	}
+	for _, target := range []string{"/.config/opencode", "/.claude.json"} {
+		if !seen[target] {
+			t.Fatalf("expected mount target %q, got %v", target, seen)
+		}
 	}
 }
 

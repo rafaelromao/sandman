@@ -61,6 +61,8 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 	}
 
 	args := []string{"run", "-d", "--rm"}
+	cleanup := func() {}
+	mountedTargets := map[string]bool{}
 
 	if opts.UserID != "" {
 		if r.binary != "podman" {
@@ -70,12 +72,18 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 	}
 
 	if opts.GitConfigPath != "" {
-		args = append(args, "-v", opts.GitConfigPath+":/.gitconfig")
+		mountedGitConfig, gitConfigCleanup, err := prepareMountedGitConfig(opts.GitConfigPath, absRepo)
+		if err != nil {
+			return nil, err
+		}
+		cleanup = gitConfigCleanup
+		args = append(args, "-v", mountedGitConfig+":/.gitconfig")
 	}
 
 	if opts.ConfigMounts != nil {
 		for _, mount := range opts.ConfigMounts {
 			args = append(args, "-v", mount.Source+":"+mount.Target)
+			mountedTargets[mount.Target] = true
 		}
 	} else {
 		for _, dir := range opts.AgentConfigDirs {
@@ -84,6 +92,7 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 			}
 			containerPath := toContainerPath(dir)
 			args = append(args, "-v", dir+":"+containerPath)
+			mountedTargets[containerPath] = true
 		}
 
 		for _, file := range opts.AgentConfigFiles {
@@ -92,6 +101,7 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 			}
 			containerPath := toContainerPath(file)
 			args = append(args, "-v", file+":"+containerPath)
+			mountedTargets[containerPath] = true
 		}
 	}
 
@@ -104,11 +114,18 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 		args = append(args, "-v", sshPath+":/.ssh")
 	}
 
-	args = append(args, "--mount", "type=tmpfs,destination=/.config", "--mount", "type=tmpfs,destination=/.local", "--mount", "type=tmpfs,destination=/.cache", "-v", absRepo+":/workspace", image, "sleep", "3600")
+	for _, target := range []string{"/.config", "/.local", "/.cache"} {
+		if mountedTargets[target] {
+			continue
+		}
+		args = append(args, "--mount", "type=tmpfs,destination="+target)
+	}
+	args = append(args, "-v", absRepo+":/workspace", image, "sleep", "3600")
 
 	cmd := r.execFn(r.binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		cleanup()
 		return nil, fmt.Errorf("start container: %w\n%s", err, out)
 	}
 	id := strings.TrimSpace(string(out))
@@ -116,12 +133,13 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 	if opts.RemoteScheme == "https" {
 		setupCmd := r.execFn(r.binary, "exec", id, "gh", "auth", "setup-git")
 		if setupOut, setupErr := setupCmd.CombinedOutput(); setupErr != nil {
+			cleanup()
 			_ = r.execFn(r.binary, "stop", id).Run()
 			return nil, fmt.Errorf("gh auth setup-git: %w\n%s", setupErr, setupOut)
 		}
 	}
 
-	return &runningContainer{id: id, binary: r.binary, execFn: r.execFn}, nil
+	return &runningContainer{id: id, binary: r.binary, execFn: r.execFn, cleanup: cleanup}, nil
 }
 
 // BuildImage builds a container image from .sandman/Dockerfile.
@@ -157,9 +175,10 @@ func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
 }
 
 type runningContainer struct {
-	id     string
-	binary string
-	execFn func(name string, arg ...string) *exec.Cmd
+	id      string
+	binary  string
+	execFn  func(name string, arg ...string) *exec.Cmd
+	cleanup func()
 }
 
 func (c *runningContainer) ID() string {
@@ -167,11 +186,43 @@ func (c *runningContainer) ID() string {
 }
 
 func (c *runningContainer) Stop() error {
+	if c.cleanup != nil {
+		defer c.cleanup()
+	}
 	cmd := c.execFn(c.binary, "stop", c.id)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("stop container: %w\n%s", err, out)
 	}
 	return nil
+}
+
+func prepareMountedGitConfig(path, absRepo string) (string, func(), error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, func() {}, nil
+		}
+		return "", nil, fmt.Errorf("read gitconfig: %w", err)
+	}
+	if !strings.Contains(string(data), absRepo) {
+		return path, func() {}, nil
+	}
+
+	updated := strings.ReplaceAll(string(data), absRepo, "/workspace")
+	tmp, err := os.CreateTemp("", "sandman-gitconfig-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp gitconfig: %w", err)
+	}
+	if _, err := tmp.WriteString(updated); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return "", nil, fmt.Errorf("write temp gitconfig: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return "", nil, fmt.Errorf("close temp gitconfig: %w", err)
+	}
+	return tmp.Name(), func() { _ = os.Remove(tmp.Name()) }, nil
 }
 
 func toContainerPath(hostPath string) string {
@@ -231,7 +282,7 @@ func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
 	cleanup := func() { os.RemoveAll(tmpDir) }
 
 	var mounts []ConfigMount
-	used := make(map[string]int)
+	usedTargets := make(map[string]bool)
 
 	for _, dir := range dirs {
 		info, err := os.Stat(dir)
@@ -245,13 +296,17 @@ func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
 		if !info.IsDir() {
 			continue
 		}
-		target := uniqueTarget(used, filepath.Base(dir))
-		dst := filepath.Join(tmpDir, target)
+		target := toContainerPath(dir)
+		if usedTargets[target] {
+			continue
+		}
+		usedTargets[target] = true
+		dst := filepath.Join(tmpDir, strings.TrimPrefix(target, "/"))
 		if err := copyResolved(dir, dst, 0); err != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("copy config dir %q: %w", dir, err)
 		}
-		mounts = append(mounts, ConfigMount{Source: dst, Target: "/" + target})
+		mounts = append(mounts, ConfigMount{Source: dst, Target: target})
 	}
 
 	for _, file := range files {
@@ -266,25 +321,20 @@ func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
 		if info.IsDir() {
 			continue
 		}
-		target := uniqueTarget(used, filepath.Base(file))
-		dst := filepath.Join(tmpDir, target)
+		target := toContainerPath(file)
+		if usedTargets[target] {
+			continue
+		}
+		usedTargets[target] = true
+		dst := filepath.Join(tmpDir, strings.TrimPrefix(target, "/"))
 		if err := copyResolved(file, dst, 0); err != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("copy config file %q: %w", file, err)
 		}
-		mounts = append(mounts, ConfigMount{Source: dst, Target: "/" + target})
+		mounts = append(mounts, ConfigMount{Source: dst, Target: target})
 	}
 
 	return mounts, cleanup, nil
-}
-
-func uniqueTarget(used map[string]int, base string) string {
-	if n, ok := used[base]; ok {
-		used[base] = n + 1
-		return fmt.Sprintf("%s-%d", base, n)
-	}
-	used[base] = 1
-	return base
 }
 
 // copyResolved copies src to dst, resolving symlinks. If src is a
@@ -339,6 +389,9 @@ func copyResolvedFile(src, dst string) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
 

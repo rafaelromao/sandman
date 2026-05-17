@@ -68,8 +68,8 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 		"ENV MISE_GLOBAL_CONFIG_FILE=\"/etc/mise/config.toml\"",
 		"ENV MISE_CONFIG_DIR=\"/etc/mise\"",
 		"ENV MISE_DATA_DIR=\"/usr/local/share/mise\"",
-		"ENV MISE_STATE_DIR=\"/.local/state/mise\"",
-		"ENV MISE_CACHE_DIR=\"/.cache/mise\"",
+		"ENV MISE_STATE_DIR=\"/usr/local/share/mise/state\"",
+		"ENV MISE_CACHE_DIR=\"/usr/local/share/mise/cache\"",
 		"ENV PATH=\"/usr/local/share/mise/shims:/usr/local/share/mise/bin:$PATH\"",
 	} {
 		if !strings.Contains(content, envLine) {
