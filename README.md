@@ -37,6 +37,7 @@ Sandman manages the lifecycle of automated coding workflows:
 | [Getting Started](docs/usage/getting-started.md) | Prerequisites, installation, and first project setup |
 | [Commands Reference](docs/usage/commands.md) | All CLI commands, flags, and issue selection modes |
 | [Configuration](docs/usage/configuration.md) | Full config schema, agent providers, and CLI config |
+| [Default Prompt](docs/usage/default-prompt.md) | Canonical prompt text, lifecycle, and section-by-section guide |
 | [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
 | [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, retry and cleanup |
 | [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and troubleshooting |
@@ -49,6 +50,7 @@ Sandman reads from `.sandman/config.yaml`. Key fields:
 ```yaml
 agent: opencode
 default_parallel: 4
+review_command: /oc review
 sandbox: podman              # podman, docker, or worktree
 container_capacity: 4        # agent runs per container
 max_containers: 0            # auto mode; or set a fixed limit

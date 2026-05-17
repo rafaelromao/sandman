@@ -28,6 +28,8 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 | `issue` | GitHub issue number |
 | `payload` | Event-specific data (status, branch, error message, etc.) |
 
+Because `sandman retry` replays prompt inputs, `run.started` payloads may also include raw prompt-affecting values such as `prompt_source_type`, `prompt_source_value`, `prompt_args`, and `review_command`.
+
 ## Per-issue logs
 
 Each agent run writes its output to `.sandman/logs/<issue>.log`. This file captures both stdout and stderr from the agent process, prefixed with issue-specific timestamps.

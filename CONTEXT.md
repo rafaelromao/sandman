@@ -69,11 +69,19 @@ A GitHub issue fetched via `gh` CLI. The unit of work delegated to an agent.
 _Avoid_: Ticket, story.
 
 **Prompt**:
-The generated instruction file passed to an agent, rendered from a template with issue metadata and built-in substitutions.
+The generated instruction file passed to an Agent, rendered from a template with issue metadata and built-in substitutions.
 _Avoid_: Instructions, query.
 
+**Default Prompt**:
+The canonical built-in prompt template embedded in Sandman at `internal/prompt/default_prompt.md`.
+_Avoid_: Base prompt, stock prompt.
+
+**Project Prompt Template**:
+The repo-local `.sandman/prompt.md` template created from the Default Prompt by `sandman init` and materialized on run when missing.
+_Avoid_: User prompt, custom prompt.
+
 **Prompt keys**:
-The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{TARGET_BRANCH}}`. Custom keys are supported via `promptArgs` in config.
+The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{TARGET_BRANCH}}`, `{{BRANCH}}`, `{{DEFAULT_BRANCH}}`, `{{REVIEW_COMMAND}}`. Custom keys are supported via `promptArgs` in config.
 
 **Command template key**:
 The `{{.PromptFile}}` key available in agent command templates, resolved to the relative path of the rendered prompt file.

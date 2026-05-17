@@ -54,6 +54,7 @@ Exactly one selection mode is required:
 | `--prompt` | — | Inline prompt template (overrides file-based templates) |
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
+| `--review-command` | — | Review command injected into `{{REVIEW_COMMAND}}` |
 
 ### Flag interactions
 
@@ -127,6 +128,7 @@ sandman config set <key> <value>
 | `agent` | string | `opencode` |
 | `build_tools` | string | `go` |
 | `default_parallel` | int | `4` |
+| `review_command` | string | `/oc review` |
 | `container_capacity` | int | `4` |
 | `max_containers` | int | `0` |
 | `worktree_dir` | string | `.sandman/worktrees` |
