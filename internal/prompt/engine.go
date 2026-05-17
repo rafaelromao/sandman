@@ -77,6 +77,8 @@ func MaterializePromptFile(cfg RenderConfig) error {
 	}
 	if _, err := os.Stat(cfg.PromptFile); err == nil {
 		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("check prompt file: %w", err)
 	}
 	dir := filepath.Dir(cfg.PromptFile)
 	if err := os.MkdirAll(dir, 0755); err != nil {
