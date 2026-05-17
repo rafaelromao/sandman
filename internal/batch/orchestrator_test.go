@@ -423,6 +423,60 @@ func TestRunBatch_CallsStopOnSuccess(t *testing.T) {
 	}
 }
 
+func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfgModel string
+		reqModel string
+		wantCmd  string
+	}{
+		{
+			name:     "request overrides config",
+			cfgModel: "config-model",
+			reqModel: "request-model",
+			wantCmd:  `opencode run -m request-model "$(cat .sandman/rendered-prompt.md)"`,
+		},
+		{
+			name:     "config model is used",
+			cfgModel: "config-model",
+			wantCmd:  `opencode run -m config-model "$(cat .sandman/rendered-prompt.md)"`,
+		},
+		{
+			name:    "default behavior leaves model out",
+			wantCmd: `opencode run "$(cat .sandman/rendered-prompt.md)"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &fakeGitHubClient{
+				issues: map[int]*github.Issue{
+					42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+				},
+			}
+			sb := &fakeSandbox{}
+			o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+				Agent:       "opencode",
+				Sandbox:     "worktree",
+				WorktreeDir: ".sandman/worktrees",
+				Git:         config.GitConfig{DefaultBranch: "main"},
+				AgentProviders: map[string]config.Agent{
+					"opencode": {Preset: "opencode", Model: tt.cfgModel},
+				},
+			}}, nil)
+			o.sandboxFactory = &fakeSandboxFactory{sandbox: sb}
+
+			_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Model: tt.reqModel})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if sb.execCommand != tt.wantCmd {
+				t.Errorf("expected command %q, got %q", tt.wantCmd, sb.execCommand)
+			}
+		})
+	}
+}
+
 func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

@@ -9,6 +9,7 @@ import (
 // CommandData holds template variables available for agent command rendering.
 type CommandData struct {
 	PromptFile string
+	ModelFlag  string
 }
 
 // RenderCommand renders an agent command template with the given data.

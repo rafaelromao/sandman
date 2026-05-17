@@ -93,6 +93,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			promptFlag, _ := cmd.Flags().GetString("prompt")
 			templateFlag, _ := cmd.Flags().GetString("template")
 			reviewCommandFlag, _ := cmd.Flags().GetString("review-command")
+			modelFlag, _ := cmd.Flags().GetString("model")
 			promptArgsRaw, _ := cmd.Flags().GetStringArray("prompt-arg")
 			promptArgs := make(map[string]string)
 			for _, arg := range promptArgsRaw {
@@ -138,6 +139,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 				Issues:               resolvedBatch.Issues,
 				Dependencies:         resolvedBatch.Deps,
+				Model:                strings.TrimSpace(modelFlag),
 				Parallel:             parallel,
 				Preserve:             preserve,
 				Debug:                debug,
@@ -183,6 +185,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md)")
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md)")
 	cmd.Flags().String("review-command", "", "Review command to inject into the prompt template")
+	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
 
 	cmd.Flags().Int("next", 0, "Delegate the N lowest-numbered open issues labeled ready-for-agent")

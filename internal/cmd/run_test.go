@@ -136,6 +136,26 @@ func TestRun_ParallelFlagPassedToBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRun_ModelFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--model", "gpt-4.1", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Model != "gpt-4.1" {
+		t.Errorf("expected model=gpt-4.1, got %q", spy.req.Model)
+	}
+}
+
 func TestRun_LoadConfigError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)

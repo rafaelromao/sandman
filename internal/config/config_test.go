@@ -88,7 +88,7 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 	if agent.Preset != "opencode" {
 		t.Errorf("preset: got %q, want %q", agent.Preset, "opencode")
 	}
-	wantCmd := `opencode run "$(cat {{.PromptFile}})"`
+	wantCmd := `opencode run{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`
 	if agent.Command != wantCmd {
 		t.Errorf("command: got %q, want %q", agent.Command, wantCmd)
 	}
@@ -226,7 +226,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 		{
 			key:          "opencode",
 			wantDisplay:  "OpenCode",
-			wantCommand:  `opencode run "$(cat {{.PromptFile}})"`,
+			wantCommand:  `opencode run{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 			wantDirs:     []string{"~/.config/opencode", "~/.local/share/opencode", "~/.claude"},
 			wantFiles:    nil,
 			wantKeychain: false,
@@ -234,7 +234,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 		{
 			key:          "claude-code",
 			wantDisplay:  "Claude Code",
-			wantCommand:  `claude --print "$(cat {{.PromptFile}})"`,
+			wantCommand:  `claude --print{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 			wantDirs:     []string{"~/.claude"},
 			wantFiles:    []string{"~/.claude.json"},
 			wantKeychain: false,
@@ -242,7 +242,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 		{
 			key:          "codex",
 			wantDisplay:  "Codex",
-			wantCommand:  `codex exec "$(cat {{.PromptFile}})"`,
+			wantCommand:  `codex exec{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 			wantDirs:     []string{"~/.config/codex", "~/.local/share/codex"},
 			wantFiles:    nil,
 			wantKeychain: false,
@@ -250,7 +250,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 		{
 			key:          "pi",
 			wantDisplay:  "Pi",
-			wantCommand:  `pi --print "$(cat {{.PromptFile}})"`,
+			wantCommand:  `pi --print{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 			wantDirs:     []string{"~/.pi"},
 			wantFiles:    nil,
 			wantKeychain: false,
