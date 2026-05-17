@@ -7,10 +7,10 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 )
 
-func TestCommandData_ExposesOnlyPromptFile(t *testing.T) {
+func TestCommandData_ExposesPromptFileAndModelFlag(t *testing.T) {
 	typ := reflect.TypeOf(CommandData{})
-	if typ.NumField() != 1 {
-		t.Errorf("expected exactly 1 field in CommandData, got %d", typ.NumField())
+	if typ.NumField() != 2 {
+		t.Errorf("expected exactly 2 fields in CommandData, got %d", typ.NumField())
 	}
 	field, ok := typ.FieldByName("PromptFile")
 	if !ok {
@@ -18,6 +18,13 @@ func TestCommandData_ExposesOnlyPromptFile(t *testing.T) {
 	}
 	if field.Type.Kind() != reflect.String {
 		t.Errorf("expected PromptFile to be string, got %s", field.Type)
+	}
+	modelField, ok := typ.FieldByName("ModelFlag")
+	if !ok {
+		t.Fatal("expected ModelFlag field in CommandData")
+	}
+	if modelField.Type.Kind() != reflect.String {
+		t.Errorf("expected ModelFlag to be string, got %s", modelField.Type)
 	}
 }
 
@@ -43,6 +50,20 @@ func TestRenderCommand_SubstitutesPromptFile(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	want := "opencode --prompt-file .sandman/rendered-prompt.md"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderCommand_IncludesModelFlagForBuiltInPreset(t *testing.T) {
+	got, err := RenderCommand(config.BuiltInAgentPresets["opencode"].Command, CommandData{
+		PromptFile: ".sandman/rendered-prompt.md",
+		ModelFlag:  "-m gpt-4.1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `opencode run -m gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

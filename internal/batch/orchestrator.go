@@ -231,6 +231,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if err != nil {
 		return nil, err
 	}
+	if model := strings.TrimSpace(req.Model); model != "" {
+		if agentCfg.Preset == "" {
+			return nil, fmt.Errorf("model override is only supported for built-in presets")
+		}
+		agentCfg.Model = model
+	}
 	if err := sandbox.ValidateAgentConfig(cfg.Agent, agentCfg); err != nil {
 		return nil, err
 	}
@@ -548,6 +554,8 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	runnable := factory.NewRunnable(issue, branch, wt)
 	if agentRun, ok := runnable.(*AgentRun); ok {
 		agentRun.env = agentCfg.Env
+		agentRun.preset = agentCfg.Preset
+		agentRun.model = agentCfg.Model
 		agentRun.defaultBranch = cfg.Git.DefaultBranch
 	}
 

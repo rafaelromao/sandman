@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -185,6 +186,26 @@ func TestAgentRun_Execute_RunsCommand(t *testing.T) {
 	}
 	if sb.execCommand != "echo hello" {
 		t.Errorf("expected command 'echo hello', got %q", sb.execCommand)
+	}
+}
+
+func TestAgentRun_Run_IncludesModelFlagForBuiltInPreset(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.preset = "opencode"
+	run.model = "gpt-4.1"
+
+	res := run.Run(context.Background(), spy, config.BuiltInAgentPresets["opencode"].Command, false, prompt.RenderConfig{})
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+
+	want := `opencode run -m gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`
+	if sb.execCommand != want {
+		t.Errorf("expected command %q, got %q", want, sb.execCommand)
 	}
 }
 

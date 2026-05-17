@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -17,6 +18,8 @@ type AgentRun struct {
 	issue         *github.Issue
 	branch        string
 	defaultBranch string
+	preset        string
+	model         string
 	sandbox       sandbox.Sandbox
 	status        string
 	env           map[string]string
@@ -93,6 +96,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 
 	renderedCmd, err := RenderCommand(command, CommandData{
 		PromptFile: renderedPromptFile,
+		ModelFlag:  r.modelFlag(),
 	})
 	if err != nil {
 		r.status = "failure"
@@ -112,6 +116,21 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 		}
 	}
 	return r.Result()
+}
+
+func (r *AgentRun) modelFlag() string {
+	model := strings.TrimSpace(r.model)
+	if model == "" {
+		return ""
+	}
+	switch r.preset {
+	case "opencode":
+		return "-m " + model
+	case "claude-code", "codex", "pi":
+		return "--model " + model
+	default:
+		return ""
+	}
 }
 
 // Result returns the current outcome of the AgentRun.
