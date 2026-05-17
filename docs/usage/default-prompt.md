@@ -13,6 +13,15 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
 
     {{ISSUE_BODY}}
 
+    ## Operating Rules
+
+    - Use parallel subagents whenever a stage has independent reads or fixes.
+    - Never parallelize the TDD implementation loop.
+    - Wait for all required subagents before synthesizing a plan or making changes.
+    - Dedupe overlapping findings before acting on them.
+    - Prioritize blockers first, then suggestions, then nits.
+    - The agent is only done when the PR is merged or merge is impossible after exhausting the review loop.
+
     ## Approach
 
     ### 1. Setup
@@ -21,19 +30,22 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     - Do not run `gh issue view {{ISSUE_NUMBER}}`, `git checkout main`, `git pull`, or create a new branch.
     - If a toolchain is missing, use mise first before adding ad hoc installs.
 
-    ### 2. Plan (TDD)
-    - Read the issue body and linked context, respecting ADRs and domain glossary.
-    - Use parallel subagents for independent reads: one on issue/spec/docs, one on relevant code and tests.
-    - Synthesize both reads before drafting a plan.
-    - Design testable public interfaces (deep modules, small interface).
-    - List behaviors to test (not implementation steps).
-    - **No horizontal slicing**: one test -> one impl -> repeat.
+    ### 2. Plan
+    - Read the issue body and linked context.
+    - Run parallel readers:
+      - Reader A: issue/spec/docs plus domain glossary.
+      - Reader B: codebase and test surface.
+    - Wait for both readers.
+    - Synthesize one implementation plan from the combined results.
+    - Keep the plan behavior-first, not implementation-first.
+    - Design testable public interfaces.
+    - List behaviors to test, not implementation steps.
+    - No horizontal slicing: one test -> one impl -> repeat.
 
-    ### 3. Implement (TDD — vertical tracer bullets)
-    - Keep TDD strictly sequential: one test, one implementation, repeat.
-    - Do not parallelize TDD.
+    ### 3. Implement (TDD)
     - RED: write one test for one behavior -> fails.
     - GREEN: write minimal code to pass -> passes.
+    - Repeat for each behavior.
     - Keep tests at public interface level, not implementation details.
     - Run project tests and formatting after each cycle.
     - Do NOT commit during TDD.
@@ -46,12 +58,12 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
 
     ### 5. Self-review
     Review the diff against the originating issue. For each file/hunk:
-    - Run standards and spec readers in parallel.
-    - Wait to synthesize both reads before fixing anything.
-    - Does it implement what the issue asked for? (Spec)
-    - Does it follow repo conventions? (Standards — CLAUDE.md, CONTRIBUTING.md, CONTEXT.md, ADRs, tooling configs)
-    - Cluster independent fixes and apply them in parallel where safe.
-    - Run tests/formatting, commit:
+    - Run parallel reviewers:
+      - Standards reviewer: repo standards, glossary, ADRs, and coding guidance.
+      - Spec reviewer: issue, linked context, and expected behavior.
+    - Wait for both reviewers.
+    - Synthesize their findings into one fix list.
+    - Apply fixes, run tests/formatting, and commit:
     ```bash
     git add -A
     git commit -m "refactor: self-review fixes"
@@ -63,22 +75,38 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}}" --body "Fixes #{{ISSUE_NUMBER}}"
     ```
 
-    ### 7. Delegate review (max 10 passes)
-    - Poll `gh pr checks <N>` until CI passes (fix failures if needed, commit & push)
-    - Post `gh pr comment <N> --body "{{REVIEW_COMMAND}}"`
-    - Poll `gh pr view <N> --comments` every 30-60s (5 min timeout)
-    - Classify feedback: blockers (must fix), suggestions (fix if straightforward), nits (fix if trivial)
-    - Cluster independent review feedback and handle the clusters in parallel before the next pass.
-    - Apply fixes, run tests/formatting, commit, push.
-    - Repeat from step 2 until approved or max 10 passes.
-    - If approval is not reached after 10 review cycles, stop, leave the PR open, and report the latest blocking feedback.
-    - PR completion gate: approval + green checks + mergeable state, then squash merge.
-    - **Do NOT review your own PR** — delegate exclusively to {{REVIEW_COMMAND}}
+    - Capture the PR URL and number.
 
-    ### 8. Merge & wrap-up
-    - Verify merge success.
+    ### 7. Delegate review (max 10 passes)
+    - Poll `gh pr checks <N>` until CI passes.
+    - If checks fail, fix them, commit, and push.
+    - Post `gh pr comment <N> --body "{{REVIEW_COMMAND}}"`
+    - Poll `gh pr view <N> --comments` every 30-60s, with a 5 minute timeout.
+    - If no review response arrives in time, stop and report the PR as still open.
+    - When feedback arrives, cluster independent comments and fix them in parallel where possible.
+    - Address blockers first, then suggestions, then nits.
+    - Apply fixes, run tests/formatting, commit, and push.
+    - Repeat this loop until approved or max 10 passes.
+    - Do NOT review your own PR.
+    - Delegate exclusively to `{{REVIEW_COMMAND}}`.
+
+    ### 8. Merge and finish
+    - Only merge when all of these are true:
+      - opencode has approved the PR
+      - required checks are green
+      - GitHub reports the PR is mergeable
+    - Merge with squash.
+    - Verify the PR actually merged.
     - Delete the branch after merge.
-    - Report the PR URL, PR number, final status, review cycles, and any final blockers.
+    - If approval is not achieved after 10 review cycles, leave the PR open and report the final blockers.
+
+    ## Final Result
+
+    Return:
+    - PR URL
+    - status
+    - number of review cycles used
+    - last blocking feedback if the PR stopped after 10 cycles
 <!-- default-prompt:end -->
 
 ## What each part does
