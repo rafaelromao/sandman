@@ -13,6 +13,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: codex
 build_tools: go
+review_command: /review please
 default_parallel: 3
 worktree_dir: /tmp/wt
 sandbox: worktree
@@ -39,6 +40,9 @@ agents:
 	}
 	if cfg.BuildTools != "go" {
 		t.Errorf("build_tools: got %q, want %q", cfg.BuildTools, "go")
+	}
+	if cfg.ReviewCommand != "/review please" {
+		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/review please")
 	}
 	if cfg.DefaultParallel != 3 {
 		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 3)
@@ -296,6 +300,9 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	if cfg.Git.DefaultBranch != "main" {
 		t.Errorf("git.default_branch: got %q, want %q", cfg.Git.DefaultBranch, "main")
 	}
+	if cfg.ReviewCommand != "/oc review" {
+		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/oc review")
+	}
 }
 
 func TestLoad_MissingContainerSettings_AppliesDefaults(t *testing.T) {
@@ -452,6 +459,7 @@ func TestConfig_GetValue(t *testing.T) {
 	}{
 		{"agent", "codex", false},
 		{"build_tools", "go", false},
+		{"review_command", "/oc review", false},
 		{"default_parallel", "4", false},
 		{"container_capacity", "3", false},
 		{"max_containers", "0", false},
@@ -486,6 +494,7 @@ func TestConfig_SetValue(t *testing.T) {
 	}{
 		{"agent", "codex", false},
 		{"build_tools", "go", false},
+		{"review_command", "/oc review", false},
 		{"default_parallel", "4", false},
 		{"container_capacity", "4", false},
 		{"max_containers", "0", false},

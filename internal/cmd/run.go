@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
@@ -92,6 +93,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			promptFlag, _ := cmd.Flags().GetString("prompt")
 			templateFlag, _ := cmd.Flags().GetString("template")
+			reviewCommandFlag, _ := cmd.Flags().GetString("review-command")
 			promptArgsRaw, _ := cmd.Flags().GetStringArray("prompt-arg")
 			promptArgs := make(map[string]string)
 			for _, arg := range promptArgsRaw {
@@ -100,6 +102,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return fmt.Errorf("invalid --prompt-arg format %q: expected KEY=VALUE", arg)
 				}
 				promptArgs[parts[0]] = parts[1]
+			}
+
+			reviewCommand := cfg.EffectiveReviewCommand()
+			if strings.TrimSpace(reviewCommandFlag) != "" {
+				reviewCommand = reviewCommandFlag
+			}
+			if reviewCommand != config.DefaultReviewCommand {
+				promptArgs["REVIEW_COMMAND"] = reviewCommand
 			}
 
 			resolvedBatch, err := batch.NewDependencyResolver(deps.GitHubClient).Resolve(cmd.Context(), issues, includeDependencies)
@@ -174,6 +184,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")
 	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md)")
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md)")
+	cmd.Flags().String("review-command", "", "Review command to inject into the prompt template")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
 
 	cmd.Flags().Int("next", 0, "Delegate the N lowest-numbered open issues labeled ready-for-agent")

@@ -215,6 +215,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	cfg := &config.Config{
 		Agent:             agent,
 		BuildTools:        preset.Name,
+		ReviewCommand:     config.DefaultReviewCommand,
 		DefaultParallel:   config.DefaultParallel,
 		ContainerCapacity: config.DefaultContainerCapacity,
 		MaxContainers:     config.DefaultMaxContainers,
