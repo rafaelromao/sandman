@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -96,7 +97,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 
 	renderedCmd, err := RenderCommand(command, CommandData{
 		PromptFile: renderedPromptFile,
-		ModelFlag:  r.modelFlag(),
+		ModelFlag:  r.modelFlag(command),
 	})
 	if err != nil {
 		r.status = "failure"
@@ -118,9 +119,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 	return r.Result()
 }
 
-func (r *AgentRun) modelFlag() string {
+func (r *AgentRun) modelFlag(command string) string {
 	model := strings.TrimSpace(r.model)
-	if model == "" {
+	if model == "" || r.preset == "" {
+		return ""
+	}
+	preset, ok := config.BuiltInAgentPresets[r.preset]
+	if !ok || preset.Command != command {
 		return ""
 	}
 	switch r.preset {
