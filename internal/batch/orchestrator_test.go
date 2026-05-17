@@ -771,8 +771,12 @@ agents:
 	if err != nil {
 		t.Fatalf("read prompt: %v", err)
 	}
-	if !strings.Contains(string(data), "Issue #42: Fix login bug") {
-		t.Errorf("prompt missing expected content, got:\n%s", string(data))
+	got := string(data)
+	if !strings.Contains(got, "Work in the current Sandman-created worktree on `sandman/42-fix-login-bug`.") {
+		t.Errorf("prompt missing expected worktree contract, got:\n%s", got)
+	}
+	if !strings.Contains(got, "gh pr comment <N> --body \"/oc review\"") {
+		t.Errorf("prompt missing review command, got:\n%s", got)
 	}
 
 	markerPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-login-bug", "agent-ran.txt")

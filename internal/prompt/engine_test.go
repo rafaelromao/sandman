@@ -30,9 +30,31 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 	want = strings.ReplaceAll(want, "{{ISSUE_BODY}}", data.Body)
 	want = strings.ReplaceAll(want, "{{SOURCE_BRANCH}}", data.SourceBranch)
 	want = strings.ReplaceAll(want, "{{TARGET_BRANCH}}", data.TargetBranch)
+	want = strings.ReplaceAll(want, "{{BRANCH}}", data.SourceBranch)
+	want = strings.ReplaceAll(want, "{{DEFAULT_BRANCH}}", data.TargetBranch)
+	want = strings.ReplaceAll(want, "{{REVIEW_COMMAND}}", "/oc review")
 
 	if result != want {
 		t.Errorf("unexpected rendered prompt\nwant:\n%s\ngot:\n%s", want, result)
+	}
+}
+
+func TestDefaultPrompt_UsesSandmanWorktreeContract(t *testing.T) {
+	got := DefaultPrompt()
+
+	for _, want := range []string{
+		"Work in the current Sandman-created worktree on `{{BRANCH}}`.",
+		"Do not run `gh issue view {{ISSUE_NUMBER}}`, `git checkout main`, `git pull`, or create a new branch.",
+		"gh pr comment <N> --body \"{{REVIEW_COMMAND}}\"",
+		"gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("default prompt missing %q\n%s", want, got)
+		}
+	}
+
+	if strings.Contains(got, "Source branch:") || strings.Contains(got, "Target branch:") {
+		t.Fatalf("default prompt still uses old branch wording\n%s", got)
 	}
 }
 
@@ -60,7 +82,7 @@ func TestRender_PromptFileOverridesBuiltIn(t *testing.T) {
 	if !strings.Contains(result, "Custom: 7 - Refactor auth") {
 		t.Errorf("result missing custom header, got:\n%s", result)
 	}
-	if strings.Contains(result, "Please analyze and implement") {
+	if strings.Contains(result, "Work in the current Sandman-created worktree") {
 		t.Errorf("result should not contain built-in template text, got:\n%s", result)
 	}
 }
