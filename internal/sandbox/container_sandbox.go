@@ -22,8 +22,6 @@ type ContainerSandbox struct {
 	ownsContainer bool
 	cmd           *exec.Cmd
 	execFn        func(name string, arg ...string) *exec.Cmd
-	origGitDir    string // original .git file content, restored on Stop
-	origGitConfig string // original .gitconfig content, restored on Stop
 }
 
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
@@ -68,9 +66,8 @@ func (s *ContainerSandbox) Start() error {
 	return s.rewriteGitPaths()
 }
 
-// rewriteGitPaths rewrites the worktree's .git pointer and the main repo's
-// git config so that paths resolve inside the container (/workspace/…)
-// instead of pointing to host-absolute paths.
+// rewriteGitPaths rewrites the worktree's .git pointer so paths resolve
+// inside the container (/workspace/...) instead of the host checkout.
 func (s *ContainerSandbox) rewriteGitPaths() error {
 	absRepo, err := filepath.Abs(s.repoPath)
 	if err != nil {
@@ -80,27 +77,41 @@ func (s *ContainerSandbox) rewriteGitPaths() error {
 	// Rewrite the worktree .git pointer so git resolves inside the container.
 	gitFile := filepath.Join(s.worktree.WorkDir(), ".git")
 	if data, readErr := os.ReadFile(gitFile); readErr == nil {
-		s.origGitDir = string(data)
 		updated := strings.Replace(string(data), absRepo, "/workspace", 1)
 		if werr := os.WriteFile(gitFile, []byte(updated), 0644); werr != nil {
 			return werr
 		}
 	}
 
-	// Rewrite the host gitconfig so the insteadOf URL rewrites to the
-	// container path /workspace/…; save the original for Stop() to restore.
-	if home, _ := os.UserHomeDir(); home != "" {
-		cfg := filepath.Join(home, ".gitconfig")
-		if data, readErr := os.ReadFile(cfg); readErr == nil && strings.Contains(string(data), absRepo) {
-			s.origGitConfig = string(data)
-			updated := strings.Replace(string(data), absRepo, "/workspace", -1)
-			if werr := os.WriteFile(cfg, []byte(updated), 0644); werr != nil {
-				return werr
-			}
-		}
+	return nil
+}
+
+// RestoreHostPaths puts host-visible worktree metadata back after container use.
+func (s *ContainerSandbox) RestoreHostPaths() error {
+	return RestoreWorktreeGitPaths(s.repoPath, s.worktree.WorkDir())
+}
+
+// RestoreWorktreeGitPaths rewrites a preserved worktree's .git pointer back to host paths.
+func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
+	absRepo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return nil
 	}
 
-	return nil
+	gitFile := filepath.Join(worktreePath, ".git")
+	data, err := os.ReadFile(gitFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	updated := strings.Replace(string(data), "/workspace", absRepo, 1)
+	if updated == string(data) {
+		return nil
+	}
+	return os.WriteFile(gitFile, []byte(updated), 0644)
 }
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
@@ -138,19 +149,11 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 
 // Stop tears down the worktree and, in isolated mode, the container.
 func (s *ContainerSandbox) Stop() error {
-	if s.origGitDir != "" {
-		gitFile := filepath.Join(s.worktree.WorkDir(), ".git")
-		_ = os.WriteFile(gitFile, []byte(s.origGitDir), 0644)
-	}
-	if s.origGitConfig != "" {
-		if home, _ := os.UserHomeDir(); home != "" {
-			_ = os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(s.origGitConfig), 0644)
-		}
-	}
+	restoreErr := s.RestoreHostPaths()
 	if s.ownsContainer {
-		return errors.Join(s.container.Stop(), s.worktree.Stop())
+		return errors.Join(restoreErr, s.container.Stop(), s.worktree.Stop())
 	}
-	return s.worktree.Stop()
+	return errors.Join(restoreErr, s.worktree.Stop())
 }
 
 // WorkDir returns the working directory path of the sandbox.

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -280,8 +281,8 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
 		t.Fatalf("create ssh dir: %v", err)
 	}
-	// Use the host absolute path in insteadOf; rewriteGitPaths will rewrite
-	// it to the container path inside the container.
+	// Use the host absolute path in insteadOf; container startup rewrites the
+	// mounted gitconfig copy to the container path.
 	absRepo, _ := filepath.Abs(repoDir)
 	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
 		"file://"+filepath.Join(absRepo, ".sandman", "remote"))
@@ -434,7 +435,7 @@ func TestPRFlow_WorktreeSandboxOpencodeCommitsAndPushes(t *testing.T) {
 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
-	_ = initRunIntegrationRepoWithRemote(t, repoDir)
+	bareRemote := initRunIntegrationRepoWithRemote(t, repoDir)
 	seedPRFlowRepo(t, repoDir)
 	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
@@ -522,7 +523,6 @@ func TestPRFlow_WorktreeSandboxOpencodeCommitsAndPushes(t *testing.T) {
 		t.Fatalf("expected branch commit to descend from baseline: %v\n%s", err, out)
 	}
 
-	bareRemote := filepath.Join(repoDir, ".sandman", "remote")
 	remoteHash := strings.TrimSpace(runGit(t, bareRemote, "rev-parse", "refs/heads/"+prFlowBranch))
 	if remoteHash != branchHash {
 		t.Fatalf("remote branch hash mismatch: got %q, want %q", remoteHash, branchHash)
@@ -1378,7 +1378,7 @@ func customizeOpenCodeAgentForContainerWithEcho(t *testing.T, repoDir, model str
 	if err != nil {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
-	agent.Command = fmt.Sprintf(`echo "containerhostname=$(hostname) containerworkdir=$(pwd)" && PATH=/workspace/.sandman/bin:${PATH} opencode run --pure -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Command = fmt.Sprintf(`printf 'containerhostname=%%s\ncontainerworkdir=%%s\n' "$(hostname)" "$(pwd)" && PATH=/workspace/.sandman/bin:${PATH} opencode run --pure -m %s "$(cat {{.PromptFile}})"`, model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
@@ -1784,6 +1784,11 @@ func buildSandmanBinary(t *testing.T) string {
 
 	binPath := filepath.Join(t.TempDir(), "sandman")
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/sandman")
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve source file path")
+	}
+	cmd.Dir = filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build sandman binary: %v: %s", err, out)

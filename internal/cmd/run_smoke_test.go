@@ -496,10 +496,7 @@ func customizeSmokeConfig(repoDir, provider, opencodeModel string) error {
 	}
 	if provider == "opencode" {
 		resolved.Command = fmt.Sprintf(`opencode run --pure -m %s "$(cat {{.PromptFile}})"`, opencodeModel)
-		if !containsSmokePath(resolved.ConfigDirs, "~/.cache") {
-			resolved.ConfigDirs = append(resolved.ConfigDirs, "~/.cache")
-		}
-		for _, dir := range []string{"~/.cache/opencode", "~/.cache/opencode/bin", "~/.local/state"} {
+		for _, dir := range []string{"~/.cache/opencode", "~/.cache/opencode/bin"} {
 			if !containsSmokePath(resolved.ConfigDirs, dir) {
 				resolved.ConfigDirs = append(resolved.ConfigDirs, dir)
 			}
@@ -580,7 +577,7 @@ func ensureSmokeWritableDirs(t *testing.T, homeDir, provider string) {
 
 	dirs := []string{"~/.cache"}
 	if provider == "opencode" {
-		dirs = append(dirs, "~/.cache/opencode", "~/.cache/opencode/bin", "~/.local/state")
+		dirs = append(dirs, "~/.cache/opencode", "~/.cache/opencode/bin")
 	}
 	for _, rel := range dirs {
 		path := homePath(homeDir, rel)
@@ -628,12 +625,10 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 		}
 		startOpts.AgentConfigFiles = append(startOpts.AgentConfigFiles, path)
 	}
-	startOpts.AgentConfigDirs = append(startOpts.AgentConfigDirs, homePath(homeDir, "~/.cache"))
 	if provider == "opencode" {
 		startOpts.AgentConfigDirs = append(startOpts.AgentConfigDirs,
 			homePath(homeDir, "~/.cache/opencode"),
 			homePath(homeDir, "~/.cache/opencode/bin"),
-			homePath(homeDir, "~/.local/state"),
 		)
 	}
 
@@ -646,12 +641,12 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 
 	assertCmd := "set -eu; command -v gh >/dev/null; test -w /.cache; test -w /.local; test -w /.config"
 	if buildTools == "go" {
-		assertCmd += "; command -v go >/dev/null; go env GOPATH | grep -q '^/.local/share/go$'; go env GOMODCACHE | grep -q '^/.cache/go/pkg/mod$'; mkdir -p /.cache/go/pkg/mod /.local/share/go; test -w /.cache/go/pkg/mod; test -w /.local/share/go"
+		assertCmd += "; command -v go >/dev/null; test \"$(go env GOPATH)\" = \"/.local/share/go\"; test \"$(go env GOMODCACHE)\" = \"/.cache/go/pkg/mod\"; mkdir -p /.cache/go/pkg/mod /.local/share/go; test -w /.cache/go/pkg/mod; test -w /.local/share/go"
 	}
 	if buildTools == "python" {
-		assertCmd += "; command -v python >/dev/null"
+		assertCmd += "; command -v python >/dev/null || command -v python3 >/dev/null"
 	}
-	check := exec.Command(runtime, "exec", container.ID(), "sh", "-lc", assertCmd)
+	check := exec.Command(runtime, "exec", container.ID(), "sh", "-c", assertCmd)
 	if out, err := check.CombinedOutput(); err != nil {
 		t.Fatalf("preflight assertions failed for %s/%s: %v\n%s", provider, buildTools, err, out)
 	}

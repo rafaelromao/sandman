@@ -441,6 +441,26 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	wg.Wait()
 
+	if sandboxMode == "docker" || sandboxMode == "podman" {
+		for _, result := range results {
+			if strings.TrimSpace(result.Branch) == "" {
+				continue
+			}
+			worktreePath := filepath.Join(cfg.WorktreeDir, result.Branch)
+			if err := sandbox.RestoreWorktreeGitPaths(".", worktreePath); err != nil && o.eventLog != nil {
+				_ = o.eventLog.Log(events.Event{
+					Type:      "run.warning",
+					Timestamp: time.Now(),
+					Issue:     result.IssueNumber,
+					Payload: map[string]any{
+						"branch":  result.Branch,
+						"message": err.Error(),
+					},
+				})
+			}
+		}
+	}
+
 	if failureCount > 0 {
 		return &Result{Runs: results}, fmt.Errorf("%d of %d runs failed", failureCount, len(req.Issues))
 	}

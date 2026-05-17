@@ -48,3 +48,5 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0005 | Replace isolated container toggle with container capacity | accepted |
 | 0006 | Built-in agent presets and Claude Code naming | accepted |
 | 0007 | BuildToolsPreset and pinned init scaffolding | accepted |
+| 0008 | Config mount resolution via temporary copy | accepted |
+| 0009 | Stabilize container-backed smoke and e2e tests | accepted |
