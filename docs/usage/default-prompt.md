@@ -22,18 +22,21 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     - If a toolchain is missing, use mise first before adding ad hoc installs.
 
     ### 2. Plan (TDD)
-    - Read the issue body and linked context, respecting ADRs and domain glossary
-    - Design testable public interfaces (deep modules, small interface)
-    - List behaviors to test (not implementation steps)
-    - **No horizontal slicing**: one test -> one impl -> repeat
+    - Read the issue body and linked context, respecting ADRs and domain glossary.
+    - Use parallel subagents for independent reads: one on issue/spec/docs, one on relevant code and tests.
+    - Synthesize both reads before drafting a plan.
+    - Design testable public interfaces (deep modules, small interface).
+    - List behaviors to test (not implementation steps).
+    - **No horizontal slicing**: one test -> one impl -> repeat.
 
     ### 3. Implement (TDD — vertical tracer bullets)
-    - RED: write one test for one behavior -> fails
-    - GREEN: write minimal code to pass -> passes
-    - Repeat for each behavior
-    - Keep tests at public interface level, not implementation details
-    - Run project tests and formatting after each cycle
-    - Do NOT commit during TDD
+    - Keep TDD strictly sequential: one test, one implementation, repeat.
+    - Do not parallelize TDD.
+    - RED: write one test for one behavior -> fails.
+    - GREEN: write minimal code to pass -> passes.
+    - Keep tests at public interface level, not implementation details.
+    - Run project tests and formatting after each cycle.
+    - Do NOT commit during TDD.
 
     ### 4. Commit
     ```bash
@@ -43,9 +46,12 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
 
     ### 5. Self-review
     Review the diff against the originating issue. For each file/hunk:
+    - Run standards and spec readers in parallel.
+    - Wait to synthesize both reads before fixing anything.
     - Does it implement what the issue asked for? (Spec)
     - Does it follow repo conventions? (Standards — CLAUDE.md, CONTRIBUTING.md, CONTEXT.md, ADRs, tooling configs)
-    - Apply fixes, run tests/formatting, commit:
+    - Cluster independent fixes and apply them in parallel where safe.
+    - Run tests/formatting, commit:
     ```bash
     git add -A
     git commit -m "refactor: self-review fixes"
@@ -62,9 +68,17 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     - Post `gh pr comment <N> --body "{{REVIEW_COMMAND}}"`
     - Poll `gh pr view <N> --comments` every 30-60s (5 min timeout)
     - Classify feedback: blockers (must fix), suggestions (fix if straightforward), nits (fix if trivial)
-    - Apply fixes, run tests/formatting, commit, push
-    - Repeat from step 2 until approved or max 10 passes
+    - Cluster independent review feedback and handle the clusters in parallel before the next pass.
+    - Apply fixes, run tests/formatting, commit, push.
+    - Repeat from step 2 until approved or max 10 passes.
+    - If approval is not reached after 10 review cycles, stop, leave the PR open, and report the latest blocking feedback.
+    - PR completion gate: approval + green checks + mergeable state, then squash merge.
     - **Do NOT review your own PR** — delegate exclusively to {{REVIEW_COMMAND}}
+
+    ### 8. Merge & wrap-up
+    - Verify merge success.
+    - Delete the branch after merge.
+    - Report the PR URL, PR number, final status, review cycles, and any final blockers.
 <!-- default-prompt:end -->
 
 ## What each part does
@@ -72,9 +86,9 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
 - `Task` names the work and injects the issue number/title.
 - `Context` passes the raw issue body through unchanged.
 - `Setup` keeps the agent inside the current Sandman worktree and forbids re-bootstrap.
-- `Plan (TDD)` asks for behavior-first planning.
-- `Implement (TDD)` keeps the loop vertical: one test, one fix, repeat.
-- `Commit`, `Self-review`, `Push & PR`, and `Delegate review` encode Sandman's PR workflow.
+- `Plan (TDD)` asks for behavior-first planning and parallel independent reads.
+- `Implement (TDD)` keeps the loop vertical and strictly sequential: one test, one fix, repeat.
+- `Commit`, `Self-review`, `Push & PR`, `Delegate review`, and `Merge & wrap-up` encode Sandman's PR workflow.
 - `{{BRANCH}}` and `{{DEFAULT_BRANCH}}` are branch aliases filled from the run branch and default branch.
 - `{{REVIEW_COMMAND}}` resolves from config or `--review-command` and defaults to `/oc review`.
 

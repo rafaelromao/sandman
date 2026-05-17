@@ -45,8 +45,15 @@ func TestDefaultPrompt_UsesSandmanWorktreeContract(t *testing.T) {
 	for _, want := range []string{
 		"Work in the current Sandman-created worktree on `{{BRANCH}}`.",
 		"Do not run `gh issue view {{ISSUE_NUMBER}}`, `git checkout main`, `git pull`, or create a new branch.",
-		"gh pr comment <N> --body \"{{REVIEW_COMMAND}}\"",
+		"Use parallel subagents for independent reads: one on issue/spec/docs, one on relevant code and tests.",
+		"Keep TDD strictly sequential: one test, one implementation, repeat.",
 		"gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"",
+		"gh pr comment <N> --body \"{{REVIEW_COMMAND}}\"",
+		"Run standards and spec readers in parallel.",
+		"Cluster independent review feedback and handle the clusters in parallel before the next pass.",
+		"PR completion gate: approval + green checks + mergeable state, then squash merge.",
+		"Verify merge success.",
+		"Report the PR URL, PR number, final status, review cycles, and any final blockers.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("default prompt missing %q\n%s", want, got)
