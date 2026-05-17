@@ -148,10 +148,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				MaxContainersSet:     maxContainersSet,
 				Interactive:          interactive,
 				PromptConfig: prompt.RenderConfig{
-					PromptFlag:    promptFlag,
-					TemplateFlag:  templateFlag,
-					ReviewCommand: reviewCommand,
-					PromptArgs:    promptArgs,
+					PromptFlag:       promptFlag,
+					TemplateFlag:     templateFlag,
+					ReviewCommand:    reviewCommand,
+					ReviewCommandSet: strings.TrimSpace(reviewCommandFlag) != "",
+					PromptArgs:       promptArgs,
 				},
 			})
 			if result != nil {

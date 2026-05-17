@@ -1147,6 +1147,44 @@ func TestRunBatch_LogsStartedAndFinishedEvents(t *testing.T) {
 	}
 }
 
+func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, PromptConfig: prompt.RenderConfig{PromptFlag: "inline", PromptArgs: map[string]string{"FOO": "bar"}, ReviewCommand: "/custom review", ReviewCommandSet: true}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) == 0 {
+		t.Fatal("expected run.started event")
+	}
+	started := spyLog.events[0]
+	if started.Type != "run.started" {
+		t.Fatalf("expected first event run.started, got %q", started.Type)
+	}
+	if started.Payload["prompt_source_type"] != "prompt" {
+		t.Fatalf("expected prompt source type prompt, got %#v", started.Payload["prompt_source_type"])
+	}
+	if started.Payload["prompt_source_value"] != "inline" {
+		t.Fatalf("expected prompt source value inline, got %#v", started.Payload["prompt_source_value"])
+	}
+	args, ok := started.Payload["prompt_args"].(map[string]string)
+	if !ok || args["FOO"] != "bar" {
+		t.Fatalf("expected prompt args replay, got %#v", started.Payload["prompt_args"])
+	}
+	if started.Payload["review_command"] != "/custom review" {
+		t.Fatalf("expected review command replay, got %#v", started.Payload["review_command"])
+	}
+}
+
 func TestRunBatch_LogsFinishedEventWithBranch(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

@@ -553,12 +553,36 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	runID := generateRunID(num)
 	if o.eventLog != nil {
+		promptSourceType := "current"
+		promptSourceValue := ""
+		switch {
+		case renderCfg.PromptFlag != "":
+			promptSourceType = "prompt"
+			promptSourceValue = renderCfg.PromptFlag
+		case renderCfg.TemplateFlag != "":
+			promptSourceType = "template"
+			promptSourceValue = renderCfg.TemplateFlag
+		}
+
+		payload := map[string]any{
+			"branch":             branch,
+			"prompt_source_type": promptSourceType,
+		}
+		if promptSourceValue != "" {
+			payload["prompt_source_value"] = promptSourceValue
+		}
+		if len(renderCfg.PromptArgs) > 0 {
+			payload["prompt_args"] = renderCfg.PromptArgs
+		}
+		if renderCfg.ReviewCommandSet {
+			payload["review_command"] = renderCfg.ReviewCommand
+		}
 		_ = o.eventLog.Log(events.Event{
 			Type:      "run.started",
 			Timestamp: time.Now(),
 			RunID:     runID,
 			Issue:     num,
-			Payload:   map[string]any{"branch": branch},
+			Payload:   payload,
 		})
 	}
 
