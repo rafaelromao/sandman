@@ -19,7 +19,13 @@ func TestDefaultPromptDocMatchesCanonicalPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := strings.TrimSpace(DefaultPrompt())
+	templatePath := filepath.Join("default_prompt.md")
+	template, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatalf("read default prompt template: %v", err)
+	}
+
+	want := strings.TrimSpace(string(template))
 	if got != want {
 		t.Fatalf("default prompt doc drifted\nwant:\n%s\ngot:\n%s", want, got)
 	}

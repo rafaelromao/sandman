@@ -39,22 +39,16 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 	}
 }
 
-func TestDefaultPrompt_UsesSandmanWorktreeContract(t *testing.T) {
-	got := DefaultPrompt()
-
-	for _, want := range []string{
-		"Work in the current Sandman-created worktree on `{{BRANCH}}`.",
-		"Do not run `gh issue view {{ISSUE_NUMBER}}`, `git checkout main`, `git pull`, or create a new branch.",
-		"gh pr comment <N> --body \"{{REVIEW_COMMAND}}\"",
-		"gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("default prompt missing %q\n%s", want, got)
-		}
+func TestDefaultPrompt_EmbeddedPromptMatchesTemplate(t *testing.T) {
+	data, err := os.ReadFile("default_prompt.md")
+	if err != nil {
+		t.Fatalf("read default prompt template: %v", err)
 	}
 
-	if strings.Contains(got, "Source branch:") || strings.Contains(got, "Target branch:") {
-		t.Fatalf("default prompt still uses old branch wording\n%s", got)
+	want := strings.TrimSpace(string(data))
+	got := strings.TrimSpace(DefaultPrompt())
+	if got != want {
+		t.Fatalf("default prompt drifted\nwant:\n%s\ngot:\n%s", want, got)
 	}
 }
 
