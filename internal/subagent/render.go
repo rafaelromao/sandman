@@ -28,6 +28,10 @@ func isTerminal(w io.Writer) bool {
 }
 
 func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writer, logW io.Writer) {
+	RenderEventsWithSink(ctx, issue, events, w, logW, nil)
+}
+
+func RenderEventsWithSink(ctx context.Context, issue int, events <-chan Event, w io.Writer, logW io.Writer, onEvent func(Event)) {
 	useANSI := isTerminal(w)
 	prefix := fmt.Sprintf("[issue-%d] ", issue)
 	active := make(map[string]bool)
@@ -39,6 +43,9 @@ func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writ
 		case e, ok := <-events:
 			if !ok {
 				return
+			}
+			if onEvent != nil {
+				onEvent(e)
 			}
 			ts := e.Timestamp
 			if ts.IsZero() {

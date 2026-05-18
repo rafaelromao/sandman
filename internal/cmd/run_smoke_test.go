@@ -687,6 +687,7 @@ func checkSubagentEvents(t *testing.T, repoDir string) {
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 
+	startedSessionIDs := map[string]bool{}
 	var started, finished, foundText bool
 	for _, line := range lines {
 		if line == "" {
@@ -702,11 +703,16 @@ func checkSubagentEvents(t *testing.T, repoDir string) {
 		switch evt.Type {
 		case "subagent.started":
 			started = true
+			if sessionID, ok := evt.Payload["session_id"].(string); ok && sessionID != "" {
+				startedSessionIDs[sessionID] = true
+			}
 		case "subagent.finished":
 			finished = true
 		case "subagent.text":
-			if text, ok := evt.Payload["text"].(string); ok && strings.Contains(text, "SMOKE_OK") {
-				foundText = true
+			if text, ok := evt.Payload["text"].(string); ok && strings.TrimSpace(text) != "" {
+				if sessionID, ok := evt.Payload["session_id"].(string); ok && startedSessionIDs[sessionID] {
+					foundText = true
+				}
 			}
 		}
 	}
@@ -776,7 +782,7 @@ func TestSmoke_SubagentOutput_Worktree(t *testing.T) {
 	issue := &github.Issue{
 		Number: 421,
 		Title:  "Smoke opencode",
-		Body:   "Reply with exactly SMOKE_OK.",
+		Body:   "Use one subagent to inspect the repository, then reply exactly SMOKE_OK. Do not modify files.",
 	}
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: issue}}
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")

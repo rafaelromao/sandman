@@ -584,6 +584,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	if factory == nil {
 		factory = defaultRunnableFactory{}
 	}
+	var runID string
 	runnable := factory.NewRunnable(issue, branch, wt)
 	if agentRun, ok := runnable.(*AgentRun); ok {
 		agentRun.env = agentCfg.Env
@@ -592,11 +593,18 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		agentRun.defaultBranch = cfg.Git.DefaultBranch
 		if agentCfg.Preset == "opencode" {
 			agentRun.capture = subagent.NewOpenCodeCapture()
-			// TODO: wire up DBPoller for subagent session discovery via opencode.db polling
+			if oc, ok := agentRun.capture.(*subagent.OpenCodeCapture); ok {
+				oc.SetDBPoller(subagent.NewDBPoller(num))
+			}
+			if o.eventLog != nil {
+				agentRun.captureSink = func(e subagent.Event) {
+					logObservedSubagentEvent(o.eventLog, runID, num, e)
+				}
+			}
 		}
 	}
 
-	runID := generateRunID(num)
+	runID = generateRunID(num)
 	if o.eventLog != nil {
 		promptSourceType := "current"
 		promptSourceValue := ""
@@ -641,69 +649,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
 	}
 
-	if o.eventLog != nil {
-		if agentRun, ok := runnable.(*AgentRun); ok && agentRun.capture != nil {
-			_ = o.eventLog.Log(events.Event{
-				Type:      events.EventSubagentStarted,
-				Timestamp: time.Now(),
-				RunID:     runID,
-				Issue:     num,
-				Payload: map[string]any{
-					"agent":  agentCfg.Preset,
-					"title":  issue.Title,
-					"branch": branch,
-				},
-			})
-		}
-	}
-
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, interactive, renderCfg)
-
-	if o.eventLog != nil {
-		if agentRun, ok := runnable.(*AgentRun); ok && agentRun.capture != nil {
-			msgCount := 0
-			for _, s := range result.SubagentOutput {
-				for _, m := range s.Messages {
-					msgCount += len(m.Parts)
-				}
-				for _, m := range s.Messages {
-					for _, p := range m.Parts {
-						if p.Type == subagent.PartTypeText {
-							text := p.Text
-							if len(text) > 500 {
-								text = text[:500]
-							}
-							_ = o.eventLog.Log(events.Event{
-								Type:      events.EventSubagentText,
-								Timestamp: time.Now(),
-								RunID:     runID,
-								Issue:     num,
-								Payload: map[string]any{
-									"session_id": s.SessionID,
-									"text":       text,
-								},
-							})
-						}
-					}
-				}
-			}
-			var sessionIDs []string
-			for _, s := range result.SubagentOutput {
-				sessionIDs = append(sessionIDs, s.SessionID)
-			}
-			_ = o.eventLog.Log(events.Event{
-				Type:      events.EventSubagentFinished,
-				Timestamp: time.Now(),
-				RunID:     runID,
-				Issue:     num,
-				Payload: map[string]any{
-					"session_id":    sessionIDs,
-					"message_count": msgCount,
-					"status":        result.Status,
-				},
-			})
-		}
-	}
 
 	worktreeState := "deleted"
 	if result.Status == "failure" || preserve {
@@ -740,6 +686,53 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		}
 	}
 	return result
+}
+
+func logObservedSubagentEvent(eventLog events.EventLog, runID string, issue int, e subagent.Event) {
+	if eventLog == nil || e.ParentID == "" {
+		return
+	}
+
+	switch e.Type {
+	case subagent.EventSubagentStart:
+		_ = eventLog.Log(events.Event{
+			Type:      events.EventSubagentStarted,
+			Timestamp: e.Timestamp,
+			RunID:     runID,
+			Issue:     issue,
+			Payload: map[string]any{
+				"session_id": e.SessionID,
+				"agent":      e.Agent,
+				"title":      e.Title,
+			},
+		})
+	case subagent.EventText:
+		text := e.Content
+		if len(text) > 500 {
+			text = text[:500]
+		}
+		_ = eventLog.Log(events.Event{
+			Type:      events.EventSubagentText,
+			Timestamp: e.Timestamp,
+			RunID:     runID,
+			Issue:     issue,
+			Payload: map[string]any{
+				"session_id": e.SessionID,
+				"text":       text,
+			},
+		})
+	case subagent.EventSubagentFinish:
+		_ = eventLog.Log(events.Event{
+			Type:      events.EventSubagentFinished,
+			Timestamp: e.Timestamp,
+			RunID:     runID,
+			Issue:     issue,
+			Payload: map[string]any{
+				"session_id": e.SessionID,
+				"agent":      e.Agent,
+			},
+		})
+	}
 }
 
 func slugify(title string) string {

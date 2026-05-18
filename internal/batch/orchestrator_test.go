@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/subagent"
 )
 
 func initGitRepo(t *testing.T, dir string) {
@@ -211,6 +212,34 @@ func (s *spyEventLog) Log(e events.Event) error {
 
 func (s *spyEventLog) Read() ([]events.Event, error) {
 	return s.events, nil
+}
+
+func TestLogObservedSubagentEvent(t *testing.T) {
+	spyLog := &spyEventLog{}
+	issue := 42
+	runID := "run-42"
+
+	logObservedSubagentEvent(spyLog, runID, issue, subagent.Event{Type: subagent.EventText, Content: "parent output", SessionID: "parent-1"})
+	if len(spyLog.events) != 0 {
+		t.Fatalf("expected parent-only event to be ignored, got %+v", spyLog.events)
+	}
+
+	logObservedSubagentEvent(spyLog, runID, issue, subagent.Event{Type: subagent.EventSubagentStart, ParentID: "parent-1", SessionID: "child-1", Agent: "opencode", Title: "Explore", Timestamp: time.Unix(100, 0)})
+	logObservedSubagentEvent(spyLog, runID, issue, subagent.Event{Type: subagent.EventText, ParentID: "parent-1", SessionID: "child-1", Content: "child output", Timestamp: time.Unix(101, 0)})
+	logObservedSubagentEvent(spyLog, runID, issue, subagent.Event{Type: subagent.EventSubagentFinish, ParentID: "parent-1", SessionID: "child-1", Agent: "opencode", Timestamp: time.Unix(102, 0)})
+
+	if len(spyLog.events) != 3 {
+		t.Fatalf("expected 3 logged events, got %+v", spyLog.events)
+	}
+	if spyLog.events[0].Type != events.EventSubagentStarted || spyLog.events[0].Payload["session_id"] != "child-1" {
+		t.Fatalf("unexpected start event: %+v", spyLog.events[0])
+	}
+	if spyLog.events[1].Type != events.EventSubagentText || spyLog.events[1].Payload["text"] != "child output" {
+		t.Fatalf("unexpected text event: %+v", spyLog.events[1])
+	}
+	if spyLog.events[2].Type != events.EventSubagentFinished || spyLog.events[2].Payload["session_id"] != "child-1" {
+		t.Fatalf("unexpected finish event: %+v", spyLog.events[2])
+	}
 }
 
 type blockingRunnable struct {

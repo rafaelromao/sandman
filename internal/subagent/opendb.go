@@ -27,10 +27,9 @@ func DiscoverDBPath() (string, error) {
 
 const defaultPollInterval = 2 * time.Second
 
-func NewDBPoller(issue int, events chan<- Event) *DBPoller {
+func NewDBPoller(issue int) *DBPoller {
 	return &DBPoller{
 		runner:    opencodeDBRunner,
-		events:    events,
 		issue:     issue,
 		writeFile: osWriteFile,
 	}
@@ -64,15 +63,16 @@ type DBPoller struct {
 	parentID string
 	seen     map[string]bool
 	started  map[string]SessionOutput
+	order    []string
 	stopped  bool
 	wg       sync.WaitGroup
 }
 
 type childSessionRow struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Agent       string `json:"agent"`
-	TimeCreated string `json:"time_created"`
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Agent       string          `json:"agent"`
+	TimeCreated json.RawMessage `json:"time_created"`
 }
 
 type messageRow struct {
@@ -105,6 +105,7 @@ func (p *DBPoller) Start(parentID string) {
 	p.parentID = parentID
 	p.seen = make(map[string]bool)
 	p.started = make(map[string]SessionOutput)
+	p.order = nil
 	p.mu.Unlock()
 
 	_, err := p.discoverDBPath()
@@ -124,6 +125,7 @@ func (p *DBPoller) emitSubagentStart(s SessionOutput) {
 	select {
 	case p.events <- Event{
 		SessionID: s.SessionID,
+		ParentID:  p.parentID,
 		Type:      EventSubagentStart,
 		Agent:     s.Agent,
 		Title:     s.Title,
@@ -144,6 +146,7 @@ func (p *DBPoller) emitSubagentFinishLocked(id string) {
 	select {
 	case p.events <- Event{
 		SessionID: id,
+		ParentID:  p.parentID,
 		Type:      EventSubagentFinish,
 		Agent:     s.Agent,
 		Timestamp: time.Now(),
@@ -152,17 +155,24 @@ func (p *DBPoller) emitSubagentFinishLocked(id string) {
 	}
 }
 
-func (p *DBPoller) Stop() {
+func (p *DBPoller) Stop() []SessionOutput {
 	p.mu.Lock()
 	p.stopped = true
 	p.mu.Unlock()
 	p.wg.Wait()
 
 	p.mu.Lock()
-	for id := range p.started {
+	outputs := make([]SessionOutput, 0, len(p.order))
+	for _, id := range p.order {
+		if s, ok := p.started[id]; ok {
+			outputs = append(outputs, s)
+		}
+	}
+	for _, id := range p.order {
 		p.emitSubagentFinishLocked(id)
 	}
 	p.mu.Unlock()
+	return outputs
 }
 
 func (p *DBPoller) pollLoop() {
@@ -215,6 +225,7 @@ func (p *DBPoller) processChildSession(s SessionOutput) {
 		p.mu.Unlock()
 	} else {
 		p.started[s.SessionID] = s
+		p.order = append(p.order, s.SessionID)
 		p.mu.Unlock()
 		p.emitSubagentStart(s)
 	}
@@ -230,6 +241,12 @@ func (p *DBPoller) processChildSession(s SessionOutput) {
 			p.dispatchEvent(s.SessionID, part)
 		}
 	}
+
+	p.mu.Lock()
+	current := p.started[s.SessionID]
+	current.Messages = messages
+	p.started[s.SessionID] = current
+	p.mu.Unlock()
 
 	if p.writeFile != nil {
 		data, err := json.MarshalIndent(messages, "", "  ")

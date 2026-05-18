@@ -26,6 +26,7 @@ type AgentRun struct {
 	status         string
 	env            map[string]string
 	capture        subagent.Capture
+	captureSink    func(subagent.Event)
 	subagentOutput []subagent.SessionOutput
 }
 
@@ -92,7 +93,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		eventsDone := make(chan struct{})
 		go func() {
 			defer close(eventsDone)
-			subagent.RenderEvents(ctx, r.issue.Number, capture.Events(), stdout, logFile)
+			subagent.RenderEventsWithSink(ctx, r.issue.Number, capture.Events(), stdout, logFile, r.captureSink)
 		}()
 
 		execErr := r.sandbox.Exec(ctx, command, combinedOut, combinedErr)

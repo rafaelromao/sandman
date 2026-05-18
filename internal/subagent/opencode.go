@@ -33,6 +33,9 @@ func NewOpenCodeCapture() *OpenCodeCapture {
 func (o *OpenCodeCapture) SetDBPoller(poller *DBPoller) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if poller != nil {
+		poller.events = o.events
+	}
 	o.dbPoller = poller
 }
 
@@ -80,8 +83,10 @@ func (o *OpenCodeCapture) Stop() ([]SessionOutput, error) {
 	pw := o.pw
 	poller := o.dbPoller
 	o.mu.Unlock()
+
+	var childOutputs []SessionOutput
 	if poller != nil {
-		poller.Stop()
+		childOutputs = poller.Stop()
 	}
 	if pw != nil {
 		_ = pw.Close()
@@ -93,10 +98,16 @@ func (o *OpenCodeCapture) Stop() ([]SessionOutput, error) {
 	result := o.sessionOutput
 	o.mu.Unlock()
 
-	if result.SessionID == "" && len(result.Messages) == 0 {
+	sessions := make([]SessionOutput, 0, 1+len(childOutputs))
+	if result.SessionID != "" || len(result.Messages) > 0 {
+		sessions = append(sessions, result)
+	}
+	sessions = append(sessions, childOutputs...)
+
+	if len(sessions) == 0 {
 		return nil, nil
 	}
-	return []SessionOutput{result}, nil
+	return sessions, nil
 }
 
 func (o *OpenCodeCapture) parseStream(reader io.Reader) {
@@ -194,11 +205,11 @@ type openCodeError struct {
 }
 
 type openCodeEvent struct {
-	Type      string         `json:"type"`
-	Timestamp string         `json:"timestamp"`
-	SessionID string         `json:"sessionID"`
-	Part      *openCodePart  `json:"part,omitempty"`
-	Error     *openCodeError `json:"error,omitempty"`
+	Type      string          `json:"type"`
+	Timestamp json.RawMessage `json:"timestamp"`
+	SessionID string          `json:"sessionID"`
+	Part      *openCodePart   `json:"part,omitempty"`
+	Error     *openCodeError  `json:"error,omitempty"`
 }
 
 func (o *OpenCodeCapture) parseJSONLine(line string) *Event {
@@ -212,8 +223,16 @@ func (o *OpenCodeCapture) parseJSONLine(line string) *Event {
 	}
 
 	var timestamp time.Time
-	if raw.Timestamp != "" {
-		timestamp, _ = time.Parse(time.RFC3339, raw.Timestamp)
+	if len(raw.Timestamp) > 0 && string(raw.Timestamp) != "null" {
+		var tsString string
+		if err := json.Unmarshal(raw.Timestamp, &tsString); err == nil {
+			timestamp, _ = time.Parse(time.RFC3339, tsString)
+		} else {
+			var tsInt int64
+			if err := json.Unmarshal(raw.Timestamp, &tsInt); err == nil {
+				timestamp = time.UnixMilli(tsInt)
+			}
+		}
 	}
 
 	ev := Event{

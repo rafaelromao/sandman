@@ -1,6 +1,7 @@
 package subagent
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -209,6 +210,87 @@ func TestStopClosesChannel(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for channel close")
+	}
+}
+
+func TestStopReturnsParentAndChildSessions(t *testing.T) {
+	oc := NewOpenCodeCapture()
+	var mu sync.Mutex
+	callIndex := 0
+	runner := func(args ...string) ([]byte, error) {
+		mu.Lock()
+		i := callIndex
+		callIndex++
+		mu.Unlock()
+		switch i {
+		case 0:
+			return []byte("/home/user/.opencode/sessions.db\n"), nil
+		case 1:
+			return []byte(`[{"id":"child-1","title":"Explore","agent":"opencode","time_created":"2024-01-01T00:00:00Z"}]`), nil
+		case 2:
+			return []byte(`[{"id":"m1","session_id":"child-1","data":"{\"role\":\"assistant\"}"}]`), nil
+		case 3:
+			return []byte(`[{"id":"p1","message_id":"m1","session_id":"child-1","data":"{\"type\":\"text\",\"text\":\"child hello\"}"}]`), nil
+		default:
+			return []byte(`[]`), nil
+		}
+	}
+	poller := &DBPoller{runner: runner, issue: 42, pollInterval: time.Millisecond, writeFile: func(path string, data []byte) error { return nil }}
+	oc.SetDBPoller(poller)
+
+	_, stdout, cleanup, err := oc.WrapCommand("opencode run --issue 123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	_, err = stdout.Write([]byte(`{"type":"text","timestamp":"2024-01-01T00:00:00Z","sessionID":"parent-1","part":{"type":"text","text":"parent hello"}}` + "\n"))
+	if err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+
+	select {
+	case e := <-oc.Events():
+		if e.Type != EventSessionDetected {
+			t.Fatalf("expected session_detected event, got %s", e.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for session_detected event")
+	}
+
+	select {
+	case e := <-oc.Events():
+		if e.Type != EventText || e.Content != "parent hello" {
+			t.Fatalf("expected parent text event, got %+v", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for parent text event")
+	}
+
+	select {
+	case e := <-oc.Events():
+		if e.Type != EventSubagentStart {
+			t.Fatalf("expected child start event, got %+v", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for child start event")
+	}
+
+	sessions, err := oc.Stop()
+	if err != nil {
+		t.Fatalf("unexpected stop error: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %+v", sessions)
+	}
+	if sessions[0].SessionID != "parent-1" || len(sessions[0].Messages) == 0 || len(sessions[0].Messages[0].Parts) == 0 {
+		t.Fatalf("expected parent session output first, got %+v", sessions[0])
+	}
+	if sessions[1].SessionID != "child-1" || len(sessions[1].Messages) == 0 || len(sessions[1].Messages[0].Parts) == 0 {
+		t.Fatalf("expected child session output second, got %+v", sessions[1])
+	}
+	if got := sessions[1].Messages[0].Parts[0].Text; got != "child hello" {
+		t.Fatalf("expected child message text, got %q", got)
 	}
 }
 

@@ -318,7 +318,6 @@ func TestDBPollerEmitsEventsForChildContent(t *testing.T) {
 	}
 
 	p.Start("parent-123")
-	defer p.Stop()
 
 	var eventsReceived int
 	timeout := time.After(2 * time.Second)
@@ -330,6 +329,9 @@ func TestDBPollerEmitsEventsForChildContent(t *testing.T) {
 			case 1:
 				if e.Type != EventSubagentStart {
 					t.Errorf("event 1: expected EventSubagentStart, got %s", e.Type)
+				}
+				if e.ParentID != "parent-123" {
+					t.Errorf("event 1: expected ParentID parent-123, got %s", e.ParentID)
 				}
 				if e.Agent != "opencode" {
 					t.Errorf("event 1: expected Agent 'opencode', got %q", e.Agent)
@@ -354,5 +356,16 @@ func TestDBPollerEmitsEventsForChildContent(t *testing.T) {
 		case <-timeout:
 			t.Fatalf("timeout after %d events, expected 2", eventsReceived)
 		}
+	}
+
+	sessions := p.Stop()
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 child session, got %+v", sessions)
+	}
+	if sessions[0].SessionID != "child-1" {
+		t.Fatalf("expected child session child-1, got %+v", sessions[0])
+	}
+	if len(sessions[0].Messages) != 1 || len(sessions[0].Messages[0].Parts) != 1 {
+		t.Fatalf("expected captured child messages, got %+v", sessions[0])
 	}
 }
