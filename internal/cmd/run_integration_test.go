@@ -342,7 +342,7 @@ touch "$state_dir/start-$issue"
 
 attempts=0
 count=0
-while [ "$attempts" -lt 100 ]; do
+while [ "$attempts" -lt 500 ]; do
   count=0
   for path in "$state_dir"/start-*; do
     if [ -e "$path" ]; then
@@ -1044,7 +1044,7 @@ mkdir -p "$state_dir"
 
     attempts=0
     count=0
-    while [ "$attempts" -lt 100 ]; do
+    while [ "$attempts" -lt 500 ]; do
       count=0
       for path in "$state_dir"/blocker-start-*; do
         if [ -e "$path" ]; then
@@ -1082,7 +1082,7 @@ mkdir -p "$state_dir"
 
     attempts=0
     count=0
-    while [ "$attempts" -lt 100 ]; do
+    while [ "$attempts" -lt 500 ]; do
       count=0
       for path in "$state_dir"/dependent-start-*; do
         if [ -e "$path" ]; then
