@@ -14,6 +14,8 @@ const (
 	EventReasoning       EventType = "reasoning"
 	EventTool            EventType = "tool"
 	EventError           EventType = "error"
+	EventStepStart       EventType = "step_start"
+	EventStepFinish      EventType = "step_finish"
 )
 
 // PartType represents the kind of content in a message part.
