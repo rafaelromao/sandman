@@ -17,6 +17,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -260,8 +261,9 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: &issue}}
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
 	store := &config.FileStore{Path: cfgPath}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 	deps := Dependencies{
-		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, eventLog),
 		ConfigStore:    store,
 		GitHubClient:   gh,
 		PromptRenderer: &prompt.Engine{},
@@ -499,7 +501,7 @@ func customizeSmokeConfig(repoDir, provider, opencodeModel string) error {
 		return err
 	}
 	if provider == "opencode" {
-		resolved.Command = fmt.Sprintf(`opencode run --pure -m %s "$(cat {{.PromptFile}})"`, opencodeModel)
+		resolved.Command = fmt.Sprintf(`opencode run -m %s "$(cat {{.PromptFile}})"`, opencodeModel)
 		for _, dir := range []string{"~/.cache/opencode", "~/.cache/opencode/bin"} {
 			if !containsSmokePath(resolved.ConfigDirs, dir) {
 				resolved.ConfigDirs = append(resolved.ConfigDirs, dir)
@@ -685,13 +687,14 @@ func checkSubagentEvents(t *testing.T, repoDir string) {
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 
-	var started, finished bool
+	var started, finished, foundText bool
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
 		var evt struct {
-			Type string `json:"type"`
+			Type    string         `json:"type"`
+			Payload map[string]any `json:"payload"`
 		}
 		if err := json.Unmarshal([]byte(line), &evt); err != nil {
 			continue
@@ -701,6 +704,10 @@ func checkSubagentEvents(t *testing.T, repoDir string) {
 			started = true
 		case "subagent.finished":
 			finished = true
+		case "subagent.text":
+			if text, ok := evt.Payload["text"].(string); ok && strings.Contains(text, "SMOKE_OK") {
+				foundText = true
+			}
 		}
 	}
 	if !started {
@@ -708,6 +715,9 @@ func checkSubagentEvents(t *testing.T, repoDir string) {
 	}
 	if !finished {
 		t.Error("expected subagent.finished event in events.jsonl")
+	}
+	if !foundText {
+		t.Error("expected subagent.text event containing 'SMOKE_OK' in events.jsonl")
 	}
 }
 
@@ -771,8 +781,9 @@ func TestSmoke_SubagentOutput_Worktree(t *testing.T) {
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: issue}}
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
 	store := &config.FileStore{Path: cfgPath}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 	deps := Dependencies{
-		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, eventLog),
 		ConfigStore:    store,
 		GitHubClient:   gh,
 		PromptRenderer: &prompt.Engine{},
@@ -862,8 +873,9 @@ func TestSmoke_SubagentOutput_Podman(t *testing.T) {
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: issue}}
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
 	store := &config.FileStore{Path: cfgPath}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 	deps := Dependencies{
-		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, eventLog),
 		ConfigStore:    store,
 		GitHubClient:   gh,
 		PromptRenderer: &prompt.Engine{},
