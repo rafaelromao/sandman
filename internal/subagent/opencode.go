@@ -17,6 +17,7 @@ type OpenCodeCapture struct {
 	sessionID string
 	stopped   bool
 	wg        sync.WaitGroup
+	pw        io.WriteCloser
 }
 
 // NewOpenCodeCapture creates a new OpenCodeCapture instance.
@@ -35,17 +36,18 @@ func (o *OpenCodeCapture) SessionID() string {
 
 func (o *OpenCodeCapture) WrapCommand(command string) (string, io.Writer, func(), error) {
 	trimmed := strings.TrimSpace(command)
-	if !strings.HasPrefix(trimmed, "opencode run") {
+	if !strings.HasPrefix(trimmed, "opencode run ") && trimmed != "opencode run" {
 		return command, nil, func() {}, nil
 	}
 
-	if strings.Contains(trimmed, "--format") {
+	if strings.Contains(trimmed, " --format ") || strings.HasSuffix(trimmed, " --format") || strings.Contains(trimmed, " --format=") {
 		return trimmed, nil, func() {}, nil
 	}
 
 	wrapped := strings.Replace(trimmed, "opencode run", "opencode run --format json", 1)
 
 	pr, pw := io.Pipe()
+	o.pw = pw
 	o.wg.Add(1)
 	go o.parseStream(pr)
 
@@ -70,9 +72,14 @@ func (o *OpenCodeCapture) Stop() ([]SessionOutput, error) {
 		return nil, nil
 	}
 	o.stopped = true
+	pw := o.pw
 	o.mu.Unlock()
+	if pw != nil {
+		_ = pw.Close()
+	}
 	o.wg.Wait()
 	close(o.events)
+	// TODO: implement session output aggregation
 	return nil, nil
 }
 
