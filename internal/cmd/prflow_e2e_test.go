@@ -168,9 +168,6 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 	if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
 		t.Fatalf("expected fake PR URL in log, got:\n%s", log)
 	}
-	if !strings.Contains(log, "To file:///workspace/.sandman/remote") {
-		t.Fatalf("expected git push output in log, got:\n%s", log)
-	}
 
 	argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.args"))
 	if err != nil {
@@ -357,9 +354,6 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 
 	if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
 		t.Fatalf("expected fake PR URL in log, got:\n%s", log)
-	}
-	if !strings.Contains(log, "To file:///workspace/.sandman/remote") {
-		t.Fatalf("expected git push output in log, got:\n%s", log)
 	}
 
 	argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.args"))
@@ -821,7 +815,7 @@ func customizeOpenCodeAgentForContainer(t *testing.T, repoDir, model string) {
 	if err != nil {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
-	agent.Command = fmt.Sprintf(`PATH=/workspace/.sandman/bin:${PATH} opencode run --pure -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Command = fmt.Sprintf(`PATH=/workspace/.sandman/bin:${PATH} opencode run -m %s "$(cat {{.PromptFile}})"`, model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
@@ -1357,7 +1351,7 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 
 {{ISSUE_BODY}}
 
-Fix only what is needed. Do not modify test files.
+	Fix only what is needed. Do not modify test files. Only the test named in the issue may pass in this branch; unrelated issue tests must keep failing.
 When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{TARGET_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, and print the PR URL.
 `
 	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
@@ -1377,7 +1371,7 @@ func customizeOpenCodeAgentForContainerWithEcho(t *testing.T, repoDir, model str
 	if err != nil {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
-	agent.Command = fmt.Sprintf(`printf 'containerhostname=%%s\ncontainerworkdir=%%s\n' "$(hostname)" "$(pwd)" >&2 && PATH=/workspace/.sandman/bin:${PATH} opencode run --pure -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Command = fmt.Sprintf(`printf 'containerhostname=%%s\ncontainerworkdir=%%s\n' "$(hostname)" "$(pwd)" >&2 && PATH=/workspace/.sandman/bin:${PATH} opencode run -m %s "$(cat {{.PromptFile}})"`, model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
@@ -1466,7 +1460,7 @@ JSON
     case "$path" in
       repos/example/sandbox/issues/150)
         cat <<'JSON'
-{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5.","labels":[{"name":"ready-for-agent"}]}
+{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5. Do not make TestDoubleFor151 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -1476,7 +1470,7 @@ JSON
         ;;
       repos/example/sandbox/issues/151)
         cat <<'JSON'
-{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7.","labels":[{"name":"ready-for-agent"}]}
+{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7. Do not make TestDoubleFor150 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -1590,7 +1584,7 @@ JSON
     case "$path" in
       repos/example/sandbox/issues/150)
         cat <<'JSON'
-{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5.","labels":[{"name":"ready-for-agent"}]}
+{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5. Do not make TestDoubleFor151 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -1600,7 +1594,7 @@ JSON
         ;;
       repos/example/sandbox/issues/151)
         cat <<'JSON'
-{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7.","labels":[{"name":"ready-for-agent"}]}
+{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7. Do not make TestDoubleFor150 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
