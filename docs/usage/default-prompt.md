@@ -68,7 +68,7 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     git add -A
     git commit -m "refactor: self-review fixes"
     ```
-    - Fix the code in case any of the tests fail, do not skip any test. Commit again:
+    - Fix the code in case any of the tests fail. Commit again:
     ```bash
     git add -A
     git commit -m "refactor: self-review fixes"
