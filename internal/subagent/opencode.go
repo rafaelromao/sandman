@@ -52,10 +52,7 @@ func (o *OpenCodeCapture) WrapCommand(command string) (string, io.Writer, func()
 	go o.parseStream(pr)
 
 	cleanup := func() {
-		o.mu.Lock()
-		defer o.mu.Unlock()
-		o.stopped = true
-		pw.Close()
+		_ = pw.Close()
 	}
 
 	return wrapped, pw, cleanup, nil

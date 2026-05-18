@@ -108,6 +108,26 @@ func TestWrapCommandSkipsIfFormatAlreadyPresent(t *testing.T) {
 	}
 }
 
+func TestStopClosesChannel(t *testing.T) {
+	oc := NewOpenCodeCapture()
+	_, _, cleanup, err := oc.WrapCommand("opencode run --issue 123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cleanup()
+	_, _ = oc.Stop()
+
+	select {
+	case _, ok := <-oc.Events():
+		if ok {
+			t.Fatal("expected channel to be closed after Stop")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for channel close")
+	}
+}
+
 func TestJSONParserExtractsSessionID(t *testing.T) {
 	oc := NewOpenCodeCapture()
 	wrapped, stdout, cleanup, err := oc.WrapCommand("opencode run --issue 123")
