@@ -12,6 +12,19 @@ import (
 	"time"
 )
 
+// DiscoverDBPath discovers the opencode database path by running "opencode db path".
+func DiscoverDBPath() (string, error) {
+	out, err := exec.Command("opencode", "db", "path").Output()
+	if err != nil {
+		return "", fmt.Errorf("discover opencode db path: %w", err)
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		return "", fmt.Errorf("opencode db path returned empty")
+	}
+	return path, nil
+}
+
 const defaultPollInterval = 2 * time.Second
 
 func NewDBPoller(issue int, events chan<- Event) *DBPoller {

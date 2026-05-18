@@ -6,6 +6,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/subagent"
 )
 
 // Request describes a batch of AgentRuns to execute.
@@ -34,10 +35,11 @@ type Result struct {
 
 // AgentRunResult describes the outcome of a single AgentRun.
 type AgentRunResult struct {
-	IssueNumber int
-	Status      string
-	Branch      string
-	DebugInfo   string
+	IssueNumber    int
+	Status         string
+	Branch         string
+	DebugInfo      string
+	SubagentOutput []subagent.SessionOutput
 }
 
 // Runnable represents a single agent execution that can be run.

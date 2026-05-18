@@ -434,16 +434,16 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			name:     "request overrides config",
 			cfgModel: "config-model",
 			reqModel: "request-model",
-			wantCmd:  `opencode run -m request-model "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd:  `opencode run --format json -m request-model "$(cat .sandman/rendered-prompt.md)"`,
 		},
 		{
 			name:     "config model is used",
 			cfgModel: "config-model",
-			wantCmd:  `opencode run -m config-model "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd:  `opencode run --format json -m config-model "$(cat .sandman/rendered-prompt.md)"`,
 		},
 		{
 			name:    "default behavior leaves model out",
-			wantCmd: `opencode run "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd: `opencode run --format json "$(cat .sandman/rendered-prompt.md)"`,
 		},
 	}
 

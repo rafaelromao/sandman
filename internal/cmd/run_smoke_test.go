@@ -5,6 +5,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -669,4 +671,211 @@ func preflightSmokeWorktree(t *testing.T, repoDir, branch string) {
 	if out, err := exec.Command("git", "branch", "-D", preflightBranch).CombinedOutput(); err != nil {
 		t.Skipf("skip smoke: worktree cleanup unavailable: %v\n%s", err, out)
 	}
+}
+
+func checkSubagentEvents(t *testing.T, repoDir string) {
+	t.Helper()
+
+	eventPath := filepath.Join(repoDir, ".sandman", "events.jsonl")
+	data, err := os.ReadFile(eventPath)
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+
+	var started, finished bool
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		var evt struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			continue
+		}
+		switch evt.Type {
+		case "subagent.started":
+			started = true
+		case "subagent.finished":
+			finished = true
+		}
+	}
+	if !started {
+		t.Error("expected subagent.started event in events.jsonl")
+	}
+	if !finished {
+		t.Error("expected subagent.finished event in events.jsonl")
+	}
+}
+
+func TestSmoke_SubagentOutput_Worktree(t *testing.T) {
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skipf("skip: opencode CLI not installed: %v", err)
+	}
+
+	allowed, err := parseSmokeProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allowed) > 0 && !allowed["opencode"] {
+		t.Skip("opencode not in SANDMAN_SMOKE_PROVIDERS")
+	}
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	remoteDir := initRunIntegrationRepoWithRemote(t, repoDir)
+	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	realHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("resolve home dir: %v", err)
+	}
+
+	opencodeModel, err := detectOpenCodeSmokeModel(realHome)
+	if err != nil {
+		t.Skipf("skip: %v", err)
+	}
+
+	homeDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
+		t.Fatalf("create ssh dir: %v", err)
+	}
+
+	authPaths := []string{"~/.local/share/opencode", "~/.config/opencode"}
+	if !copySmokeAuthLayout(t, realHome, homeDir, authPaths) {
+		t.Skip("missing opencode auth files")
+	}
+	ensureSmokeWritableDirs(t, homeDir, "opencode")
+	if err := writeSmokeGitConfig(homeDir, remoteDir); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	s := &scaffold.Scaffolder{}
+	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: "generic", Agent: "opencode"}, smokePrompter{}); err != nil {
+		t.Fatalf("scaffold repo: %v", err)
+	}
+	if err := customizeSmokeConfig(repoDir, "opencode", opencodeModel); err != nil {
+		t.Fatalf("update config: %v", err)
+	}
+	preflightSmokeWorktree(t, repoDir, "sandman/421-smoke-opencode")
+
+	issue := &github.Issue{
+		Number: 421,
+		Title:  "Smoke opencode",
+		Body:   "Reply with exactly SMOKE_OK.",
+	}
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: issue}}
+	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
+	store := &config.FileStore{Path: cfgPath}
+	deps := Dependencies{
+		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		ConfigStore:    store,
+		GitHubClient:   gh,
+		PromptRenderer: &prompt.Engine{},
+		IsTTY:          func() bool { return false },
+	}
+
+	out, err := executeSmokeRun(t, deps, "worktree", issue.Number)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+
+	checkSubagentEvents(t, repoDir)
+}
+
+func TestSmoke_SubagentOutput_Podman(t *testing.T) {
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skipf("skip: opencode CLI not installed: %v", err)
+	}
+
+	allowed, err := parseSmokeProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allowed) > 0 && !allowed["opencode"] {
+		t.Skip("opencode not in SANDMAN_SMOKE_PROVIDERS")
+	}
+
+	runtime, err := sandbox.ResolveRuntime("podman")
+	if err != nil {
+		t.Skipf("container runtime unavailable: %v", err)
+	}
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	remoteDir := initRunIntegrationRepoWithRemote(t, repoDir)
+	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	realHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("resolve home dir: %v", err)
+	}
+
+	opencodeModel, err := detectOpenCodeSmokeModel(realHome)
+	if err != nil {
+		t.Skipf("skip: %v", err)
+	}
+
+	homeDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
+		t.Fatalf("create ssh dir: %v", err)
+	}
+
+	authPaths := []string{"~/.local/share/opencode", "~/.config/opencode"}
+	if !copySmokeAuthLayout(t, realHome, homeDir, authPaths) {
+		t.Skip("missing opencode auth files")
+	}
+	ensureSmokeWritableDirs(t, homeDir, "opencode")
+	if err := writeSmokeGitConfig(homeDir, remoteDir); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	warmSmokeRuntime(t, runtime)
+
+	s := &scaffold.Scaffolder{}
+	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: "generic", Agent: "opencode"}, smokePrompter{}); err != nil {
+		t.Fatalf("scaffold repo: %v", err)
+	}
+	if err := addSmokeDockerDeps(repoDir, "opencode"); err != nil {
+		t.Fatalf("update Dockerfile: %v", err)
+	}
+	if err := customizeSmokeConfig(repoDir, "opencode", opencodeModel); err != nil {
+		t.Fatalf("update config: %v", err)
+	}
+	imageTag := preflightSmokeImage(t, runtime, repoDir, "opencode")
+	preflightSmokeContainer(t, runtime, imageTag, repoDir, homeDir, "opencode", "generic", authPaths)
+	preflightSmokeWorktree(t, repoDir, "sandman/421-smoke-opencode")
+
+	issue := &github.Issue{
+		Number: 421,
+		Title:  "Smoke opencode",
+		Body:   "Reply with exactly SMOKE_OK.",
+	}
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: issue}}
+	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
+	store := &config.FileStore{Path: cfgPath}
+	deps := Dependencies{
+		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		ConfigStore:    store,
+		GitHubClient:   gh,
+		PromptRenderer: &prompt.Engine{},
+		IsTTY:          func() bool { return false },
+	}
+
+	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+
+	checkSubagentEvents(t, repoDir)
 }

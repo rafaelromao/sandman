@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/scaffold"
+	"github.com/rafaelromao/sandman/internal/subagent"
 )
 
 func generateRunID(issueNum int) string {
@@ -297,7 +298,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if err != nil {
 				return nil, fmt.Errorf("resolve config mounts: %w", err)
 			}
-			startOpts.ConfigMounts = mounts
+			startOpts.ConfigMounts = append(startOpts.ConfigMounts, mounts...)
 			defer cleanup()
 		}
 
@@ -519,6 +520,18 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 		}
 	}
 
+	if agentCfg.Preset == "opencode" {
+		dbPath, err := subagent.DiscoverDBPath()
+		if err == nil {
+			if _, err := os.Stat(dbPath); err == nil {
+				opts.ConfigMounts = append(opts.ConfigMounts, sandbox.ConfigMount{
+					Source: dbPath,
+					Target: sandbox.ToContainerPath(dbPath),
+				})
+			}
+		}
+	}
+
 	return opts, nil
 }
 
@@ -577,6 +590,9 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		agentRun.preset = agentCfg.Preset
 		agentRun.model = agentCfg.Model
 		agentRun.defaultBranch = cfg.Git.DefaultBranch
+		if agentCfg.Preset == "opencode" {
+			agentRun.capture = subagent.NewOpenCodeCapture()
+		}
 	}
 
 	runID := generateRunID(num)
@@ -624,7 +640,69 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
 	}
 
+	if o.eventLog != nil {
+		if agentRun, ok := runnable.(*AgentRun); ok && agentRun.capture != nil {
+			_ = o.eventLog.Log(events.Event{
+				Type:      events.EventSubagentStarted,
+				Timestamp: time.Now(),
+				RunID:     runID,
+				Issue:     num,
+				Payload: map[string]any{
+					"agent":  agentCfg.Preset,
+					"title":  issue.Title,
+					"branch": branch,
+				},
+			})
+		}
+	}
+
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, interactive, renderCfg)
+
+	if o.eventLog != nil {
+		if agentRun, ok := runnable.(*AgentRun); ok && agentRun.capture != nil {
+			msgCount := 0
+			for _, s := range result.SubagentOutput {
+				for _, m := range s.Messages {
+					msgCount += len(m.Parts)
+				}
+				for _, m := range s.Messages {
+					for _, p := range m.Parts {
+						if p.Type == subagent.PartTypeText {
+							text := p.Text
+							if len(text) > 500 {
+								text = text[:500]
+							}
+							_ = o.eventLog.Log(events.Event{
+								Type:      events.EventSubagentText,
+								Timestamp: time.Now(),
+								RunID:     runID,
+								Issue:     num,
+								Payload: map[string]any{
+									"session_id": s.SessionID,
+									"text":       text,
+								},
+							})
+						}
+					}
+				}
+			}
+			var sessionIDs []string
+			for _, s := range result.SubagentOutput {
+				sessionIDs = append(sessionIDs, s.SessionID)
+			}
+			_ = o.eventLog.Log(events.Event{
+				Type:      events.EventSubagentFinished,
+				Timestamp: time.Now(),
+				RunID:     runID,
+				Issue:     num,
+				Payload: map[string]any{
+					"session_id":    sessionIDs,
+					"message_count": msgCount,
+					"status":        result.Status,
+				},
+			})
+		}
+	}
 
 	worktreeState := "deleted"
 	if result.Status == "failure" || preserve {

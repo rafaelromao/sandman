@@ -223,7 +223,7 @@ func TestContainerMount_RendersBuiltInAgentPaths(t *testing.T) {
 			}
 
 			for _, expanded := range expandedDirs {
-				containerPath := toContainerPath(expanded)
+				containerPath := ToContainerPath(expanded)
 				expected := expanded + ":" + containerPath
 				found := false
 				for i := 0; i < len(captured)-1; i++ {
@@ -238,7 +238,7 @@ func TestContainerMount_RendersBuiltInAgentPaths(t *testing.T) {
 			}
 
 			for _, expanded := range expandedFiles {
-				containerPath := toContainerPath(expanded)
+				containerPath := ToContainerPath(expanded)
 				expected := expanded + ":" + containerPath
 				found := false
 				for i := 0; i < len(captured)-1; i++ {
@@ -807,10 +807,10 @@ func TestToContainerPath_MapsDirectory(t *testing.T) {
 	}
 
 	hostPath := filepath.Join(home, ".config", "sandman")
-	got := toContainerPath(hostPath)
+	got := ToContainerPath(hostPath)
 	want := "/.config/sandman"
 	if got != want {
-		t.Errorf("toContainerPath(%q) = %q, want %q", hostPath, got, want)
+		t.Errorf("ToContainerPath(%q) = %q, want %q", hostPath, got, want)
 	}
 }
 
@@ -821,18 +821,18 @@ func TestToContainerPath_MapsFile(t *testing.T) {
 	}
 
 	hostPath := filepath.Join(home, ".claude.json")
-	got := toContainerPath(hostPath)
+	got := ToContainerPath(hostPath)
 	want := "/.claude.json"
 	if got != want {
-		t.Errorf("toContainerPath(%q) = %q, want %q", hostPath, got, want)
+		t.Errorf("ToContainerPath(%q) = %q, want %q", hostPath, got, want)
 	}
 }
 
 func TestToContainerPath_ReturnsHostPathWhenNotUnderHome(t *testing.T) {
-	got := toContainerPath("/opt/custom/path")
+	got := ToContainerPath("/opt/custom/path")
 	want := "/opt/custom/path"
 	if got != want {
-		t.Errorf("toContainerPath(%q) = %q, want %q", "/opt/custom/path", got, want)
+		t.Errorf("ToContainerPath(%q) = %q, want %q", "/opt/custom/path", got, want)
 	}
 }
 

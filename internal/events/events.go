@@ -11,6 +11,12 @@ type Event struct {
 	Payload   map[string]any `json:"payload,omitempty"`
 }
 
+const (
+	EventSubagentStarted  = "subagent.started"
+	EventSubagentText     = "subagent.text"
+	EventSubagentFinished = "subagent.finished"
+)
+
 // EventLog is the seam for writing and reading events.
 type EventLog interface {
 	Log(event Event) error

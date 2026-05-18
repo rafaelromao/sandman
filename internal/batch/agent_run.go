@@ -12,18 +12,21 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/subagent"
 )
 
 // AgentRun orchestrates the lifecycle of a single agent execution for an issue.
 type AgentRun struct {
-	issue         *github.Issue
-	branch        string
-	defaultBranch string
-	preset        string
-	model         string
-	sandbox       sandbox.Sandbox
-	status        string
-	env           map[string]string
+	issue          *github.Issue
+	branch         string
+	defaultBranch  string
+	preset         string
+	model          string
+	sandbox        sandbox.Sandbox
+	status         string
+	env            map[string]string
+	capture        subagent.Capture
+	subagentOutput []subagent.SessionOutput
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -57,7 +60,8 @@ func (r *AgentRun) Prepare(renderer prompt.Renderer, cfg prompt.RenderConfig) er
 
 // Execute runs the agent command inside the sandbox, writing prefixed output to the given writers
 // and un-prefixed output to .sandman/logs/<issue>.log.
-func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
+// When capture is non-nil, the command is wrapped to intercept output for subagent event streaming.
+func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer, capture subagent.Capture) error {
 	logDir := ".sandman/logs"
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)
@@ -68,6 +72,41 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		return fmt.Errorf("create log file: %w", err)
 	}
 	defer logFile.Close()
+
+	if capture != nil {
+		wrapped, captureStdout, cleanup, err := capture.WrapCommand(command)
+		if err != nil {
+			return fmt.Errorf("wrap command: %w", err)
+		}
+		defer cleanup()
+		command = wrapped
+
+		var combinedOut io.Writer
+		combinedOut = logFile
+		if captureStdout != nil {
+			combinedOut = io.MultiWriter(logFile, captureStdout)
+		}
+		combinedErr := io.MultiWriter(logFile, NewLinePrefixWriter(r.issue.Number, stderr))
+
+		eventsDone := make(chan struct{})
+		go func() {
+			defer close(eventsDone)
+			subagent.RenderEvents(ctx, r.issue.Number, capture.Events(), stdout)
+		}()
+
+		if err := r.sandbox.Exec(ctx, command, combinedOut, combinedErr); err != nil {
+			return fmt.Errorf("execute agent: %w", err)
+		}
+
+		sessions, stopErr := capture.Stop()
+		if stopErr != nil {
+			return fmt.Errorf("stop capture: %w", stopErr)
+		}
+		r.subagentOutput = sessions
+
+		<-eventsDone
+		return nil
+	}
 
 	prefixedOut := NewLinePrefixWriter(r.issue.Number, stdout)
 	prefixedErr := NewLinePrefixWriter(r.issue.Number, stderr)
@@ -111,7 +150,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 			return r.Result()
 		}
 	} else {
-		if err := r.Execute(ctx, renderedCmd, os.Stdout, os.Stderr); err != nil {
+		if err := r.Execute(ctx, renderedCmd, os.Stdout, os.Stderr, r.capture); err != nil {
 			r.status = "failure"
 			return r.Result()
 		}
@@ -141,8 +180,9 @@ func (r *AgentRun) modelFlag(command string) string {
 // Result returns the current outcome of the AgentRun.
 func (r *AgentRun) Result() AgentRunResult {
 	return AgentRunResult{
-		IssueNumber: r.issue.Number,
-		Status:      r.status,
-		Branch:      r.branch,
+		IssueNumber:    r.issue.Number,
+		Status:         r.status,
+		Branch:         r.branch,
+		SubagentOutput: r.subagentOutput,
 	}
 }

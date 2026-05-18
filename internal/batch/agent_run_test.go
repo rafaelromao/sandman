@@ -15,7 +15,34 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/subagent"
 )
+
+type fakeCapture struct {
+	wrapCalled   bool
+	wrapCmd      string
+	wrapWriter   io.Writer
+	wrapErr      error
+	eventsCh     chan subagent.Event
+	stopCalled   bool
+	stopSessions []subagent.SessionOutput
+	stopErr      error
+}
+
+func (f *fakeCapture) WrapCommand(command string) (string, io.Writer, func(), error) {
+	f.wrapCalled = true
+	f.wrapCmd = "wrapped: " + command
+	return f.wrapCmd, f.wrapWriter, func() {}, f.wrapErr
+}
+
+func (f *fakeCapture) Events() <-chan subagent.Event {
+	return f.eventsCh
+}
+
+func (f *fakeCapture) Stop() ([]subagent.SessionOutput, error) {
+	f.stopCalled = true
+	return f.stopSessions, f.stopErr
+}
 
 type fakeProcess struct {
 	sigTermCalled bool
@@ -177,7 +204,7 @@ func TestAgentRun_Execute_RunsCommand(t *testing.T) {
 	sb := &fakeSandbox{}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
+	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -235,7 +262,7 @@ func TestAgentRun_Execute_Failure(t *testing.T) {
 	sb := &fakeSandbox{execError: errors.New("agent failed")}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	if err := run.Execute(context.Background(), "exit 1", io.Discard, io.Discard); err == nil {
+	if err := run.Execute(context.Background(), "exit 1", io.Discard, io.Discard, nil); err == nil {
 		t.Fatal("expected error when exec fails")
 	}
 }
@@ -246,7 +273,7 @@ func TestAgentRun_Execute_PrefixesOutput(t *testing.T) {
 	var outBuf bytes.Buffer
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	if err := run.Execute(context.Background(), "echo hello", &outBuf, io.Discard); err != nil {
+	if err := run.Execute(context.Background(), "echo hello", &outBuf, io.Discard, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -276,7 +303,7 @@ func TestAgentRun_Execute_WritesLogFile(t *testing.T) {
 	sb := &fakeSandbox{execStdout: "hello world\n", execStderr: "error line\n"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
+	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -492,5 +519,117 @@ func TestAgentRun_Result(t *testing.T) {
 	}
 	if res.Status != "success" {
 		t.Errorf("expected status success, got %s", res.Status)
+	}
+}
+
+func TestAgentRun_Execute_WithCapture(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execStdout: "some output\n"}
+
+	eventsCh := make(chan subagent.Event)
+	close(eventsCh)
+
+	cap := &fakeCapture{
+		wrapWriter:   io.Discard,
+		eventsCh:     eventsCh,
+		stopSessions: []subagent.SessionOutput{{SessionID: "sess-1"}},
+	}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	if err := run.Execute(context.Background(), "opencode run --issue 42", io.Discard, io.Discard, cap); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !cap.wrapCalled {
+		t.Error("expected WrapCommand to be called")
+	}
+	if sb.execCommand != cap.wrapCmd {
+		t.Errorf("expected wrapped command %q, got %q", cap.wrapCmd, sb.execCommand)
+	}
+	if !cap.stopCalled {
+		t.Error("expected Stop to be called")
+	}
+
+	res := run.Result()
+	if len(res.SubagentOutput) != 1 || res.SubagentOutput[0].SessionID != "sess-1" {
+		t.Errorf("expected subagent output in result, got %+v", res.SubagentOutput)
+	}
+}
+
+func TestAgentRun_Execute_WithCaptureWrapsOnlyOpencode(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execStdout: "some output\n"}
+
+	eventsCh := make(chan subagent.Event)
+	close(eventsCh)
+
+	cap := &fakeCapture{
+		wrapWriter:   io.Discard,
+		eventsCh:     eventsCh,
+		stopSessions: []subagent.SessionOutput{{SessionID: "sess-1"}},
+	}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard, cap); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !cap.wrapCalled {
+		t.Error("expected WrapCommand to be called")
+	}
+	if sb.execCommand != cap.wrapCmd {
+		t.Errorf("expected wrapped command %q, got %q", cap.wrapCmd, sb.execCommand)
+	}
+}
+
+func TestAgentRun_Execute_WithCaptureStopError(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execStdout: "some output\n"}
+
+	eventsCh := make(chan subagent.Event)
+	close(eventsCh)
+
+	cap := &fakeCapture{
+		wrapWriter: io.Discard,
+		eventsCh:   eventsCh,
+		stopErr:    errors.New("stop failed"),
+	}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	err := run.Execute(context.Background(), "opencode run --issue 42", io.Discard, io.Discard, cap)
+	if err == nil || !strings.Contains(err.Error(), "stop failed") {
+		t.Errorf("expected stop error, got %v", err)
+	}
+}
+
+func TestAgentRun_Run_WithCaptureOnStruct(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Test capture."}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	eventsCh := make(chan subagent.Event)
+	close(eventsCh)
+
+	cap := &fakeCapture{
+		wrapWriter:   io.Discard,
+		eventsCh:     eventsCh,
+		stopSessions: []subagent.SessionOutput{{SessionID: "sess-run-1"}},
+	}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.capture = cap
+	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", false, prompt.RenderConfig{})
+
+	if res.Status != "success" {
+		t.Errorf("expected success, got %s", res.Status)
+	}
+	if !cap.wrapCalled {
+		t.Error("expected WrapCommand to be called")
+	}
+	if !cap.stopCalled {
+		t.Error("expected Stop to be called")
+	}
+	if len(res.SubagentOutput) != 1 || res.SubagentOutput[0].SessionID != "sess-run-1" {
+		t.Errorf("expected subagent output in result, got %+v", res.SubagentOutput)
 	}
 }
