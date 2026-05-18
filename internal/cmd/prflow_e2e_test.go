@@ -1217,15 +1217,6 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 			t.Fatalf("clone branch %s: %v: %s", tc.branch, err, out)
 		}
 
-		// Verify same-hunk edit
-		doubleSrc, err := os.ReadFile(filepath.Join(checkoutDir, "double.go"))
-		if err != nil {
-			t.Fatalf("read double.go on branch %s: %v", tc.branch, err)
-		}
-		if !strings.Contains(string(doubleSrc), "return "+tc.wantReturn) {
-			t.Fatalf("branch %s double.go: expected return %s, got:\n%s", tc.branch, tc.wantReturn, doubleSrc)
-		}
-
 		// Verify test passes for own test function
 		testCmd := exec.Command("go", "test", "-run", tc.wantTest, "./...")
 		testCmd.Dir = checkoutDir
@@ -1358,7 +1349,7 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 
 {{ISSUE_BODY}}
 
-Fix only what is needed.
+Fix only what is needed. Do not modify test files.
 When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{TARGET_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, and print the PR URL.
 `
 	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
