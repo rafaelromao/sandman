@@ -226,7 +226,7 @@ func TestStopReturnsParentAndChildSessions(t *testing.T) {
 		case 0:
 			return []byte("/home/user/.opencode/sessions.db\n"), nil
 		case 1:
-			return []byte(`[{"id":"child-1","title":"Explore","agent":"opencode","time_created":"2024-01-01T00:00:00Z"}]`), nil
+			return []byte(`[{"id":"child-1","title":"Explore","agent":"opencode","time_updated":100}]`), nil
 		case 2:
 			return []byte(`[{"id":"m1","session_id":"child-1","data":"{\"role\":\"assistant\"}"}]`), nil
 		case 3:

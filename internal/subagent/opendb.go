@@ -346,7 +346,7 @@ func (p *DBPoller) discoverDBPath() (string, error) {
 }
 
 func (p *DBPoller) querySessions(parentID string) ([]SessionOutput, error) {
-	query := fmt.Sprintf("SELECT id, title, agent, time_created FROM session WHERE parent_id = '%s' ORDER BY time_created", escapeSQLString(parentID))
+	query := fmt.Sprintf("SELECT id, title, agent, time_updated FROM session WHERE parent_id = '%s' ORDER BY time_created", escapeSQLString(parentID))
 	out, err := p.runner("db", query, "--format", "json")
 	if err != nil {
 		return nil, err

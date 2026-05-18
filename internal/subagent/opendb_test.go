@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -59,8 +60,12 @@ func TestDBPollerDiscoverDBPathCaches(t *testing.T) {
 }
 
 func TestDBPollerQuerySessions(t *testing.T) {
+	var gotQuery string
 	runner := func(args ...string) ([]byte, error) {
-		return []byte(`[{"id":"child-1","title":"Fix auth","agent":"opencode","time_created":"2024-01-01T00:00:00Z"}]`), nil
+		if len(args) > 1 {
+			gotQuery = args[1]
+		}
+		return []byte(`[{"id":"child-1","title":"Fix auth","agent":"opencode","time_updated":123}]`), nil
 	}
 
 	p := &DBPoller{runner: runner}
@@ -79,6 +84,12 @@ func TestDBPollerQuerySessions(t *testing.T) {
 	}
 	if sessions[0].Agent != "opencode" {
 		t.Errorf("expected Agent 'opencode', got %q", sessions[0].Agent)
+	}
+	if sessions[0].TimeUpdated != 123 {
+		t.Errorf("expected TimeUpdated 123, got %d", sessions[0].TimeUpdated)
+	}
+	if !strings.Contains(gotQuery, "time_updated") {
+		t.Errorf("expected query to select time_updated, got %q", gotQuery)
 	}
 }
 
@@ -289,7 +300,7 @@ func TestDBPollerEmitsEventsForChildContent(t *testing.T) {
 	steps := []step{
 		{output: []byte("/home/user/.opencode/sessions.db")},
 		{output: []byte(`[]`)},
-		{output: []byte(`[{"id":"child-1","title":"Fix bug","agent":"opencode","time_created":"2024-01-01T00:00:00Z"}]`)},
+		{output: []byte(`[{"id":"child-1","title":"Fix bug","agent":"opencode","time_updated":100}]`)},
 		{output: []byte(`[{"id":"m1","session_id":"child-1","data":"{\"role\":\"assistant\"}"}]`)},
 		{output: []byte(`[{"id":"p1","message_id":"m1","session_id":"child-1","data":"{\"type\":\"text\",\"text\":\"Hello from child\"}"}]`)},
 	}
@@ -367,5 +378,79 @@ func TestDBPollerEmitsEventsForChildContent(t *testing.T) {
 	}
 	if len(sessions[0].Messages) != 1 || len(sessions[0].Messages[0].Parts) != 1 {
 		t.Fatalf("expected captured child messages, got %+v", sessions[0])
+	}
+}
+
+func TestDBPollerPollOnceTracksTimeUpdatedBeforeFinish(t *testing.T) {
+	events := make(chan Event, 64)
+	sessionPoll := 0
+	partsPoll := 0
+	runner := func(args ...string) ([]byte, error) {
+		if len(args) < 2 {
+			return nil, errors.New("unexpected args")
+		}
+		query := args[1]
+		switch {
+		case strings.Contains(query, "FROM session WHERE parent_id"):
+			sessionPoll++
+			switch sessionPoll {
+			case 1:
+				return []byte(`[{"id":"child-1","title":"Fix bug","agent":"opencode","time_updated":100}]`), nil
+			case 2, 3:
+				return []byte(`[{"id":"child-1","title":"Fix bug","agent":"opencode","time_updated":200}]`), nil
+			default:
+				return []byte(`[]`), nil
+			}
+		case strings.Contains(query, "FROM message m"):
+			return []byte(`[{"id":"m1","session_id":"child-1","data":"{\"role\":\"assistant\"}"}]`), nil
+		case strings.Contains(query, "FROM part p"):
+			partsPoll++
+			switch partsPoll {
+			case 1:
+				return []byte(`[{"id":"p1","message_id":"m1","session_id":"child-1","data":"{\"type\":\"text\",\"text\":\"first\"}"}]`), nil
+			default:
+				return []byte(`[{"id":"p1","message_id":"m1","session_id":"child-1","data":"{\"type\":\"text\",\"text\":\"first\"}"},{"id":"p2","message_id":"m1","session_id":"child-1","data":"{\"type\":\"text\",\"text\":\"second\"}"}]`), nil
+			}
+		default:
+			return nil, errors.New("unexpected query: " + query)
+		}
+	}
+
+	p := &DBPoller{
+		runner:    runner,
+		events:    events,
+		issue:     42,
+		writeFile: func(path string, data []byte) error { return nil },
+		seen:      make(map[string]bool),
+		lastSeen:  make(map[string]int64),
+		finished:  make(map[string]bool),
+		started:   make(map[string]SessionOutput),
+	}
+	p.parentID = "parent-123"
+
+	p.pollOnce("parent-123")
+	p.pollOnce("parent-123")
+
+	got := []Event{<-events, <-events, <-events}
+	if got[0].Type != EventSubagentStart {
+		t.Fatalf("event 0: expected subagent start, got %+v", got[0])
+	}
+	if got[1].Type != EventText || got[1].Content != "first" {
+		t.Fatalf("event 1: expected first text, got %+v", got[1])
+	}
+	if got[2].Type != EventText || got[2].Content != "second" {
+		t.Fatalf("event 2: expected second text, got %+v", got[2])
+	}
+	if p.finished["child-1"] {
+		t.Fatal("expected child session to remain active after time_updated changed")
+	}
+
+	p.pollOnce("parent-123")
+	finish := <-events
+	if finish.Type != EventSubagentFinish {
+		t.Fatalf("expected finish after unchanged poll, got %+v", finish)
+	}
+	if !p.finished["child-1"] {
+		t.Fatal("expected child session to be marked finished after unchanged poll")
 	}
 }
