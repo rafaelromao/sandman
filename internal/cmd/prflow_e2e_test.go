@@ -1377,7 +1377,7 @@ func customizeOpenCodeAgentForContainerWithEcho(t *testing.T, repoDir, model str
 	if err != nil {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
-	agent.Command = fmt.Sprintf(`printf 'containerhostname=%%s\ncontainerworkdir=%%s\n' "$(hostname)" "$(pwd)" && PATH=/workspace/.sandman/bin:${PATH} opencode run --pure -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Command = fmt.Sprintf(`printf 'containerhostname=%%s\ncontainerworkdir=%%s\n' "$(hostname)" "$(pwd)" >&2 && PATH=/workspace/.sandman/bin:${PATH} opencode run --pure -m %s "$(cat {{.PromptFile}})"`, model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
