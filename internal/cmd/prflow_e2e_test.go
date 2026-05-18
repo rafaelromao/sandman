@@ -138,6 +138,9 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build image for model detection: %v: %s", err, out)
 	}
+	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
+	}
 	modelOut, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect",
 		"opencode", "models").Output()
 	if err != nil {
@@ -324,6 +327,9 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build image for model detection: %v: %s", err, out)
+	}
+	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
 	}
 	modelOut, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect",
 		"opencode", "models").Output()
@@ -1064,6 +1070,9 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build image for model detection: %v: %s", err, out)
+	}
+	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
 	}
 	modelOut, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel",
 		"opencode", "models").Output()
