@@ -148,7 +148,7 @@ func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
 		t.Fatal(err)
 	}
 	if len(allowed) == 0 {
-		t.Skip("set SANDMAN_SMOKE_PROVIDERS=opencode,claude-code,codex,pi and run `go test -tags smoke ./internal/cmd -run Smoke`")
+		t.Skip("set SANDMAN_SMOKE_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
 	}
 
 	for _, tc := range cases {
@@ -182,7 +182,7 @@ func parseSmokeProviders() (map[string]bool, error) {
 			continue
 		}
 		switch name {
-		case "opencode", "claude-code", "codex", "pi":
+		case "opencode":
 			allowed[name] = true
 		default:
 			return nil, fmt.Errorf("unknown smoke provider %q", name)
