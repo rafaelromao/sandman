@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// OpenCodeCapture captures output from OpenCode agent sessions.
 type OpenCodeCapture struct {
 	events    chan Event
 	mu        sync.Mutex
@@ -16,10 +17,18 @@ type OpenCodeCapture struct {
 	stopped   bool
 }
 
+// NewOpenCodeCapture creates a new OpenCodeCapture instance.
 func NewOpenCodeCapture() *OpenCodeCapture {
 	return &OpenCodeCapture{
 		events: make(chan Event, 64),
 	}
+}
+
+// SessionID returns the detected session ID, if any.
+func (o *OpenCodeCapture) SessionID() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.sessionID
 }
 
 func (o *OpenCodeCapture) WrapCommand(command string) (string, io.Writer, func(), error) {
@@ -48,8 +57,12 @@ func (o *OpenCodeCapture) Events() <-chan Event {
 
 func (o *OpenCodeCapture) Stop() ([]SessionOutput, error) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
+	if o.stopped {
+		o.mu.Unlock()
+		return nil, nil
+	}
 	o.stopped = true
+	o.mu.Unlock()
 	close(o.events)
 	return nil, nil
 }
@@ -57,6 +70,13 @@ func (o *OpenCodeCapture) Stop() ([]SessionOutput, error) {
 func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
+		o.mu.Lock()
+		stopped := o.stopped
+		o.mu.Unlock()
+		if stopped {
+			return
+		}
+
 		line := scanner.Text()
 		if line == "" {
 			continue

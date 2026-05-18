@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// EventType represents the kind of capture event from an agent session.
 type EventType string
 
 const (
@@ -15,6 +16,7 @@ const (
 	EventError           EventType = "error"
 )
 
+// PartType represents the kind of content in a message part.
 type PartType string
 
 const (
@@ -23,6 +25,7 @@ const (
 	PartTypeTool      PartType = "tool"
 )
 
+// Event is a single structured event emitted during agent session capture.
 type Event struct {
 	SessionID string
 	ParentID  string
@@ -33,6 +36,7 @@ type Event struct {
 	Timestamp time.Time
 }
 
+// Part is a single content unit within a message.
 type Part struct {
 	Type       PartType
 	Text       string
@@ -41,11 +45,13 @@ type Part struct {
 	ToolOutput string
 }
 
+// Message represents a single message in a captured session.
 type Message struct {
 	Role  string
 	Parts []Part
 }
 
+// SessionOutput holds the captured output for a single agent session.
 type SessionOutput struct {
 	SessionID string
 	Title     string
@@ -53,6 +59,7 @@ type SessionOutput struct {
 	Messages  []Message
 }
 
+// Capture wraps an agent command to intercept its output stream.
 type Capture interface {
 	WrapCommand(command string) (wrapped string, stdout io.Writer, cleanup func(), err error)
 	Events() <-chan Event
