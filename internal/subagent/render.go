@@ -138,7 +138,7 @@ func formatEvent(e Event, useANSI bool) string {
 	case EventStepFinish:
 		return "OK"
 	case EventSessionDetected:
-		return fmt.Sprintf("\u2550 Session %s started \u2550", e.SessionID)
+		return ""
 	case EventError:
 		return fmt.Sprintf("\u2717 %s", e.Content)
 	default:

@@ -49,11 +49,10 @@ func (o *OpenCodeCapture) WrapCommand(command string) (string, io.Writer, func()
 		return command, nil, func() {}, nil
 	}
 
-	if strings.Contains(trimmed, " --format ") || strings.HasSuffix(trimmed, " --format") || strings.Contains(trimmed, " --format=") {
-		return trimmed, nil, func() {}, nil
+	wrapped := trimmed
+	if !(strings.Contains(trimmed, " --format ") || strings.HasSuffix(trimmed, " --format") || strings.Contains(trimmed, " --format=")) {
+		wrapped = strings.Replace(trimmed, "opencode run", "opencode run --format json", 1)
 	}
-
-	wrapped := strings.Replace(trimmed, "opencode run", "opencode run --format json", 1)
 
 	pr, pw := io.Pipe()
 	o.pw = pw
@@ -104,13 +103,6 @@ func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 	defer o.wg.Done()
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
-		o.mu.Lock()
-		stopped := o.stopped
-		o.mu.Unlock()
-		if stopped {
-			return
-		}
-
 		line := scanner.Text()
 		if line == "" {
 			continue
@@ -170,6 +162,12 @@ func (o *OpenCodeCapture) accumulateEvent(event *Event) {
 		part = Part{Type: PartTypeReasoning, Text: event.Content}
 	case EventTool:
 		part = Part{Type: PartTypeTool, ToolName: event.Title, ToolOutput: event.Content}
+	case EventStepStart:
+		part = Part{Type: PartTypeText, Text: "..."}
+	case EventStepFinish:
+		part = Part{Type: PartTypeText, Text: "OK"}
+	case EventError:
+		part = Part{Type: PartTypeText, Text: "✗ " + event.Content}
 	default:
 		return
 	}

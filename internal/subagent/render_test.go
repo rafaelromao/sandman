@@ -421,3 +421,34 @@ func TestRenderEventsWritesToLogWriter(t *testing.T) {
 		t.Errorf("expected 'Hello world' in log, got %q", logBuf.String())
 	}
 }
+
+func TestRenderEventsIgnoresSessionDetected(t *testing.T) {
+	var buf bytes.Buffer
+	events := make(chan Event, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go RenderEvents(ctx, 42, events, &buf, nil)
+
+	events <- Event{
+		Type:      EventSessionDetected,
+		SessionID: "sess-123",
+		Timestamp: time.Date(2024, 1, 1, 10, 30, 0, 0, time.UTC),
+	}
+	events <- Event{
+		Type:      EventText,
+		Content:   "Hello world",
+		Timestamp: time.Date(2024, 1, 1, 10, 30, 1, 0, time.UTC),
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	output := buf.String()
+	if strings.Contains(output, "Session sess-123 started") {
+		t.Errorf("expected session banner to be hidden, got %q", output)
+	}
+	if !strings.Contains(output, "Hello world") {
+		t.Errorf("expected text output, got %q", output)
+	}
+}
