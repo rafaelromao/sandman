@@ -18,6 +18,7 @@ type OpenCodeCapture struct {
 	stopped   bool
 	wg        sync.WaitGroup
 	pw        io.WriteCloser
+	dbPoller  *DBPoller
 }
 
 // NewOpenCodeCapture creates a new OpenCodeCapture instance.
@@ -25,6 +26,13 @@ func NewOpenCodeCapture() *OpenCodeCapture {
 	return &OpenCodeCapture{
 		events: make(chan Event, 64),
 	}
+}
+
+// SetDBPoller sets the DB poller for discovering subagent sessions.
+func (o *OpenCodeCapture) SetDBPoller(poller *DBPoller) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.dbPoller = poller
 }
 
 // SessionID returns the detected session ID, if any.
@@ -70,7 +78,11 @@ func (o *OpenCodeCapture) Stop() ([]SessionOutput, error) {
 	}
 	o.stopped = true
 	pw := o.pw
+	poller := o.dbPoller
 	o.mu.Unlock()
+	if poller != nil {
+		poller.Stop()
+	}
 	if pw != nil {
 		_ = pw.Close()
 	}
@@ -104,6 +116,9 @@ func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 		isNew := o.sessionID == "" && event.SessionID != ""
 		if isNew {
 			o.sessionID = event.SessionID
+			if o.dbPoller != nil {
+				o.dbPoller.Start(event.SessionID)
+			}
 		}
 		matches := o.sessionID == event.SessionID || event.SessionID == ""
 		o.mu.Unlock()
