@@ -594,6 +594,39 @@ func TestAgentRun_Execute_WithCaptureWritesInlineToLog(t *testing.T) {
 	}
 }
 
+func TestAgentRun_Execute_WithCapturePreformattedOpencode(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execStdout: `{"type":"text","timestamp":"2024-01-01T10:30:00Z","sessionID":"sess-preformatted","part":{"type":"text","text":"hello"}}` + "\n"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.capture = subagent.NewOpenCodeCapture()
+
+	if err := run.Execute(context.Background(), "opencode run --format json --issue 42", io.Discard, io.Discard, run.capture); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if sb.execCommand != "opencode run --format json --issue 42" {
+		t.Fatalf("expected command unchanged, got %q", sb.execCommand)
+	}
+
+	res := run.Result()
+	if len(res.SubagentOutput) != 1 {
+		t.Fatalf("expected one session, got %+v", res.SubagentOutput)
+	}
+	if res.SubagentOutput[0].SessionID != "sess-preformatted" {
+		t.Fatalf("expected session id sess-preformatted, got %+v", res.SubagentOutput[0])
+	}
+	if len(res.SubagentOutput[0].Messages) == 0 || len(res.SubagentOutput[0].Messages[0].Parts) == 0 {
+		t.Fatalf("expected captured message parts, got %+v", res.SubagentOutput[0])
+	}
+	if got := res.SubagentOutput[0].Messages[0].Parts[0].Text; got != "hello" {
+		t.Fatalf("expected captured text hello, got %q", got)
+	}
+}
+
 func TestAgentRun_Execute_WithCaptureWrapsOnlyOpencode(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{execStdout: "some output\n"}

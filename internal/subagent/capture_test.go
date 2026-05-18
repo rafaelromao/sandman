@@ -108,6 +108,90 @@ func TestWrapCommandSkipsIfFormatAlreadyPresent(t *testing.T) {
 	}
 }
 
+func TestWrapCommandKeepsCaptureWhenFormatAlreadyPresent(t *testing.T) {
+	oc := NewOpenCodeCapture()
+
+	wrapped, stdout, cleanup, err := oc.WrapCommand("opencode run --format json --issue 123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	if wrapped != "opencode run --format json --issue 123" {
+		t.Fatalf("expected command unchanged, got %q", wrapped)
+	}
+	if stdout == nil {
+		t.Fatal("expected capture stdout writer")
+	}
+
+	_, err = stdout.Write([]byte(`{"type":"text","timestamp":"2024-01-01T00:00:00Z","sessionID":"sess-preformatted","part":{"type":"text","text":"hello"}}` + "\n"))
+	if err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+
+	select {
+	case e := <-oc.Events():
+		if e.Type != EventSessionDetected {
+			t.Fatalf("expected session_detected event, got %s", e.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for session_detected event")
+	}
+
+	select {
+	case e := <-oc.Events():
+		if e.Type != EventText {
+			t.Fatalf("expected text event, got %s", e.Type)
+		}
+		if e.Content != "hello" {
+			t.Fatalf("expected content hello, got %q", e.Content)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for text event")
+	}
+}
+
+func TestSessionOutputKeepsStepAndErrorEvents(t *testing.T) {
+	oc := NewOpenCodeCapture()
+	_, stdout, cleanup, err := oc.WrapCommand("opencode run --format json --issue 123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	_, err = stdout.Write([]byte(`{"type":"step_start","timestamp":"2024-01-01T00:00:00Z","sessionID":"sess-steps"}` + "\n"))
+	if err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+	_, err = stdout.Write([]byte(`{"type":"step_finish","timestamp":"2024-01-01T00:00:01Z","sessionID":"sess-steps"}` + "\n"))
+	if err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+	_, err = stdout.Write([]byte(`{"type":"error","timestamp":"2024-01-01T00:00:02Z","sessionID":"sess-steps","error":{"message":"boom"}}` + "\n"))
+	if err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+
+	for i := 0; i < 4; i++ {
+		<-oc.Events()
+	}
+
+	sessions, err := oc.Stop()
+	if err != nil {
+		t.Fatalf("unexpected stop error: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected one session, got %+v", sessions)
+	}
+	parts := sessions[0].Messages[0].Parts
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 parts, got %+v", parts)
+	}
+	if parts[0].Text != "..." || parts[1].Text != "OK" || parts[2].Text != "✗ boom" {
+		t.Fatalf("unexpected parts: %+v", parts)
+	}
+}
+
 func TestStopClosesChannel(t *testing.T) {
 	oc := NewOpenCodeCapture()
 	_, _, cleanup, err := oc.WrapCommand("opencode run --issue 123")
