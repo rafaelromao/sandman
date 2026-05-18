@@ -37,6 +37,10 @@ func (o *OpenCodeCapture) WrapCommand(command string) (string, io.Writer, func()
 		return command, nil, func() {}, nil
 	}
 
+	if strings.Contains(trimmed, "--format") {
+		return trimmed, nil, func() {}, nil
+	}
+
 	wrapped := strings.Replace(trimmed, "opencode run", "opencode run --format json", 1)
 
 	pr, pw := io.Pipe()
@@ -88,18 +92,12 @@ func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 			continue
 		}
 
-		var sessionID, typ, tsStr, content string
+		var sessionID, tsStr string
 		if v, ok := raw["sessionID"]; ok {
 			json.Unmarshal(v, &sessionID)
 		}
-		if v, ok := raw["type"]; ok {
-			json.Unmarshal(v, &typ)
-		}
 		if v, ok := raw["timestamp"]; ok {
 			json.Unmarshal(v, &tsStr)
-		}
-		if v, ok := raw["content"]; ok {
-			json.Unmarshal(v, &content)
 		}
 
 		var timestamp time.Time

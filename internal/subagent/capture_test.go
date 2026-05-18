@@ -94,6 +94,20 @@ func TestWrapCommandTrimsWhitespace(t *testing.T) {
 	}
 }
 
+func TestWrapCommandSkipsIfFormatAlreadyPresent(t *testing.T) {
+	oc := NewOpenCodeCapture()
+
+	wrapped, _, _, err := oc.WrapCommand("opencode run --format json --issue 123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := "opencode run --format json --issue 123"
+	if wrapped != expected {
+		t.Errorf("expected %q, got %q", expected, wrapped)
+	}
+}
+
 func TestJSONParserExtractsSessionID(t *testing.T) {
 	oc := NewOpenCodeCapture()
 	wrapped, stdout, cleanup, err := oc.WrapCommand("opencode run --issue 123")
