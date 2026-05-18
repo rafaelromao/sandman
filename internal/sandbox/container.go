@@ -80,29 +80,33 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 		args = append(args, "-v", mountedGitConfig+":/.gitconfig")
 	}
 
-	if opts.ConfigMounts != nil {
-		for _, mount := range opts.ConfigMounts {
-			args = append(args, "-v", mount.Source+":"+mount.Target)
-			mountedTargets[mount.Target] = true
-		}
-	} else {
-		for _, dir := range opts.AgentConfigDirs {
-			if _, err := os.Stat(dir); os.IsNotExist(err) {
-				continue
-			}
-			containerPath := toContainerPath(dir)
-			args = append(args, "-v", dir+":"+containerPath)
-			mountedTargets[containerPath] = true
-		}
+	for _, mount := range opts.ConfigMounts {
+		args = append(args, "-v", mount.Source+":"+mount.Target)
+		mountedTargets[mount.Target] = true
+	}
 
-		for _, file := range opts.AgentConfigFiles {
-			if _, err := os.Stat(file); os.IsNotExist(err) {
-				continue
-			}
-			containerPath := toContainerPath(file)
-			args = append(args, "-v", file+":"+containerPath)
-			mountedTargets[containerPath] = true
+	for _, dir := range opts.AgentConfigDirs {
+		containerPath := ToContainerPath(dir)
+		if mountedTargets[containerPath] {
+			continue
 		}
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		}
+		args = append(args, "-v", dir+":"+containerPath)
+		mountedTargets[containerPath] = true
+	}
+
+	for _, file := range opts.AgentConfigFiles {
+		containerPath := ToContainerPath(file)
+		if mountedTargets[containerPath] {
+			continue
+		}
+		if _, err := os.Stat(file); os.IsNotExist(err) {
+			continue
+		}
+		args = append(args, "-v", file+":"+containerPath)
+		mountedTargets[containerPath] = true
 	}
 
 	if opts.SSH {
@@ -225,7 +229,7 @@ func prepareMountedGitConfig(path, absRepo string) (string, func(), error) {
 	return tmp.Name(), func() { _ = os.Remove(tmp.Name()) }, nil
 }
 
-func toContainerPath(hostPath string) string {
+func ToContainerPath(hostPath string) string {
 	home, _ := os.UserHomeDir()
 	if home != "" && strings.HasPrefix(hostPath, home) {
 		rel := strings.TrimPrefix(hostPath, home)
@@ -296,7 +300,7 @@ func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
 		if !info.IsDir() {
 			continue
 		}
-		target := toContainerPath(dir)
+		target := ToContainerPath(dir)
 		if usedTargets[target] {
 			continue
 		}
@@ -321,7 +325,7 @@ func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
 		if info.IsDir() {
 			continue
 		}
-		target := toContainerPath(file)
+		target := ToContainerPath(file)
 		if usedTargets[target] {
 			continue
 		}
