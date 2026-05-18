@@ -218,13 +218,13 @@ func TestAgentRun_Run_DoesNotInjectModelFlagForCustomCommand(t *testing.T) {
 	run.preset = "opencode"
 	run.model = "gpt-4.1"
 
-	command := `opencode run --pure "$(cat {{.PromptFile}})"`
+	command := `opencode run "$(cat {{.PromptFile}})"`
 	res := run.Run(context.Background(), spy, command, false, prompt.RenderConfig{})
 	if res.Status != "success" {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
 
-	want := `opencode run --pure "$(cat .sandman/rendered-prompt.md)"`
+	want := `opencode run "$(cat .sandman/rendered-prompt.md)"`
 	if sb.execCommand != want {
 		t.Errorf("expected command %q, got %q", want, sb.execCommand)
 	}

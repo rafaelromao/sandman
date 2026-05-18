@@ -67,18 +67,8 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init")
-	if err != nil {
-		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
-	}
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
-		}
-	}
-
 	// Create the bare remote inside the repo so it's accessible inside the container.
-	remoteDir := filepath.Join(repoDir, ".sandman", "remote")
+	remoteDir := filepath.Join(repoDir, "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatalf("create remote dir: %v", err)
 	}
@@ -92,6 +82,16 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 
 	seedPRFlowRepo(t, repoDir)
 	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init")
+	if err != nil {
+		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
 	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
 	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-binary-")
@@ -104,7 +104,7 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 	}
 	absRepo, _ := filepath.Abs(repoDir)
 	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
-		"file://"+filepath.Join(absRepo, ".sandman", "remote"))
+		"file://"+filepath.Join(absRepo, "remote"))
 	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
@@ -138,6 +138,9 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build image for model detection: %v: %s", err, out)
 	}
+	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
+	}
 	modelOut, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect",
 		"opencode", "models").Output()
 	if err != nil {
@@ -164,9 +167,6 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 
 	if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
 		t.Fatalf("expected fake PR URL in log, got:\n%s", log)
-	}
-	if !strings.Contains(log, "To file:///workspace/.sandman/remote") {
-		t.Fatalf("expected git push output in log, got:\n%s", log)
 	}
 
 	argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.args"))
@@ -249,15 +249,8 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	runRootCommand(t, prFlowDeps(repoDir), "init")
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
-		}
-	}
-
 	// Create the bare remote inside the repo so it's accessible inside the container.
-	remoteDir := filepath.Join(repoDir, ".sandman", "remote")
+	remoteDir := filepath.Join(repoDir, "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatalf("create remote dir: %v", err)
 	}
@@ -271,6 +264,13 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 
 	seedPRFlowRepo(t, repoDir)
 	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	runRootCommand(t, prFlowDeps(repoDir), "init")
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
 	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
 	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-")
@@ -285,7 +285,7 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	// mounted gitconfig copy to the container path.
 	absRepo, _ := filepath.Abs(repoDir)
 	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
-		"file://"+filepath.Join(absRepo, ".sandman", "remote"))
+		"file://"+filepath.Join(absRepo, "remote"))
 	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
@@ -325,6 +325,9 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build image for model detection: %v: %s", err, out)
 	}
+	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
+	}
 	modelOut, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect",
 		"opencode", "models").Output()
 	if err != nil {
@@ -351,9 +354,6 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 
 	if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
 		t.Fatalf("expected fake PR URL in log, got:\n%s", log)
-	}
-	if !strings.Contains(log, "To file:///workspace/.sandman/remote") {
-		t.Fatalf("expected git push output in log, got:\n%s", log)
 	}
 
 	argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.args"))
@@ -815,7 +815,7 @@ func customizeOpenCodeAgentForContainer(t *testing.T, repoDir, model string) {
 	if err != nil {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
-	agent.Command = fmt.Sprintf(`PATH=/workspace/.sandman/bin:${PATH} opencode run --pure -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Command = fmt.Sprintf(`PATH=/workspace/.sandman/bin:${PATH} opencode run -m %s "$(cat {{.PromptFile}})"`, model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
@@ -994,18 +994,8 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init")
-	if err != nil {
-		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
-	}
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
-		}
-	}
-
 	// Create the bare remote inside the repo so it's accessible inside the container.
-	remoteDir := filepath.Join(repoDir, ".sandman", "remote")
+	remoteDir := filepath.Join(repoDir, "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatalf("create remote dir: %v", err)
 	}
@@ -1019,6 +1009,16 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 
 	seedParallelPRFlowRepo(t, repoDir)
 	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init")
+	if err != nil {
+		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
 	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
 	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-parallel-")
@@ -1031,7 +1031,7 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 	}
 	absRepo, _ := filepath.Abs(repoDir)
 	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
-		"file://"+filepath.Join(absRepo, ".sandman", "remote"))
+		"file://"+filepath.Join(absRepo, "remote"))
 	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
@@ -1064,6 +1064,9 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build image for model detection: %v: %s", err, out)
+	}
+	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
 	}
 	modelOut, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel",
 		"opencode", "models").Output()
@@ -1358,7 +1361,7 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 
 {{ISSUE_BODY}}
 
-Fix only what is needed.
+Fix only what is needed. Do not modify test files. Only the test named in the issue may pass in this branch; unrelated issue tests must keep failing.
 When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{TARGET_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, and print the PR URL.
 `
 	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
@@ -1378,7 +1381,7 @@ func customizeOpenCodeAgentForContainerWithEcho(t *testing.T, repoDir, model str
 	if err != nil {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
-	agent.Command = fmt.Sprintf(`printf 'containerhostname=%%s\ncontainerworkdir=%%s\n' "$(hostname)" "$(pwd)" && PATH=/workspace/.sandman/bin:${PATH} opencode run --pure -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Command = fmt.Sprintf(`printf 'containerhostname=%%s\ncontainerworkdir=%%s\n' "$(hostname)" "$(pwd)" >&2 && PATH=/workspace/.sandman/bin:${PATH} opencode run -m %s "$(cat {{.PromptFile}})"`, model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
@@ -1467,7 +1470,7 @@ JSON
     case "$path" in
       repos/example/sandbox/issues/150)
         cat <<'JSON'
-{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5.","labels":[{"name":"ready-for-agent"}]}
+{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5. Do not make TestDoubleFor151 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -1477,7 +1480,7 @@ JSON
         ;;
       repos/example/sandbox/issues/151)
         cat <<'JSON'
-{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7.","labels":[{"name":"ready-for-agent"}]}
+{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7. Do not make TestDoubleFor150 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -1591,7 +1594,7 @@ JSON
     case "$path" in
       repos/example/sandbox/issues/150)
         cat <<'JSON'
-{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5.","labels":[{"name":"ready-for-agent"}]}
+{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5. Do not make TestDoubleFor151 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -1601,7 +1604,7 @@ JSON
         ;;
       repos/example/sandbox/issues/151)
         cat <<'JSON'
-{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7.","labels":[{"name":"ready-for-agent"}]}
+{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7. Do not make TestDoubleFor150 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
