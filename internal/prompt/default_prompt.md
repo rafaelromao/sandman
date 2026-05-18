@@ -61,7 +61,7 @@ Review the diff against the originating issue. For each file/hunk:
 git add -A
 git commit -m "refactor: self-review fixes"
 ```
-- Fix the code in case any of the tests fail, do not skip any test. Commit again:
+- Fix the code in case any of the tests fail. Commit again:
 ```bash
 git add -A
 git commit -m "refactor: self-review fixes"
