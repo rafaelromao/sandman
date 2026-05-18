@@ -56,11 +56,13 @@ Review the diff against the originating issue. For each file/hunk:
   - Spec reviewer: issue, linked context, and expected behavior.
 - Wait for both reviewers.
 - Synthesize their findings into one fix list.
-- Apply fixes, run tests/formatting, and commit:
+- Apply fixes, format the code, run all tests, including smoke and e2e, and commit:
 ```bash
 git add -A
 git commit -m "refactor: self-review fixes"
 ```
+- Fix the code in case any of the test fail, do not skip any test. Commit again.
+- Repeat the Self-review cycle until all tests pass.
 
 ### 6. Push & PR
 ```bash
