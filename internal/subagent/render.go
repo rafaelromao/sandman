@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 )
@@ -32,7 +31,6 @@ func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writ
 	useANSI := isTerminal(w)
 	prefix := fmt.Sprintf("[issue-%d] ", issue)
 	active := make(map[string]bool)
-	var mu sync.Mutex
 
 	for {
 		select {
@@ -47,57 +45,68 @@ func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writ
 				ts = time.Now()
 			}
 			timeStr := ts.Format("15:04:05")
-			line := formatEventWithHierarchy(e, useANSI, active, &mu)
-			if line == "" {
+			lines := formatEventWithHierarchy(e, useANSI, active)
+			if len(lines) == 0 {
 				continue
 			}
-			fmt.Fprintf(w, "%s%s %s\n", prefix, timeStr, line)
+			for _, line := range lines {
+				fmt.Fprintf(w, "%s%s %s\n", prefix, timeStr, line)
+			}
 		}
 	}
 }
 
-func formatEventWithHierarchy(e Event, useANSI bool, active map[string]bool, mu sync.Locker) string {
+func formatEventWithHierarchy(e Event, useANSI bool, active map[string]bool) []string {
 	switch e.Type {
 	case EventSubagentStart:
-		mu.Lock()
 		active[e.SessionID] = true
-		mu.Unlock()
-		return fmt.Sprintf(" └─ @%s subagent: %s", e.Agent, e.Title)
+		return []string{fmt.Sprintf(" └─ @%s subagent: %s", e.Agent, e.Title)}
 	case EventSubagentFinish:
-		mu.Lock()
 		delete(active, e.SessionID)
-		mu.Unlock()
-		return fmt.Sprintf(" └─ @%s subagent: finished", e.Agent)
+		return []string{fmt.Sprintf(" └─ @%s subagent: finished", e.Agent)}
 	default:
-		mu.Lock()
-		_, isSub := active[e.SessionID]
-		mu.Unlock()
-		if isSub {
+		if _, ok := active[e.SessionID]; ok {
 			return formatSubagentEvent(e, useANSI)
 		}
-		return formatEvent(e, useANSI)
+		line := formatEvent(e, useANSI)
+		if line == "" {
+			return nil
+		}
+		return []string{line}
 	}
 }
 
-func formatSubagentEvent(e Event, useANSI bool) string {
+func formatSubagentEvent(e Event, useANSI bool) []string {
+	indent := "    └─ "
 	switch e.Type {
 	case EventText:
-		return fmt.Sprintf("    └─ %s", firstLine(e.Content))
+		return indentLines(indent, e.Content)
 	case EventReasoning:
-		prefix := "    └─ [thinking] "
+		prefix := indent + "[thinking] "
 		if useANSI {
-			return fmt.Sprintf("    └─ %s%s%s", ansiDim+ansiItalic, "[thinking] "+firstLine(e.Content), ansiReset)
+			prefix = fmt.Sprintf("    └─ %s%s", ansiDim+ansiItalic, "[thinking] ")
+			suffix := ansiReset
+			return []string{prefix + firstLine(e.Content) + suffix}
 		}
-		return prefix + firstLine(e.Content)
+		return []string{prefix + firstLine(e.Content)}
 	case EventTool:
-		line := "    └─ [" + e.Title + "]"
+		line := indent + "[" + e.Title + "]"
 		if e.Content != "" {
 			line += " " + firstLine(e.Content)
 		}
-		return line
+		return []string{line}
 	default:
-		return fmt.Sprintf("    └─ %s", firstLine(e.Content))
+		return []string{fmt.Sprintf("    └─ %s", e.Content)}
 	}
+}
+
+func indentLines(indent, content string) []string {
+	lines := strings.Split(content, "\n")
+	result := make([]string, len(lines))
+	for i, l := range lines {
+		result[i] = indent + l
+	}
+	return result
 }
 
 func firstLine(s string) string {
