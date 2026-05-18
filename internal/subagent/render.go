@@ -84,7 +84,7 @@ func formatSubagentEvent(e Event, useANSI bool) []string {
 	case EventReasoning:
 		prefix := indent + "[thinking] "
 		if useANSI {
-			prefix = fmt.Sprintf("    └─ %s%s", ansiDim+ansiItalic, "[thinking] ")
+			prefix = fmt.Sprintf("%s%s%s", indent, ansiDim+ansiItalic, "[thinking] ")
 			suffix := ansiReset
 			return []string{prefix + firstLine(e.Content) + suffix}
 		}
