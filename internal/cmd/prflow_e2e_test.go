@@ -68,7 +68,7 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 	initRunIntegrationRepo(t, repoDir)
 
 	// Create the bare remote inside the repo so it's accessible inside the container.
-	remoteDir := filepath.Join(repoDir, ".sandman", "remote")
+	remoteDir := filepath.Join(repoDir, "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatalf("create remote dir: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 	}
 	absRepo, _ := filepath.Abs(repoDir)
 	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
-		"file://"+filepath.Join(absRepo, ".sandman", "remote"))
+		"file://"+filepath.Join(absRepo, "remote"))
 	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	initRunIntegrationRepo(t, repoDir)
 
 	// Create the bare remote inside the repo so it's accessible inside the container.
-	remoteDir := filepath.Join(repoDir, ".sandman", "remote")
+	remoteDir := filepath.Join(repoDir, "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatalf("create remote dir: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	// mounted gitconfig copy to the container path.
 	absRepo, _ := filepath.Abs(repoDir)
 	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
-		"file://"+filepath.Join(absRepo, ".sandman", "remote"))
+		"file://"+filepath.Join(absRepo, "remote"))
 	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
@@ -1001,7 +1001,7 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 	initRunIntegrationRepo(t, repoDir)
 
 	// Create the bare remote inside the repo so it's accessible inside the container.
-	remoteDir := filepath.Join(repoDir, ".sandman", "remote")
+	remoteDir := filepath.Join(repoDir, "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatalf("create remote dir: %v", err)
 	}
@@ -1037,7 +1037,7 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 	}
 	absRepo, _ := filepath.Abs(repoDir)
 	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
-		"file://"+filepath.Join(absRepo, ".sandman", "remote"))
+		"file://"+filepath.Join(absRepo, "remote"))
 	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
