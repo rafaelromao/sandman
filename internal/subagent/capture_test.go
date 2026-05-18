@@ -245,6 +245,9 @@ func TestJSONParserEmitsToolEvent(t *testing.T) {
 		if e.Title != "Read" {
 			t.Errorf("expected tool name 'Read', got %q", e.Title)
 		}
+		if e.Content != "completed" {
+			t.Errorf("expected status 'completed', got %q", e.Content)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for tool event")
 	}
@@ -270,6 +273,9 @@ func TestJSONParserEmitsErrorEvent(t *testing.T) {
 	case e := <-oc.Events():
 		if e.Type != EventError {
 			t.Errorf("expected error event, got %s", e.Type)
+		}
+		if e.Content != "something went wrong" {
+			t.Errorf("expected error message 'something went wrong', got %q", e.Content)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for error event")

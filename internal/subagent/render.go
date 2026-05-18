@@ -7,7 +7,6 @@ import (
 	"os"
 	"syscall"
 	"time"
-	"unsafe"
 )
 
 const ansiDim = "\033[2m"
@@ -20,12 +19,11 @@ func isTerminal(w io.Writer) bool {
 	if !ok {
 		return false
 	}
-	var termios syscall.Termios
-	_, _, err := syscall.Syscall6(
-		syscall.SYS_IOCTL, f.Fd(), syscall.TCGETS,
-		uintptr(unsafe.Pointer(&termios)), 0, 0, 0,
-	)
-	return err == 0
+	var st syscall.Stat_t
+	if err := syscall.Fstat(int(f.Fd()), &st); err != nil {
+		return false
+	}
+	return st.Mode&syscall.S_IFMT == syscall.S_IFCHR
 }
 
 func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writer) {
@@ -65,9 +63,9 @@ func formatEvent(e Event, useANSI bool) string {
 		return e.Content
 	case EventTool:
 		if useANSI {
-			return fmt.Sprintf("\u2500 %s%s%s", ansiBold, e.Title, ansiReset)
+			return fmt.Sprintf("\u2500 %s%s%s %s", ansiBold, e.Title, ansiReset, e.Content)
 		}
-		return fmt.Sprintf("\u2500 %s", e.Title)
+		return fmt.Sprintf("\u2500 %s %s", e.Title, e.Content)
 	case EventStepStart:
 		return "..."
 	case EventStepFinish:

@@ -69,6 +69,7 @@ func TestRenderEventsToolPlain(t *testing.T) {
 	events <- Event{
 		Type:      EventTool,
 		Title:     "Read",
+		Content:   "completed",
 		Timestamp: time.Date(2024, 1, 1, 10, 30, 0, 0, time.UTC),
 	}
 
@@ -76,8 +77,8 @@ func TestRenderEventsToolPlain(t *testing.T) {
 	cancel()
 
 	output := buf.String()
-	if !strings.Contains(output, "\u2500 Read") {
-		t.Errorf("expected '─ Read', got %q", output)
+	if !strings.Contains(output, "\u2500 Read completed") {
+		t.Errorf("expected '─ Read completed', got %q", output)
 	}
 }
 

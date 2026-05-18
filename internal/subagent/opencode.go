@@ -130,17 +130,27 @@ func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 	}
 }
 
+type openCodeState struct {
+	Status string `json:"status"`
+}
+
 type openCodePart struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-	Tool string `json:"tool"`
+	Type  string         `json:"type"`
+	Text  string         `json:"text"`
+	Tool  string         `json:"tool"`
+	State *openCodeState `json:"state,omitempty"`
+}
+
+type openCodeError struct {
+	Message string `json:"message"`
 }
 
 type openCodeEvent struct {
-	Type      string        `json:"type"`
-	Timestamp string        `json:"timestamp"`
-	SessionID string        `json:"sessionID"`
-	Part      *openCodePart `json:"part,omitempty"`
+	Type      string         `json:"type"`
+	Timestamp string         `json:"timestamp"`
+	SessionID string         `json:"sessionID"`
+	Part      *openCodePart  `json:"part,omitempty"`
+	Error     *openCodeError `json:"error,omitempty"`
 }
 
 func (o *OpenCodeCapture) parseJSONLine(line string) *Event {
@@ -178,6 +188,9 @@ func (o *OpenCodeCapture) parseJSONLine(line string) *Event {
 		ev.Type = EventTool
 		if raw.Part != nil {
 			ev.Title = raw.Part.Tool
+			if raw.Part.State != nil {
+				ev.Content = raw.Part.State.Status
+			}
 		}
 	case "step_start":
 		ev.Type = EventStepStart
@@ -185,6 +198,9 @@ func (o *OpenCodeCapture) parseJSONLine(line string) *Event {
 		ev.Type = EventStepFinish
 	case "error":
 		ev.Type = EventError
+		if raw.Error != nil {
+			ev.Content = raw.Error.Message
+		}
 	default:
 		return nil
 	}
