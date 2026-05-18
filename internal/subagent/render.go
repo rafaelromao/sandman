@@ -27,7 +27,7 @@ func isTerminal(w io.Writer) bool {
 	return st.Mode&syscall.S_IFMT == syscall.S_IFCHR
 }
 
-func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writer) {
+func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writer, logW io.Writer) {
 	useANSI := isTerminal(w)
 	prefix := fmt.Sprintf("[issue-%d] ", issue)
 	active := make(map[string]bool)
@@ -51,6 +51,9 @@ func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writ
 			}
 			for _, line := range lines {
 				fmt.Fprintf(w, "%s%s %s\n", prefix, timeStr, line)
+				if logW != nil {
+					fmt.Fprintf(logW, "%s %s\n", timeStr, line)
+				}
 			}
 		}
 	}

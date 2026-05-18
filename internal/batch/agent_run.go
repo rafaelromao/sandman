@@ -82,9 +82,9 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		command = wrapped
 
 		var combinedOut io.Writer
-		combinedOut = logFile
+		combinedOut = io.Discard
 		if captureStdout != nil {
-			combinedOut = io.MultiWriter(logFile, captureStdout)
+			combinedOut = captureStdout
 		}
 		prefixedErr := NewLinePrefixWriter(r.issue.Number, stderr)
 		combinedErr := io.MultiWriter(logFile, prefixedErr)
@@ -92,7 +92,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		eventsDone := make(chan struct{})
 		go func() {
 			defer close(eventsDone)
-			subagent.RenderEvents(ctx, r.issue.Number, capture.Events(), stdout)
+			subagent.RenderEvents(ctx, r.issue.Number, capture.Events(), stdout, logFile)
 		}()
 
 		execErr := r.sandbox.Exec(ctx, command, combinedOut, combinedErr)
