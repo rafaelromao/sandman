@@ -17,6 +17,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -768,8 +769,10 @@ func TestSmoke_SubagentOutput_Worktree(t *testing.T) {
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: issue}}
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
 	store := &config.FileStore{Path: cfgPath}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 	deps := Dependencies{
-		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, eventLog),
+		EventLog:       eventLog,
 		ConfigStore:    store,
 		GitHubClient:   gh,
 		PromptRenderer: &prompt.Engine{},
@@ -859,8 +862,10 @@ func TestSmoke_SubagentOutput_Podman(t *testing.T) {
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: issue}}
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
 	store := &config.FileStore{Path: cfgPath}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 	deps := Dependencies{
-		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, eventLog),
+		EventLog:       eventLog,
 		ConfigStore:    store,
 		GitHubClient:   gh,
 		PromptRenderer: &prompt.Engine{},
