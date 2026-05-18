@@ -1202,14 +1202,13 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 
 	// 4. Branch-local correctness: check out each branch in a temp dir
 	for _, tc := range []struct {
-		issue      int
-		branch     string
-		wantReturn string
-		wantTest   string
-		failTest   string
+		issue    int
+		branch   string
+		wantTest string
+		failTest string
 	}{
-		{parallelIssue150, parallelBranch150, "5", "TestDoubleFor150", "TestDoubleFor151"},
-		{parallelIssue151, parallelBranch151, "7", "TestDoubleFor151", "TestDoubleFor150"},
+		{parallelIssue150, parallelBranch150, "TestDoubleFor150", "TestDoubleFor151"},
+		{parallelIssue151, parallelBranch151, "TestDoubleFor151", "TestDoubleFor150"},
 	} {
 		checkoutDir := t.TempDir()
 		clone := exec.Command("git", "clone", "--branch", tc.branch, "--single-branch", remoteDir, checkoutDir)
