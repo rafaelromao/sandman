@@ -12,13 +12,14 @@ import (
 
 // OpenCodeCapture captures output from OpenCode agent sessions.
 type OpenCodeCapture struct {
-	events    chan Event
-	mu        sync.Mutex
-	sessionID string
-	stopped   bool
-	wg        sync.WaitGroup
-	pw        io.WriteCloser
-	dbPoller  *DBPoller
+	events        chan Event
+	mu            sync.Mutex
+	sessionID     string
+	stopped       bool
+	wg            sync.WaitGroup
+	pw            io.WriteCloser
+	dbPoller      *DBPoller
+	sessionOutput SessionOutput
 }
 
 // NewOpenCodeCapture creates a new OpenCodeCapture instance.
@@ -88,8 +89,15 @@ func (o *OpenCodeCapture) Stop() ([]SessionOutput, error) {
 	}
 	o.wg.Wait()
 	close(o.events)
-	// TODO: implement session output aggregation
-	return nil, nil
+
+	o.mu.Lock()
+	result := o.sessionOutput
+	o.mu.Unlock()
+
+	if result.SessionID == "" && len(result.Messages) == 0 {
+		return nil, nil
+	}
+	return []SessionOutput{result}, nil
 }
 
 func (o *OpenCodeCapture) parseStream(reader io.Reader) {
@@ -139,10 +147,37 @@ func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 			default:
 			}
 		}
+		o.accumulateEvent(event)
 	}
 	if err := scanner.Err(); err != nil {
 		log.Printf("opencode capture: scanner error: %v", err)
 	}
+}
+
+func (o *OpenCodeCapture) accumulateEvent(event *Event) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if event.SessionID != "" && o.sessionOutput.SessionID == "" {
+		o.sessionOutput.SessionID = event.SessionID
+	}
+
+	var part Part
+	switch event.Type {
+	case EventText:
+		part = Part{Type: PartTypeText, Text: event.Content}
+	case EventReasoning:
+		part = Part{Type: PartTypeReasoning, Text: event.Content}
+	case EventTool:
+		part = Part{Type: PartTypeTool, ToolName: event.Title, ToolOutput: event.Content}
+	default:
+		return
+	}
+
+	if len(o.sessionOutput.Messages) == 0 {
+		o.sessionOutput.Messages = append(o.sessionOutput.Messages, Message{Role: "assistant"})
+	}
+	o.sessionOutput.Messages[0].Parts = append(o.sessionOutput.Messages[0].Parts, part)
 }
 
 type openCodeState struct {

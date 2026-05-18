@@ -600,7 +600,7 @@ func customizeOpenCodeAgent(t *testing.T, repoDir, model string) {
 	if err != nil {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
-	agent.Command = fmt.Sprintf(`opencode run --pure -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Command = fmt.Sprintf(`opencode run -m %s "$(cat {{.PromptFile}})"`, model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
