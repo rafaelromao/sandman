@@ -54,7 +54,7 @@ func TestCaptureInterfaceExists(t *testing.T) {
 }
 
 func TestWrapCommandInjectsFormatJson(t *testing.T) {
-	oc := &OpenCodeCapture{}
+	oc := NewOpenCodeCapture()
 
 	wrapped, _, _, err := oc.WrapCommand("opencode run --issue 123")
 	if err != nil {
@@ -68,7 +68,7 @@ func TestWrapCommandInjectsFormatJson(t *testing.T) {
 }
 
 func TestWrapCommandNonOpencodeUnchanged(t *testing.T) {
-	oc := &OpenCodeCapture{}
+	oc := NewOpenCodeCapture()
 
 	wrapped, _, _, err := oc.WrapCommand("echo hello")
 	if err != nil {
@@ -77,6 +77,20 @@ func TestWrapCommandNonOpencodeUnchanged(t *testing.T) {
 
 	if wrapped != "echo hello" {
 		t.Errorf("expected %q, got %q", "echo hello", wrapped)
+	}
+}
+
+func TestWrapCommandTrimsWhitespace(t *testing.T) {
+	oc := NewOpenCodeCapture()
+
+	wrapped, _, _, err := oc.WrapCommand("  opencode run --issue 456  ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := "opencode run --format json --issue 456"
+	if wrapped != expected {
+		t.Errorf("expected %q, got %q", expected, wrapped)
 	}
 }
 

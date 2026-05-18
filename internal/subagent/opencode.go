@@ -32,11 +32,12 @@ func (o *OpenCodeCapture) SessionID() string {
 }
 
 func (o *OpenCodeCapture) WrapCommand(command string) (string, io.Writer, func(), error) {
-	if !strings.Contains(command, "opencode run") {
+	trimmed := strings.TrimSpace(command)
+	if !strings.HasPrefix(trimmed, "opencode run") {
 		return command, nil, func() {}, nil
 	}
 
-	wrapped := strings.Replace(command, "opencode run", "opencode run --format json", 1)
+	wrapped := strings.Replace(trimmed, "opencode run", "opencode run --format json", 1)
 
 	pr, pw := io.Pipe()
 	go o.parseStream(pr)
@@ -123,5 +124,9 @@ func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 			default:
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		// Scanner error (e.g., line too long) — pipe likely closed
+		_ = err
 	}
 }
