@@ -50,6 +50,7 @@ type DBPoller struct {
 	dbPath   string
 	parentID string
 	seen     map[string]bool
+	started  map[string]SessionOutput
 	stopped  bool
 	wg       sync.WaitGroup
 }
@@ -90,6 +91,7 @@ func (p *DBPoller) Start(parentID string) {
 	p.mu.Lock()
 	p.parentID = parentID
 	p.seen = make(map[string]bool)
+	p.started = make(map[string]SessionOutput)
 	p.mu.Unlock()
 
 	_, err := p.discoverDBPath()
@@ -102,11 +104,52 @@ func (p *DBPoller) Start(parentID string) {
 	go p.pollLoop()
 }
 
+func (p *DBPoller) emitSubagentStart(s SessionOutput) {
+	if p.events == nil {
+		return
+	}
+	select {
+	case p.events <- Event{
+		SessionID: s.SessionID,
+		Type:      EventSubagentStart,
+		Agent:     s.Agent,
+		Title:     s.Title,
+		Timestamp: time.Now(),
+	}:
+	default:
+	}
+}
+
+func (p *DBPoller) emitSubagentFinishLocked(id string) {
+	if p.events == nil {
+		return
+	}
+	s, ok := p.started[id]
+	if !ok {
+		return
+	}
+	select {
+	case p.events <- Event{
+		SessionID: id,
+		Type:      EventSubagentFinish,
+		Agent:     s.Agent,
+		Timestamp: time.Now(),
+	}:
+	default:
+	}
+}
+
 func (p *DBPoller) Stop() {
 	p.mu.Lock()
 	p.stopped = true
 	p.mu.Unlock()
 	p.wg.Wait()
+
+	p.mu.Lock()
+	for id := range p.started {
+		p.emitSubagentFinishLocked(id)
+	}
+	p.mu.Unlock()
 }
 
 func (p *DBPoller) pollLoop() {
@@ -154,6 +197,15 @@ func (p *DBPoller) pollOnce(parentID string) {
 }
 
 func (p *DBPoller) processChildSession(s SessionOutput) {
+	p.mu.Lock()
+	if _, ok := p.started[s.SessionID]; ok {
+		p.mu.Unlock()
+	} else {
+		p.started[s.SessionID] = s
+		p.mu.Unlock()
+		p.emitSubagentStart(s)
+	}
+
 	messages, err := p.extractSession(s.SessionID)
 	if err != nil {
 		log.Printf("subagent DB: failed to extract session %s: %v", s.SessionID, err)

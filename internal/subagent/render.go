@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -29,6 +30,7 @@ func isTerminal(w io.Writer) bool {
 func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writer) {
 	useANSI := isTerminal(w)
 	prefix := fmt.Sprintf("[issue-%d] ", issue)
+	active := make(map[string]bool)
 
 	for {
 		select {
@@ -43,13 +45,75 @@ func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writ
 				ts = time.Now()
 			}
 			timeStr := ts.Format("15:04:05")
-			line := formatEvent(e, useANSI)
-			if line == "" {
+			lines := formatEventWithHierarchy(e, useANSI, active)
+			if len(lines) == 0 {
 				continue
 			}
-			fmt.Fprintf(w, "%s%s %s\n", prefix, timeStr, line)
+			for _, line := range lines {
+				fmt.Fprintf(w, "%s%s %s\n", prefix, timeStr, line)
+			}
 		}
 	}
+}
+
+func formatEventWithHierarchy(e Event, useANSI bool, active map[string]bool) []string {
+	switch e.Type {
+	case EventSubagentStart:
+		active[e.SessionID] = true
+		return []string{fmt.Sprintf(" └─ @%s subagent: %s", e.Agent, e.Title)}
+	case EventSubagentFinish:
+		delete(active, e.SessionID)
+		return []string{fmt.Sprintf(" └─ @%s subagent: finished", e.Agent)}
+	default:
+		if _, ok := active[e.SessionID]; ok {
+			return formatSubagentEvent(e, useANSI)
+		}
+		line := formatEvent(e, useANSI)
+		if line == "" {
+			return nil
+		}
+		return []string{line}
+	}
+}
+
+func formatSubagentEvent(e Event, useANSI bool) []string {
+	indent := "    └─ "
+	switch e.Type {
+	case EventText:
+		return indentLines(indent, e.Content)
+	case EventReasoning:
+		prefix := indent + "[thinking] "
+		if useANSI {
+			prefix = fmt.Sprintf("%s%s%s", indent, ansiDim+ansiItalic, "[thinking] ")
+			suffix := ansiReset
+			return []string{prefix + firstLine(e.Content) + suffix}
+		}
+		return []string{prefix + firstLine(e.Content)}
+	case EventTool:
+		line := indent + "[" + e.Title + "]"
+		if e.Content != "" {
+			line += " " + firstLine(e.Content)
+		}
+		return []string{line}
+	default:
+		return []string{indent + e.Content}
+	}
+}
+
+func indentLines(indent, content string) []string {
+	lines := strings.Split(content, "\n")
+	result := make([]string, len(lines))
+	for i, l := range lines {
+		result[i] = indent + l
+	}
+	return result
+}
+
+func firstLine(s string) string {
+	if idx := strings.Index(s, "\n"); idx >= 0 {
+		return s[:idx]
+	}
+	return s
 }
 
 func formatEvent(e Event, useANSI bool) string {
