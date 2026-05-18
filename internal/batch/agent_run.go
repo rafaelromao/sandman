@@ -86,7 +86,8 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		if captureStdout != nil {
 			combinedOut = io.MultiWriter(logFile, captureStdout)
 		}
-		combinedErr := io.MultiWriter(logFile, NewLinePrefixWriter(r.issue.Number, stderr))
+		prefixedErr := NewLinePrefixWriter(r.issue.Number, stderr)
+		combinedErr := io.MultiWriter(logFile, prefixedErr)
 
 		eventsDone := make(chan struct{})
 		go func() {
@@ -94,9 +95,8 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 			subagent.RenderEvents(ctx, r.issue.Number, capture.Events(), stdout)
 		}()
 
-		if err := r.sandbox.Exec(ctx, command, combinedOut, combinedErr); err != nil {
-			return fmt.Errorf("execute agent: %w", err)
-		}
+		execErr := r.sandbox.Exec(ctx, command, combinedOut, combinedErr)
+		_ = prefixedErr.Flush()
 
 		sessions, stopErr := capture.Stop()
 		if stopErr != nil {
@@ -105,6 +105,9 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		r.subagentOutput = sessions
 
 		<-eventsDone
+		if execErr != nil {
+			return fmt.Errorf("execute agent: %w", execErr)
+		}
 		return nil
 	}
 

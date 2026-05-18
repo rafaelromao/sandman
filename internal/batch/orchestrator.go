@@ -592,6 +592,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		agentRun.defaultBranch = cfg.Git.DefaultBranch
 		if agentCfg.Preset == "opencode" {
 			agentRun.capture = subagent.NewOpenCodeCapture()
+			// TODO: wire up DBPoller for subagent session discovery via opencode.db polling
 		}
 	}
 
