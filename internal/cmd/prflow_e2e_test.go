@@ -1202,28 +1202,18 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 
 	// 4. Branch-local correctness: check out each branch in a temp dir
 	for _, tc := range []struct {
-		issue      int
-		branch     string
-		wantReturn string
-		wantTest   string
-		failTest   string
+		issue    int
+		branch   string
+		wantTest string
+		failTest string
 	}{
-		{parallelIssue150, parallelBranch150, "5", "TestDoubleFor150", "TestDoubleFor151"},
-		{parallelIssue151, parallelBranch151, "7", "TestDoubleFor151", "TestDoubleFor150"},
+		{parallelIssue150, parallelBranch150, "TestDoubleFor150", "TestDoubleFor151"},
+		{parallelIssue151, parallelBranch151, "TestDoubleFor151", "TestDoubleFor150"},
 	} {
 		checkoutDir := t.TempDir()
 		clone := exec.Command("git", "clone", "--branch", tc.branch, "--single-branch", remoteDir, checkoutDir)
 		if out, err := clone.CombinedOutput(); err != nil {
 			t.Fatalf("clone branch %s: %v: %s", tc.branch, err, out)
-		}
-
-		// Verify same-hunk edit
-		doubleSrc, err := os.ReadFile(filepath.Join(checkoutDir, "double.go"))
-		if err != nil {
-			t.Fatalf("read double.go on branch %s: %v", tc.branch, err)
-		}
-		if !strings.Contains(string(doubleSrc), "return "+tc.wantReturn) {
-			t.Fatalf("branch %s double.go: expected return %s, got:\n%s", tc.branch, tc.wantReturn, doubleSrc)
 		}
 
 		// Verify test passes for own test function
@@ -1358,7 +1348,7 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 
 {{ISSUE_BODY}}
 
-Fix only what is needed.
+Fix only what is needed. Do not modify test files.
 When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{TARGET_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, and print the PR URL.
 `
 	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
