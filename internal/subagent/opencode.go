@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ type OpenCodeCapture struct {
 	mu        sync.Mutex
 	sessionID string
 	stopped   bool
+	wg        sync.WaitGroup
 }
 
 // NewOpenCodeCapture creates a new OpenCodeCapture instance.
@@ -44,6 +46,7 @@ func (o *OpenCodeCapture) WrapCommand(command string) (string, io.Writer, func()
 	wrapped := strings.Replace(trimmed, "opencode run", "opencode run --format json", 1)
 
 	pr, pw := io.Pipe()
+	o.wg.Add(1)
 	go o.parseStream(pr)
 
 	cleanup := func() {
@@ -68,11 +71,13 @@ func (o *OpenCodeCapture) Stop() ([]SessionOutput, error) {
 	}
 	o.stopped = true
 	o.mu.Unlock()
+	o.wg.Wait()
 	close(o.events)
 	return nil, nil
 }
 
 func (o *OpenCodeCapture) parseStream(reader io.Reader) {
+	defer o.wg.Done()
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		o.mu.Lock()
@@ -124,7 +129,6 @@ func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		// Scanner error (e.g., line too long) — pipe likely closed
-		_ = err
+		log.Printf("opencode capture: scanner error: %v", err)
 	}
 }
