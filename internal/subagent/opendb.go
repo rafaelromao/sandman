@@ -86,14 +86,13 @@ func (p *DBPoller) Start(parentID string) {
 	p.mu.Lock()
 	p.parentID = parentID
 	p.seen = make(map[string]bool)
+	p.mu.Unlock()
 
 	_, err := p.discoverDBPath()
 	if err != nil {
 		log.Printf("subagent DB: failed to discover DB path: %v — disabling subagent capture", err)
-		p.mu.Unlock()
 		return
 	}
-	p.mu.Unlock()
 
 	p.wg.Add(1)
 	go p.pollLoop()
@@ -288,7 +287,9 @@ func (p *DBPoller) groupPartsByMessage(messages []messageRow, parts []partRow) [
 	result := make([]Message, len(messages))
 	for i, mr := range messages {
 		var md messageData
-		_ = json.Unmarshal([]byte(mr.Data), &md)
+		if err := json.Unmarshal([]byte(mr.Data), &md); err != nil {
+			log.Printf("subagent DB: failed to parse message.data JSON for message %s: %v", mr.ID, err)
+		}
 
 		result[i] = Message{
 			Role:  md.Role,
@@ -301,6 +302,7 @@ func (p *DBPoller) groupPartsByMessage(messages []messageRow, parts []partRow) [
 func parsePartData(raw string) Part {
 	var pd partData
 	if err := json.Unmarshal([]byte(raw), &pd); err != nil {
+		log.Printf("subagent DB: failed to parse part.data JSON: %v — raw: %s", err, raw)
 		return Part{Type: PartTypeText, Text: raw}
 	}
 
