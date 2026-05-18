@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -29,6 +31,8 @@ func isTerminal(w io.Writer) bool {
 func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writer) {
 	useANSI := isTerminal(w)
 	prefix := fmt.Sprintf("[issue-%d] ", issue)
+	active := make(map[string]bool)
+	var mu sync.Mutex
 
 	for {
 		select {
@@ -43,13 +47,64 @@ func RenderEvents(ctx context.Context, issue int, events <-chan Event, w io.Writ
 				ts = time.Now()
 			}
 			timeStr := ts.Format("15:04:05")
-			line := formatEvent(e, useANSI)
+			line := formatEventWithHierarchy(e, useANSI, active, &mu)
 			if line == "" {
 				continue
 			}
 			fmt.Fprintf(w, "%s%s %s\n", prefix, timeStr, line)
 		}
 	}
+}
+
+func formatEventWithHierarchy(e Event, useANSI bool, active map[string]bool, mu sync.Locker) string {
+	switch e.Type {
+	case EventSubagentStart:
+		mu.Lock()
+		active[e.SessionID] = true
+		mu.Unlock()
+		return fmt.Sprintf(" └─ @%s subagent: %s", e.Agent, e.Title)
+	case EventSubagentFinish:
+		mu.Lock()
+		delete(active, e.SessionID)
+		mu.Unlock()
+		return fmt.Sprintf(" └─ @%s subagent: finished", e.Agent)
+	default:
+		mu.Lock()
+		_, isSub := active[e.SessionID]
+		mu.Unlock()
+		if isSub {
+			return formatSubagentEvent(e, useANSI)
+		}
+		return formatEvent(e, useANSI)
+	}
+}
+
+func formatSubagentEvent(e Event, useANSI bool) string {
+	switch e.Type {
+	case EventText:
+		return fmt.Sprintf("    └─ %s", firstLine(e.Content))
+	case EventReasoning:
+		prefix := "    └─ [thinking] "
+		if useANSI {
+			return fmt.Sprintf("    └─ %s%s%s", ansiDim+ansiItalic, "[thinking] "+firstLine(e.Content), ansiReset)
+		}
+		return prefix + firstLine(e.Content)
+	case EventTool:
+		line := "    └─ [" + e.Title + "]"
+		if e.Content != "" {
+			line += " " + firstLine(e.Content)
+		}
+		return line
+	default:
+		return fmt.Sprintf("    └─ %s", firstLine(e.Content))
+	}
+}
+
+func firstLine(s string) string {
+	if idx := strings.Index(s, "\n"); idx >= 0 {
+		return s[:idx]
+	}
+	return s
 }
 
 func formatEvent(e Event, useANSI bool) string {

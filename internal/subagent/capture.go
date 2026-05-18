@@ -16,6 +16,8 @@ const (
 	EventError           EventType = "error"
 	EventStepStart       EventType = "step_start"
 	EventStepFinish      EventType = "step_finish"
+	EventSubagentStart   EventType = "subagent_start"
+	EventSubagentFinish  EventType = "subagent_finish"
 )
 
 // PartType represents the kind of content in a message part.
