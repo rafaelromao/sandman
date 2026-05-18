@@ -107,14 +107,21 @@ func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 		}
 
 		o.mu.Lock()
-		if o.sessionID == "" && sessionID != "" {
+		isNew := o.sessionID == "" && sessionID != ""
+		if isNew {
 			o.sessionID = sessionID
-			o.events <- Event{
+		}
+		o.mu.Unlock()
+
+		if isNew {
+			select {
+			case o.events <- Event{
 				SessionID: sessionID,
 				Type:      EventSessionDetected,
 				Timestamp: timestamp,
+			}:
+			default:
 			}
 		}
-		o.mu.Unlock()
 	}
 }
