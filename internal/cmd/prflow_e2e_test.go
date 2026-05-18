@@ -67,16 +67,6 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init")
-	if err != nil {
-		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
-	}
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
-		}
-	}
-
 	// Create the bare remote inside the repo so it's accessible inside the container.
 	remoteDir := filepath.Join(repoDir, ".sandman", "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
@@ -92,6 +82,16 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 
 	seedPRFlowRepo(t, repoDir)
 	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init")
+	if err != nil {
+		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
 	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
 	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-binary-")
@@ -249,13 +249,6 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	runRootCommand(t, prFlowDeps(repoDir), "init")
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
-		}
-	}
-
 	// Create the bare remote inside the repo so it's accessible inside the container.
 	remoteDir := filepath.Join(repoDir, ".sandman", "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
@@ -271,6 +264,13 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 
 	seedPRFlowRepo(t, repoDir)
 	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	runRootCommand(t, prFlowDeps(repoDir), "init")
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
 	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
 	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-")
@@ -994,16 +994,6 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init")
-	if err != nil {
-		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
-	}
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
-		}
-	}
-
 	// Create the bare remote inside the repo so it's accessible inside the container.
 	remoteDir := filepath.Join(repoDir, ".sandman", "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
@@ -1019,6 +1009,16 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 
 	seedParallelPRFlowRepo(t, repoDir)
 	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init")
+	if err != nil {
+		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
 	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
 	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-parallel-")
