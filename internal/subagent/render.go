@@ -96,7 +96,7 @@ func formatSubagentEvent(e Event, useANSI bool) []string {
 		}
 		return []string{line}
 	default:
-		return []string{fmt.Sprintf("    └─ %s", e.Content)}
+		return []string{indent + e.Content}
 	}
 }
 
