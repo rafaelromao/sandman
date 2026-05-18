@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -553,6 +554,43 @@ func TestAgentRun_Execute_WithCapture(t *testing.T) {
 	res := run.Result()
 	if len(res.SubagentOutput) != 1 || res.SubagentOutput[0].SessionID != "sess-1" {
 		t.Errorf("expected subagent output in result, got %+v", res.SubagentOutput)
+	}
+}
+
+func TestAgentRun_Execute_WithCaptureWritesInlineToLog(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execStdout: `{"type":"text","timestamp":"2024-01-01T10:30:00Z","part":{"text":"hello"}}` + "\n"}
+
+	eventsCh := make(chan subagent.Event, 10)
+	eventsCh <- subagent.Event{Type: subagent.EventText, Content: "hello", Timestamp: time.Date(2024, 1, 1, 10, 30, 0, 0, time.UTC)}
+	close(eventsCh)
+
+	cap := &fakeCapture{
+		wrapWriter:   io.Discard,
+		eventsCh:     eventsCh,
+		stopSessions: []subagent.SessionOutput{{SessionID: "sess-1"}},
+	}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	if err := run.Execute(context.Background(), "opencode run --issue 42", io.Discard, io.Discard, cap); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("expected log file to exist: %v", err)
+	}
+
+	content := string(data)
+	if strings.Contains(content, `"type":"text"`) {
+		t.Errorf("expected log to not contain raw JSON, got %q", content)
+	}
+	if !strings.Contains(content, "hello") {
+		t.Errorf("expected log to contain inline 'hello', got %q", content)
 	}
 }
 

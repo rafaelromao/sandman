@@ -14,7 +14,7 @@ func TestRenderEventsText(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 42, events, &buf)
+	go RenderEvents(ctx, 42, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventText,
@@ -43,7 +43,7 @@ func TestRenderEventsMultipleEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 7, events, &buf)
+	go RenderEvents(ctx, 7, events, &buf, nil)
 
 	events <- Event{Type: EventText, Content: "first", Timestamp: time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)}
 	events <- Event{Type: EventText, Content: "second", Timestamp: time.Date(2024, 1, 1, 10, 0, 1, 0, time.UTC)}
@@ -64,7 +64,7 @@ func TestRenderEventsToolPlain(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 1, events, &buf)
+	go RenderEvents(ctx, 1, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventTool,
@@ -88,7 +88,7 @@ func TestRenderEventsStepStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 1, events, &buf)
+	go RenderEvents(ctx, 1, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventStepStart,
@@ -110,7 +110,7 @@ func TestRenderSubagentStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 42, events, &buf)
+	go RenderEvents(ctx, 42, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventSubagentStart,
@@ -136,7 +136,7 @@ func TestRenderSubagentTextIndented(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 42, events, &buf)
+	go RenderEvents(ctx, 42, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventSubagentStart,
@@ -173,7 +173,7 @@ func TestRenderSubagentToolCall(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 42, events, &buf)
+	go RenderEvents(ctx, 42, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventSubagentStart,
@@ -209,7 +209,7 @@ func TestRenderSubagentFinish(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 42, events, &buf)
+	go RenderEvents(ctx, 42, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventSubagentStart,
@@ -244,7 +244,7 @@ func TestRenderSubagentReasoningNonTTY(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 42, events, &buf)
+	go RenderEvents(ctx, 42, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventSubagentStart,
@@ -279,7 +279,7 @@ func TestRenderSubagentInterleaved(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 42, events, &buf)
+	go RenderEvents(ctx, 42, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventText,
@@ -334,7 +334,7 @@ func TestRenderSubagentMultiLineText(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go RenderEvents(ctx, 42, events, &buf)
+	go RenderEvents(ctx, 42, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventSubagentStart,
@@ -376,7 +376,7 @@ func TestRenderEventsChannelClose(t *testing.T) {
 	events := make(chan Event, 10)
 	ctx := context.Background()
 
-	go RenderEvents(ctx, 1, events, &buf)
+	go RenderEvents(ctx, 1, events, &buf, nil)
 
 	events <- Event{
 		Type:      EventText,
@@ -390,5 +390,34 @@ func TestRenderEventsChannelClose(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "last message") {
 		t.Errorf("expected 'last message' in output, got %q", output)
+	}
+}
+
+func TestRenderEventsWritesToLogWriter(t *testing.T) {
+	var outBuf bytes.Buffer
+	var logBuf bytes.Buffer
+	events := make(chan Event, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go RenderEvents(ctx, 42, events, &outBuf, &logBuf)
+
+	events <- Event{
+		Type:      EventText,
+		Content:   "Hello world",
+		Timestamp: time.Date(2024, 1, 1, 10, 30, 0, 0, time.UTC),
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	if !strings.Contains(outBuf.String(), "[issue-42]") {
+		t.Errorf("expected [issue-42] prefix in stdout, got %q", outBuf.String())
+	}
+	if strings.Contains(logBuf.String(), "[issue-42]") {
+		t.Errorf("expected no issue prefix in log, got %q", logBuf.String())
+	}
+	if !strings.Contains(logBuf.String(), "Hello world") {
+		t.Errorf("expected 'Hello world' in log, got %q", logBuf.String())
 	}
 }
