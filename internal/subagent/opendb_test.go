@@ -226,7 +226,10 @@ func TestDBPollerParseToolPart(t *testing.T) {
 func TestDBPollerStartStop(t *testing.T) {
 	events := make(chan Event, 64)
 	runner := func(args ...string) ([]byte, error) {
-		return []byte(`/home/user/.opencode/sessions.db`), nil
+		if len(args) >= 2 && args[0] == "db" && args[1] == "path" {
+			return []byte("/home/user/.opencode/sessions.db"), nil
+		}
+		return []byte(`[]`), nil
 	}
 
 	p := &DBPoller{
@@ -243,7 +246,6 @@ func TestDBPollerStartStop(t *testing.T) {
 
 	p.Stop()
 
-	// Should have no events (no child sessions found)
 	select {
 	case e := <-events:
 		t.Errorf("unexpected event: %+v", e)

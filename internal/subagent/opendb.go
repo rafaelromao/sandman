@@ -27,6 +27,10 @@ func opencodeDBRunner(args ...string) ([]byte, error) {
 	return exec.Command("opencode", args...).Output()
 }
 
+func escapeSQLString(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
 func osWriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -163,9 +167,15 @@ func (p *DBPoller) processChildSession(s SessionOutput) {
 	}
 
 	if p.writeFile != nil {
-		data, _ := json.MarshalIndent(messages, "", "  ")
-		path := fmt.Sprintf(".sandman/logs/%d/subagents/%s.json", p.issue, s.SessionID)
-		_ = p.writeFile(path, data)
+		data, err := json.MarshalIndent(messages, "", "  ")
+		if err != nil {
+			log.Printf("subagent DB: failed to marshal session %s debug data: %v", s.SessionID, err)
+		} else {
+			path := fmt.Sprintf(".sandman/logs/%d/subagents/%s.json", p.issue, s.SessionID)
+			if err := p.writeFile(path, data); err != nil {
+				log.Printf("subagent DB: failed to write debug file %s: %v", path, err)
+			}
+		}
 	}
 }
 
@@ -206,20 +216,27 @@ func (p *DBPoller) dispatchEvent(childID string, part Part) {
 }
 
 func (p *DBPoller) discoverDBPath() (string, error) {
-	if p.dbPath != "" {
-		return p.dbPath, nil
+	p.mu.Lock()
+	cached := p.dbPath
+	p.mu.Unlock()
+	if cached != "" {
+		return cached, nil
 	}
+
 	out, err := p.runner("db", "path")
 	if err != nil {
 		return "", err
 	}
 	path := strings.TrimSpace(string(out))
+
+	p.mu.Lock()
 	p.dbPath = path
+	p.mu.Unlock()
 	return path, nil
 }
 
 func (p *DBPoller) querySessions(parentID string) ([]SessionOutput, error) {
-	query := fmt.Sprintf("SELECT id, title, agent, time_created FROM session WHERE parent_id = '%s'", parentID)
+	query := fmt.Sprintf("SELECT id, title, agent, time_created FROM session WHERE parent_id = '%s' ORDER BY time_created", escapeSQLString(parentID))
 	out, err := p.runner("db", query, "--format", "json")
 	if err != nil {
 		return nil, err
@@ -252,7 +269,7 @@ func (p *DBPoller) extractSession(sessionID string) ([]Message, error) {
 }
 
 func (p *DBPoller) queryMessages(sessionID string) ([]messageRow, error) {
-	query := fmt.Sprintf("SELECT m.id, m.session_id, m.data FROM message m WHERE m.session_id = '%s'", sessionID)
+	query := fmt.Sprintf("SELECT m.id, m.session_id, m.data FROM message m WHERE m.session_id = '%s' ORDER BY m.id", escapeSQLString(sessionID))
 	out, err := p.runner("db", query, "--format", "json")
 	if err != nil {
 		return nil, err
@@ -265,7 +282,7 @@ func (p *DBPoller) queryMessages(sessionID string) ([]messageRow, error) {
 }
 
 func (p *DBPoller) queryParts(sessionID string) ([]partRow, error) {
-	query := fmt.Sprintf("SELECT p.id, p.message_id, p.session_id, p.data FROM part p WHERE p.session_id = '%s'", sessionID)
+	query := fmt.Sprintf("SELECT p.id, p.message_id, p.session_id, p.data FROM part p WHERE p.session_id = '%s' ORDER BY p.id", escapeSQLString(sessionID))
 	out, err := p.runner("db", query, "--format", "json")
 	if err != nil {
 		return nil, err
