@@ -62,6 +62,8 @@ type DBPoller struct {
 	dbPath   string
 	parentID string
 	seen     map[string]bool
+	lastSeen map[string]int64
+	finished map[string]bool
 	started  map[string]SessionOutput
 	order    []string
 	stopped  bool
@@ -73,6 +75,7 @@ type childSessionRow struct {
 	Title       string          `json:"title"`
 	Agent       string          `json:"agent"`
 	TimeCreated json.RawMessage `json:"time_created"`
+	TimeUpdated int64           `json:"time_updated"`
 }
 
 type messageRow struct {
@@ -104,6 +107,8 @@ func (p *DBPoller) Start(parentID string) {
 	p.mu.Lock()
 	p.parentID = parentID
 	p.seen = make(map[string]bool)
+	p.lastSeen = make(map[string]int64)
+	p.finished = make(map[string]bool)
 	p.started = make(map[string]SessionOutput)
 	p.order = nil
 	p.mu.Unlock()
@@ -168,9 +173,6 @@ func (p *DBPoller) Stop() []SessionOutput {
 			outputs = append(outputs, s)
 		}
 	}
-	for _, id := range p.order {
-		p.emitSubagentFinishLocked(id)
-	}
 	p.mu.Unlock()
 	return outputs
 }
@@ -208,45 +210,21 @@ func (p *DBPoller) pollOnce(parentID string) {
 
 	for _, s := range sessions {
 		p.mu.Lock()
-		if p.seen[s.SessionID] {
-			p.mu.Unlock()
-			continue
-		}
-		p.seen[s.SessionID] = true
+		firstSeen := !p.seen[s.SessionID]
+		previousUpdated := p.lastSeen[s.SessionID]
+		alreadyFinished := p.finished[s.SessionID]
 		p.mu.Unlock()
 
-		p.processChildSession(s)
+		p.processChildSession(s, s.TimeUpdated, firstSeen, previousUpdated == s.TimeUpdated && !firstSeen, alreadyFinished)
 	}
 }
 
-func (p *DBPoller) processChildSession(s SessionOutput) {
-	p.mu.Lock()
-	if _, ok := p.started[s.SessionID]; ok {
-		p.mu.Unlock()
-	} else {
-		p.started[s.SessionID] = s
-		p.order = append(p.order, s.SessionID)
-		p.mu.Unlock()
-		p.emitSubagentStart(s)
-	}
-
+func (p *DBPoller) processChildSession(s SessionOutput, updated int64, firstSeen, unchanged, alreadyFinished bool) {
 	messages, err := p.extractSession(s.SessionID)
 	if err != nil {
 		log.Printf("subagent DB: failed to extract session %s: %v", s.SessionID, err)
 		return
 	}
-
-	for _, m := range messages {
-		for _, part := range m.Parts {
-			p.dispatchEvent(s.SessionID, part)
-		}
-	}
-
-	p.mu.Lock()
-	current := p.started[s.SessionID]
-	current.Messages = messages
-	p.started[s.SessionID] = current
-	p.mu.Unlock()
 
 	if p.writeFile != nil {
 		data, err := json.MarshalIndent(messages, "", "  ")
@@ -257,6 +235,56 @@ func (p *DBPoller) processChildSession(s SessionOutput) {
 			if err := p.writeFile(path, data); err != nil {
 				log.Printf("subagent DB: failed to write debug file %s: %v", path, err)
 			}
+		}
+	}
+
+	p.mu.Lock()
+	previous, ok := p.started[s.SessionID]
+	if !ok {
+		previous = s
+	}
+	if firstSeen {
+		p.started[s.SessionID] = SessionOutput{SessionID: s.SessionID, Title: s.Title, Agent: s.Agent, Messages: messages}
+		p.order = append(p.order, s.SessionID)
+		p.seen[s.SessionID] = true
+		p.lastSeen[s.SessionID] = updated
+		p.mu.Unlock()
+		p.emitSubagentStart(s)
+		p.emitNewParts(s.SessionID, nil, messages)
+		return
+	}
+
+	if alreadyFinished {
+		p.mu.Unlock()
+		return
+	}
+
+	if unchanged {
+		p.finished[s.SessionID] = true
+		p.mu.Unlock()
+		p.emitSubagentFinishLocked(s.SessionID)
+		return
+	}
+
+	p.started[s.SessionID] = SessionOutput{SessionID: s.SessionID, Title: previous.Title, Agent: previous.Agent, Messages: messages}
+	p.lastSeen[s.SessionID] = updated
+	p.mu.Unlock()
+
+	p.emitNewParts(s.SessionID, previous.Messages, messages)
+}
+
+func (p *DBPoller) emitNewParts(childID string, previous, current []Message) {
+	if p.events == nil {
+		return
+	}
+
+	for i, msg := range current {
+		prevCount := 0
+		if i < len(previous) {
+			prevCount = len(previous[i].Parts)
+		}
+		for _, part := range msg.Parts[prevCount:] {
+			p.dispatchEvent(childID, part)
 		}
 	}
 }
@@ -330,9 +358,10 @@ func (p *DBPoller) querySessions(parentID string) ([]SessionOutput, error) {
 	sessions := make([]SessionOutput, len(rows))
 	for i, r := range rows {
 		sessions[i] = SessionOutput{
-			SessionID: r.ID,
-			Title:     r.Title,
-			Agent:     r.Agent,
+			SessionID:   r.ID,
+			Title:       r.Title,
+			Agent:       r.Agent,
+			TimeUpdated: r.TimeUpdated,
 		}
 	}
 	return sessions, nil

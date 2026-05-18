@@ -57,10 +57,11 @@ type Message struct {
 
 // SessionOutput holds the captured output for a single agent session.
 type SessionOutput struct {
-	SessionID string
-	Title     string
-	Agent     string
-	Messages  []Message
+	SessionID   string
+	Title       string
+	Agent       string
+	TimeUpdated int64
+	Messages    []Message
 }
 
 // Capture wraps an agent command to intercept its output stream.
