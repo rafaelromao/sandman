@@ -96,38 +96,31 @@ func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 			continue
 		}
 
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+		event := o.parseJSONLine(line)
+		if event == nil {
 			continue
 		}
-
-		var sessionID, tsStr string
-		if v, ok := raw["sessionID"]; ok {
-			json.Unmarshal(v, &sessionID)
-		}
-		if v, ok := raw["timestamp"]; ok {
-			json.Unmarshal(v, &tsStr)
-		}
-
-		var timestamp time.Time
-		if tsStr != "" {
-			timestamp, _ = time.Parse(time.RFC3339, tsStr)
-		}
-
 		o.mu.Lock()
-		isNew := o.sessionID == "" && sessionID != ""
+		isNew := o.sessionID == "" && event.SessionID != ""
 		if isNew {
-			o.sessionID = sessionID
+			o.sessionID = event.SessionID
 		}
+		matches := o.sessionID == event.SessionID || event.SessionID == ""
 		o.mu.Unlock()
 
 		if isNew {
 			select {
 			case o.events <- Event{
-				SessionID: sessionID,
+				SessionID: event.SessionID,
 				Type:      EventSessionDetected,
-				Timestamp: timestamp,
+				Timestamp: event.Timestamp,
 			}:
+			default:
+			}
+		}
+		if matches {
+			select {
+			case o.events <- *event:
 			default:
 			}
 		}
@@ -135,4 +128,66 @@ func (o *OpenCodeCapture) parseStream(reader io.Reader) {
 	if err := scanner.Err(); err != nil {
 		log.Printf("opencode capture: scanner error: %v", err)
 	}
+}
+
+type openCodePart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+	Tool string `json:"tool"`
+}
+
+type openCodeEvent struct {
+	Type      string        `json:"type"`
+	Timestamp string        `json:"timestamp"`
+	SessionID string        `json:"sessionID"`
+	Part      *openCodePart `json:"part,omitempty"`
+}
+
+func (o *OpenCodeCapture) parseJSONLine(line string) *Event {
+	var raw openCodeEvent
+	if err := json.Unmarshal([]byte(line), &raw); err != nil {
+		textEvent := Event{
+			Type:    EventText,
+			Content: line,
+		}
+		return &textEvent
+	}
+
+	var timestamp time.Time
+	if raw.Timestamp != "" {
+		timestamp, _ = time.Parse(time.RFC3339, raw.Timestamp)
+	}
+
+	ev := Event{
+		SessionID: raw.SessionID,
+		Timestamp: timestamp,
+	}
+
+	switch raw.Type {
+	case "text":
+		ev.Type = EventText
+		if raw.Part != nil {
+			ev.Content = raw.Part.Text
+		}
+	case "reasoning":
+		ev.Type = EventReasoning
+		if raw.Part != nil {
+			ev.Content = raw.Part.Text
+		}
+	case "tool_use":
+		ev.Type = EventTool
+		if raw.Part != nil {
+			ev.Title = raw.Part.Tool
+		}
+	case "step_start":
+		ev.Type = EventStepStart
+	case "step_finish":
+		ev.Type = EventStepFinish
+	case "error":
+		ev.Type = EventError
+	default:
+		return nil
+	}
+
+	return &ev
 }
