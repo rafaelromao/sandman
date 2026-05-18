@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -481,6 +482,132 @@ func (o *Orchestrator) logBlocked(issueNum int, blockers []int) {
 	})
 }
 
+func openCodeDataHome(agentCfg config.Agent) string {
+	for _, dir := range agentCfg.ConfigDirs {
+		expanded, err := expandPath(dir)
+		if err != nil || expanded == "" {
+			continue
+		}
+		if strings.HasSuffix(filepath.ToSlash(filepath.Clean(expanded)), "/.local/share/opencode") {
+			return filepath.Dir(expanded)
+		}
+	}
+	return ""
+}
+
+func openCodeConfigHome(agentCfg config.Agent) string {
+	for _, dir := range agentCfg.ConfigDirs {
+		expanded, err := expandPath(dir)
+		if err != nil || expanded == "" {
+			continue
+		}
+		if strings.HasSuffix(filepath.ToSlash(filepath.Clean(expanded)), "/.config/opencode") {
+			return filepath.Dir(expanded)
+		}
+	}
+	return ""
+}
+
+func openCodeCacheHome(agentCfg config.Agent) string {
+	if configHome := openCodeConfigHome(agentCfg); configHome != "" {
+		return filepath.Join(filepath.Dir(configHome), ".cache")
+	}
+	if dataHome := openCodeDataHome(agentCfg); dataHome != "" {
+		return filepath.Join(filepath.Dir(filepath.Dir(dataHome)), ".cache")
+	}
+	return ""
+}
+
+func openCodeHomeRoot(agentCfg config.Agent) string {
+	if configHome := openCodeConfigHome(agentCfg); configHome != "" {
+		return filepath.Dir(configHome)
+	}
+	if dataHome := openCodeDataHome(agentCfg); dataHome != "" {
+		return filepath.Dir(filepath.Dir(dataHome))
+	}
+	return ""
+}
+
+func openCodeNeedsHomeOverride(agentCfg config.Agent) bool {
+	homeRoot := openCodeHomeRoot(agentCfg)
+	if homeRoot == "" {
+		return false
+	}
+	currentUser, err := user.Current()
+	if err != nil || currentUser.HomeDir == "" {
+		return false
+	}
+	return filepath.Clean(homeRoot) != filepath.Clean(currentUser.HomeDir)
+}
+
+func openCodeProcessEnv(agentCfg config.Agent) map[string]string {
+	env := map[string]string{}
+	for key, value := range agentCfg.Env {
+		env[key] = value
+	}
+	if !openCodeNeedsHomeOverride(agentCfg) {
+		if len(env) == 0 {
+			return nil
+		}
+		return env
+	}
+	if homeRoot := openCodeHomeRoot(agentCfg); homeRoot != "" {
+		if _, ok := env["HOME"]; !ok {
+			env["HOME"] = homeRoot
+		}
+	}
+	if dataHome := openCodeDataHome(agentCfg); dataHome != "" {
+		if _, ok := env["XDG_DATA_HOME"]; !ok {
+			env["XDG_DATA_HOME"] = dataHome
+		}
+	}
+	if configHome := openCodeConfigHome(agentCfg); configHome != "" {
+		if _, ok := env["XDG_CONFIG_HOME"]; !ok {
+			env["XDG_CONFIG_HOME"] = configHome
+		}
+	}
+	if cacheHome := openCodeCacheHome(agentCfg); cacheHome != "" {
+		if _, ok := env["XDG_CACHE_HOME"]; !ok {
+			env["XDG_CACHE_HOME"] = cacheHome
+		}
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	return env
+}
+
+func openCodeDBQueryEnv(agentCfg config.Agent) []string {
+	if !openCodeNeedsHomeOverride(agentCfg) {
+		return nil
+	}
+	env := append([]string{}, os.Environ()...)
+	if homeRoot := openCodeHomeRoot(agentCfg); homeRoot != "" {
+		env = append(env, "HOME="+homeRoot)
+	}
+	if configHome := openCodeConfigHome(agentCfg); configHome != "" {
+		env = append(env, "XDG_CONFIG_HOME="+configHome)
+	}
+	if dataHome := openCodeDataHome(agentCfg); dataHome != "" {
+		env = append(env, "XDG_DATA_HOME="+dataHome)
+	}
+	if cacheHome := openCodeCacheHome(agentCfg); cacheHome != "" {
+		env = append(env, "XDG_CACHE_HOME="+cacheHome)
+	}
+	return env
+}
+
+func openCodeDBPath(agentCfg config.Agent) string {
+	if dataHome := openCodeDataHome(agentCfg); dataHome != "" {
+		return filepath.Join(dataHome, "opencode", "opencode.db")
+	}
+	dbPath, err := subagent.DiscoverDBPath()
+	if err != nil {
+		return ""
+	}
+	return dbPath
+}
+
 func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 	opts := sandbox.StartOptions{}
 
@@ -521,8 +648,8 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 	}
 
 	if agentCfg.Preset == "opencode" {
-		dbPath, err := subagent.DiscoverDBPath()
-		if err == nil {
+		dbPath := openCodeDBPath(agentCfg)
+		if dbPath != "" {
 			if _, err := os.Stat(dbPath); err == nil {
 				opts.ConfigMounts = append(opts.ConfigMounts, sandbox.ConfigMount{
 					Source: dbPath,
@@ -591,10 +718,11 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		agentRun.preset = agentCfg.Preset
 		agentRun.model = agentCfg.Model
 		agentRun.defaultBranch = cfg.Git.DefaultBranch
-		if agentCfg.Preset == "opencode" {
+		if agentCfg.Preset == "opencode" && container == nil {
+			agentRun.env = openCodeProcessEnv(agentCfg)
 			agentRun.capture = subagent.NewOpenCodeCapture()
 			if oc, ok := agentRun.capture.(*subagent.OpenCodeCapture); ok {
-				oc.SetDBPoller(subagent.NewDBPoller(num))
+				oc.SetDBPoller(subagent.NewDBPollerWithEnv(num, openCodeDBQueryEnv(agentCfg)))
 			}
 			if o.eventLog != nil {
 				agentRun.captureSink = func(e subagent.Event) {

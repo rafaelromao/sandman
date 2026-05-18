@@ -48,14 +48,16 @@ func (o *OpenCodeCapture) SessionID() string {
 
 func (o *OpenCodeCapture) WrapCommand(command string) (string, io.Writer, func(), error) {
 	trimmed := strings.TrimSpace(command)
-	if !strings.HasPrefix(trimmed, "opencode run ") && trimmed != "opencode run" {
+	prefix, core := splitEnvAssignments(trimmed)
+	if !strings.HasPrefix(core, "opencode run ") && core != "opencode run" {
 		return command, nil, func() {}, nil
 	}
 
-	wrapped := trimmed
-	if !(strings.Contains(trimmed, " --format ") || strings.HasSuffix(trimmed, " --format") || strings.Contains(trimmed, " --format=")) {
-		wrapped = strings.Replace(trimmed, "opencode run", "opencode run --format json", 1)
+	wrappedCore := core
+	if !(strings.Contains(core, " --format ") || strings.HasSuffix(core, " --format") || strings.Contains(core, " --format=")) {
+		wrappedCore = strings.Replace(core, "opencode run", "opencode run --format json", 1)
 	}
+	wrapped := strings.TrimSpace(prefix + wrappedCore)
 
 	pr, pw := io.Pipe()
 	o.pw = pw
@@ -67,6 +69,30 @@ func (o *OpenCodeCapture) WrapCommand(command string) (string, io.Writer, func()
 	}
 
 	return wrapped, pw, cleanup, nil
+}
+
+func splitEnvAssignments(command string) (string, string) {
+	remaining := strings.TrimSpace(command)
+	var prefix strings.Builder
+	for remaining != "" {
+		space := strings.IndexByte(remaining, ' ')
+		if space < 0 {
+			break
+		}
+		token := remaining[:space]
+		if !looksLikeEnvAssignment(token) {
+			break
+		}
+		prefix.WriteString(token)
+		prefix.WriteByte(' ')
+		remaining = strings.TrimLeft(remaining[space+1:], " ")
+	}
+	return prefix.String(), remaining
+}
+
+func looksLikeEnvAssignment(token string) bool {
+	idx := strings.IndexByte(token, '=')
+	return idx > 0 && !strings.HasPrefix(token, "--")
 }
 
 func (o *OpenCodeCapture) Events() <-chan Event {

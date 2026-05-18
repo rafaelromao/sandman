@@ -47,6 +47,17 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
+func setTestHomeEnv(t *testing.T, homeDir string) {
+	t.Helper()
+	t.Setenv("HOME", homeDir)
+}
+
+func envWithHome(homeDir string) []string {
+	env := append([]string{}, os.Environ()...)
+	env = append(env, "HOME="+homeDir)
+	return env
+}
+
 func initRunIntegrationRepoWithRemote(t *testing.T, dir string) string {
 	t.Helper()
 	initRunIntegrationRepo(t, dir)

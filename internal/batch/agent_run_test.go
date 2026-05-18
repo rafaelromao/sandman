@@ -557,6 +557,31 @@ func TestAgentRun_Execute_WithCapture(t *testing.T) {
 	}
 }
 
+func TestAgentRun_Execute_WithCaptureAppliesEnvAfterWrap(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+
+	eventsCh := make(chan subagent.Event)
+	close(eventsCh)
+
+	cap := &fakeCapture{
+		wrapWriter:   io.Discard,
+		eventsCh:     eventsCh,
+		stopSessions: []subagent.SessionOutput{{SessionID: "sess-1"}},
+	}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.env = map[string]string{"XDG_DATA_HOME": "/tmp/opencode-data"}
+	if err := run.Execute(context.Background(), "opencode run --issue 42", io.Discard, io.Discard, cap); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "export XDG_DATA_HOME='/tmp/opencode-data'; wrapped: opencode run --issue 42"
+	if sb.execCommand != want {
+		t.Fatalf("expected wrapped command with env after wrap\ngot:  %q\nwant: %q", sb.execCommand, want)
+	}
+}
+
 func TestAgentRun_Execute_WithCaptureWritesInlineToLog(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

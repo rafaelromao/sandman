@@ -80,7 +80,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 			return fmt.Errorf("wrap command: %w", err)
 		}
 		defer cleanup()
-		command = wrapped
+		command = applyAgentEnv(wrapped, r.env)
 
 		var combinedOut io.Writer
 		combinedOut = io.Discard
@@ -117,6 +117,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 
 	combinedOut := io.MultiWriter(logFile, prefixedOut)
 	combinedErr := io.MultiWriter(logFile, prefixedErr)
+	command = applyAgentEnv(command, r.env)
 
 	if err := r.sandbox.Exec(ctx, command, combinedOut, combinedErr); err != nil {
 		return fmt.Errorf("execute agent: %w", err)
@@ -146,9 +147,9 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 		r.status = "failure"
 		return r.Result()
 	}
-	renderedCmd = applyAgentEnv(renderedCmd, r.env)
 
 	if interactive {
+		renderedCmd = applyAgentEnv(renderedCmd, r.env)
 		if err := r.sandbox.ExecInteractive(ctx, renderedCmd); err != nil {
 			r.status = "failure"
 			return r.Result()

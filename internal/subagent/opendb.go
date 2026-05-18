@@ -28,15 +28,25 @@ func DiscoverDBPath() (string, error) {
 const defaultPollInterval = 2 * time.Second
 
 func NewDBPoller(issue int) *DBPoller {
+	return NewDBPollerWithEnv(issue, nil)
+}
+
+func NewDBPollerWithEnv(issue int, env []string) *DBPoller {
 	return &DBPoller{
-		runner:    opencodeDBRunner,
+		runner:    newOpenCodeDBRunner(env),
 		issue:     issue,
 		writeFile: osWriteFile,
 	}
 }
 
-func opencodeDBRunner(args ...string) ([]byte, error) {
-	return exec.Command("opencode", args...).Output()
+func newOpenCodeDBRunner(env []string) func(args ...string) ([]byte, error) {
+	return func(args ...string) ([]byte, error) {
+		cmd := exec.Command("opencode", args...)
+		if len(env) > 0 {
+			cmd.Env = env
+		}
+		return cmd.Output()
+	}
 }
 
 func escapeSQLString(s string) string {
@@ -163,8 +173,16 @@ func (p *DBPoller) emitSubagentFinishLocked(id string) {
 func (p *DBPoller) Stop() []SessionOutput {
 	p.mu.Lock()
 	p.stopped = true
+	parentID := p.parentID
+	dbPath := p.dbPath
 	p.mu.Unlock()
 	p.wg.Wait()
+	if parentID != "" && dbPath != "" {
+		// Take two final snapshots after the parent run exits so we can still
+		// discover short-lived child sessions and observe a stable end state.
+		p.pollOnce(parentID)
+		p.pollOnce(parentID)
+	}
 
 	p.mu.Lock()
 	outputs := make([]SessionOutput, 0, len(p.order))

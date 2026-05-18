@@ -109,6 +109,20 @@ func TestWrapCommandSkipsIfFormatAlreadyPresent(t *testing.T) {
 	}
 }
 
+func TestWrapCommandHandlesEnvAssignmentPrefix(t *testing.T) {
+	oc := NewOpenCodeCapture()
+
+	wrapped, _, _, err := oc.WrapCommand(`PATH=/workspace/.sandman/bin:${PATH} opencode run --issue 123`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := `PATH=/workspace/.sandman/bin:${PATH} opencode run --format json --issue 123`
+	if wrapped != expected {
+		t.Errorf("expected %q, got %q", expected, wrapped)
+	}
+}
+
 func TestWrapCommandKeepsCaptureWhenFormatAlreadyPresent(t *testing.T) {
 	oc := NewOpenCodeCapture()
 

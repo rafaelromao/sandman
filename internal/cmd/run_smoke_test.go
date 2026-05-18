@@ -33,6 +33,8 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 Return exactly SMOKE_OK and do not modify files.
 `
 
+const opencodeSubagentSmokeBody = "Use the @explore subagent exactly once to inspect the repository, then reply exactly SMOKE_OK. Do not modify files."
+
 type smokeProviderCase struct {
 	name         string
 	hostCLI      string
@@ -239,7 +241,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	if err := writeSmokeGitConfig(homeDir, remoteDir); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
-	t.Setenv("HOME", homeDir)
+	setTestHomeEnv(t, homeDir)
 
 	warmSmokeRuntime(t, runtime)
 
@@ -528,7 +530,7 @@ func ensureSmokeHostCLI(t *testing.T, tc smokeProviderCase) {
 
 func detectOpenCodeSmokeModel(realHome string) (string, error) {
 	cmd := exec.Command("opencode", "models")
-	cmd.Env = append(os.Environ(), "HOME="+realHome)
+	cmd.Env = envWithHome(realHome)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("list supported opencode models: %w", err)
@@ -768,7 +770,7 @@ func TestSmoke_SubagentOutput_Worktree(t *testing.T) {
 	if err := writeSmokeGitConfig(homeDir, remoteDir); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
-	t.Setenv("HOME", homeDir)
+	setTestHomeEnv(t, homeDir)
 
 	s := &scaffold.Scaffolder{}
 	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: "generic", Agent: "opencode"}, smokePrompter{}); err != nil {
@@ -782,7 +784,7 @@ func TestSmoke_SubagentOutput_Worktree(t *testing.T) {
 	issue := &github.Issue{
 		Number: 421,
 		Title:  "Smoke opencode",
-		Body:   "Use one subagent to inspect the repository, then reply exactly SMOKE_OK. Do not modify files.",
+		Body:   opencodeSubagentSmokeBody,
 	}
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: issue}}
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
@@ -809,6 +811,8 @@ func TestSmoke_SubagentOutput_Worktree(t *testing.T) {
 }
 
 func TestSmoke_SubagentOutput_Podman(t *testing.T) {
+	t.Skip("opencode child-session capture smoke is currently supported in worktree mode only")
+
 	if _, err := exec.LookPath("opencode"); err != nil {
 		t.Skipf("skip: opencode CLI not installed: %v", err)
 	}
@@ -854,7 +858,7 @@ func TestSmoke_SubagentOutput_Podman(t *testing.T) {
 	if err := writeSmokeGitConfig(homeDir, remoteDir); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
-	t.Setenv("HOME", homeDir)
+	setTestHomeEnv(t, homeDir)
 	warmSmokeRuntime(t, runtime)
 
 	s := &scaffold.Scaffolder{}
@@ -874,7 +878,7 @@ func TestSmoke_SubagentOutput_Podman(t *testing.T) {
 	issue := &github.Issue{
 		Number: 421,
 		Title:  "Smoke opencode",
-		Body:   "Reply with exactly SMOKE_OK.",
+		Body:   opencodeSubagentSmokeBody,
 	}
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: issue}}
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")

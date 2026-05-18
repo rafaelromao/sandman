@@ -69,6 +69,9 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 			args = append(args, "--user", opts.UserID)
 		}
 		args = append(args, "--env", "HOME=/")
+		args = append(args, "--env", "XDG_CONFIG_HOME=/.config")
+		args = append(args, "--env", "XDG_DATA_HOME=/.local/share")
+		args = append(args, "--env", "XDG_CACHE_HOME=/.cache")
 	}
 
 	if opts.GitConfigPath != "" {
