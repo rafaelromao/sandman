@@ -167,6 +167,40 @@ func TestScaffold_ResolvesToolVersionSelectors(t *testing.T) {
 	}
 }
 
+func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoGoHints(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	version, err := s.resolveGoVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveGoVersion with repo selector: %v", err)
+	}
+	latest, err := s.resolveGoVersion(dir, "latest", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveGoVersion with latest selector: %v", err)
+	}
+	if version != latest {
+		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
+	}
+}
+
+func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoPythonHints(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	version, err := s.resolvePythonVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolvePythonVersion with repo selector: %v", err)
+	}
+	latest, err := s.resolvePythonVersion(dir, "latest", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolvePythonVersion with latest selector: %v", err)
+	}
+	if version != latest {
+		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
+	}
+}
+
 func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 	for agent := range config.BuiltInAgentPresets {
 		t.Run(agent, func(t *testing.T) {

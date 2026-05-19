@@ -265,6 +265,14 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 			name = goBuildToolsPreset
 		} else if hasPythonRepoHint(repoRoot) {
 			name = pythonBuildToolsPreset
+		} else if p != nil {
+			selected, err := p.Select("Choose a build tools preset:", KnownBuildToolsPresets)
+			if err == nil {
+				name = strings.ToLower(strings.TrimSpace(selected))
+			}
+			if name == "" {
+				name = defaultBuildToolsPreset
+			}
 		} else {
 			name = defaultBuildToolsPreset
 		}

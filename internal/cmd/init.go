@@ -74,7 +74,7 @@ func NewInitCmd() *cobra.Command {
 	}
 
 	cmd.Flags().String("build-tools", "", fmt.Sprintf("Build tools preset (%s)", strings.Join(scaffold.KnownBuildToolsPresets, ", ")))
-	cmd.Flags().String("tool-version", "repo", "Logical version selector (latest, lts, or semver shorthand)")
+	cmd.Flags().String("tool-version", "repo", "Logical version selector (repo, latest, lts, or semver shorthand)")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode, claude-code, codex, pi)")
 
 	return cmd
