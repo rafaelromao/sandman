@@ -48,7 +48,10 @@ func (b *Broadcaster) AddClient(conn net.Conn) {
 	defer b.mu.Unlock()
 
 	if b.buffer.Len() > 0 {
-		conn.Write(b.buffer.Bytes())
+		if _, err := conn.Write(b.buffer.Bytes()); err != nil {
+			conn.Close()
+			return
+		}
 	}
 
 	b.clients[conn] = struct{}{}
