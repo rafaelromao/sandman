@@ -25,6 +25,29 @@ func (f *fakePrompter) Select(msg string, options []string) (string, error) {
 	return f.selected, f.selectErr
 }
 
+func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
+	for _, preset := range []string{"generic", "go", "python"} {
+		t.Run(preset, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+
+			err := s.Scaffold(dir, Options{BuildTools: preset}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(data)
+			if !strings.Contains(content, " openssh-client ") {
+				t.Fatalf("Dockerfile missing openssh-client shared package, got:\n%s", content)
+			}
+		})
+	}
+}
+
 func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
