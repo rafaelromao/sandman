@@ -36,6 +36,7 @@ type Orchestrator struct {
 	defaultBranchSync       func(repoPath, sourceBranch string) error
 	containerRuntimeFactory ContainerRuntimeFactory
 	killTimeout             time.Duration
+	errorLog                io.Writer
 }
 
 type containerLease struct {
@@ -207,6 +208,7 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.Renderer, confi
 		renderer:     renderer,
 		configStore:  configStore,
 		eventLog:     eventLog,
+		errorLog:     os.Stderr,
 	}
 }
 
@@ -537,7 +539,7 @@ func expandPath(path string) (string, error) {
 func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, preserve bool, debug bool, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: fetch issue %d: %v\n", num, err)
+		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
 		return AgentRunResult{IssueNumber: num, Status: "failure"}
 	}
 
@@ -549,7 +551,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	if containerAlloc != nil {
 		lease, err := containerAlloc.Acquire()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: acquire container for issue %d: %v\n", num, err)
+			fmt.Fprintf(o.errorLog, "error: acquire container for issue %d: %v\n", num, err)
 			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 		}
 		container = lease.container
@@ -558,7 +560,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch, container)
 	if err := wt.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: start sandbox for issue %d: %v\n", num, err)
+		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", num, err)
 		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 	}
 
