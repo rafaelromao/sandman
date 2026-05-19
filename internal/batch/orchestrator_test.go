@@ -2493,11 +2493,11 @@ func TestRunBatch_SkipsGitIdentityWhenConfigEmpty(t *testing.T) {
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
 
-	cmd := exec.Command("git", "config", "user.name")
+	cmd := exec.Command("git", "config", "--local", "user.name")
 	cmd.Dir = worktreePath
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("git config user.name: %v", err)
+		t.Fatalf("git config --local user.name: %v", err)
 	}
 	if got := strings.TrimSpace(string(out)); got != "Test" {
 		t.Errorf("user.name: got %q, want %q (should be unchanged from repo default)", got, "Test")
@@ -2537,11 +2537,11 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyNameSet(t *testing.T) {
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
 
-	cmd := exec.Command("git", "config", "user.name")
+	cmd := exec.Command("git", "config", "--local", "user.name")
 	cmd.Dir = worktreePath
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("git config user.name: %v", err)
+		t.Fatalf("git config --local user.name: %v", err)
 	}
 	if got := strings.TrimSpace(string(out)); got != "Test" {
 		t.Errorf("user.name: got %q, want %q (should be unchanged from repo default)", got, "Test")
@@ -2581,11 +2581,11 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyEmailSet(t *testing.T) {
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
 
-	cmd := exec.Command("git", "config", "user.email")
+	cmd := exec.Command("git", "config", "--local", "user.email")
 	cmd.Dir = worktreePath
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("git config user.email: %v", err)
+		t.Fatalf("git config --local user.email: %v", err)
 	}
 	if got := strings.TrimSpace(string(out)); got != "test@test.com" {
 		t.Errorf("user.email: got %q, want %q (should be unchanged from repo default)", got, "test@test.com")

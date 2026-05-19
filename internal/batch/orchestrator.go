@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -564,10 +564,9 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			{"user.name", cfg.Git.AuthorName},
 			{"user.email", cfg.Git.AuthorEmail},
 		} {
-			cmd := exec.Command("git", "config", kv.key, kv.value)
-			cmd.Dir = wt.WorkDir()
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch, DebugInfo: fmt.Sprintf("git config %s: %v\n%s", kv.key, err, out)}
+			cmd := fmt.Sprintf("git config %s %s", kv.key, shellQuote(kv.value))
+			if err := wt.Exec(ctx, cmd, io.Discard, io.Discard); err != nil {
+				return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch, DebugInfo: fmt.Sprintf("git config %s: %v", kv.key, err)}
 			}
 		}
 	}
