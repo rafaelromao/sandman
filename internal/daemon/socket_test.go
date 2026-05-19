@@ -8,7 +8,7 @@ import (
 
 func TestControlSocket_StartCreatesSocket(t *testing.T) {
 	dir := t.TempDir()
-	sock := NewControlSocket(dir)
+	sock := NewControlSocket(dir, NewBroadcaster())
 
 	if err := sock.Start(); err != nil {
 		t.Fatalf("Start() failed: %v", err)
@@ -24,7 +24,7 @@ func TestControlSocket_StartCreatesSocket(t *testing.T) {
 
 func TestControlSocket_StopsAcceptingAfterClose(t *testing.T) {
 	dir := t.TempDir()
-	sock := NewControlSocket(dir)
+	sock := NewControlSocket(dir, NewBroadcaster())
 
 	if err := sock.Start(); err != nil {
 		t.Fatalf("Start() failed: %v", err)
@@ -42,14 +42,14 @@ func TestControlSocket_StopsAcceptingAfterClose(t *testing.T) {
 
 func TestControlSocket_RemovesStaleSocketOnStart(t *testing.T) {
 	dir := t.TempDir()
-	oldSock := NewControlSocket(dir)
+	oldSock := NewControlSocket(dir, NewBroadcaster())
 	if err := oldSock.Start(); err != nil {
 		t.Fatal(err)
 	}
 	oldSock.Stop()
 
 	// Start again — should remove stale socket
-	newSock := NewControlSocket(dir)
+	newSock := NewControlSocket(dir, NewBroadcaster())
 	if err := newSock.Start(); err != nil {
 		t.Fatalf("Start() with stale socket should succeed: %v", err)
 	}

@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"io"
 
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -25,6 +26,7 @@ type Request struct {
 	MaxContainersSet     bool
 	Interactive          bool
 	PromptConfig         prompt.RenderConfig
+	OutputWriter         io.Writer
 }
 
 // Result describes the outcome of a batch.

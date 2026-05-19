@@ -24,6 +24,7 @@ type AgentRun struct {
 	sandbox       sandbox.Sandbox
 	status        string
 	env           map[string]string
+	outputWriter  io.Writer
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -68,6 +69,11 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		return fmt.Errorf("create log file: %w", err)
 	}
 	defer logFile.Close()
+
+	if r.outputWriter != nil {
+		stdout = io.MultiWriter(stdout, r.outputWriter)
+		stderr = io.MultiWriter(stderr, r.outputWriter)
+	}
 
 	prefixedOut := NewLinePrefixWriter(r.issue.Number, stdout)
 	prefixedErr := NewLinePrefixWriter(r.issue.Number, stderr)
