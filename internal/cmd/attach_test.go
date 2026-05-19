@@ -19,8 +19,8 @@ func TestAttach_NoDaemonReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no daemon is running")
 	}
-	if !strings.Contains(err.Error(), "no sandman daemon is running.") {
-		t.Fatalf("expected 'no sandman daemon is running.', got: %v", err)
+	if !strings.Contains(err.Error(), "no sandman daemon is running") {
+		t.Fatalf("expected 'no sandman daemon is running', got: %v", err)
 	}
 }
 
