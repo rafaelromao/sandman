@@ -291,6 +291,17 @@ func TestInit_AgentFlagSelectsConfigPreset(t *testing.T) {
 	}
 }
 
+func TestInit_ToolVersionDefaultsToRepo(t *testing.T) {
+	cmd := NewInitCmd()
+	flag := cmd.Flag("tool-version")
+	if flag == nil {
+		t.Fatal("tool-version flag not found")
+	}
+	if flag.DefValue != "repo" {
+		t.Fatalf("expected --tool-version default to be \"repo\", got %q", flag.DefValue)
+	}
+}
+
 func TestInit_ExistingDirectoryPrompts(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

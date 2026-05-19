@@ -139,6 +139,7 @@ func TestScaffold_ResolvesToolVersionSelectors(t *testing.T) {
 		{name: "latest", selector: "latest", wantPin: DefaultBuiltInAgentVersion("codex")},
 		{name: "lts", selector: "lts", wantPin: builtInAgentVersionCatalog["codex"][1]},
 		{name: "semver shorthand", selector: "0.130", wantPin: DefaultBuiltInAgentVersion("codex")},
+		{name: "repo falls back to latest", selector: "repo", wantPin: DefaultBuiltInAgentVersion("codex")},
 	}
 
 	for _, tt := range tests {

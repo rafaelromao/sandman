@@ -297,6 +297,9 @@ func (s *Scaffolder) resolveGoVersion(repoRoot, selector string, p Prompter) (st
 	}
 
 	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
 	if choice == "" {
 		if found {
 			if p != nil {
@@ -491,6 +494,9 @@ func (s *Scaffolder) resolveAgentVersion(agent, selector string, p Prompter) (st
 	}
 
 	choice := strings.TrimSpace(selector)
+	if choice == "repo" {
+		choice = ""
+	}
 	if choice == "" && p != nil {
 		selected, err := p.Select("Choose a built-in agent version:", append([]string{"latest", "lts"}, versions...))
 		if err == nil {
@@ -583,6 +589,9 @@ func (s *Scaffolder) resolvePythonVersion(repoRoot, selector string, p Prompter)
 	}
 
 	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
 	if choice == "" {
 		if found {
 			if p != nil {
