@@ -114,6 +114,18 @@ sandman clean [flags]
 
 Exactly one flag is required.
 
+## `sandman attach`
+
+Attach to a running sandman daemon and stream its output.
+
+```bash
+sandman attach
+```
+
+If no daemon is running (`.sandman/run.sock` doesn't exist), prints a clear error. Otherwise connects to the daemon's control socket and reads raw bytes to stdout until the socket closes (EOF).
+
+Useful for monitoring a long-running batch from a separate terminal.
+
 ## `sandman config`
 
 Manage Sandman configuration via dot-notation keys.
