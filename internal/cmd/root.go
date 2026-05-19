@@ -23,6 +23,7 @@ type Dependencies struct {
 	PromptRenderer prompt.Renderer
 	IssuePicker    IssuePicker
 	IsTTY          func() bool
+	GitRunner      gitRunner
 }
 
 // NewRootCmd constructs the command tree with injected dependencies.

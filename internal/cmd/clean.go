@@ -3,11 +3,83 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/spf13/cobra"
 )
+
+// gitRunner abstracts git operations for worktree/branch management.
+type gitRunner interface {
+	removeWorktree(path string) error
+	pruneAndDeleteBranch(branch string) error
+	removeOrphanBranches() (int, error)
+}
+
+// realGitRunner shells out to git.
+type realGitRunner struct {
+	repoPath string
+}
+
+func newRealGitRunner() *realGitRunner {
+	return &realGitRunner{repoPath: "."}
+}
+
+func (r *realGitRunner) removeWorktree(path string) error {
+	cmd := exec.Command("git", "worktree", "remove", "--force", path)
+	cmd.Dir = r.repoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git worktree remove: %w\n%s", err, out)
+	}
+	return nil
+}
+
+func (r *realGitRunner) pruneAndDeleteBranch(branch string) error {
+	pruneCmd := exec.Command("git", "worktree", "prune")
+	pruneCmd.Dir = r.repoPath
+	if out, err := pruneCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git worktree prune: %w\n%s", err, out)
+	}
+	delCmd := exec.Command("git", "branch", "-D", branch)
+	delCmd.Dir = r.repoPath
+	if out, err := delCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git branch -D: %w\n%s", err, out)
+	}
+	return nil
+}
+
+func (r *realGitRunner) removeOrphanBranches() (int, error) {
+	listCmd := exec.Command("git", "branch", "--list", "sandman/*", "--format", "%(refname:short)")
+	listCmd.Dir = r.repoPath
+	out, err := listCmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("git branch --list: %w\n%s", err, out)
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return 0, nil
+	}
+	branches := strings.Split(raw, "\n")
+	var removed int
+	for _, branch := range branches {
+		branch = strings.TrimSpace(branch)
+		if branch == "" {
+			continue
+		}
+		delCmd := exec.Command("git", "branch", "-D", branch)
+		delCmd.Dir = r.repoPath
+		if delCmd.Run() != nil {
+			continue
+		}
+		removed++
+	}
+	pruneCmd := exec.Command("git", "worktree", "prune")
+	pruneCmd.Dir = r.repoPath
+	_ = pruneCmd.Run()
+	return removed, nil
+}
 
 // NewCleanCmd creates the clean command.
 func NewCleanCmd(deps Dependencies) *cobra.Command {
@@ -34,16 +106,22 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				cfg.WorktreeDir = ".sandman/worktrees"
 			}
 
-			eventsList, err := deps.EventLog.Read()
-			if err != nil {
-				return fmt.Errorf("read event log: %w", err)
+			gr := deps.GitRunner
+			if gr == nil {
+				gr = newRealGitRunner()
 			}
 
 			if all {
+				removed, _ := gr.removeOrphanBranches()
 				_ = os.RemoveAll(cfg.WorktreeDir)
 				_ = os.RemoveAll(".sandman/logs")
-				fmt.Fprintln(cmd.OutOrStdout(), "Cleaned all worktrees and logs")
+				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale branches and logs\n", removed)
 				return nil
+			}
+
+			eventsList, err := deps.EventLog.Read()
+			if err != nil {
+				return fmt.Errorf("read event log: %w", err)
 			}
 
 			started := make(map[string]map[string]any)
@@ -73,7 +151,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				branch, _ := payload["branch"].(string)
 				if branch != "" {
 					wtPath := filepath.Join(cfg.WorktreeDir, branch)
-					_ = os.RemoveAll(wtPath)
+					if err := gr.removeWorktree(wtPath); err != nil {
+						_ = gr.pruneAndDeleteBranch(branch)
+					}
 				}
 				if issueNum := issues[runID]; issueNum > 0 {
 					_ = os.RemoveAll(filepath.Join(".sandman", "logs", fmt.Sprintf("%d.log", issueNum)))

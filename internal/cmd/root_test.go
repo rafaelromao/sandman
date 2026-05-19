@@ -61,6 +61,36 @@ func (f *fakeIssuePicker) Select(issues []github.Issue) ([]int, error) {
 	return f.issues, f.err
 }
 
+// fakeGitRunner is a test double for gitRunner.
+type fakeGitRunner struct {
+	removeWorktreeErr          error
+	removeWorktreeCalls        []string
+	pruneAndDeleteBranchErr    error
+	pruneAndDeleteBranchCalls  []string
+	removeOrphanBranchesErr    error
+	removeOrphanBranchesCount  int
+	removeOrphanBranchesCalled bool
+}
+
+func (f *fakeGitRunner) removeWorktree(path string) error {
+	f.removeWorktreeCalls = append(f.removeWorktreeCalls, path)
+	if f.removeWorktreeErr != nil {
+		return f.removeWorktreeErr
+	}
+	_ = os.RemoveAll(path)
+	return nil
+}
+
+func (f *fakeGitRunner) pruneAndDeleteBranch(branch string) error {
+	f.pruneAndDeleteBranchCalls = append(f.pruneAndDeleteBranchCalls, branch)
+	return f.pruneAndDeleteBranchErr
+}
+
+func (f *fakeGitRunner) removeOrphanBranches() (int, error) {
+	f.removeOrphanBranchesCalled = true
+	return f.removeOrphanBranchesCount, f.removeOrphanBranchesErr
+}
+
 // newTestDeps returns Dependencies wired with test doubles.
 func newTestDeps() Dependencies {
 	return Dependencies{
