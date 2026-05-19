@@ -41,6 +41,10 @@ func (s *WorktreeSandbox) Start() error {
 		return fmt.Errorf("create worktree base: %w", err)
 	}
 
+	if _, err := gitRevParse(s.repoPath, "--verify", "refs/heads/"+s.branch); err == nil {
+		return fmt.Errorf(`branch %q already exists — delete it with "git branch -D %s" and re-run`, s.branch, s.branch)
+	}
+
 	addCmd := exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.sourceBranch)
 	addCmd.Dir = s.repoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {

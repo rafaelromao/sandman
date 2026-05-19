@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -563,6 +564,48 @@ func TestRunBatch_FetchError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when fetch fails")
 	}
+}
+
+func TestRunBatch_LifecycleErrorsPrintedToStderr(t *testing.T) {
+	stderr := captureStderr(t, func() {
+		client := &fakeGitHubClient{err: errors.New("github api error")}
+		o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+		_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	})
+	if !strings.Contains(stderr, "github api error") {
+		t.Errorf("expected fetch error on stderr, got: %s", stderr)
+	}
+}
+
+func TestRunBatch_SandboxStartErrorPrintedToStderr(t *testing.T) {
+	sb := &fakeSandbox{startErr: errors.New("sandbox start failure")}
+	factory := &fakeSandboxFactory{sandbox: sb}
+
+	stderr := captureStderr(t, func() {
+		client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "test", Body: "body"}}}
+		o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+		o.sandboxFactory = factory
+		_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	})
+	if !strings.Contains(stderr, "sandbox start failure") {
+		t.Errorf("expected sandbox start error on stderr, got: %s", stderr)
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	fn()
+	w.Close()
+	os.Stderr = orig
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	return buf.String()
 }
 
 func TestRunBatch_NoIssues(t *testing.T) {
