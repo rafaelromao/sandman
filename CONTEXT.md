@@ -106,7 +106,30 @@ _Avoid_: Working directory, checkout, clone.
 A sandbox adapter that uses only a git worktree for isolation, with no container. One worktree per AgentRun.
 _Avoid_: Local sandbox.
 
+**Daemon Process**:
+A long-lived sandman process executing a Batch in the background. Writes `.sandman/run.pid` and listens on the control socket.
+_Avoid_: Background job, server.
+
+**Control Socket**:
+A Unix domain socket at `.sandman/run.sock` that accepts attach client connections. Created when a daemon starts, removed when it stops.
+_Avoid_: IPC socket, management socket.
+
+**PID Lock**:
+A file at `.sandman/run.pid` containing the PID of the running daemon process. Prevents concurrent `sandman run` invocations in the same project directory.
+_Avoid_: Lock file, process file.
+
+**Attach**:
+Connect a terminal to a running daemon via the control socket to stream its output. Invoked via `sandman attach`.
+_Avoid_: Tail, follow.
+
 ## Relationships
+
+- A **Daemon Process** is created by `sandman run`, which acquires a **PID Lock** and starts a **Control Socket**
+- A **PID Lock** at `.sandman/run.pid` prevents a second `sandman run` while the first is alive
+- A stale **PID Lock** (daemon crashed) is cleaned up automatically on the next `sandman run`
+- A **Control Socket** at `.sandman/run.sock` accepts **Attach** connections for the duration of the **Batch**
+- A **Daemon Process** stops the **Control Socket** and releases the **PID Lock** when its **Batch** completes
+- An **Attach** client connects to the **Control Socket** and reads the daemon's output until EOF
 
 - A **Batch** contains one or more **AgentRuns**
 - An **AgentRun** targets exactly one **Issue** and produces exactly one **Branch**
@@ -140,3 +163,4 @@ _Avoid_: Local sandbox.
 - "run" was used to mean both the CLI command (`sandman run`) and a single agent execution. Resolved: the CLI command triggers a **Batch**; each execution is an **AgentRun**.
 - "sandbox" was used interchangeably with "worktree" and "container." Resolved: **Sandbox** is the abstract isolation contract; **WorktreeSandbox** and **ContainerSandbox** are the concrete adapters. A **Worktree** is a git concept — a dedicated checkout that lives inside a sandbox.
 - "language" was used to mean both repo detection and scaffold recipe choice. Resolved: **BuildToolsPreset** is the scaffold-time recipe term; avoid "language" for that choice.
+- "running process" was used to mean both a **Daemon Process** (background sandman) and an **AgentRun** (agent execution). Resolved: **Daemon Process** is the long-lived sandman process; an **AgentRun** is a single agent execution within a batch.

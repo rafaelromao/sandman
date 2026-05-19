@@ -43,6 +43,7 @@ execution, and event logging for automated coding workflows.`,
 	root.AddCommand(NewRetryCmd(deps))
 	root.AddCommand(NewCleanCmd(deps))
 	root.AddCommand(NewConfigCmd(deps.ConfigStore))
+	root.AddCommand(NewAttachCmd())
 
 	return root
 }

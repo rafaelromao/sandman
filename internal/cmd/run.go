@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
@@ -135,6 +136,19 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if maxContainersSet && maxContainers < 0 {
 				return fmt.Errorf("max_containers must be 0 or greater")
 			}
+
+			pidLock := daemon.NewPIDLock(".sandman")
+			ctlSocket := daemon.NewControlSocket(".sandman")
+
+			if err := pidLock.Acquire(); err != nil {
+				return err
+			}
+			defer pidLock.Release()
+
+			if err := ctlSocket.Start(); err != nil {
+				return err
+			}
+			defer ctlSocket.Stop()
 
 			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 				Issues:               resolvedBatch.Issues,
