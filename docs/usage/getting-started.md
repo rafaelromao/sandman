@@ -75,6 +75,16 @@ When the agent finishes, check the result:
 sandman history
 ```
 
+### Attaching to a running daemon
+
+Open a second terminal while a `sandman run` is in progress to stream its output live:
+
+```bash
+sandman attach
+```
+
+Attach reads from the daemon's control socket at `.sandman/run.sock` and exits with code 0 when the batch finishes and the socket closes.
+
 ## Next steps
 
 - [Commands Reference](commands.md) — full list of CLI commands and flags
