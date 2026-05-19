@@ -291,6 +291,29 @@ func TestInit_AgentFlagSelectsConfigPreset(t *testing.T) {
 	}
 }
 
+func TestInit_InfersToolVersionRepoWhenUnset(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(dockerfileData), "# sandman tool-version: "+scaffold.DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("expected a pinned tool-version, got:\n%s", dockerfileData)
+	}
+}
+
 func TestInit_ExistingDirectoryPrompts(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

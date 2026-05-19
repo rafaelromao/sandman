@@ -139,6 +139,7 @@ func TestScaffold_ResolvesToolVersionSelectors(t *testing.T) {
 		{name: "latest", selector: "latest", wantPin: DefaultBuiltInAgentVersion("codex")},
 		{name: "lts", selector: "lts", wantPin: builtInAgentVersionCatalog["codex"][1]},
 		{name: "semver shorthand", selector: "0.130", wantPin: DefaultBuiltInAgentVersion("codex")},
+		{name: "repo falls back to latest", selector: "repo", wantPin: DefaultBuiltInAgentVersion("codex")},
 	}
 
 	for _, tt := range tests {
@@ -163,6 +164,40 @@ func TestScaffold_ResolvesToolVersionSelectors(t *testing.T) {
 				t.Fatalf("Dockerfile missing codex install pin %q, got:\n%s", tt.wantPin, content)
 			}
 		})
+	}
+}
+
+func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoGoHints(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	version, err := s.resolveGoVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveGoVersion with repo selector: %v", err)
+	}
+	latest, err := s.resolveGoVersion(dir, "latest", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveGoVersion with latest selector: %v", err)
+	}
+	if version != latest {
+		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
+	}
+}
+
+func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoPythonHints(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	version, err := s.resolvePythonVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolvePythonVersion with repo selector: %v", err)
+	}
+	latest, err := s.resolvePythonVersion(dir, "latest", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolvePythonVersion with latest selector: %v", err)
+	}
+	if version != latest {
+		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
 	}
 }
 
