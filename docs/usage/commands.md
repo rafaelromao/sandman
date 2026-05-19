@@ -11,7 +11,7 @@ sandman init [flags]
 | Flag | Description |
 |------|-------------|
 | `--build-tools` | Build tools preset (`generic` or `go`) |
-| `--tool-version` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
+| `--tool-version` | `repo` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
 | `--agent` | Built-in agent preset (`opencode`, `claude-code`, `codex`, `pi`) |
 
 If flags are omitted, interactive prompts guide you through the choices.
