@@ -17,7 +17,7 @@ func NewAttachCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sockPath := filepath.Join(".sandman", "run.sock")
 			if _, err := os.Stat(sockPath); os.IsNotExist(err) {
-				return fmt.Errorf("no sandman daemon is running")
+				return fmt.Errorf("no sandman daemon is running.")
 			}
 
 			conn, err := net.Dial("unix", sockPath)

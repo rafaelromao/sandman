@@ -177,7 +177,7 @@ func TestRun_ClosesControlSocketOnCompletion(t *testing.T) {
 	}
 }
 
-func TestRun_FailsOnExistingLiveDaemon(t *testing.T) {
+func TestRun_CleansStalePIDOnStart(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	sandmanDir := filepath.Join(dir, ".sandman")

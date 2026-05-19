@@ -3,9 +3,12 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/daemon"
@@ -137,6 +140,19 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("max_containers must be 0 or greater")
 			}
 
+			ctx, cancel := context.WithCancel(cmd.Context())
+			defer cancel()
+
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				select {
+				case <-sigCh:
+					cancel()
+				case <-ctx.Done():
+				}
+			}()
+
 			pidLock := daemon.NewPIDLock(".sandman")
 			ctlSocket := daemon.NewControlSocket(".sandman")
 
@@ -150,7 +166,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			defer ctlSocket.Stop()
 
-			result, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
+			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
 				Issues:               resolvedBatch.Issues,
 				Dependencies:         resolvedBatch.Deps,
 				Model:                strings.TrimSpace(modelFlag),

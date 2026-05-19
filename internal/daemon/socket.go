@@ -10,11 +10,10 @@ import (
 type ControlSocket struct {
 	dir      string
 	listener net.Listener
-	done     chan struct{}
 }
 
 func NewControlSocket(dir string) *ControlSocket {
-	return &ControlSocket{dir: dir, done: make(chan struct{})}
+	return &ControlSocket{dir: dir}
 }
 
 func (s *ControlSocket) Start() error {
