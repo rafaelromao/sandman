@@ -2406,6 +2406,192 @@ func TestRunBatch_ReturnsErrorWhenBuildImageFails(t *testing.T) {
 	}
 }
 
+func TestRunBatch_SetsGitIdentityFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+	}
+	store := &fakeConfigStore{
+		config: &config.Config{
+			Agent:       "test-agent",
+			Sandbox:     "worktree",
+			WorktreeDir: ".sandman/worktrees",
+			Git: config.GitConfig{
+				DefaultBranch: "main",
+				AuthorName:    "Alice",
+				AuthorEmail:   "alice@example.com",
+			},
+			AgentProviders: map[string]config.Agent{
+				"test-agent": {Command: "touch agent-ran.txt"},
+			},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Preserve: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+
+	cmd := exec.Command("git", "config", "--local", "user.name")
+	cmd.Dir = worktreePath
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config user.name: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "Alice" {
+		t.Errorf("user.name: got %q, want %q", got, "Alice")
+	}
+
+	cmd = exec.Command("git", "config", "--local", "user.email")
+	cmd.Dir = worktreePath
+	out, err = cmd.Output()
+	if err != nil {
+		t.Fatalf("git config user.email: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "alice@example.com" {
+		t.Errorf("user.email: got %q, want %q", got, "alice@example.com")
+	}
+}
+
+func TestRunBatch_SkipsGitIdentityWhenConfigEmpty(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+	}
+	store := &fakeConfigStore{
+		config: &config.Config{
+			Agent:       "test-agent",
+			Sandbox:     "worktree",
+			WorktreeDir: ".sandman/worktrees",
+			Git: config.GitConfig{
+				DefaultBranch: "main",
+			},
+			AgentProviders: map[string]config.Agent{
+				"test-agent": {Command: "touch agent-ran.txt"},
+			},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Preserve: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+
+	cmd := exec.Command("git", "config", "--local", "user.name")
+	cmd.Dir = worktreePath
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config --local user.name: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "Test" {
+		t.Errorf("user.name: got %q, want %q (should be unchanged from repo default)", got, "Test")
+	}
+}
+
+func TestRunBatch_SkipsGitIdentityWhenOnlyNameSet(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+	}
+	store := &fakeConfigStore{
+		config: &config.Config{
+			Agent:       "test-agent",
+			Sandbox:     "worktree",
+			WorktreeDir: ".sandman/worktrees",
+			Git: config.GitConfig{
+				DefaultBranch: "main",
+				AuthorName:    "Alice",
+			},
+			AgentProviders: map[string]config.Agent{
+				"test-agent": {Command: "touch agent-ran.txt"},
+			},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Preserve: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+
+	cmd := exec.Command("git", "config", "--local", "user.name")
+	cmd.Dir = worktreePath
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config --local user.name: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "Test" {
+		t.Errorf("user.name: got %q, want %q (should be unchanged from repo default)", got, "Test")
+	}
+}
+
+func TestRunBatch_SkipsGitIdentityWhenOnlyEmailSet(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+	}
+	store := &fakeConfigStore{
+		config: &config.Config{
+			Agent:       "test-agent",
+			Sandbox:     "worktree",
+			WorktreeDir: ".sandman/worktrees",
+			Git: config.GitConfig{
+				DefaultBranch: "main",
+				AuthorEmail:   "alice@example.com",
+			},
+			AgentProviders: map[string]config.Agent{
+				"test-agent": {Command: "touch agent-ran.txt"},
+			},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Preserve: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+
+	cmd := exec.Command("git", "config", "--local", "user.email")
+	cmd.Dir = worktreePath
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config --local user.email: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "test@test.com" {
+		t.Errorf("user.email: got %q, want %q (should be unchanged from repo default)", got, "test@test.com")
+	}
+}
+
 func TestRunBatch_ContainerCapacityOneReturnsErrorWhenDockerUnavailable(t *testing.T) {
 	t.Setenv("PATH", "")
 	client := &fakeGitHubClient{
