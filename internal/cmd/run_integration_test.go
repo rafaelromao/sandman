@@ -1129,3 +1129,136 @@ esac
 		}
 	}
 }
+
+func podmanGitIdentityDeps(t *testing.T, dir, remoteDir, agentCmd, authorName, authorEmail string) Dependencies {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
+		t.Fatalf("create .sandman dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte("FROM alpine\nRUN apk add --no-cache git\n"), 0644); err != nil {
+		t.Fatalf("write .sandman/Dockerfile: %v", err)
+	}
+
+	homeDir, err := os.MkdirTemp("", "sandman-podman-home-")
+	if err != nil {
+		t.Fatalf("create home dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
+	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
+		t.Fatalf("create ssh dir: %v", err)
+	}
+	gitCfg := fmt.Sprintf("[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitCfg), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
+		t.Fatalf("warm podman image for test home: %v: %s", err, out)
+	}
+
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+	}}
+
+	store := &fakeStore{config: &config.Config{
+		Agent:       "test-agent",
+		WorktreeDir: ".sandman/worktrees",
+		Sandbox:     "podman",
+		Git: config.GitConfig{
+			DefaultBranch: "main",
+			AuthorName:    authorName,
+			AuthorEmail:   authorEmail,
+		},
+		AgentProviders: map[string]config.Agent{
+			"test-agent": {Name: "test-agent", Command: strings.TrimSpace(agentCmd)},
+		},
+	}}
+
+	runner := batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil)
+	return Dependencies{
+		BatchRunner:    runner,
+		ConfigStore:    store,
+		EventLog:       &fakeEventLog{},
+		GitHubClient:   gh,
+		PromptRenderer: &prompt.Engine{},
+		IsTTY:          func() bool { return false },
+	}
+}
+
+func TestRun_PodmanSandboxSetsGitIdentityFromConfig(t *testing.T) {
+	if !podmanAvailable(t) {
+		return
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	remoteDir := initRunIntegrationRepoWithRemote(t, dir)
+	runGit(t, dir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	agentCmd := `
+touch test-file.txt
+git add test-file.txt
+git commit -m "test commit by sandman"
+git log --format="%an <%ae>" -1
+`
+	deps := podmanGitIdentityDeps(t, dir, remoteDir, agentCmd, "Sandman", "sandman@test.com")
+
+	out, err := executeRunCommand(t, deps, "42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	logContent := string(logData)
+
+	if !strings.Contains(logContent, "Sandman <sandman@test.com>") {
+		t.Fatalf("expected commit author 'Sandman <sandman@test.com>' in log, got:\n%s", logContent)
+	}
+}
+
+func TestRun_PodmanSandboxSkipsGitIdentityWhenConfigEmpty(t *testing.T) {
+	if !podmanAvailable(t) {
+		return
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	remoteDir := initRunIntegrationRepoWithRemote(t, dir)
+	runGit(t, dir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	agentCmd := `
+touch test-file.txt
+git add test-file.txt
+git commit -m "test commit by repo default"
+git log --format="%an <%ae>" -1
+`
+	deps := podmanGitIdentityDeps(t, dir, remoteDir, agentCmd, "", "")
+
+	out, err := executeRunCommand(t, deps, "42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	logContent := string(logData)
+
+	if !strings.Contains(logContent, "Test <test@test.com>") {
+		t.Fatalf("expected commit author 'Test <test@test.com>' (repo default) in log, got:\n%s", logContent)
+	}
+}
