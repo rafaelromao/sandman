@@ -340,7 +340,7 @@ func TestClean_All_CallsRemoveOrphanBranches(t *testing.T) {
 	if _, err := os.Stat(logDir); !os.IsNotExist(err) {
 		t.Errorf("expected log dir to be removed")
 	}
-	if !strings.Contains(buf.String(), "Cleaned 3 worktrees and logs") {
-		t.Errorf("expected output to confirm 3 worktrees cleaned, got: %s", buf.String())
+	if !strings.Contains(buf.String(), "Cleaned 3 stale branches and logs") {
+		t.Errorf("expected output to confirm 3 branches cleaned, got: %s", buf.String())
 	}
 }

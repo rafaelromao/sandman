@@ -115,7 +115,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				removed, _ := gr.removeOrphanBranches()
 				_ = os.RemoveAll(cfg.WorktreeDir)
 				_ = os.RemoveAll(".sandman/logs")
-				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d worktrees and logs\n", removed)
+				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale branches and logs\n", removed)
 				return nil
 			}
 
