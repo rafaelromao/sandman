@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -556,6 +557,19 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch, container)
 	if err := wt.Start(); err != nil {
 		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+	}
+
+	if cfg.Git.AuthorName != "" && cfg.Git.AuthorEmail != "" {
+		for _, kv := range []struct{ key, value string }{
+			{"user.name", cfg.Git.AuthorName},
+			{"user.email", cfg.Git.AuthorEmail},
+		} {
+			cmd := exec.Command("git", "config", kv.key, kv.value)
+			cmd.Dir = wt.WorkDir()
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch, DebugInfo: fmt.Sprintf("git config %s: %v\n%s", kv.key, err, out)}
+			}
+		}
 	}
 
 	activeMu.Lock()
