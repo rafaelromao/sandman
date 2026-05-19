@@ -141,15 +141,7 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
 		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
 	}
-	modelOut, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect",
-		"opencode", "models").Output()
-	if err != nil {
-		t.Fatalf("detect model in container: %v", err)
-	}
-	containerModel := pickModel(strings.TrimSpace(string(modelOut)))
-	if containerModel == "" {
-		t.Fatal("no model available in container")
-	}
+	containerModel := "opencode/big-pickle"
 	t.Logf("using container model: %s", containerModel)
 
 	customizeOpenCodeAgentForContainer(t, repoDir, containerModel)
@@ -328,15 +320,7 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
 		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
 	}
-	modelOut, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect",
-		"opencode", "models").Output()
-	if err != nil {
-		t.Fatalf("detect model in container: %v", err)
-	}
-	containerModel := pickModel(strings.TrimSpace(string(modelOut)))
-	if containerModel == "" {
-		t.Fatal("no model available in container")
-	}
+	containerModel := "opencode/big-pickle"
 	t.Logf("using container model: %s", containerModel)
 
 	customizeOpenCodeAgentForContainer(t, repoDir, containerModel)
@@ -428,10 +412,7 @@ func TestPRFlow_WorktreeSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	if _, err := exec.LookPath("opencode"); err != nil {
 		t.Skipf("skip opencode e2e: host CLI unavailable: %v", err)
 	}
-	model, err := detectOpenCodeModel(realHome)
-	if err != nil {
-		t.Skipf("skip opencode e2e: %v", err)
-	}
+	model := "opencode/big-pickle"
 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
@@ -630,35 +611,6 @@ When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run
 	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
 		t.Fatalf("write prompt: %v", err)
 	}
-}
-
-func pickModel(modelsOutput string) string {
-	models := strings.Fields(modelsOutput)
-	preferred := []string{
-		"openai/gpt-5.3-codex",
-		"openai/gpt-5.3-codex-spark",
-		"openai/gpt-5.2-codex",
-		"openai/gpt-5.1-codex",
-		"openai/gpt-5-codex",
-		"openai/gpt-5.1-codex-mini",
-		"openai/gpt-5.1-codex-max",
-	}
-	for _, want := range preferred {
-		for _, model := range models {
-			if model == want {
-				return model
-			}
-		}
-	}
-	for _, model := range models {
-		if strings.Contains(model, "codex") {
-			return model
-		}
-	}
-	if len(models) > 0 {
-		return models[0]
-	}
-	return ""
 }
 
 func writeFakeGHShimForContainer(t *testing.T, hostDir string) {
@@ -1068,15 +1020,7 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
 		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
 	}
-	modelOut, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel",
-		"opencode", "models").Output()
-	if err != nil {
-		t.Fatalf("detect model in container: %v", err)
-	}
-	containerModel := pickModel(strings.TrimSpace(string(modelOut)))
-	if containerModel == "" {
-		t.Fatal("no model available in container")
-	}
+	containerModel := "opencode/big-pickle"
 	t.Logf("using container model: %s", containerModel)
 
 	customizeOpenCodeAgentForContainerWithEcho(t, repoDir, containerModel)
@@ -1686,49 +1630,6 @@ func parseE2EProviders() (map[string]bool, error) {
 func hasOpenCodeAuth(home string) bool {
 	_, err := os.Stat(homePath(home, "~/.local/share/opencode/auth.json"))
 	return err == nil
-}
-
-func detectOpenCodeModel(home string) (string, error) {
-	cmd := exec.Command("opencode", "models")
-	cmd.Env = append(os.Environ(), "HOME="+home)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("list supported opencode models: %w", err)
-	}
-
-	var models []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			models = append(models, line)
-		}
-	}
-	if len(models) == 0 {
-		return "", fmt.Errorf("no supported opencode models found")
-	}
-
-	preferred := []string{
-		"openai/gpt-5.3-codex",
-		"openai/gpt-5.3-codex-spark",
-		"openai/gpt-5.2-codex",
-		"openai/gpt-5.1-codex",
-		"openai/gpt-5-codex",
-		"openai/gpt-5.1-codex-mini",
-		"openai/gpt-5.1-codex-max",
-	}
-	for _, want := range preferred {
-		for _, model := range models {
-			if model == want {
-				return model, nil
-			}
-		}
-	}
-	for _, model := range models {
-		if strings.Contains(model, "codex") {
-			return model, nil
-		}
-	}
-	return models[0], nil
 }
 
 func homePath(home, rel string) string {

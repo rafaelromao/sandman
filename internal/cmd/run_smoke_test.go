@@ -210,10 +210,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	}
 	opencodeModel := ""
 	if tc.name == "opencode" {
-		opencodeModel, err = detectOpenCodeSmokeModel(realHome)
-		if err != nil {
-			t.Skipf("skip %s smoke: %v", tc.name, err)
-		}
+		opencodeModel = "opencode/big-pickle"
 	}
 
 	homeDir := t.TempDir()
@@ -518,49 +515,6 @@ func ensureSmokeHostCLI(t *testing.T, tc smokeProviderCase) {
 	if _, err := exec.LookPath(tc.hostCLI); err != nil {
 		t.Skipf("skip %s smoke: host CLI %q not installed", tc.name, tc.hostCLI)
 	}
-}
-
-func detectOpenCodeSmokeModel(realHome string) (string, error) {
-	cmd := exec.Command("opencode", "models")
-	cmd.Env = append(os.Environ(), "HOME="+realHome)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("list supported opencode models: %w", err)
-	}
-
-	var models []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			models = append(models, line)
-		}
-	}
-	if len(models) == 0 {
-		return "", fmt.Errorf("no supported opencode models found")
-	}
-
-	preferred := []string{
-		"openai/gpt-5.3-codex",
-		"openai/gpt-5.3-codex-spark",
-		"openai/gpt-5.2-codex",
-		"openai/gpt-5.1-codex",
-		"openai/gpt-5-codex",
-		"openai/gpt-5.1-codex-mini",
-		"openai/gpt-5.1-codex-max",
-	}
-	for _, want := range preferred {
-		for _, model := range models {
-			if model == want {
-				return model, nil
-			}
-		}
-	}
-	for _, model := range models {
-		if strings.Contains(model, "codex") {
-			return model, nil
-		}
-	}
-	return models[0], nil
 }
 
 func containsSmokePath(paths []string, want string) bool {
