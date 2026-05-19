@@ -20,17 +20,24 @@ func NewBroadcaster() *Broadcaster {
 
 func (b *Broadcaster) Write(p []byte) (int, error) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	n, err := b.buffer.Write(p)
 	if err != nil {
+		b.mu.Unlock()
 		return n, err
 	}
 
-	for client := range b.clients {
-		if _, err := client.Write(p); err != nil {
-			client.Close()
-			delete(b.clients, client)
+	clients := make([]net.Conn, 0, len(b.clients))
+	for c := range b.clients {
+		clients = append(clients, c)
+	}
+	b.mu.Unlock()
+
+	for _, conn := range clients {
+		if _, err := conn.Write(p); err != nil {
+			conn.Close()
+			b.mu.Lock()
+			delete(b.clients, conn)
+			b.mu.Unlock()
 		}
 	}
 

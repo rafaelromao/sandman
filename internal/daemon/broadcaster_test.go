@@ -4,6 +4,7 @@ import (
 	"net"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestBroadcaster_StoresAndReturnsBytes(t *testing.T) {
@@ -128,6 +129,60 @@ func TestBroadcaster_MultipleClientsAllReceiveSameData(t *testing.T) {
 		t.Fatalf("client 2 got %q", got2)
 	}
 }
+
+func TestBroadcaster_WriteReleasesLockBeforeClientWrites(t *testing.T) {
+	b := NewBroadcaster()
+
+	reader, writer := net.Pipe()
+	b.AddClient(writer)
+
+	writeDone := make(chan struct{})
+	go func() {
+		b.Write([]byte("data\n"))
+		close(writeDone)
+	}()
+
+	go func() {
+		// reader reads to unblock the goroutine when we're done testing
+		buf := make([]byte, 1024)
+		for {
+			_, err := reader.Read(buf)
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Small sleep to let Write reach the client write
+	time.Sleep(5 * time.Millisecond)
+
+	// At this point Write should be stuck on writer.Write with the lock released.
+	// Use a discard conn for AddClient to avoid replay blocking.
+	addDone := make(chan struct{})
+	go func() {
+		b.AddClient(discardConn{})
+		close(addDone)
+	}()
+
+	select {
+	case <-addDone:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("AddClient blocked — lock not released during client writes")
+	}
+	reader.Close()
+	<-writeDone
+}
+
+type discardConn struct{}
+
+func (discardConn) Read(b []byte) (int, error)         { return len(b), nil }
+func (discardConn) Write(b []byte) (int, error)        { return len(b), nil }
+func (discardConn) Close() error                       { return nil }
+func (discardConn) LocalAddr() net.Addr                { return &net.UnixAddr{Name: "x", Net: "unix"} }
+func (discardConn) RemoteAddr() net.Addr               { return &net.UnixAddr{Name: "y", Net: "unix"} }
+func (discardConn) SetDeadline(t time.Time) error      { return nil }
+func (discardConn) SetReadDeadline(t time.Time) error  { return nil }
+func (discardConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func TestBroadcaster_CloseClosesAllClients(t *testing.T) {
 	dir := t.TempDir()
