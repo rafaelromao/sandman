@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -562,6 +563,32 @@ func TestRunBatch_FetchError(t *testing.T) {
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {
 		t.Fatal("expected error when fetch fails")
+	}
+}
+
+func TestRunBatch_LifecycleErrorsPrintedToStderr(t *testing.T) {
+	var buf bytes.Buffer
+	client := &fakeGitHubClient{err: errors.New("github api error")}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.errorLog = &buf
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if !strings.Contains(buf.String(), "github api error") {
+		t.Errorf("expected fetch error on stderr, got: %s", buf.String())
+	}
+}
+
+func TestRunBatch_SandboxStartErrorPrintedToStderr(t *testing.T) {
+	var buf bytes.Buffer
+	sb := &fakeSandbox{startErr: errors.New("sandbox start failure")}
+	factory := &fakeSandboxFactory{sandbox: sb}
+
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "test", Body: "body"}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = factory
+	o.errorLog = &buf
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if !strings.Contains(buf.String(), "sandbox start failure") {
+		t.Errorf("expected sandbox start error on stderr, got: %s", buf.String())
 	}
 }
 
