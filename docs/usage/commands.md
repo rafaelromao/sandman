@@ -8,13 +8,13 @@ Scaffolds `.sandman/` configuration files in the current directory.
 sandman init [flags]
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--build-tools` | Build tools preset (`generic` or `go`) |
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--build-tools` | `""` | Build tools preset (`generic`, `go`, `python`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
-| `--agent` | Built-in agent preset (`opencode`, `claude-code`, `codex`, `pi`) |
+| `--agent` | `""` | Built-in agent preset (`opencode`, `claude-code`, `codex`, `pi`) |
 
-If flags are omitted, interactive prompts guide you through the choices.
+When `--tool-version` is omitted, `init` infers `repo` as the version selector, reading version hints from the repo when available. If flags are completely omitted and no repo hints are found, interactive prompts guide you through the choices.
 
 ## `sandman run`
 
