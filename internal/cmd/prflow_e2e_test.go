@@ -35,8 +35,6 @@ const (
 )
 
 func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
-	t.Skip("real opencode podman e2e is currently unstable; worktree e2e covers the supported path")
-
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -221,8 +219,6 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 }
 
 func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
-	t.Skip("real opencode podman e2e is currently unstable; worktree e2e covers the supported path")
-
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -410,8 +406,6 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 }
 
 func TestPRFlow_WorktreeSandboxOpencodeCommitsAndPushes(t *testing.T) {
-	t.Skip("real opencode worktree e2e is currently unstable; smoke and harness tests cover the supported path")
-
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -967,8 +961,6 @@ exit 1
 }
 
 func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
-	t.Skip("real opencode podman e2e is currently unstable; worktree e2e covers the supported path")
-
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}

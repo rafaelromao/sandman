@@ -811,8 +811,6 @@ func TestSmoke_SubagentOutput_Worktree(t *testing.T) {
 }
 
 func TestSmoke_SubagentOutput_Podman(t *testing.T) {
-	t.Skip("opencode child-session capture smoke is currently supported in worktree mode only")
-
 	if _, err := exec.LookPath("opencode"); err != nil {
 		t.Skipf("skip: opencode CLI not installed: %v", err)
 	}
