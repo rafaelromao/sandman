@@ -154,7 +154,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}()
 
 			pidLock := daemon.NewPIDLock(".sandman")
-			ctlSocket := daemon.NewControlSocket(".sandman")
+			broadcaster := daemon.NewBroadcaster()
+			ctlSocket := daemon.NewControlSocket(".sandman", broadcaster)
 
 			if err := pidLock.Acquire(); err != nil {
 				return err
@@ -179,6 +180,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				MaxContainers:        maxContainers,
 				MaxContainersSet:     maxContainersSet,
 				Interactive:          interactive,
+				OutputWriter:         broadcaster,
 				PromptConfig: prompt.RenderConfig{
 					PromptFlag:       promptFlag,
 					TemplateFlag:     templateFlag,

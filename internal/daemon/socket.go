@@ -8,12 +8,17 @@ import (
 )
 
 type ControlSocket struct {
-	dir      string
-	listener net.Listener
+	dir         string
+	listener    net.Listener
+	broadcaster *Broadcaster
 }
 
-func NewControlSocket(dir string) *ControlSocket {
-	return &ControlSocket{dir: dir}
+func NewControlSocket(dir string, broadcaster *Broadcaster) *ControlSocket {
+	return &ControlSocket{dir: dir, broadcaster: broadcaster}
+}
+
+func (s *ControlSocket) Broadcaster() *Broadcaster {
+	return s.broadcaster
 }
 
 func (s *ControlSocket) Start() error {
@@ -35,7 +40,7 @@ func (s *ControlSocket) Start() error {
 			if err != nil {
 				return
 			}
-			conn.Close()
+			s.broadcaster.AddClient(conn)
 		}
 	}()
 
@@ -44,7 +49,11 @@ func (s *ControlSocket) Start() error {
 
 func (s *ControlSocket) Stop() error {
 	if s.listener != nil {
-		return s.listener.Close()
+		if err := s.listener.Close(); err != nil {
+			s.broadcaster.Close()
+			return err
+		}
 	}
+	s.broadcaster.Close()
 	return nil
 }

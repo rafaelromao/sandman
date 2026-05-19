@@ -350,6 +350,30 @@ func TestAgentRun_Run_ExecuteFailure(t *testing.T) {
 	}
 }
 
+func TestAgentRun_Execute_WritesToOutputWriter(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execStdout: "hello world\n"}
+	var buf bytes.Buffer
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.outputWriter = &buf
+	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "hello world") {
+		t.Errorf("expected output writer to contain agent output, got %q", output)
+	}
+
+	if !strings.Contains(output, "[issue-42]") {
+		t.Errorf("expected output writer to contain prefixed output, got %q", output)
+	}
+}
+
 func TestAgentRun_Run_InteractiveUsesExecInteractive(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Users cannot log in."}
 	sb := &fakeSandbox{}
