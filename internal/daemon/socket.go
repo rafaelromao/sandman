@@ -48,9 +48,12 @@ func (s *ControlSocket) Start() error {
 }
 
 func (s *ControlSocket) Stop() error {
-	s.broadcaster.Close()
 	if s.listener != nil {
-		return s.listener.Close()
+		if err := s.listener.Close(); err != nil {
+			s.broadcaster.Close()
+			return err
+		}
 	}
+	s.broadcaster.Close()
 	return nil
 }

@@ -130,59 +130,39 @@ func TestBroadcaster_MultipleClientsAllReceiveSameData(t *testing.T) {
 	}
 }
 
-func TestBroadcaster_WriteReleasesLockBeforeClientWrites(t *testing.T) {
+func TestBroadcaster_SlowClientDoesNotBlockFastClient(t *testing.T) {
 	b := NewBroadcaster()
 
-	reader, writer := net.Pipe()
-	b.AddClient(writer)
+	slowReader, slowWriter := net.Pipe()
+	defer slowReader.Close()
+	b.AddClient(slowWriter)
 
-	writeDone := make(chan struct{})
-	go func() {
-		b.Write([]byte("data\n"))
-		close(writeDone)
-	}()
+	fastReader, fastWriter := net.Pipe()
+	defer fastReader.Close()
+	b.AddClient(fastWriter)
 
+	fastDone := make(chan string, 1)
 	go func() {
-		// reader reads to unblock the goroutine when we're done testing
 		buf := make([]byte, 1024)
-		for {
-			_, err := reader.Read(buf)
-			if err != nil {
-				return
-			}
+		n, err := fastReader.Read(buf)
+		if err != nil {
+			fastDone <- ""
+			return
 		}
+		fastDone <- string(buf[:n])
 	}()
 
-	// Small sleep to let Write reach the client write
-	time.Sleep(5 * time.Millisecond)
-
-	// At this point Write should be stuck on writer.Write with the lock released.
-	// Use a discard conn for AddClient to avoid replay blocking.
-	addDone := make(chan struct{})
-	go func() {
-		b.AddClient(discardConn{})
-		close(addDone)
-	}()
+	b.Write([]byte("data\n"))
 
 	select {
-	case <-addDone:
+	case got := <-fastDone:
+		if got != "data\n" {
+			t.Fatalf("fast client got %q, want %q", got, "data\n")
+		}
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("AddClient blocked — lock not released during client writes")
+		t.Fatal("fast client blocked by slow client")
 	}
-	reader.Close()
-	<-writeDone
 }
-
-type discardConn struct{}
-
-func (discardConn) Read(b []byte) (int, error)         { return len(b), nil }
-func (discardConn) Write(b []byte) (int, error)        { return len(b), nil }
-func (discardConn) Close() error                       { return nil }
-func (discardConn) LocalAddr() net.Addr                { return &net.UnixAddr{Name: "x", Net: "unix"} }
-func (discardConn) RemoteAddr() net.Addr               { return &net.UnixAddr{Name: "y", Net: "unix"} }
-func (discardConn) SetDeadline(t time.Time) error      { return nil }
-func (discardConn) SetReadDeadline(t time.Time) error  { return nil }
-func (discardConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func TestBroadcaster_CloseClosesAllClients(t *testing.T) {
 	dir := t.TempDir()
