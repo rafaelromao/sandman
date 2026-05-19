@@ -63,11 +63,17 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
       - Spec reviewer: issue, linked context, and expected behavior.
     - Wait for both reviewers.
     - Synthesize their findings into one fix list.
-    - Apply fixes, run tests/formatting, and commit:
+    - Apply fixes, format the code, run all tests, including smoke and e2e, and commit:
     ```bash
     git add -A
     git commit -m "refactor: self-review fixes"
     ```
+    - Fix the code in case any of the tests fail. Commit again:
+    ```bash
+    git add -A
+    git commit -m "refactor: self-review fixes"
+    ```
+    - Repeat the Self-review cycle until all tests pass.
 
     ### 6. Push & PR
     ```bash
@@ -81,7 +87,7 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     - Poll `gh pr checks <N>` until CI passes.
     - If checks fail, fix them, commit, and push.
     - Post `gh pr comment <N> --body "{{REVIEW_COMMAND}}"`
-    - Poll `gh pr view <N> --comments` every 30-60s, with a 5 minute timeout.
+    - Poll `gh pr view <N> --comments` every 30-60s, with a 10 minute timeout.
     - If no review response arrives in time, stop and report the PR as still open.
     - When feedback arrives, cluster independent comments and fix them in parallel where possible.
     - Address blockers first, then suggestions, then nits.
