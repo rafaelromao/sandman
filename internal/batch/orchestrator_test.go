@@ -1691,22 +1691,28 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 		t.Fatalf("write docker: %v", err)
 	}
 	t.Setenv("PATH", dir)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
 	// Ensure a .gitconfig exists so buildStartOptions includes it.
-	home, _ := os.UserHomeDir()
 	gitconfigPath := filepath.Join(home, ".gitconfig")
-	if _, err := os.Stat(gitconfigPath); os.IsNotExist(err) {
-		_ = os.WriteFile(gitconfigPath, []byte("[user]\n\tname = Test\n\temail = test@test.com\n"), 0644)
-		t.Cleanup(func() { os.Remove(gitconfigPath) })
+	if err := os.WriteFile(gitconfigPath, []byte("[user]\n\tname = Test\n\temail = test@test.com\n"), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
 	}
 
 	// Ensure ~/.config/gh exists so buildStartOptions includes it.
 	ghConfigDir := filepath.Join(home, ".config", "gh")
-	if _, err := os.Stat(ghConfigDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(ghConfigDir, 0755); err != nil {
-			t.Fatalf("create gh config dir: %v", err)
-		}
-		t.Cleanup(func() { os.RemoveAll(ghConfigDir) })
+	if err := os.MkdirAll(ghConfigDir, 0755); err != nil {
+		t.Fatalf("create gh config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ghConfigDir, "hosts.yml"), []byte("github.com:\n    user: test-user\n    oauth_token: test-token\n"), 0600); err != nil {
+		t.Fatalf("write gh hosts.yml: %v", err)
+	}
+
+	// Ensure ~/.config/git exists so buildStartOptions includes the XDG git config dir.
+	gitConfigDir := filepath.Join(home, ".config", "git")
+	if err := os.MkdirAll(gitConfigDir, 0755); err != nil {
+		t.Fatalf("create git config dir: %v", err)
 	}
 
 	client := &fakeGitHubClient{
@@ -1727,11 +1733,11 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	if !starter.startCalled {
 		t.Fatal("expected container starter to be called")
 	}
-	if starter.startOpts.GitConfigPath == "" {
-		t.Error("expected GitConfigPath to be set")
+	if starter.startOpts.GitConfigPath != "" {
+		t.Errorf("expected GitConfigPath to be moved into ConfigMounts, got %q", starter.startOpts.GitConfigPath)
 	}
-	if len(starter.startOpts.AgentConfigDirs) != 2 {
-		t.Errorf("expected 2 agent config dirs (preset + gh), got %d", len(starter.startOpts.AgentConfigDirs))
+	if len(starter.startOpts.AgentConfigDirs) != 3 {
+		t.Errorf("expected 3 agent config dirs (preset + gh + xdg git), got %d", len(starter.startOpts.AgentConfigDirs))
 	}
 	if len(starter.startOpts.AgentConfigFiles) != 1 {
 		t.Errorf("expected 1 agent config file, got %d", len(starter.startOpts.AgentConfigFiles))
@@ -1757,6 +1763,15 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 		}
 		if !filepath.IsAbs(mount.Source) {
 			t.Errorf("expected absolute Source path, got %q", mount.Source)
+		}
+	}
+	seenTargets := map[string]bool{}
+	for _, mount := range starter.startOpts.ConfigMounts {
+		seenTargets[mount.Target] = true
+	}
+	for _, target := range []string{"/.gitconfig", "/.config/gh", "/.config/git"} {
+		if !seenTargets[target] {
+			t.Errorf("expected ConfigMount target %q, got %v", target, seenTargets)
 		}
 	}
 }

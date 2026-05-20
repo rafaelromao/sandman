@@ -295,14 +295,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("max_containers must be 0 or greater")
 		}
 
-		if len(startOpts.AgentConfigDirs) > 0 || len(startOpts.AgentConfigFiles) > 0 {
-			mounts, cleanup, err := sandbox.ResolveConfigMounts(startOpts.AgentConfigDirs, startOpts.AgentConfigFiles)
-			if err != nil {
-				return nil, fmt.Errorf("resolve config mounts: %w", err)
-			}
-			startOpts.ConfigMounts = mounts
-			defer cleanup()
+		cleanup, err := prepareContainerConfigMounts(".", &startOpts)
+		if err != nil {
+			return nil, fmt.Errorf("prepare container config mounts: %w", err)
 		}
+		defer cleanup()
 
 		starter := containerFactory.New(sandboxMode)
 		image, err := starter.BuildImage(".")
@@ -494,6 +491,11 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 		gitConfig := filepath.Join(home, ".gitconfig")
 		if _, err := os.Stat(gitConfig); err == nil {
 			opts.GitConfigPath = gitConfig
+		}
+
+		gitConfigDir := filepath.Join(home, ".config", "git")
+		if _, err := os.Stat(gitConfigDir); err == nil {
+			opts.AgentConfigDirs = append(opts.AgentConfigDirs, gitConfigDir)
 		}
 
 		ghConfig := filepath.Join(home, ".config", "gh")
