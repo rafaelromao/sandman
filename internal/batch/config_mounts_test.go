@@ -81,7 +81,7 @@ func TestPrepareContainerConfigMounts_RewritesGitConfigCopiesSSHAndHydratesGH(t 
 	for _, mount := range opts.ConfigMounts {
 		seen[mount.Target] = mount.Source
 	}
-	for _, target := range []string{"/.gitconfig", "/.config/git", "/.config/gh", "/.ssh", "/.config/opencode"} {
+	for _, target := range []string{"/.gitconfig", "/.config/git", "/.config/gh", "/.ssh", "/root/.ssh", "/.config/opencode"} {
 		if seen[target] == "" {
 			t.Fatalf("expected mount target %q, got %v", target, seen)
 		}
@@ -108,6 +108,9 @@ func TestPrepareContainerConfigMounts_RewritesGitConfigCopiesSSHAndHydratesGH(t 
 
 	if _, err := os.Stat(filepath.Join(seen["/.ssh"], "id_ed25519")); err != nil {
 		t.Fatalf("expected copied ssh key in mounted dir: %v", err)
+	}
+	if seen["/.ssh"] != seen["/root/.ssh"] {
+		t.Fatalf("expected /.ssh and /root/.ssh to reuse the same copied source, got %q and %q", seen["/.ssh"], seen["/root/.ssh"])
 	}
 }
 

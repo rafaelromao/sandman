@@ -57,6 +57,7 @@ func prepareContainerConfigMounts(repoPath string, opts *sandbox.StartOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("resolve config mounts: %w", err)
 	}
+	mounts = addSSHMountAliases(mounts)
 
 	if convertedGitConfig {
 		if err := rewriteGitConfigMount(repoPath, mounts); err != nil {
@@ -77,6 +78,26 @@ func prepareContainerConfigMounts(repoPath string, opts *sandbox.StartOptions) (
 
 	opts.ConfigMounts = mounts
 	return cleanup, nil
+}
+
+func addSSHMountAliases(mounts []sandbox.ConfigMount) []sandbox.ConfigMount {
+	seenTargets := make(map[string]bool, len(mounts))
+	for _, mount := range mounts {
+		seenTargets[mount.Target] = true
+	}
+
+	for _, mount := range mounts {
+		if mount.Target != "/.ssh" || seenTargets["/root/.ssh"] {
+			continue
+		}
+		// OpenSSH expands ~/.ssh from the passwd home directory (/root in our
+		// podman containers), not from HOME=/. Mirror the copied ssh dir there
+		// so git/ssh can find known_hosts and identity files.
+		mounts = append(mounts, sandbox.ConfigMount{Source: mount.Source, Target: "/root/.ssh"})
+		seenTargets["/root/.ssh"] = true
+	}
+
+	return mounts
 }
 
 func rewriteGitConfigMount(repoPath string, mounts []sandbox.ConfigMount) error {
