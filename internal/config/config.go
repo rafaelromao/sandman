@@ -40,8 +40,8 @@ type Config struct {
 // GitConfig holds git-specific settings.
 type GitConfig struct {
 	DefaultBranch string `yaml:"default_branch"`
-	AuthorName    string `yaml:"author_name"`
-	AuthorEmail   string `yaml:"author_email"`
+	AuthorName    string `yaml:"author_name,omitempty"`
+	AuthorEmail   string `yaml:"author_email,omitempty"`
 }
 
 // Agent holds a configured agent provider or a custom override.
@@ -196,12 +196,6 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Git.DefaultBranch == "" {
 		cfg.Git.DefaultBranch = "main"
-	}
-	if strings.TrimSpace(cfg.Git.AuthorName) == "" {
-		cfg.Git.AuthorName = DefaultGitAuthorName
-	}
-	if strings.TrimSpace(cfg.Git.AuthorEmail) == "" {
-		cfg.Git.AuthorEmail = DefaultGitAuthorEmail
 	}
 
 	if cfg.Agent == "" {
@@ -439,4 +433,22 @@ func (c *Config) EffectiveReviewCommand() string {
 		return DefaultReviewCommand
 	}
 	return c.ReviewCommand
+}
+
+// EffectiveGitAuthorName returns the configured git author name or the
+// built-in Sandman fallback when unset.
+func (c *Config) EffectiveGitAuthorName() string {
+	if c == nil || strings.TrimSpace(c.Git.AuthorName) == "" || strings.TrimSpace(c.Git.AuthorEmail) == "" {
+		return DefaultGitAuthorName
+	}
+	return c.Git.AuthorName
+}
+
+// EffectiveGitAuthorEmail returns the configured git author email or the
+// built-in Sandman fallback when unset.
+func (c *Config) EffectiveGitAuthorEmail() string {
+	if c == nil || strings.TrimSpace(c.Git.AuthorName) == "" || strings.TrimSpace(c.Git.AuthorEmail) == "" {
+		return DefaultGitAuthorEmail
+	}
+	return c.Git.AuthorEmail
 }

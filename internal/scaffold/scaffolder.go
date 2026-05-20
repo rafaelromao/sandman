@@ -226,8 +226,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		Sandbox:           config.DefaultSandbox,
 		Git: config.GitConfig{
 			DefaultBranch: "main",
-			AuthorName:    config.DefaultGitAuthorName,
-			AuthorEmail:   config.DefaultGitAuthorEmail,
 		},
 		AgentProviders: map[string]config.Agent{
 			agent: {Preset: agent},

@@ -2516,7 +2516,7 @@ func TestRunBatch_SkipsGitIdentityWhenConfigEmpty(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-	assertGitCommitAuthor(t, worktreePath, "Test <test@test.com>")
+	assertGitCommitAuthor(t, worktreePath, "Sandman <sandman.support@gmail.com>")
 	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
 }
 
@@ -2552,7 +2552,7 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyNameSet(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-	assertGitCommitAuthor(t, worktreePath, "Test <test@test.com>")
+	assertGitCommitAuthor(t, worktreePath, "Sandman <sandman.support@gmail.com>")
 	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
 }
 
@@ -2588,7 +2588,7 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyEmailSet(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-	assertGitCommitAuthor(t, worktreePath, "Test <test@test.com>")
+	assertGitCommitAuthor(t, worktreePath, "Sandman <sandman.support@gmail.com>")
 	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
 }
 

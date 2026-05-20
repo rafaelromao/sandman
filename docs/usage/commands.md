@@ -148,7 +148,7 @@ sandman config set <key> <value>
 | `worktree_dir` | string | `.sandman/worktrees` |
 | `sandbox` | string | `podman` |
 | `git.default_branch` | string | `main` |
-| `git.author_name` | string | `Sandman` |
-| `git.author_email` | string | `sandman.support@gmail.com` |
+| `git.author_name` | string | `My Name` |
+| `git.author_email` | string | `me@example.com` |
 
-If you do not set these keys explicitly, Sandman uses `Sandman <sandman.support@gmail.com>` as the default commit identity for agent-created commits.
+If you do not set these keys explicitly, Sandman uses the runtime fallback identity `Sandman <sandman.support@gmail.com>` for agent-created commits.

@@ -582,7 +582,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	runnable := factory.NewRunnable(issue, branch, wt)
 	if agentRun, ok := runnable.(*AgentRun); ok {
 		agentRun.env = agentCfg.Env
-		agentRun.env = applyGitIdentityEnv(agentRun.env, cfg.Git, wt)
+		agentRun.env = applyGitIdentityEnv(agentRun.env, cfg)
 		agentRun.preset = agentCfg.Preset
 		agentRun.model = agentCfg.Model
 		agentRun.defaultBranch = cfg.Git.DefaultBranch
@@ -673,23 +673,22 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	return result
 }
 
-func applyGitIdentityEnv(env map[string]string, gitCfg config.GitConfig, sb sandbox.Sandbox) map[string]string {
-	if strings.TrimSpace(gitCfg.AuthorName) == "" || strings.TrimSpace(gitCfg.AuthorEmail) == "" {
-		return env
-	}
+func applyGitIdentityEnv(env map[string]string, cfg *config.Config) map[string]string {
+	name := cfg.EffectiveGitAuthorName()
+	email := cfg.EffectiveGitAuthorEmail()
 	merged := make(map[string]string, len(env)+9)
 	for k, v := range env {
 		merged[k] = v
 	}
-	merged["GIT_AUTHOR_NAME"] = gitCfg.AuthorName
-	merged["GIT_AUTHOR_EMAIL"] = gitCfg.AuthorEmail
-	merged["GIT_COMMITTER_NAME"] = gitCfg.AuthorName
-	merged["GIT_COMMITTER_EMAIL"] = gitCfg.AuthorEmail
+	merged["GIT_AUTHOR_NAME"] = name
+	merged["GIT_AUTHOR_EMAIL"] = email
+	merged["GIT_COMMITTER_NAME"] = name
+	merged["GIT_COMMITTER_EMAIL"] = email
 	merged["GIT_CONFIG_COUNT"] = "2"
 	merged["GIT_CONFIG_KEY_0"] = "user.name"
-	merged["GIT_CONFIG_VALUE_0"] = gitCfg.AuthorName
+	merged["GIT_CONFIG_VALUE_0"] = name
 	merged["GIT_CONFIG_KEY_1"] = "user.email"
-	merged["GIT_CONFIG_VALUE_1"] = gitCfg.AuthorEmail
+	merged["GIT_CONFIG_VALUE_1"] = email
 	return merged
 }
 
