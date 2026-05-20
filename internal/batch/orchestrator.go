@@ -295,7 +295,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("max_containers must be 0 or greater")
 		}
 
-		cleanup, err := PrepareContainerConfigMounts(".", &startOpts, cfg.Git)
+		cleanup, err := PrepareContainerConfigMounts(".", &startOpts)
 		if err != nil {
 			return nil, fmt.Errorf("prepare container config mounts: %w", err)
 		}
@@ -566,18 +566,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 	}
 
-	if cfg.Git.AuthorName != "" && cfg.Git.AuthorEmail != "" && shouldSetLocalGitIdentity(wt) {
-		for _, kv := range []struct{ key, value string }{
-			{"user.name", cfg.Git.AuthorName},
-			{"user.email", cfg.Git.AuthorEmail},
-		} {
-			cmd := fmt.Sprintf("git config %s %s", kv.key, shellQuote(kv.value))
-			if err := wt.Exec(ctx, cmd, io.Discard, io.Discard); err != nil {
-				return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch, DebugInfo: fmt.Sprintf("git config %s: %v", kv.key, err)}
-			}
-		}
-	}
-
 	activeMu.Lock()
 	activeRuns[num] = wt
 	activeMu.Unlock()
@@ -685,21 +673,11 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	return result
 }
 
-func shouldSetLocalGitIdentity(sb sandbox.Sandbox) bool {
-	if _, ok := sb.(*sandbox.ContainerSandbox); ok {
-		return false
-	}
-	return true
-}
-
 func applyGitIdentityEnv(env map[string]string, gitCfg config.GitConfig, sb sandbox.Sandbox) map[string]string {
-	if _, ok := sb.(*sandbox.ContainerSandbox); !ok {
-		return env
-	}
 	if strings.TrimSpace(gitCfg.AuthorName) == "" || strings.TrimSpace(gitCfg.AuthorEmail) == "" {
 		return env
 	}
-	merged := make(map[string]string, len(env)+4)
+	merged := make(map[string]string, len(env)+9)
 	for k, v := range env {
 		merged[k] = v
 	}
@@ -707,6 +685,11 @@ func applyGitIdentityEnv(env map[string]string, gitCfg config.GitConfig, sb sand
 	merged["GIT_AUTHOR_EMAIL"] = gitCfg.AuthorEmail
 	merged["GIT_COMMITTER_NAME"] = gitCfg.AuthorName
 	merged["GIT_COMMITTER_EMAIL"] = gitCfg.AuthorEmail
+	merged["GIT_CONFIG_COUNT"] = "2"
+	merged["GIT_CONFIG_KEY_0"] = "user.name"
+	merged["GIT_CONFIG_VALUE_0"] = gitCfg.AuthorName
+	merged["GIT_CONFIG_KEY_1"] = "user.email"
+	merged["GIT_CONFIG_VALUE_1"] = gitCfg.AuthorEmail
 	return merged
 }
 

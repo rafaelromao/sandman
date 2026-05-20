@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"gopkg.in/yaml.v3"
 )
@@ -28,10 +27,9 @@ var lookupGHToken = func() (string, error) {
 // PrepareContainerConfigMounts resolves git, gh, ssh, and agent config paths
 // into temp-copied ConfigMounts so container runs do not bind host paths
 // directly and can safely follow symlinked config trees.
-func PrepareContainerConfigMounts(repoPath string, opts *sandbox.StartOptions, gitCfg config.GitConfig) (func(), error) {
+func PrepareContainerConfigMounts(repoPath string, opts *sandbox.StartOptions) (func(), error) {
 	dirs := append([]string(nil), opts.AgentConfigDirs...)
 	files := append([]string(nil), opts.AgentConfigFiles...)
-	var extraCleanup []func()
 
 	convertedGitConfig := false
 	if opts.GitConfigPath != "" {
@@ -80,23 +78,9 @@ func PrepareContainerConfigMounts(repoPath string, opts *sandbox.StartOptions, g
 		cleanup()
 		return nil, err
 	}
-	updatedMounts, cleanupFn, err := prepareContainerGitIdentityMounts(mounts, gitCfg)
-	if err != nil {
-		cleanup()
-		return nil, err
-	}
-	if cleanupFn != nil {
-		extraCleanup = append(extraCleanup, cleanupFn)
-	}
-	mounts = updatedMounts
 
 	opts.ConfigMounts = mounts
-	return func() {
-		for _, fn := range extraCleanup {
-			fn()
-		}
-		cleanup()
-	}, nil
+	return cleanup, nil
 }
 
 func addSSHMountAliases(mounts []sandbox.ConfigMount) []sandbox.ConfigMount {
@@ -234,88 +218,6 @@ func hydrateGHHostsFile(path string) error {
 
 	if err := os.WriteFile(path, updated, info.Mode().Perm()); err != nil {
 		return fmt.Errorf("write gh hosts file: %w", err)
-	}
-
-	return nil
-}
-
-func prepareContainerGitIdentityMounts(mounts []sandbox.ConfigMount, gitCfg config.GitConfig) ([]sandbox.ConfigMount, func(), error) {
-	if strings.TrimSpace(gitCfg.AuthorName) == "" || strings.TrimSpace(gitCfg.AuthorEmail) == "" {
-		return mounts, nil, nil
-	}
-
-	var cleanup func()
-	configPaths := containerGitConfigPaths(mounts)
-	if len(configPaths) == 0 {
-		tmpDir, err := os.MkdirTemp("", "sandman-git-config-*")
-		if err != nil {
-			return nil, nil, fmt.Errorf("create temp git config dir: %w", err)
-		}
-		cleanup = func() { _ = os.RemoveAll(tmpDir) }
-
-		gitDir := filepath.Join(tmpDir, ".config", "git")
-		if err := os.MkdirAll(gitDir, 0755); err != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("create temp git config path: %w", err)
-		}
-		mounts = append(mounts, sandbox.ConfigMount{Source: gitDir, Target: "/.config/git"})
-		configPaths = append(configPaths, filepath.Join(gitDir, "config"))
-	}
-
-	for _, path := range configPaths {
-		if err := writeGitIdentityConfig(path, gitCfg); err != nil {
-			if cleanup != nil {
-				cleanup()
-			}
-			return nil, nil, err
-		}
-	}
-
-	return mounts, cleanup, nil
-}
-
-func containerGitConfigPaths(mounts []sandbox.ConfigMount) []string {
-	seen := map[string]bool{}
-	var paths []string
-	for _, mount := range mounts {
-		var path string
-		switch mount.Target {
-		case "/.gitconfig":
-			path = mount.Source
-		case "/.config/git":
-			path = filepath.Join(mount.Source, "config")
-		case "/.config/git/config":
-			path = mount.Source
-		}
-		if path == "" || seen[path] {
-			continue
-		}
-		seen[path] = true
-		paths = append(paths, path)
-	}
-	return paths
-}
-
-func writeGitIdentityConfig(path string, gitCfg config.GitConfig) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("create git config dir %q: %w", filepath.Dir(path), err)
-	}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.WriteFile(path, nil, 0644); err != nil {
-			return fmt.Errorf("create git config file %q: %w", path, err)
-		}
-	} else if err != nil {
-		return fmt.Errorf("stat git config file %q: %w", path, err)
-	}
-
-	for _, kv := range []struct{ key, value string }{
-		{"user.name", gitCfg.AuthorName},
-		{"user.email", gitCfg.AuthorEmail},
-	} {
-		cmd := exec.Command("git", "config", "--file", path, kv.key, kv.value)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("git config --file %s %s: %w\n%s", path, kv.key, err, out)
-		}
 	}
 
 	return nil

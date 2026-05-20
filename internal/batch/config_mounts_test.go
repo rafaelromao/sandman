@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
@@ -65,7 +64,7 @@ func TestPrepareContainerConfigMounts_RewritesGitConfigCopiesSSHAndHydratesGH(t 
 		SSH:              true,
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(repoDir, &opts, config.GitConfig{})
+	cleanup, err := PrepareContainerConfigMounts(repoDir, &opts)
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -132,7 +131,7 @@ func TestPrepareContainerConfigMounts_ErrorsWhenGHTokenMissingFromCopiedConfig(t
 	t.Cleanup(func() { lookupGHToken = oldLookup })
 
 	opts := sandbox.StartOptions{AgentConfigDirs: []string{ghConfigDir}}
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), &opts, config.GitConfig{})
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), &opts)
 	if cleanup != nil {
 		defer cleanup()
 	}
