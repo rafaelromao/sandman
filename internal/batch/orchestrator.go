@@ -295,7 +295,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("max_containers must be 0 or greater")
 		}
 
-		cleanup, err := prepareContainerConfigMounts(".", &startOpts)
+		cleanup, err := PrepareContainerConfigMounts(".", &startOpts)
 		if err != nil {
 			return nil, fmt.Errorf("prepare container config mounts: %w", err)
 		}

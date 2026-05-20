@@ -64,7 +64,7 @@ func TestPrepareContainerConfigMounts_RewritesGitConfigCopiesSSHAndHydratesGH(t 
 		SSH:              true,
 	}
 
-	cleanup, err := prepareContainerConfigMounts(repoDir, &opts)
+	cleanup, err := PrepareContainerConfigMounts(repoDir, &opts)
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestPrepareContainerConfigMounts_ErrorsWhenGHTokenMissingFromCopiedConfig(t
 	t.Cleanup(func() { lookupGHToken = oldLookup })
 
 	opts := sandbox.StartOptions{AgentConfigDirs: []string{ghConfigDir}}
-	cleanup, err := prepareContainerConfigMounts(t.TempDir(), &opts)
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), &opts)
 	if cleanup != nil {
 		defer cleanup()
 	}

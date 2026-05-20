@@ -24,7 +24,10 @@ var lookupGHToken = func() (string, error) {
 	return token, nil
 }
 
-func prepareContainerConfigMounts(repoPath string, opts *sandbox.StartOptions) (func(), error) {
+// PrepareContainerConfigMounts resolves git, gh, ssh, and agent config paths
+// into temp-copied ConfigMounts so container runs do not bind host paths
+// directly and can safely follow symlinked config trees.
+func PrepareContainerConfigMounts(repoPath string, opts *sandbox.StartOptions) (func(), error) {
 	dirs := append([]string(nil), opts.AgentConfigDirs...)
 	files := append([]string(nil), opts.AgentConfigFiles...)
 
