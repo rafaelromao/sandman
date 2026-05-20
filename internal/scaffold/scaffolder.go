@@ -397,7 +397,7 @@ func resolveGoVersionChoice(choice, hint string, hintFound bool) (string, error)
 		if !hintFound {
 			return "", fmt.Errorf("no repo Go version hint found")
 		}
-		return resolveMiseGoVersion(normalizeGoVersionSelector(hint))
+		return resolveGoVersionHint(hint)
 	case "latest", "lts":
 		if strings.ToLower(choice) == "latest" {
 			return resolveMiseGoVersion("latest")
@@ -414,6 +414,26 @@ func resolveGoVersionChoice(choice, hint string, hintFound bool) (string, error)
 	}
 
 	return resolveMiseGoVersion(choice)
+}
+
+func resolveGoVersionHint(hint string) (string, error) {
+	hint = normalizeGoVersionSelector(hint)
+	switch strings.ToLower(hint) {
+	case "latest":
+		return resolveMiseGoVersion("latest")
+	case "lts":
+		latest, err := resolveMiseGoVersion("latest")
+		if err != nil {
+			return "", err
+		}
+		prefix, err := goPreviousMinorPrefix(latest)
+		if err != nil {
+			return "", err
+		}
+		return resolveMiseGoVersion(prefix)
+	}
+
+	return resolveMiseGoVersion(hint)
 }
 
 func normalizeGoVersionSelector(selector string) string {
@@ -943,7 +963,7 @@ func resolvePythonVersionChoice(choice, hint string, hintFound bool) (string, er
 		if !hintFound {
 			return "", fmt.Errorf("no repo Python version hint found")
 		}
-		return resolveMisePythonVersion(normalizePythonVersionSelector(hint))
+		return resolvePythonVersionHint(hint)
 	case "latest", "lts":
 		if strings.ToLower(choice) == "latest" {
 			return resolveMisePythonVersion("latest")
@@ -960,6 +980,26 @@ func resolvePythonVersionChoice(choice, hint string, hintFound bool) (string, er
 	}
 
 	return resolveMisePythonVersion(choice)
+}
+
+func resolvePythonVersionHint(hint string) (string, error) {
+	hint = normalizePythonVersionSelector(hint)
+	switch strings.ToLower(hint) {
+	case "latest":
+		return resolveMisePythonVersion("latest")
+	case "lts":
+		latest, err := resolveMisePythonVersion("latest")
+		if err != nil {
+			return "", err
+		}
+		prefix, err := pythonPreviousMinorPrefix(latest)
+		if err != nil {
+			return "", err
+		}
+		return resolveMisePythonVersion(prefix)
+	}
+
+	return resolveMisePythonVersion(hint)
 }
 
 func normalizePythonVersionSelector(selector string) string {
