@@ -53,7 +53,7 @@ The `init` command interactively prompts you for:
 - **Build tools preset** — language-specific tooling for the container image (generic, go, node, or python)
 - **Tool version** — version selector for the build toolchain
 
-Sandman auto-detects repo hints and defaults to the matching preset when it finds Go, Node, or Python project files; otherwise it falls back to `generic`.
+Sandman auto-detects repo hints and defaults to the matching BuildToolsPreset when it finds Go, Node, or Python project files; otherwise it falls back to `generic`.
 
 You can skip the prompts by passing flags:
 

@@ -309,7 +309,21 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 		if hasGoRepoHint(repoRoot) {
 			name = goBuildToolsPreset
 		} else if hasNodeRepoHint(repoRoot) {
-			name = nodeBuildToolsPreset
+			if p != nil {
+				options := []string{nodeBuildToolsPreset}
+				for _, preset := range KnownBuildToolsPresets {
+					if preset != nodeBuildToolsPreset {
+						options = append(options, preset)
+					}
+				}
+				selected, err := p.Select("Choose a build tools preset:", options)
+				if err == nil {
+					name = strings.ToLower(strings.TrimSpace(selected))
+				}
+			}
+			if name == "" {
+				name = nodeBuildToolsPreset
+			}
 		} else if hasPythonRepoHint(repoRoot) {
 			name = pythonBuildToolsPreset
 		} else if p != nil {
@@ -548,7 +562,7 @@ func resolveMiseNodeVersion(selector string) (string, error) {
 			return version, nil
 		}
 	}
-	if selector != "" && selector != "latest" && selector != "lts" {
+	if selector != "" && selector != "latest" && selector != "lts" && nodeVersionSelectorPattern.MatchString(selector) {
 		return selector, nil
 	}
 	if err != nil {
