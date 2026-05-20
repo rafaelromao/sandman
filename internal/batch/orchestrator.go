@@ -295,7 +295,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("max_containers must be 0 or greater")
 		}
 
-		cleanup, err := PrepareContainerConfigMounts(".", &startOpts)
+		cleanup, err := PrepareContainerConfigMounts(".", &startOpts, cfg.Git)
 		if err != nil {
 			return nil, fmt.Errorf("prepare container config mounts: %w", err)
 		}
@@ -566,7 +566,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 	}
 
-	if cfg.Git.AuthorName != "" && cfg.Git.AuthorEmail != "" {
+	if cfg.Git.AuthorName != "" && cfg.Git.AuthorEmail != "" && shouldSetLocalGitIdentity(wt) {
 		for _, kv := range []struct{ key, value string }{
 			{"user.name", cfg.Git.AuthorName},
 			{"user.email", cfg.Git.AuthorEmail},
@@ -594,6 +594,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	runnable := factory.NewRunnable(issue, branch, wt)
 	if agentRun, ok := runnable.(*AgentRun); ok {
 		agentRun.env = agentCfg.Env
+		agentRun.env = applyGitIdentityEnv(agentRun.env, cfg.Git, wt)
 		agentRun.preset = agentCfg.Preset
 		agentRun.model = agentCfg.Model
 		agentRun.defaultBranch = cfg.Git.DefaultBranch
@@ -682,6 +683,31 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		}
 	}
 	return result
+}
+
+func shouldSetLocalGitIdentity(sb sandbox.Sandbox) bool {
+	if _, ok := sb.(*sandbox.ContainerSandbox); ok {
+		return false
+	}
+	return true
+}
+
+func applyGitIdentityEnv(env map[string]string, gitCfg config.GitConfig, sb sandbox.Sandbox) map[string]string {
+	if _, ok := sb.(*sandbox.ContainerSandbox); !ok {
+		return env
+	}
+	if strings.TrimSpace(gitCfg.AuthorName) == "" || strings.TrimSpace(gitCfg.AuthorEmail) == "" {
+		return env
+	}
+	merged := make(map[string]string, len(env)+4)
+	for k, v := range env {
+		merged[k] = v
+	}
+	merged["GIT_AUTHOR_NAME"] = gitCfg.AuthorName
+	merged["GIT_AUTHOR_EMAIL"] = gitCfg.AuthorEmail
+	merged["GIT_COMMITTER_NAME"] = gitCfg.AuthorName
+	merged["GIT_COMMITTER_EMAIL"] = gitCfg.AuthorEmail
+	return merged
 }
 
 func slugify(title string) string {
