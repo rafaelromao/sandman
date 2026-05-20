@@ -355,7 +355,11 @@ func warmSmokeRuntime(t *testing.T, runtime string) {
 
 func writeSmokeGitConfig(homeDir, remoteDir string) error {
 	gitConfig := fmt.Sprintf("[user]\n\tname = Smoke\n\temail = smoke@example.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
-	return os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfig), 0644)
+	gitConfigDir := filepath.Join(homeDir, ".config", "git")
+	if err := os.MkdirAll(gitConfigDir, 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(gitConfigDir, "config"), []byte(gitConfig), 0644)
 }
 
 func copySmokeAuthLayout(t *testing.T, realHome, tempHome string, paths []string) bool {
@@ -562,10 +566,17 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 	t.Helper()
 
 	startOpts := sandbox.StartOptions{
-		GitConfigPath: filepath.Join(homeDir, ".gitconfig"),
-		UserID:        fmt.Sprintf("%d", os.Getuid()),
-		SSH:           true,
-		RemoteScheme:  "ssh",
+		UserID:       fmt.Sprintf("%d", os.Getuid()),
+		SSH:          true,
+		RemoteScheme: "ssh",
+	}
+	gitConfigPath := filepath.Join(homeDir, ".gitconfig")
+	if _, err := os.Stat(gitConfigPath); err == nil {
+		startOpts.GitConfigPath = gitConfigPath
+	}
+	gitConfigDir := filepath.Join(homeDir, ".config", "git")
+	if _, err := os.Stat(gitConfigDir); err == nil {
+		startOpts.AgentConfigDirs = append(startOpts.AgentConfigDirs, gitConfigDir)
 	}
 	for _, rel := range authPaths {
 		path := homePath(homeDir, rel)

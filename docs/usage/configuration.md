@@ -32,6 +32,8 @@ sandbox: podman
 
 # Git configuration for agent commits.
 git:
+  author_name: Sandman
+  author_email: sandman.support@gmail.com
   default_branch: main
 
 # Agent provider definitions.
@@ -179,6 +181,6 @@ sandman config set git.author_email "me@example.com"
 
 Use `sandman config get` and `sandman config set` for top-level config keys; edit `.sandman/config.yaml` directly for nested agent settings like `agents.<name>.model`.
 
-If `git.author_name` and `git.author_email` are unset, Sandman uses the runtime fallback identity `Sandman <sandman.support@gmail.com>` for agent-created commits. This fallback is injected into the agent process and is not written to your host git config or repo-local `.git/config`. Set both keys to override that identity for your project.
+`sandman init` writes `git.author_name: Sandman` and `git.author_email: sandman.support@gmail.com` into new project configs so the default agent commit identity is explicit. If an older config omits these fields, Sandman still uses the same fallback identity at runtime. In both cases, the identity is injected into the agent process and is not written to your host git config or repo-local `.git/config`. Set both keys to override that identity for your project.
 
 See [Commands Reference](commands.md) for the full list of supported dot-notation keys.

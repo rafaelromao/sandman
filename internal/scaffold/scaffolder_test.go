@@ -114,18 +114,18 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.Git.AuthorName != "" {
-		t.Fatalf("git.author_name: got %q, want empty stored value", cfg.Git.AuthorName)
+	if cfg.Git.AuthorName != config.DefaultGitAuthorName {
+		t.Fatalf("git.author_name: got %q, want %q", cfg.Git.AuthorName, config.DefaultGitAuthorName)
 	}
-	if cfg.Git.AuthorEmail != "" {
-		t.Fatalf("git.author_email: got %q, want empty stored value", cfg.Git.AuthorEmail)
+	if cfg.Git.AuthorEmail != config.DefaultGitAuthorEmail {
+		t.Fatalf("git.author_email: got %q, want %q", cfg.Git.AuthorEmail, config.DefaultGitAuthorEmail)
 	}
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if strings.Contains(string(configData), "author_name:") || strings.Contains(string(configData), "author_email:") {
-		t.Fatalf("scaffolded config should not persist default git author settings, got:\n%s", configData)
+	if !strings.Contains(string(configData), "author_name: "+config.DefaultGitAuthorName) || !strings.Contains(string(configData), "author_email: "+config.DefaultGitAuthorEmail) {
+		t.Fatalf("scaffolded config should persist default git author settings, got:\n%s", configData)
 	}
 }
 

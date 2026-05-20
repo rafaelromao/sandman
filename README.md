@@ -55,6 +55,8 @@ sandbox: podman              # podman, docker, or worktree
 container_capacity: 4        # agent runs per container
 max_containers: 0            # auto mode; or set a fixed limit
 git:
+  author_name: Sandman
+  author_email: sandman.support@gmail.com
   default_branch: main
 agents:
   opencode:
@@ -65,7 +67,7 @@ agents:
       API_KEY: ${API_KEY}
 ```
 
-If `git.author_name` and `git.author_email` are unset, Sandman uses `Sandman <sandman.support@gmail.com>` as a runtime fallback identity for agent-created commits without mutating your host git config.
+`sandman init` writes `git.author_name` and `git.author_email` with the Sandman default identity. Older configs that omit them still use `Sandman <sandman.support@gmail.com>` as a runtime fallback without mutating your host git config.
 
 See [Configuration](docs/usage/configuration.md) for the full schema.
 
