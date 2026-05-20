@@ -82,9 +82,10 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     ```
 
     - Capture the PR URL and number.
+    - Do not stop after PR creation; immediately continue into steps 7 and 8.
 
     ### 7. Delegate review (max 10 passes)
-    - Poll `gh pr checks <N>` until CI passes.
+    - Poll `gh pr checks <N>` until CI passes. Do not exit while checks are pending.
     - If checks fail, fix them, commit, and push.
     - Post `gh pr comment <N> --body "{{REVIEW_COMMAND}}"`
     - Poll `gh pr view <N> --comments` every 30-60s, with a 10 minute timeout.
