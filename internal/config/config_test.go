@@ -77,6 +77,33 @@ agents:
 	}
 }
 
+func TestLoad_AppliesDefaultGitIdentityWhenUnset(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+git:
+  default_branch: main
+agents:
+  opencode:
+    preset: opencode
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Git.AuthorName != DefaultGitAuthorName {
+		t.Errorf("git.author_name: got %q, want %q", cfg.Git.AuthorName, DefaultGitAuthorName)
+	}
+	if cfg.Git.AuthorEmail != DefaultGitAuthorEmail {
+		t.Errorf("git.author_email: got %q, want %q", cfg.Git.AuthorEmail, DefaultGitAuthorEmail)
+	}
+}
+
 func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 	cfg := &Config{}
 
