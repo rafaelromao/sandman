@@ -32,8 +32,8 @@ sandbox: podman
 
 # Git configuration for agent commits.
 git:
-  author_name: Dev
-  author_email: dev@example.com
+  author_name: Sandman
+  author_email: sandman.support@gmail.com
   default_branch: main
 
 # Agent provider definitions.
@@ -176,8 +176,11 @@ sandman config get default_parallel
 
 sandman config set container_capacity 2
 sandman config set git.author_name "My Name"
+sandman config set git.author_email "me@example.com"
 ```
 
 Use `sandman config get` and `sandman config set` for top-level config keys; edit `.sandman/config.yaml` directly for nested agent settings like `agents.<name>.model`.
+
+By default, Sandman sets agent commit identity to `Sandman <sandman.support@gmail.com>` when `git.author_name` and `git.author_email` are otherwise unset. Set both keys to override that identity for your project.
 
 See [Commands Reference](commands.md) for the full list of supported dot-notation keys.
