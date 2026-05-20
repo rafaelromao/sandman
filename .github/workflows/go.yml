@@ -42,5 +42,29 @@ jobs:
       - name: Test
         run: go test -v ./...
 
-      - name: Smoke build matrix
-        run: go test -tags smoke ./internal/cmd -run 'TestInit_.*PresetBuildsForEveryBuiltInAgentProvider' -v
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [opencode, claude-code, codex, pi]
+    env:
+      SMOKE_AGENT: ${{ matrix.agent }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Validate Podman
+        run: podman info
+
+      - name: Smoke test
+        run: go test -tags smoke -v ./internal/cmd -run TestInit_NodePresetBuildsForEveryBuiltInAgentProvider

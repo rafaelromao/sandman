@@ -209,7 +209,7 @@ func TestInit_NodeBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "RUN mise use -g --pin node@20.") {
 		t.Fatalf("Dockerfile missing pinned node install, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN npm install -g pnpm yarn") {
+	if !strings.Contains(dockerfile, "RUN npm install -g pnpm@"+scaffold.DefaultPNPMVersion) {
 		t.Fatalf("Dockerfile missing node companion tooling, got:\n%s", dockerfile)
 	}
 }
@@ -311,7 +311,13 @@ func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+	  "name": "demo",
+	  "engines": {
+	    "node": "20"
+	  }
+	}
+`), 0644); err != nil {
 		t.Fatalf("write package.json: %v", err)
 	}
 
@@ -332,6 +338,24 @@ func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
 	}
 	if !strings.Contains(string(configData), "build_tools: node") {
 		t.Fatalf("config missing node build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: node") {
+		t.Fatalf("Dockerfile missing node build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman node-version:") {
+		t.Fatalf("Dockerfile missing node-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin node@") {
+		t.Fatalf("Dockerfile missing pinned node install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN npm install -g pnpm@"+scaffold.DefaultPNPMVersion) {
+		t.Fatalf("Dockerfile missing pnpm install, got:\n%s", dockerfile)
 	}
 }
 

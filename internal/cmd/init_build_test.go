@@ -80,15 +80,20 @@ func TestInit_NodePresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 		t.Skipf("container runtime unavailable: %v", err)
 	}
 
-	for agent := range config.BuiltInAgentPresets {
+	for _, agent := range smokeAgents() {
 		t.Run(agent, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0644); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+		  "name": "demo",
+		  "engines": {
+		    "node": "20"
+		  }
+		}`), 0644); err != nil {
 				t.Fatalf("write package.json: %v", err)
 			}
 
 			s := &scaffold.Scaffolder{}
-			if err := s.Scaffold(dir, scaffold.Options{BuildTools: "node", Agent: agent}, buildPrompter{}); err != nil {
+			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
 				t.Fatalf("scaffold: %v", err)
 			}
 
@@ -99,6 +104,17 @@ func TestInit_NodePresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 			})
 		})
 	}
+}
+
+func smokeAgents() []string {
+	if agent := os.Getenv("SMOKE_AGENT"); agent != "" {
+		return []string{agent}
+	}
+	agents := make([]string, 0, len(config.BuiltInAgentPresets))
+	for agent := range config.BuiltInAgentPresets {
+		agents = append(agents, agent)
+	}
+	return agents
 }
 
 func TestInit_GenericPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {

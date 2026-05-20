@@ -26,6 +26,8 @@ const pythonBuildToolsPreset = "python"
 
 const DefaultMISEVersion = "v2026.5.8"
 
+const DefaultPNPMVersion = "10.33.4"
+
 // Options configures the scaffolding behavior.
 type Options struct {
 	BuildTools  string // --build-tools override
@@ -111,6 +113,8 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 			"file",
 			"gh",
 			"git",
+			"nodejs",
+			"npm",
 			"openssh-client",
 			"python3",
 			"python3-pip",
@@ -296,20 +300,32 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 	if name == "" {
 		if hasGoRepoHint(repoRoot) {
 			name = goBuildToolsPreset
-		} else if hasNodeRepoHint(repoRoot) {
-			name = nodeBuildToolsPreset
-		} else if hasPythonRepoHint(repoRoot) {
-			name = pythonBuildToolsPreset
 		} else if p != nil {
-			selected, err := p.Select("Choose a build tools preset:", KnownBuildToolsPresets)
+			msg := "Choose a build tools preset:"
+			if hasNodeRepoHint(repoRoot) {
+				msg = "Choose a build tools preset (node detected; default node):"
+			}
+			selected, err := p.Select(msg, KnownBuildToolsPresets)
 			if err == nil {
 				name = strings.ToLower(strings.TrimSpace(selected))
 			}
 			if name == "" {
-				name = defaultBuildToolsPreset
+				if hasNodeRepoHint(repoRoot) {
+					name = nodeBuildToolsPreset
+				} else if hasPythonRepoHint(repoRoot) {
+					name = pythonBuildToolsPreset
+				} else {
+					name = defaultBuildToolsPreset
+				}
 			}
 		} else {
-			name = defaultBuildToolsPreset
+			if hasNodeRepoHint(repoRoot) {
+				name = nodeBuildToolsPreset
+			} else if hasPythonRepoHint(repoRoot) {
+				name = pythonBuildToolsPreset
+			} else {
+				name = defaultBuildToolsPreset
+			}
 		}
 	}
 	preset, ok := builtInBuildToolsPresets[name]
@@ -334,17 +350,18 @@ func hasPythonRepoHint(repoRoot string) bool {
 }
 
 func hasNodeRepoHint(repoRoot string) bool {
-	if _, err := os.Stat(filepath.Join(repoRoot, "package.json")); err == nil {
-		return true
-	}
-	for _, rel := range []string{".nvmrc", ".node-version", ".tool-versions"} {
+	for _, rel := range []string{"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", ".nvmrc", ".node-version"} {
 		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
+			return true
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(repoRoot, ".tool-versions")); err == nil {
+		if _, ok := parseNodeVersionHint(".tool-versions", data); ok {
 			return true
 		}
 	}
 	return false
 }
-
 func (s *Scaffolder) resolveGoVersion(repoRoot, selector string, p Prompter) (string, error) {
 	hint, found, err := readGoVersionHint(repoRoot)
 	if err != nil {
@@ -384,6 +401,198 @@ func (s *Scaffolder) resolveGoVersion(repoRoot, selector string, p Prompter) (st
 		return "", fmt.Errorf("resolve go version: %w", err)
 	}
 	return resolved, nil
+}
+
+func (s *Scaffolder) legacyResolveNodeVersion(repoRoot, selector string, p Prompter) (string, error) {
+	hint, found, err := readNodeVersionHint(repoRoot)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if p != nil {
+				selected, err := p.Select(fmt.Sprintf("Choose a Node version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = normalizeNodeVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if p != nil {
+				selected, err := p.Select("Choose a Node version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = normalizeNodeVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	resolved, err := resolveNodeVersionChoice(choice, hint, found)
+	if err != nil {
+		return "", fmt.Errorf("resolve node version: %w", err)
+	}
+	return resolved, nil
+}
+
+func legacyResolveNodeVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = normalizeNodeVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Node version hint found")
+		}
+		return resolveMiseNodeVersion(normalizeNodeVersionSelector(hint))
+	case "latest", "lts":
+		return resolveMiseNodeVersion(choice)
+	}
+
+	return resolveMiseNodeVersion(choice)
+}
+
+func legacyNormalizeNodeVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if len(selector) > 4 && strings.HasPrefix(strings.ToLower(selector), "node") && selector[4] >= '0' && selector[4] <= '9' {
+		return selector[4:]
+	}
+	if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "nodejs") && selector[6] >= '0' && selector[6] <= '9' {
+		return selector[6:]
+	}
+	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	return selector
+}
+
+func legacyResolveMiseNodeVersion(selector string) (string, error) {
+	selector = normalizeNodeVersionSelector(selector)
+	args := []string{"latest"}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		args = append(args, "node")
+	} else {
+		args = append(args, "node@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledNodeVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledNodeVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := bundledNodeVersionCatalog["lts"]; ok {
+			return version, nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve node version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve node version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+var legacyBundledNodeVersionCatalog = map[string]string{
+	"latest": "24.4.0",
+	"lts":    "22.17.0",
+	"24":     "24.4.0",
+	"22":     "22.17.0",
+	"20":     "20.19.0",
+}
+
+func legacyReadNodeVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{".nvmrc", ".node-version", "package.json", ".tool-versions"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Node version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseNodeVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func legacyParseNodeVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case ".nvmrc", ".node-version":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			return normalizeNodeVersionSelector(line), true
+		}
+	case ".tool-versions":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && (fields[0] == "node" || fields[0] == "nodejs") {
+				return normalizeNodeVersionSelector(fields[1]), true
+			}
+		}
+	case "package.json":
+		dataStr := string(data)
+		if version, ok := parseNodePackageJSONVersion(dataStr); ok {
+			return normalizeNodeVersionSelector(version), true
+		}
+	}
+	return "", false
+}
+
+func parseNodePackageJSONVersion(data string) (string, bool) {
+	var pkg struct {
+		Engines map[string]string `json:"engines"`
+	}
+	if err := json.Unmarshal([]byte(data), &pkg); err != nil {
+		return "", false
+	}
+	version, ok := pkg.Engines["node"]
+	if !ok {
+		return "", false
+	}
+	version = strings.TrimSpace(version)
+	version = strings.Trim(version, `"'`)
+	for _, c := range []string{"<", ">", "=", "!", "^", "~", ",", "|"} {
+		version = strings.ReplaceAll(version, c, " ")
+	}
+	for _, f := range strings.Fields(version) {
+		f = normalizeNodeVersionSelector(f)
+		if f != "" && f[0] >= '0' && f[0] <= '9' {
+			return f, true
+		}
+	}
+	return "", false
 }
 
 func resolveGoVersionChoice(choice, hint string, hintFound bool) (string, error) {
@@ -947,7 +1156,7 @@ func parseNodeVersionHint(name string, data []byte) (string, bool) {
 	return "", false
 }
 
-func firstNodeVersionToken(value string) string {
+func legacyFirstNodeVersionToken(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.Trim(value, "\"' ")
 	for _, sep := range []string{"||", "&&", ","} {
@@ -970,6 +1179,10 @@ func firstNodeVersionToken(value string) string {
 		}
 	}
 	return value
+}
+
+func firstNodeVersionToken(value string) string {
+	return legacyFirstNodeVersionToken(value)
 }
 
 func resolvePythonVersionChoice(choice, hint string, hintFound bool) (string, error) {
@@ -1170,10 +1383,9 @@ func renderPythonInstallCommand(version string) string {
 func renderNodeInstallCommand(version string) string {
 	var out strings.Builder
 	out.WriteString(fmt.Sprintf("RUN mise use -g --pin node@%s\n", version))
-	out.WriteString("RUN npm install -g pnpm yarn\n")
+	out.WriteString("RUN npm install -g pnpm@" + DefaultPNPMVersion + "\n")
 	return out.String()
 }
-
 func renderAgentInstallCommand(agent, version string) string {
 	switch agent {
 	case "opencode":
