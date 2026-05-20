@@ -151,4 +151,4 @@ sandman config set <key> <value>
 | `git.author_name` | string | `Sandman` |
 | `git.author_email` | string | `sandman.support@gmail.com` |
 
-`sandman init` writes these keys with the Sandman default identity. Older configs that omit them still use the same fallback identity at runtime.
+`sandman init` writes these keys with the Sandman default identity. If you clear them, Sandman stops injecting identity and Git falls back to whatever other config or environment your process provides.

@@ -181,6 +181,6 @@ sandman config set git.author_email "me@example.com"
 
 Use `sandman config get` and `sandman config set` for top-level config keys; edit `.sandman/config.yaml` directly for nested agent settings like `agents.<name>.model`.
 
-`sandman init` writes `git.author_name: Sandman` and `git.author_email: sandman.support@gmail.com` into new project configs so the default agent commit identity is explicit. If an older config omits these fields, Sandman still uses the same fallback identity at runtime. In both cases, the identity is injected into the agent process and is not written to your host git config or repo-local `.git/config`. Set both keys to override that identity for your project.
+`sandman init` writes `git.author_name: Sandman` and `git.author_email: sandman.support@gmail.com` into new project configs so the default agent commit identity is explicit. Sandman injects that identity into the agent process and does not write it to your host git config or repo-local `.git/config`. If you clear these fields, Sandman stops injecting identity and Git falls back to whatever other config or environment your process provides.
 
 See [Commands Reference](commands.md) for the full list of supported dot-notation keys.

@@ -674,8 +674,11 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 }
 
 func applyGitIdentityEnv(env map[string]string, cfg *config.Config) map[string]string {
-	name := cfg.EffectiveGitAuthorName()
-	email := cfg.EffectiveGitAuthorEmail()
+	name := strings.TrimSpace(cfg.Git.AuthorName)
+	email := strings.TrimSpace(cfg.Git.AuthorEmail)
+	if name == "" || email == "" {
+		return env
+	}
 	merged := make(map[string]string, len(env)+9)
 	for k, v := range env {
 		merged[k] = v

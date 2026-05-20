@@ -354,7 +354,7 @@ func warmSmokeRuntime(t *testing.T, runtime string) {
 }
 
 func writeSmokeGitConfig(homeDir, remoteDir string) error {
-	gitConfig := fmt.Sprintf("[user]\n\tname = Smoke\n\temail = smoke@example.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
+	gitConfig := fmt.Sprintf("[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
 	gitConfigDir := filepath.Join(homeDir, ".config", "git")
 	if err := os.MkdirAll(gitConfigDir, 0755); err != nil {
 		return err
@@ -496,7 +496,15 @@ func customizeSmokeConfig(repoDir, provider, opencodeModel string) error {
 		return err
 	}
 	if provider == "opencode" {
-		resolved.Command = fmt.Sprintf(`opencode run --pure -m %s "$(cat {{.PromptFile}})"`, opencodeModel)
+		resolved.Command = strings.Join([]string{
+			`test "$GIT_AUTHOR_NAME" = "Sandman"`,
+			`test "$GIT_AUTHOR_EMAIL" = "sandman.support@gmail.com"`,
+			`test "$GIT_COMMITTER_NAME" = "Sandman"`,
+			`test "$GIT_COMMITTER_EMAIL" = "sandman.support@gmail.com"`,
+			`test "$(git config user.name)" = "Sandman"`,
+			`test "$(git config user.email)" = "sandman.support@gmail.com"`,
+			fmt.Sprintf(`opencode run --pure -m %s "$(cat {{.PromptFile}})"`, opencodeModel),
+		}, " && ")
 		for _, dir := range []string{"~/.cache/opencode", "~/.cache/opencode/bin"} {
 			if !containsSmokePath(resolved.ConfigDirs, dir) {
 				resolved.ConfigDirs = append(resolved.ConfigDirs, dir)

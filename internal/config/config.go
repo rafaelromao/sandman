@@ -434,21 +434,3 @@ func (c *Config) EffectiveReviewCommand() string {
 	}
 	return c.ReviewCommand
 }
-
-// EffectiveGitAuthorName returns the configured git author name or the
-// built-in Sandman fallback when unset.
-func (c *Config) EffectiveGitAuthorName() string {
-	if c == nil || strings.TrimSpace(c.Git.AuthorName) == "" || strings.TrimSpace(c.Git.AuthorEmail) == "" {
-		return DefaultGitAuthorName
-	}
-	return c.Git.AuthorName
-}
-
-// EffectiveGitAuthorEmail returns the configured git author email or the
-// built-in Sandman fallback when unset.
-func (c *Config) EffectiveGitAuthorEmail() string {
-	if c == nil || strings.TrimSpace(c.Git.AuthorName) == "" || strings.TrimSpace(c.Git.AuthorEmail) == "" {
-		return DefaultGitAuthorEmail
-	}
-	return c.Git.AuthorEmail
-}

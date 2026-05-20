@@ -45,7 +45,7 @@ The scaffolded config also includes the default agent commit identity:
 - `git.author_name: Sandman`
 - `git.author_email: sandman.support@gmail.com`
 
-Override both fields with `sandman config set` if you want a project-specific identity. Older configs that omit these fields still fall back to `Sandman <sandman.support@gmail.com>` at runtime.
+Override both fields with `sandman config set` if you want a project-specific identity. If you clear or omit these fields, Sandman stops injecting commit identity and Git falls back to whatever other config or environment your process provides.
 
 The `init` command interactively prompts you for:
 

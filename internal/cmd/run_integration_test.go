@@ -1341,7 +1341,7 @@ git log --format="%an <%ae>" -1
 	}
 }
 
-func TestRun_PodmanSandboxUsesRuntimeFallbackGitIdentityWhenConfigEmpty(t *testing.T) {
+func TestRun_PodmanSandboxUsesRepoDefaultIdentityWhenConfigEmpty(t *testing.T) {
 	if !podmanAvailable(t) {
 		return
 	}
@@ -1375,7 +1375,7 @@ git log --format="%an <%ae>" -1
 	}
 	logContent := string(logData)
 
-	if !strings.Contains(logContent, "Sandman <sandman.support@gmail.com>") {
-		t.Fatalf("expected fallback commit author 'Sandman <sandman.support@gmail.com>' in log, got:\n%s", logContent)
+	if !strings.Contains(logContent, "Test <test@test.com>") {
+		t.Fatalf("expected commit author 'Test <test@test.com>' (repo default) in log, got:\n%s", logContent)
 	}
 }

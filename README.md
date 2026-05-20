@@ -67,7 +67,7 @@ agents:
       API_KEY: ${API_KEY}
 ```
 
-`sandman init` writes `git.author_name` and `git.author_email` with the Sandman default identity. Older configs that omit them still use `Sandman <sandman.support@gmail.com>` as a runtime fallback without mutating your host git config.
+`sandman init` writes `git.author_name` and `git.author_email` with the Sandman default identity. If you clear them, Sandman stops injecting identity and Git falls back to whatever other config or environment your process provides, without mutating your host git config.
 
 See [Configuration](docs/usage/configuration.md) for the full schema.
 
