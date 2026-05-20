@@ -98,9 +98,11 @@ var smokeProviderCases = []smokeProviderCase{
 			Body:   "Reply with exactly SMOKE_OK.",
 		},
 		wantBranch: "sandman/423-smoke-codex",
+		requiredAuth: []string{
+			"~/.codex",
+		},
 		authPaths: []string{
-			"~/.config/codex",
-			"~/.local/share/codex",
+			"~/.codex",
 		},
 	},
 	{
