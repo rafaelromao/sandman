@@ -19,6 +19,8 @@ const (
 	DefaultMaxContainers     = 0
 	DefaultWorktreeDir       = ".sandman/worktrees"
 	DefaultSandbox           = "podman"
+	DefaultGitAuthorName     = "Sandman"
+	DefaultGitAuthorEmail    = "sandman.support@gmail.com"
 )
 
 // Config holds the loaded Sandman configuration.
@@ -194,6 +196,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Git.DefaultBranch == "" {
 		cfg.Git.DefaultBranch = "main"
+	}
+	if strings.TrimSpace(cfg.Git.AuthorName) == "" {
+		cfg.Git.AuthorName = DefaultGitAuthorName
+	}
+	if strings.TrimSpace(cfg.Git.AuthorEmail) == "" {
+		cfg.Git.AuthorEmail = DefaultGitAuthorEmail
 	}
 
 	if cfg.Agent == "" {

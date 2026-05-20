@@ -108,6 +108,18 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if got, want := string(promptData), prompt.DefaultPrompt(); got != want {
 		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, got)
 	}
+
+	configPath := filepath.Join(dir, ".sandman", "config.yaml")
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Git.AuthorName != config.DefaultGitAuthorName {
+		t.Fatalf("git.author_name: got %q, want %q", cfg.Git.AuthorName, config.DefaultGitAuthorName)
+	}
+	if cfg.Git.AuthorEmail != config.DefaultGitAuthorEmail {
+		t.Fatalf("git.author_email: got %q, want %q", cfg.Git.AuthorEmail, config.DefaultGitAuthorEmail)
+	}
 }
 
 func TestReadDockerfileMetadata_ParsesMiseVersion(t *testing.T) {
