@@ -8,7 +8,7 @@ Sandman reads configuration from `.sandman/config.yaml` in the project root. You
 # Default agent provider name (maps to an entry under `agents` or a built-in preset).
 agent: opencode
 
-# Build tools preset for the container image (generic, go).
+# Build tools preset for the container image (generic, go, node, python).
 build_tools: generic
 
 # Review command injected into the prompt template.

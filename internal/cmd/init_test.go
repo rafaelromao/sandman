@@ -256,6 +256,72 @@ func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
 	}
 }
 
+func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: node") {
+		t.Fatalf("config missing node build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: node") {
+		t.Fatalf("Dockerfile missing node build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN corepack enable") {
+		t.Fatalf("Dockerfile missing corepack enable, got:\n%s", dockerfile)
+	}
+}
+
+func TestInit_ExplicitGenericOverridesNodeRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: generic") {
+		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
+	}
+}
+
 func TestInit_AgentFlagSelectsConfigPreset(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

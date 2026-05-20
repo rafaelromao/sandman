@@ -3,10 +3,12 @@ package scaffold
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +20,8 @@ import (
 const defaultBuildToolsPreset = "generic"
 
 const goBuildToolsPreset = "go"
+
+const nodeBuildToolsPreset = "node"
 
 const pythonBuildToolsPreset = "python"
 
@@ -97,6 +101,27 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		},
 		MiseVersion: DefaultMISEVersion,
 	},
+	nodeBuildToolsPreset: {
+		Name:      nodeBuildToolsPreset,
+		BaseImage: "debian:bookworm-slim",
+		SharedPackages: []string{
+			"bash",
+			"build-essential",
+			"ca-certificates",
+			"curl",
+			"file",
+			"gh",
+			"git",
+			"nodejs",
+			"npm",
+			"openssh-client",
+			"python3",
+			"python3-pip",
+			"unzip",
+			"xz-utils",
+		},
+		MiseVersion: DefaultMISEVersion,
+	},
 	pythonBuildToolsPreset: {
 		Name:      pythonBuildToolsPreset,
 		BaseImage: "debian:bookworm-slim",
@@ -152,6 +177,15 @@ var bundledGoVersionCatalog = map[string]string{
 	"prefix:1.20": "1.20.14",
 }
 
+var bundledNodeVersionCatalog = map[string]string{
+	"latest": "24.2.0",
+	"lts":    "22.16.0",
+	"24":     "24.2.0",
+	"22":     "22.16.0",
+	"20":     "20.19.0",
+	"18":     "18.20.8",
+}
+
 var bundledPythonVersionCatalog = map[string]string{
 	"latest": "3.13.3",
 	"3.14":   "3.14.3",
@@ -196,10 +230,16 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 
 	goVersion := ""
+	nodeVersion := ""
 	pythonVersion := ""
 	agentVersion := DefaultBuiltInAgentVersion(agent)
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == nodeBuildToolsPreset {
+		nodeVersion, err = s.resolveNodeVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
 			return err
 		}
@@ -239,7 +279,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, nodeVersion, pythonVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -268,6 +308,22 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 	if name == "" {
 		if hasGoRepoHint(repoRoot) {
 			name = goBuildToolsPreset
+		} else if hasNodeRepoHint(repoRoot) {
+			if p != nil {
+				options := []string{nodeBuildToolsPreset}
+				for _, preset := range KnownBuildToolsPresets {
+					if preset != nodeBuildToolsPreset {
+						options = append(options, preset)
+					}
+				}
+				selected, err := p.Select("Choose a build tools preset:", options)
+				if err == nil {
+					name = strings.ToLower(strings.TrimSpace(selected))
+				}
+			}
+			if name == "" {
+				name = nodeBuildToolsPreset
+			}
 		} else if hasPythonRepoHint(repoRoot) {
 			name = pythonBuildToolsPreset
 		} else if p != nil {
@@ -292,6 +348,21 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 func hasGoRepoHint(repoRoot string) bool {
 	_, found, err := readGoVersionHint(repoRoot)
 	return err == nil && found
+}
+
+func hasNodeRepoHint(repoRoot string) bool {
+	if _, err := os.Stat(filepath.Join(repoRoot, "package.json")); err == nil {
+		return true
+	}
+	for _, rel := range []string{"package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", ".node-version", ".nvmrc"} {
+		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
+			return true
+		}
+	}
+	if _, found, err := readNodeVersionHint(repoRoot); err == nil && found {
+		return true
+	}
+	return false
 }
 
 func hasPythonRepoHint(repoRoot string) bool {
@@ -372,6 +443,132 @@ func resolveGoVersionChoice(choice, hint string, hintFound bool) (string, error)
 	}
 
 	return resolveMiseGoVersion(choice)
+}
+
+func (s *Scaffolder) resolveNodeVersion(repoRoot, selector string, p Prompter) (string, error) {
+	hint, found, err := readNodeVersionHint(repoRoot)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if p != nil {
+				selected, err := p.Select(fmt.Sprintf("Choose a Node version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = normalizeNodeVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if p != nil {
+				selected, err := p.Select("Choose a Node version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = normalizeNodeVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	resolved, err := resolveNodeVersionChoice(choice, hint, found)
+	if err != nil {
+		return "", fmt.Errorf("resolve node version: %w", err)
+	}
+	return resolved, nil
+}
+
+func resolveNodeVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = normalizeNodeVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Node version hint found")
+		}
+		return resolveMiseNodeVersion(normalizeNodeVersionSelector(hint))
+	case "latest", "lts":
+		return resolveMiseNodeVersion(choice)
+	}
+
+	return resolveMiseNodeVersion(choice)
+}
+
+var nodeVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
+
+func normalizeNodeVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return ""
+	}
+	lower := strings.ToLower(selector)
+	switch {
+	case lower == "repo", lower == "latest", lower == "lts":
+		return lower
+	case strings.HasPrefix(lower, "lts/"):
+		return "lts"
+	}
+	if len(selector) > 1 && strings.HasPrefix(lower, "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	if version := nodeVersionSelectorPattern.FindString(selector); version != "" {
+		return version
+	}
+	return selector
+}
+
+func resolveMiseNodeVersion(selector string) (string, error) {
+	selector = normalizeNodeVersionSelector(selector)
+	args := []string{"latest"}
+	switch strings.ToLower(selector) {
+	case "", "latest":
+		args = append(args, "node")
+	case "lts":
+		args = append(args, "node@lts")
+	default:
+		args = append(args, "node@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledNodeVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledNodeVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := bundledNodeVersionCatalog["lts"]; ok {
+			return version, nil
+		}
+	}
+	if selector != "" && selector != "latest" && selector != "lts" && nodeVersionSelectorPattern.MatchString(selector) {
+		return selector, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve node version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve node version %q: mise returned empty output and no bundled fallback", selector)
 }
 
 func normalizeGoVersionSelector(selector string) string {
@@ -561,12 +758,15 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, nodeVersion, pythonVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman agent-provider: %s\n", agent)
 	if preset.Name == goBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman go-version: %s\n", goVersion)
+	}
+	if preset.Name == nodeBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman node-version: %s\n", nodeVersion)
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman python-version: %s\n", pythonVersion)
@@ -587,6 +787,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 		out.WriteString("ENV GOPATH=\"/.local/share/go\"\n")
 		out.WriteString("ENV GOMODCACHE=\"/.cache/go/pkg/mod\"\n")
 		out.WriteString(renderGoInstallCommand(goVersion))
+	}
+	if preset.Name == nodeBuildToolsPreset {
+		out.WriteString(renderNodeInstallCommand(nodeVersion))
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
@@ -634,6 +837,67 @@ func (s *Scaffolder) resolvePythonVersion(repoRoot, selector string, p Prompter)
 		return "", fmt.Errorf("resolve python version: %w", err)
 	}
 	return resolved, nil
+}
+
+func readNodeVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{".node-version", ".nvmrc", ".tool-versions", "package.json"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Node version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseNodeVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseNodeVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case ".node-version", ".nvmrc":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			return line, true
+		}
+	case ".tool-versions":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && (fields[0] == "node" || fields[0] == "nodejs") {
+				return fields[1], true
+			}
+		}
+	case "package.json":
+		type packageJSON struct {
+			Engines struct {
+				Node string `json:"node"`
+			} `json:"engines"`
+			Volta struct {
+				Node string `json:"node"`
+			} `json:"volta"`
+		}
+		var pkg packageJSON
+		if err := json.Unmarshal(data, &pkg); err == nil {
+			if version := strings.TrimSpace(pkg.Volta.Node); version != "" {
+				return version, true
+			}
+			if version := strings.TrimSpace(pkg.Engines.Node); version != "" {
+				return version, true
+			}
+		}
+	}
+	return "", false
 }
 
 func resolvePythonVersionChoice(choice, hint string, hintFound bool) (string, error) {
@@ -804,6 +1068,13 @@ func renderGoInstallCommand(version string) string {
 	return fmt.Sprintf("RUN mise use -g --pin go@%s\n", version)
 }
 
+func renderNodeInstallCommand(version string) string {
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("RUN mise use -g --pin node@%s\n", version))
+	out.WriteString("RUN corepack enable\n")
+	return out.String()
+}
+
 func renderPythonInstallCommand(version string) string {
 	var out strings.Builder
 	out.WriteString(fmt.Sprintf("RUN mise use -g --pin python@%s\n", version))
@@ -855,6 +1126,7 @@ type dockerfileMetadata struct {
 	BuildToolsPreset string
 	AgentProvider    string
 	GoVersion        string
+	NodeVersion      string
 	PythonVersion    string
 	ToolVersion      string
 	MiseVersion      string
@@ -908,6 +1180,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.ToolVersion = strings.TrimSpace(value)
 		case "go-version":
 			meta.GoVersion = strings.TrimSpace(value)
+		case "node-version":
+			meta.NodeVersion = strings.TrimSpace(value)
 		case "python-version":
 			meta.PythonVersion = strings.TrimSpace(value)
 		case "mise-version":

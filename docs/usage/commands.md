@@ -10,7 +10,7 @@ sandman init [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--build-tools` | `""` | Build tools preset (`generic`, `go`, `python`) |
+| `--build-tools` | `""` | Build tools preset (`generic`, `go`, `node`, `python`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
 | `--agent` | `""` | Built-in agent preset (`opencode`, `claude-code`, `codex`, `pi`) |
 
@@ -140,7 +140,7 @@ sandman config set <key> <value>
 | Key | Type | Example |
 |-----|------|---------|
 | `agent` | string | `opencode` |
-| `build_tools` | string | `go` |
+| `build_tools` | string | `node` |
 | `default_parallel` | int | `4` |
 | `review_command` | string | `/oc review` |
 | `container_capacity` | int | `4` |
