@@ -50,13 +50,13 @@ Override both fields with `sandman config set` if you want agent-created commits
 The `init` command interactively prompts you for:
 
 - **Agent preset** — which built-in agent to configure (opencode, claude-code, codex, pi)
-- **Build tools preset** — language-specific tooling for the container image (generic or go)
+- **Build tools preset** — scaffold recipe for the container image (generic, go, node, or python)
 - **Tool version** — version selector for the build toolchain
 
 You can skip the prompts by passing flags:
 
 ```bash
-sandman init --agent opencode --build-tools go
+sandman init --agent opencode --build-tools node
 ```
 
 ## First run

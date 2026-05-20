@@ -26,7 +26,7 @@ func (f *fakePrompter) Select(msg string, options []string) (string, error) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "python"} {
+	for _, preset := range []string{"generic", "go", "node", "python"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -45,6 +45,47 @@ func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 				t.Fatalf("Dockerfile missing openssh-client shared package, got:\n%s", content)
 			}
 		})
+	}
+}
+
+func TestScaffold_NodePresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{BuildTools: "node"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: node") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman node-version:") {
+		t.Fatalf("Dockerfile missing node-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "FROM debian:bookworm-slim") {
+		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin node@") {
+		t.Fatalf("Dockerfile missing pinned node install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN npm install -g pnpm yarn") {
+		t.Fatalf("Dockerfile missing node companion tooling, got:\n%s", content)
+	}
+	if !strings.Contains(content, " gh ") {
+		t.Fatalf("Dockerfile missing gh shared package, got:\n%s", content)
+	}
+	if strings.Contains(content, "/root/.local/share/mise") {
+		t.Fatalf("Dockerfile should not depend on /root mise paths, got:\n%s", content)
 	}
 }
 
@@ -213,6 +254,127 @@ func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoPythonHints(t *testing.T) 
 	}
 }
 
+func TestScaffold_NodeRepoSelectorFallsBackToLatest_WhenNoNodeHints(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	version, err := s.resolveNodeVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveNodeVersion with repo selector: %v", err)
+	}
+	latest, err := s.resolveNodeVersion(dir, "latest", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveNodeVersion with latest selector: %v", err)
+	}
+	if version != latest {
+		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
+	}
+}
+
+func TestScaffold_NodeVersionSelectors(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector string
+		setupFn  func(dir string)
+		checkFn  func(t *testing.T, got, latest string)
+	}{
+		{
+			name:     "latest",
+			selector: "latest",
+			checkFn: func(t *testing.T, got, _ string) {
+				if got == "" {
+					t.Fatal("expected latest node version")
+				}
+			},
+		},
+		{
+			name:     "lts",
+			selector: "lts",
+			checkFn: func(t *testing.T, got, latest string) {
+				if got == "" {
+					t.Fatal("expected lts node version")
+				}
+				if got == latest {
+					t.Fatalf("expected lts to differ from latest, got %q", got)
+				}
+			},
+		},
+		{
+			name:     "repo",
+			selector: "repo",
+			setupFn: func(dir string) {
+				if err := os.WriteFile(filepath.Join(dir, ".nvmrc"), []byte("20\n"), 0644); err != nil {
+					panic(err)
+				}
+			},
+			checkFn: func(t *testing.T, got, _ string) {
+				if !strings.HasPrefix(got, "20.") {
+					t.Fatalf("expected repo hint to pin 20.x, got %q", got)
+				}
+			},
+		},
+		{
+			name:     "repo lts",
+			selector: "repo",
+			setupFn: func(dir string) {
+				if err := os.WriteFile(filepath.Join(dir, ".nvmrc"), []byte("lts/*\n"), 0644); err != nil {
+					panic(err)
+				}
+			},
+			checkFn: func(t *testing.T, got, latest string) {
+				if got == "" {
+					t.Fatal("expected lts node version")
+				}
+				if got == latest {
+					t.Fatalf("expected lts repo hint to differ from latest, got %q", got)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.setupFn != nil {
+				tt.setupFn(dir)
+			}
+
+			s := &Scaffolder{}
+			latest, err := s.resolveNodeVersion(dir, "latest", &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve latest node version: %v", err)
+			}
+
+			got, err := s.resolveNodeVersion(dir, tt.selector, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve node version %q: %v", tt.selector, err)
+			}
+
+			tt.checkFn(t, got, latest)
+		})
+	}
+}
+
+func TestScaffold_NodeInteractiveSelectionUsesPromptChoice(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".nvmrc"), []byte("20\n"), 0644); err != nil {
+		t.Fatalf("write .nvmrc: %v", err)
+	}
+
+	s := &Scaffolder{}
+	repoVersion, err := s.resolveNodeVersion(dir, "", &fakePrompter{selected: "repo"})
+	if err != nil {
+		t.Fatalf("resolve repo node version: %v", err)
+	}
+	latestVersion, err := s.resolveNodeVersion(dir, "", &fakePrompter{selected: "latest"})
+	if err != nil {
+		t.Fatalf("resolve latest node version: %v", err)
+	}
+	if repoVersion == latestVersion {
+		t.Fatalf("expected prompt choice to change version, got %q", repoVersion)
+	}
+}
+
 func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 	for agent := range config.BuiltInAgentPresets {
 		t.Run(agent, func(t *testing.T) {
@@ -308,6 +470,50 @@ func TestScaffold_AllAgentPresets_GenerateGoPresetFiles(t *testing.T) {
 	}
 }
 
+func TestScaffold_AllAgentPresets_GenerateNodePresetFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+			wantNodeVersion, err := s.resolveNodeVersion(dir, "", &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve node version: %v", err)
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "node", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.BuildTools != "node" {
+				t.Errorf("expected build tools %q, got %q", "node", cfg.BuildTools)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman build-tools: node") {
+				t.Fatalf("Dockerfile missing node build-tools metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "# sandman node-version: "+wantNodeVersion) {
+				t.Fatalf("Dockerfile missing pinned node version %q, got:\n%s", wantNodeVersion, content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin node@"+wantNodeVersion) {
+				t.Fatalf("Dockerfile missing pinned node install %q, got:\n%s", wantNodeVersion, content)
+			}
+			if !strings.Contains(content, "RUN npm install -g pnpm yarn") {
+				t.Fatalf("Dockerfile missing node companion tooling, got:\n%s", content)
+			}
+		})
+	}
+}
+
 func TestScaffold_UnknownBuildToolsPreset_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
@@ -371,6 +577,40 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	}
 	if got, want := string(promptData), prompt.DefaultPrompt(); got != want {
 		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestScaffold_NodeRepoVersionHintPrefersPackageJSONEngines(t *testing.T) {
+	dir := t.TempDir()
+	packageJSON := `{
+  "name": "demo",
+  "engines": {
+    "node": ">=20 <21"
+  }
+}`
+
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(packageJSON), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	s := &Scaffolder{}
+	if err := s.Scaffold(dir, Options{}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(dockerfileData)
+	if !strings.Contains(content, "# sandman build-tools: node") {
+		t.Fatalf("Dockerfile missing node build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman node-version: 20.") {
+		t.Fatalf("Dockerfile missing pinned node version from repo hint, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin node@20.") {
+		t.Fatalf("Dockerfile missing repo-derived node install, got:\n%s", content)
 	}
 }
 
@@ -472,6 +712,22 @@ func TestScaffold_PythonRepoAutoDetect(t *testing.T) {
 				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
 			}
 		})
+	}
+}
+
+func TestScaffold_NodeRepoAutoDetect(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "node" {
+		t.Fatalf("expected preset %q, got %q", "node", preset.Name)
 	}
 }
 

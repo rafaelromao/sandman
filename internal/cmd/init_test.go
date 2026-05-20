@@ -163,6 +163,57 @@ func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	}
 }
 
+func TestInit_NodeBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+  "name": "demo",
+  "engines": {
+    "node": ">=20 <21"
+  }
+}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: node") {
+		t.Fatalf("config missing node build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: node") {
+		t.Fatalf("Dockerfile missing node build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman node-version: 20.") {
+		t.Fatalf("Dockerfile missing node-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin node@20.") {
+		t.Fatalf("Dockerfile missing pinned node install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN npm install -g pnpm yarn") {
+		t.Fatalf("Dockerfile missing node companion tooling, got:\n%s", dockerfile)
+	}
+}
+
 func TestInit_DefaultsToPythonPresetForPythonRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -253,6 +304,34 @@ func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
 	}
 	if !strings.Contains(dockerfile, "ENV GOMODCACHE=\"/.cache/go/pkg/mod\"") {
 		t.Fatalf("Dockerfile missing GOMODCACHE env, got:\n%s", dockerfile)
+	}
+}
+
+func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: node") {
+		t.Fatalf("config missing node build_tools preset, got:\n%s", configData)
 	}
 }
 
