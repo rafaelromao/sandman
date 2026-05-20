@@ -117,6 +117,9 @@ func rewriteGitConfigFile(path, absRepo string) error {
 	return os.WriteFile(path, []byte(updated), info.Mode().Perm())
 }
 
+// hydrateGHConfigMount injects an oauth_token into the copied gh hosts.yml
+// when the host uses keyring-backed auth (which leaves oauth_token empty in
+// the on-disk file). Without this, gh inside the container cannot authenticate.
 func hydrateGHConfigMount(mounts []sandbox.ConfigMount) error {
 	for _, mount := range mounts {
 		if mount.Target != "/.config/gh" {
