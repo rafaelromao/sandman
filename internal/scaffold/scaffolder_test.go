@@ -26,7 +26,7 @@ func (f *fakePrompter) Select(msg string, options []string) (string, error) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "python"} {
+	for _, preset := range []string{"generic", "go", "node", "python"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -45,6 +45,49 @@ func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 				t.Fatalf("Dockerfile missing openssh-client shared package, got:\n%s", content)
 			}
 		})
+	}
+}
+
+func TestScaffold_NodePresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	s := &Scaffolder{}
+	wantNodeVersion, err := s.resolveNodeVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve node version: %v", err)
+	}
+
+	err = s.Scaffold(dir, Options{Agent: "opencode"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: node") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman node-version: "+wantNodeVersion) {
+		t.Fatalf("Dockerfile missing node-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin node@"+wantNodeVersion) {
+		t.Fatalf("Dockerfile missing pinned node install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN corepack enable") {
+		t.Fatalf("Dockerfile missing corepack enable, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
 }
 
@@ -181,6 +224,58 @@ func TestScaffold_ResolvesToolVersionSelectors(t *testing.T) {
 			}
 			if !strings.Contains(content, "@openai/codex@"+tt.wantPin) {
 				t.Fatalf("Dockerfile missing codex install pin %q, got:\n%s", tt.wantPin, content)
+			}
+		})
+	}
+}
+
+func TestScaffold_ResolvesNodeVersionSelectors(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector string
+		wantPin  string
+	}{
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "repo", selector: "repo"},
+		{name: "shorthand", selector: "20"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
+				t.Fatalf("write package.json: %v", err)
+			}
+
+			s := &Scaffolder{}
+			resolvedPin, err := s.resolveNodeVersion(dir, tt.selector, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve node version: %v", err)
+			}
+
+			wantPin := tt.wantPin
+			if wantPin == "" {
+				wantPin = resolvedPin
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "node", Agent: "codex", ToolVersion: tt.selector}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman node-version: "+wantPin) {
+				t.Fatalf("Dockerfile missing node pin %q, got:\n%s", wantPin, content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin node@"+wantPin) {
+				t.Fatalf("Dockerfile missing node install pin %q, got:\n%s", wantPin, content)
+			}
+			if !strings.Contains(content, "RUN corepack enable") {
+				t.Fatalf("Dockerfile missing corepack enable, got:\n%s", content)
 			}
 		})
 	}
@@ -479,6 +574,68 @@ func TestScaffold_PythonRepoAutoDetect(t *testing.T) {
 				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
 			}
 		})
+	}
+}
+
+func TestScaffold_NodeRepoAutoDetect(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    string
+	}{
+		{
+			name: "package.json engines",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644)
+			},
+			want: "node",
+		},
+		{
+			name: "nvmrc",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, ".nvmrc"), []byte("20\n"), 0644)
+			},
+			want: "node",
+		},
+		{
+			name: "tool-versions",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("node 20\n"), 0644)
+			},
+			want: "node",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			s := &Scaffolder{}
+			preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve build tools preset: %v", err)
+			}
+			if preset.Name != tt.want {
+				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
+			}
+		})
+	}
+}
+
+func TestScaffold_GenericBuildToolsOverridesNodeRepoHints(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "generic" {
+		t.Fatalf("expected explicit generic preset, got %q", preset.Name)
 	}
 }
 

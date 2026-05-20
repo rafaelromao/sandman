@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Built-in agent presets (opencode, claude-code, codex, pi) with config resolver
 - `--prompt`, `--template`, `--prompt-arg` CLI flags for prompt customization
 - BuildToolsPreset scaffold-time recipe with pinned versioning and mise
+- Node BuildToolsPreset with repo hint detection and pinned container scaffolding
 - `--sandbox`, `--container-capacity`, `--max-containers` CLI flags
 - Event log: `run.warning` event type
 
