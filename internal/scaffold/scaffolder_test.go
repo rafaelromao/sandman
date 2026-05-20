@@ -120,6 +120,13 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if cfg.Git.AuthorEmail != config.DefaultGitAuthorEmail {
 		t.Fatalf("git.author_email: got %q, want %q", cfg.Git.AuthorEmail, config.DefaultGitAuthorEmail)
 	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(configData), "author_name: "+config.DefaultGitAuthorName) || !strings.Contains(string(configData), "author_email: "+config.DefaultGitAuthorEmail) {
+		t.Fatalf("scaffolded config should persist default git author settings, got:\n%s", configData)
+	}
 }
 
 func TestReadDockerfileMetadata_ParsesMiseVersion(t *testing.T) {

@@ -55,8 +55,9 @@ sandbox: podman              # podman, docker, or worktree
 container_capacity: 4        # agent runs per container
 max_containers: 0            # auto mode; or set a fixed limit
 git:
-  author_name: Dev
-  author_email: dev@example.com
+  author_name: Sandman
+  author_email: sandman.support@gmail.com
+  default_branch: main
 agents:
   opencode:
     preset: opencode
@@ -65,6 +66,8 @@ agents:
     env:
       API_KEY: ${API_KEY}
 ```
+
+`sandman init` writes `git.author_name` and `git.author_email` with the Sandman default identity. If you clear them, Sandman stops injecting identity and Git falls back to whatever other config or environment your process provides, without mutating your host git config.
 
 See [Configuration](docs/usage/configuration.md) for the full schema.
 

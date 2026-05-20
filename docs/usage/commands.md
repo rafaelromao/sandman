@@ -151,4 +151,4 @@ sandman config set <key> <value>
 | `git.author_name` | string | `Sandman` |
 | `git.author_email` | string | `sandman.support@gmail.com` |
 
-If you do not set these keys explicitly, Sandman uses `Sandman <sandman.support@gmail.com>` as the default commit identity for agent-created commits.
+`sandman init` writes these keys with the Sandman default identity. If you clear them, Sandman stops injecting identity and Git falls back to whatever other config or environment your process provides.

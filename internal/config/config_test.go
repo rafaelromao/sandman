@@ -77,7 +77,7 @@ agents:
 	}
 }
 
-func TestLoad_AppliesDefaultGitIdentityWhenUnset(t *testing.T) {
+func TestLoad_LeavesGitIdentityUnsetWhenMissing(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: opencode
@@ -96,11 +96,11 @@ agents:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.Git.AuthorName != DefaultGitAuthorName {
-		t.Errorf("git.author_name: got %q, want %q", cfg.Git.AuthorName, DefaultGitAuthorName)
+	if cfg.Git.AuthorName != "" {
+		t.Errorf("git.author_name: got %q, want empty stored value", cfg.Git.AuthorName)
 	}
-	if cfg.Git.AuthorEmail != DefaultGitAuthorEmail {
-		t.Errorf("git.author_email: got %q, want %q", cfg.Git.AuthorEmail, DefaultGitAuthorEmail)
+	if cfg.Git.AuthorEmail != "" {
+		t.Errorf("git.author_email: got %q, want empty stored value", cfg.Git.AuthorEmail)
 	}
 }
 

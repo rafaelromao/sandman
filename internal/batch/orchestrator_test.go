@@ -2469,7 +2469,7 @@ func TestRunBatch_SetsGitIdentityFromConfig(t *testing.T) {
 				AuthorEmail:   "alice@example.com",
 			},
 			AgentProviders: map[string]config.Agent{
-				"test-agent": {Command: "touch agent-ran.txt"},
+				"test-agent": {Command: "touch test-file.txt && git add test-file.txt && git commit -m \"test commit\""},
 			},
 		},
 	}
@@ -2481,26 +2481,8 @@ func TestRunBatch_SetsGitIdentityFromConfig(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-
-	cmd := exec.Command("git", "config", "--local", "user.name")
-	cmd.Dir = worktreePath
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git config user.name: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != "Alice" {
-		t.Errorf("user.name: got %q, want %q", got, "Alice")
-	}
-
-	cmd = exec.Command("git", "config", "--local", "user.email")
-	cmd.Dir = worktreePath
-	out, err = cmd.Output()
-	if err != nil {
-		t.Fatalf("git config user.email: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != "alice@example.com" {
-		t.Errorf("user.email: got %q, want %q", got, "alice@example.com")
-	}
+	assertGitCommitAuthor(t, worktreePath, "Alice <alice@example.com>")
+	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
 }
 
 func TestRunBatch_SkipsGitIdentityWhenConfigEmpty(t *testing.T) {
@@ -2522,7 +2504,7 @@ func TestRunBatch_SkipsGitIdentityWhenConfigEmpty(t *testing.T) {
 				DefaultBranch: "main",
 			},
 			AgentProviders: map[string]config.Agent{
-				"test-agent": {Command: "touch agent-ran.txt"},
+				"test-agent": {Command: "touch test-file.txt && git add test-file.txt && git commit -m \"test commit\""},
 			},
 		},
 	}
@@ -2534,16 +2516,8 @@ func TestRunBatch_SkipsGitIdentityWhenConfigEmpty(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-
-	cmd := exec.Command("git", "config", "--local", "user.name")
-	cmd.Dir = worktreePath
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git config --local user.name: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != "Test" {
-		t.Errorf("user.name: got %q, want %q (should be unchanged from repo default)", got, "Test")
-	}
+	assertGitCommitAuthor(t, worktreePath, "Test <test@test.com>")
+	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
 }
 
 func TestRunBatch_SkipsGitIdentityWhenOnlyNameSet(t *testing.T) {
@@ -2566,7 +2540,7 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyNameSet(t *testing.T) {
 				AuthorName:    "Alice",
 			},
 			AgentProviders: map[string]config.Agent{
-				"test-agent": {Command: "touch agent-ran.txt"},
+				"test-agent": {Command: "touch test-file.txt && git add test-file.txt && git commit -m \"test commit\""},
 			},
 		},
 	}
@@ -2578,16 +2552,8 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyNameSet(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-
-	cmd := exec.Command("git", "config", "--local", "user.name")
-	cmd.Dir = worktreePath
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git config --local user.name: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != "Test" {
-		t.Errorf("user.name: got %q, want %q (should be unchanged from repo default)", got, "Test")
-	}
+	assertGitCommitAuthor(t, worktreePath, "Test <test@test.com>")
+	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
 }
 
 func TestRunBatch_SkipsGitIdentityWhenOnlyEmailSet(t *testing.T) {
@@ -2610,7 +2576,7 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyEmailSet(t *testing.T) {
 				AuthorEmail:   "alice@example.com",
 			},
 			AgentProviders: map[string]config.Agent{
-				"test-agent": {Command: "touch agent-ran.txt"},
+				"test-agent": {Command: "touch test-file.txt && git add test-file.txt && git commit -m \"test commit\""},
 			},
 		},
 	}
@@ -2622,15 +2588,43 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyEmailSet(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+	assertGitCommitAuthor(t, worktreePath, "Test <test@test.com>")
+	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
+}
 
-	cmd := exec.Command("git", "config", "--local", "user.email")
+func assertGitCommitAuthor(t *testing.T, worktreePath, want string) {
+	t.Helper()
+	cmd := exec.Command("git", "log", "--format=%an <%ae>", "-1")
 	cmd.Dir = worktreePath
 	out, err := cmd.Output()
 	if err != nil {
+		t.Fatalf("git log author: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Fatalf("commit author: got %q, want %q", got, want)
+	}
+}
+
+func assertLocalGitIdentity(t *testing.T, worktreePath, wantName, wantEmail string) {
+	t.Helper()
+	cmd := exec.Command("git", "config", "--local", "user.name")
+	cmd.Dir = worktreePath
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config --local user.name: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != wantName {
+		t.Fatalf("local user.name: got %q, want %q", got, wantName)
+	}
+
+	cmd = exec.Command("git", "config", "--local", "user.email")
+	cmd.Dir = worktreePath
+	out, err = cmd.Output()
+	if err != nil {
 		t.Fatalf("git config --local user.email: %v", err)
 	}
-	if got := strings.TrimSpace(string(out)); got != "test@test.com" {
-		t.Errorf("user.email: got %q, want %q (should be unchanged from repo default)", got, "test@test.com")
+	if got := strings.TrimSpace(string(out)); got != wantEmail {
+		t.Fatalf("local user.email: got %q, want %q", got, wantEmail)
 	}
 }
 

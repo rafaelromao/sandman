@@ -142,18 +142,25 @@ func writeSandmanDockerfile(t *testing.T, dir string) {
 }
 
 func newRunIntegrationDepsWithSandbox(agent config.Agent, sandboxMode string, gh *fakeGitHubClient) Dependencies {
+	return newRunIntegrationDepsWithSandboxAndGit(agent, sandboxMode, config.GitConfig{DefaultBranch: "main"}, gh)
+}
+
+func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode string, gitCfg config.GitConfig, gh *fakeGitHubClient) Dependencies {
 	if agent.Name == "" {
 		agent.Name = "test-agent"
 	}
 	if agent.Command == "" {
 		agent.Command = "true"
 	}
+	if gitCfg.DefaultBranch == "" {
+		gitCfg.DefaultBranch = "main"
+	}
 
 	store := &fakeStore{config: &config.Config{
 		Agent:       "test-agent",
 		WorktreeDir: ".sandman/worktrees",
 		Sandbox:     sandboxMode,
-		Git:         config.GitConfig{DefaultBranch: "main"},
+		Git:         gitCfg,
 		AgentProviders: map[string]config.Agent{
 			"test-agent": agent,
 		},
@@ -1160,29 +1167,11 @@ func podmanGitIdentityDeps(t *testing.T, dir, remoteDir, agentCmd, authorName, a
 		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 	}}
 
-	store := &fakeStore{config: &config.Config{
-		Agent:       "test-agent",
-		WorktreeDir: ".sandman/worktrees",
-		Sandbox:     "podman",
-		Git: config.GitConfig{
-			DefaultBranch: "main",
-			AuthorName:    authorName,
-			AuthorEmail:   authorEmail,
-		},
-		AgentProviders: map[string]config.Agent{
-			"test-agent": {Name: "test-agent", Command: strings.TrimSpace(agentCmd)},
-		},
-	}}
-
-	runner := batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil)
-	return Dependencies{
-		BatchRunner:    runner,
-		ConfigStore:    store,
-		EventLog:       &fakeEventLog{},
-		GitHubClient:   gh,
-		PromptRenderer: &prompt.Engine{},
-		IsTTY:          func() bool { return false },
-	}
+	return newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "podman", config.GitConfig{
+		DefaultBranch: "main",
+		AuthorName:    authorName,
+		AuthorEmail:   authorEmail,
+	}, gh)
 }
 
 func TestRun_PodmanSandboxSetsGitIdentityFromConfig(t *testing.T) {
@@ -1224,7 +1213,135 @@ git log --format="%an <%ae>" -1
 	}
 }
 
-func TestRun_PodmanSandboxSkipsGitIdentityWhenConfigEmpty(t *testing.T) {
+func TestRun_PodmanSandboxUsesEnvScopedGitIdentityWithoutMutatingWorktreeConfig(t *testing.T) {
+	if !podmanAvailable(t) {
+		return
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	remoteDir := initRunIntegrationRepoWithRemote(t, dir)
+	runGit(t, dir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	agentCmd := `
+git config user.name
+git config user.email
+touch test-file.txt
+git add test-file.txt
+git commit -m "test commit by sandman"
+git log --format="%an <%ae>" -1
+`
+	deps := podmanGitIdentityDeps(t, dir, remoteDir, agentCmd, "Sandman", "sandman@test.com")
+
+	out, err := executeRunCommand(t, deps, "--preserve", "42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	logContent := string(logData)
+	if !strings.Contains(logContent, "Sandman") || !strings.Contains(logContent, "sandman@test.com") {
+		t.Fatalf("expected env-scoped git identity in log, got:\n%s", logContent)
+	}
+	if !strings.Contains(logContent, "Sandman <sandman@test.com>") {
+		t.Fatalf("expected commit author 'Sandman <sandman@test.com>' in log, got:\n%s", logContent)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+	cmd := exec.Command("git", "config", "--local", "user.name")
+	cmd.Dir = worktreePath
+	localName, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config --local user.name: %v", err)
+	}
+	if got := strings.TrimSpace(string(localName)); got != "Test" {
+		t.Fatalf("expected worktree local user.name to stay repo default, got %q", got)
+	}
+
+	cmd = exec.Command("git", "config", "--local", "user.email")
+	cmd.Dir = worktreePath
+	localEmail, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config --local user.email: %v", err)
+	}
+	if got := strings.TrimSpace(string(localEmail)); got != "test@test.com" {
+		t.Fatalf("expected worktree local user.email to stay repo default, got %q", got)
+	}
+}
+
+func TestRun_WorktreeSandboxUsesEnvScopedGitIdentityWithoutMutatingWorktreeConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
+
+	agentCmd := `
+git config user.name
+git config user.email
+touch test-file.txt
+git add test-file.txt
+git commit -m "test commit by sandman"
+git log --format="%an <%ae>" -1
+`
+	deps := newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "worktree", config.GitConfig{
+		DefaultBranch: "main",
+		AuthorName:    "Sandman",
+		AuthorEmail:   "sandman@test.com",
+	}, &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+	}})
+
+	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "--preserve", "42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	logContent := string(logData)
+	if !strings.Contains(logContent, "Sandman") || !strings.Contains(logContent, "sandman@test.com") {
+		t.Fatalf("expected env-scoped git identity in log, got:\n%s", logContent)
+	}
+	if !strings.Contains(logContent, "Sandman <sandman@test.com>") {
+		t.Fatalf("expected commit author 'Sandman <sandman@test.com>' in log, got:\n%s", logContent)
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+	cmd := exec.Command("git", "config", "--local", "user.name")
+	cmd.Dir = worktreePath
+	localName, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config --local user.name: %v", err)
+	}
+	if got := strings.TrimSpace(string(localName)); got != "Test" {
+		t.Fatalf("expected worktree local user.name to stay repo default, got %q", got)
+	}
+
+	cmd = exec.Command("git", "config", "--local", "user.email")
+	cmd.Dir = worktreePath
+	localEmail, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config --local user.email: %v", err)
+	}
+	if got := strings.TrimSpace(string(localEmail)); got != "test@test.com" {
+		t.Fatalf("expected worktree local user.email to stay repo default, got %q", got)
+	}
+}
+
+func TestRun_PodmanSandboxUsesRepoDefaultIdentityWhenConfigEmpty(t *testing.T) {
 	if !podmanAvailable(t) {
 		return
 	}

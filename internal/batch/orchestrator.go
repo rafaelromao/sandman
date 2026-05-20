@@ -566,18 +566,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
 	}
 
-	if cfg.Git.AuthorName != "" && cfg.Git.AuthorEmail != "" {
-		for _, kv := range []struct{ key, value string }{
-			{"user.name", cfg.Git.AuthorName},
-			{"user.email", cfg.Git.AuthorEmail},
-		} {
-			cmd := fmt.Sprintf("git config %s %s", kv.key, shellQuote(kv.value))
-			if err := wt.Exec(ctx, cmd, io.Discard, io.Discard); err != nil {
-				return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch, DebugInfo: fmt.Sprintf("git config %s: %v", kv.key, err)}
-			}
-		}
-	}
-
 	activeMu.Lock()
 	activeRuns[num] = wt
 	activeMu.Unlock()
@@ -594,6 +582,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	runnable := factory.NewRunnable(issue, branch, wt)
 	if agentRun, ok := runnable.(*AgentRun); ok {
 		agentRun.env = agentCfg.Env
+		agentRun.env = applyGitIdentityEnv(agentRun.env, cfg)
 		agentRun.preset = agentCfg.Preset
 		agentRun.model = agentCfg.Model
 		agentRun.defaultBranch = cfg.Git.DefaultBranch
@@ -682,6 +671,28 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		}
 	}
 	return result
+}
+
+func applyGitIdentityEnv(env map[string]string, cfg *config.Config) map[string]string {
+	name := strings.TrimSpace(cfg.Git.AuthorName)
+	email := strings.TrimSpace(cfg.Git.AuthorEmail)
+	if name == "" || email == "" {
+		return env
+	}
+	merged := make(map[string]string, len(env)+9)
+	for k, v := range env {
+		merged[k] = v
+	}
+	merged["GIT_AUTHOR_NAME"] = name
+	merged["GIT_AUTHOR_EMAIL"] = email
+	merged["GIT_COMMITTER_NAME"] = name
+	merged["GIT_COMMITTER_EMAIL"] = email
+	merged["GIT_CONFIG_COUNT"] = "2"
+	merged["GIT_CONFIG_KEY_0"] = "user.name"
+	merged["GIT_CONFIG_VALUE_0"] = name
+	merged["GIT_CONFIG_KEY_1"] = "user.email"
+	merged["GIT_CONFIG_VALUE_1"] = email
+	return merged
 }
 
 func slugify(title string) string {

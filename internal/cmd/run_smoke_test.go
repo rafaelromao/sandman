@@ -354,8 +354,12 @@ func warmSmokeRuntime(t *testing.T, runtime string) {
 }
 
 func writeSmokeGitConfig(homeDir, remoteDir string) error {
-	gitConfig := fmt.Sprintf("[user]\n\tname = Smoke\n\temail = smoke@example.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
-	return os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfig), 0644)
+	gitConfig := fmt.Sprintf("[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
+	gitConfigDir := filepath.Join(homeDir, ".config", "git")
+	if err := os.MkdirAll(gitConfigDir, 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(gitConfigDir, "config"), []byte(gitConfig), 0644)
 }
 
 func copySmokeAuthLayout(t *testing.T, realHome, tempHome string, paths []string) bool {
@@ -492,7 +496,15 @@ func customizeSmokeConfig(repoDir, provider, opencodeModel string) error {
 		return err
 	}
 	if provider == "opencode" {
-		resolved.Command = fmt.Sprintf(`opencode run --pure -m %s "$(cat {{.PromptFile}})"`, opencodeModel)
+		resolved.Command = strings.Join([]string{
+			`test "$GIT_AUTHOR_NAME" = "Sandman"`,
+			`test "$GIT_AUTHOR_EMAIL" = "sandman.support@gmail.com"`,
+			`test "$GIT_COMMITTER_NAME" = "Sandman"`,
+			`test "$GIT_COMMITTER_EMAIL" = "sandman.support@gmail.com"`,
+			`test "$(git config user.name)" = "Sandman"`,
+			`test "$(git config user.email)" = "sandman.support@gmail.com"`,
+			fmt.Sprintf(`opencode run --pure -m %s "$(cat {{.PromptFile}})"`, opencodeModel),
+		}, " && ")
 		for _, dir := range []string{"~/.cache/opencode", "~/.cache/opencode/bin"} {
 			if !containsSmokePath(resolved.ConfigDirs, dir) {
 				resolved.ConfigDirs = append(resolved.ConfigDirs, dir)
@@ -562,10 +574,17 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 	t.Helper()
 
 	startOpts := sandbox.StartOptions{
-		GitConfigPath: filepath.Join(homeDir, ".gitconfig"),
-		UserID:        fmt.Sprintf("%d", os.Getuid()),
-		SSH:           true,
-		RemoteScheme:  "ssh",
+		UserID:       fmt.Sprintf("%d", os.Getuid()),
+		SSH:          true,
+		RemoteScheme: "ssh",
+	}
+	gitConfigPath := filepath.Join(homeDir, ".gitconfig")
+	if _, err := os.Stat(gitConfigPath); err == nil {
+		startOpts.GitConfigPath = gitConfigPath
+	}
+	gitConfigDir := filepath.Join(homeDir, ".config", "git")
+	if _, err := os.Stat(gitConfigDir); err == nil {
+		startOpts.AgentConfigDirs = append(startOpts.AgentConfigDirs, gitConfigDir)
 	}
 	for _, rel := range authPaths {
 		path := homePath(homeDir, rel)
