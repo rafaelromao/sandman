@@ -756,7 +756,7 @@ func resolveNodeVersionChoice(choice, hint string, hintFound bool) (string, erro
 		if !hintFound {
 			return "", fmt.Errorf("no repo Node version hint found")
 		}
-		return resolveMiseNodeVersion(normalizeNodeVersionSelector(hint))
+		return resolveNodeVersionHint(hint)
 	case "latest", "lts":
 		if strings.ToLower(choice) == "latest" {
 			return resolveMiseNodeVersion("latest")
@@ -773,6 +773,26 @@ func resolveNodeVersionChoice(choice, hint string, hintFound bool) (string, erro
 	}
 
 	return resolveMiseNodeVersion(choice)
+}
+
+func resolveNodeVersionHint(hint string) (string, error) {
+	hint = normalizeNodeVersionSelector(hint)
+	switch strings.ToLower(hint) {
+	case "latest":
+		return resolveMiseNodeVersion("latest")
+	case "lts":
+		latest, err := resolveMiseNodeVersion("latest")
+		if err != nil {
+			return "", err
+		}
+		prefix, err := nodePreviousMajorPrefix(latest)
+		if err != nil {
+			return "", err
+		}
+		return resolveMiseNodeVersion(prefix)
+	}
+
+	return resolveMiseNodeVersion(hint)
 }
 
 func normalizeNodeVersionSelector(selector string) string {
