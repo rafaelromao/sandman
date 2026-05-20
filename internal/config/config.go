@@ -102,8 +102,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		DisplayName: "Codex",
 		Command:     `codex exec{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 		ConfigDirs: []string{
-			"~/.config/codex",
-			"~/.local/share/codex",
+			"~/.codex",
 		},
 	},
 	"pi": {

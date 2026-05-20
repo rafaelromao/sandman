@@ -270,7 +270,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 			key:          "codex",
 			wantDisplay:  "Codex",
 			wantCommand:  `codex exec{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
-			wantDirs:     []string{"~/.config/codex", "~/.local/share/codex"},
+			wantDirs:     []string{"~/.codex"},
 			wantFiles:    nil,
 			wantKeychain: false,
 		},
@@ -355,6 +355,23 @@ func TestResolveAgentProvider_IncludesConfigFiles(t *testing.T) {
 
 	if len(agent.ConfigDirs) != 1 || agent.ConfigDirs[0] != "~/.claude" {
 		t.Errorf("ConfigDirs: got %v, want [\"~/.claude\"]", agent.ConfigDirs)
+	}
+}
+
+func TestResolveAgentProvider_CodexUsesOfficialLayout(t *testing.T) {
+	cfg := &Config{}
+
+	agent, err := cfg.ResolveAgentProvider("codex")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantDirs := []string{"~/.codex"}
+	if !reflect.DeepEqual(agent.ConfigDirs, wantDirs) {
+		t.Errorf("ConfigDirs: got %v, want %v", agent.ConfigDirs, wantDirs)
+	}
+	if len(agent.ConfigFiles) != 0 {
+		t.Errorf("ConfigFiles: got %v, want empty", agent.ConfigFiles)
 	}
 }
 

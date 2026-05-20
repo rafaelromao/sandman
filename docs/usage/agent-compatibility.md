@@ -25,7 +25,7 @@ Sandman does not hardcode default models for built-in agents because those defau
 |--------|----------|-----------|---------------|-------------------|
 | `opencode` | Yes | Yes | No | `~/.config/opencode`, `~/.local/share/opencode` |
 | `claude-code` | Yes | Yes | No | `~/.claude`, `~/.claude.json` |
-| `codex` | Yes | Yes | No | `~/.config/codex`, `~/.local/share/codex` |
+| `codex` | Yes | Yes | No | `~/.codex` |
 | `pi` | Yes | Yes | No | `~/.pi` |
 
 All four presets support both worktree and container-backed sandboxing.
