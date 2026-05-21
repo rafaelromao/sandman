@@ -26,7 +26,7 @@ func (f *fakePrompter) Select(msg string, options []string) (string, error) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "node", "python", "ruby"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -281,6 +281,55 @@ func TestScaffold_ResolvesNodeVersionSelectors(t *testing.T) {
 	}
 }
 
+func TestScaffold_ResolvesRubyVersionSelectors(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector string
+		wantPin  string
+	}{
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "repo", selector: "repo"},
+		{name: "shorthand", selector: "3.3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte("3.3.0\n"), 0644); err != nil {
+				t.Fatalf("write .ruby-version: %v", err)
+			}
+
+			s := &Scaffolder{}
+			resolvedPin, err := s.resolveRubyVersion(dir, tt.selector, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve ruby version: %v", err)
+			}
+
+			wantPin := tt.wantPin
+			if wantPin == "" {
+				wantPin = resolvedPin
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "ruby", Agent: "codex", ToolVersion: tt.selector}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman ruby-version: "+wantPin) {
+				t.Fatalf("Dockerfile missing ruby pin %q, got:\n%s", wantPin, content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin ruby@"+wantPin) {
+				t.Fatalf("Dockerfile missing ruby install pin %q, got:\n%s", wantPin, content)
+			}
+		})
+	}
+}
+
 func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoGoHints(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
@@ -309,6 +358,23 @@ func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoPythonHints(t *testing.T) 
 	latest, err := s.resolvePythonVersion(dir, "latest", &fakePrompter{confirm: true})
 	if err != nil {
 		t.Fatalf("resolvePythonVersion with latest selector: %v", err)
+	}
+	if version != latest {
+		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
+	}
+}
+
+func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoRubyHints(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	version, err := s.resolveRubyVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveRubyVersion with repo selector: %v", err)
+	}
+	latest, err := s.resolveRubyVersion(dir, "latest", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveRubyVersion with latest selector: %v", err)
 	}
 	if version != latest {
 		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
@@ -410,6 +476,50 @@ func TestScaffold_AllAgentPresets_GenerateGoPresetFiles(t *testing.T) {
 	}
 }
 
+func TestScaffold_AllAgentPresets_GenerateRubyPresetFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+			wantRubyVersion, err := s.resolveRubyVersion(dir, "", &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve ruby version: %v", err)
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "ruby", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.BuildTools != "ruby" {
+				t.Errorf("expected build tools %q, got %q", "ruby", cfg.BuildTools)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman build-tools: ruby") {
+				t.Fatalf("Dockerfile missing ruby build-tools metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "# sandman ruby-version: "+wantRubyVersion) {
+				t.Fatalf("Dockerfile missing ruby version metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin ruby@"+wantRubyVersion) {
+				t.Fatalf("Dockerfile missing pinned ruby install %q, got:\n%s", wantRubyVersion, content)
+			}
+			if !strings.Contains(content, " gh ") {
+				t.Fatalf("Dockerfile missing gh shared package, got:\n%s", content)
+			}
+		})
+	}
+}
+
 func TestScaffold_UnknownBuildToolsPreset_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
@@ -473,6 +583,46 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	}
 	if got, want := string(promptData), prompt.DefaultPrompt(); got != want {
 		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestScaffold_RubyPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte("3.3.0\n"), 0644); err != nil {
+		t.Fatalf("write .ruby-version: %v", err)
+	}
+
+	s := &Scaffolder{}
+	wantRubyVersion, err := s.resolveRubyVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve ruby version: %v", err)
+	}
+
+	err = s.Scaffold(dir, Options{Agent: "opencode"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: ruby") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman ruby-version: "+wantRubyVersion) {
+		t.Fatalf("Dockerfile missing ruby-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin ruby@"+wantRubyVersion) {
+		t.Fatalf("Dockerfile missing pinned ruby install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
 }
 
@@ -603,6 +753,59 @@ func TestScaffold_NodeRepoAutoDetect(t *testing.T) {
 				_ = os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("node 20\n"), 0644)
 			},
 			want: "node",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			s := &Scaffolder{}
+			preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve build tools preset: %v", err)
+			}
+			if preset.Name != tt.want {
+				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
+			}
+		})
+	}
+}
+
+func TestScaffold_RubyRepoAutoDetect(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    string
+	}{
+		{
+			name: "ruby-version",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte("3.3.0\n"), 0644)
+			},
+			want: "ruby",
+		},
+		{
+			name: "Gemfile",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\nruby '3.3.0'\n"), 0644)
+			},
+			want: "ruby",
+		},
+		{
+			name: "tool-versions",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("ruby 3.3.0\n"), 0644)
+			},
+			want: "ruby",
+		},
+		{
+			name: "Gemfile.lock",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, "Gemfile.lock"), []byte("RUBY VERSION\n   ruby 3.3.0p0\n"), 0644)
+			},
+			want: "ruby",
 		},
 	}
 
