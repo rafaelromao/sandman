@@ -420,8 +420,8 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
-		t.Fatalf("expected worktree to be removed, got: %v", err)
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected worktree to remain, got: %v", err)
 	}
 }
 
@@ -958,12 +958,11 @@ func TestRun_WorktreeSandboxSingleIssuePreservesWorktreeOnFailure(t *testing.T) 
 		t.Fatalf("expected batch failure, got: %v", err)
 	}
 
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected failure output with at least two lines, got:\n%s", out)
+	if !strings.Contains(out, "Summary: 0 succeeded, 1 failed") {
+		t.Fatalf("expected failure summary, got:\n%s", out)
 	}
-	if got, want := strings.Join(lines[:2], "\n"), "Summary: 0 succeeded, 1 failed\n  #42  failure  sandman/42-fix-bug"; got != want {
-		t.Fatalf("expected failure output %q, got %q", want, got)
+	if !strings.Contains(out, "worktree: .sandman/worktrees/sandman/42-fix-bug") {
+		t.Fatalf("expected worktree hint, got:\n%s", out)
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
@@ -1000,7 +999,6 @@ Priority: {{PRIORITY}}
 
 	out, err := executeRunCommand(t, deps,
 		"--sandbox", "worktree",
-		"--preserve",
 		"--prompt", promptTemplate,
 		"--prompt-arg", "PRIORITY=urgent",
 		"42",
@@ -1014,6 +1012,9 @@ Priority: {{PRIORITY}}
 	}
 	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
 		t.Fatalf("expected branch string in summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "worktree: .sandman/worktrees/sandman/42-fix-bug") {
+		t.Fatalf("expected worktree hint, got:\n%s", out)
 	}
 
 	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug", ".sandman", "rendered-prompt.md")
@@ -1233,13 +1234,16 @@ git log --format="%an <%ae>" -1
 `
 	deps := podmanGitIdentityDeps(t, dir, remoteDir, agentCmd, "Sandman", "sandman@test.com")
 
-	out, err := executeRunCommand(t, deps, "--preserve", "42")
+	out, err := executeRunCommand(t, deps, "42")
 	if err != nil {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
 	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
 		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "worktree: .sandman/worktrees/sandman/42-fix-bug") {
+		t.Fatalf("expected worktree hint, got:\n%s", out)
 	}
 
 	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
@@ -1298,12 +1302,15 @@ git log --format="%an <%ae>" -1
 		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 	}})
 
-	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "--preserve", "42")
+	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "42")
 	if err != nil {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
 		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "worktree: .sandman/worktrees/sandman/42-fix-bug") {
+		t.Fatalf("expected worktree hint, got:\n%s", out)
 	}
 
 	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")

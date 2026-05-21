@@ -436,7 +436,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg, agentCfg, req.Preserve, req.Debug, req.Branches, req.Interactive, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
+			res := o.runSingle(ctx, issueNum, cfg, agentCfg, req.Branches, req.Interactive, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
 			mu.Lock()
 			results[idx] = res
 			statuses[issueNum] = res.Status
@@ -546,7 +546,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, preserve bool, debug bool, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
@@ -646,10 +646,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, interactive, renderCfg)
 
-	worktreeState := "deleted"
-	if result.Status == "failure" || preserve {
-		worktreeState = "preserved"
-	}
+	worktreeState := "preserved"
 
 	if o.eventLog != nil {
 		_ = o.eventLog.Log(events.Event{
@@ -665,21 +662,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		})
 	}
 
-	if debug && result.Status == "failure" {
-		result.DebugInfo = fmt.Sprintf("Debug: worktree preserved at %s\nRun: cd %s && sh\n", wt.WorkDir(), wt.WorkDir())
-	}
-
-	if ctx.Err() == nil && result.Status != "failure" && !preserve {
-		if err := wt.Stop(); err != nil && o.eventLog != nil {
-			_ = o.eventLog.Log(events.Event{
-				Type:      "run.warning",
-				Timestamp: time.Now(),
-				RunID:     runID,
-				Issue:     num,
-				Payload:   map[string]any{"message": err.Error()},
-			})
-		}
-	}
 	return result
 }
 

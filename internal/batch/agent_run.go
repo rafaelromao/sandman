@@ -151,8 +151,9 @@ func (r *AgentRun) modelFlag(command string) string {
 // Result returns the current outcome of the AgentRun.
 func (r *AgentRun) Result() AgentRunResult {
 	return AgentRunResult{
-		IssueNumber: r.issue.Number,
-		Status:      r.status,
-		Branch:      r.branch,
+		IssueNumber:  r.issue.Number,
+		Status:       r.status,
+		Branch:       r.branch,
+		WorktreePath: r.sandbox.WorkDir(),
 	}
 }
