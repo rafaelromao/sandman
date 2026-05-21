@@ -25,6 +25,8 @@ const nodeBuildToolsPreset = "node"
 
 const pythonBuildToolsPreset = "python"
 
+const javaBuildToolsPreset = "java"
+
 const DefaultMISEVersion = "v2026.5.8"
 
 // Options configures the scaffolding behavior.
@@ -143,6 +145,29 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		},
 		MiseVersion: DefaultMISEVersion,
 	},
+	javaBuildToolsPreset: {
+		Name:      javaBuildToolsPreset,
+		BaseImage: "debian:bookworm-slim",
+		SharedPackages: []string{
+			"bash",
+			"build-essential",
+			"ca-certificates",
+			"curl",
+			"file",
+			"gh",
+			"git",
+			"gradle",
+			"maven",
+			"nodejs",
+			"npm",
+			"openssh-client",
+			"python3",
+			"python3-pip",
+			"unzip",
+			"xz-utils",
+		},
+		MiseVersion: DefaultMISEVersion,
+	},
 }
 
 // DefaultBuiltInAgentVersion returns the latest bundled version pin for a built-in agent.
@@ -196,6 +221,18 @@ var bundledPythonVersionCatalog = map[string]string{
 	"3.9":    "3.9.21",
 }
 
+var bundledJavaVersionCatalog = map[string]string{
+	"latest": "25.0.1",
+	"lts":    "21.0.8",
+	"25":     "25.0.1",
+	"24":     "24.0.2",
+	"23":     "23.0.2",
+	"22":     "22.0.2",
+	"21":     "21.0.8",
+	"17":     "17.0.16",
+	"11":     "11.0.28",
+}
+
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
 
@@ -232,9 +269,15 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	goVersion := ""
 	nodeVersion := ""
 	pythonVersion := ""
+	javaVersion := ""
 	agentVersion := DefaultBuiltInAgentVersion(agent)
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == javaBuildToolsPreset {
+		javaVersion, err = s.resolveJavaVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
 			return err
 		}
@@ -279,7 +322,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, nodeVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, nodeVersion, pythonVersion, javaVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -308,6 +351,22 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 	if name == "" {
 		if hasGoRepoHint(repoRoot) {
 			name = goBuildToolsPreset
+		} else if hasJavaRepoHint(repoRoot) {
+			if p != nil {
+				options := []string{javaBuildToolsPreset}
+				for _, preset := range KnownBuildToolsPresets {
+					if preset != javaBuildToolsPreset {
+						options = append(options, preset)
+					}
+				}
+				selected, err := p.Select("Choose a build tools preset:", options)
+				if err == nil {
+					name = strings.ToLower(strings.TrimSpace(selected))
+				}
+			}
+			if name == "" {
+				name = javaBuildToolsPreset
+			}
 		} else if hasNodeRepoHint(repoRoot) {
 			if p != nil {
 				options := []string{nodeBuildToolsPreset}
@@ -348,6 +407,15 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 func hasGoRepoHint(repoRoot string) bool {
 	_, found, err := readGoVersionHint(repoRoot)
 	return err == nil && found
+}
+
+func hasJavaRepoHint(repoRoot string) bool {
+	for _, rel := range []string{"pom.xml", "build.gradle", "build.gradle.kts"} {
+		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func hasNodeRepoHint(repoRoot string) bool {
@@ -505,6 +573,135 @@ func resolveNodeVersionChoice(choice, hint string, hintFound bool) (string, erro
 	return resolveMiseNodeVersion(choice)
 }
 
+func (s *Scaffolder) resolveJavaVersion(repoRoot, selector string, p Prompter) (string, error) {
+	hint, found, err := readJavaVersionHint(repoRoot)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if p != nil {
+				selected, err := p.Select(fmt.Sprintf("Choose a Java version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = normalizeJavaVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if p != nil {
+				selected, err := p.Select("Choose a Java version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = normalizeJavaVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	resolved, err := resolveJavaVersionChoice(choice, hint, found)
+	if err != nil {
+		return "", fmt.Errorf("resolve java version: %w", err)
+	}
+	return resolved, nil
+}
+
+func resolveJavaVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = normalizeJavaVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Java version hint found")
+		}
+		return resolveMiseJavaVersion(normalizeJavaVersionSelector(hint))
+	case "latest", "lts":
+		return resolveMiseJavaVersion(choice)
+	}
+
+	return resolveMiseJavaVersion(choice)
+}
+
+var javaVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
+
+func normalizeJavaVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return ""
+	}
+	lower := strings.ToLower(selector)
+	switch {
+	case lower == "repo", lower == "latest", lower == "lts":
+		return lower
+	case strings.HasPrefix(lower, "java") && len(selector) > 4 && selector[4] >= '0' && selector[4] <= '9':
+		return selector[4:]
+	case strings.HasPrefix(lower, "jdk") && len(selector) > 3 && selector[3] >= '0' && selector[3] <= '9':
+		return selector[3:]
+	case strings.HasPrefix(lower, "openjdk") && len(selector) > 7 && selector[7] >= '0' && selector[7] <= '9':
+		return selector[7:]
+	case strings.HasPrefix(lower, "v") && len(selector) > 1 && selector[1] >= '0' && selector[1] <= '9':
+		return selector[1:]
+	}
+	if version := javaVersionSelectorPattern.FindString(selector); version != "" {
+		return version
+	}
+	return selector
+}
+
+func resolveMiseJavaVersion(selector string) (string, error) {
+	selector = normalizeJavaVersionSelector(selector)
+	args := []string{"latest"}
+	switch strings.ToLower(selector) {
+	case "", "latest":
+		args = append(args, "java")
+	case "lts":
+		args = append(args, "java@lts")
+	default:
+		args = append(args, "java@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledJavaVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledJavaVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := bundledJavaVersionCatalog["lts"]; ok {
+			return version, nil
+		}
+	}
+	if selector != "" && selector != "latest" && selector != "lts" && javaVersionSelectorPattern.MatchString(selector) {
+		return selector, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve java version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve java version %q: mise returned empty output and no bundled fallback", selector)
+}
+
 var nodeVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
 
 func normalizeNodeVersionSelector(selector string) string {
@@ -569,6 +766,54 @@ func resolveMiseNodeVersion(selector string) (string, error) {
 		return "", fmt.Errorf("resolve node version %q: %w", selector, err)
 	}
 	return "", fmt.Errorf("resolve node version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func readJavaVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{"pom.xml", "build.gradle", "build.gradle.kts"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Java version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseJavaVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseJavaVersionHint(name string, data []byte) (string, bool) {
+	switch name {
+	case "pom.xml":
+		for _, key := range []string{"maven.compiler.release", "java.version", "maven.compiler.source", "maven.compiler.target", "jdk.version"} {
+			pattern := regexp.MustCompile(`(?is)<` + regexp.QuoteMeta(key) + `>\s*([^<]+?)\s*</` + regexp.QuoteMeta(key) + `>`)
+			if match := pattern.FindSubmatch(data); len(match) == 2 {
+				if version := strings.TrimSpace(string(match[1])); version != "" {
+					return version, true
+				}
+			}
+		}
+	default:
+		patterns := []*regexp.Regexp{
+			regexp.MustCompile(`(?i)JavaLanguageVersion\.of\(\s*([0-9]+(?:\.[0-9]+)?)\s*\)`),
+			regexp.MustCompile(`(?i)jvmToolchain\(\s*([0-9]+(?:\.[0-9]+)?)\s*\)`),
+			regexp.MustCompile(`(?i)sourceCompatibility\s*=\s*(?:JavaVersion\.)?VERSION_?([0-9]+(?:\.[0-9]+)?)`),
+			regexp.MustCompile(`(?i)targetCompatibility\s*=\s*(?:JavaVersion\.)?VERSION_?([0-9]+(?:\.[0-9]+)?)`),
+			regexp.MustCompile(`(?i)sourceCompatibility\s*=\s*['\"]?([0-9]+(?:\.[0-9]+)?)['\"]?`),
+			regexp.MustCompile(`(?i)targetCompatibility\s*=\s*['\"]?([0-9]+(?:\.[0-9]+)?)['\"]?`),
+		}
+		for _, pattern := range patterns {
+			if match := pattern.FindSubmatch(data); len(match) == 2 {
+				if version := strings.TrimSpace(string(match[1])); version != "" {
+					return version, true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 func normalizeGoVersionSelector(selector string) string {
@@ -758,12 +1003,15 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, nodeVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, nodeVersion, pythonVersion, javaVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman agent-provider: %s\n", agent)
 	if preset.Name == goBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman go-version: %s\n", goVersion)
+	}
+	if preset.Name == javaBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman java-version: %s\n", javaVersion)
 	}
 	if preset.Name == nodeBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman node-version: %s\n", nodeVersion)
@@ -787,6 +1035,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 		out.WriteString("ENV GOPATH=\"/.local/share/go\"\n")
 		out.WriteString("ENV GOMODCACHE=\"/.cache/go/pkg/mod\"\n")
 		out.WriteString(renderGoInstallCommand(goVersion))
+	}
+	if preset.Name == javaBuildToolsPreset {
+		out.WriteString(renderJavaInstallCommand(javaVersion))
 	}
 	if preset.Name == nodeBuildToolsPreset {
 		out.WriteString(renderNodeInstallCommand(nodeVersion))
@@ -1082,6 +1333,16 @@ func renderPythonInstallCommand(version string) string {
 	return out.String()
 }
 
+func renderJavaInstallCommand(version string) string {
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("RUN mise use -g --pin java@%s\n", version))
+	out.WriteString(fmt.Sprintf("ENV JAVA_HOME=\"/usr/local/share/mise/installs/java/%s\"\n", version))
+	out.WriteString("ENV PATH=\"$JAVA_HOME/bin:$PATH\"\n")
+	out.WriteString("RUN mvn -v\n")
+	out.WriteString("RUN gradle -v\n")
+	return out.String()
+}
+
 func renderAgentInstallCommand(agent, version string) string {
 	switch agent {
 	case "opencode":
@@ -1126,6 +1387,7 @@ type dockerfileMetadata struct {
 	BuildToolsPreset string
 	AgentProvider    string
 	GoVersion        string
+	JavaVersion      string
 	NodeVersion      string
 	PythonVersion    string
 	ToolVersion      string
@@ -1180,6 +1442,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.ToolVersion = strings.TrimSpace(value)
 		case "go-version":
 			meta.GoVersion = strings.TrimSpace(value)
+		case "java-version":
+			meta.JavaVersion = strings.TrimSpace(value)
 		case "node-version":
 			meta.NodeVersion = strings.TrimSpace(value)
 		case "python-version":

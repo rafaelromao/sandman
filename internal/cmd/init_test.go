@@ -256,6 +256,55 @@ func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
 	}
 }
 
+func TestInit_DefaultsToJavaPresetForJavaRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>"), 0644); err != nil {
+		t.Fatalf("write pom.xml: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: java") {
+		t.Fatalf("config missing java build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: java") {
+		t.Fatalf("Dockerfile missing java build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin java@") {
+		t.Fatalf("Dockerfile missing pinned java install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "ENV JAVA_HOME=\"/usr/local/share/mise/installs/java/") {
+		t.Fatalf("Dockerfile missing JAVA_HOME, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mvn -v") {
+		t.Fatalf("Dockerfile missing maven check, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN gradle -v") {
+		t.Fatalf("Dockerfile missing gradle check, got:\n%s", dockerfile)
+	}
+}
+
 func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -292,6 +341,33 @@ func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
 	}
 	if !strings.Contains(dockerfile, "RUN corepack enable") {
 		t.Fatalf("Dockerfile missing corepack enable, got:\n%s", dockerfile)
+	}
+}
+
+func TestInit_ExplicitGenericOverridesJavaRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "build.gradle.kts"), []byte("java { toolchain { languageVersion.set(JavaLanguageVersion.of(21)) } }"), 0644); err != nil {
+		t.Fatalf("write build.gradle.kts: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: generic") {
+		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
 	}
 }
 
