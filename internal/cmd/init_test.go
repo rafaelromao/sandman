@@ -209,6 +209,55 @@ func TestInit_DefaultsToPythonPresetForPythonRepo(t *testing.T) {
 	}
 }
 
+func TestInit_DefaultsToRustPresetForRustRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\nrust-version = \"1.85\"\n"), 0644); err != nil {
+		t.Fatalf("write Cargo.toml: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: rust") {
+		t.Fatalf("config missing rust build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: rust") {
+		t.Fatalf("Dockerfile missing rust build-tools metadata, got:\n%s", dockerfile)
+	}
+	var rustVersion string
+	for _, line := range strings.Split(dockerfile, "\n") {
+		if strings.HasPrefix(line, "# sandman rust-version: ") {
+			rustVersion = strings.TrimSpace(strings.TrimPrefix(line, "# sandman rust-version: "))
+			break
+		}
+	}
+	if rustVersion == "" {
+		t.Fatalf("Dockerfile missing rust-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin rust@"+rustVersion) {
+		t.Fatalf("Dockerfile missing pinned rust install, got:\n%s", dockerfile)
+	}
+}
+
 func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -301,6 +350,33 @@ func TestInit_ExplicitGenericOverridesNodeRepoHint(t *testing.T) {
 
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
 		t.Fatalf("write package.json: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: generic") {
+		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
+	}
+}
+
+func TestInit_ExplicitGenericOverridesRustRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\nrust-version = \"1.85\"\n"), 0644); err != nil {
+		t.Fatalf("write Cargo.toml: %v", err)
 	}
 
 	var out bytes.Buffer
