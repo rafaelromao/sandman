@@ -50,10 +50,12 @@ Override both fields with `sandman config set` if you want a project-specific id
 The `init` command interactively prompts you for:
 
 - **Agent preset** — which built-in agent to configure (opencode, claude-code, codex, pi)
-- **Build tools preset** — language-specific tooling for the container image (generic, go, node, or python)
+- **Build tools preset** — container tooling preset (generic, go, node, python, or elixir)
 - **Tool version** — version selector for the build toolchain
 
-Sandman auto-detects repo hints and defaults to the matching BuildToolsPreset when it finds Go, Node, or Python project files; otherwise it falls back to `generic`.
+Sandman auto-detects repo hints and defaults to the matching BuildToolsPreset when it finds Go, Elixir, Node, or Python project files; otherwise it falls back to `generic`.
+
+Elixir scaffolding pins both Elixir and a compatible Erlang/OTP version at init time, preferring repo-declared hints when they exist.
 
 You can skip the prompts by passing flags:
 
