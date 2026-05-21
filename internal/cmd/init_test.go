@@ -295,6 +295,71 @@ func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
 	}
 }
 
+func TestInit_DefaultsToElixirPresetForElixirRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule Demo.MixProject do
+  use Mix.Project
+
+  def project do
+    [
+      app: :demo,
+      version: "0.1.0",
+      elixir: "~> 1.18"
+    ]
+  end
+end
+`), 0644); err != nil {
+		t.Fatalf("write mix.exs: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: elixir") {
+		t.Fatalf("config missing elixir build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: elixir") {
+		t.Fatalf("Dockerfile missing elixir build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman elixir-version:") {
+		t.Fatalf("Dockerfile missing elixir-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman erlang-version:") {
+		t.Fatalf("Dockerfile missing erlang-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin elixir@") {
+		t.Fatalf("Dockerfile missing pinned elixir install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin erlang@") {
+		t.Fatalf("Dockerfile missing pinned erlang install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mix local.hex --force") {
+		t.Fatalf("Dockerfile missing hex install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mix local.rebar --force") {
+		t.Fatalf("Dockerfile missing rebar install, got:\n%s", dockerfile)
+	}
+}
+
 func TestInit_ExplicitGenericOverridesNodeRepoHint(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

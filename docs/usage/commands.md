@@ -10,11 +10,11 @@ sandman init [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--build-tools` | `""` | Build tools preset (`generic`, `go`, `node`, `python`) |
+| `--build-tools` | `""` | Build tools preset (`generic`, `go`, `node`, `python`, `elixir`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
 | `--agent` | `""` | Built-in agent preset (`opencode`, `claude-code`, `codex`, `pi`) |
 
-When `--tool-version` is omitted, `init` infers `repo` as the version selector, reading version hints from the repo when available. If flags are completely omitted and no repo hints are found, interactive prompts guide you through the choices.
+When `--tool-version` is omitted, `init` infers `repo` as the version selector, reading version hints from the repo when available. Elixir scaffolds pin both Elixir and a compatible Erlang/OTP version. If flags are completely omitted and no repo hints are found, interactive prompts guide you through the choices.
 
 ## `sandman run`
 

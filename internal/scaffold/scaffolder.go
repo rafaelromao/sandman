@@ -25,6 +25,8 @@ const nodeBuildToolsPreset = "node"
 
 const pythonBuildToolsPreset = "python"
 
+const elixirBuildToolsPreset = "elixir"
+
 const DefaultMISEVersion = "v2026.5.8"
 
 // Options configures the scaffolding behavior.
@@ -143,6 +145,27 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		},
 		MiseVersion: DefaultMISEVersion,
 	},
+	elixirBuildToolsPreset: {
+		Name:      elixirBuildToolsPreset,
+		BaseImage: "debian:bookworm-slim",
+		SharedPackages: []string{
+			"bash",
+			"build-essential",
+			"ca-certificates",
+			"curl",
+			"file",
+			"gh",
+			"git",
+			"nodejs",
+			"npm",
+			"openssh-client",
+			"python3",
+			"python3-pip",
+			"unzip",
+			"xz-utils",
+		},
+		MiseVersion: DefaultMISEVersion,
+	},
 }
 
 // DefaultBuiltInAgentVersion returns the latest bundled version pin for a built-in agent.
@@ -196,6 +219,23 @@ var bundledPythonVersionCatalog = map[string]string{
 	"3.9":    "3.9.21",
 }
 
+var bundledElixirVersionCatalog = map[string]string{
+	"latest": "1.19.5",
+	"1.19":   "1.19.5",
+	"1.18":   "1.18.4",
+	"1.17":   "1.17.3",
+	"1.16":   "1.16.3",
+	"1.15":   "1.15.8",
+}
+
+var bundledErlangVersionCatalog = map[string]string{
+	"28": "28.1.1",
+	"27": "27.3.4",
+	"26": "26.2.5",
+	"25": "25.3.2",
+	"24": "24.3.4",
+}
+
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
 
@@ -232,9 +272,16 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	goVersion := ""
 	nodeVersion := ""
 	pythonVersion := ""
+	elixirVersion := ""
+	erlangVersion := ""
 	agentVersion := DefaultBuiltInAgentVersion(agent)
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == elixirBuildToolsPreset {
+		elixirVersion, erlangVersion, err = s.resolveElixirVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
 			return err
 		}
@@ -279,7 +326,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, nodeVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -308,6 +355,22 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 	if name == "" {
 		if hasGoRepoHint(repoRoot) {
 			name = goBuildToolsPreset
+		} else if hasElixirRepoHint(repoRoot) {
+			if p != nil {
+				options := []string{elixirBuildToolsPreset}
+				for _, preset := range KnownBuildToolsPresets {
+					if preset != elixirBuildToolsPreset {
+						options = append(options, preset)
+					}
+				}
+				selected, err := p.Select("Choose a build tools preset:", options)
+				if err == nil {
+					name = strings.ToLower(strings.TrimSpace(selected))
+				}
+			}
+			if name == "" {
+				name = elixirBuildToolsPreset
+			}
 		} else if hasNodeRepoHint(repoRoot) {
 			if p != nil {
 				options := []string{nodeBuildToolsPreset}
@@ -370,6 +433,16 @@ func hasPythonRepoHint(repoRoot string) bool {
 		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
 			return true
 		}
+	}
+	return false
+}
+
+func hasElixirRepoHint(repoRoot string) bool {
+	if _, err := os.Stat(filepath.Join(repoRoot, "mix.exs")); err == nil {
+		return true
+	}
+	if _, found, err := readElixirVersionHint(repoRoot); err == nil && found {
+		return true
 	}
 	return false
 }
@@ -443,6 +516,278 @@ func resolveGoVersionChoice(choice, hint string, hintFound bool) (string, error)
 	}
 
 	return resolveMiseGoVersion(choice)
+}
+
+func (s *Scaffolder) resolveElixirVersion(repoRoot, selector string, p Prompter) (string, string, error) {
+	hint, found, err := readElixirVersionHint(repoRoot)
+	if err != nil {
+		return "", "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if p != nil {
+				selected, err := p.Select(fmt.Sprintf("Choose an Elixir version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = normalizeElixirVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if p != nil {
+				selected, err := p.Select("Choose an Elixir version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = normalizeElixirVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	elixirVersion, err := resolveElixirVersionChoice(choice, hint, found)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve elixir version: %w", err)
+	}
+
+	erlangSelector, err := compatibleErlangSelectorForElixir(elixirVersion)
+	if err != nil {
+		return "", "", err
+	}
+	erlangVersion, err := resolveMiseErlangVersion(erlangSelector)
+	if err != nil {
+		return "", "", err
+	}
+
+	return elixirVersion, erlangVersion, nil
+}
+
+func resolveElixirVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = normalizeElixirVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return resolveMiseElixirVersion("latest")
+		}
+		return resolveMiseElixirVersion(normalizeElixirVersionSelector(hint))
+	case "latest", "lts":
+		if strings.ToLower(choice) == "latest" {
+			return resolveMiseElixirVersion("latest")
+		}
+		latest, err := resolveMiseElixirVersion("latest")
+		if err != nil {
+			return "", err
+		}
+		prefix, err := elixirPreviousMinorPrefix(latest)
+		if err != nil {
+			return "", err
+		}
+		return resolveMiseElixirVersion(prefix)
+	}
+
+	return resolveMiseElixirVersion(choice)
+}
+
+var elixirVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
+
+var mixExsElixirVersionPattern = regexp.MustCompile(`(?m)^[^#\n]*\belixir:\s*["']([^"']+)["']`)
+
+func normalizeElixirVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return ""
+	}
+	lower := strings.ToLower(selector)
+	switch {
+	case lower == "repo", lower == "latest", lower == "lts":
+		return lower
+	case strings.HasPrefix(lower, "elixir") && len(selector) > 6 && selector[6] >= '0' && selector[6] <= '9':
+		return selector[6:]
+	case len(selector) > 1 && strings.HasPrefix(lower, "v") && selector[1] >= '0' && selector[1] <= '9':
+		return selector[1:]
+	}
+	if version := elixirVersionSelectorPattern.FindString(selector); version != "" {
+		return version
+	}
+	return selector
+}
+
+func resolveMiseElixirVersion(selector string) (string, error) {
+	selector = normalizeElixirVersionSelector(selector)
+	args := []string{"latest"}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		args = append(args, "elixir")
+	} else {
+		args = append(args, "elixir@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledElixirVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledElixirVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve elixir version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve elixir version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func resolveMiseErlangVersion(selector string) (string, error) {
+	selector = strings.TrimSpace(selector)
+	args := []string{"latest"}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		args = append(args, "erlang")
+	} else {
+		args = append(args, "erlang@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledErlangVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledErlangVersionCatalog["28"]; ok {
+			return version, nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve erlang version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve erlang version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func compatibleErlangSelectorForElixir(version string) (string, error) {
+	version = normalizeElixirVersionSelector(version)
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected Elixir version %q", version)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("parse Elixir major version %q: %w", version, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("parse Elixir minor version %q: %w", version, err)
+	}
+
+	switch {
+	case major > 1 || minor >= 20:
+		return "28", nil
+	case minor >= 17:
+		return "27", nil
+	case minor >= 15:
+		return "26", nil
+	case minor >= 13:
+		return "25", nil
+	default:
+		return "24", nil
+	}
+}
+
+func elixirPreviousMinorPrefix(version string) (string, error) {
+	version = normalizeElixirVersionSelector(version)
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected Elixir version %q", version)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("parse Elixir major version %q: %w", version, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("parse Elixir minor version %q: %w", version, err)
+	}
+	if minor == 0 {
+		return "", fmt.Errorf("unexpected Elixir version %q", version)
+	}
+	minor--
+
+	return fmt.Sprintf("%d.%d", major, minor), nil
+}
+
+func readElixirVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{".elixir-version", ".tool-versions", "mix.exs"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Elixir version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseElixirVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseElixirVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case ".elixir-version":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			return normalizeElixirVersionSelector(line), true
+		}
+	case ".tool-versions":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "elixir" {
+				return normalizeElixirVersionSelector(fields[1]), true
+			}
+		}
+	case "mix.exs":
+		matches := mixExsElixirVersionPattern.FindSubmatch(data)
+		if len(matches) == 2 {
+			if version := normalizeElixirVersionSelector(string(matches[1])); version != "" {
+				return version, true
+			}
+		}
+	}
+	return "", false
 }
 
 func (s *Scaffolder) resolveNodeVersion(repoRoot, selector string, p Prompter) (string, error) {
@@ -758,7 +1103,7 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, nodeVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman agent-provider: %s\n", agent)
@@ -770,6 +1115,10 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman python-version: %s\n", pythonVersion)
+	}
+	if preset.Name == elixirBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman elixir-version: %s\n", elixirVersion)
+		fmt.Fprintf(&out, "# sandman erlang-version: %s\n", erlangVersion)
 	}
 	fmt.Fprintf(&out, "# sandman tool-version: %s\n", agentVersion)
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
@@ -793,6 +1142,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
+	}
+	if preset.Name == elixirBuildToolsPreset {
+		out.WriteString(renderElixirInstallCommand(elixirVersion, erlangVersion))
 	}
 	out.WriteString(renderAgentInstallCommand(agent, agentVersion))
 	return out.String()
@@ -1082,6 +1434,15 @@ func renderPythonInstallCommand(version string) string {
 	return out.String()
 }
 
+func renderElixirInstallCommand(elixirVersion, erlangVersion string) string {
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("RUN mise use -g --pin erlang@%s\n", erlangVersion))
+	out.WriteString(fmt.Sprintf("RUN mise use -g --pin elixir@%s\n", elixirVersion))
+	out.WriteString("RUN mix local.hex --force\n")
+	out.WriteString("RUN mix local.rebar --force\n")
+	return out.String()
+}
+
 func renderAgentInstallCommand(agent, version string) string {
 	switch agent {
 	case "opencode":
@@ -1128,6 +1489,8 @@ type dockerfileMetadata struct {
 	GoVersion        string
 	NodeVersion      string
 	PythonVersion    string
+	ElixirVersion    string
+	ErlangVersion    string
 	ToolVersion      string
 	MiseVersion      string
 }
@@ -1184,6 +1547,10 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.NodeVersion = strings.TrimSpace(value)
 		case "python-version":
 			meta.PythonVersion = strings.TrimSpace(value)
+		case "elixir-version":
+			meta.ElixirVersion = strings.TrimSpace(value)
+		case "erlang-version":
+			meta.ErlangVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
 		}
