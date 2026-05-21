@@ -728,6 +728,21 @@ func TestScaffold_GoPresetTakesPriorityOverPython(t *testing.T) {
 	}
 }
 
+func TestScaffold_RustPresetTakesPriorityOverGo(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "rust-toolchain.toml"), []byte("[toolchain]\nchannel = \"1.85\"\n"), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "rust" {
+		t.Errorf("expected Rust preset to take priority over Go, got %q", preset.Name)
+	}
+}
+
 func TestScaffold_ResolvesRustVersionSelectors(t *testing.T) {
 	tests := []struct {
 		name     string

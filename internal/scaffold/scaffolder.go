@@ -347,10 +347,10 @@ func (s *Scaffolder) resolveAgent(opts Options, p Prompter) (string, error) {
 func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Prompter) (BuildToolsPreset, error) {
 	name := strings.ToLower(strings.TrimSpace(opts.BuildTools))
 	if name == "" {
-		if hasGoRepoHint(repoRoot) {
-			name = goBuildToolsPreset
-		} else if hasRustRepoHint(repoRoot) {
+		if hasRustRepoHint(repoRoot) {
 			name = rustBuildToolsPreset
+		} else if hasGoRepoHint(repoRoot) {
+			name = goBuildToolsPreset
 		} else if hasNodeRepoHint(repoRoot) {
 			if p != nil {
 				options := []string{nodeBuildToolsPreset}
@@ -679,7 +679,7 @@ func resolveRustVersionChoice(choice, hint string, hintFound bool) (string, erro
 			return "", fmt.Errorf("no repo Rust version hint found")
 		}
 		return resolveMiseRustVersion(normalizeRustVersionSelector(hint))
-	case "latest", "stable":
+	case "latest":
 		return resolveMiseRustVersion("latest")
 	case "lts":
 		latest, err := resolveMiseRustVersion("latest")
@@ -705,7 +705,7 @@ func normalizeRustVersionSelector(selector string) string {
 	}
 	lower := strings.ToLower(selector)
 	switch {
-	case lower == "repo", lower == "latest", lower == "lts", lower == "stable", lower == "beta", lower == "nightly":
+	case lower == "repo", lower == "latest", lower == "lts":
 		return lower
 	case strings.HasPrefix(lower, "rust") && len(selector) > 4 && selector[4] >= '0' && selector[4] <= '9':
 		return selector[4:]
@@ -960,19 +960,17 @@ func parseRustVersionHint(name string, data []byte) (string, bool) {
 			}
 		}
 	default:
+		rustVersionPattern := regexp.MustCompile(`(?i)^(?:[\w-]+\.)*rust-version\s*=\s*(.+)$`)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			if strings.Contains(strings.ToLower(line), "rust-version") {
-				parts := strings.SplitN(line, "=", 2)
-				if len(parts) == 2 {
-					value := strings.TrimSpace(parts[1])
-					value = strings.Trim(value, `"'`)
-					if value != "" {
-						return value, true
-					}
+			if matches := rustVersionPattern.FindStringSubmatch(line); len(matches) == 2 {
+				value := strings.TrimSpace(matches[1])
+				value = strings.Trim(value, `"'`)
+				if value != "" {
+					return value, true
 				}
 			}
 		}
