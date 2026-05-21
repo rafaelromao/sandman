@@ -25,6 +25,8 @@ const nodeBuildToolsPreset = "node"
 
 const pythonBuildToolsPreset = "python"
 
+const rustBuildToolsPreset = "rust"
+
 const DefaultMISEVersion = "v2026.5.8"
 
 // Options configures the scaffolding behavior.
@@ -143,6 +145,29 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		},
 		MiseVersion: DefaultMISEVersion,
 	},
+	rustBuildToolsPreset: {
+		Name:      rustBuildToolsPreset,
+		BaseImage: "debian:bookworm-slim",
+		SharedPackages: []string{
+			"bash",
+			"build-essential",
+			"ca-certificates",
+			"curl",
+			"file",
+			"gh",
+			"git",
+			"libssl-dev",
+			"nodejs",
+			"npm",
+			"openssh-client",
+			"pkg-config",
+			"python3",
+			"python3-pip",
+			"unzip",
+			"xz-utils",
+		},
+		MiseVersion: DefaultMISEVersion,
+	},
 }
 
 // DefaultBuiltInAgentVersion returns the latest bundled version pin for a built-in agent.
@@ -196,6 +221,16 @@ var bundledPythonVersionCatalog = map[string]string{
 	"3.9":    "3.9.21",
 }
 
+var bundledRustVersionCatalog = map[string]string{
+	"latest":  "1.86.0",
+	"1.85":    "1.85.1",
+	"1.84":    "1.84.1",
+	"1.83":    "1.83.0",
+	"stable":  "1.86.0",
+	"beta":    "1.86.0",
+	"nightly": "1.86.0",
+}
+
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
 
@@ -232,6 +267,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	goVersion := ""
 	nodeVersion := ""
 	pythonVersion := ""
+	rustVersion := ""
 	agentVersion := DefaultBuiltInAgentVersion(agent)
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
@@ -245,6 +281,11 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	} else if preset.Name == pythonBuildToolsPreset {
 		pythonVersion, err = s.resolvePythonVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == rustBuildToolsPreset {
+		rustVersion, err = s.resolveRustVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
 			return err
 		}
@@ -279,7 +320,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, nodeVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, nodeVersion, pythonVersion, rustVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -308,6 +349,8 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 	if name == "" {
 		if hasGoRepoHint(repoRoot) {
 			name = goBuildToolsPreset
+		} else if hasRustRepoHint(repoRoot) {
+			name = rustBuildToolsPreset
 		} else if hasNodeRepoHint(repoRoot) {
 			if p != nil {
 				options := []string{nodeBuildToolsPreset}
@@ -370,6 +413,18 @@ func hasPythonRepoHint(repoRoot string) bool {
 		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
 			return true
 		}
+	}
+	return false
+}
+
+func hasRustRepoHint(repoRoot string) bool {
+	for _, rel := range []string{"rust-toolchain.toml", "rust-toolchain", "Cargo.toml"} {
+		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
+			return true
+		}
+	}
+	if _, found, err := readRustVersionHint(repoRoot); err == nil && found {
+		return true
 	}
 	return false
 }
@@ -571,6 +626,157 @@ func resolveMiseNodeVersion(selector string) (string, error) {
 	return "", fmt.Errorf("resolve node version %q: mise returned empty output and no bundled fallback", selector)
 }
 
+func (s *Scaffolder) resolveRustVersion(repoRoot, selector string, p Prompter) (string, error) {
+	hint, found, err := readRustVersionHint(repoRoot)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if p != nil {
+				selected, err := p.Select(fmt.Sprintf("Choose a Rust version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = normalizeRustVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if p != nil {
+				selected, err := p.Select("Choose a Rust version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = normalizeRustVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	resolved, err := resolveRustVersionChoice(choice, hint, found)
+	if err != nil {
+		return "", fmt.Errorf("resolve rust version: %w", err)
+	}
+	return resolved, nil
+}
+
+func resolveRustVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = normalizeRustVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Rust version hint found")
+		}
+		return resolveMiseRustVersion(normalizeRustVersionSelector(hint))
+	case "latest", "stable":
+		return resolveMiseRustVersion("latest")
+	case "lts":
+		latest, err := resolveMiseRustVersion("latest")
+		if err != nil {
+			return "", err
+		}
+		prefix, err := rustPreviousMinorPrefix(latest)
+		if err != nil {
+			return "", err
+		}
+		return resolveMiseRustVersion(prefix)
+	}
+
+	return resolveMiseRustVersion(choice)
+}
+
+var rustVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
+
+func normalizeRustVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return ""
+	}
+	lower := strings.ToLower(selector)
+	switch {
+	case lower == "repo", lower == "latest", lower == "lts", lower == "stable", lower == "beta", lower == "nightly":
+		return lower
+	case strings.HasPrefix(lower, "rust") && len(selector) > 4 && selector[4] >= '0' && selector[4] <= '9':
+		return selector[4:]
+	}
+	if len(selector) > 1 && strings.HasPrefix(lower, "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	if version := rustVersionSelectorPattern.FindString(selector); version != "" {
+		return version
+	}
+	return selector
+}
+
+func resolveMiseRustVersion(selector string) (string, error) {
+	selector = normalizeRustVersionSelector(selector)
+	args := []string{"latest"}
+	switch strings.ToLower(selector) {
+	case "", "latest":
+		args = append(args, "rust")
+	case "stable", "beta", "nightly":
+		args = append(args, "rust@"+selector)
+	default:
+		args = append(args, "rust@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledRustVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledRustVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve rust version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve rust version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func rustPreviousMinorPrefix(version string) (string, error) {
+	version = normalizeRustVersionSelector(version)
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected Rust version %q", version)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("parse Rust major version %q: %w", version, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("parse Rust minor version %q: %w", version, err)
+	}
+	if minor == 0 {
+		return "", fmt.Errorf("unexpected Rust version %q", version)
+	}
+	minor--
+
+	return fmt.Sprintf("%d.%d", major, minor), nil
+}
+
 func normalizeGoVersionSelector(selector string) string {
 	selector = strings.TrimSpace(selector)
 	if len(selector) > 2 && strings.HasPrefix(strings.ToLower(selector), "go") && selector[2] >= '0' && selector[2] <= '9' {
@@ -697,6 +903,83 @@ func parseGoVersionHint(name string, data []byte) (string, bool) {
 	return "", false
 }
 
+func readRustVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{"rust-toolchain.toml", "rust-toolchain", "Cargo.toml", ".tool-versions"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Rust version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseRustVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseRustVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case "rust-toolchain.toml":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(strings.ToLower(line), "channel") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 {
+					value := strings.TrimSpace(parts[1])
+					value = strings.Trim(value, `"'`)
+					if value != "" {
+						return value, true
+					}
+				}
+			}
+		}
+	case "rust-toolchain":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			return line, true
+		}
+	case ".tool-versions":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "rust" {
+				return fields[1], true
+			}
+		}
+	default:
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.Contains(strings.ToLower(line), "rust-version") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 {
+					value := strings.TrimSpace(parts[1])
+					value = strings.Trim(value, `"'`)
+					if value != "" {
+						return value, true
+					}
+				}
+			}
+		}
+	}
+	return "", false
+}
+
 func (s *Scaffolder) resolveAgentVersion(agent, selector string, p Prompter) (string, error) {
 	versions, ok := builtInAgentVersionCatalog[agent]
 	if !ok || len(versions) == 0 {
@@ -758,7 +1041,7 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, nodeVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, nodeVersion, pythonVersion, rustVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman agent-provider: %s\n", agent)
@@ -770,6 +1053,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman python-version: %s\n", pythonVersion)
+	}
+	if preset.Name == rustBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman rust-version: %s\n", rustVersion)
 	}
 	fmt.Fprintf(&out, "# sandman tool-version: %s\n", agentVersion)
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
@@ -793,6 +1079,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
+	}
+	if preset.Name == rustBuildToolsPreset {
+		out.WriteString(renderRustInstallCommand(rustVersion))
 	}
 	out.WriteString(renderAgentInstallCommand(agent, agentVersion))
 	return out.String()
@@ -1082,6 +1371,10 @@ func renderPythonInstallCommand(version string) string {
 	return out.String()
 }
 
+func renderRustInstallCommand(version string) string {
+	return fmt.Sprintf("RUN mise use -g --pin rust@%s\n", version)
+}
+
 func renderAgentInstallCommand(agent, version string) string {
 	switch agent {
 	case "opencode":
@@ -1128,6 +1421,7 @@ type dockerfileMetadata struct {
 	GoVersion        string
 	NodeVersion      string
 	PythonVersion    string
+	RustVersion      string
 	ToolVersion      string
 	MiseVersion      string
 }
@@ -1184,6 +1478,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.NodeVersion = strings.TrimSpace(value)
 		case "python-version":
 			meta.PythonVersion = strings.TrimSpace(value)
+		case "rust-version":
+			meta.RustVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
 		}

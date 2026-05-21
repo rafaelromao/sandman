@@ -26,7 +26,7 @@ func (f *fakePrompter) Select(msg string, options []string) (string, error) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "node", "python", "rust"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -476,6 +476,44 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	}
 }
 
+func TestScaffold_RustPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rust-toolchain.toml"), []byte("[toolchain]\nchannel = \"1.85\"\n"), 0644); err != nil {
+		t.Fatalf("write rust-toolchain.toml: %v", err)
+	}
+
+	s := &Scaffolder{}
+	wantRustVersion, err := s.resolveRustVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve rust version: %v", err)
+	}
+	if err := s.Scaffold(dir, Options{Agent: "opencode"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: rust") {
+		t.Fatalf("Dockerfile missing rust build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman rust-version: "+wantRustVersion) {
+		t.Fatalf("Dockerfile missing rust-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin rust@"+wantRustVersion) {
+		t.Fatalf("Dockerfile missing pinned rust install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
+	}
+}
+
 func TestScaffold_AllAgentPresets_GeneratePythonPresetFiles(t *testing.T) {
 	for agent := range config.BuiltInAgentPresets {
 		t.Run(agent, func(t *testing.T) {
@@ -577,6 +615,42 @@ func TestScaffold_PythonRepoAutoDetect(t *testing.T) {
 	}
 }
 
+func TestScaffold_RustRepoAutoDetect(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+	}{
+		{
+			name: "Cargo.toml rust-version",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\nrust-version = \"1.85\"\n"), 0644)
+			},
+		},
+		{
+			name: "rust-toolchain.toml",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, "rust-toolchain.toml"), []byte("[toolchain]\nchannel = \"stable\"\n"), 0644)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			s := &Scaffolder{}
+			preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve build tools preset: %v", err)
+			}
+			if preset.Name != "rust" {
+				t.Errorf("expected preset %q, got %q", "rust", preset.Name)
+			}
+		})
+	}
+}
+
 func TestScaffold_NodeRepoAutoDetect(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -651,6 +725,83 @@ func TestScaffold_GoPresetTakesPriorityOverPython(t *testing.T) {
 	}
 	if preset.Name != "go" {
 		t.Errorf("expected Go preset to take priority over Python, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_ResolvesRustVersionSelectors(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector string
+		setupFn  func(dir string)
+	}{
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "semver shorthand", selector: "1.85"},
+		{
+			name:     "repo from rust-toolchain",
+			selector: "repo",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, "rust-toolchain.toml"), []byte("[toolchain]\nchannel = \"1.85\"\n"), 0644)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.setupFn != nil {
+				tt.setupFn(dir)
+			}
+
+			s := &Scaffolder{}
+			resolvedPin, err := s.resolveRustVersion(dir, tt.selector, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve rust version: %v", err)
+			}
+			if resolvedPin == "" {
+				t.Fatal("expected rust version pin")
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "rust", Agent: "opencode", ToolVersion: tt.selector}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman rust-version: "+resolvedPin) {
+				t.Fatalf("Dockerfile missing rust pin %q, got:\n%s", resolvedPin, content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin rust@"+resolvedPin) {
+				t.Fatalf("Dockerfile missing rust install pin %q, got:\n%s", resolvedPin, content)
+			}
+		})
+	}
+}
+
+func TestScaffold_RustVersionPromptSelectionWorks(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	resolvedPin, err := s.resolveRustVersion(dir, "", &fakePrompter{selected: "lts"})
+	if err != nil {
+		t.Fatalf("resolve rust version: %v", err)
+	}
+	if resolvedPin == "" {
+		t.Fatal("expected rust version pin")
+	}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "rust", Agent: "opencode", ToolVersion: ""}, &fakePrompter{selected: "lts"}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(dockerfileData)
+	if !strings.Contains(content, "# sandman rust-version: "+resolvedPin) {
+		t.Fatalf("Dockerfile missing rust pin %q, got:\n%s", resolvedPin, content)
 	}
 }
 
