@@ -51,6 +51,7 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     - Do NOT commit during TDD.
 
     ### 4. Commit
+    - Commit all changes from the TDD cycle before moving on. Do not proceed to self-review, push, or PR creation until the current TDD changes are committed.
     ```bash
     git add -A
     git commit -m "feat: <issue title>"
@@ -82,7 +83,15 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     ```
 
     - Capture the PR URL and number.
-    - Do not stop after PR creation; immediately continue into steps 7 and 8.
+
+    ### 6.5 Completion Gate
+    - PR creation is a checkpoint, not completion.
+    - Do not stop, summarize, or return a final result after `gh pr create`.
+    - Immediately continue into steps 7 and 8.
+    - The only valid end states are:
+      - PR merged and verified
+      - merge impossible after exhausting the review loop, with the PR left open
+    - If you feel done after PR creation, ignore that impulse and continue.
 
     ### 7. Delegate review (max 10 passes)
     - Poll `gh pr checks <N>` until CI passes. Do not exit while checks are pending.
@@ -94,12 +103,20 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     - Address blockers first, then suggestions, then nits.
     - Apply fixes, run tests/formatting, commit, and push.
     - Repeat this loop until approved or max 10 passes.
-    - Do NOT review your own PR.
-    - Delegate exclusively to `{{REVIEW_COMMAND}}`.
+    - Do NOT review your own PR, delegate exclusively to `{{REVIEW_COMMAND}}`.
+
+    ### 7.5 Completion Gate
+    - Review is a checkpoint, not completion.
+    - Do not stop, summarize, or return a final result after the review loop.
+    - Immediately continue into step 8.
+    - If the PR is not fully approved, or checks are not green, or GitHub does not report it mergeable, do not merge.
+    - The only valid end states are:
+      - PR merged and verified
+      - merge impossible after exhausting the review loop, with the PR left open
 
     ### 8. Merge and finish
     - Only merge when all of these are true:
-      - opencode has approved the PR
+      - the PR is fully approved
       - required checks are green
       - GitHub reports the PR is mergeable
     - Merge with squash.
