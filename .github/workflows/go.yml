@@ -41,3 +41,6 @@ jobs:
 
       - name: Test
         run: go test -v ./...
+
+      - name: Smoke build matrix
+        run: go test -tags smoke ./internal/cmd -run '^TestInit_.*BuildsForEveryBuiltInAgentProvider$' -count=1

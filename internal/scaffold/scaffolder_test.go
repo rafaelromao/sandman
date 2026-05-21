@@ -26,7 +26,7 @@ func (f *fakePrompter) Select(msg string, options []string) (string, error) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "java", "node", "python"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -623,6 +623,52 @@ func TestScaffold_NodeRepoAutoDetect(t *testing.T) {
 	}
 }
 
+func TestScaffold_JavaRepoAutoDetect(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    string
+	}{
+		{
+			name: "pom.xml",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>"), 0644)
+			},
+			want: "java",
+		},
+		{
+			name: "build.gradle",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, "build.gradle"), []byte("java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }"), 0644)
+			},
+			want: "java",
+		},
+		{
+			name: "build.gradle.kts",
+			setupFn: func(dir string) {
+				_ = os.WriteFile(filepath.Join(dir, "build.gradle.kts"), []byte("java { toolchain { languageVersion.set(JavaLanguageVersion.of(21)) } }"), 0644)
+			},
+			want: "java",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			s := &Scaffolder{}
+			preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve build tools preset: %v", err)
+			}
+			if preset.Name != tt.want {
+				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
+			}
+		})
+	}
+}
+
 func TestScaffold_GenericBuildToolsOverridesNodeRepoHints(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
@@ -636,6 +682,38 @@ func TestScaffold_GenericBuildToolsOverridesNodeRepoHints(t *testing.T) {
 	}
 	if preset.Name != "generic" {
 		t.Fatalf("expected explicit generic preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_GenericBuildToolsOverridesJavaRepoHints(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>"), 0644); err != nil {
+		t.Fatalf("write pom.xml: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "generic" {
+		t.Fatalf("expected explicit generic preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_JavaRepoAllowsInteractiveGenericChoice(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>"), 0644); err != nil {
+		t.Fatalf("write pom.xml: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true, selected: "generic"})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "generic" {
+		t.Fatalf("expected interactive generic choice, got %q", preset.Name)
 	}
 }
 
@@ -666,5 +744,106 @@ func TestValidateDockerfileMetadata_AllowsGoPreset(t *testing.T) {
 
 	if err := ValidateDockerfileMetadata(dir, "go", "opencode"); err != nil {
 		t.Fatalf("validate metadata: %v", err)
+	}
+}
+
+func TestScaffold_JavaPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>"), 0644); err != nil {
+		t.Fatalf("write pom.xml: %v", err)
+	}
+
+	s := &Scaffolder{}
+	wantJavaVersion, err := s.resolveJavaVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve java version: %v", err)
+	}
+
+	err = s.Scaffold(dir, Options{Agent: "opencode"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: java") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman java-version: "+wantJavaVersion) {
+		t.Fatalf("Dockerfile missing java-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin java@"+wantJavaVersion) {
+		t.Fatalf("Dockerfile missing pinned java install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "ENV JAVA_HOME=\"/usr/local/share/mise/installs/java/"+wantJavaVersion+"\"") {
+		t.Fatalf("Dockerfile missing JAVA_HOME, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mvn -v") {
+		t.Fatalf("Dockerfile missing maven check, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN gradle -v") {
+		t.Fatalf("Dockerfile missing gradle check, got:\n%s", content)
+	}
+	if !strings.Contains(content, " gh ") {
+		t.Fatalf("Dockerfile missing gh shared package, got:\n%s", content)
+	}
+}
+
+func TestScaffold_ResolvesJavaVersionSelectors(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector string
+		wantPin  string
+	}{
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "repo", selector: "repo"},
+		{name: "shorthand", selector: "21"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>"), 0644); err != nil {
+				t.Fatalf("write pom.xml: %v", err)
+			}
+
+			s := &Scaffolder{}
+			resolvedPin, err := s.resolveJavaVersion(dir, tt.selector, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve java version: %v", err)
+			}
+
+			wantPin := tt.wantPin
+			if wantPin == "" {
+				wantPin = resolvedPin
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "java", Agent: "codex", ToolVersion: tt.selector}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman java-version: "+wantPin) {
+				t.Fatalf("Dockerfile missing java pin %q, got:\n%s", wantPin, content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin java@"+wantPin) {
+				t.Fatalf("Dockerfile missing java install pin %q, got:\n%s", wantPin, content)
+			}
+			if !strings.Contains(content, "RUN mvn -v") {
+				t.Fatalf("Dockerfile missing maven check, got:\n%s", content)
+			}
+			if !strings.Contains(content, "RUN gradle -v") {
+				t.Fatalf("Dockerfile missing gradle check, got:\n%s", content)
+			}
+		})
 	}
 }
