@@ -40,7 +40,7 @@ git:
 agents:
   opencode:
     preset: opencode
-    model: gpt-4.1
+    model: openai/gpt-4.1
   claude-code:
     preset: claude-code
     config_dirs:
@@ -69,13 +69,13 @@ Available presets: `opencode`, `claude-code`, `codex`, `pi`. Each preset provide
 
 ### Agent models
 
-`agents.<name>.model` sets the `AgentModel` for a built-in preset.
+`agents.<name>.model` sets the `AgentModel` for a built-in preset and uses `provider/model` format.
 
 ```yaml
 agents:
   opencode:
     preset: opencode
-    model: gpt-4.1
+    model: openai/gpt-4.1
 ```
 
 Precedence:
@@ -83,6 +83,8 @@ Precedence:
 - `sandman run --model` overrides `agents.<name>.model`
 - If neither is set, Sandman leaves the agent's own default model alone
 - `model` is only valid for built-in presets; custom command providers manage model selection themselves
+- Pi expects `provider/model` and Sandman splits it into separate provider and model flags before launching Pi
+- If Pi gets a model value without `/`, Sandman returns a clear error
 
 Use `sandman config get` and `sandman config set` for the active top-level agent selection before you edit `agents.<name>.model` in `.sandman/config.yaml`:
 
