@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,8 @@ import (
 const defaultBuildToolsPreset = "generic"
 
 const goBuildToolsPreset = "go"
+
+const dotnetBuildToolsPreset = "dotnet"
 
 const nodeBuildToolsPreset = "node"
 
@@ -82,6 +85,27 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 	},
 	goBuildToolsPreset: {
 		Name:      goBuildToolsPreset,
+		BaseImage: "debian:bookworm-slim",
+		SharedPackages: []string{
+			"bash",
+			"build-essential",
+			"ca-certificates",
+			"curl",
+			"file",
+			"gh",
+			"git",
+			"nodejs",
+			"npm",
+			"openssh-client",
+			"python3",
+			"python3-pip",
+			"unzip",
+			"xz-utils",
+		},
+		MiseVersion: DefaultMISEVersion,
+	},
+	dotnetBuildToolsPreset: {
+		Name:      dotnetBuildToolsPreset,
 		BaseImage: "debian:bookworm-slim",
 		SharedPackages: []string{
 			"bash",
@@ -196,6 +220,21 @@ var bundledPythonVersionCatalog = map[string]string{
 	"3.9":    "3.9.21",
 }
 
+var bundledDotnetVersionCatalog = map[string]string{
+	"latest": "10.0.100",
+	"lts":    "8.0.416",
+	"10":     "10.0.100",
+	"10.0":   "10.0.100",
+	"9":      "9.0.203",
+	"9.0":    "9.0.203",
+	"8":      "8.0.416",
+	"8.0":    "8.0.416",
+	"7":      "7.0.410",
+	"7.0":    "7.0.410",
+	"6":      "6.0.428",
+	"6.0":    "6.0.428",
+}
+
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
 
@@ -230,11 +269,17 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 
 	goVersion := ""
+	dotnetVersion := ""
 	nodeVersion := ""
 	pythonVersion := ""
 	agentVersion := DefaultBuiltInAgentVersion(agent)
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == dotnetBuildToolsPreset {
+		dotnetVersion, err = s.resolveDotnetVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
 			return err
 		}
@@ -279,7 +324,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, nodeVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -306,7 +351,9 @@ func (s *Scaffolder) resolveAgent(opts Options, p Prompter) (string, error) {
 func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Prompter) (BuildToolsPreset, error) {
 	name := strings.ToLower(strings.TrimSpace(opts.BuildTools))
 	if name == "" {
-		if hasGoRepoHint(repoRoot) {
+		if hasDotnetRepoHint(repoRoot) {
+			name = dotnetBuildToolsPreset
+		} else if hasGoRepoHint(repoRoot) {
 			name = goBuildToolsPreset
 		} else if hasNodeRepoHint(repoRoot) {
 			if p != nil {
@@ -348,6 +395,30 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 func hasGoRepoHint(repoRoot string) bool {
 	_, found, err := readGoVersionHint(repoRoot)
 	return err == nil && found
+}
+
+func hasDotnetRepoHint(repoRoot string) bool {
+	if _, found, err := readDotnetVersionHint(repoRoot); err == nil && found {
+		return true
+	}
+	match := false
+	_ = filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil {
+			return nil
+		}
+		name := d.Name()
+		switch {
+		case name == "global.json", name == "Directory.Build.props", name == "Directory.Build.targets", name == "Directory.Packages.props":
+			match = true
+			return fs.SkipAll
+		case strings.HasSuffix(strings.ToLower(name), ".csproj"), strings.HasSuffix(strings.ToLower(name), ".fsproj"), strings.HasSuffix(strings.ToLower(name), ".vbproj"), strings.HasSuffix(strings.ToLower(name), ".sln"), strings.HasSuffix(strings.ToLower(name), ".slnx"):
+			match = true
+			return fs.SkipAll
+		default:
+			return nil
+		}
+	})
+	return match
 }
 
 func hasNodeRepoHint(repoRoot string) bool {
@@ -443,6 +514,66 @@ func resolveGoVersionChoice(choice, hint string, hintFound bool) (string, error)
 	}
 
 	return resolveMiseGoVersion(choice)
+}
+
+func (s *Scaffolder) resolveDotnetVersion(repoRoot, selector string, p Prompter) (string, error) {
+	hint, found, err := readDotnetVersionHint(repoRoot)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if p != nil {
+				selected, err := p.Select(fmt.Sprintf("Choose a .NET SDK version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = normalizeDotnetVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if p != nil {
+				selected, err := p.Select("Choose a .NET SDK version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = normalizeDotnetVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	resolved, err := resolveDotnetVersionChoice(choice, hint, found)
+	if err != nil {
+		return "", fmt.Errorf("resolve dotnet version: %w", err)
+	}
+	return resolved, nil
+}
+
+func resolveDotnetVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = normalizeDotnetVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo .NET SDK version hint found")
+		}
+		return resolveMiseDotnetVersion(normalizeDotnetVersionSelector(hint))
+	case "latest", "lts":
+		return resolveMiseDotnetVersion(choice)
+	}
+
+	return resolveMiseDotnetVersion(choice)
 }
 
 func (s *Scaffolder) resolveNodeVersion(repoRoot, selector string, p Prompter) (string, error) {
@@ -614,6 +745,60 @@ func resolveMiseGoVersion(selector string) (string, error) {
 	return "", fmt.Errorf("resolve go version %q: mise returned empty output and no bundled fallback", selector)
 }
 
+func normalizeDotnetVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "dotnet") && selector[6] >= '0' && selector[6] <= '9' {
+		return selector[6:]
+	}
+	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	return selector
+}
+
+func resolveMiseDotnetVersion(selector string) (string, error) {
+	selector = normalizeDotnetVersionSelector(selector)
+	args := []string{"latest"}
+	switch strings.ToLower(selector) {
+	case "", "latest":
+		args = append(args, "dotnet")
+	case "lts":
+		args = append(args, "dotnet@lts")
+	default:
+		args = append(args, "dotnet@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledDotnetVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledDotnetVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := bundledDotnetVersionCatalog["lts"]; ok {
+			return version, nil
+		}
+	}
+	if selector != "" && selector != "latest" && selector != "lts" {
+		return selector, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve dotnet version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve dotnet version %q: mise returned empty output and no bundled fallback", selector)
+}
+
 func goPreviousMinorPrefix(version string) (string, error) {
 	version = normalizeGoVersionSelector(version)
 	parts := strings.Split(version, ".")
@@ -758,12 +943,15 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, nodeVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman agent-provider: %s\n", agent)
 	if preset.Name == goBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman go-version: %s\n", goVersion)
+	}
+	if preset.Name == dotnetBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman dotnet-version: %s\n", dotnetVersion)
 	}
 	if preset.Name == nodeBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman node-version: %s\n", nodeVersion)
@@ -787,6 +975,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 		out.WriteString("ENV GOPATH=\"/.local/share/go\"\n")
 		out.WriteString("ENV GOMODCACHE=\"/.cache/go/pkg/mod\"\n")
 		out.WriteString(renderGoInstallCommand(goVersion))
+	}
+	if preset.Name == dotnetBuildToolsPreset {
+		out.WriteString(renderDotnetInstallCommand(dotnetVersion))
 	}
 	if preset.Name == nodeBuildToolsPreset {
 		out.WriteString(renderNodeInstallCommand(nodeVersion))
@@ -854,6 +1045,40 @@ func readNodeVersionHint(repoRoot string) (string, bool, error) {
 		}
 	}
 	return "", false, nil
+}
+
+func readDotnetVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{"global.json", "Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read .NET version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseDotnetVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseDotnetVersionHint(name string, data []byte) (string, bool) {
+	if name == "global.json" {
+		type globalJSON struct {
+			SDK struct {
+				Version string `json:"version"`
+			} `json:"sdk"`
+		}
+		var doc globalJSON
+		if err := json.Unmarshal(data, &doc); err == nil {
+			if version := strings.TrimSpace(doc.SDK.Version); version != "" {
+				return version, true
+			}
+		}
+	}
+	return "", false
 }
 
 func parseNodeVersionHint(name string, data []byte) (string, bool) {
@@ -1066,6 +1291,10 @@ func parsePythonVersionHint(name string, data []byte) (string, bool) {
 
 func renderGoInstallCommand(version string) string {
 	return fmt.Sprintf("RUN mise use -g --pin go@%s\n", version)
+}
+
+func renderDotnetInstallCommand(version string) string {
+	return fmt.Sprintf("RUN mise use -g --pin dotnet@%s\n", version)
 }
 
 func renderNodeInstallCommand(version string) string {

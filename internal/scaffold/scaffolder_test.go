@@ -26,7 +26,7 @@ func (f *fakePrompter) Select(msg string, options []string) (string, error) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -45,6 +45,43 @@ func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 				t.Fatalf("Dockerfile missing openssh-client shared package, got:\n%s", content)
 			}
 		})
+	}
+}
+
+func TestScaffold_DotnetPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte(`{"sdk":{"version":"8.0.100"}}`), 0644); err != nil {
+		t.Fatalf("write global.json: %v", err)
+	}
+
+	s := &Scaffolder{}
+	wantDotnetVersion, err := s.resolveDotnetVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve dotnet version: %v", err)
+	}
+
+	err = s.Scaffold(dir, Options{Agent: "opencode"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: dotnet") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman dotnet-version: "+wantDotnetVersion) {
+		t.Fatalf("Dockerfile missing dotnet-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin dotnet@"+wantDotnetVersion) {
+		t.Fatalf("Dockerfile missing pinned dotnet install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
 }
 
@@ -623,10 +660,42 @@ func TestScaffold_NodeRepoAutoDetect(t *testing.T) {
 	}
 }
 
+func TestScaffold_DotnetRepoAutoDetect(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte(`{"sdk":{"version":"8.0.100"}}`), 0644); err != nil {
+		t.Fatalf("write global.json: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "dotnet" {
+		t.Fatalf("expected preset %q, got %q", "dotnet", preset.Name)
+	}
+}
+
 func TestScaffold_GenericBuildToolsOverridesNodeRepoHints(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
 		t.Fatalf("write package.json: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "generic" {
+		t.Fatalf("expected explicit generic preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_GenericBuildToolsOverridesDotnetRepoHints(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte(`{"sdk":{"version":"8.0.100"}}`), 0644); err != nil {
+		t.Fatalf("write global.json: %v", err)
 	}
 
 	s := &Scaffolder{}
