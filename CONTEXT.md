@@ -9,19 +9,19 @@ The set of issue numbers that must complete successfully before an AgentRun for 
 _Avoid_: dependencies, prerequisites.
 
 **Agent**:
-An external AI coding tool (OpenCode, Codex, Claude Code, Pi) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
+An external AI coding tool (OpenCode or Pi) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
 _Avoid_: AI model, LLM, copilot.
 
 **AgentPreset**:
-A built-in command, config source, and auth profile for a known AI coding tool keyed by name (opencode, claude-code, codex, pi). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
+A built-in command, config source, and auth profile for a known AI coding tool keyed by name (opencode, pi). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
 _Avoid_: Provider template, agent type.
 
 **Agent Provider**:
-A configured agent type declared in `.sandman/config.yaml`, with a command template, env map, and known config source paths.
+Deprecated language for repo-local provider configuration. Sandman now supports built-in agents only.
 _Avoid_: Agent type, runner.
 
 **AgentModel**:
-A provider-specific model identifier configured under `agents.<name>.model` for a built-in preset.
+A built-in agent model identifier overridden via `sandman run --model`.
 _Avoid_: agent model, default model.
 
 **AgentRun**:
@@ -41,7 +41,7 @@ A git branch named `sandman/<issue-number>-<slugified-title>`, created per Agent
 _Avoid_: Feature branch, PR branch.
 
 **BuildToolsPreset**:
-A scaffold-time recipe chosen during `sandman init` that seeds a pinned container image definition with shared baseline tools, stack tooling, and built-in agent installation defaults.
+A scaffold-time recipe chosen during `sandman init` that seeds a pinned container image definition with shared baseline tools and built-in agent installation defaults.
 _Avoid_: language, stack, base image.
 
 **ConfigDirs**:
@@ -145,7 +145,7 @@ _Avoid_: Tail, follow.
 - If `max_containers=0`, Sandman auto-scales the container pool up to the minimum number of containers needed for active **AgentRuns**
 - Container pooling is batch-scoped: idle **ContainerSandboxes** may be reused by later **AgentRuns** in the same **Batch**, and are stopped when that **Batch** completes
 - An **AgentRun** generates many **Events**
-- A **Prompt** is rendered per **AgentRun** from an **Agent Provider** config
+- A **Prompt** is rendered per **AgentRun** from the selected built-in **AgentPreset**
 
 ## Example dialogue
 

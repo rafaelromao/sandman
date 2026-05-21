@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependency-aware batch execution with topological sort and cycle detection
 - `--include-dependencies` CLI flag for transitive blocker expansion
 - `run.blocked` event type and blocked status
-- Built-in agent presets (opencode, claude-code, codex, pi) with config resolver
+- Built-in agent presets (opencode, pi) with config resolver
 - `--prompt`, `--template`, `--prompt-arg` CLI flags for prompt customization
 - BuildToolsPreset scaffold-time recipe with pinned versioning and mise
 - Node BuildToolsPreset with repo hint detection and pinned container scaffolding

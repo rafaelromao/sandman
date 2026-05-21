@@ -25,7 +25,7 @@ const (
 
 // Config holds the loaded Sandman configuration.
 type Config struct {
-	Agent             string           `yaml:"agent"`
+	DefaultAgent      string           `yaml:"default_agent"`
 	BuildTools        string           `yaml:"build_tools"`
 	ReviewCommand     string           `yaml:"review_command"`
 	DefaultParallel   int              `yaml:"default_parallel"`
@@ -34,7 +34,8 @@ type Config struct {
 	WorktreeDir       string           `yaml:"worktree_dir"`
 	Sandbox           string           `yaml:"sandbox"`
 	Git               GitConfig        `yaml:"git"`
-	AgentProviders    map[string]Agent `yaml:"agents,omitempty"`
+	Agent             string           `yaml:"-"`
+	AgentProviders    map[string]Agent `yaml:"-"`
 }
 
 // GitConfig holds git-specific settings.
@@ -58,17 +59,6 @@ type Agent struct {
 	KeychainAuth  bool              `yaml:"keychain_auth,omitempty"`
 }
 
-type rawAgentConfig struct {
-	Name         string            `yaml:"name,omitempty"`
-	Preset       string            `yaml:"preset,omitempty"`
-	Command      string            `yaml:"command,omitempty"`
-	Model        *string           `yaml:"model,omitempty"`
-	Env          map[string]string `yaml:"env,omitempty"`
-	ConfigDirs   []string          `yaml:"config_dirs,omitempty"`
-	ConfigFiles  []string          `yaml:"config_files,omitempty"`
-	KeychainAuth bool              `yaml:"keychain_auth,omitempty"`
-}
-
 // AgentPreset defines the built-in defaults for a provider preset.
 type AgentPreset struct {
 	DisplayName  string
@@ -88,23 +78,6 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.config/opencode",
 			"~/.local/share/opencode",
 			"~/.claude",
-		},
-	},
-	"claude-code": {
-		DisplayName: "Claude Code",
-		Command:     `claude --print{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
-		ConfigDirs: []string{
-			"~/.claude",
-		},
-		ConfigFiles: []string{
-			"~/.claude.json",
-		},
-	},
-	"codex": {
-		DisplayName: "Codex",
-		Command:     `codex exec{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
-		ConfigDirs: []string{
-			"~/.codex",
 		},
 	},
 	"pi": {
@@ -130,16 +103,15 @@ func Load(path string) (*Config, error) {
 	}
 
 	type rawConfig struct {
-		Agent             string                    `yaml:"agent"`
-		BuildTools        string                    `yaml:"build_tools"`
-		ReviewCommand     string                    `yaml:"review_command"`
-		DefaultParallel   int                       `yaml:"default_parallel"`
-		ContainerCapacity *int                      `yaml:"container_capacity"`
-		MaxContainers     *int                      `yaml:"max_containers"`
-		WorktreeDir       string                    `yaml:"worktree_dir"`
-		Sandbox           string                    `yaml:"sandbox"`
-		Git               GitConfig                 `yaml:"git"`
-		AgentProviders    map[string]rawAgentConfig `yaml:"agents"`
+		DefaultAgent      string    `yaml:"default_agent"`
+		BuildTools        string    `yaml:"build_tools"`
+		ReviewCommand     string    `yaml:"review_command"`
+		DefaultParallel   int       `yaml:"default_parallel"`
+		ContainerCapacity *int      `yaml:"container_capacity"`
+		MaxContainers     *int      `yaml:"max_containers"`
+		WorktreeDir       string    `yaml:"worktree_dir"`
+		Sandbox           string    `yaml:"sandbox"`
+		Git               GitConfig `yaml:"git"`
 	}
 
 	var raw rawConfig
@@ -148,7 +120,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := Config{
-		Agent:           raw.Agent,
+		DefaultAgent:    raw.DefaultAgent,
 		BuildTools:      raw.BuildTools,
 		ReviewCommand:   raw.ReviewCommand,
 		DefaultParallel: raw.DefaultParallel,
@@ -156,15 +128,6 @@ func Load(path string) (*Config, error) {
 		Sandbox:         raw.Sandbox,
 		Git:             raw.Git,
 	}
-
-	agentProviders := make(map[string]Agent, len(raw.AgentProviders))
-	for name, rawAgent := range raw.AgentProviders {
-		if err := rawAgent.validate(name); err != nil {
-			return nil, fmt.Errorf("validate config: %w", err)
-		}
-		agentProviders[name] = rawAgent.Agent()
-	}
-	cfg.AgentProviders = agentProviders
 
 	if cfg.DefaultParallel <= 0 {
 		cfg.DefaultParallel = DefaultParallel
@@ -199,10 +162,19 @@ func Load(path string) (*Config, error) {
 		cfg.Git.DefaultBranch = "main"
 	}
 
-	if cfg.Agent == "" {
-		return nil, fmt.Errorf("validate config: agent is required")
+	if strings.TrimSpace(cfg.DefaultAgent) == "" {
+		cfg.DefaultAgent = DefaultAgent
 	}
-	agentCfg, err := cfg.ResolveAgentProvider(cfg.Agent)
+	cfg.Agent = cfg.DefaultAgent
+	cfg.AgentProviders = make(map[string]Agent, len(BuiltInAgentPresets))
+	for name := range BuiltInAgentPresets {
+		agent, err := cfg.ResolveAgentProvider(name)
+		if err != nil {
+			return nil, fmt.Errorf("validate config: %w", err)
+		}
+		cfg.AgentProviders[name] = agent
+	}
+	agentCfg, err := cfg.ResolveAgentProvider(cfg.DefaultAgent)
 	if err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
@@ -231,7 +203,17 @@ func Save(path string, cfg *Config) error {
 func (c *Config) ResolveAgentProvider(name string) (Agent, error) {
 	if c != nil && c.AgentProviders != nil {
 		if agent, ok := c.AgentProviders[name]; ok {
-			return resolveAgentProvider(name, agent)
+			if preset := agent.Preset; preset != "" {
+				if builtin, ok := BuiltInAgentPresets[preset]; ok {
+					return builtin.AgentWithOverrides(preset, agent), nil
+				}
+			}
+			if builtin, ok := BuiltInAgentPresets[name]; ok {
+				return builtin.AgentWithOverrides(name, agent), nil
+			}
+			if agent.Command != "" {
+				return agent, nil
+			}
 		}
 	}
 
@@ -240,27 +222,6 @@ func (c *Config) ResolveAgentProvider(name string) (Agent, error) {
 	}
 
 	return Agent{}, fmt.Errorf("agent %q not found in config", name)
-}
-
-func resolveAgentProvider(name string, agent Agent) (Agent, error) {
-	if agent.Preset == "" {
-		if agent.Command != "" {
-			return agent, nil
-		}
-
-		if preset, ok := BuiltInAgentPresets[name]; ok {
-			return preset.AgentWithOverrides(name, agent), nil
-		}
-
-		return Agent{}, fmt.Errorf("agent %q must define preset or command", name)
-	}
-
-	preset, ok := BuiltInAgentPresets[agent.Preset]
-	if !ok {
-		return Agent{}, fmt.Errorf("agent %q uses unknown preset %q", name, agent.Preset)
-	}
-
-	return preset.AgentWithOverrides(agent.Preset, agent), nil
 }
 
 func (p AgentPreset) Agent(preset string) Agent {
@@ -303,36 +264,6 @@ func (p AgentPreset) AgentWithOverrides(preset string, override Agent) Agent {
 	return agent
 }
 
-func (r rawAgentConfig) Agent() Agent {
-	model := ""
-	if r.Model != nil {
-		model = *r.Model
-	}
-	return Agent{
-		Name:         r.Name,
-		Preset:       r.Preset,
-		Command:      r.Command,
-		Model:        model,
-		Env:          copyStringMap(r.Env),
-		ConfigDirs:   append([]string(nil), r.ConfigDirs...),
-		ConfigFiles:  append([]string(nil), r.ConfigFiles...),
-		KeychainAuth: r.KeychainAuth,
-	}
-}
-
-func (r rawAgentConfig) validate(name string) error {
-	if r.Model == nil {
-		return nil
-	}
-	if strings.TrimSpace(*r.Model) == "" {
-		return fmt.Errorf("agent %q model must not be empty", name)
-	}
-	if r.Preset == "" && r.Command != "" {
-		return fmt.Errorf("agent %q model is only supported for built-in presets", name)
-	}
-	return nil
-}
-
 func copyStringMap(src map[string]string) map[string]string {
 	if len(src) == 0 {
 		return nil
@@ -360,8 +291,8 @@ func SplitPiModel(model string) (string, string, error) {
 // GetValue returns the string representation of a config field by its dot-notation key.
 func (c *Config) GetValue(key string) (string, error) {
 	switch strings.ToLower(key) {
-	case "agent":
-		return c.Agent, nil
+	case "default_agent":
+		return c.DefaultAgent, nil
 	case "build_tools":
 		return c.EffectiveBuildTools(), nil
 	case "review_command":
@@ -390,8 +321,12 @@ func (c *Config) GetValue(key string) (string, error) {
 // SetValue updates a config field by its dot-notation key.
 func (c *Config) SetValue(key, value string) error {
 	switch strings.ToLower(key) {
-	case "agent":
-		c.Agent = value
+	case "default_agent":
+		if _, err := c.ResolveAgentProvider(strings.TrimSpace(value)); err != nil {
+			return err
+		}
+		c.DefaultAgent = strings.TrimSpace(value)
+		c.Agent = c.DefaultAgent
 	case "build_tools":
 		c.BuildTools = value
 	case "review_command":

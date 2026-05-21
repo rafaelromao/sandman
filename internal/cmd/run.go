@@ -99,6 +99,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			templateFlag, _ := cmd.Flags().GetString("template")
 			reviewCommandFlag, _ := cmd.Flags().GetString("review-command")
 			modelFlag, _ := cmd.Flags().GetString("model")
+			agentFlag, _ := cmd.Flags().GetString("agent")
 			promptArgsRaw, _ := cmd.Flags().GetStringArray("prompt-arg")
 			promptArgs := make(map[string]string)
 			for _, arg := range promptArgsRaw {
@@ -112,6 +113,17 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			reviewCommand := cfg.EffectiveReviewCommand()
 			if strings.TrimSpace(reviewCommandFlag) != "" {
 				reviewCommand = reviewCommandFlag
+			}
+
+			agentName := strings.TrimSpace(agentFlag)
+			if agentName == "" {
+				agentName = strings.TrimSpace(cfg.DefaultAgent)
+			}
+			if agentName == "" {
+				agentName = strings.TrimSpace(cfg.Agent)
+			}
+			if _, err := cfg.ResolveAgentProvider(agentName); err != nil {
+				return err
 			}
 
 			resolvedBatch, err := batch.NewDependencyResolver(deps.GitHubClient).Resolve(cmd.Context(), issues, includeDependencies)
@@ -169,6 +181,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
 				Issues:               resolvedBatch.Issues,
 				Dependencies:         resolvedBatch.Deps,
+				Agent:                agentName,
 				Model:                strings.TrimSpace(modelFlag),
 				Parallel:             parallel,
 				Sandbox:              sandboxMode,
@@ -213,6 +226,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md)")
 	cmd.Flags().String("review-command", "", "Review command to inject into the prompt template")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
+	cmd.Flags().String("agent", "", "Built-in agent preset (opencode or pi)")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
 
 	cmd.Flags().Int("next", 0, "Delegate the N lowest-numbered open issues labeled ready-for-agent")

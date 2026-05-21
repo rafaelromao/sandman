@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -146,24 +147,31 @@ func newRunIntegrationDepsWithSandbox(agent config.Agent, sandboxMode string, gh
 }
 
 func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode string, gitCfg config.GitConfig, gh *fakeGitHubClient) Dependencies {
-	if agent.Name == "" {
-		agent.Name = "test-agent"
-	}
 	if agent.Command == "" {
 		agent.Command = "true"
 	}
+	binDir, err := os.MkdirTemp("", "sandman-agent-bin-")
+	if err != nil {
+		panic(err)
+	}
+	script := "#!/bin/sh\nset -e\n" + renderShellExports(agent.Env) + strings.TrimSpace(agent.Command) + "\n"
+	for _, name := range []string{"opencode", "pi"} {
+		path := filepath.Join(binDir, name)
+		if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+			panic(err)
+		}
+	}
+	_ = os.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 	if gitCfg.DefaultBranch == "" {
 		gitCfg.DefaultBranch = "main"
 	}
 
 	store := &fakeStore{config: &config.Config{
-		Agent:       "test-agent",
-		WorktreeDir: ".sandman/worktrees",
-		Sandbox:     sandboxMode,
-		Git:         gitCfg,
-		AgentProviders: map[string]config.Agent{
-			"test-agent": agent,
-		},
+		DefaultAgent: "opencode",
+		Agent:        "opencode",
+		WorktreeDir:  ".sandman/worktrees",
+		Sandbox:      sandboxMode,
+		Git:          gitCfg,
 	}}
 
 	runner := batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil)
@@ -175,6 +183,33 @@ func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode stri
 		PromptRenderer: &prompt.Engine{},
 		IsTTY:          func() bool { return false },
 	}
+}
+
+func renderShellExports(env map[string]string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var out strings.Builder
+	for _, key := range keys {
+		out.WriteString("export ")
+		out.WriteString(key)
+		out.WriteString("=")
+		out.WriteString(shellQuote(env[key]))
+		out.WriteString("\n")
+	}
+	return out.String()
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func issueAwareAgentCommand(body string) string {
