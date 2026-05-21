@@ -1302,6 +1302,9 @@ func resolveMiseRubyVersion(selector string) (string, error) {
 			return version, nil
 		}
 	}
+	if selector != "" && selector != "latest" && selector != "lts" && nodeVersionSelectorPattern.MatchString(selector) {
+		return selector, nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("resolve ruby version %q: %w", selector, err)
 	}
