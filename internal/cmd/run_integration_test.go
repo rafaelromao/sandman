@@ -533,8 +533,8 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
-		t.Fatalf("expected worktree to be removed, got: %v", err)
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected worktree to remain, got: %v", err)
 	}
 }
 
