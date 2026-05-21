@@ -510,8 +510,8 @@ func TestPRFlow_WorktreeSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", prFlowBranch)
-	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
-		t.Fatalf("expected worktree cleanup, got: %v", err)
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected worktree to remain, got: %v", err)
 	}
 }
 
