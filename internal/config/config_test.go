@@ -197,6 +197,28 @@ agents:
 	}
 }
 
+func TestLoad_PiModelRequiresProviderModelFormat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: pi
+agents:
+  pi:
+    preset: pi
+    model: gpt-4.1
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "provider/model format") {
+		t.Fatalf("expected error mentioning provider/model format, got %v", err)
+	}
+}
+
 func TestLoad_ModelOnCustomCommandProvider_ReturnsValidationError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -277,7 +299,7 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 		{
 			key:          "pi",
 			wantDisplay:  "Pi",
-			wantCommand:  `pi --print{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+			wantCommand:  `pi --print{{if .ModelProvider}} --provider {{.ModelProvider}}{{end}}{{if .ModelName}} --model {{.ModelName}}{{end}} "$(cat {{.PromptFile}})"`,
 			wantDirs:     []string{"~/.pi"},
 			wantFiles:    nil,
 			wantKeychain: false,
@@ -306,6 +328,29 @@ func TestBuiltInPresets_Metadata(t *testing.T) {
 				t.Errorf("KeychainAuth: got %v, want %v", preset.KeychainAuth, tt.wantKeychain)
 			}
 		})
+	}
+}
+
+func TestSplitPiModel(t *testing.T) {
+	provider, model, err := SplitPiModel("openai/gpt-4.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider != "openai" {
+		t.Errorf("provider: got %q, want %q", provider, "openai")
+	}
+	if model != "gpt-4.1" {
+		t.Errorf("model: got %q, want %q", model, "gpt-4.1")
+	}
+}
+
+func TestSplitPiModel_InvalidFormat(t *testing.T) {
+	_, _, err := SplitPiModel("gpt-4.1")
+	if err == nil {
+		t.Fatal("expected error for missing provider/model separator")
+	}
+	if !strings.Contains(err.Error(), "provider/model format") {
+		t.Fatalf("expected error mentioning provider/model format, got %v", err)
 	}
 }
 

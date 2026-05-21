@@ -240,6 +240,14 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		agentCfg.Model = model
 	}
+	if agentCfg.Preset == "pi" {
+		provider, modelName, err := config.SplitPiModel(agentCfg.Model)
+		if err != nil {
+			return nil, err
+		}
+		agentCfg.ModelProvider = provider
+		agentCfg.ModelName = modelName
+	}
 	if err := sandbox.ValidateAgentConfig(cfg.Agent, agentCfg); err != nil {
 		return nil, err
 	}
@@ -585,6 +593,8 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		agentRun.env = applyGitIdentityEnv(agentRun.env, cfg)
 		agentRun.preset = agentCfg.Preset
 		agentRun.model = agentCfg.Model
+		agentRun.modelProvider = agentCfg.ModelProvider
+		agentRun.modelName = agentCfg.ModelName
 		agentRun.defaultBranch = cfg.Git.DefaultBranch
 		agentRun.outputWriter = outputWriter
 	}

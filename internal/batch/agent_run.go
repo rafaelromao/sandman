@@ -21,6 +21,8 @@ type AgentRun struct {
 	defaultBranch string
 	preset        string
 	model         string
+	modelProvider string
+	modelName     string
 	sandbox       sandbox.Sandbox
 	status        string
 	env           map[string]string
@@ -102,8 +104,10 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 	}
 
 	renderedCmd, err := RenderCommand(command, CommandData{
-		PromptFile: renderedPromptFile,
-		ModelFlag:  r.modelFlag(command),
+		PromptFile:    renderedPromptFile,
+		ModelFlag:     r.modelFlag(command),
+		ModelProvider: r.modelProvider,
+		ModelName:     r.modelName,
 	})
 	if err != nil {
 		r.status = "failure"
@@ -137,7 +141,7 @@ func (r *AgentRun) modelFlag(command string) string {
 	switch r.preset {
 	case "opencode":
 		return "-m " + model
-	case "claude-code", "codex", "pi":
+	case "claude-code", "codex":
 		return "--model " + model
 	default:
 		return ""

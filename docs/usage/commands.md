@@ -55,7 +55,7 @@ Exactly one selection mode is required:
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--review-command` | — | Review command injected into `{{REVIEW_COMMAND}}` |
-| `--model` | — | Override the `AgentModel` for built-in presets |
+| `--model` | — | Override the `AgentModel` for built-in presets using `provider/model` format |
 
 ### Flag interactions
 
@@ -66,6 +66,7 @@ Exactly one selection mode is required:
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means auto-scale
 - `--model` only applies to built-in presets and overrides any `agents.<name>.model` value
+- Pi splits `provider/model` into separate provider and model flags, and errors if `/` is missing
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 
 ## `sandman status`

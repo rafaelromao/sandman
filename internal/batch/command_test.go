@@ -7,10 +7,10 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 )
 
-func TestCommandData_ExposesPromptFileAndModelFlag(t *testing.T) {
+func TestCommandData_ExposesPromptFileAndModelFields(t *testing.T) {
 	typ := reflect.TypeOf(CommandData{})
-	if typ.NumField() != 2 {
-		t.Errorf("expected exactly 2 fields in CommandData, got %d", typ.NumField())
+	if typ.NumField() != 4 {
+		t.Errorf("expected exactly 4 fields in CommandData, got %d", typ.NumField())
 	}
 	field, ok := typ.FieldByName("PromptFile")
 	if !ok {
@@ -25,6 +25,20 @@ func TestCommandData_ExposesPromptFileAndModelFlag(t *testing.T) {
 	}
 	if modelField.Type.Kind() != reflect.String {
 		t.Errorf("expected ModelFlag to be string, got %s", modelField.Type)
+	}
+	providerField, ok := typ.FieldByName("ModelProvider")
+	if !ok {
+		t.Fatal("expected ModelProvider field in CommandData")
+	}
+	if providerField.Type.Kind() != reflect.String {
+		t.Errorf("expected ModelProvider to be string, got %s", providerField.Type)
+	}
+	nameField, ok := typ.FieldByName("ModelName")
+	if !ok {
+		t.Fatal("expected ModelName field in CommandData")
+	}
+	if nameField.Type.Kind() != reflect.String {
+		t.Errorf("expected ModelName to be string, got %s", nameField.Type)
 	}
 }
 
@@ -84,7 +98,7 @@ func TestRenderCommand_BuiltInPresets(t *testing.T) {
 		"opencode":    `opencode run "$(cat .sandman/rendered-prompt.md)"`,
 		"claude-code": `claude --print "$(cat .sandman/rendered-prompt.md)"`,
 		"codex":       `codex exec "$(cat .sandman/rendered-prompt.md)"`,
-		"pi":          `pi --print "$(cat .sandman/rendered-prompt.md)"`,
+		"pi":          `pi --print --provider openai --model gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`,
 	}
 
 	for key, want := range presets {
@@ -95,7 +109,9 @@ func TestRenderCommand_BuiltInPresets(t *testing.T) {
 			}
 
 			got, err := RenderCommand(preset.Command, CommandData{
-				PromptFile: ".sandman/rendered-prompt.md",
+				PromptFile:    ".sandman/rendered-prompt.md",
+				ModelProvider: "openai",
+				ModelName:     "gpt-4.1",
 			})
 			if err != nil {
 				t.Fatalf("RenderCommand: %v", err)

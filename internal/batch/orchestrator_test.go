@@ -427,24 +427,41 @@ func TestRunBatch_CallsStopOnSuccess(t *testing.T) {
 func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 	tests := []struct {
 		name     string
+		agent    string
 		cfgModel string
 		reqModel string
 		wantCmd  string
 	}{
 		{
 			name:     "request overrides config",
+			agent:    "opencode",
 			cfgModel: "config-model",
 			reqModel: "request-model",
 			wantCmd:  `opencode run -m request-model "$(cat .sandman/rendered-prompt.md)"`,
 		},
 		{
 			name:     "config model is used",
+			agent:    "opencode",
 			cfgModel: "config-model",
 			wantCmd:  `opencode run -m config-model "$(cat .sandman/rendered-prompt.md)"`,
 		},
 		{
 			name:    "default behavior leaves model out",
+			agent:   "opencode",
 			wantCmd: `opencode run "$(cat .sandman/rendered-prompt.md)"`,
+		},
+		{
+			name:     "pi splits provider and model",
+			agent:    "pi",
+			cfgModel: "openai/gpt-4.1",
+			wantCmd:  `pi --print --provider openai --model gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`,
+		},
+		{
+			name:     "pi request model overrides config",
+			agent:    "pi",
+			cfgModel: "anthropic/claude-sonnet-4",
+			reqModel: "openai/gpt-4.1",
+			wantCmd:  `pi --print --provider openai --model gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`,
 		},
 	}
 
@@ -457,12 +474,13 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			}
 			sb := &fakeSandbox{}
 			o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
-				Agent:       "opencode",
+				Agent:       tt.agent,
 				Sandbox:     "worktree",
 				WorktreeDir: ".sandman/worktrees",
 				Git:         config.GitConfig{DefaultBranch: "main"},
 				AgentProviders: map[string]config.Agent{
 					"opencode": {Preset: "opencode", Model: tt.cfgModel},
+					"pi":       {Preset: "pi", Model: tt.cfgModel},
 				},
 			}}, nil)
 			o.sandboxFactory = &fakeSandboxFactory{sandbox: sb}
@@ -475,6 +493,32 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 				t.Errorf("expected command %q, got %q", tt.wantCmd, sb.execCommand)
 			}
 		})
+	}
+}
+
+func TestRunBatch_PiModelMustUseProviderModelFormat(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:       "pi",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{DefaultBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"pi": {Preset: "pi", Model: "gpt-4.1"},
+		},
+	}}, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err == nil {
+		t.Fatal("expected error for invalid pi model value")
+	}
+	if !strings.Contains(err.Error(), "provider/model format") {
+		t.Fatalf("expected error mentioning provider/model format, got %v", err)
 	}
 }
 

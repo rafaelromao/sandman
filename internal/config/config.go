@@ -46,14 +46,16 @@ type GitConfig struct {
 
 // Agent holds a configured agent provider or a custom override.
 type Agent struct {
-	Name         string            `yaml:"name,omitempty"`
-	Preset       string            `yaml:"preset,omitempty"`
-	Command      string            `yaml:"command,omitempty"`
-	Model        string            `yaml:"model,omitempty"`
-	Env          map[string]string `yaml:"env,omitempty"`
-	ConfigDirs   []string          `yaml:"config_dirs,omitempty"`
-	ConfigFiles  []string          `yaml:"config_files,omitempty"`
-	KeychainAuth bool              `yaml:"keychain_auth,omitempty"`
+	Name          string            `yaml:"name,omitempty"`
+	Preset        string            `yaml:"preset,omitempty"`
+	Command       string            `yaml:"command,omitempty"`
+	Model         string            `yaml:"model,omitempty"`
+	ModelProvider string            `yaml:"-"`
+	ModelName     string            `yaml:"-"`
+	Env           map[string]string `yaml:"env,omitempty"`
+	ConfigDirs    []string          `yaml:"config_dirs,omitempty"`
+	ConfigFiles   []string          `yaml:"config_files,omitempty"`
+	KeychainAuth  bool              `yaml:"keychain_auth,omitempty"`
 }
 
 type rawAgentConfig struct {
@@ -107,7 +109,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 	},
 	"pi": {
 		DisplayName: "Pi",
-		Command:     `pi --print{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		Command:     `pi --print{{if .ModelProvider}} --provider {{.ModelProvider}}{{end}}{{if .ModelName}} --model {{.ModelName}}{{end}} "$(cat {{.PromptFile}})"`,
 		ConfigDirs: []string{
 			"~/.pi",
 		},
@@ -200,8 +202,14 @@ func Load(path string) (*Config, error) {
 	if cfg.Agent == "" {
 		return nil, fmt.Errorf("validate config: agent is required")
 	}
-	if _, err := cfg.ResolveAgentProvider(cfg.Agent); err != nil {
+	agentCfg, err := cfg.ResolveAgentProvider(cfg.Agent)
+	if err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
+	}
+	if agentCfg.Preset == "pi" {
+		if _, _, err := SplitPiModel(agentCfg.Model); err != nil {
+			return nil, fmt.Errorf("validate config: %w", err)
+		}
 	}
 
 	return &cfg, nil
@@ -334,6 +342,19 @@ func copyStringMap(src map[string]string) map[string]string {
 		dst[k] = v
 	}
 	return dst
+}
+
+// SplitPiModel splits a Pi model value in provider/model form.
+func SplitPiModel(model string) (string, string, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "", "", nil
+	}
+	provider, name, ok := strings.Cut(model, "/")
+	if !ok || strings.TrimSpace(provider) == "" || strings.TrimSpace(name) == "" {
+		return "", "", fmt.Errorf("pi model must use provider/model format, got %q", model)
+	}
+	return strings.TrimSpace(provider), strings.TrimSpace(name), nil
 }
 
 // GetValue returns the string representation of a config field by its dot-notation key.
