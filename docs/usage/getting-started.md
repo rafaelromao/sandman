@@ -50,10 +50,10 @@ Override both fields with `sandman config set` if you want a project-specific id
 The `init` command interactively prompts you for:
 
 - **Agent preset** — which built-in agent to configure (opencode, claude-code, codex, pi)
-- **Build tools preset** — language-specific tooling for the container image (generic, go, node, or python)
+- **Build tools preset** — language-specific tooling for the container image (generic, go, node, python, or ruby)
 - **Tool version** — version selector for the build toolchain
 
-Sandman auto-detects repo hints and defaults to the matching BuildToolsPreset when it finds Go, Node, or Python project files; otherwise it falls back to `generic`.
+Sandman auto-detects repo hints and defaults to the matching BuildToolsPreset when it finds Go, Node, Python, or Ruby project files; otherwise it falls back to `generic`. When a repo declares a Ruby version, `sandman init` prefers that pin while scaffolding the Ruby preset.
 
 You can skip the prompts by passing flags:
 

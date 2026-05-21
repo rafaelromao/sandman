@@ -25,6 +25,8 @@ const nodeBuildToolsPreset = "node"
 
 const pythonBuildToolsPreset = "python"
 
+const rubyBuildToolsPreset = "ruby"
+
 const DefaultMISEVersion = "v2026.5.8"
 
 // Options configures the scaffolding behavior.
@@ -143,6 +145,37 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		},
 		MiseVersion: DefaultMISEVersion,
 	},
+	rubyBuildToolsPreset: {
+		Name:      rubyBuildToolsPreset,
+		BaseImage: "debian:bookworm-slim",
+		SharedPackages: []string{
+			"autoconf",
+			"bash",
+			"bison",
+			"build-essential",
+			"ca-certificates",
+			"curl",
+			"file",
+			"gh",
+			"git",
+			"libffi-dev",
+			"libgdbm-dev",
+			"libncurses-dev",
+			"libreadline-dev",
+			"libssl-dev",
+			"libyaml-dev",
+			"nodejs",
+			"npm",
+			"openssh-client",
+			"pkg-config",
+			"python3",
+			"python3-pip",
+			"unzip",
+			"xz-utils",
+			"zlib1g-dev",
+		},
+		MiseVersion: DefaultMISEVersion,
+	},
 }
 
 // DefaultBuiltInAgentVersion returns the latest bundled version pin for a built-in agent.
@@ -196,6 +229,15 @@ var bundledPythonVersionCatalog = map[string]string{
 	"3.9":    "3.9.21",
 }
 
+var bundledRubyVersionCatalog = map[string]string{
+	"latest": "3.4.4",
+	"lts":    "3.3.8",
+	"3.4":    "3.4.4",
+	"3.3":    "3.3.8",
+	"3.2":    "3.2.7",
+	"3.1":    "3.1.6",
+}
+
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
 
@@ -232,9 +274,15 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	goVersion := ""
 	nodeVersion := ""
 	pythonVersion := ""
+	rubyVersion := ""
 	agentVersion := DefaultBuiltInAgentVersion(agent)
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == rubyBuildToolsPreset {
+		rubyVersion, err = s.resolveRubyVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
 			return err
 		}
@@ -279,7 +327,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, nodeVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, nodeVersion, pythonVersion, rubyVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -308,6 +356,22 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 	if name == "" {
 		if hasGoRepoHint(repoRoot) {
 			name = goBuildToolsPreset
+		} else if hasRubyRepoHint(repoRoot) {
+			if p != nil {
+				options := []string{rubyBuildToolsPreset}
+				for _, preset := range KnownBuildToolsPresets {
+					if preset != rubyBuildToolsPreset {
+						options = append(options, preset)
+					}
+				}
+				selected, err := p.Select("Choose a build tools preset:", options)
+				if err == nil {
+					name = strings.ToLower(strings.TrimSpace(selected))
+				}
+			}
+			if name == "" {
+				name = rubyBuildToolsPreset
+			}
 		} else if hasNodeRepoHint(repoRoot) {
 			if p != nil {
 				options := []string{nodeBuildToolsPreset}
@@ -367,6 +431,18 @@ func hasNodeRepoHint(repoRoot string) bool {
 
 func hasPythonRepoHint(repoRoot string) bool {
 	for _, rel := range []string{"pyproject.toml", "setup.py", "setup.cfg", "Pipfile", ".python-version"} {
+		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRubyRepoHint(repoRoot string) bool {
+	if _, found, err := readRubyVersionHint(repoRoot); err == nil && found {
+		return true
+	}
+	for _, rel := range []string{"Gemfile", "Gemfile.lock", ".ruby-version"} {
 		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
 			return true
 		}
@@ -758,7 +834,7 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, nodeVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, nodeVersion, pythonVersion, rubyVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman agent-provider: %s\n", agent)
@@ -770,6 +846,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman python-version: %s\n", pythonVersion)
+	}
+	if preset.Name == rubyBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman ruby-version: %s\n", rubyVersion)
 	}
 	fmt.Fprintf(&out, "# sandman tool-version: %s\n", agentVersion)
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
@@ -793,6 +872,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
+	}
+	if preset.Name == rubyBuildToolsPreset {
+		out.WriteString(renderRubyInstallCommand(rubyVersion))
 	}
 	out.WriteString(renderAgentInstallCommand(agent, agentVersion))
 	return out.String()
@@ -835,6 +917,47 @@ func (s *Scaffolder) resolvePythonVersion(repoRoot, selector string, p Prompter)
 	resolved, err := resolvePythonVersionChoice(choice, hint, found)
 	if err != nil {
 		return "", fmt.Errorf("resolve python version: %w", err)
+	}
+	return resolved, nil
+}
+
+func (s *Scaffolder) resolveRubyVersion(repoRoot, selector string, p Prompter) (string, error) {
+	hint, found, err := readRubyVersionHint(repoRoot)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if p != nil {
+				selected, err := p.Select(fmt.Sprintf("Choose a Ruby version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = normalizeRubyVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if p != nil {
+				selected, err := p.Select("Choose a Ruby version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = normalizeRubyVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	resolved, err := resolveRubyVersionChoice(choice, hint, found)
+	if err != nil {
+		return "", fmt.Errorf("resolve ruby version: %w", err)
 	}
 	return resolved, nil
 }
@@ -1082,6 +1205,222 @@ func renderPythonInstallCommand(version string) string {
 	return out.String()
 }
 
+func resolveRubyVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = normalizeRubyVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Ruby version hint found")
+		}
+		return resolveMiseRubyVersion(normalizeRubyVersionSelector(hint))
+	case "latest", "lts":
+		if strings.ToLower(choice) == "latest" {
+			return resolveMiseRubyVersion("latest")
+		}
+		latest, err := resolveMiseRubyVersion("latest")
+		if err != nil {
+			if version, ok := bundledRubyVersionCatalog["lts"]; ok {
+				return version, nil
+			}
+			return "", err
+		}
+		prefix, err := rubyPreviousMinorPrefix(latest)
+		if err != nil {
+			if version, ok := bundledRubyVersionCatalog["lts"]; ok {
+				return version, nil
+			}
+			return "", err
+		}
+		resolved, err := resolveMiseRubyVersion(prefix)
+		if err == nil {
+			return resolved, nil
+		}
+		if version, ok := bundledRubyVersionCatalog["lts"]; ok {
+			return version, nil
+		}
+		return "", err
+	}
+
+	return resolveMiseRubyVersion(choice)
+}
+
+func normalizeRubyVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return ""
+	}
+	lower := strings.ToLower(selector)
+	switch {
+	case lower == "repo", lower == "latest", lower == "lts":
+		return lower
+	case strings.HasPrefix(lower, "ruby-"):
+		return strings.TrimPrefix(selector[5:], "-")
+	case strings.HasPrefix(lower, "ruby") && len(selector) > 4 && selector[4] >= '0' && selector[4] <= '9':
+		return selector[4:]
+	}
+	if len(selector) > 1 && strings.HasPrefix(lower, "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	if version := nodeVersionSelectorPattern.FindString(selector); version != "" {
+		return version
+	}
+	return selector
+}
+
+func resolveMiseRubyVersion(selector string) (string, error) {
+	selector = normalizeRubyVersionSelector(selector)
+	args := []string{"latest"}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		args = append(args, "ruby")
+	} else {
+		args = append(args, "ruby@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledRubyVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledRubyVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := bundledRubyVersionCatalog["3.3"]; ok {
+			return version, nil
+		}
+	}
+	if selector != "" && selector != "latest" && selector != "lts" && nodeVersionSelectorPattern.MatchString(selector) {
+		return selector, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve ruby version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve ruby version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func rubyPreviousMinorPrefix(version string) (string, error) {
+	version = normalizeRubyVersionSelector(version)
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected Ruby version %q", version)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("parse Ruby major version %q: %w", version, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("parse Ruby minor version %q: %w", version, err)
+	}
+	if minor == 0 {
+		return "", fmt.Errorf("unexpected Ruby version %q", version)
+	}
+	minor--
+
+	return fmt.Sprintf("%d.%d", major, minor), nil
+}
+
+func readRubyVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{".ruby-version", "Gemfile", "Gemfile.lock", ".tool-versions"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Ruby version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseRubyVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseRubyVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case ".ruby-version":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			return line, true
+		}
+	case ".tool-versions":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "ruby" {
+				return fields[1], true
+			}
+		}
+	case "Gemfile":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(line, "ruby ") {
+				if version := nodeVersionSelectorPattern.FindString(line); version != "" {
+					return version, true
+				}
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					return strings.Trim(fields[1], "\"'"), true
+				}
+			}
+		}
+	case "Gemfile.lock":
+		inVersionBlock := false
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			if line == "RUBY VERSION" {
+				inVersionBlock = true
+				continue
+			}
+			if inVersionBlock {
+				if strings.HasPrefix(line, "ruby ") {
+					if version := nodeVersionSelectorPattern.FindString(line); version != "" {
+						return version, true
+					}
+					fields := strings.Fields(line)
+					if len(fields) >= 2 {
+						return fields[1], true
+					}
+				}
+				break
+			}
+		}
+	}
+	return "", false
+}
+
+func renderRubyInstallCommand(version string) string {
+	return fmt.Sprintf("RUN mise use -g --pin ruby@%s\n", version)
+}
+
 func renderAgentInstallCommand(agent, version string) string {
 	switch agent {
 	case "opencode":
@@ -1128,6 +1467,7 @@ type dockerfileMetadata struct {
 	GoVersion        string
 	NodeVersion      string
 	PythonVersion    string
+	RubyVersion      string
 	ToolVersion      string
 	MiseVersion      string
 }
@@ -1184,6 +1524,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.NodeVersion = strings.TrimSpace(value)
 		case "python-version":
 			meta.PythonVersion = strings.TrimSpace(value)
+		case "ruby-version":
+			meta.RubyVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
 		}

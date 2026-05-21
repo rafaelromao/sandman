@@ -163,6 +163,60 @@ func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	}
 }
 
+func TestInit_RubyBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "ruby"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: ruby") {
+		t.Fatalf("config missing ruby build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: ruby") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman ruby-version:") {
+		t.Fatalf("Dockerfile missing ruby-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin ruby@") {
+		t.Fatalf("Dockerfile missing pinned ruby install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@"+scaffold.DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN MISE_VERSION="+scaffold.DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", dockerfile)
+	}
+
+	promptData, err := os.ReadFile(filepath.Join(dir, ".sandman", "prompt.md"))
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	promptText := string(promptData)
+	if want := prompt.DefaultPrompt(); promptText != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, promptText)
+	}
+}
+
 func TestInit_DefaultsToPythonPresetForPythonRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -292,6 +346,49 @@ func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
 	}
 	if !strings.Contains(dockerfile, "RUN corepack enable") {
 		t.Fatalf("Dockerfile missing corepack enable, got:\n%s", dockerfile)
+	}
+}
+
+func TestInit_DefaultsToRubyPresetForRubyRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte("3.3.0\n"), 0644); err != nil {
+		t.Fatalf("write .ruby-version: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: ruby") {
+		t.Fatalf("config missing ruby build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: ruby") {
+		t.Fatalf("Dockerfile missing ruby build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman ruby-version:") {
+		t.Fatalf("Dockerfile missing ruby-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin ruby@") {
+		t.Fatalf("Dockerfile missing pinned ruby install, got:\n%s", dockerfile)
 	}
 }
 

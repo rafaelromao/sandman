@@ -143,6 +143,15 @@ func TestSmoke_RealAgentCLIs_PythonPreset(t *testing.T) {
 	runSmokeProviderCases(t, cases)
 }
 
+func TestSmoke_RealAgentCLIs_RubyPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "ruby"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
 func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
 	allowed, err := parseSmokeProviders()
 	if err != nil {
