@@ -47,6 +47,33 @@ func TestInit_PythonPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 	}
 }
 
+func TestInit_DotnetPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
+	runtime, err := sandbox.ResolveRuntime("podman")
+	if err != nil {
+		t.Skipf("container runtime unavailable: %v", err)
+	}
+
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte(`{"sdk":{"version":"8.0.100"}}`), 0644); err != nil {
+				t.Fatalf("write global.json: %v", err)
+			}
+
+			s := &scaffold.Scaffolder{}
+			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			tag := fmt.Sprintf("sandman-dotnet-preset-%s-%d:latest", agent, time.Now().UnixNano())
+			buildPresetImage(t, runtime, tag, filepath.Join(dir, ".sandman", "Dockerfile"), dir)
+			t.Cleanup(func() {
+				_ = exec.Command(runtime, "rmi", "-f", tag).Run()
+			})
+		})
+	}
+}
+
 func TestInit_GoPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 	runtime, err := sandbox.ResolveRuntime("podman")
 	if err != nil {

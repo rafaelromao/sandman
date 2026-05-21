@@ -295,6 +295,49 @@ func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
 	}
 }
 
+func TestInit_DefaultsToDotnetPresetForDotnetRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte(`{"sdk":{"version":"8.0.100"}}`), 0644); err != nil {
+		t.Fatalf("write global.json: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: dotnet") {
+		t.Fatalf("config missing dotnet build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: dotnet") {
+		t.Fatalf("Dockerfile missing dotnet build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman dotnet-version:") {
+		t.Fatalf("Dockerfile missing dotnet-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin dotnet@") {
+		t.Fatalf("Dockerfile missing pinned dotnet install, got:\n%s", dockerfile)
+	}
+}
+
 func TestInit_ExplicitGenericOverridesNodeRepoHint(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
