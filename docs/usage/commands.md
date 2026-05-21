@@ -41,8 +41,6 @@ Exactly one selection mode is required:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--parallel` | `default_parallel` from config (4) | Maximum concurrent agent runs |
-| `--preserve` | `false` | Keep worktrees after successful runs |
-| `--debug` | `false` | Print worktree path and instructions on failure |
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `1` = isolated container |
 | `--max-containers` | config default (0) | Max containers; `0` = auto mode |
@@ -62,6 +60,7 @@ Exactly one selection mode is required:
 - `--next` is mutually exclusive with issue arguments, `--label`, and `--query`
 - `--include-dependencies` is mutually exclusive with `--interactive`
 - `--interactive` requires exactly one issue
+- `run` preserves worktrees by default; use `sandman clean` to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means auto-scale

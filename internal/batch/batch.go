@@ -16,8 +16,6 @@ type Request struct {
 	Dependencies         map[int][]int
 	Model                string
 	Parallel             int
-	Preserve             bool
-	Debug                bool
 	Branches             map[int]string
 	Sandbox              string
 	ContainerCapacity    int
@@ -36,10 +34,10 @@ type Result struct {
 
 // AgentRunResult describes the outcome of a single AgentRun.
 type AgentRunResult struct {
-	IssueNumber int
-	Status      string
-	Branch      string
-	DebugInfo   string
+	IssueNumber  int
+	Status       string
+	Branch       string
+	WorktreePath string
 }
 
 // Runnable represents a single agent execution that can be run.

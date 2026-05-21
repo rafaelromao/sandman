@@ -22,6 +22,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [issue...]",
 		Short: "Run an AFK agent for specific issues",
+		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Use \"sandman clean\" to delete preserved worktrees.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := deps.ConfigStore.Load()
 			if err != nil {
@@ -124,8 +125,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			// Let 0 pass through — Orchestrator defaults to 4
 
-			preserve, _ := cmd.Flags().GetBool("preserve")
-			debug, _ := cmd.Flags().GetBool("debug")
 			sandboxMode, _ := cmd.Flags().GetString("sandbox")
 			containerCapacityFlag := cmd.Flags().Lookup("container-capacity")
 			containerCapacitySet := containerCapacityFlag != nil && containerCapacityFlag.Changed
@@ -172,8 +171,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				Dependencies:         resolvedBatch.Deps,
 				Model:                strings.TrimSpace(modelFlag),
 				Parallel:             parallel,
-				Preserve:             preserve,
-				Debug:                debug,
 				Sandbox:              sandboxMode,
 				ContainerCapacity:    containerCapacity,
 				ContainerCapacitySet: containerCapacitySet,
@@ -192,8 +189,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if result != nil {
 				printSummary(cmd, result)
 				for _, run := range result.Runs {
-					if run.DebugInfo != "" {
-						fmt.Fprint(cmd.OutOrStdout(), run.DebugInfo)
+					if strings.TrimSpace(run.WorktreePath) != "" {
+						fmt.Fprintf(cmd.OutOrStdout(), "worktree: %s\n", run.WorktreePath)
 					}
 				}
 			}
@@ -205,8 +202,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 		},
 	}
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
-	cmd.Flags().Bool("preserve", false, "Preserve worktrees after successful runs")
-	cmd.Flags().Bool("debug", false, "Print worktree path and instructions after failure")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 1 means isolated container execution")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")

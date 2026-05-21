@@ -147,7 +147,7 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
 	customizeOpenCodeAgentForContainer(t, repoDir, containerModel)
 	writePRFlowPrompt(t, repoDir)
 
-	out, err = runSandmanBinary(t, binPath, repoDir, "run", "--sandbox", "podman", "--preserve", strconv.Itoa(prFlowIssueNumber))
+	out, err = runSandmanBinary(t, binPath, repoDir, "run", "--sandbox", "podman", strconv.Itoa(prFlowIssueNumber))
 	t.Logf("sandman run returned err=%v output=%s", err, out)
 
 	logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", prFlowIssueNumber))
@@ -326,7 +326,7 @@ func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	customizeOpenCodeAgentForContainer(t, repoDir, containerModel)
 	writePRFlowPrompt(t, repoDir)
 
-	_, err = runRootCommand(t, deps, "run", "--sandbox", "podman", "--preserve", strconv.Itoa(prFlowIssueNumber))
+	_, err = runRootCommand(t, deps, "run", "--sandbox", "podman", strconv.Itoa(prFlowIssueNumber))
 	t.Logf("sandman run returned err=%v", err)
 
 	logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", prFlowIssueNumber))
@@ -510,8 +510,8 @@ func TestPRFlow_WorktreeSandboxOpencodeCommitsAndPushes(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", prFlowBranch)
-	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
-		t.Fatalf("expected worktree cleanup, got: %v", err)
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected worktree to remain, got: %v", err)
 	}
 }
 
@@ -1028,7 +1028,6 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 
 	out, err = runSandmanBinary(t, binPath, repoDir, "run",
 		"--sandbox", "podman",
-		"--preserve",
 		"--parallel", "2",
 		"--container-capacity", "2",
 		"--max-containers", "1",

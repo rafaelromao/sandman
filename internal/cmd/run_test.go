@@ -313,28 +313,8 @@ func TestRun_PrintsSummaryWithBlockedRunsAndNoFailures(t *testing.T) {
 	}
 }
 
-func TestRun_PreserveFlagPassedToBatchRunner(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--preserve", "42"})
-
-	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !spy.req.Preserve {
-		t.Errorf("expected Preserve=true, got false")
-	}
-}
-
-func TestRun_NoPreserveFlagDefaultsToFalse(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{}}
+func TestRun_PrintsWorktreeHintForCompletedRuns(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug", WorktreePath: ".sandman/worktrees/sandman/42-fix-bug"}}}}
 	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
@@ -348,8 +328,9 @@ func TestRun_NoPreserveFlagDefaultsToFalse(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.req.Preserve {
-		t.Errorf("expected Preserve=false, got true")
+	out := buf.String()
+	if !strings.Contains(out, "worktree: .sandman/worktrees/sandman/42-fix-bug") {
+		t.Fatalf("expected worktree hint, got:\n%s", out)
 	}
 }
 
@@ -370,26 +351,6 @@ func TestRun_NoParallelFlagDefaultsToZero(t *testing.T) {
 
 	if spy.req.Parallel != 0 {
 		t.Errorf("expected parallel=0 to pass through to orchestrator, got %d", spy.req.Parallel)
-	}
-}
-
-func TestRun_DebugFlagPassedToBatchRunner(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--debug", "42"})
-
-	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !spy.req.Debug {
-		t.Errorf("expected Debug=true, got false")
 	}
 }
 

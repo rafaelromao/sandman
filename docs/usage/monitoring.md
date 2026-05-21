@@ -34,21 +34,13 @@ Because `sandman retry` replays prompt inputs, `run.started` payloads may also i
 
 Each agent run writes its output to `.sandman/logs/<issue>.log`. This file captures both stdout and stderr from the agent process, prefixed with issue-specific timestamps.
 
-## Debug mode
+## Worktree hints
 
 ```bash
-sandman run --debug 42
+sandman run 42
 ```
 
-When enabled, Sandman prints the worktree path and instructions for manual inspection alongside failure output. Worktrees are always preserved on failure (regardless of `--debug`), so you can examine the agent's partial output and diagnose issues.
-
-## Preserve mode
-
-```bash
-sandman run --preserve 42
-```
-
-Keeps worktrees on disk even after successful runs. Useful when you want to review the agent's work before cleaning up manually with `sandman clean`.
+Every completed run prints `worktree: <path>` on stdout. Worktrees stay on disk until you remove them with `sandman clean`.
 
 ## Graceful shutdown
 
