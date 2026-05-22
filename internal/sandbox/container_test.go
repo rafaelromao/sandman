@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -863,6 +864,39 @@ func TestResolveConfigMounts_ResolvesFileSymlink(t *testing.T) {
 	}
 	if string(data) != `{"key": "value"}` {
 		t.Errorf("expected content %q, got %q", `{"key": "value"}`, string(data))
+	}
+}
+
+func TestResolveConfigMounts_SkipsSpecialFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "valid.txt"), []byte("ok"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	socketPath := filepath.Join(dir, "agent.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Skipf("unix sockets unavailable: %v", err)
+	}
+	defer ln.Close()
+
+	mounts, cleanup, err := ResolveConfigMounts([]string{dir}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	source := mounts[0].Source
+	data, err := os.ReadFile(filepath.Join(source, "valid.txt"))
+	if err != nil {
+		t.Fatalf("read valid.txt: %v", err)
+	}
+	if string(data) != "ok" {
+		t.Errorf("expected 'ok', got %q", string(data))
+	}
+
+	if _, err := os.Stat(filepath.Join(source, "agent.sock")); !os.IsNotExist(err) {
+		t.Fatalf("expected socket file to be skipped, got: %v", err)
 	}
 }
 
