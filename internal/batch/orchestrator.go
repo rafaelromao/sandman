@@ -544,7 +544,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				mu.Unlock()
 				return
 			}
-			defer startGate.Release()
 
 			res, started := o.runSingle(ctx, issueNum, cfg, agentCfg, req.Branches, req.Interactive, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
 			if started {
