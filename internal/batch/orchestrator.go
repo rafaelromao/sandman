@@ -285,14 +285,24 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 
 		containerCapacity := cfg.ContainerCapacity
+		if containerCapacity < 0 {
+			return nil, fmt.Errorf("container_capacity must be 0 or greater")
+		}
 		if containerCapacity == 0 {
 			containerCapacity = config.DefaultContainerCapacity
 		}
 		if req.ContainerCapacitySet {
-			containerCapacity = req.ContainerCapacity
+			if req.ContainerCapacity < 0 {
+				return nil, fmt.Errorf("container_capacity must be 0 or greater")
+			}
+			if req.ContainerCapacity == 0 {
+				containerCapacity = config.DefaultContainerCapacity
+			} else {
+				containerCapacity = req.ContainerCapacity
+			}
 		}
 		if containerCapacity < 1 {
-			return nil, fmt.Errorf("container_capacity must be at least 1")
+			return nil, fmt.Errorf("container_capacity must be 0 or greater")
 		}
 
 		maxContainers := cfg.MaxContainers

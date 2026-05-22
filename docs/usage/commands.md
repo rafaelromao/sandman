@@ -42,7 +42,7 @@ Exactly one selection mode is required:
 |------|---------|-------------|
 | `--parallel` | `default_parallel` from config (4) | Maximum concurrent agent runs |
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
-| `--container-capacity` | config default (4) | Max concurrent agent runs per container; `1` = isolated container |
+| `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = auto/default mode, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = auto mode |
 | `--interactive` | `false` | Run agent in interactive mode (requires exactly one issue) |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
@@ -63,6 +63,7 @@ Exactly one selection mode is required:
 - `run` preserves worktrees by default; use `sandman clean` to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
+- `--container-capacity` accepts `0` as auto/default mode and resolves it to the default container capacity behavior
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means auto-scale
 - `--model` only applies to built-in presets and overrides any `agents.<name>.model` value
 - Pi splits `provider/model` into separate provider and model flags, and errors if `/` is missing

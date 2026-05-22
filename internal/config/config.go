@@ -177,8 +177,8 @@ func Load(path string) (*Config, error) {
 	}
 	if raw.ContainerCapacity == nil {
 		cfg.ContainerCapacity = DefaultContainerCapacity
-	} else if *raw.ContainerCapacity <= 0 {
-		return nil, fmt.Errorf("validate config: container_capacity must be at least 1")
+	} else if *raw.ContainerCapacity < 0 {
+		return nil, fmt.Errorf("validate config: container_capacity must be 0 or greater")
 	} else {
 		cfg.ContainerCapacity = *raw.ContainerCapacity
 	}
@@ -410,8 +410,8 @@ func (c *Config) SetValue(key, value string) error {
 		if err != nil {
 			return fmt.Errorf("invalid value for container_capacity: %w", err)
 		}
-		if n <= 0 {
-			return fmt.Errorf("container_capacity must be at least 1")
+		if n < 0 {
+			return fmt.Errorf("container_capacity must be 0 or greater")
 		}
 		c.ContainerCapacity = n
 	case "max_containers":

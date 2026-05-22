@@ -516,11 +516,11 @@ func TestLoad_InvalidContainerSettings_ReturnValidationError(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "container capacity less than one",
+			name: "negative container capacity",
 			content: `agent: codex
-container_capacity: 0
+container_capacity: -1
 `,
-			wantErr: "container_capacity must be at least 1",
+			wantErr: "container_capacity must be 0 or greater",
 		},
 		{
 			name: "negative max containers",
@@ -547,6 +547,26 @@ max_containers: -1
 				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestLoad_ContainerCapacityZeroIsAccepted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: codex
+container_capacity: 0
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.ContainerCapacity != 0 {
+		t.Errorf("container_capacity: got %d, want %d", cfg.ContainerCapacity, 0)
 	}
 }
 
@@ -679,6 +699,7 @@ func TestConfig_SetValue(t *testing.T) {
 		{"review_command", "/oc review", false},
 		{"default_parallel", "4", false},
 		{"container_capacity", "4", false},
+		{"container_capacity", "0", false},
 		{"max_containers", "0", false},
 		{"worktree_dir", "/tmp/wt", false},
 		{"sandbox", "podman", false},
@@ -688,7 +709,6 @@ func TestConfig_SetValue(t *testing.T) {
 		{"unknown_key", "value", true},
 		{"default_parallel", "not-a-number", true},
 		{"default_parallel", "-1", true},
-		{"container_capacity", "0", true},
 		{"container_capacity", "not-a-number", true},
 		{"max_containers", "-1", true},
 		{"max_containers", "not-a-number", true},

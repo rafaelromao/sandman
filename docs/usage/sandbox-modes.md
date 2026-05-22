@@ -33,6 +33,7 @@ Container scheduling is governed by two config fields:
 
 - **`container_capacity`** — maximum concurrent `AgentRun`s inside one `ContainerSandbox`
 - **`max_containers`** — maximum number of `ContainerSandbox` instances
+- `container_capacity: 0` means auto/default mode: Sandman uses the default container capacity behavior instead of an explicit per-container limit
 
 #### How it works
 
@@ -71,7 +72,11 @@ Sandman creates up to 3 containers, each hosting up to 2 concurrent runs (max 6 
 container_capacity: 1
 ```
 
-Each container hosts exactly one `AgentRun`. This provides the strongest per-run isolation at the cost of higher overhead.
+Each container hosts exactly one `AgentRun`. This is the most constrained per-container capacity, at the cost of higher overhead.
+
+#### Auto/default capacity (`container_capacity: 0`)
+
+`container_capacity: 0` does not disable container scheduling. It resolves to the default container capacity behavior, so users can opt out of an explicit per-container limit while still using container-backed batching.
 
 ### Setup requirements
 
