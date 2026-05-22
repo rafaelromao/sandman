@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/spf13/cobra"
 )
@@ -15,6 +16,27 @@ func NewStatusCmd(log events.EventLog) *cobra.Command {
 		Use:   "status",
 		Short: "Show the status of current and recent agent runs",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			liveRuns, err := daemon.NewLiveRunStore(".sandman").List()
+			if err != nil {
+				return fmt.Errorf("list live runs: %w", err)
+			}
+
+			if len(liveRuns) > 0 {
+				sort.Slice(liveRuns, func(i, j int) bool {
+					if !liveRuns[i].StartedAt.Equal(liveRuns[j].StartedAt) {
+						return liveRuns[i].StartedAt.Before(liveRuns[j].StartedAt)
+					}
+					return liveRuns[i].RunID < liveRuns[j].RunID
+				})
+
+				fmt.Fprintln(cmd.OutOrStdout(), "Active runs:")
+				for _, run := range liveRuns {
+					elapsed := time.Since(run.StartedAt).Round(time.Second)
+					fmt.Fprintf(cmd.OutOrStdout(), "  %s  issues %s  elapsed %s\n", run.RunID, formatIssueList(run.Issues), elapsed)
+				}
+				return nil
+			}
+
 			eventsList, err := log.Read()
 			if err != nil {
 				return fmt.Errorf("read event log: %w", err)

@@ -8,6 +8,8 @@ sandman run 42 43
 
 Runs agents for issues #42 and #43. Issues run concurrently up to the `--parallel` limit.
 
+Each `sandman run` invocation gets its own live run directory under `.sandman/runs/<run-id>/`, so multiple live daemons can coexist in one repo.
+
 ## Running by label
 
 ```bash

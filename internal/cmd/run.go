@@ -172,19 +172,32 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}()
 
-			pidLock := daemon.NewPIDLock(".sandman")
+			liveRuns := daemon.NewLiveRunStore(".sandman")
 			broadcaster := daemon.NewBroadcaster()
-			ctlSocket := daemon.NewControlSocket(".sandman", broadcaster)
-
-			if err := pidLock.Acquire(); err != nil {
-				return err
+			runID := daemon.NewRunID(resolvedBatch.Issues)
+			runMeta := daemon.LiveRun{
+				RunID:     runID,
+				PID:       os.Getpid(),
+				Issues:    append([]int(nil), resolvedBatch.Issues...),
+				StartedAt: time.Now().UTC(),
 			}
-			defer pidLock.Release()
+			if err := liveRuns.Register(runMeta); err != nil {
+				return fmt.Errorf("write live run metadata: %w", err)
+			}
+
+			ctlSocket := daemon.NewControlSocket(liveRuns.RunDir(runID), broadcaster)
+			defer func() {
+				if err := ctlSocket.Stop(); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warn: close control socket: %v\n", err)
+				}
+				if err := liveRuns.Remove(runID); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warn: remove live run dir: %v\n", err)
+				}
+			}()
 
 			if err := ctlSocket.Start(); err != nil {
 				return err
 			}
-			defer ctlSocket.Stop()
 
 			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
 				Issues:               resolvedBatch.Issues,
