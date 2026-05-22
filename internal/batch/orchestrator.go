@@ -259,14 +259,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, err
 	}
 
-	resolvedGitIdentity := gitIdentity{}
-	if o.sandboxFactory == nil && o.runnableFactory == nil && o.containerRuntimeFactory == nil {
-		resolvedGitIdentity, err = resolveGitIdentity(".")
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	sbFactory := o.sandboxFactory
 	if sbFactory == nil {
 		switch sandboxMode {
@@ -374,12 +366,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, err
 		}
 	}
-	if len(req.Issues) > 0 && (resolvedGitIdentity != gitIdentity{}) {
-		if err := setGitConfigValue(".", "extensions.worktreeConfig", "true"); err != nil {
-			return nil, fmt.Errorf("enable worktree git config: %w", err)
-		}
-	}
-
 	if req.PromptConfig.PromptFile == "" {
 		req.PromptConfig.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
 	}
@@ -403,6 +389,24 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	var activeMu sync.Mutex
 	activeRuns := make(map[int]sandbox.Sandbox)
+	var resolveGitIdentityOnce sync.Once
+	resolvedGitIdentity := gitIdentity{}
+	resolveGitIdentityErr := error(nil)
+	resolveBatchGitIdentity := func() (gitIdentity, error) {
+		if o.sandboxFactory != nil || o.runnableFactory != nil || o.containerRuntimeFactory != nil {
+			return gitIdentity{}, nil
+		}
+		resolveGitIdentityOnce.Do(func() {
+			resolvedGitIdentity, resolveGitIdentityErr = resolveGitIdentity(".")
+			if resolveGitIdentityErr != nil {
+				return
+			}
+			if err := setGitConfigValue(".", "extensions.worktreeConfig", "true"); err != nil {
+				resolveGitIdentityErr = fmt.Errorf("enable worktree git config: %w", err)
+			}
+		})
+		return resolvedGitIdentity, resolveGitIdentityErr
+	}
 
 	// Graceful shutdown: on context cancel, SIGTERM all processes, wait 10s, then SIGKILL.
 	shutdownDone := make(chan struct{})
@@ -470,7 +474,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg, agentCfg, resolvedGitIdentity, req.Branches, req.Interactive, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
+			res := o.runSingle(ctx, issueNum, cfg, agentCfg, resolveBatchGitIdentity, req.Branches, req.Interactive, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
 			mu.Lock()
 			results[idx] = res
 			statuses[issueNum] = res.Status
@@ -580,7 +584,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, gitIdentity gitIdentity, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
@@ -604,7 +608,12 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch, container)
 	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
-		setter.SetGitIdentity(gitIdentity.Name, gitIdentity.Email)
+		identity, err := resolveGitIdentity()
+		if err != nil {
+			fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", num, err)
+			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+		}
+		setter.SetGitIdentity(identity.Name, identity.Email)
 	}
 	if err := wt.Start(); err != nil {
 		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", num, err)

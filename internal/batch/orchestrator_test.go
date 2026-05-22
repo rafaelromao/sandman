@@ -2772,12 +2772,14 @@ func TestRunBatch_FailsWhenNoGitIdentityResolved(t *testing.T) {
 	}
 
 	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
+	var errBuf bytes.Buffer
+	o.errorLog = &errBuf
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {
 		t.Fatal("expected git identity resolution error")
 	}
-	if !strings.Contains(err.Error(), "resolve git identity") {
-		t.Fatalf("expected git identity resolution error, got %v", err)
+	if !strings.Contains(errBuf.String(), "resolve git identity") {
+		t.Fatalf("expected git identity resolution error in stderr, got err=%v stderr=%q", err, errBuf.String())
 	}
 }
 
