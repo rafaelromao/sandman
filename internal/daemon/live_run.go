@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -148,5 +150,9 @@ func NewRunID(issues []int) string {
 	if len(issues) > 0 {
 		issueNum = issues[0]
 	}
-	return "run-" + strconv.Itoa(issueNum) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	buf := make([]byte, 4)
+	if _, err := rand.Read(buf); err != nil {
+		return "run-" + strconv.Itoa(issueNum) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	return "run-" + strconv.Itoa(issueNum) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10) + "-" + hex.EncodeToString(buf)
 }

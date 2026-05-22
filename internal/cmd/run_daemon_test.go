@@ -114,15 +114,20 @@ func TestRun_AllowsConcurrentLiveRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runner := &blockingBatchRunner{
-		started: make(chan struct{}, 2),
-		release: make(chan struct{}),
+	release := make(chan struct{})
+	runner1 := &blockingBatchRunner{
+		started: make(chan struct{}, 1),
+		release: release,
 		result:  &batch.Result{},
 	}
-	deps := newRunDeps(runner)
+	runner2 := &blockingBatchRunner{
+		started: make(chan struct{}, 1),
+		release: release,
+		result:  &batch.Result{},
+	}
 
 	done := make(chan error, 2)
-	startRun := func(issue string) {
+	startRun := func(issue string, deps Dependencies) {
 		go func() {
 			var buf bytes.Buffer
 			cmd := NewRunCmd(deps)
@@ -133,16 +138,16 @@ func TestRun_AllowsConcurrentLiveRuns(t *testing.T) {
 		}()
 	}
 
-	startRun("42")
+	startRun("42", newRunDeps(runner1))
 	select {
-	case <-runner.started:
+	case <-runner1.started:
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for first run to start")
 	}
 
-	startRun("43")
+	startRun("43", newRunDeps(runner2))
 	select {
-	case <-runner.started:
+	case <-runner2.started:
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for second run to start")
 	}
@@ -155,7 +160,7 @@ func TestRun_AllowsConcurrentLiveRuns(t *testing.T) {
 		t.Fatalf("expected 2 live runs, got %d", len(entries))
 	}
 
-	close(runner.release)
+	close(release)
 
 	for i := 0; i < 2; i++ {
 		select {
