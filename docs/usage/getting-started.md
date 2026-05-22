@@ -40,12 +40,12 @@ This scaffolds the `.sandman/` directory with:
 - **`.sandman/Dockerfile`** — Container image definition for container-backed sandboxing
 - **`.sandman/prompt.md`** — Project Prompt Template seeded from Sandman's Default Prompt
 
-The scaffolded config also includes the default agent commit identity:
+Agent commits use your host Git identity. Before the first run, make sure your Git config resolves both values:
 
-- `git.author_name: Sandman`
-- `git.author_email: sandman.support@gmail.com`
+- `user.name`
+- `user.email`
 
-Override both fields with `sandman config set` if you want a project-specific identity. If you clear or omit these fields, Sandman stops injecting commit identity and Git falls back to whatever other config or environment your process provides.
+Sandman resolves them from `~/.gitconfig`, then the host global/XDG Git config, then repo-local `.git/config`, and stops early if either value is missing.
 
 The `init` command interactively prompts you for:
 

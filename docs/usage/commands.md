@@ -151,7 +151,5 @@ sandman config set <key> <value>
 | `worktree_dir` | string | `.sandman/worktrees` |
 | `sandbox` | string | `podman` |
 | `git.default_branch` | string | `main` |
-| `git.author_name` | string | `Sandman` |
-| `git.author_email` | string | `sandman.support@gmail.com` |
 
-`sandman init` writes these keys with the Sandman default identity. If you clear them, Sandman stops injecting identity and Git falls back to whatever other config or environment your process provides.
+Agent commits use your host Git identity, not Sandman config keys. Sandman resolves `user.name` and `user.email` from `~/.gitconfig`, then host global/XDG config, then repo-local `.git/config`.

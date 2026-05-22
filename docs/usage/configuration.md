@@ -31,10 +31,8 @@ worktree_dir: .sandman/worktrees
 # Sandbox mode: podman (default), docker, or worktree.
 sandbox: podman
 
-# Git configuration for agent commits.
+# Git configuration for branch management.
 git:
-  author_name: Sandman
-  author_email: sandman.support@gmail.com
   default_branch: main
 
 # Sandman installs both built-in agents in scaffolded Dockerfiles.
@@ -94,12 +92,17 @@ sandman config get default_parallel
 # 4
 
 sandman config set container_capacity 2
-sandman config set git.author_name "My Name"
-sandman config set git.author_email "me@example.com"
+sandman config set git.default_branch trunk
 ```
 
 Use `sandman config get` and `sandman config set` for top-level config keys.
 
-`sandman init` writes `git.author_name: Sandman` and `git.author_email: sandman.support@gmail.com` into new project configs so the default agent commit identity is explicit. Sandman injects that identity into the agent process and does not write it to your host git config or repo-local `.git/config`. If you clear these fields, Sandman stops injecting identity and Git falls back to whatever other config or environment your process provides.
+Sandman does not store a separate commit identity in project config. Agent commits use your host Git identity resolved in this order:
+
+1. `~/.gitconfig`
+2. Host global/XDG Git config such as `~/.config/git/config`
+3. Repo-local `.git/config`
+
+If `user.name` or `user.email` is still missing after that lookup, `sandman run` fails before the agent starts.
 
 See [Commands Reference](commands.md) for the full list of supported dot-notation keys.

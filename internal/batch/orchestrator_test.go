@@ -2607,11 +2607,16 @@ func TestRunBatch_ReturnsErrorWhenBuildImageFails(t *testing.T) {
 	}
 }
 
-func TestRunBatch_SetsGitIdentityFromConfig(t *testing.T) {
-	t.Skip("legacy git identity behavior not exercised in this refactor")
+func TestRunBatch_UsesDotGitconfigIdentityOverRepoLocalConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[user]\n\tname = Alice\n\temail = alice@example.com\n"), 0644); err != nil {
+		t.Fatalf("write .gitconfig: %v", err)
+	}
 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -2620,14 +2625,12 @@ func TestRunBatch_SetsGitIdentityFromConfig(t *testing.T) {
 	}
 	store := &fakeConfigStore{
 		config: &config.Config{
-			DefaultAgent: "opencode",
-			Agent:        "opencode",
+			DefaultAgent: "test-agent",
+			Agent:        "test-agent",
 			Sandbox:      "worktree",
 			WorktreeDir:  ".sandman/worktrees",
 			Git: config.GitConfig{
 				DefaultBranch: "main",
-				AuthorName:    "Alice",
-				AuthorEmail:   "alice@example.com",
 			},
 			AgentProviders: map[string]config.Agent{
 				"test-agent": {Command: "touch test-file.txt && git add test-file.txt && git commit -m \"test commit\""},
@@ -2646,11 +2649,23 @@ func TestRunBatch_SetsGitIdentityFromConfig(t *testing.T) {
 	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
 }
 
-func TestRunBatch_SkipsGitIdentityWhenConfigEmpty(t *testing.T) {
-	t.Skip("legacy git identity behavior not exercised in this refactor")
+func TestRunBatch_UsesXDGGitIdentityWhenDotGitconfigLacksIdentity(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
+	home := t.TempDir()
+	xdg := filepath.Join(home, "xdg")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[core]\n\teditor = true\n"), 0644); err != nil {
+		t.Fatalf("write .gitconfig: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(xdg, "git"), 0755); err != nil {
+		t.Fatalf("mkdir xdg git dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(xdg, "git", "config"), []byte("[user]\n\tname = XDG User\n\temail = xdg@example.com\n"), 0644); err != nil {
+		t.Fatalf("write xdg git config: %v", err)
+	}
 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -2659,49 +2674,12 @@ func TestRunBatch_SkipsGitIdentityWhenConfigEmpty(t *testing.T) {
 	}
 	store := &fakeConfigStore{
 		config: &config.Config{
-			Agent:       "test-agent",
-			Sandbox:     "worktree",
-			WorktreeDir: ".sandman/worktrees",
-			Git: config.GitConfig{
-				DefaultBranch: "main",
-			},
-			AgentProviders: map[string]config.Agent{
-				"test-agent": {Command: "touch test-file.txt && git add test-file.txt && git commit -m \"test commit\""},
-			},
-		},
-	}
-
-	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-	assertGitCommitAuthor(t, worktreePath, "Sandman <sandman.support@gmail.com>")
-	assertLocalGitIdentity(t, worktreePath, "Sandman", "sandman.support@gmail.com")
-}
-
-func TestRunBatch_SkipsGitIdentityWhenOnlyNameSet(t *testing.T) {
-	t.Skip("legacy git identity behavior not exercised in this refactor")
-	dir := t.TempDir()
-	t.Chdir(dir)
-	initGitRepo(t, dir)
-
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-		},
-	}
-	store := &fakeConfigStore{
-		config: &config.Config{
-			DefaultAgent: "opencode",
-			Agent:        "opencode",
+			DefaultAgent: "test-agent",
+			Agent:        "test-agent",
 			Sandbox:      "worktree",
 			WorktreeDir:  ".sandman/worktrees",
 			Git: config.GitConfig{
 				DefaultBranch: "main",
-				AuthorName:    "Alice",
 			},
 			AgentProviders: map[string]config.Agent{
 				"test-agent": {Command: "touch test-file.txt && git add test-file.txt && git commit -m \"test commit\""},
@@ -2716,15 +2694,17 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyNameSet(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-	assertGitCommitAuthor(t, worktreePath, "Sandman <sandman.support@gmail.com>")
-	assertLocalGitIdentity(t, worktreePath, "Sandman", "sandman.support@gmail.com")
+	assertGitCommitAuthor(t, worktreePath, "XDG User <xdg@example.com>")
+	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
 }
 
-func TestRunBatch_SkipsGitIdentityWhenOnlyEmailSet(t *testing.T) {
-	t.Skip("legacy git identity behavior not exercised in this refactor")
+func TestRunBatch_FallsBackToRepoLocalGitIdentity(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -2733,13 +2713,12 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyEmailSet(t *testing.T) {
 	}
 	store := &fakeConfigStore{
 		config: &config.Config{
-			DefaultAgent: "opencode",
-			Agent:        "opencode",
+			DefaultAgent: "test-agent",
+			Agent:        "test-agent",
 			Sandbox:      "worktree",
 			WorktreeDir:  ".sandman/worktrees",
 			Git: config.GitConfig{
 				DefaultBranch: "main",
-				AuthorEmail:   "alice@example.com",
 			},
 			AgentProviders: map[string]config.Agent{
 				"test-agent": {Command: "touch test-file.txt && git add test-file.txt && git commit -m \"test commit\""},
@@ -2754,8 +2733,54 @@ func TestRunBatch_SkipsGitIdentityWhenOnlyEmailSet(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-	assertGitCommitAuthor(t, worktreePath, "Sandman <sandman.support@gmail.com>")
-	assertLocalGitIdentity(t, worktreePath, "Sandman", "sandman.support@gmail.com")
+	assertGitCommitAuthor(t, worktreePath, "Test <test@test.com>")
+	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
+}
+
+func TestRunBatch_FailsWhenNoGitIdentityResolved(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	if out, err := exec.Command("git", "config", "--unset", "user.name").CombinedOutput(); err != nil {
+		t.Fatalf("unset repo user.name: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "config", "--unset", "user.email").CombinedOutput(); err != nil {
+		t.Fatalf("unset repo user.email: %v: %s", err, out)
+	}
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+	}
+	store := &fakeConfigStore{
+		config: &config.Config{
+			DefaultAgent: "test-agent",
+			Agent:        "test-agent",
+			Sandbox:      "worktree",
+			WorktreeDir:  ".sandman/worktrees",
+			Git: config.GitConfig{
+				DefaultBranch: "main",
+			},
+			AgentProviders: map[string]config.Agent{
+				"test-agent": {Command: "touch test-file.txt && git add test-file.txt && git commit -m \"test commit\""},
+			},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
+	var errBuf bytes.Buffer
+	o.errorLog = &errBuf
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err == nil {
+		t.Fatal("expected git identity resolution error")
+	}
+	if !strings.Contains(errBuf.String(), "resolve git identity") {
+		t.Fatalf("expected git identity resolution error in stderr, got err=%v stderr=%q", err, errBuf.String())
+	}
 }
 
 func assertGitCommitAuthor(t *testing.T, worktreePath, want string) {

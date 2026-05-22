@@ -1177,7 +1177,7 @@ esac
 	}
 }
 
-func podmanGitIdentityDeps(t *testing.T, dir, remoteDir, agentCmd, authorName, authorEmail string) Dependencies {
+func podmanGitIdentityDeps(t *testing.T, dir, remoteDir, dotGitConfig, xdgGitConfig, agentCmd string) Dependencies {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
 		t.Fatalf("create .sandman dir: %v", err)
@@ -1194,11 +1194,21 @@ func podmanGitIdentityDeps(t *testing.T, dir, remoteDir, agentCmd, authorName, a
 	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
 		t.Fatalf("create ssh dir: %v", err)
 	}
-	gitCfg := fmt.Sprintf("[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
+	gitCfg := fmt.Sprintf(dotGitConfig, "file://"+remoteDir)
 	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitCfg), 0644); err != nil {
 		t.Fatalf("write gitconfig: %v", err)
 	}
+	if strings.TrimSpace(xdgGitConfig) != "" {
+		gitConfigDir := filepath.Join(homeDir, ".config", "git")
+		if err := os.MkdirAll(gitConfigDir, 0755); err != nil {
+			t.Fatalf("create xdg git dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(gitConfigDir, "config"), []byte(xdgGitConfig), 0644); err != nil {
+			t.Fatalf("write xdg git config: %v", err)
+		}
+	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
 	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
 		t.Fatalf("warm podman image for test home: %v: %s", err, out)
 	}
@@ -1207,14 +1217,10 @@ func podmanGitIdentityDeps(t *testing.T, dir, remoteDir, agentCmd, authorName, a
 		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 	}}
 
-	return newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "podman", config.GitConfig{
-		DefaultBranch: "main",
-		AuthorName:    authorName,
-		AuthorEmail:   authorEmail,
-	}, gh)
+	return newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "podman", config.GitConfig{DefaultBranch: "main"}, gh)
 }
 
-func TestRun_PodmanSandboxSetsGitIdentityFromConfig(t *testing.T) {
+func TestRun_PodmanSandboxUsesDotGitconfigIdentityWithoutMutatingWorktreeConfig(t *testing.T) {
 	if !podmanAvailable(t) {
 		return
 	}
@@ -1225,12 +1231,20 @@ func TestRun_PodmanSandboxSetsGitIdentityFromConfig(t *testing.T) {
 	runGit(t, dir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
 	agentCmd := `
-touch test-file.txt
-git add test-file.txt
-git commit -m "test commit by sandman"
-git log --format="%an <%ae>" -1
+	git config user.name
+	git config user.email
+	touch test-file.txt
+	git add test-file.txt
+	git commit -m "test commit by sandman"
+	git log --format="%an <%ae>" -1
+	`
+	dotGitConfig := `[url %q]
+	insteadOf = git@github.com:rafaelromao/sandman.git
+[user]
+	name = Sandman
+	email = sandman@test.com
 `
-	deps := podmanGitIdentityDeps(t, dir, remoteDir, agentCmd, "Sandman", "sandman@test.com")
+	deps := podmanGitIdentityDeps(t, dir, remoteDir, dotGitConfig, "", agentCmd)
 
 	out, err := executeRunCommand(t, deps, "42")
 	if err != nil {
@@ -1253,7 +1267,7 @@ git log --format="%an <%ae>" -1
 	}
 }
 
-func TestRun_PodmanSandboxUsesEnvScopedGitIdentityWithoutMutatingWorktreeConfig(t *testing.T) {
+func TestRun_PodmanSandboxUsesXDGGitIdentityWithoutMutatingWorktreeConfig(t *testing.T) {
 	if !podmanAvailable(t) {
 		return
 	}
@@ -1264,14 +1278,21 @@ func TestRun_PodmanSandboxUsesEnvScopedGitIdentityWithoutMutatingWorktreeConfig(
 	runGit(t, dir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
 	agentCmd := `
-git config user.name
-git config user.email
-touch test-file.txt
-git add test-file.txt
-git commit -m "test commit by sandman"
-git log --format="%an <%ae>" -1
+	git config user.name
+	git config user.email
+	touch test-file.txt
+	git add test-file.txt
+	git commit -m "test commit by xdg identity"
+	git log --format="%an <%ae>" -1
+	`
+	dotGitConfig := `[url %q]
+	insteadOf = git@github.com:rafaelromao/sandman.git
 `
-	deps := podmanGitIdentityDeps(t, dir, remoteDir, agentCmd, "Sandman", "sandman@test.com")
+	xdgGitConfig := `[user]
+	name = XDG User
+	email = xdg@example.com
+`
+	deps := podmanGitIdentityDeps(t, dir, remoteDir, dotGitConfig, xdgGitConfig, agentCmd)
 
 	out, err := executeRunCommand(t, deps, "42")
 	if err != nil {
@@ -1291,11 +1312,11 @@ git log --format="%an <%ae>" -1
 		t.Fatalf("read log: %v", err)
 	}
 	logContent := string(logData)
-	if !strings.Contains(logContent, "Sandman") || !strings.Contains(logContent, "sandman@test.com") {
-		t.Fatalf("expected env-scoped git identity in log, got:\n%s", logContent)
+	if !strings.Contains(logContent, "XDG User") || !strings.Contains(logContent, "xdg@example.com") {
+		t.Fatalf("expected xdg git identity in log, got:\n%s", logContent)
 	}
-	if !strings.Contains(logContent, "Sandman <sandman@test.com>") {
-		t.Fatalf("expected commit author 'Sandman <sandman@test.com>' in log, got:\n%s", logContent)
+	if !strings.Contains(logContent, "XDG User <xdg@example.com>") {
+		t.Fatalf("expected commit author 'XDG User <xdg@example.com>' in log, got:\n%s", logContent)
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
@@ -1320,24 +1341,30 @@ git log --format="%an <%ae>" -1
 	}
 }
 
-func TestRun_WorktreeSandboxUsesEnvScopedGitIdentityWithoutMutatingWorktreeConfig(t *testing.T) {
+func TestRun_WorktreeSandboxUsesHostGitIdentityWithoutMutatingWorktreeConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	_ = initRunIntegrationRepoWithRemote(t, dir)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+	gitConfig := `[user]
+	name = Host User
+	email = host@example.com
+`
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfig), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
 
 	agentCmd := `
-git config user.name
-git config user.email
-touch test-file.txt
-git add test-file.txt
-git commit -m "test commit by sandman"
-git log --format="%an <%ae>" -1
-`
-	deps := newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "worktree", config.GitConfig{
-		DefaultBranch: "main",
-		AuthorName:    "Sandman",
-		AuthorEmail:   "sandman@test.com",
-	}, &fakeGitHubClient{issues: map[int]*github.Issue{
+	git config user.name
+	git config user.email
+	touch test-file.txt
+	git add test-file.txt
+	git commit -m "test commit by host identity"
+	git log --format="%an <%ae>" -1
+	`
+	deps := newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "worktree", config.GitConfig{DefaultBranch: "main"}, &fakeGitHubClient{issues: map[int]*github.Issue{
 		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 	}})
 
@@ -1358,11 +1385,11 @@ git log --format="%an <%ae>" -1
 		t.Fatalf("read log: %v", err)
 	}
 	logContent := string(logData)
-	if !strings.Contains(logContent, "Sandman") || !strings.Contains(logContent, "sandman@test.com") {
-		t.Fatalf("expected env-scoped git identity in log, got:\n%s", logContent)
+	if !strings.Contains(logContent, "Host User") || !strings.Contains(logContent, "host@example.com") {
+		t.Fatalf("expected host git identity in log, got:\n%s", logContent)
 	}
-	if !strings.Contains(logContent, "Sandman <sandman@test.com>") {
-		t.Fatalf("expected commit author 'Sandman <sandman@test.com>' in log, got:\n%s", logContent)
+	if !strings.Contains(logContent, "Host User <host@example.com>") {
+		t.Fatalf("expected commit author 'Host User <host@example.com>' in log, got:\n%s", logContent)
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
@@ -1400,10 +1427,13 @@ func TestRun_PodmanSandboxUsesRepoDefaultIdentityWhenConfigEmpty(t *testing.T) {
 	agentCmd := `
 touch test-file.txt
 git add test-file.txt
-git commit -m "test commit by repo default"
-git log --format="%an <%ae>" -1
+	git commit -m "test commit by repo default"
+	git log --format="%an <%ae>" -1
+	`
+	dotGitConfig := `[url %q]
+	insteadOf = git@github.com:rafaelromao/sandman.git
 `
-	deps := podmanGitIdentityDeps(t, dir, remoteDir, agentCmd, "", "")
+	deps := podmanGitIdentityDeps(t, dir, remoteDir, dotGitConfig, "", agentCmd)
 
 	out, err := executeRunCommand(t, deps, "42")
 	if err != nil {
