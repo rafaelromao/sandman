@@ -20,8 +20,6 @@ const (
 	DefaultMaxContainers     = 0
 	DefaultWorktreeDir       = ".sandman/worktrees"
 	DefaultSandbox           = "podman"
-	DefaultGitAuthorName     = "Sandman"
-	DefaultGitAuthorEmail    = "sandman.support@gmail.com"
 )
 
 // Config holds the loaded Sandman configuration.
@@ -43,8 +41,6 @@ type Config struct {
 // GitConfig holds git-specific settings.
 type GitConfig struct {
 	DefaultBranch string `yaml:"default_branch"`
-	AuthorName    string `yaml:"author_name,omitempty"`
-	AuthorEmail   string `yaml:"author_email,omitempty"`
 }
 
 // Agent holds a configured agent provider or a custom override.
@@ -318,10 +314,6 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.Sandbox, nil
 	case "git.default_branch":
 		return c.Git.DefaultBranch, nil
-	case "git.author_name":
-		return c.Git.AuthorName, nil
-	case "git.author_email":
-		return c.Git.AuthorEmail, nil
 	default:
 		return "", fmt.Errorf("unknown config key: %s", key)
 	}
@@ -382,10 +374,6 @@ func (c *Config) SetValue(key, value string) error {
 		c.Sandbox = value
 	case "git.default_branch":
 		c.Git.DefaultBranch = value
-	case "git.author_name":
-		c.Git.AuthorName = value
-	case "git.author_email":
-		c.Git.AuthorEmail = value
 	default:
 		return fmt.Errorf("unknown config key: %s", key)
 	}

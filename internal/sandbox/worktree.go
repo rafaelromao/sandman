@@ -17,6 +17,8 @@ type WorktreeSandbox struct {
 	branch       string
 	sourceBranch string
 	workDir      string
+	gitName      string
+	gitEmail     string
 	cmd          *exec.Cmd
 }
 
@@ -34,7 +36,7 @@ func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *Wo
 func (s *WorktreeSandbox) Start() error {
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
 	if _, err := os.Stat(s.workDir); err == nil {
-		return nil
+		return s.configureGitIdentity()
 	}
 
 	if err := os.MkdirAll(s.worktreeBase, 0755); err != nil {
@@ -49,6 +51,25 @@ func (s *WorktreeSandbox) Start() error {
 	addCmd.Dir = s.repoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git worktree add: %w\n%s", err, out)
+	}
+	return s.configureGitIdentity()
+}
+
+// SetGitIdentity configures the identity Sandman should write to worktree-local git config.
+func (s *WorktreeSandbox) SetGitIdentity(name, email string) {
+	s.gitName = name
+	s.gitEmail = email
+}
+
+func (s *WorktreeSandbox) configureGitIdentity() error {
+	if strings.TrimSpace(s.gitName) == "" || strings.TrimSpace(s.gitEmail) == "" {
+		return nil
+	}
+	if out, err := runGitCommand(s.workDir, "config", "--worktree", "user.name", s.gitName); err != nil {
+		return fmt.Errorf("set worktree git user.name: %w\n%s", err, out)
+	}
+	if out, err := runGitCommand(s.workDir, "config", "--worktree", "user.email", s.gitEmail); err != nil {
+		return fmt.Errorf("set worktree git user.email: %w\n%s", err, out)
 	}
 	return nil
 }

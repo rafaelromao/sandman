@@ -309,7 +309,7 @@ func TestConfigSet_DefaultParallel_NegativeValue_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestConfigSet_GitAuthorName_UpdatesFile(t *testing.T) {
+func TestConfigSet_GitAuthorName_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
@@ -321,16 +321,11 @@ func TestConfigSet_GitAuthorName_UpdatesFile(t *testing.T) {
 	cmd.SetArgs([]string{"git.author_name", "Alice"})
 
 	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error for removed git author key")
 	}
-
-	cfg, err := config.Load(path)
-	if err != nil {
-		t.Fatalf("reload config: %v", err)
-	}
-	if cfg.Git.AuthorName != "Alice" {
-		t.Errorf("git.author_name: got %q, want %q", cfg.Git.AuthorName, "Alice")
+	if !strings.Contains(err.Error(), "unknown config key") {
+		t.Fatalf("expected unknown config key error, got: %v", err)
 	}
 }
 
