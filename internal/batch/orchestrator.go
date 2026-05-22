@@ -704,7 +704,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		identity, err := resolveGitIdentity()
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", num, err)
-			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}, false
 		}
 		setter.SetGitIdentity(identity.Name, identity.Email)
 	}
