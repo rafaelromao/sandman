@@ -52,7 +52,7 @@ default_agent: opencode
 default_parallel: 4
 review_command: /oc review
 sandbox: podman              # podman, docker, or worktree
-container_capacity: 4        # agent runs per container
+container_capacity: 4        # agent runs per container; 0 uses default container capacity behavior
 max_containers: 0            # auto mode; or set a fixed limit
 git:
   author_name: Sandman

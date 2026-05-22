@@ -57,7 +57,7 @@ A Docker or Podman container providing filesystem and process isolation for one 
 _Avoid_: Docker container, sandbox container.
 
 **ContainerCapacity**:
-The maximum number of AgentRuns that may execute concurrently inside one ContainerSandbox. When capacity is full, additional AgentRuns wait for another container or for capacity to free up.
+The maximum number of AgentRuns that may execute concurrently inside one ContainerSandbox. `0` means auto/default mode: use the default container capacity behavior instead of an explicit per-container limit. When capacity is full, additional AgentRuns wait for another container or for capacity to free up.
 _Avoid_: shared mode, isolated mode.
 
 **MaxContainers**:

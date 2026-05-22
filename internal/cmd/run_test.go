@@ -1101,6 +1101,29 @@ func TestRun_MaxContainersAutoFlagPassedToBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRun_ContainerCapacityAutoFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--container-capacity", "0", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.req.ContainerCapacitySet {
+		t.Fatal("expected ContainerCapacitySet=true")
+	}
+	if spy.req.ContainerCapacity != 0 {
+		t.Errorf("expected container_capacity=0, got %d", spy.req.ContainerCapacity)
+	}
+}
+
 func TestRun_InvalidContainerFlagsReturnError(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1109,8 +1132,8 @@ func TestRun_InvalidContainerFlagsReturnError(t *testing.T) {
 	}{
 		{
 			name:    "container capacity less than one",
-			args:    []string{"--container-capacity", "0", "42"},
-			wantErr: "container_capacity must be at least 1",
+			args:    []string{"--container-capacity", "-1", "42"},
+			wantErr: "container_capacity must be 0 or greater",
 		},
 		{
 			name:    "negative max containers",
