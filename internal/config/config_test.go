@@ -194,10 +194,38 @@ func TestAgentWithOverrides_ConfigFilesOverridden(t *testing.T) {
 	}
 }
 
+func TestLoad_AgentWithKeychainAuth(t *testing.T) {
+	cfg := &Config{
+		DefaultAgent: "opencode",
+		AgentProviders: map[string]Agent{
+			"opencode": {
+				Preset:       "opencode",
+				Command:      "opencode",
+				KeychainAuth: true,
+			},
+		},
+	}
+
+	agent, err := cfg.ResolveAgentProvider("opencode")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if agent.Command != "opencode" {
+		t.Errorf("agents.opencode.command: got %q, want %q", agent.Command, "opencode")
+	}
+	if agent.Preset != "opencode" {
+		t.Errorf("agents.opencode.preset: got %q, want %q", agent.Preset, "opencode")
+	}
+	if !agent.KeychainAuth {
+		t.Error("agents.opencode.keychain_auth: expected true")
+	}
+}
+
 func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `agent: codex
+	content := `default_agent: opencode
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -231,7 +259,7 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 func TestLoad_MissingContainerSettings_AppliesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `agent: codex
+	content := `default_agent: opencode
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -258,14 +286,14 @@ func TestLoad_InvalidContainerSettings_ReturnValidationError(t *testing.T) {
 	}{
 		{
 			name: "negative container capacity",
-			content: `agent: codex
+			content: `default_agent: opencode
 container_capacity: -1
 `,
 			wantErr: "container_capacity must be 0 or greater",
 		},
 		{
 			name: "negative max containers",
-			content: `agent: codex
+			content: `default_agent: opencode
 max_containers: -1
 `,
 			wantErr: "max_containers must be 0 or greater",
@@ -294,7 +322,7 @@ max_containers: -1
 func TestLoad_ContainerCapacityZeroIsAccepted(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `agent: codex
+	content := `default_agent: opencode
 container_capacity: 0
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -314,7 +342,7 @@ container_capacity: 0
 func TestLoad_NegativeDefaultParallel_DefaultsToFour(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `agent: codex
+	content := `default_agent: opencode
 default_parallel: -2
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -388,7 +416,7 @@ func TestConfig_SetValue(t *testing.T) {
 		value   string
 		wantErr bool
 	}{
-		{"default_agent", "pi", false},
+		{"default_agent", "opencode", false},
 		{"build_tools", "go", false},
 		{"review_command", "/oc review", false},
 		{"default_parallel", "4", false},
