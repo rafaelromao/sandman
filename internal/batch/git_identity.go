@@ -47,13 +47,13 @@ func resolveGitIdentity(repoPath string) (gitIdentity, error) {
 	}
 
 	if strings.TrimSpace(identity.Name) == "" {
-		identity.Name, err = gitConfigValue(repoPath, "--local", "--get", "user.name")
+		identity.Name, err = gitConfigValue(repoPath, "--includes", "--local", "--get", "user.name")
 		if err != nil {
 			return gitIdentity{}, err
 		}
 	}
 	if strings.TrimSpace(identity.Email) == "" {
-		identity.Email, err = gitConfigValue(repoPath, "--local", "--get", "user.email")
+		identity.Email, err = gitConfigValue(repoPath, "--includes", "--local", "--get", "user.email")
 		if err != nil {
 			return gitIdentity{}, err
 		}
