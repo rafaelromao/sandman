@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -17,6 +18,8 @@ type Request struct {
 	Agent                string
 	Model                string
 	Parallel             int
+	StartDelay           time.Duration
+	StartDelaySet        bool
 	Branches             map[int]string
 	Sandbox              string
 	ContainerCapacity    int

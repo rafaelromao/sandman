@@ -299,6 +299,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		BuildTools:        preset.Name,
 		ReviewCommand:     config.DefaultReviewCommand,
 		DefaultParallel:   config.DefaultParallel,
+		StartDelay:        config.DefaultStartDelay,
 		ContainerCapacity: config.DefaultContainerCapacity,
 		MaxContainers:     config.DefaultMaxContainers,
 		WorktreeDir:       config.DefaultWorktreeDir,

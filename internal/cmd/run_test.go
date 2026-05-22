@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -133,6 +134,51 @@ func TestRun_ParallelFlagPassedToBatchRunner(t *testing.T) {
 
 	if spy.req.Parallel != 2 {
 		t.Errorf("expected parallel=2, got %d", spy.req.Parallel)
+	}
+}
+
+func TestRun_StartDelayFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--start-delay", "7", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.req.StartDelaySet {
+		t.Fatal("expected start delay override to be marked as set")
+	}
+	if spy.req.StartDelay != 7*time.Second {
+		t.Errorf("expected start delay=7s, got %s", spy.req.StartDelay)
+	}
+}
+
+func TestRun_StartDelayNegativeValueRejected(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--start-delay", "-1", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for negative start delay")
+	}
+	if !strings.Contains(err.Error(), "start_delay must be 0 or greater") {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
 	}
 }
 

@@ -15,6 +15,7 @@ const (
 	DefaultBuildToolsPreset  = "generic"
 	DefaultReviewCommand     = "/oc review"
 	DefaultParallel          = 4
+	DefaultStartDelay        = 0
 	DefaultContainerCapacity = 4
 	DefaultMaxContainers     = 0
 	DefaultWorktreeDir       = ".sandman/worktrees"
@@ -29,6 +30,7 @@ type Config struct {
 	BuildTools        string           `yaml:"build_tools"`
 	ReviewCommand     string           `yaml:"review_command"`
 	DefaultParallel   int              `yaml:"default_parallel"`
+	StartDelay        int              `yaml:"start_delay"`
 	ContainerCapacity int              `yaml:"container_capacity"`
 	MaxContainers     int              `yaml:"max_containers"`
 	WorktreeDir       string           `yaml:"worktree_dir"`
@@ -107,6 +109,7 @@ func Load(path string) (*Config, error) {
 		BuildTools        string    `yaml:"build_tools"`
 		ReviewCommand     string    `yaml:"review_command"`
 		DefaultParallel   int       `yaml:"default_parallel"`
+		StartDelay        int       `yaml:"start_delay"`
 		ContainerCapacity *int      `yaml:"container_capacity"`
 		MaxContainers     *int      `yaml:"max_containers"`
 		WorktreeDir       string    `yaml:"worktree_dir"`
@@ -124,6 +127,7 @@ func Load(path string) (*Config, error) {
 		BuildTools:      raw.BuildTools,
 		ReviewCommand:   raw.ReviewCommand,
 		DefaultParallel: raw.DefaultParallel,
+		StartDelay:      raw.StartDelay,
 		WorktreeDir:     raw.WorktreeDir,
 		Sandbox:         raw.Sandbox,
 		Git:             raw.Git,
@@ -131,6 +135,9 @@ func Load(path string) (*Config, error) {
 
 	if cfg.DefaultParallel <= 0 {
 		cfg.DefaultParallel = DefaultParallel
+	}
+	if cfg.StartDelay < 0 {
+		return nil, fmt.Errorf("validate config: start_delay must be 0 or greater")
 	}
 	if cfg.BuildTools == "" {
 		cfg.BuildTools = DefaultBuildToolsPreset
@@ -299,6 +306,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.EffectiveReviewCommand(), nil
 	case "default_parallel":
 		return fmt.Sprintf("%d", c.DefaultParallel), nil
+	case "start_delay":
+		return fmt.Sprintf("%d", c.StartDelay), nil
 	case "container_capacity":
 		return fmt.Sprintf("%d", c.ContainerCapacity), nil
 	case "max_containers":
@@ -340,6 +349,15 @@ func (c *Config) SetValue(key, value string) error {
 			return fmt.Errorf("default_parallel must be greater than 0")
 		}
 		c.DefaultParallel = n
+	case "start_delay":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for start_delay: %w", err)
+		}
+		if n < 0 {
+			return fmt.Errorf("start_delay must be 0 or greater")
+		}
+		c.StartDelay = n
 	case "container_capacity":
 		n, err := strconv.Atoi(value)
 		if err != nil {

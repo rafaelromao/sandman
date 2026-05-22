@@ -21,6 +21,10 @@ default_parallel: 4
 # 0 means auto/default mode: use the default container capacity behavior.
 container_capacity: 4
 
+# Batch pacing delay in seconds after any AgentRun finishes.
+# 0 disables pacing.
+start_delay: 0
+
 # Maximum number of ContainerSandbox instances.
 # 0 means auto mode: create the minimum needed for active runs.
 max_containers: 0
@@ -85,6 +89,14 @@ When `max_containers=0` and `container_capacity=4` with 6 active runs, Sandman c
 
 See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 
+## Batch pacing
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `start_delay` | `0` | Wait this many seconds after any `AgentRun` finishes before starting the next one. `0` disables batch pacing |
+
+`start_delay` is batch-local pacing behavior. It applies across sandbox modes, starts only after the first run completes, and does not change container capacity or max container scheduling.
+
 ## CLI config commands
 
 Use `sandman config get` and `sandman config set` to read and write individual fields:
@@ -96,6 +108,7 @@ sandman config get default_parallel
 sandman config set container_capacity 2
 sandman config set git.author_name "My Name"
 sandman config set git.author_email "me@example.com"
+sandman config set start_delay 5
 ```
 
 Use `sandman config get` and `sandman config set` for top-level config keys.

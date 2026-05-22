@@ -941,6 +941,7 @@ func TestRunBatch_RespectsParallelLimit(t *testing.T) {
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.runnableFactory = factory
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.sandboxFactory = &freshSandboxFactory{}
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Parallel: 2})
@@ -976,6 +977,7 @@ func TestRunBatch_OneFailureDoesNotAbortOthers(t *testing.T) {
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.runnableFactory = factory
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3}, Parallel: 3})
 	if err == nil {
@@ -1029,6 +1031,7 @@ func TestRunBatch_DefaultParallelIsFour(t *testing.T) {
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.runnableFactory = factory
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.sandboxFactory = &freshSandboxFactory{}
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4, 5}})
@@ -1236,6 +1239,218 @@ func TestRunBatch_PreservesParallelismWithinDependencyLevel(t *testing.T) {
 	close(releaseDependentA)
 	close(releaseDependentB)
 	waitForSignal(t, done, "expected batch to complete")
+}
+
+func TestRunBatch_StartDelay_WaitsAfterRunFinishesBeforeNextStart(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "First"},
+			2: {Number: 2, Title: "Second"},
+		},
+	}
+
+	started1 := make(chan struct{})
+	started2 := make(chan struct{})
+	release1 := make(chan struct{})
+	release2 := make(chan struct{})
+
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			1: &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}, started: started1, release: release1},
+			2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started2, release: release2},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+	sb := &fakeSandbox{}
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: sb}
+	var errBuf bytes.Buffer
+	o.errorLog = &errBuf
+
+	done := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(done)
+		_, err := o.RunBatch(context.Background(), Request{
+			Issues:        []int{1, 2},
+			Parallel:      1,
+			StartDelay:    100 * time.Millisecond,
+			StartDelaySet: true,
+		})
+		errCh <- err
+	}()
+
+	var firstRelease chan struct{}
+	var secondRelease chan struct{}
+	var secondStarted <-chan struct{}
+	select {
+	case <-started1:
+		firstRelease = release1
+		secondRelease = release2
+		secondStarted = started2
+	case <-started2:
+		firstRelease = release2
+		secondRelease = release1
+		secondStarted = started1
+	case <-done:
+		t.Fatalf("batch returned early: err=%v logs=%s", <-errCh, errBuf.String())
+	case <-time.After(250 * time.Millisecond):
+		t.Fatalf("expected first run to start; sandbox started=%v created=%v logs=%s", sb.startCalled, factory.created, errBuf.String())
+	}
+	assertNoSignal(t, secondStarted, "second run started before first completed")
+
+	close(firstRelease)
+	assertNoSignal(t, secondStarted, "second run started before start delay elapsed")
+	waitForSignal(t, secondStarted, "expected second run to start after start delay")
+
+	close(secondRelease)
+	waitForSignal(t, done, "expected batch to complete")
+}
+
+func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Blocker"},
+			3: {Number: 3, Title: "Dependent A", BlockedBy: []int{1}},
+			4: {Number: 4, Title: "Dependent B", BlockedBy: []int{1}},
+		},
+	}
+
+	blockerStarted := make(chan struct{})
+	dependentAStarted := make(chan struct{})
+	dependentBStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+	releaseDependentA := make(chan struct{})
+	releaseDependentB := make(chan struct{})
+
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			1: &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}, started: blockerStarted, release: releaseBlocker},
+			3: &controlledRunnable{result: AgentRunResult{IssueNumber: 3, Status: "success"}, started: dependentAStarted, release: releaseDependentA},
+			4: &controlledRunnable{result: AgentRunResult{IssueNumber: 4, Status: "success"}, started: dependentBStarted, release: releaseDependentB},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{
+			Issues:        []int{1, 3, 4},
+			Dependencies:  map[int][]int{3: {1}, 4: {1}},
+			Parallel:      2,
+			StartDelay:    100 * time.Millisecond,
+			StartDelaySet: true,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+	releaseAt := time.Now()
+	close(releaseBlocker)
+
+	var secondStarted <-chan struct{}
+	var firstAt time.Time
+	select {
+	case <-dependentAStarted:
+		secondStarted = dependentBStarted
+		firstAt = time.Now()
+	case <-dependentBStarted:
+		secondStarted = dependentAStarted
+		firstAt = time.Now()
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected dependent runs to start after start delay")
+	}
+	if elapsed := firstAt.Sub(releaseAt); elapsed < 75*time.Millisecond {
+		t.Fatalf("expected start delay before dependent runs, got %s", elapsed)
+	}
+
+	var secondAt time.Time
+	select {
+	case <-secondStarted:
+		secondAt = time.Now()
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected second dependent to start")
+	}
+	if diff := secondAt.Sub(firstAt); diff > 50*time.Millisecond {
+		t.Fatalf("expected simultaneous ready runs to start together, got %s", diff)
+	}
+
+	close(releaseDependentA)
+	close(releaseDependentB)
+	waitForSignal(t, done, "expected batch to complete")
+}
+
+func TestRunBatch_StartDelay_AbortsImmediatelyOnCancel(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "First"},
+			2: {Number: 2, Title: "Second"},
+		},
+	}
+
+	started1 := make(chan struct{})
+	started2 := make(chan struct{})
+	release1 := make(chan struct{})
+	release2 := make(chan struct{})
+
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			1: &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}, started: started1, release: release1},
+			2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started2, release: release2},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(ctx, Request{
+			Issues:        []int{1, 2},
+			Parallel:      1,
+			StartDelay:    500 * time.Millisecond,
+			StartDelaySet: true,
+		})
+	}()
+
+	var firstRelease chan struct{}
+	var secondStarted <-chan struct{}
+	select {
+	case <-started1:
+		firstRelease = release1
+		secondStarted = started2
+	case <-started2:
+		firstRelease = release2
+		secondStarted = started1
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected first run to start")
+	}
+	cancel()
+	assertNoSignal(t, secondStarted, "second run started after batch cancellation")
+	close(firstRelease)
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected batch to abort immediately after cancellation")
+	}
 }
 
 func TestRunBatch_LogsStartedAndFinishedEvents(t *testing.T) {
