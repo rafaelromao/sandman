@@ -62,6 +62,25 @@ func commitGitFile(t *testing.T, dir, name, content, message string) {
 	runGit(t, dir, "commit", "-m", message)
 }
 
+func removeBranch(t *testing.T, dir, branch string) {
+	t.Helper()
+	list := exec.Command("git", "branch", "--list", branch)
+	list.Dir = dir
+	out, err := list.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch --list %s: %v: %s", branch, err, out)
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return
+	}
+	deleteCmd := exec.Command("git", "branch", "-D", branch)
+	deleteCmd.Dir = dir
+	out, err = deleteCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch -D %s: %v: %s", branch, err, out)
+	}
+}
+
 func TestWorktreeSandbox_CreatesBranchFromSourceBranchWithTrackedFilesOnly(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
@@ -103,11 +122,16 @@ func TestWorktreeSandbox_CreatesBranchFromSourceBranchWithTrackedFilesOnly(t *te
 func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	if err := s.Start(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
 
 	worktreePath := s.WorkDir()
 	if worktreePath == "" {
@@ -132,6 +156,7 @@ func TestSyncDefaultBranchFastForwardsDefaultBranchBeforeAddingWorktree(t *testi
 	runGit(t, localDir, "checkout", "-b", "feature")
 	commitGitFile(t, localDir, "feature-only.txt", "feature\n", "feature")
 	writeGitFile(t, localDir, "untracked.txt", "keep me out of the worktree\n")
+	removeBranch(t, localDir, "sandman/42-fix-bug")
 
 	commitGitFile(t, seedDir, "tracked.txt", "remote\n", "remote update")
 	runGit(t, seedDir, "push", "origin", "main")
@@ -150,6 +175,10 @@ func TestSyncDefaultBranchFastForwardsDefaultBranchBeforeAddingWorktree(t *testi
 	if err := s.Start(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, localDir, "sandman/42-fix-bug")
+	})
 
 	trackedPath := filepath.Join(s.WorkDir(), "tracked.txt")
 	data, err := os.ReadFile(trackedPath)
@@ -216,11 +245,16 @@ func TestWorktreeSandbox_WorkDirBeforeStart(t *testing.T) {
 func TestWorktreeSandbox_WritePrompt(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	if err := s.Start(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
 
 	content := "hello prompt"
 	if err := s.WritePrompt(content); err != nil {
@@ -240,11 +274,16 @@ func TestWorktreeSandbox_WritePrompt(t *testing.T) {
 func TestWorktreeSandbox_StopRemovesWorktree(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	if err := s.Start(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
 
 	worktreePath := s.WorkDir()
 	if err := s.Stop(); err != nil {
@@ -259,11 +298,16 @@ func TestWorktreeSandbox_StopRemovesWorktree(t *testing.T) {
 func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	if err := s.Start(); err != nil {
 		t.Fatalf("unexpected error on first start: %v", err)
 	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
 
 	worktreePath := s.WorkDir()
 	if err := os.WriteFile(filepath.Join(worktreePath, "marker.txt"), []byte("preserved"), 0644); err != nil {
@@ -291,6 +335,7 @@ func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
 func TestWorktreeSandbox_StartFailsWhenBranchAlreadyExists(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
 	runGit(t, dir, "checkout", "-b", "sandman/42-fix-bug")
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
@@ -305,16 +350,23 @@ func TestWorktreeSandbox_StartFailsWhenBranchAlreadyExists(t *testing.T) {
 	if !strings.Contains(err.Error(), `git branch -D sandman/42-fix-bug`) {
 		t.Errorf("expected error to contain actionable delete command, got %q", err.Error())
 	}
+	runGit(t, dir, "checkout", "main")
+	t.Cleanup(func() { removeBranch(t, dir, "sandman/42-fix-bug") })
 }
 
 func TestWorktreeSandbox_ExecInteractive_RunsCommand(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	if err := s.Start(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
 
 	if err := s.ExecInteractive(context.Background(), "touch interactive-ran.txt"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
