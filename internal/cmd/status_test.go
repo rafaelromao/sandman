@@ -46,8 +46,8 @@ func TestStatus_ShowsLiveRunsWithRunIDAndIssues(t *testing.T) {
 	if !strings.Contains(out, "#42, #43") {
 		t.Fatalf("expected live issue list in output, got:\n%s", out)
 	}
-	if strings.Contains(out, "#99") {
-		t.Fatalf("expected live metadata to win over event log, got:\n%s", out)
+	if !strings.Contains(out, "#99") {
+		t.Fatalf("expected event-log-only active run to survive merge, got:\n%s", out)
 	}
 }
 
