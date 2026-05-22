@@ -92,7 +92,7 @@ Open a second terminal while a `sandman run` is in progress to stream its output
 sandman attach
 ```
 
-Attach reads from the daemon's control socket at `.sandman/run.sock` and exits with code 0 when the batch finishes and the socket closes.
+Attach reads from the daemon's per-run control socket at `.sandman/runs/<run-id>/run.sock` and exits with code 0 when the batch finishes and the socket closes. If several live runs are active, use `sandman attach <run-id>` to choose one explicitly.
 
 ## Next steps
 
