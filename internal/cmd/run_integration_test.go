@@ -172,6 +172,10 @@ func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode stri
 		WorktreeDir:  ".sandman/worktrees",
 		Sandbox:      sandboxMode,
 		Git:          gitCfg,
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Command: agent.Command, Env: agent.Env},
+			"pi":       {Command: agent.Command, Env: agent.Env},
+		},
 	}}
 
 	runner := batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil)
