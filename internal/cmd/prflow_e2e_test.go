@@ -1251,6 +1251,344 @@ func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
 	}
 }
 
+func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("skip e2e in CI")
+	}
+
+	allowed, err := parseE2EProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed["opencode"] {
+		t.Skip("set SANDMAN_E2E_PROVIDERS=opencode and run `go test -tags e2e ./internal/cmd -run PRFlow`")
+	}
+
+	realHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("resolve home dir: %v", err)
+	}
+	if !hasOpenCodeAuth(realHome) {
+		t.Skipf("skip opencode e2e: missing auth under %s", realHome)
+	}
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skipf("skip opencode e2e: host CLI unavailable: %v", err)
+	}
+	if _, err := exec.LookPath("podman"); err != nil {
+		t.Skipf("skip podman e2e: podman unavailable: %v", err)
+	}
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	// Create the bare remote inside the repo so it's accessible inside the container.
+	remoteDir := filepath.Join(repoDir, "remote")
+	if err := os.MkdirAll(remoteDir, 0755); err != nil {
+		t.Fatalf("create remote dir: %v", err)
+	}
+	bareInit := exec.Command("git", "init", "--bare")
+	bareInit.Dir = remoteDir
+	if out, err := bareInit.CombinedOutput(); err != nil {
+		t.Fatalf("init bare remote: %v: %s", err, out)
+	}
+	runGit(t, repoDir, "remote", "add", "origin", remoteDir)
+	runGit(t, repoDir, "push", "-u", "origin", "main")
+
+	seedParallelPRFlowRepo(t, repoDir)
+	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init")
+	if err != nil {
+		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-parallel-auto-")
+	if err != nil {
+		t.Fatalf("create home dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
+	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
+		t.Fatalf("create ssh dir: %v", err)
+	}
+	absRepo, _ := filepath.Abs(repoDir)
+	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
+		"file://"+filepath.Join(absRepo, "remote"))
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	for _, dir := range []string{".config/opencode", ".local/share/opencode"} {
+		src := filepath.Join(realHome, dir)
+		dst := filepath.Join(homeDir, dir)
+		if _, err := os.Stat(src); os.IsNotExist(err) {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			t.Fatalf("create parent for %s: %v", dst, err)
+		}
+		if err := os.Symlink(src, dst); err != nil {
+			t.Fatalf("link %s: %v", dir, err)
+		}
+	}
+	t.Setenv("HOME", homeDir)
+	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
+		t.Fatalf("warm podman image for test home: %v: %s", err, out)
+	}
+
+	ghShimDir := t.TempDir()
+	writeFakeGHShimParallel(t, ghShimDir)
+	prependPath(t, ghShimDir)
+
+	containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
+	writeFakeGHShimForContainerParallel(t, containerGhShimDir)
+
+	buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect-parallel-auto", "-f",
+		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build image for model detection: %v: %s", err, out)
+	}
+	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel-auto", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
+	}
+	containerModel := "opencode/big-pickle"
+	t.Logf("using container model: %s", containerModel)
+
+	customizeOpenCodeAgentForContainerWithEcho(t, repoDir, containerModel)
+	writeParallelPRFlowPrompt(t, repoDir)
+
+	out, err = runSandmanBinary(t, binPath, repoDir, "run",
+		"--sandbox", "podman",
+		"--parallel", "2",
+		"--container-capacity", "0",
+		"--max-containers", "1",
+		strconv.Itoa(parallelIssue150), strconv.Itoa(parallelIssue151))
+	t.Logf("sandman run returned err=%v output=%s", err, out)
+
+	// ---- Assertions ----
+
+	// 1. Event timeline: both run.started before first run.finished
+	eventsPath := filepath.Join(repoDir, ".sandman", "events.jsonl")
+	eventsData, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var started, finished []time.Time
+	for _, line := range strings.Split(strings.TrimSpace(string(eventsData)), "\n") {
+		if line == "" {
+			continue
+		}
+		var evt events.Event
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			t.Fatalf("parse event: %v: %s", err, line)
+		}
+		switch evt.Type {
+		case "run.started":
+			started = append(started, evt.Timestamp)
+		case "run.finished":
+			finished = append(finished, evt.Timestamp)
+		}
+	}
+	if len(started) != 2 {
+		t.Fatalf("expected 2 run.started events, got %d", len(started))
+	}
+	if len(finished) != 2 {
+		t.Fatalf("expected 2 run.finished events, got %d", len(finished))
+	}
+	lastStarted := started[0]
+	if started[1].After(started[0]) {
+		lastStarted = started[1]
+	}
+	firstFinished := finished[0]
+	if finished[1].Before(finished[0]) {
+		firstFinished = finished[1]
+	}
+	if !lastStarted.Before(firstFinished) {
+		t.Fatal("expected both run.started events before first run.finished — runs did not overlap")
+	}
+
+	// 2. Shared container identity + different workdirs
+	for _, issue := range []int{parallelIssue150, parallelIssue151} {
+		logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", issue))
+		logData, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("read log for issue %d: %v", issue, err)
+		}
+		if !strings.Contains(string(logData), "containerhostname=") {
+			t.Fatalf("expected container hostname in log for issue %d, got:\n%s", issue, logData)
+		}
+		if !strings.Contains(string(logData), "containerworkdir=") {
+			t.Fatalf("expected container workdir in log for issue %d, got:\n%s", issue, logData)
+		}
+	}
+
+	extract := func(logData []byte, prefix string) (string, bool) {
+		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
+			if strings.HasPrefix(line, prefix) {
+				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+			}
+		}
+		return "", false
+	}
+
+	log150, _ := os.ReadFile(filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", parallelIssue150)))
+	log151, _ := os.ReadFile(filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", parallelIssue151)))
+
+	hostname150, _ := extract(log150, "containerhostname=")
+	hostname151, _ := extract(log151, "containerhostname=")
+	if hostname150 == "" || hostname151 == "" {
+		t.Fatal("missing container hostname in one or both logs")
+	}
+	if hostname150 != hostname151 {
+		t.Fatalf("expected same container hostname, got %q and %q", hostname150, hostname151)
+	}
+
+	workdir150, _ := extract(log150, "containerworkdir=")
+	workdir151, _ := extract(log151, "containerworkdir=")
+	if workdir150 == "" || workdir151 == "" {
+		t.Fatal("missing container workdir in one or both logs")
+	}
+	if workdir150 == workdir151 {
+		t.Fatalf("expected different workdirs, got same %q", workdir150)
+	}
+	if !strings.Contains(workdir150, "150-fix-150") {
+		t.Fatalf("expected issue 150 branch in workdir, got %q", workdir150)
+	}
+	if !strings.Contains(workdir151, "151-fix-151") {
+		t.Fatalf("expected issue 151 branch in workdir, got %q", workdir151)
+	}
+
+	// 3. Both branches pushed beyond baseline
+	for _, branch := range []string{parallelBranch150, parallelBranch151} {
+		branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", branch))
+		if branchHash == baselineHash {
+			t.Fatalf("expected branch %s commit beyond baseline, got %s", branch, branchHash)
+		}
+		if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
+			t.Fatalf("expected branch %s to descend from baseline: %v\n%s", branch, err, out)
+		}
+		remoteHash := strings.TrimSpace(runGit(t, repoDir, "ls-remote", "origin", "refs/heads/"+branch))
+		if remoteHash == "" {
+			t.Fatalf("expected pushed remote branch %s", branch)
+		}
+		fields := strings.Fields(remoteHash)
+		if len(fields) == 0 || fields[0] != branchHash {
+			t.Fatalf("remote branch %s hash mismatch: got %q, want %q", branch, remoteHash, branchHash)
+		}
+	}
+
+	// 4. Branch-local correctness: check out each branch in a temp dir
+	for _, tc := range []struct {
+		issue      int
+		branch     string
+		wantReturn string
+		wantTest   string
+		failTest   string
+	}{
+		{parallelIssue150, parallelBranch150, "5", "TestDoubleFor150", "TestDoubleFor151"},
+		{parallelIssue151, parallelBranch151, "7", "TestDoubleFor151", "TestDoubleFor150"},
+	} {
+		checkoutDir := t.TempDir()
+		clone := exec.Command("git", "clone", "--branch", tc.branch, "--single-branch", remoteDir, checkoutDir)
+		if out, err := clone.CombinedOutput(); err != nil {
+			t.Fatalf("clone branch %s: %v: %s", tc.branch, err, out)
+		}
+
+		// Verify same-hunk edit
+		doubleSrc, err := os.ReadFile(filepath.Join(checkoutDir, "double.go"))
+		if err != nil {
+			t.Fatalf("read double.go on branch %s: %v", tc.branch, err)
+		}
+		if !strings.Contains(string(doubleSrc), "return "+tc.wantReturn) {
+			t.Fatalf("branch %s double.go: expected return %s, got:\n%s", tc.branch, tc.wantReturn, doubleSrc)
+		}
+
+		// Verify test passes for own test function
+		testCmd := exec.Command("go", "test", "-run", tc.wantTest, "./...")
+		testCmd.Dir = checkoutDir
+		if out, err := testCmd.CombinedOutput(); err != nil {
+			t.Fatalf("branch %s test %s failed: %v: %s", tc.branch, tc.wantTest, err, out)
+		}
+
+		// Verify test fails for other test function
+		testFailCmd := exec.Command("go", "test", "-run", tc.failTest, "./...")
+		testFailCmd.Dir = checkoutDir
+		if err := testFailCmd.Run(); err == nil {
+			t.Fatalf("branch %s test %s should have failed but passed", tc.branch, tc.failTest)
+		}
+	}
+
+	// 5. Exactly two gh pr create calls (order-independent)
+	for i := 1; i <= 2; i++ {
+		argsFile := filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i))
+		if _, err := os.Stat(argsFile); err != nil {
+			t.Fatalf("missing pr-create.args.%d: %v", i, err)
+		}
+	}
+	countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
+	if err != nil {
+		t.Fatalf("read pr create count: %v", err)
+	}
+	if got := strings.TrimSpace(string(countData)); got != "2" {
+		t.Fatalf("expected exactly two pr create invocations, got %q", got)
+	}
+
+	type prCreateCall struct {
+		branch string
+		title  string
+		body   string
+	}
+	expected := map[string]prCreateCall{
+		parallelBranch150: {parallelBranch150, "Fix 150", "Fixes #150"},
+		parallelBranch151: {parallelBranch151, "Fix 151", "Fixes #151"},
+	}
+	seen := make(map[string]bool)
+	for i := 1; i <= 2; i++ {
+		argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i)))
+		if err != nil {
+			t.Fatalf("read pr create args.%d: %v", i, err)
+		}
+		args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+		head := prFlowFlagValue(args, "--head")
+		if head == "" {
+			t.Fatalf("pr create %d: missing --head flag in args:\n%s", i, argsData)
+		}
+		if seen[head] {
+			t.Fatalf("pr create %d: duplicate branch %q", i, head)
+		}
+		seen[head] = true
+
+		call, ok := expected[head]
+		if !ok {
+			t.Fatalf("pr create %d: unexpected --head %q, expected one of %q or %q", i, head, parallelBranch150, parallelBranch151)
+		}
+		if got := prFlowFlagValue(args, "--base"); got != "main" {
+			t.Fatalf("pr create %d (%s): --base got %q, want %q", i, head, got, "main")
+		}
+		if got := prFlowFlagValue(args, "--title"); got != call.title {
+			t.Fatalf("pr create %d (%s): --title got %q, want %q", i, head, got, call.title)
+		}
+
+		bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.body.%d", i)))
+		if err != nil {
+			t.Fatalf("read pr create body.%d: %v", i, err)
+		}
+		if got := strings.TrimSpace(string(bodyData)); got != call.body {
+			t.Fatalf("pr create %d (%s): body got %q, want %q", i, head, got, call.body)
+		}
+	}
+	if len(seen) != 2 {
+		t.Fatalf("expected pr creates for both branches, got %v", seen)
+	}
+}
+
 func seedParallelPRFlowRepo(t *testing.T, dir string) {
 	t.Helper()
 
