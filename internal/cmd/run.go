@@ -132,8 +132,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			maxContainersFlag := cmd.Flags().Lookup("max-containers")
 			maxContainersSet := maxContainersFlag != nil && maxContainersFlag.Changed
 			maxContainers, _ := cmd.Flags().GetInt("max-containers")
-			if containerCapacitySet && containerCapacity < 1 {
-				return fmt.Errorf("container_capacity must be at least 1")
+			if containerCapacitySet && containerCapacity < 0 {
+				return fmt.Errorf("container_capacity must be 0 or greater")
 			}
 			if maxContainersSet && maxContainers < 0 {
 				return fmt.Errorf("max_containers must be 0 or greater")
@@ -203,7 +203,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	}
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
-	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 1 means isolated container execution")
+	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means auto/default mode")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")
 	cmd.Flags().Bool("interactive", false, "Run the agent in interactive mode")
 	cmd.Flags().Bool("include-dependencies", false, "Expand the batch to include transitive blockers")

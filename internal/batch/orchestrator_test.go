@@ -2300,6 +2300,110 @@ func TestRunBatch_UsesConfigContainerSettingsWhenRequestUnset(t *testing.T) {
 	}
 }
 
+func TestRunBatch_ContainerCapacityZeroUsesDefaultWhenRequestUnset(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+			3: {Number: 3, Title: "Three"},
+			4: {Number: 4, Title: "Four"},
+			5: {Number: 5, Title: "Five"},
+		},
+	}
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+	runnables := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "success"},
+			{IssueNumber: 3, Status: "success"},
+			{IssueNumber: 4, Status: "success"},
+			{IssueNumber: 5, Status: "success"},
+		},
+		delays: []time.Duration{
+			50 * time.Millisecond,
+			50 * time.Millisecond,
+			50 * time.Millisecond,
+			50 * time.Millisecond,
+			50 * time.Millisecond,
+		},
+	}
+	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", ContainerCapacity: 0, MaxContainers: 0, Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &freshSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4, 5}, Sandbox: "docker", Parallel: 5})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if starter.startCount != 2 {
+		t.Fatalf("expected config container_capacity=0 to use default capacity and start 2 containers, got %d", starter.startCount)
+	}
+}
+
+func TestRunBatch_ContainerCapacityZeroRequestUsesDefaultCapacity(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+			3: {Number: 3, Title: "Three"},
+			4: {Number: 4, Title: "Four"},
+			5: {Number: 5, Title: "Five"},
+		},
+	}
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+	runnables := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "success"},
+			{IssueNumber: 3, Status: "success"},
+			{IssueNumber: 4, Status: "success"},
+			{IssueNumber: 5, Status: "success"},
+		},
+		delays: []time.Duration{
+			50 * time.Millisecond,
+			50 * time.Millisecond,
+			50 * time.Millisecond,
+			50 * time.Millisecond,
+			50 * time.Millisecond,
+		},
+	}
+	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", ContainerCapacity: 2, MaxContainers: 0, Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &freshSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4, 5}, Sandbox: "docker", Parallel: 5, ContainerCapacity: 0, ContainerCapacitySet: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if starter.startCount != 2 {
+		t.Fatalf("expected request container_capacity=0 to use default capacity and start 2 containers, got %d", starter.startCount)
+	}
+}
+
 func TestRunBatch_WorktreeSandboxIgnoresContainerSettings(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

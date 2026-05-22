@@ -118,3 +118,5 @@ sandman run --container-capacity 2 --max-containers 3 42 43 44 45 46
 sandman config set max_containers 0
 sandman run --parallel 8 42 43 44 45 46 47
 ```
+
+Set `container_capacity` to `0` when you want the default container capacity behavior without pinning a per-container limit in config.
