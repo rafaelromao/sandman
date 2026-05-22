@@ -32,7 +32,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			label, _ := cmd.Flags().GetString("label")
 			query, _ := cmd.Flags().GetString("query")
-			interactive, _ := cmd.Flags().GetBool("interactive")
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
 			nextFlag := cmd.Flags().Lookup("next")
 			nextProvided := nextFlag != nil && nextFlag.Changed
@@ -86,14 +85,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			if len(issues) == 0 {
 				return fmt.Errorf("no issues selected")
-			}
-
-			if interactive && includeDependencies {
-				return fmt.Errorf("cannot combine --include-dependencies with --interactive")
-			}
-
-			if interactive && len(issues) > 1 {
-				return fmt.Errorf("--interactive requires exactly one issue")
 			}
 
 			promptFlag, _ := cmd.Flags().GetString("prompt")
@@ -212,7 +203,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				ContainerCapacitySet: containerCapacitySet,
 				MaxContainers:        maxContainers,
 				MaxContainersSet:     maxContainersSet,
-				Interactive:          interactive,
 				OutputWriter:         broadcaster,
 				PromptConfig: prompt.RenderConfig{
 					PromptFlag:       promptFlag,
@@ -242,7 +232,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means auto/default mode")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")
-	cmd.Flags().Bool("interactive", false, "Run the agent in interactive mode")
 	cmd.Flags().Bool("include-dependencies", false, "Expand the batch to include transitive blockers")
 	cmd.Flags().String("label", "", "Select issues by label")
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")

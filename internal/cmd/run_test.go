@@ -441,7 +441,7 @@ func TestRun_SandboxFlagPassedToBatchRunner(t *testing.T) {
 	}
 }
 
-func TestRun_InteractiveFlagPassedToBatchRunner(t *testing.T) {
+func TestRun_InteractiveFlagRejected(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
 
@@ -452,34 +452,14 @@ func TestRun_InteractiveFlagPassedToBatchRunner(t *testing.T) {
 	cmd.SetArgs([]string{"--interactive", "42"})
 
 	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !spy.req.Interactive {
-		t.Errorf("expected Interactive=true, got false")
-	}
-}
-
-func TestRun_IncludeDependenciesWithInteractiveReturnsError(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--interactive", "--include-dependencies", "42"})
-
-	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when combining --include-dependencies with --interactive")
+		t.Fatal("expected error for removed --interactive flag")
 	}
 	if spy.called {
 		t.Fatal("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "cannot combine --include-dependencies with --interactive") {
-		t.Fatalf("expected mutual exclusivity error, got %v", err)
+	if !strings.Contains(err.Error(), "unknown flag: --interactive") {
+		t.Fatalf("expected unknown flag error, got %v", err)
 	}
 }
 
@@ -676,29 +656,6 @@ func TestRun_NoArgsNoTTYReturnsError(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when no issues provided and not a TTY")
-	}
-	if spy.called {
-		t.Error("expected batch runner not to be called")
-	}
-}
-
-func TestRun_InteractiveWithMultipleIssuesReturnsError(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-	}
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--interactive", "1", "2"})
-
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when --interactive with multiple issues")
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called")
@@ -991,40 +948,6 @@ func TestRun_NextFlagWithQueryReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cannot combine --next with issue arguments, --label or --query") {
 		t.Errorf("expected mutual exclusivity error, got: %v", err)
-	}
-}
-
-func TestRun_InteractiveWithNextGreaterThanOneReturnsError(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 1, Title: "Feature A"},
-			{Number: 2, Title: "Feature B"},
-		},
-	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--interactive", "--next=2"})
-
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when --interactive with --next 2")
-	}
-	if spy.called {
-		t.Error("expected batch runner not to be called")
-	}
-	if !strings.Contains(err.Error(), "--interactive requires exactly one issue") {
-		t.Errorf("expected interactive error, got: %v", err)
 	}
 }
 

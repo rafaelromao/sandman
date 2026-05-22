@@ -127,7 +127,7 @@ type fakeRunnable struct {
 	mu          *sync.Mutex
 }
 
-func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult {
+func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if f.mu != nil {
 		f.mu.Lock()
 		*f.activeCount++
@@ -218,7 +218,7 @@ type blockingRunnable struct {
 	delayAfterCancel time.Duration
 }
 
-func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult {
+func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	<-ctx.Done()
 	time.Sleep(b.delayAfterCancel)
 	return AgentRunResult{IssueNumber: 42, Status: "failure"}
@@ -240,7 +240,7 @@ type controlledRunnable struct {
 	once     sync.Once
 }
 
-func (r *controlledRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult {
+func (r *controlledRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if r.finished != nil {
 		defer close(r.finished)
 	}
@@ -2655,7 +2655,7 @@ func TestRunBatch_WorktreeSandboxIgnoresContainerSettings(t *testing.T) {
 	}
 }
 
-func TestRunBatch_InteractiveFlagPassedToRun(t *testing.T) {
+func TestRunBatch_UsesNonInteractiveRunPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -2675,7 +2675,7 @@ func TestRunBatch_InteractiveFlagPassedToRun(t *testing.T) {
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.runnableFactory = factory
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Interactive: true})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2683,7 +2683,7 @@ func TestRunBatch_InteractiveFlagPassedToRun(t *testing.T) {
 	if len(factory.created) != 1 {
 		t.Fatalf("expected 1 runnable, got %d", len(factory.created))
 	}
-	// The interactive parameter is passed to Run; we verify the run succeeded.
+	// The run succeeded through the normal execution path.
 	if factory.results[0].IssueNumber != 42 {
 		t.Errorf("expected issue 42, got %d", factory.results[0].IssueNumber)
 	}

@@ -45,7 +45,6 @@ Exactly one selection mode is required:
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = auto/default mode, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = auto mode |
-| `--interactive` | `false` | Run agent in interactive mode (requires exactly one issue) |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
 | `--query` | — | Select issues by GitHub search query |
@@ -60,8 +59,6 @@ Exactly one selection mode is required:
 ### Flag interactions
 
 - `--next` is mutually exclusive with issue arguments, `--label`, and `--query`
-- `--include-dependencies` is mutually exclusive with `--interactive`
-- `--interactive` requires exactly one issue
 - `run` preserves worktrees by default; use `sandman clean` to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
 - `--start-delay` is batch-local pacing; it waits after any `AgentRun` finishes before the next start, and `0` disables the delay
