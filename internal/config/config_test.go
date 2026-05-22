@@ -19,8 +19,7 @@ default_parallel: 3
 worktree_dir: /tmp/wt
 sandbox: worktree
 git:
-  author_name: Dev
-  author_email: dev@example.com
+  default_branch: trunk
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -52,14 +51,32 @@ git:
 	if cfg.Sandbox != "worktree" {
 		t.Errorf("sandbox: got %q, want %q", cfg.Sandbox, "worktree")
 	}
-	if cfg.Git.AuthorName != "Dev" {
-		t.Errorf("git.author_name: got %q, want %q", cfg.Git.AuthorName, "Dev")
-	}
-	if cfg.Git.AuthorEmail != "dev@example.com" {
-		t.Errorf("git.author_email: got %q, want %q", cfg.Git.AuthorEmail, "dev@example.com")
+	if cfg.Git.DefaultBranch != "trunk" {
+		t.Errorf("git.default_branch: got %q, want %q", cfg.Git.DefaultBranch, "trunk")
 	}
 	if _, ok := cfg.AgentProviders["opencode"]; !ok {
 		t.Fatal("expected built-in opencode agent in derived map")
+	}
+}
+
+func TestLoad_IgnoresLegacyGitAuthorFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `git:
+  default_branch: main
+  author_name: Dev
+  author_email: dev@example.com
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Git.DefaultBranch != "main" {
+		t.Fatalf("git.default_branch: got %q, want %q", cfg.Git.DefaultBranch, "main")
 	}
 }
 
@@ -426,8 +443,6 @@ func TestConfig_SetValue(t *testing.T) {
 		{"worktree_dir", "/tmp/wt", false},
 		{"sandbox", "podman", false},
 		{"git.default_branch", "master", false},
-		{"git.author_name", "Alice", false},
-		{"git.author_email", "alice@example.com", false},
 		{"unknown_key", "value", true},
 		{"default_parallel", "not-a-number", true},
 		{"default_parallel", "-1", true},

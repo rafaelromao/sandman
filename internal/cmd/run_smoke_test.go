@@ -31,6 +31,11 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 Return exactly SMOKE_OK and do not modify files.
 `
 
+const (
+	smokeGitName  = "Smoke User"
+	smokeGitEmail = "smoke@example.com"
+)
+
 type smokeProviderCase struct {
 	name         string
 	hostCLI      string
@@ -199,6 +204,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 		t.Fatalf("write gitconfig: %v", err)
 	}
 	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
 
 	warmSmokeRuntime(t, runtime)
 
@@ -321,12 +327,8 @@ func warmSmokeRuntime(t *testing.T, runtime string) {
 }
 
 func writeSmokeGitConfig(homeDir, remoteDir string) error {
-	gitConfig := fmt.Sprintf("[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n", "file://"+remoteDir)
-	gitConfigDir := filepath.Join(homeDir, ".config", "git")
-	if err := os.MkdirAll(gitConfigDir, 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(gitConfigDir, "config"), []byte(gitConfig), 0644)
+	gitConfig := fmt.Sprintf("[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n[user]\n\tname = %s\n\temail = %s\n", "file://"+remoteDir, smokeGitName, smokeGitEmail)
+	return os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfig), 0644)
 }
 
 func copySmokeAuthLayout(t *testing.T, realHome, tempHome string, paths []string) bool {
@@ -464,12 +466,8 @@ func customizeSmokeConfig(repoDir, provider, opencodeModel string) (*config.Conf
 	}
 	if provider == "opencode" {
 		resolved.Command = strings.Join([]string{
-			`test "$GIT_AUTHOR_NAME" = "Sandman"`,
-			`test "$GIT_AUTHOR_EMAIL" = "sandman.support@gmail.com"`,
-			`test "$GIT_COMMITTER_NAME" = "Sandman"`,
-			`test "$GIT_COMMITTER_EMAIL" = "sandman.support@gmail.com"`,
-			`test "$(git config user.name)" = "Sandman"`,
-			`test "$(git config user.email)" = "sandman.support@gmail.com"`,
+			fmt.Sprintf(`test "$(git config user.name)" = %q`, smokeGitName),
+			fmt.Sprintf(`test "$(git config user.email)" = %q`, smokeGitEmail),
 			fmt.Sprintf(`opencode run --pure -m %s "$(cat {{.PromptFile}})"`, opencodeModel),
 		}, " && ")
 		for _, dir := range []string{"~/.cache/opencode", "~/.cache/opencode/bin"} {

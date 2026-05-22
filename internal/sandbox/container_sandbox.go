@@ -48,6 +48,13 @@ func NewSharedContainerSandbox(worktree Sandbox, container Container, binary, re
 	}
 }
 
+// SetGitIdentity forwards worktree-local git identity configuration to the underlying worktree.
+func (s *ContainerSandbox) SetGitIdentity(name, email string) {
+	if setter, ok := s.worktree.(interface{ SetGitIdentity(string, string) }); ok {
+		setter.SetGitIdentity(name, email)
+	}
+}
+
 func (s *ContainerSandbox) containerWorkDir() string {
 	wd := s.worktree.WorkDir()
 	rel, err := filepath.Rel(s.repoPath, wd)

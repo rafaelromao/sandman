@@ -259,6 +259,14 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, err
 	}
 
+	resolvedGitIdentity := gitIdentity{}
+	if o.sandboxFactory == nil && o.runnableFactory == nil && o.containerRuntimeFactory == nil {
+		resolvedGitIdentity, err = resolveGitIdentity(".")
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	sbFactory := o.sandboxFactory
 	if sbFactory == nil {
 		switch sandboxMode {
@@ -366,6 +374,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, err
 		}
 	}
+	if len(req.Issues) > 0 && (resolvedGitIdentity != gitIdentity{}) {
+		if err := setGitConfigValue(".", "extensions.worktreeConfig", "true"); err != nil {
+			return nil, fmt.Errorf("enable worktree git config: %w", err)
+		}
+	}
 
 	if req.PromptConfig.PromptFile == "" {
 		req.PromptConfig.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
@@ -457,7 +470,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res := o.runSingle(ctx, issueNum, cfg, agentCfg, req.Branches, req.Interactive, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
+			res := o.runSingle(ctx, issueNum, cfg, agentCfg, resolvedGitIdentity, req.Branches, req.Interactive, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
 			mu.Lock()
 			results[idx] = res
 			statuses[issueNum] = res.Status
@@ -567,7 +580,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, gitIdentity gitIdentity, branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
@@ -590,6 +603,9 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	}
 
 	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch, container)
+	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
+		setter.SetGitIdentity(gitIdentity.Name, gitIdentity.Email)
+	}
 	if err := wt.Start(); err != nil {
 		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", num, err)
 		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
@@ -611,7 +627,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	runnable := factory.NewRunnable(issue, branch, wt)
 	if agentRun, ok := runnable.(*AgentRun); ok {
 		agentRun.env = agentCfg.Env
-		agentRun.env = applyGitIdentityEnv(agentRun.env, cfg)
 		agentRun.preset = agentCfg.Preset
 		agentRun.model = agentCfg.Model
 		agentRun.modelProvider = agentCfg.ModelProvider
@@ -685,29 +700,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	return result
 }
-
-func applyGitIdentityEnv(env map[string]string, cfg *config.Config) map[string]string {
-	name := strings.TrimSpace(cfg.Git.AuthorName)
-	email := strings.TrimSpace(cfg.Git.AuthorEmail)
-	if name == "" || email == "" {
-		return env
-	}
-	merged := make(map[string]string, len(env)+9)
-	for k, v := range env {
-		merged[k] = v
-	}
-	merged["GIT_AUTHOR_NAME"] = name
-	merged["GIT_AUTHOR_EMAIL"] = email
-	merged["GIT_COMMITTER_NAME"] = name
-	merged["GIT_COMMITTER_EMAIL"] = email
-	merged["GIT_CONFIG_COUNT"] = "2"
-	merged["GIT_CONFIG_KEY_0"] = "user.name"
-	merged["GIT_CONFIG_VALUE_0"] = name
-	merged["GIT_CONFIG_KEY_1"] = "user.email"
-	merged["GIT_CONFIG_VALUE_1"] = email
-	return merged
-}
-
 func slugify(title string) string {
 	var result []rune
 	for _, r := range strings.ToLower(title) {
