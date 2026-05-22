@@ -16,6 +16,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 build_tools: go
 review_command: /review please
 default_parallel: 3
+start_delay: 5
 worktree_dir: /tmp/wt
 sandbox: worktree
 git:
@@ -44,6 +45,9 @@ git:
 	}
 	if cfg.DefaultParallel != 3 {
 		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 3)
+	}
+	if cfg.StartDelay != 5 {
+		t.Errorf("start_delay: got %d, want %d", cfg.StartDelay, 5)
 	}
 	if cfg.WorktreeDir != "/tmp/wt" {
 		t.Errorf("worktree_dir: got %q, want %q", cfg.WorktreeDir, "/tmp/wt")
@@ -293,6 +297,9 @@ func TestLoad_MissingContainerSettings_AppliesDefaults(t *testing.T) {
 	if cfg.MaxContainers != 0 {
 		t.Errorf("max_containers: got %d, want %d", cfg.MaxContainers, 0)
 	}
+	if cfg.StartDelay != 0 {
+		t.Errorf("start_delay: got %d, want %d", cfg.StartDelay, 0)
+	}
 }
 
 func TestLoad_InvalidContainerSettings_ReturnValidationError(t *testing.T) {
@@ -314,6 +321,13 @@ container_capacity: -1
 max_containers: -1
 `,
 			wantErr: "max_containers must be 0 or greater",
+		},
+		{
+			name: "negative start delay",
+			content: `default_agent: opencode
+start_delay: -1
+`,
+			wantErr: "start_delay must be 0 or greater",
 		},
 	}
 
@@ -437,6 +451,8 @@ func TestConfig_SetValue(t *testing.T) {
 		{"build_tools", "go", false},
 		{"review_command", "/oc review", false},
 		{"default_parallel", "4", false},
+		{"start_delay", "0", false},
+		{"start_delay", "5", false},
 		{"container_capacity", "4", false},
 		{"container_capacity", "0", false},
 		{"max_containers", "0", false},
@@ -446,6 +462,8 @@ func TestConfig_SetValue(t *testing.T) {
 		{"unknown_key", "value", true},
 		{"default_parallel", "not-a-number", true},
 		{"default_parallel", "-1", true},
+		{"start_delay", "not-a-number", true},
+		{"start_delay", "-1", true},
 		{"container_capacity", "not-a-number", true},
 		{"max_containers", "-1", true},
 		{"max_containers", "not-a-number", true},

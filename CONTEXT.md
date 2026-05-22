@@ -60,6 +60,10 @@ _Avoid_: Docker container, sandbox container.
 The maximum number of AgentRuns that may execute concurrently inside one ContainerSandbox. `0` means auto/default mode: use the default container capacity behavior instead of an explicit per-container limit. When capacity is full, additional AgentRuns wait for another container or for capacity to free up.
 _Avoid_: shared mode, isolated mode.
 
+**StartDelay**:
+A batch pacing delay in seconds. After any AgentRun finishes, the Batch waits this long before starting the next AgentRun. `0` disables pacing.
+_Avoid_: cooldown, throttle.
+
 **MaxContainers**:
 The maximum number of ContainerSandboxes Sandman may create for one Batch. `max_containers=0` means auto mode: create up to the minimum number of containers needed for the currently active AgentRuns, based on ContainerCapacity.
 _Avoid_: isolated container toggle, fixed pool size.
@@ -144,6 +148,7 @@ _Avoid_: Tail, follow.
 - If all containers are full and the **Batch** is already at **MaxContainers**, additional **AgentRuns** wait in a queue until capacity becomes available
 - If `max_containers=0`, Sandman auto-scales the container pool up to the minimum number of containers needed for active **AgentRuns**
 - Container pooling is batch-scoped: idle **ContainerSandboxes** may be reused by later **AgentRuns** in the same **Batch**, and are stopped when that **Batch** completes
+- A **Batch** may apply **StartDelay** pacing between **AgentRun** starts; the delay is batch-local and does not change container capacity
 - An **AgentRun** generates many **Events**
 - A **Prompt** is rendered per **AgentRun** from the selected built-in **AgentPreset**
 

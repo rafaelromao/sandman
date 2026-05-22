@@ -35,6 +35,7 @@ func (p *fakeProcess) Kill() error {
 }
 
 type fakeSandbox struct {
+	startCalled        bool
 	startErr           error
 	writePromptCalled  bool
 	writePromptContent string
@@ -50,7 +51,10 @@ type fakeSandbox struct {
 	workDir     string
 }
 
-func (f *fakeSandbox) Start() error { return f.startErr }
+func (f *fakeSandbox) Start() error {
+	f.startCalled = true
+	return f.startErr
+}
 func (f *fakeSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	f.execCalled = true
 	f.execCommand = command

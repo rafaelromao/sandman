@@ -110,6 +110,26 @@ func TestConfigGet_ContainerCapacity(t *testing.T) {
 	}
 }
 
+func TestConfigGet_StartDelay(t *testing.T) {
+	var buf bytes.Buffer
+	store := &fakeStore{
+		config: &config.Config{DefaultAgent: "opencode", Agent: "opencode", StartDelay: 12},
+	}
+	cmd := NewConfigGetCmd(store)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"start_delay"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "12") {
+		t.Errorf("expected output to contain '12', got: %q", buf.String())
+	}
+}
+
 func TestConfigGet_UnknownKey_ReturnsError(t *testing.T) {
 	var buf bytes.Buffer
 	store := &fakeStore{
@@ -201,6 +221,31 @@ func TestConfigSet_ReviewCommand_UpdatesFile(t *testing.T) {
 	}
 	if cfg.ReviewCommand != "/review please" {
 		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/review please")
+	}
+}
+
+func TestConfigSet_StartDelay_UpdatesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	store := &config.FileStore{Path: path}
+	cmd := NewConfigSetCmd(store)
+	cmd.SetArgs([]string{"start_delay", "9"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.StartDelay != 9 {
+		t.Errorf("start_delay: got %d, want %d", cfg.StartDelay, 9)
 	}
 }
 

@@ -41,6 +41,7 @@ Exactly one selection mode is required:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--parallel` | `default_parallel` from config (4) | Maximum concurrent agent runs |
+| `--start-delay` | config `start_delay` (0) | Wait this many seconds after any `AgentRun` finishes before starting the next one; `0` disables pacing |
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = auto/default mode, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = auto mode |
@@ -63,6 +64,7 @@ Exactly one selection mode is required:
 - `--interactive` requires exactly one issue
 - `run` preserves worktrees by default; use `sandman clean` to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
+- `--start-delay` is batch-local pacing; it waits after any `AgentRun` finishes before the next start, and `0` disables the delay
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
 - `--container-capacity` accepts `0` as auto/default mode and resolves it to the default container capacity behavior
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means auto-scale
@@ -145,6 +147,7 @@ sandman config set <key> <value>
 | `default_agent` | string | `opencode` |
 | `build_tools` | string | `node` |
 | `default_parallel` | int | `4` |
+| `start_delay` | int | `0` |
 | `review_command` | string | `/oc review` |
 | `container_capacity` | int | `4` |
 | `max_containers` | int | `0` |

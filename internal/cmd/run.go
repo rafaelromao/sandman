@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/daemon"
@@ -137,6 +138,13 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			// Let 0 pass through — Orchestrator defaults to 4
 
+			startDelayFlag := cmd.Flags().Lookup("start-delay")
+			startDelaySet := startDelayFlag != nil && startDelayFlag.Changed
+			startDelay, _ := cmd.Flags().GetInt("start-delay")
+			if startDelaySet && startDelay < 0 {
+				return fmt.Errorf("start_delay must be 0 or greater")
+			}
+
 			sandboxMode, _ := cmd.Flags().GetString("sandbox")
 			containerCapacityFlag := cmd.Flags().Lookup("container-capacity")
 			containerCapacitySet := containerCapacityFlag != nil && containerCapacityFlag.Changed
@@ -184,6 +192,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				Agent:                agentName,
 				Model:                strings.TrimSpace(modelFlag),
 				Parallel:             parallel,
+				StartDelay:           time.Duration(startDelay) * time.Second,
+				StartDelaySet:        startDelaySet,
 				Sandbox:              sandboxMode,
 				ContainerCapacity:    containerCapacity,
 				ContainerCapacitySet: containerCapacitySet,
@@ -215,6 +225,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 		},
 	}
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
+	cmd.Flags().Int("start-delay", 0, "Wait N seconds after any AgentRun finishes before starting the next one; 0 disables the delay")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means auto/default mode")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")

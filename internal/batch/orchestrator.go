@@ -74,6 +74,81 @@ type containerPool struct {
 	shared []*pooledContainer
 }
 
+type batchStartGate struct {
+	mu               sync.Mutex
+	parallel         int
+	delay            time.Duration
+	active           int
+	nextAllowedStart time.Time
+}
+
+func newBatchStartGate(parallel int, delay time.Duration) *batchStartGate {
+	if parallel < 1 {
+		parallel = 1
+	}
+	return &batchStartGate{parallel: parallel, delay: delay}
+}
+
+func (g *batchStartGate) Acquire(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		g.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			g.mu.Unlock()
+			return err
+		}
+		now := time.Now()
+		if g.active < g.parallel && (g.delay <= 0 || !now.Before(g.nextAllowedStart)) {
+			if err := ctx.Err(); err != nil {
+				g.mu.Unlock()
+				return err
+			}
+			g.active++
+			g.mu.Unlock()
+			return nil
+		}
+
+		wait := 10 * time.Millisecond
+		if g.delay > 0 && now.Before(g.nextAllowedStart) {
+			wait = time.Until(g.nextAllowedStart)
+		}
+		g.mu.Unlock()
+
+		if wait <= 0 {
+			wait = 10 * time.Millisecond
+		}
+
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (g *batchStartGate) Release() { g.release(true) }
+
+func (g *batchStartGate) ReleaseWithoutDelay() { g.release(false) }
+
+func (g *batchStartGate) release(applyDelay bool) {
+	g.mu.Lock()
+	if applyDelay && g.delay > 0 {
+		next := time.Now().Add(g.delay)
+		if next.After(g.nextAllowedStart) {
+			g.nextAllowedStart = next
+		}
+	}
+	g.active--
+	g.mu.Unlock()
+}
+
 func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, startOpts sandbox.StartOptions, capacity, maxContainers int) *containerPool {
 	p := &containerPool{
 		starter:       starter,
@@ -348,6 +423,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if parallel == 0 {
 		parallel = 4
 	}
+	startDelay := time.Duration(cfg.StartDelay) * time.Second
+	if req.StartDelaySet {
+		if req.StartDelay < 0 {
+			return nil, fmt.Errorf("start_delay must be 0 or greater")
+		}
+		startDelay = req.StartDelay
+	}
 
 	dependencies := make(map[int][]int, len(req.Issues))
 	for _, num := range req.Issues {
@@ -376,7 +458,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, fmt.Errorf("materialize prompt template: %w", err)
 	}
 
-	sem := make(chan struct{}, parallel)
+	startGate := newBatchStartGate(parallel, startDelay)
 	var wg sync.WaitGroup
 	results := make([]AgentRunResult, len(req.Issues))
 	var mu sync.Mutex
@@ -471,10 +553,21 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			if err := startGate.Acquire(ctx); err != nil {
+				mu.Lock()
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Status: "failure", Branch: req.Branches[issueNum]}
+				statuses[issueNum] = "failure"
+				failureCount++
+				mu.Unlock()
+				return
+			}
 
-			res := o.runSingle(ctx, issueNum, cfg, agentCfg, resolveBatchGitIdentity, req.Branches, req.Interactive, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
+			res, started := o.runSingle(ctx, issueNum, cfg, agentCfg, resolveBatchGitIdentity, req.Branches, req.Interactive, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
+			if started {
+				defer startGate.Release()
+			} else {
+				defer startGate.ReleaseWithoutDelay()
+			}
 			mu.Lock()
 			results[idx] = res
 			statuses[issueNum] = res.Status
@@ -584,11 +677,11 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) AgentRunResult {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
-		return AgentRunResult{IssueNumber: num, Status: "failure"}
+		return AgentRunResult{IssueNumber: num, Status: "failure"}, false
 	}
 
 	branch := branches[num]
@@ -600,7 +693,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		lease, err := containerAlloc.Acquire()
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: acquire container for issue %d: %v\n", num, err)
-			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}, false
 		}
 		container = lease.container
 		defer lease.Release()
@@ -611,13 +704,13 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		identity, err := resolveGitIdentity()
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", num, err)
-			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}, false
 		}
 		setter.SetGitIdentity(identity.Name, identity.Email)
 	}
 	if err := wt.Start(); err != nil {
 		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", num, err)
-		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}
+		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}, false
 	}
 
 	activeMu.Lock()
@@ -707,7 +800,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		})
 	}
 
-	return result
+	return result, true
 }
 func slugify(title string) string {
 	var result []rune
