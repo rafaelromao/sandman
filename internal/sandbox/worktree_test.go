@@ -332,7 +332,7 @@ func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
 	}
 }
 
-func TestWorktreeSandbox_StartFailsWhenBranchAlreadyExists(t *testing.T) {
+func TestWorktreeSandbox_StartFailsWhenBranchAlreadyInUse(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	removeBranch(t, dir, "sandman/42-fix-bug")
@@ -341,14 +341,10 @@ func TestWorktreeSandbox_StartFailsWhenBranchAlreadyExists(t *testing.T) {
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	err := s.Start()
 	if err == nil {
-		t.Fatal("expected error when branch already exists")
+		t.Fatal("expected error when branch is already checked out")
 	}
-	want := `branch "sandman/42-fix-bug" already exists`
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("expected error to contain %q, got %q", want, err.Error())
-	}
-	if !strings.Contains(err.Error(), `git branch -D sandman/42-fix-bug`) {
-		t.Errorf("expected error to contain actionable delete command, got %q", err.Error())
+	if !strings.Contains(err.Error(), "git worktree add") {
+		t.Errorf("expected git worktree add error, got %q", err.Error())
 	}
 	runGit(t, dir, "checkout", "main")
 	t.Cleanup(func() { removeBranch(t, dir, "sandman/42-fix-bug") })
