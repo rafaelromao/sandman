@@ -71,41 +71,6 @@ var smokeProviderCases = []smokeProviderCase{
 		},
 	},
 	{
-		name:       "claude-code",
-		hostCLI:    "claude",
-		buildTools: "generic",
-		issue: github.Issue{
-			Number: 422,
-			Title:  "Smoke claude code",
-			Body:   "Reply with exactly SMOKE_OK.",
-		},
-		wantBranch: "sandman/422-smoke-claude-code",
-		requiredAuth: []string{
-			"~/.claude.json",
-		},
-		authPaths: []string{
-			"~/.claude",
-			"~/.claude.json",
-		},
-	},
-	{
-		name:       "codex",
-		hostCLI:    "codex",
-		buildTools: "generic",
-		issue: github.Issue{
-			Number: 423,
-			Title:  "Smoke codex",
-			Body:   "Reply with exactly SMOKE_OK.",
-		},
-		wantBranch: "sandman/423-smoke-codex",
-		requiredAuth: []string{
-			"~/.codex",
-		},
-		authPaths: []string{
-			"~/.codex",
-		},
-	},
-	{
 		name:       "pi",
 		hostCLI:    "pi",
 		buildTools: "generic",
@@ -149,7 +114,7 @@ func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
 		t.Fatal(err)
 	}
 	if len(allowed) == 0 {
-		t.Skip("set SANDMAN_SMOKE_PROVIDERS=opencode,claude-code,codex,pi and run `go test -tags smoke ./internal/cmd -run Smoke`")
+		t.Skip("set SANDMAN_SMOKE_PROVIDERS=opencode,pi and run `go test -tags smoke ./internal/cmd -run Smoke`")
 	}
 
 	for _, tc := range cases {
@@ -183,7 +148,7 @@ func parseSmokeProviders() (map[string]bool, error) {
 			continue
 		}
 		switch name {
-		case "opencode", "claude-code", "codex", "pi":
+		case "opencode", "pi":
 			allowed[name] = true
 		default:
 			return nil, fmt.Errorf("unknown smoke provider %q", name)
@@ -244,7 +209,8 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	if err := addSmokeDockerDeps(repoDir, tc.name); err != nil {
 		t.Fatalf("update Dockerfile: %v", err)
 	}
-	if err := customizeSmokeConfig(repoDir, tc.name, opencodeModel); err != nil {
+	smokeCfg, err := customizeSmokeConfig(repoDir, tc.name, opencodeModel)
+	if err != nil {
 		t.Fatalf("update config: %v", err)
 	}
 	imageTag := preflightSmokeImage(t, runtime, repoDir, tc.name)
@@ -253,8 +219,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 
 	issue := tc.issue
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: &issue}}
-	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
-	store := &config.FileStore{Path: cfgPath}
+	store := &fakeStore{config: smokeCfg}
 	deps := Dependencies{
 		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
 		ConfigStore:    store,
@@ -487,15 +452,15 @@ func addSmokeDockerDeps(repoDir, provider string) error {
 	return os.WriteFile(dockerfilePath, data, 0644)
 }
 
-func customizeSmokeConfig(repoDir, provider, opencodeModel string) error {
+func customizeSmokeConfig(repoDir, provider, opencodeModel string) (*config.Config, error) {
 	configPath := filepath.Join(repoDir, ".sandman", "config.yaml")
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resolved, err := cfg.ResolveAgentProvider(provider)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if provider == "opencode" {
 		resolved.Command = strings.Join([]string{
@@ -517,10 +482,7 @@ func customizeSmokeConfig(repoDir, provider, opencodeModel string) error {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
 	cfg.AgentProviders[provider] = resolved
-	if err := config.Save(configPath, cfg); err != nil {
-		return err
-	}
-	return nil
+	return cfg, nil
 }
 
 func ensureSmokeHostCLI(t *testing.T, tc smokeProviderCase) {

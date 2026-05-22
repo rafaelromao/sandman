@@ -1631,7 +1631,7 @@ func TestOrchestrator_ContainerMetadataDriftFailsBeforeBuild(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
 		t.Fatalf("create .sandman: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte("# sandman build-tools: generic\n# sandman agent-provider: codex\nFROM debian:bookworm-slim\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte("# sandman build-tools: generic\n# sandman default-agent: pi\nFROM debian:bookworm-slim\n"), 0644); err != nil {
 		t.Fatalf("write Dockerfile: %v", err)
 	}
 
