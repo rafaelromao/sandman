@@ -230,7 +230,14 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 	sandboxMode = resolvedMode
 
-	agentCfg, err := cfg.ResolveAgentProvider(cfg.Agent)
+	agentName := strings.TrimSpace(req.Agent)
+	if agentName == "" {
+		agentName = cfg.DefaultAgent
+	}
+	if agentName == "" {
+		agentName = cfg.Agent
+	}
+	agentCfg, err := cfg.ResolveAgentProvider(agentName)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +255,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		agentCfg.ModelProvider = provider
 		agentCfg.ModelName = modelName
 	}
-	if err := sandbox.ValidateAgentConfig(cfg.Agent, agentCfg); err != nil {
+	if err := sandbox.ValidateAgentConfig(agentName, agentCfg); err != nil {
 		return nil, err
 	}
 
@@ -280,7 +287,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	var containerAlloc containerAllocator
 	var pool *containerPool
 	if sandboxMode == "docker" || sandboxMode == "podman" {
-		if err := scaffold.ValidateDockerfileMetadata(".", cfg.BuildTools, cfg.Agent); err != nil {
+		defaultAgent := strings.TrimSpace(cfg.DefaultAgent)
+		if defaultAgent == "" {
+			defaultAgent = strings.TrimSpace(cfg.Agent)
+		}
+		if err := scaffold.ValidateDockerfileMetadata(".", cfg.BuildTools, defaultAgent); err != nil {
 			return nil, err
 		}
 

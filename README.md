@@ -5,7 +5,7 @@ A terminal-native CLI tool for orchestrating AFK coding agents in isolated sandb
 ## Quick Start
 
 ```bash
-# Prerequisites: Go 1.24+, Git, gh CLI, and an AI agent (opencode, claude-code, codex, pi)
+# Prerequisites: Go 1.24+, Git, gh CLI, and an AI agent (opencode or pi)
 # 1. Install
 go install github.com/rafaelromao/sandman/cmd/sandman@latest
 
@@ -36,7 +36,7 @@ Sandman manages the lifecycle of automated coding workflows:
 |-------|-------------|
 | [Getting Started](docs/usage/getting-started.md) | Prerequisites, installation, and first project setup |
 | [Commands Reference](docs/usage/commands.md) | All CLI commands, flags, and issue selection modes |
-| [Configuration](docs/usage/configuration.md) | Full config schema, agent providers, and CLI config |
+| [Configuration](docs/usage/configuration.md) | Full config schema, default agent, and CLI config |
 | [Default Prompt](docs/usage/default-prompt.md) | Canonical prompt text, lifecycle, and section-by-section guide |
 | [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
 | [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, retry and cleanup |
@@ -48,7 +48,7 @@ Sandman manages the lifecycle of automated coding workflows:
 Sandman reads from `.sandman/config.yaml`. Key fields:
 
 ```yaml
-agent: opencode
+default_agent: opencode
 default_parallel: 4
 review_command: /oc review
 sandbox: podman              # podman, docker, or worktree
@@ -58,13 +58,9 @@ git:
   author_name: Sandman
   author_email: sandman.support@gmail.com
   default_branch: main
-agents:
-  opencode:
-    preset: opencode
-  custom-agent:
-    command: "custom-agent --prompt {{.PromptFile}}"
-    env:
-      API_KEY: ${API_KEY}
+installed_agents:
+  - opencode
+  - pi
 ```
 
 `sandman init` writes `git.author_name` and `git.author_email` with the Sandman default identity. If you clear them, Sandman stops injecting identity and Git falls back to whatever other config or environment your process provides, without mutating your host git config.
@@ -82,7 +78,7 @@ make install  # Install to $GOPATH/bin
 Smoke tests (opt-in):
 
 ```bash
-SANDMAN_SMOKE_PROVIDERS=opencode,claude-code go test -tags smoke ./internal/cmd -run Smoke
+SANDMAN_SMOKE_PROVIDERS=opencode,pi go test -tags smoke ./internal/cmd -run Smoke
 ```
 
 ## License

@@ -52,7 +52,7 @@ func NewInitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			buildTools, _ := cmd.Flags().GetString("build-tools")
 			toolVersion, _ := cmd.Flags().GetString("tool-version")
-			agent, _ := cmd.Flags().GetString("agent")
+			defaultAgent, _ := cmd.Flags().GetString("default-agent")
 
 			if toolVersion == "" {
 				toolVersion = "repo"
@@ -70,16 +70,16 @@ func NewInitCmd() *cobra.Command {
 			}
 
 			return s.Scaffold(wd, scaffold.Options{
-				BuildTools:  buildTools,
-				ToolVersion: toolVersion,
-				Agent:       agent,
+				BuildTools:   buildTools,
+				ToolVersion:  toolVersion,
+				DefaultAgent: defaultAgent,
 			}, prompter)
 		},
 	}
 
 	cmd.Flags().String("build-tools", "", fmt.Sprintf("Build tools preset (%s)", strings.Join(scaffold.KnownBuildToolsPresets, ", ")))
 	cmd.Flags().String("tool-version", "", "Logical version selector (repo, latest, lts, or semver shorthand)")
-	cmd.Flags().String("agent", "", "Built-in agent preset (opencode, claude-code, codex, pi)")
+	cmd.Flags().String("default-agent", "", "Default built-in agent preset (opencode or pi)")
 
 	return cmd
 }

@@ -141,8 +141,6 @@ func (r *AgentRun) modelFlag(command string) string {
 	switch r.preset {
 	case "opencode":
 		return "-m " + model
-	case "claude-code", "codex":
-		return "--model " + model
 	default:
 		return ""
 	}

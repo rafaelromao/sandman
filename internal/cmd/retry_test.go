@@ -267,7 +267,7 @@ func TestRetry_ReplaysStoredModelFromConfig(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/current review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Model: "gpt-new"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{DefaultAgent: "opencode", Agent: "opencode", ReviewCommand: "/current review"}},
 		EventLog:    log,
 	}
 
@@ -294,7 +294,7 @@ func TestRetry_ReplaysStoredModelFromOverride(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/current review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Model: "gpt-config"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{DefaultAgent: "opencode", Agent: "opencode", ReviewCommand: "/current review"}},
 		EventLog:    log,
 	}
 
@@ -323,8 +323,8 @@ func TestRetry_FailsWhenStoredTemplateMissing(t *testing.T) {
 		}},
 	}}
 	deps := Dependencies{
-		BatchRunner: batch.NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}, &prompt.Engine{}, &fakeStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}, ReviewCommand: "/current review"}}, nil),
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/current review"}},
+		BatchRunner: batch.NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}, &prompt.Engine{}, &fakeStore{config: &config.Config{DefaultAgent: "opencode", Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, ReviewCommand: "/current review"}}, nil),
+		ConfigStore: &fakeStore{config: &config.Config{DefaultAgent: "opencode", Agent: "opencode", ReviewCommand: "/current review"}},
 		EventLog:    log,
 	}
 

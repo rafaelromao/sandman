@@ -12,7 +12,7 @@ sandman init [flags]
 |------|---------|-------------|
 | `--build-tools` | `""` | Build tools preset (`generic`, `dotnet`, `go`, `node`, `python`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
-| `--agent` | `""` | Built-in agent preset (`opencode`, `claude-code`, `codex`, `pi`) |
+| `--default-agent` | `""` | Default built-in agent preset for `init` (`opencode` or `pi`) |
 
 When `--tool-version` is omitted, `init` infers `repo` as the version selector, reading version hints from the repo when available. If flags are completely omitted and no repo hints are found, interactive prompts guide you through the choices.
 
@@ -54,6 +54,7 @@ Exactly one selection mode is required:
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--review-command` | — | Review command injected into `{{REVIEW_COMMAND}}` |
 | `--model` | — | Override the `AgentModel` for built-in presets using `provider/model` format |
+| `--agent` | config default (`opencode` or `pi`) | Built-in agent preset for this run |
 
 ### Flag interactions
 
@@ -65,7 +66,8 @@ Exactly one selection mode is required:
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
 - `--container-capacity` accepts `0` as auto/default mode and resolves it to the default container capacity behavior
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means auto-scale
-- `--model` only applies to built-in presets and overrides any `agents.<name>.model` value
+- `--model` only applies to built-in presets
+- `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `default_agent` from config
 - Pi splits `provider/model` into separate provider and model flags, and errors if `/` is missing
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 
@@ -140,7 +142,7 @@ sandman config set <key> <value>
 
 | Key | Type | Example |
 |-----|------|---------|
-| `agent` | string | `opencode` |
+| `default_agent` | string | `opencode` |
 | `build_tools` | string | `node` |
 | `default_parallel` | int | `4` |
 | `review_command` | string | `/oc review` |

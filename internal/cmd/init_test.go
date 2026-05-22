@@ -71,11 +71,11 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman build-tools: generic") {
 		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "# sandman agent-provider: opencode") {
-		t.Fatalf("Dockerfile missing agent metadata, got:\n%s", dockerfile)
+	if !strings.Contains(dockerfile, "# sandman default-agent: opencode") {
+		t.Fatalf("Dockerfile missing default-agent metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "# sandman tool-version: "+scaffold.DefaultBuiltInAgentVersion("opencode")) {
-		t.Fatalf("Dockerfile missing pinned agent version, got:\n%s", dockerfile)
+	if !strings.Contains(dockerfile, "# sandman installed-agents: opencode,pi") {
+		t.Fatalf("Dockerfile missing installed-agents metadata, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", dockerfile)
@@ -365,7 +365,7 @@ func TestInit_ExplicitGenericOverridesNodeRepoHint(t *testing.T) {
 	}
 }
 
-func TestInit_AgentFlagSelectsConfigPreset(t *testing.T) {
+func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -373,7 +373,7 @@ func TestInit_AgentFlagSelectsConfigPreset(t *testing.T) {
 	cmd := NewInitCmd()
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
-	cmd.SetArgs([]string{"--build-tools", "generic", "--agent", "claude-code"})
+	cmd.SetArgs([]string{"--build-tools", "generic", "--default-agent", "pi"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -387,16 +387,19 @@ func TestInit_AgentFlagSelectsConfigPreset(t *testing.T) {
 	if !strings.Contains(string(configData), "build_tools: generic") {
 		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
 	}
-	if !strings.Contains(string(configData), "preset: claude-code") {
-		t.Errorf("config missing claude-code preset, got:\n%s", configData)
+	if !strings.Contains(string(configData), "default_agent: pi") {
+		t.Errorf("config missing default_agent preset, got:\n%s", configData)
 	}
 
 	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
-	if !strings.Contains(string(dockerfileData), "@anthropic-ai/claude-code@"+scaffold.DefaultBuiltInAgentVersion("claude-code")) {
-		t.Errorf("Dockerfile missing pinned claude-code install, got:\n%s", dockerfileData)
+	if !strings.Contains(string(dockerfileData), "RUN npm install -g opencode-ai@"+scaffold.DefaultBuiltInAgentVersion("opencode")) {
+		t.Errorf("Dockerfile missing opencode install, got:\n%s", dockerfileData)
+	}
+	if !strings.Contains(string(dockerfileData), "RUN python3 -m pip install --break-system-packages pi=="+scaffold.DefaultBuiltInAgentVersion("pi")) {
+		t.Errorf("Dockerfile missing pi install, got:\n%s", dockerfileData)
 	}
 }
 
@@ -418,8 +421,8 @@ func TestInit_InfersToolVersionRepoWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
-	if !strings.Contains(string(dockerfileData), "# sandman tool-version: "+scaffold.DefaultBuiltInAgentVersion("opencode")) {
-		t.Fatalf("expected a pinned tool-version, got:\n%s", dockerfileData)
+	if !strings.Contains(string(dockerfileData), "# sandman installed-agents: opencode,pi") {
+		t.Fatalf("expected installed-agents metadata, got:\n%s", dockerfileData)
 	}
 }
 

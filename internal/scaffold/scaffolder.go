@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -32,9 +33,10 @@ const DefaultMISEVersion = "v2026.5.8"
 
 // Options configures the scaffolding behavior.
 type Options struct {
-	BuildTools  string // --build-tools override
-	ToolVersion string // --tool-version override
-	Agent       string // --agent override
+	BuildTools   string // --build-tools override
+	ToolVersion  string // --tool-version override
+	DefaultAgent string // --default-agent override
+	Agent        string // legacy alias for tests
 }
 
 // BuildToolsPreset describes a scaffold-time recipe for the container image.
@@ -188,10 +190,8 @@ var KnownBuildToolsPresets = func() []string {
 }()
 
 var builtInAgentVersionCatalog = map[string][]string{
-	"opencode":    {"1.15.0", "1.14.0", "1.13.0"},
-	"claude-code": {"2.1.142", "2.1.120", "2.0.0"},
-	"codex":       {"0.130.0", "0.129.0", "0.128.0"},
-	"pi":          {"0.1.2", "0.1.1", "0.1.0"},
+	"opencode": {"1.15.0", "1.14.0", "1.13.0"},
+	"pi":       {"0.1.2", "0.1.1", "0.1.0"},
 }
 
 var bundledGoVersionCatalog = map[string]string{
@@ -258,7 +258,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("create .sandman: %w", err)
 	}
 
-	agent, err := s.resolveAgent(opts, p)
+	defaultAgent, err := s.resolveDefaultAgent(opts)
 	if err != nil {
 		return err
 	}
@@ -272,7 +272,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	dotnetVersion := ""
 	nodeVersion := ""
 	pythonVersion := ""
-	agentVersion := DefaultBuiltInAgentVersion(agent)
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
@@ -293,15 +292,10 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		if err != nil {
 			return err
 		}
-	} else {
-		agentVersion, err = s.resolveAgentVersion(agent, opts.ToolVersion, p)
-		if err != nil {
-			return err
-		}
 	}
 
 	cfg := &config.Config{
-		Agent:             agent,
+		DefaultAgent:      defaultAgent,
 		BuildTools:        preset.Name,
 		ReviewCommand:     config.DefaultReviewCommand,
 		DefaultParallel:   config.DefaultParallel,
@@ -314,9 +308,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 			AuthorName:    config.DefaultGitAuthorName,
 			AuthorEmail:   config.DefaultGitAuthorEmail,
 		},
-		AgentProviders: map[string]config.Agent{
-			agent: {Preset: agent},
-		},
 	}
 
 	configPath := filepath.Join(sandmanDir, "config.yaml")
@@ -324,7 +315,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, agent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -338,14 +329,17 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	return nil
 }
 
-func (s *Scaffolder) resolveAgent(opts Options, p Prompter) (string, error) {
-	if opts.Agent != "" {
-		if _, ok := config.BuiltInAgentPresets[opts.Agent]; !ok {
-			return "", fmt.Errorf("unknown agent: %q (supported: %s)", opts.Agent, strings.Join(KnownAgents, ", "))
-		}
-		return opts.Agent, nil
+func (s *Scaffolder) resolveDefaultAgent(opts Options) (string, error) {
+	if opts.DefaultAgent == "" {
+		opts.DefaultAgent = opts.Agent
 	}
-	return config.DefaultAgent, nil
+	if opts.DefaultAgent == "" {
+		return config.DefaultAgent, nil
+	}
+	if _, ok := config.BuiltInAgentPresets[opts.DefaultAgent]; !ok {
+		return "", fmt.Errorf("unknown default agent: %q (supported: %s)", opts.DefaultAgent, strings.Join(KnownAgents, ", "))
+	}
+	return opts.DefaultAgent, nil
 }
 
 func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Prompter) (BuildToolsPreset, error) {
@@ -943,10 +937,11 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
-	fmt.Fprintf(&out, "# sandman agent-provider: %s\n", agent)
+	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
+	fmt.Fprintf(&out, "# sandman installed-agents: opencode,pi\n")
 	if preset.Name == goBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman go-version: %s\n", goVersion)
 	}
@@ -959,7 +954,6 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	if preset.Name == pythonBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman python-version: %s\n", pythonVersion)
 	}
-	fmt.Fprintf(&out, "# sandman tool-version: %s\n", agentVersion)
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "FROM %s\n", preset.BaseImage)
 	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(preset.SharedPackages, " "))
@@ -985,7 +979,8 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, agent, 
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
 	}
-	out.WriteString(renderAgentInstallCommand(agent, agentVersion))
+	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
+	out.WriteString(renderAgentInstallCommand("pi", DefaultBuiltInAgentVersion("pi")))
 	return out.String()
 }
 
@@ -1315,10 +1310,6 @@ func renderAgentInstallCommand(agent, version string) string {
 	switch agent {
 	case "opencode":
 		return fmt.Sprintf("RUN npm install -g opencode-ai@%s\n", version)
-	case "claude-code":
-		return fmt.Sprintf("RUN npm install -g @anthropic-ai/claude-code@%s\n", version)
-	case "codex":
-		return fmt.Sprintf("RUN npm install -g @openai/codex@%s\n", version)
 	case "pi":
 		return fmt.Sprintf("RUN python3 -m pip install --break-system-packages pi==%s\n", version)
 	default:
@@ -1330,9 +1321,12 @@ func renderAgentInstallCommand(agent, version string) string {
 // Metadata-free Dockerfiles are treated as opaque custom files.
 // tool-version and mise-version are intentionally not validated here because
 // runtime config has no canonical pinned value to compare against.
-func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedAgent string) error {
+func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAgent string) error {
 	if strings.TrimSpace(expectedBuildTools) == "" {
 		expectedBuildTools = defaultBuildToolsPreset
+	}
+	if strings.TrimSpace(expectedDefaultAgent) == "" {
+		expectedDefaultAgent = config.DefaultAgent
 	}
 	dockerfilePath := filepath.Join(repoRoot, ".sandman", "Dockerfile")
 	meta, found, err := readDockerfileMetadata(dockerfilePath)
@@ -1345,15 +1339,20 @@ func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedAgent stri
 	if meta.BuildToolsPreset != expectedBuildTools {
 		return fmt.Errorf("scaffold metadata drift: Dockerfile build-tools %q does not match expected %q", meta.BuildToolsPreset, expectedBuildTools)
 	}
-	if meta.AgentProvider != expectedAgent {
-		return fmt.Errorf("scaffold metadata drift: Dockerfile agent-provider %q does not match config agent %q", meta.AgentProvider, expectedAgent)
+	if meta.DefaultAgent != expectedDefaultAgent {
+		return fmt.Errorf("scaffold metadata drift: Dockerfile default-agent %q does not match config default agent %q", meta.DefaultAgent, expectedDefaultAgent)
+	}
+	wantAgents := []string{"opencode", "pi"}
+	if !reflect.DeepEqual(meta.InstalledAgents, wantAgents) {
+		return fmt.Errorf("scaffold metadata drift: Dockerfile installed-agents %v does not match expected %v", meta.InstalledAgents, wantAgents)
 	}
 	return nil
 }
 
 type dockerfileMetadata struct {
 	BuildToolsPreset string
-	AgentProvider    string
+	DefaultAgent     string
+	InstalledAgents  []string
 	GoVersion        string
 	NodeVersion      string
 	PythonVersion    string
@@ -1403,8 +1402,16 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 		switch strings.TrimSpace(strings.ToLower(key)) {
 		case "build-tools":
 			meta.BuildToolsPreset = strings.TrimSpace(value)
-		case "agent-provider":
-			meta.AgentProvider = strings.TrimSpace(value)
+		case "default-agent":
+			meta.DefaultAgent = strings.TrimSpace(value)
+		case "installed-agents":
+			parts := strings.Split(strings.TrimSpace(value), ",")
+			meta.InstalledAgents = meta.InstalledAgents[:0]
+			for _, part := range parts {
+				if trimmed := strings.TrimSpace(part); trimmed != "" {
+					meta.InstalledAgents = append(meta.InstalledAgents, trimmed)
+				}
+			}
 		case "tool-version":
 			meta.ToolVersion = strings.TrimSpace(value)
 		case "go-version":

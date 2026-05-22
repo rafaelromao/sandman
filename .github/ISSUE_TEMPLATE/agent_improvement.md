@@ -8,7 +8,7 @@ assignees: ''
 ---
 
 **Which agent provider is affected?**
-E.g. opencode, codex, Claude Code, pi, or all providers.
+E.g. opencode, pi, or both built-ins.
 
 **Describe the improvement**
 What aspect of agent behavior, prompt, or documentation are you improving?

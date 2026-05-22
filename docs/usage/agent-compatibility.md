@@ -1,21 +1,19 @@
 # Agent Compatibility
 
-Sandman includes built-in presets for four AI coding agents. This guide documents their compatibility with Sandman's sandbox modes and configuration requirements.
+Sandman includes built-in presets for two AI coding agents: `opencode` and `pi`.
 
 ## Built-in presets
 
 | Preset | Display Name | Command Template |
 |--------|-------------|------------------|
 | `opencode` | OpenCode | `opencode run "$(cat {{.PromptFile}})"` |
-| `claude-code` | Claude Code | `claude --print "$(cat {{.PromptFile}})"` |
-| `codex` | Codex | `codex exec "$(cat {{.PromptFile}})"` |
 | `pi` | Pi | `pi --print --provider <provider> --model <model> "$(cat {{.PromptFile}})"` |
 
 ## Model selection
 
-Sandman only wires `AgentModel` for built-in presets. If `agents.<name>.model` is set, Sandman passes it through for `opencode`, `claude-code`, and `codex`; Pi expects `provider/model` and Sandman splits it into separate provider and model flags. Custom command providers keep their own defaults.
+Sandman wires `AgentModel` only for built-in presets. `sandman run --model` overrides the config value for the selected built-in agent. Pi expects `provider/model` and Sandman splits it into separate provider and model flags.
 
-`sandman run --model` takes precedence over `agents.<name>.model`.
+`sandman run --model` takes precedence over the configured default model.
 
 Sandman does not hardcode default models for built-in agents because those defaults vary by tool, account, and provider.
 
@@ -23,16 +21,14 @@ Sandman does not hardcode default models for built-in agents because those defau
 
 | Preset | Worktree | Container | Keychain Auth | Host Config Paths |
 |--------|----------|-----------|---------------|-------------------|
-| `opencode` | Yes | Yes | No | `~/.config/opencode`, `~/.local/share/opencode` |
-| `claude-code` | Yes | Yes | No | `~/.claude`, `~/.claude.json` |
-| `codex` | Yes | Yes | No | `~/.codex` |
+| `opencode` | Yes | Yes | No | `~/.config/opencode`, `~/.local/share/opencode`, `~/.claude` |
 | `pi` | Yes | Yes | No | `~/.pi` |
 
-All four presets support both worktree and container-backed sandboxing.
+Both presets support worktree and container-backed sandboxing.
 
 ## Container auth model
 
-**Keychain auth is not supported in container mode.** If an agent provider has `keychain_auth: true` and a container sandbox is selected, Sandman rejects the batch with a clear error message.
+**Keychain auth is not supported in container mode.** If a built-in agent has `keychain_auth: true` and a container sandbox is selected, Sandman rejects the batch with a clear error message.
 
 To use an agent inside a container:
 
@@ -40,7 +36,7 @@ To use an agent inside a container:
 2. Use file-based authentication (e.g., API keys stored in config files)
 3. Sandman resolves config files and directories into the container via a temporary copy (see ADR-0008)
 
-For example, Claude Code stores its session tokens in `~/.claude` and `~/.claude.json`. Sandman resolves these paths into the container automatically when using the `claude-code` preset, and the agent should be configured to use file-based auth.
+OpenCode stores its session tokens in `~/.claude` alongside its own config. Sandman resolves those paths into the container automatically when using the `opencode` preset, and the agent should be configured to use file-based auth.
 
 ## Worktree management
 

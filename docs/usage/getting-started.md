@@ -5,7 +5,7 @@
 - [Go](https://go.dev/dl/) 1.24 or later
 - [Git](https://git-scm.com/)
 - [`gh` CLI](https://cli.github.com/) — authenticated and with `repo` scope
-- An AI coding agent: [OpenCode](https://opencode.ai/), [Claude Code](https://claude.com/product/claude-code), [Codex](https://openai.com/codex/), or [Pi](https://pi.dev)
+- An AI coding agent: [OpenCode](https://opencode.ai/) or [Pi](https://pi.dev)
 - (Optional but recommended) [Podman](https://podman.io/) or [Docker](https://docker.com/) for container-backed sandboxing
 
 ## Installation
@@ -36,7 +36,7 @@ sandman init
 
 This scaffolds the `.sandman/` directory with:
 
-- **`.sandman/config.yaml`** — Sandman configuration with the selected agent preset
+- **`.sandman/config.yaml`** — Sandman configuration with the selected default agent preset
 - **`.sandman/Dockerfile`** — Container image definition for container-backed sandboxing
 - **`.sandman/prompt.md`** — Project Prompt Template seeded from Sandman's Default Prompt
 
@@ -49,7 +49,7 @@ Override both fields with `sandman config set` if you want a project-specific id
 
 The `init` command interactively prompts you for:
 
-- **Agent preset** — which built-in agent to configure (opencode, claude-code, codex, pi)
+- **Default agent preset** — which built-in agent to use by default (opencode or pi)
 - **Build tools preset** — container recipe for the image (generic, dotnet, go, node, or python)
 - **Tool version** — version selector for the build toolchain
 
@@ -58,7 +58,7 @@ Sandman auto-detects repo hints and defaults to the matching BuildToolsPreset wh
 You can skip the prompts by passing flags:
 
 ```bash
-sandman init --agent opencode --build-tools node
+sandman init --default-agent opencode --build-tools node
 ```
 
 ## First run

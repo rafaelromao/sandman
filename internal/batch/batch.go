@@ -14,6 +14,7 @@ type Request struct {
 	Issues []int
 	// Dependencies maps each issue to its resolved BlockedBy set.
 	Dependencies         map[int][]int
+	Agent                string
 	Model                string
 	Parallel             int
 	Branches             map[int]string
