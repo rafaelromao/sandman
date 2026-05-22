@@ -194,73 +194,6 @@ func TestAgentWithOverrides_ConfigFilesOverridden(t *testing.T) {
 	}
 }
 
-func TestResolveAgentProvider_IncludesConfigFiles(t *testing.T) {
-	cfg := &Config{}
-
-	agent, err := cfg.ResolveAgentProvider("claude-code")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(agent.ConfigFiles) != 1 || agent.ConfigFiles[0] != "~/.claude.json" {
-		t.Errorf("ConfigFiles: got %v, want [\"~/.claude.json\"]", agent.ConfigFiles)
-	}
-
-	if len(agent.ConfigDirs) != 1 || agent.ConfigDirs[0] != "~/.claude" {
-		t.Errorf("ConfigDirs: got %v, want [\"~/.claude\"]", agent.ConfigDirs)
-	}
-}
-
-func TestResolveAgentProvider_CodexUsesOfficialLayout(t *testing.T) {
-	cfg := &Config{}
-
-	agent, err := cfg.ResolveAgentProvider("codex")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	wantDirs := []string{"~/.codex"}
-	if !reflect.DeepEqual(agent.ConfigDirs, wantDirs) {
-		t.Errorf("ConfigDirs: got %v, want %v", agent.ConfigDirs, wantDirs)
-	}
-	if len(agent.ConfigFiles) != 0 {
-		t.Errorf("ConfigFiles: got %v, want empty", agent.ConfigFiles)
-	}
-}
-
-func TestLoad_AgentWithKeychainAuth(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	content := `agent: opencode
-agents:
-  opencode:
-    command: "opencode"
-    keychain_auth: true
-`
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	agent, ok := cfg.AgentProviders["opencode"]
-	if !ok {
-		t.Fatalf("agents.opencode: missing")
-	}
-	if agent.Command != "opencode" {
-		t.Errorf("agents.opencode.command: got %q, want %q", agent.Command, "opencode")
-	}
-	if agent.Preset != "" {
-		t.Errorf("agents.opencode.preset: got %q, want empty", agent.Preset)
-	}
-	if !agent.KeychainAuth {
-		t.Error("agents.opencode.keychain_auth: expected true")
-	}
-}
-
 func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -455,7 +388,7 @@ func TestConfig_SetValue(t *testing.T) {
 		value   string
 		wantErr bool
 	}{
-		{"agent", "codex", false},
+		{"default_agent", "pi", false},
 		{"build_tools", "go", false},
 		{"review_command", "/oc review", false},
 		{"default_parallel", "4", false},
