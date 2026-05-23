@@ -126,6 +126,23 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     - Verify the PR actually merged.
     - Delete the branch after merge.
     - If approval is not achieved after 10 review cycles, leave the PR open and report the final blockers.
+    - Before exiting, write `.sandman/continuation-context.md` in the worktree with this template:
+    ```markdown
+    ## Completed
+    (what was implemented, committed, or merged)
+
+    ## Pending
+    (what remains unfinished)
+
+    ## Blockers
+    (anything preventing completion)
+
+    ## Key Decisions
+    (significant design choices made)
+
+    ## Next Step
+    (single most important next action)
+    ```
 
     ## Final Result
 
@@ -153,4 +170,4 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
 - **Default Prompt**: Sandman's embedded source of truth.
 - **Project Prompt Template**: `.sandman/prompt.md`, created from the Default Prompt during `sandman init` and materialized on run when missing.
 - **Prompt**: `.sandman/rendered-prompt.md`, the rendered instruction file handed to the agent.
-- **Continue replay**: `sandman continue` reuses stored branch, agent, model, and review command from the prior run, then writes a raw prompt to `.sandman/continue-prompt.md`.
+- **Continue replay**: `sandman continue` reuses stored branch, agent, model, and review command from the prior run, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.

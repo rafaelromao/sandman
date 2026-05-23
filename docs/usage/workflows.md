@@ -38,7 +38,7 @@ Selects the 3 lowest-numbered open issues labeled `ready-for-agent`. This is use
 sandman continue 42 "finish the tests"
 ```
 
-Reuses the previously created branch for issue #42 and feeds the agent a new raw prompt. Useful when the original prompt stalled or drifted.
+Reuses the previously created branch for issue #42 and feeds the agent a new prompt plus prior continuation context. Useful when the original prompt stalled or drifted.
 
 ## Cleaning up
 

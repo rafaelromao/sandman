@@ -119,6 +119,23 @@ gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}
 - Verify the PR actually merged.
 - Delete the branch after merge.
 - If approval is not achieved after 10 review cycles, leave the PR open and report the final blockers.
+- Before exiting, write `.sandman/continuation-context.md` in the worktree with this template:
+```markdown
+## Completed
+(what was implemented, committed, or merged)
+
+## Pending
+(what remains unfinished)
+
+## Blockers
+(anything preventing completion)
+
+## Key Decisions
+(significant design choices made)
+
+## Next Step
+(single most important next action)
+```
 
 ## Final Result
 
