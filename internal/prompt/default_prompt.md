@@ -71,7 +71,7 @@ git commit -m "refactor: self-review fixes"
 
 ### 6. Push & PR
 - If `{{DEFAULT_BRANCH}}` was rewritten after this branch diverged, rebase onto it before opening the PR.
-- If that rebase causes conflicts or the branch is already published and would require force-push, stop and report it instead of forcing the push.
+- If rebase hits merge conflicts, abort rebase, push current changes, open PR, then stop and report conflict.
 ```bash
 git rebase {{DEFAULT_BRANCH}}
 git push -u origin {{BRANCH}}
@@ -79,15 +79,6 @@ gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}
 ```
 
 - Capture the PR URL and number.
-
-### 6.5 Completion Gate
-- PR creation is a checkpoint, not completion.
-- Do not stop, summarize, or return a final result after `gh pr create`.
-- Immediately continue into steps 7 and 8.
-- The only valid end states are:
-  - PR merged and verified
-  - merge impossible after exhausting the review loop, with the PR left open
-- If you feel done after PR creation, ignore that impulse and continue.
 
 ### 7. Delegate review (max 10 passes)
 - Poll `gh pr checks <N>` until CI passes. Do not exit while checks are pending.
@@ -110,7 +101,7 @@ gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}
   - PR merged and verified
   - merge impossible after exhausting the review loop, with the PR left open
 
-### 8. Merge and finish
+### 8. Merge
 - Only merge when all of these are true:
   - the PR is fully approved
   - required checks are green
@@ -119,6 +110,8 @@ gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}
 - Verify the PR actually merged.
 - Delete the branch after merge.
 - If approval is not achieved after 10 review cycles, leave the PR open and report the final blockers.
+
+### 9. Write continuation context
 - Before exiting, write `.sandman/continuation-context.md` in the worktree with this template:
 ```markdown
 ## Completed
@@ -136,6 +129,18 @@ gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}
 ## Next Step
 (single most important next action)
 ```
+
+### 10. Checklist
+- [ ] 1. Setup
+- [ ] 2. Plan
+- [ ] 3. Implement (TDD)
+- [ ] 4. Commit
+- [ ] 5. Self-review
+- [ ] 6. Push & PR
+- [ ] 7. Delegate review
+- [ ] 7.5 Completion Gate
+- [ ] 8. Merge
+- [ ] 9. Write continuation context
 
 ## Final Result
 
