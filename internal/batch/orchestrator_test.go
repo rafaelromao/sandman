@@ -1528,6 +1528,40 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 	if started.Payload["review_command"] != "/custom review" {
 		t.Fatalf("expected review command replay, got %#v", started.Payload["review_command"])
 	}
+	if started.Payload["agent"] != "test-agent" {
+		t.Fatalf("expected agent replay, got %#v", started.Payload["agent"])
+	}
+}
+
+func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunID: "run-42-1", PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) == 0 {
+		t.Fatal("expected run.continued event")
+	}
+	continued := spyLog.events[0]
+	if continued.Type != "run.continued" {
+		t.Fatalf("expected first event run.continued, got %q", continued.Type)
+	}
+	if continued.Payload["previous_run_id"] != "run-42-1" {
+		t.Fatalf("expected previous run ID replay, got %#v", continued.Payload["previous_run_id"])
+	}
+	if continued.Payload["agent"] != "test-agent" {
+		t.Fatalf("expected agent replay, got %#v", continued.Payload["agent"])
+	}
 }
 
 func TestRunBatch_LogsModelOnStartedEvent(t *testing.T) {

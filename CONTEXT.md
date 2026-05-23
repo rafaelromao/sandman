@@ -126,6 +126,14 @@ _Avoid_: Lock file, process file.
 Connect a terminal to a running daemon via the control socket to stream its output. Invoked via `sandman attach`.
 _Avoid_: Tail, follow.
 
+**Continue**:
+Re-run the latest AgentRun for an issue with a new raw prompt while reusing the prior branch, agent, model, and review command. Invoked via `sandman continue`.
+_Avoid_: Retry.
+
+**Continuation**:
+An AgentRun or Batch request mode that skips prompt template rendering and writes raw prompt text to `continue-prompt.md` inside the worktree.
+_Avoid_: Replay mode.
+
 ## Relationships
 
 - A **Daemon Process** is created by `sandman run`, which acquires a **PID Lock** and starts a **Control Socket**

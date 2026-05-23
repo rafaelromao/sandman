@@ -90,15 +90,15 @@ sandman history
 
 Displays each completed run with status, duration, and branch name.
 
-## `sandman retry`
+## `sandman continue`
 
-Retry the last agent run for a given issue.
+Continue the last agent run for a given issue with a fresh raw prompt.
 
 ```bash
-sandman retry <issue-number>
+sandman continue <issue-number> <prompt-text>
 ```
 
-Reuses the previously created branch and recorded `AgentModel`. Useful after a transient failure.
+Reuses the previously created branch and recorded agent/model/review command, then writes the raw prompt to `.sandman/continue-prompt.md`.
 
 ## `sandman clean`
 

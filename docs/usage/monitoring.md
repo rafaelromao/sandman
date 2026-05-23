@@ -28,7 +28,7 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 | `issue` | GitHub issue number |
 | `payload` | Event-specific data (status, branch, error message, etc.) |
 
-Because `sandman retry` replays prompt inputs, `run.started` payloads may also include raw prompt-affecting values such as `prompt_source_type`, `prompt_source_value`, `prompt_args`, and `review_command`.
+Because `sandman continue` replays branch, agent, model, and review command data, `run.started` payloads include `agent` and may include `model` and `review_command`. `run.continued` events also include `previous_run_id`.
 
 ## Per-issue logs
 
