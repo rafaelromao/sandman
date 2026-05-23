@@ -6,6 +6,7 @@ type RenderConfig struct {
 	TemplateFlag       string            // --template: path to template file
 	PromptFile         string            // .sandman/prompt.md project template path
 	RenderedPromptFile string            // .sandman/rendered-prompt.md rendered prompt path
+	ContinuePrompt     string            // raw continuation prompt text
 	ReviewCommand      string            // REVIEW_COMMAND substitution value
 	ReviewCommandSet   bool              // true when --review-command was provided
 	PromptArgs         map[string]string // arbitrary keys from config

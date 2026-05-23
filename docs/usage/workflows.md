@@ -32,13 +32,13 @@ sandman run --next 3
 
 Selects the 3 lowest-numbered open issues labeled `ready-for-agent`. This is useful for CI/CD pipelines or automated triage workflows.
 
-## Retrying a failed run
+## Continuing a failed run
 
 ```bash
-sandman retry 42
+sandman continue 42 "finish the tests"
 ```
 
-Reruns the last agent for issue #42, reusing the previously created branch. If the prior run recorded prompt inputs, retry replays the same prompt/template source, prompt args, and review command. Useful after transient failures.
+Reuses the previously created branch for issue #42 and feeds the agent a new raw prompt. Useful when the original prompt stalled or drifted.
 
 ## Cleaning up
 

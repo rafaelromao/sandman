@@ -118,7 +118,7 @@ func TestRootHelpListsAllCommands(t *testing.T) {
 	}
 
 	out := buf.String()
-	commands := []string{"init", "run", "status", "history", "retry", "clean", "config", "attach"}
+	commands := []string{"init", "run", "status", "history", "continue", "clean", "config", "attach"}
 	for _, cmd := range commands {
 		if !strings.Contains(out, cmd) {
 			t.Errorf("help output missing command %q", cmd)
@@ -212,13 +212,13 @@ func TestHistoryNoCompletedRuns(t *testing.T) {
 	}
 }
 
-func TestRetry_NoIssueReturnsError(t *testing.T) {
+func TestContinue_NoIssueReturnsError(t *testing.T) {
 	var buf bytes.Buffer
 	deps := newTestDeps()
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
-	rootCmd.SetArgs([]string{"retry"})
+	rootCmd.SetArgs([]string{"continue"})
 
 	err := rootCmd.Execute()
 	if err == nil {

@@ -448,14 +448,20 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, err
 		}
 	}
-	if req.PromptConfig.PromptFile == "" {
+	if !req.Continuation && req.PromptConfig.PromptFile == "" {
 		req.PromptConfig.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
 	}
 	if req.PromptConfig.RenderedPromptFile == "" {
-		req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+		if req.Continuation {
+			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
+		} else {
+			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+		}
 	}
-	if err := prompt.MaterializePromptFile(req.PromptConfig); err != nil {
-		return nil, fmt.Errorf("materialize prompt template: %w", err)
+	if !req.Continuation {
+		if err := prompt.MaterializePromptFile(req.PromptConfig); err != nil {
+			return nil, fmt.Errorf("materialize prompt template: %w", err)
+		}
 	}
 
 	startGate := newBatchStartGate(parallel, startDelay)
@@ -562,7 +568,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
-			res, started := o.runSingle(ctx, issueNum, cfg, agentCfg, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
+			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunID, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -677,7 +683,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunID string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
@@ -754,7 +760,10 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			"branch":             branch,
 			"prompt_source_type": promptSourceType,
 		}
-		if promptSourceValue != "" {
+		if continuation {
+			payload = map[string]any{"branch": branch, "previous_run_id": previousRunID}
+		}
+		if promptSourceValue != "" && !continuation {
 			payload["prompt_source_value"] = promptSourceValue
 		}
 		if len(renderCfg.PromptArgs) > 0 {
@@ -763,11 +772,18 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		if renderCfg.ReviewCommandSet {
 			payload["review_command"] = renderCfg.ReviewCommand
 		}
+		if agentName != "" {
+			payload["agent"] = agentName
+		}
 		if model := strings.TrimSpace(agentCfg.Model); model != "" {
 			payload["model"] = model
 		}
+		eventType := "run.started"
+		if continuation {
+			eventType = "run.continued"
+		}
 		_ = o.eventLog.Log(events.Event{
-			Type:      "run.started",
+			Type:      eventType,
 			Timestamp: time.Now(),
 			RunID:     runID,
 			Issue:     num,

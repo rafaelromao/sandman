@@ -93,14 +93,22 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 
 // Run executes the full lifecycle of the AgentRun and returns the result.
 func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
-	if err := r.Prepare(renderer, renderCfg); err != nil {
-		r.status = "failure"
-		return r.Result()
-	}
-
 	renderedPromptFile := renderCfg.RenderedPromptFile
 	if renderedPromptFile == "" {
 		renderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+	}
+
+	if renderCfg.ContinuePrompt != "" {
+		renderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
+		if err := r.writeContinuePrompt(renderedPromptFile, renderCfg.ContinuePrompt); err != nil {
+			r.status = "failure"
+			return r.Result()
+		}
+	} else {
+		if err := r.Prepare(renderer, renderCfg); err != nil {
+			r.status = "failure"
+			return r.Result()
+		}
 	}
 
 	renderedCmd, err := RenderCommand(command, CommandData{
@@ -120,6 +128,17 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 		return r.Result()
 	}
 	return r.Result()
+}
+
+func (r *AgentRun) writeContinuePrompt(renderedPromptFile, content string) error {
+	promptPath := filepath.Join(r.sandbox.WorkDir(), renderedPromptFile)
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
+		return fmt.Errorf("create prompt dir: %w", err)
+	}
+	if err := os.WriteFile(promptPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("write prompt: %w", err)
+	}
+	return nil
 }
 
 func (r *AgentRun) modelFlag(command string) string {

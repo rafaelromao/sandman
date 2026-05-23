@@ -17,6 +17,8 @@ type Request struct {
 	Dependencies         map[int][]int
 	Agent                string
 	Model                string
+	Continuation         bool
+	PreviousRunID        string
 	Parallel             int
 	StartDelay           time.Duration
 	StartDelaySet        bool

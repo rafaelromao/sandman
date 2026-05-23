@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Initial release of Sandman
-- CLI commands: `init`, `run`, `status`, `history`, `clean`, `retry`, `config`
+- CLI commands: `init`, `run`, `status`, `history`, `continue`, `clean`, `config`
 - Git worktree sandboxing for isolated agent execution
 - Parallel batch execution with configurable concurrency
 - Event logging to JSONL

@@ -39,7 +39,7 @@ Sandman manages the lifecycle of automated coding workflows:
 | [Configuration](docs/usage/configuration.md) | Full config schema, default agent, and CLI config |
 | [Default Prompt](docs/usage/default-prompt.md) | Canonical prompt text, lifecycle, and section-by-section guide |
 | [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
-| [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, retry and cleanup |
+| [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, continue and cleanup |
 | [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and troubleshooting |
 | [Agent Compatibility](docs/usage/agent-compatibility.md) | Built-in agent presets and container auth model |
 
