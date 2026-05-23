@@ -270,6 +270,60 @@ func (f *controlledRunnableFactory) NewRunnable(issue *github.Issue, branch stri
 	return r
 }
 
+type continuationFlowState struct {
+	mu       sync.Mutex
+	prompts  []string
+	contexts []string
+	step     int
+}
+
+func (s *continuationFlowState) recordPrompt(promptText string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prompts = append(s.prompts, promptText)
+}
+
+func (s *continuationFlowState) nextContext() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.step >= len(s.contexts) {
+		return ""
+	}
+	context := s.contexts[s.step]
+	s.step++
+	return context
+}
+
+type continuationFlowRunnable struct {
+	state *continuationFlowState
+	sb    sandbox.Sandbox
+}
+
+func (r *continuationFlowRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	if renderCfg.ContinuePrompt != "" {
+		promptPath := filepath.Join(r.sb.WorkDir(), ".sandman", "continue-prompt.md")
+		if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err == nil {
+			_ = os.WriteFile(promptPath, []byte(renderCfg.ContinuePrompt), 0644)
+		}
+		r.state.recordPrompt(renderCfg.ContinuePrompt)
+	}
+	contextPath := filepath.Join(r.sb.WorkDir(), ".sandman", "continuation-context.md")
+	if content := r.state.nextContext(); content != "" {
+		if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err == nil {
+			_ = os.WriteFile(contextPath, []byte(content), 0644)
+		}
+	}
+	return AgentRunResult{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug", WorktreePath: r.sb.WorkDir()}
+}
+
+type continuationFlowRunnableFactory struct {
+	state *continuationFlowState
+}
+
+func (f *continuationFlowRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return &continuationFlowRunnable{state: f.state, sb: sb}
+}
+
 func waitForSignal(t *testing.T, signal <-chan struct{}, message string) {
 	t.Helper()
 	select {
@@ -1561,6 +1615,85 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	}
 	if continued.Payload["agent"] != "test-agent" {
 		t.Fatalf("expected agent replay, got %#v", continued.Payload["agent"])
+	}
+}
+
+func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(".sandman", "worktrees", branch)
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	state := &continuationFlowState{contexts: []string{
+		"## Completed\nInitial run.\n",
+		"## Completed\nFirst continue.\n",
+		"## Completed\nSecond continue.\n",
+	}}
+	log := &spyEventLog{}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	o.runnableFactory = &continuationFlowRunnableFactory{state: state}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("initial run failed: %v", err)
+	}
+	initialContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "continuation-context.md"))
+	if err != nil {
+		t.Fatalf("read initial continuation context: %v", err)
+	}
+	if !strings.Contains(string(initialContext), "Initial run.") {
+		t.Fatalf("expected initial context to be written, got %q", string(initialContext))
+	}
+
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunID: log.events[0].RunID, PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
+	if err != nil {
+		t.Fatalf("first continue failed: %v", err)
+	}
+	firstContinueContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "continuation-context.md"))
+	if err != nil {
+		t.Fatalf("read first continue context: %v", err)
+	}
+	if !strings.Contains(string(firstContinueContext), "First continue.") {
+		t.Fatalf("expected first continue context to be written, got %q", string(firstContinueContext))
+	}
+
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunID: log.events[2].RunID, PromptConfig: prompt.RenderConfig{ContinuePrompt: "push the PR"}})
+	if err != nil {
+		t.Fatalf("second continue failed: %v", err)
+	}
+	secondContinueContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "continuation-context.md"))
+	if err != nil {
+		t.Fatalf("read second continue context: %v", err)
+	}
+	if !strings.Contains(string(secondContinueContext), "Second continue.") {
+		t.Fatalf("expected second continue context to be written, got %q", string(secondContinueContext))
+	}
+
+	if len(state.prompts) != 2 {
+		t.Fatalf("expected 2 continue prompts, got %#v", state.prompts)
+	}
+	if state.prompts[0] != "finish the tests" {
+		t.Fatalf("expected first continue prompt to pass through, got %q", state.prompts[0])
+	}
+	if state.prompts[1] != "push the PR" {
+		t.Fatalf("expected second continue prompt to pass through, got %q", state.prompts[1])
+	}
+	if len(log.events) < 5 {
+		t.Fatalf("expected 5 events, got %#v", log.events)
+	}
+	if log.events[0].Type != "run.started" || log.events[1].Type != "run.finished" || log.events[2].Type != "run.continued" || log.events[3].Type != "run.finished" || log.events[4].Type != "run.continued" {
+		t.Fatalf("unexpected event sequence: %#v", []string{log.events[0].Type, log.events[1].Type, log.events[2].Type, log.events[3].Type, log.events[4].Type})
+	}
+	if log.events[2].Payload["previous_run_id"] != log.events[0].RunID {
+		t.Fatalf("expected first continue to reference initial run, got %#v", log.events[2].Payload["previous_run_id"])
+	}
+	if log.events[4].Payload["previous_run_id"] != log.events[2].RunID {
+		t.Fatalf("expected second continue to reference first continue, got %#v", log.events[4].Payload["previous_run_id"])
 	}
 }
 
