@@ -62,11 +62,13 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				worktreeBase = ".sandman/worktrees"
 			}
 			worktreePath := filepath.Join(worktreeBase, branch)
-			if _, err := os.Stat(worktreePath); err != nil {
+			if info, err := os.Stat(worktreePath); err != nil {
 				if os.IsNotExist(err) {
 					return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
 				}
 				return fmt.Errorf("check worktree %q: %w", worktreePath, err)
+			} else if !info.IsDir() {
+				return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
 			}
 
 			reviewCommand := effectiveReviewCommand(cfg)
