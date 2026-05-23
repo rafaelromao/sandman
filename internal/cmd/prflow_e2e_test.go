@@ -725,8 +725,6 @@ JSON
     printf 'unexpected gh api path: %s\n' "$path" >&2
     exit 1
     ;;
-esac
-
   auth)
     if [ "${2:-}" = "status" ]; then
       cat <<'JSON'
