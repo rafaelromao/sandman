@@ -45,7 +45,6 @@ Exactly one selection mode is required:
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = auto/default mode, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = auto mode |
-| `--interactive` | `false` | Run agent in interactive mode (requires exactly one issue) |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
 | `--query` | — | Select issues by GitHub search query |
@@ -60,8 +59,6 @@ Exactly one selection mode is required:
 ### Flag interactions
 
 - `--next` is mutually exclusive with issue arguments, `--label`, and `--query`
-- `--include-dependencies` is mutually exclusive with `--interactive`
-- `--interactive` requires exactly one issue
 - `run` preserves worktrees by default; use `sandman clean` to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
 - `--start-delay` is batch-local pacing; it waits after any `AgentRun` finishes before the next start, and `0` disables the delay
@@ -81,7 +78,7 @@ Show currently active (in-progress) agent runs.
 sandman status
 ```
 
-Reads live run metadata from `.sandman/runs/<run-id>/run.json` and displays active runs with `run-id`, issue list, and elapsed time. If no live runs exist, Sandman falls back to event-log active runs.
+Reads `.sandman/events.jsonl` and displays runs that have started but not yet finished, with elapsed time.
 
 ## `sandman history`
 
@@ -124,10 +121,10 @@ Exactly one flag is required.
 Attach to a running sandman daemon and stream its output.
 
 ```bash
-sandman attach [run-id]
+sandman attach
 ```
 
-If no live run exists, prints a clear error. If `run-id` is provided, Sandman attaches to that live daemon. If exactly one live run exists, `sandman attach` auto-selects it. If several live runs are active, Sandman prompts you to choose one. Attach reads raw bytes from `.sandman/runs/<run-id>/run.sock` until EOF.
+If no daemon is running (`.sandman/run.sock` doesn't exist), prints a clear error. Otherwise connects to the daemon's control socket and reads raw bytes to stdout until the socket closes (EOF).
 
 Useful for monitoring a long-running batch from a separate terminal.
 

@@ -276,8 +276,8 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	}
 
 	worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", tc.wantBranch)
-	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
-		t.Fatalf("expected worktree to be removed, got: %v", err)
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected worktree to be preserved, got: %v", err)
 	}
 }
 
@@ -468,7 +468,7 @@ func customizeSmokeConfig(repoDir, provider, opencodeModel string) (*config.Conf
 		resolved.Command = strings.Join([]string{
 			fmt.Sprintf(`test "$(git config user.name)" = %q`, smokeGitName),
 			fmt.Sprintf(`test "$(git config user.email)" = %q`, smokeGitEmail),
-			fmt.Sprintf(`opencode run --pure -m %s "$(cat {{.PromptFile}})"`, opencodeModel),
+			fmt.Sprintf(`opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, opencodeModel),
 		}, " && ")
 		for _, dir := range []string{"~/.cache/opencode", "~/.cache/opencode/bin"} {
 			if !containsSmokePath(resolved.ConfigDirs, dir) {

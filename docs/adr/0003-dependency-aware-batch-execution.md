@@ -38,7 +38,7 @@ We will implement dependency-aware batch execution with the following rules:
 
 3. **Strict mode by default**: When resolving the batch, if any blocker is outside the initially requested set of issues, `RunBatch` returns an error listing the missing blockers. This forces explicit batch composition.
 
-4. **`--include-dependencies` flag**: When provided, Sandman recursively fetches all transitive blockers, expands the batch to include them, topologically sorts the full graph, and executes the expanded batch. This flag is mutually exclusive with `--interactive`.
+4. **`--include-dependencies` flag**: When provided, Sandman recursively fetches all transitive blockers, expands the batch to include them, topologically sorts the full graph, and executes the expanded batch.
 
 5. **Cycle detection**: Before execution begins, Sandman runs a DFS cycle check on the full dependency graph. If a cycle is detected, the batch errors out immediately.
 

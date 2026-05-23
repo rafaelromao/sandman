@@ -8,8 +8,6 @@ sandman run 42 43
 
 Runs agents for issues #42 and #43. Issues run concurrently up to the `--parallel` limit.
 
-Each `sandman run` invocation gets its own live run directory under `.sandman/runs/<run-id>/`, so multiple live daemons can coexist in one repo.
-
 ## Running by label
 
 ```bash
@@ -33,17 +31,6 @@ sandman run --next 3
 ```
 
 Selects the 3 lowest-numbered open issues labeled `ready-for-agent`. This is useful for CI/CD pipelines or automated triage workflows.
-
-## Interactive mode
-
-```bash
-sandman run --interactive 42
-```
-
-Runs the agent in interactive (TTY-attached) mode for a single issue. The agent receives full terminal capabilities rather than a non-interactive command invocation.
-
-- Requires exactly one issue
-- Mutually exclusive with `--include-dependencies`
 
 ## Retrying a failed run
 
@@ -69,11 +56,12 @@ Sandman can detect dependencies between issues and execute them in the correct o
 
 ### How dependency detection works
 
-Sandman discovers `BlockedBy` relationships from three sources:
+Sandman discovers `BlockedBy` relationships from two sources:
 
 1. **Body references** — issue bodies containing `blocked by #N` or `depends on #N`
 2. **GitHub REST API** — native `issue.blocked_by` and `issue.issue_dependencies.blocked_by` fields
-3. **Issue events** — `blocked_by_added`, `blocked_by_removed`, and cross-reference events
+
+The union of both sources forms each issue's `BlockedBy` set.
 
 ### Strict mode (default)
 
@@ -95,7 +83,6 @@ sandman run --include-dependencies 100
 
 Recursively includes all transitive blockers of issue #100. If #100 is blocked by #42, and #42 is blocked by #10, all three issues are included.
 
-- Mutually exclusive with `--interactive`
 - Cycles are detected and produce an error with the cycle path
 
 ### Execution semantics

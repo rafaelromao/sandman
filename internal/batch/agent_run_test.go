@@ -41,14 +41,15 @@ type fakeSandbox struct {
 	writePromptContent string
 	writePromptError   error
 
-	execCalled  bool
-	execCommand string
-	execError   error
-	execStdout  string
-	execStderr  string
-	process     *fakeProcess
-	stopCalled  bool
-	workDir     string
+	execCalled            bool
+	execInteractiveCalled bool
+	execCommand           string
+	execError             error
+	execStdout            string
+	execStderr            string
+	process               *fakeProcess
+	stopCalled            bool
+	workDir               string
 }
 
 func (f *fakeSandbox) Start() error {
@@ -67,7 +68,7 @@ func (f *fakeSandbox) Exec(ctx context.Context, command string, stdout, stderr i
 	return f.execError
 }
 func (f *fakeSandbox) ExecInteractive(ctx context.Context, command string) error {
-	f.execCalled = true
+	f.execInteractiveCalled = true
 	f.execCommand = command
 	return f.execError
 }
@@ -203,7 +204,7 @@ func TestAgentRun_Run_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 	run.preset = "opencode"
 	run.model = "gpt-4.1"
 
-	res := run.Run(context.Background(), spy, config.BuiltInAgentPresets["opencode"].Command, false, prompt.RenderConfig{})
+	res := run.Run(context.Background(), spy, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{})
 	if res.Status != "success" {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
@@ -224,7 +225,7 @@ func TestAgentRun_Run_DoesNotInjectModelFlagForCustomCommand(t *testing.T) {
 	run.model = "gpt-4.1"
 
 	command := `opencode run "$(cat {{.PromptFile}})"`
-	res := run.Run(context.Background(), spy, command, false, prompt.RenderConfig{})
+	res := run.Run(context.Background(), spy, command, prompt.RenderConfig{})
 	if res.Status != "success" {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
@@ -310,7 +311,7 @@ func TestAgentRun_Run_Success(t *testing.T) {
 	renderCfg := prompt.RenderConfig{}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "echo hello", false, renderCfg)
+	res := run.Run(context.Background(), spy, "echo hello", renderCfg)
 
 	if res.Status != "success" {
 		t.Errorf("expected status success, got %s", res.Status)
@@ -332,7 +333,7 @@ func TestAgentRun_Run_PrepareFailure(t *testing.T) {
 	spy := &spyRenderer{err: errors.New("render failed")}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "echo hello", false, prompt.RenderConfig{})
+	res := run.Run(context.Background(), spy, "echo hello", prompt.RenderConfig{})
 
 	if res.Status != "failure" {
 		t.Errorf("expected status failure, got %s", res.Status)
@@ -348,7 +349,7 @@ func TestAgentRun_Run_ExecuteFailure(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "exit 1", false, prompt.RenderConfig{})
+	res := run.Run(context.Background(), spy, "exit 1", prompt.RenderConfig{})
 
 	if res.Status != "failure" {
 		t.Errorf("expected status failure, got %s", res.Status)
@@ -379,22 +380,25 @@ func TestAgentRun_Execute_WritesToOutputWriter(t *testing.T) {
 	}
 }
 
-func TestAgentRun_Run_InteractiveUsesExecInteractive(t *testing.T) {
+func TestAgentRun_Run_UsesExecEvenWhenInteractiveRequested(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Users cannot log in."}
 	sb := &fakeSandbox{}
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "echo hello", true, prompt.RenderConfig{})
+	res := run.Run(context.Background(), spy, "echo hello", prompt.RenderConfig{})
 
 	if res.Status != "success" {
 		t.Errorf("expected status success, got %s", res.Status)
 	}
 	if !sb.execCalled {
-		t.Fatal("expected ExecInteractive to be called")
+		t.Fatal("expected Exec to be called")
 	}
 	if sb.execCommand != "echo hello" {
 		t.Errorf("expected command 'echo hello', got %q", sb.execCommand)
+	}
+	if sb.execInteractiveCalled {
+		t.Fatal("expected ExecInteractive not to be called")
 	}
 }
 
@@ -404,7 +408,7 @@ func TestAgentRun_Run_InjectsPromptFileIntoCommandTemplate(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "opencode --prompt-file {{.PromptFile}}", false, prompt.RenderConfig{
+	res := run.Run(context.Background(), spy, "opencode --prompt-file {{.PromptFile}}", prompt.RenderConfig{
 		PromptFile: ".sandman/prompt.md",
 	})
 
@@ -425,7 +429,7 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	run.defaultBranch = "main"
 	run.env = map[string]string{"API_KEY": "sk-test123", "MODEL": "gpt-4"}
 
-	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", false, prompt.RenderConfig{
+	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{
 		PromptFile: ".sandman/prompt.md",
 	})
 
@@ -474,7 +478,7 @@ func TestAgentRun_Run_TemplateErrorCausesFailure(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "opencode {{.Unknown}}", false, prompt.RenderConfig{})
+	res := run.Run(context.Background(), spy, "opencode {{.Unknown}}", prompt.RenderConfig{})
 
 	if res.Status != "failure" {
 		t.Errorf("expected status failure, got %s", res.Status)

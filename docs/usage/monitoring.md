@@ -6,7 +6,7 @@
 sandman status
 ```
 
-Displays currently active live runs with `run-id`, issue list, and elapsed time. Reads `.sandman/runs/<run-id>/run.json` and uses live metadata as the source of truth.
+Displays currently active (in-progress) agent runs with elapsed time. Reads `.sandman/events.jsonl` and filters for runs that have started but not yet finished.
 
 ## History
 
@@ -49,8 +49,8 @@ When Sandman receives SIGINT or SIGTERM (e.g., Ctrl+C):
 1. Running agents are notified (SIGTERM forwarded to agent process)
 2. Sandman waits up to 10 seconds for agents to finish gracefully
 3. If agents are still running after the timeout, Sandman sends SIGKILL
-4. The control socket (`.sandman/runs/<run-id>/run.sock`) is closed — any connected `sandman attach` clients see EOF and exit
-5. The live run directory (`.sandman/runs/<run-id>/`) is removed
+4. The control socket (`.sandman/run.sock`) is closed — any connected `sandman attach` clients see EOF and exit
+5. The PID lock (`.sandman/run.pid`) is released
 6. Partial results and events are preserved in the event log
 
 ## Understanding run status

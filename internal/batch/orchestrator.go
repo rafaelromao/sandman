@@ -562,7 +562,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
-			res, started := o.runSingle(ctx, issueNum, cfg, agentCfg, resolveBatchGitIdentity, req.Branches, req.Interactive, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
+			res, started := o.runSingle(ctx, issueNum, cfg, agentCfg, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -677,7 +677,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, interactive bool, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
@@ -782,7 +782,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
 	}
 
-	result := runnable.Run(ctx, o.renderer, agentCfg.Command, interactive, renderCfg)
+	result := runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
 
 	worktreeState := "preserved"
 

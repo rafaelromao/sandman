@@ -92,7 +92,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 }
 
 // Run executes the full lifecycle of the AgentRun and returns the result.
-func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult {
+func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if err := r.Prepare(renderer, renderCfg); err != nil {
 		r.status = "failure"
 		return r.Result()
@@ -115,16 +115,9 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 	}
 	renderedCmd = applyAgentEnv(renderedCmd, r.env)
 
-	if interactive {
-		if err := r.sandbox.ExecInteractive(ctx, renderedCmd); err != nil {
-			r.status = "failure"
-			return r.Result()
-		}
-	} else {
-		if err := r.Execute(ctx, renderedCmd, os.Stdout, os.Stderr); err != nil {
-			r.status = "failure"
-			return r.Result()
-		}
+	if err := r.Execute(ctx, renderedCmd, os.Stdout, os.Stderr); err != nil {
+		r.status = "failure"
+		return r.Result()
 	}
 	return r.Result()
 }

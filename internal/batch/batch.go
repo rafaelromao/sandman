@@ -26,7 +26,6 @@ type Request struct {
 	ContainerCapacitySet bool
 	MaxContainers        int
 	MaxContainersSet     bool
-	Interactive          bool
 	PromptConfig         prompt.RenderConfig
 	OutputWriter         io.Writer
 }
@@ -46,7 +45,7 @@ type AgentRunResult struct {
 
 // Runnable represents a single agent execution that can be run.
 type Runnable interface {
-	Run(ctx context.Context, renderer prompt.Renderer, command string, interactive bool, renderCfg prompt.RenderConfig) AgentRunResult
+	Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult
 }
 
 // RunnableFactory creates a Runnable for a given issue.
