@@ -26,7 +26,7 @@ func (b *blockedBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*
 	return b.result, b.err
 }
 
-func TestRun_AcquiresPIDLock(t *testing.T) {
+func TestRun_CreatesControlSocketInRunDir(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	sandmanDir := filepath.Join(dir, ".sandman")
@@ -53,83 +53,16 @@ func TestRun_AcquiresPIDLock(t *testing.T) {
 
 	<-blocked.started
 
-	pidPath := filepath.Join(sandmanDir, "run.pid")
-	data, err := os.ReadFile(pidPath)
+	runsDir := filepath.Join(sandmanDir, "runs")
+	entries, err := os.ReadDir(runsDir)
 	if err != nil {
-		t.Fatalf("run.pid should exist during run: %v", err)
+		t.Fatalf("read runs dir: %v", err)
 	}
-	if len(data) == 0 {
-		t.Fatal("run.pid should contain PID")
-	}
-
-	close(blocked.release)
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for run to complete")
-	}
-}
-
-func TestRun_ReleasesPIDLockOnCompletion(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatal(err)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 run dir, got %d", len(entries))
 	}
 
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42"})
-
-	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	pidPath := filepath.Join(sandmanDir, "run.pid")
-	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
-		t.Fatal("run.pid should be deleted after run completes")
-	}
-}
-
-func TestRun_CreatesControlSocket(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	blocked := &blockedBatchRunner{
-		started: make(chan struct{}),
-		release: make(chan struct{}),
-		result:  &batch.Result{},
-	}
-	deps := newRunDeps(blocked)
-
-	done := make(chan error, 1)
-	go func() {
-		var buf bytes.Buffer
-		cmd := NewRunCmd(deps)
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-		cmd.SetArgs([]string{"42"})
-		done <- cmd.Execute()
-	}()
-
-	<-blocked.started
-
-	sockPath := filepath.Join(sandmanDir, "run.sock")
+	sockPath := filepath.Join(runsDir, entries[0].Name(), "run.sock")
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
 		t.Fatalf("socket should exist during run: %v", err)
@@ -148,7 +81,7 @@ func TestRun_CreatesControlSocket(t *testing.T) {
 	}
 }
 
-func TestRun_ClosesControlSocketOnCompletion(t *testing.T) {
+func TestRun_RemovesRunDirOnCompletion(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	sandmanDir := filepath.Join(dir, ".sandman")
@@ -170,14 +103,17 @@ func TestRun_ClosesControlSocketOnCompletion(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	sockPath := filepath.Join(sandmanDir, "run.sock")
-	_, err = net.Dial("unix", sockPath)
-	if err == nil {
-		t.Fatal("socket should be closed after run completes")
+	runsDir := filepath.Join(sandmanDir, "runs")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read runs dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected run dirs to be cleaned up, got %d", len(entries))
 	}
 }
 
-func TestRun_CleansStalePIDOnStart(t *testing.T) {
+func TestRun_AllowsConcurrentRuns(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	sandmanDir := filepath.Join(dir, ".sandman")
@@ -185,31 +121,60 @@ func TestRun_CleansStalePIDOnStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pidPath := filepath.Join(sandmanDir, "run.pid")
-	if err := os.WriteFile(pidPath, []byte("999999999"), 0644); err != nil {
-		t.Fatal(err)
+	release := make(chan struct{})
+	runner1 := &blockedBatchRunner{
+		started: make(chan struct{}),
+		release: release,
+		result:  &batch.Result{},
+	}
+	runner2 := &blockedBatchRunner{
+		started: make(chan struct{}),
+		release: release,
+		result:  &batch.Result{},
 	}
 
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	done := make(chan error, 2)
+	startRun := func(issue string, deps Dependencies) {
+		go func() {
+			var buf bytes.Buffer
+			cmd := NewRunCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SetArgs([]string{issue})
+			done <- cmd.Execute()
+		}()
+	}
 
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42"})
+	startRun("42", newRunDeps(runner1))
+	<-runner1.started
 
-	err := cmd.Execute()
+	startRun("43", newRunDeps(runner2))
+	<-runner2.started
+
+	runsDir := filepath.Join(sandmanDir, "runs")
+	entries, err := os.ReadDir(runsDir)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("read runs dir: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 run dirs for concurrent runs, got %d", len(entries))
 	}
 
-	if !spy.called {
-		t.Fatal("expected batch runner to be called after stale PID cleanup")
+	close(release)
+
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for run to finish")
+		}
 	}
 }
 
-func TestRun_RemovesSocketAndPIDOnError(t *testing.T) {
+func TestRun_RemovesSocketAndRunDirOnError(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	sandmanDir := filepath.Join(dir, ".sandman")
@@ -231,13 +196,12 @@ func TestRun_RemovesSocketAndPIDOnError(t *testing.T) {
 		t.Fatal("expected error from batch runner")
 	}
 
-	pidPath := filepath.Join(sandmanDir, "run.pid")
-	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
-		t.Fatal("run.pid should be deleted even on error")
+	runsDir := filepath.Join(sandmanDir, "runs")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read runs dir: %v", err)
 	}
-
-	sockPath := filepath.Join(sandmanDir, "run.sock")
-	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
-		t.Fatal("run.sock should be deleted even on error")
+	if len(entries) != 0 {
+		t.Fatalf("expected run dirs to be cleaned up after error, got %d", len(entries))
 	}
 }

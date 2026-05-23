@@ -15,9 +15,9 @@ func NewAttachCmd() *cobra.Command {
 		Use:   "attach",
 		Short: "Attach to a running sandman daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sockPath := filepath.Join(".sandman", "run.sock")
-			if _, err := os.Stat(sockPath); os.IsNotExist(err) {
-				return fmt.Errorf("no sandman daemon is running")
+			sockPath, err := findDaemonSocket(".sandman")
+			if err != nil {
+				return err
 			}
 
 			conn, err := net.Dial("unix", sockPath)
@@ -29,5 +29,36 @@ func NewAttachCmd() *cobra.Command {
 			_, err = io.Copy(cmd.OutOrStdout(), conn)
 			return err
 		},
+	}
+}
+
+func findDaemonSocket(baseDir string) (string, error) {
+	runsDir := filepath.Join(baseDir, "runs")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("no sandman daemon is running")
+		}
+		return "", err
+	}
+
+	var sockets []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sockPath := filepath.Join(runsDir, entry.Name(), "run.sock")
+		if _, err := os.Stat(sockPath); err == nil {
+			sockets = append(sockets, sockPath)
+		}
+	}
+
+	switch len(sockets) {
+	case 0:
+		return "", fmt.Errorf("no sandman daemon is running")
+	case 1:
+		return sockets[0], nil
+	default:
+		return "", fmt.Errorf("multiple sandman daemons are running; specify a run directory under .sandman/runs/")
 	}
 }

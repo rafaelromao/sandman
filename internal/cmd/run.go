@@ -163,19 +163,15 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}()
 
-			pidLock := daemon.NewPIDLock(".sandman")
+			runDir := daemon.RunDir(".sandman", resolvedBatch.Issues)
 			broadcaster := daemon.NewBroadcaster()
-			ctlSocket := daemon.NewControlSocket(".sandman", broadcaster)
-
-			if err := pidLock.Acquire(); err != nil {
-				return err
-			}
-			defer pidLock.Release()
+			ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
 
 			if err := ctlSocket.Start(); err != nil {
 				return err
 			}
 			defer ctlSocket.Stop()
+			defer os.RemoveAll(runDir)
 
 			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
 				Issues:               resolvedBatch.Issues,

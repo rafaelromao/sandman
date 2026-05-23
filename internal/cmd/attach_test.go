@@ -28,7 +28,7 @@ func TestAttach_ReadsFromSocket(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	sockDir := filepath.Join(dir, ".sandman")
+	sockDir := filepath.Join(dir, ".sandman", "runs", "test-run-1")
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestAttach_ExitsOnEOF(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	sockDir := filepath.Join(dir, ".sandman")
+	sockDir := filepath.Join(dir, ".sandman", "runs", "test-run-2")
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}

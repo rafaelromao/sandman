@@ -3,91 +3,50 @@ package daemon
 import (
 	"os"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"testing"
 )
 
-func TestPIDLock_AcquireCreatesPIDFile(t *testing.T) {
-	dir := t.TempDir()
-	lock := NewPIDLock(dir)
-
-	err := lock.Acquire()
-	if err != nil {
-		t.Fatalf("Acquire() failed: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, "run.pid"))
-	if err != nil {
-		t.Fatalf("run.pid not created: %v", err)
-	}
-
-	pid := string(data)
-	if pid == "" {
-		t.Fatal("run.pid is empty")
+func TestRunDir_CreatesUniquePath(t *testing.T) {
+	d1 := RunDir("", []int{42})
+	d2 := RunDir("", []int{42})
+	if d1 == d2 {
+		t.Fatal("expected unique run dirs")
 	}
 }
 
-func TestPIDLock_AcquireFailsOnLivePID(t *testing.T) {
-	dir := t.TempDir()
-	livePID := os.Getpid()
-	pidPath := filepath.Join(dir, "run.pid")
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(livePID)), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	lock := NewPIDLock(dir)
-	err := lock.Acquire()
-	if err == nil {
-		t.Fatal("expected error when lock held by live process")
+func TestRunDir_ContainsIssueInPath(t *testing.T) {
+	dir := RunDir("", []int{42})
+	if !strings.Contains(dir, "42") {
+		t.Fatalf("expected issue 42 in path, got %q", dir)
 	}
 }
 
-func TestPIDLock_AcquireCleansStalePID(t *testing.T) {
-	dir := t.TempDir()
-	pidPath := filepath.Join(dir, "run.pid")
-	if err := os.WriteFile(pidPath, []byte("999999999"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	lock := NewPIDLock(dir)
-	err := lock.Acquire()
-	if err != nil {
-		t.Fatalf("Acquire() should clean stale PID, got: %v", err)
-	}
-
-	data, err := os.ReadFile(pidPath)
-	if err != nil {
-		t.Fatalf("run.pid should exist after acquire: %v", err)
-	}
-	if string(data) == "999999999" {
-		t.Fatal("run.pid should have been overwritten with current PID")
+func TestRunDir_IsUnderRuns(t *testing.T) {
+	dir := RunDir("base", []int{1})
+	if !strings.HasPrefix(dir, filepath.Join("base", "runs")) {
+		t.Fatalf("expected path under base/runs, got %q", dir)
 	}
 }
 
-func TestPIDLock_ReleaseRemovesPIDFile(t *testing.T) {
-	dir := t.TempDir()
-	lock := NewPIDLock(dir)
-
-	if err := lock.Acquire(); err != nil {
-		t.Fatal(err)
+func TestRunDir_NoIssues(t *testing.T) {
+	dir := RunDir("", nil)
+	parts := strings.Split(dir, string(filepath.Separator))
+	if len(parts) < 1 {
+		t.Fatal("expected at least one path component")
 	}
-
-	if err := lock.Release(); err != nil {
-		t.Fatalf("Release() failed: %v", err)
+	last := parts[len(parts)-1]
+	if !strings.HasPrefix(last, "run-") {
+		t.Fatalf("expected run- prefix, got %q", last)
 	}
-
-	pidPath := filepath.Join(dir, "run.pid")
-	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
-		t.Fatal("run.pid should be deleted after Release()")
+	if strings.Contains(last, "42") {
+		t.Fatalf("unexpected issue number in path with no issues: %q", last)
 	}
 }
 
-func TestPIDLock_ReleaseNoFile(t *testing.T) {
-	dir := t.TempDir()
-	lock := NewPIDLock(dir)
-
-	err := lock.Release()
-	if err != nil {
-		t.Fatalf("Release() on non-existent file should succeed: %v", err)
+func TestRunDir_SubdirNotCreated(t *testing.T) {
+	dir := RunDir(t.TempDir(), []int{1})
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("RunDir should not create the directory")
 	}
 }

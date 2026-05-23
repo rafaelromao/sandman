@@ -5,7 +5,17 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 )
+
+// RunDir returns a unique run directory path under baseDir/runs/.
+func RunDir(baseDir string, issues []int) string {
+	id := fmt.Sprintf("run-%d", time.Now().UnixNano())
+	if len(issues) > 0 {
+		id = fmt.Sprintf("run-%d-%d", issues[0], time.Now().UnixNano())
+	}
+	return filepath.Join(baseDir, "runs", id)
+}
 
 type ControlSocket struct {
 	dir         string
