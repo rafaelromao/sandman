@@ -111,20 +111,16 @@ A sandbox adapter that uses only a git worktree for isolation, with no container
 _Avoid_: Local sandbox.
 
 **Daemon Process**:
-A long-lived sandman process executing a Batch in the background. Writes live run metadata under `.sandman/runs/<run-id>/` and listens on its per-run control socket.
+A long-lived sandman process executing a Batch in the background. Writes `.sandman/run.pid` and listens on the control socket.
 _Avoid_: Background job, server.
 
 **Control Socket**:
-A Unix domain socket at `.sandman/runs/<run-id>/run.sock` that accepts attach client connections. Created when a daemon starts, removed when it stops.
+A Unix domain socket at `.sandman/run.sock` that accepts attach client connections. Created when a daemon starts, removed when it stops.
 _Avoid_: IPC socket, management socket.
 
-**Live Run Metadata**:
-A JSON file at `.sandman/runs/<run-id>/run.json` containing `run_id`, `pid`, `issues`, and `started_at` for one live daemon.
+**PID Lock**:
+A file at `.sandman/run.pid` containing the PID of the running daemon process. Prevents concurrent `sandman run` invocations in the same project directory.
 _Avoid_: Lock file, process file.
-
-**Live Run Registry**:
-The `.sandman/runs/` directory containing one live run directory per daemon process.
-_Avoid_: Global lock, singleton daemon registry.
 
 **Attach**:
 Connect a terminal to a running daemon via the control socket to stream its output. Invoked via `sandman attach`.
@@ -132,11 +128,11 @@ _Avoid_: Tail, follow.
 
 ## Relationships
 
-- A **Daemon Process** is created by `sandman run`, which writes **Live Run Metadata** and starts a **Control Socket** inside `.sandman/runs/<run-id>/`
-- The **Live Run Registry** can contain multiple concurrent daemon directories for the same repo
-- A stale live run directory is removed when its daemon exits
-- A **Control Socket** at `.sandman/runs/<run-id>/run.sock` accepts **Attach** connections for the duration of the **Batch**
-- A **Daemon Process** stops the **Control Socket** and removes its live run directory when its **Batch** completes
+- A **Daemon Process** is created by `sandman run`, which acquires a **PID Lock** and starts a **Control Socket**
+- A **PID Lock** at `.sandman/run.pid` prevents a second `sandman run` while the first is alive
+- A stale **PID Lock** (daemon crashed) is cleaned up automatically on the next `sandman run`
+- A **Control Socket** at `.sandman/run.sock` accepts **Attach** connections for the duration of the **Batch**
+- A **Daemon Process** stops the **Control Socket** and releases the **PID Lock** when its **Batch** completes
 - An **Attach** client connects to the **Control Socket** and reads the daemon's output until EOF
 
 - A **Batch** contains one or more **AgentRuns**

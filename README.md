@@ -18,10 +18,6 @@ sandman run 42 43
 # 4. Check progress
 sandman status
 sandman history
-
-# 5. Attach to a live run
-sandman attach
-sandman attach <run-id>
 ```
 
 ## Overview
