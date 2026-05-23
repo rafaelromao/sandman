@@ -60,6 +60,13 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
+	contextPath := filepath.Join(dir, branch, ".sandman", "continuation-context.md")
+	if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err != nil {
+		t.Fatalf("mkdir continuation dir: %v", err)
+	}
+	if err := os.WriteFile(contextPath, []byte("# Continuation Context\n\n## Completed\nInitial pass.\n"), 0644); err != nil {
+		t.Fatalf("write continuation context: %v", err)
+	}
 
 	spy := &spyContinueBatchRunner{result: &batch.Result{}}
 	log := &fakeEventLog{events: []events.Event{
@@ -104,8 +111,17 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if spy.req.Agent != "pi" {
 		t.Fatalf("expected agent replay, got %q", spy.req.Agent)
 	}
-	if spy.req.PromptConfig.ContinuePrompt != "finish the tests" {
-		t.Fatalf("expected raw continue prompt, got %q", spy.req.PromptConfig.ContinuePrompt)
+	if !strings.Contains(spy.req.PromptConfig.ContinuePrompt, "## Prior Context") {
+		t.Fatalf("expected prior context section, got %q", spy.req.PromptConfig.ContinuePrompt)
+	}
+	if strings.Contains(spy.req.PromptConfig.ContinuePrompt, "# Continuation Context") {
+		t.Fatalf("expected header stripped, got %q", spy.req.PromptConfig.ContinuePrompt)
+	}
+	if !strings.Contains(spy.req.PromptConfig.ContinuePrompt, "finish the tests") {
+		t.Fatalf("expected new instruction, got %q", spy.req.PromptConfig.ContinuePrompt)
+	}
+	if !strings.Contains(spy.req.PromptConfig.ContinuePrompt, ".sandman/continuation-context.md") {
+		t.Fatalf("expected update instruction, got %q", spy.req.PromptConfig.ContinuePrompt)
 	}
 	if spy.req.PromptConfig.ReviewCommand != "/custom review 2" {
 		t.Fatalf("expected review command replay, got %q", spy.req.PromptConfig.ReviewCommand)
@@ -148,6 +164,40 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	}
 	if spy.req.Agent != "pi" {
 		t.Fatalf("expected agent override, got %q", spy.req.Agent)
+	}
+}
+
+func TestContinue_WarnsAndUsesBarePromptWhenContinuationContextMissing(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "agent": "opencode"}}}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.PromptConfig.ContinuePrompt != "finish the tests" {
+		t.Fatalf("expected bare prompt, got %q", spy.req.PromptConfig.ContinuePrompt)
+	}
+	if !strings.Contains(buf.String(), "missing continuation context") {
+		t.Fatalf("expected warning about missing context, got %q", buf.String())
 	}
 }
 

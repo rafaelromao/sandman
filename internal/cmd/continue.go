@@ -99,6 +99,20 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 
+			continuePrompt := promptText
+			contextPath := filepath.Join(worktreePath, ".sandman", "continuation-context.md")
+			if content, err := os.ReadFile(contextPath); err != nil {
+				if !os.IsNotExist(err) {
+					return fmt.Errorf("read continuation context %q: %w", contextPath, err)
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: missing continuation context %q; continuing with bare prompt\n", contextPath)
+			} else {
+				priorContext := strings.TrimSpace(stripContinuationContextHeader(string(content)))
+				if priorContext != "" {
+					continuePrompt = buildContinuationPrompt(promptText, priorContext)
+				}
+			}
+
 			req := batch.Request{
 				Issues:        []int{issueNum},
 				Branches:      map[int]string{issueNum: branch},
@@ -107,7 +121,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				Continuation:  true,
 				PreviousRunID: lastRun.RunID,
 				PromptConfig: prompt.RenderConfig{
-					ContinuePrompt:   promptText,
+					ContinuePrompt:   continuePrompt,
 					ReviewCommand:    reviewCommand,
 					ReviewCommandSet: true,
 				},
@@ -150,4 +164,31 @@ func payloadString(payload map[string]any, key string) (string, bool) {
 	}
 	str, ok := v.(string)
 	return str, ok
+}
+
+func stripContinuationContextHeader(content string) string {
+	lines := strings.Split(content, "\n")
+	i := 0
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	if i < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
+		i++
+		for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+			i++
+		}
+	}
+	return strings.Join(lines[i:], "\n")
+}
+
+func buildContinuationPrompt(promptText, priorContext string) string {
+	var b strings.Builder
+	b.WriteString("## Prior Context\n\n")
+	b.WriteString(strings.TrimSpace(priorContext))
+	b.WriteString("\n\n## New Instruction\n\n")
+	b.WriteString(strings.TrimSpace(promptText))
+	b.WriteString("\n\n## Update Continuation Context\n\n")
+	b.WriteString("Before exiting, overwrite `.sandman/continuation-context.md` with an updated summary using this template:\n\n")
+	b.WriteString("```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n")
+	return b.String()
 }

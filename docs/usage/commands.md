@@ -92,13 +92,13 @@ Displays each completed run with status, duration, and branch name.
 
 ## `sandman continue`
 
-Continue the last agent run for a given issue with a fresh raw prompt.
+Continue the last agent run for a given issue with a fresh prompt plus prior continuation context.
 
 ```bash
 sandman continue <issue-number> <prompt-text>
 ```
 
-Reuses the previously created branch and recorded agent/model/review command, then writes the raw prompt to `.sandman/continue-prompt.md`.
+Reuses the previously created branch and recorded agent/model/review command, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
 
 ## `sandman clean`
 
