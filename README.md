@@ -79,6 +79,14 @@ Smoke tests (opt-in):
 SANDMAN_SMOKE_PROVIDERS=opencode,pi go test -tags smoke ./internal/cmd -run Smoke
 ```
 
+E2E tests (opt-in):
+
+```bash
+SANDMAN_E2E_PROVIDERS=opencode,pi go test -tags e2e ./internal/cmd -run PRFlow
+```
+
+Pi smoke/e2e require `pi-free` installed in active Pi setup.
+
 ## License
 
 MIT

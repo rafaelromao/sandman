@@ -245,7 +245,7 @@ func TestScaffold_InstallsBothBuiltInAgents(t *testing.T) {
 			if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 				t.Fatalf("Dockerfile missing opencode install pin, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN python3 -m pip install --break-system-packages pi=="+DefaultBuiltInAgentVersion("pi")) {
+			if !strings.Contains(content, "RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@"+DefaultBuiltInAgentVersion("pi")) {
 				t.Fatalf("Dockerfile missing pi install pin, got:\n%s", content)
 			}
 			if strings.Contains(content, "tool-version") {

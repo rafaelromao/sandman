@@ -34,485 +34,415 @@ const (
 	parallelBranch151 = "sandman/151-fix-151"
 )
 
-func TestPRFlow_PodmanSandboxOpencodeBinaryCommitsAndPushes(t *testing.T) {
-	if os.Getenv("CI") != "" {
-		t.Skip("skip e2e in CI")
-	}
+type prFlowProviderCase struct {
+	name              string
+	hostCLI           string
+	model             string
+	requiredAuthPaths []string
+	authPaths         []string
+}
+
+type prFlowAgentOptions struct {
+	container bool
+	echo      bool
+}
+
+var prFlowProviderCases = []prFlowProviderCase{
+	{
+		name:              "opencode",
+		hostCLI:           "opencode",
+		model:             "opencode/big-pickle",
+		requiredAuthPaths: []string{"~/.local/share/opencode/auth.json"},
+		authPaths:         []string{"~/.config/opencode", "~/.local/share/opencode"},
+	},
+	{
+		name:              "pi",
+		hostCLI:           "pi",
+		model:             "kilo/kilo-auto/free",
+		requiredAuthPaths: []string{"~/.pi"},
+		authPaths:         []string{"~/.pi"},
+	},
+}
+
+func runPRFlowProviderCases(t *testing.T, fn func(t *testing.T, tc prFlowProviderCase)) {
+	t.Helper()
 
 	allowed, err := parseE2EProviders()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !allowed["opencode"] {
-		t.Skip("set SANDMAN_E2E_PROVIDERS=opencode and run `go test -tags e2e ./internal/cmd -run PRFlow`")
+	if len(allowed) == 0 {
+		t.Skip("set SANDMAN_E2E_PROVIDERS=opencode,pi and run `go test -tags e2e ./internal/cmd -run PRFlow`")
 	}
 
-	realHome, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("resolve home dir: %v", err)
-	}
-	if !hasOpenCodeAuth(realHome) {
-		t.Skipf("skip opencode e2e: missing auth under %s", realHome)
-	}
-	if _, err := exec.LookPath("opencode"); err != nil {
-		t.Skipf("skip opencode e2e: host CLI unavailable: %v", err)
-	}
-	if _, err := exec.LookPath("podman"); err != nil {
-		t.Skipf("skip podman e2e: podman unavailable: %v", err)
-	}
-
-	binPath := buildSandmanBinary(t)
-
-	repoDir := t.TempDir()
-	t.Chdir(repoDir)
-	initRunIntegrationRepo(t, repoDir)
-
-	// Create the bare remote inside the repo so it's accessible inside the container.
-	remoteDir := filepath.Join(repoDir, "remote")
-	if err := os.MkdirAll(remoteDir, 0755); err != nil {
-		t.Fatalf("create remote dir: %v", err)
-	}
-	bareInit := exec.Command("git", "init", "--bare")
-	bareInit.Dir = remoteDir
-	if out, err := bareInit.CombinedOutput(); err != nil {
-		t.Fatalf("init bare remote: %v: %s", err, out)
-	}
-	runGit(t, repoDir, "remote", "add", "origin", remoteDir)
-	runGit(t, repoDir, "push", "-u", "origin", "main")
-
-	seedPRFlowRepo(t, repoDir)
-	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
-
-	out, err := runSandmanBinary(t, binPath, repoDir, "init")
-	if err != nil {
-		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
-	}
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
-		}
-	}
-	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-
-	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-binary-")
-	if err != nil {
-		t.Fatalf("create home dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
-	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
-		t.Fatalf("create ssh dir: %v", err)
-	}
-	absRepo, _ := filepath.Abs(repoDir)
-	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
-		"file://"+filepath.Join(absRepo, "remote"))
-	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
-		t.Fatalf("write gitconfig: %v", err)
-	}
-	for _, dir := range []string{".config/opencode", ".local/share/opencode"} {
-		src := filepath.Join(realHome, dir)
-		dst := filepath.Join(homeDir, dir)
-		if _, err := os.Stat(src); os.IsNotExist(err) {
+	for _, tc := range prFlowProviderCases {
+		tc := tc
+		if !allowed[tc.name] {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			t.Fatalf("create parent for %s: %v", dst, err)
-		}
-		if err := os.Symlink(src, dst); err != nil {
-			t.Fatalf("link %s: %v", dir, err)
-		}
-	}
-	t.Setenv("HOME", homeDir)
-	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
-		t.Fatalf("warm podman image for test home: %v: %s", err, out)
-	}
-
-	ghShimDir := t.TempDir()
-	writeFakeGHShim(t, ghShimDir)
-	prependPath(t, ghShimDir)
-
-	containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
-	writeFakeGHShimForContainer(t, containerGhShimDir)
-
-	buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect", "-f",
-		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build image for model detection: %v: %s", err, out)
-	}
-	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
-		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
-	}
-	containerModel := "opencode/big-pickle"
-	t.Logf("using container model: %s", containerModel)
-
-	customizeOpenCodeAgentForContainer(t, repoDir, containerModel)
-	writePRFlowPrompt(t, repoDir)
-
-	out, err = runSandmanBinary(t, binPath, repoDir, "run", "--sandbox", "podman", strconv.Itoa(prFlowIssueNumber))
-	t.Logf("sandman run returned err=%v output=%s", err, out)
-
-	logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", prFlowIssueNumber))
-	logData, logErr := os.ReadFile(logPath)
-	if logErr != nil {
-		t.Fatalf("read log: %v", logErr)
-	}
-	log := string(logData)
-
-	if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
-		t.Fatalf("expected fake PR URL in log, got:\n%s", log)
-	}
-
-	argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.args"))
-	if err != nil {
-		t.Fatalf("read pr create args: %v", err)
-	}
-	args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
-	if got := prFlowFlagValue(args, "--base"); got != "main" {
-		t.Fatalf("pr create --base: got %q, want %q", got, "main")
-	}
-	if got := prFlowFlagValue(args, "--head"); got != prFlowBranch {
-		t.Fatalf("pr create --head: got %q, want %q", got, prFlowBranch)
-	}
-	if got := prFlowFlagValue(args, "--title"); got != "Fix failing test" {
-		t.Fatalf("pr create --title: got %q, want %q", got, "Fix failing test")
-	}
-
-	bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.body"))
-	if err != nil {
-		t.Fatalf("read pr create body: %v", err)
-	}
-	if got := strings.TrimSpace(string(bodyData)); got != "Fixes #1" {
-		t.Fatalf("pr create body: got %q, want %q", got, "Fixes #1")
-	}
-
-	countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
-	if err != nil {
-		t.Fatalf("read pr create count: %v", err)
-	}
-	if got := strings.TrimSpace(string(countData)); got != "1" {
-		t.Fatalf("expected exactly one pr create invocation, got %q", got)
-	}
-
-	branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", prFlowBranch))
-	if branchHash == baselineHash {
-		t.Fatalf("expected branch commit beyond baseline, got %s", branchHash)
-	}
-	if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
-		t.Fatalf("expected branch commit to descend from baseline: %v\n%s", err, out)
-	}
-
-	remoteHash := strings.TrimSpace(runGit(t, repoDir, "ls-remote", "origin", "refs/heads/"+prFlowBranch))
-	if remoteHash == "" {
-		t.Fatal("expected pushed remote branch")
-	}
-	fields := strings.Fields(remoteHash)
-	if len(fields) == 0 || fields[0] != branchHash {
-		t.Fatalf("remote branch hash mismatch: got %q, want %q", remoteHash, branchHash)
+		t.Run(tc.name, func(t *testing.T) {
+			fn(t, tc)
+		})
 	}
 }
 
-func TestPRFlow_PodmanSandboxOpencodeCommitsAndPushes(t *testing.T) {
+func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
 
-	allowed, err := parseE2EProviders()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !allowed["opencode"] {
-		t.Skip("set SANDMAN_E2E_PROVIDERS=opencode and run `go test -tags e2e ./internal/cmd -run PRFlow`")
-	}
+	runPRFlowProviderCases(t, func(t *testing.T, tc prFlowProviderCase) {
+		realHome := requirePRFlowProvider(t, tc)
+		requirePodmanE2E(t)
 
-	realHome, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("resolve home dir: %v", err)
-	}
-	if !hasOpenCodeAuth(realHome) {
-		t.Skipf("skip opencode e2e: missing auth under %s", realHome)
-	}
-	if _, err := exec.LookPath("opencode"); err != nil {
-		t.Skipf("skip opencode e2e: host CLI unavailable: %v", err)
-	}
-	if _, err := exec.LookPath("podman"); err != nil {
-		t.Skipf("skip podman e2e: podman unavailable: %v", err)
-	}
+		binPath := buildSandmanBinary(t)
 
-	repoDir := t.TempDir()
-	t.Chdir(repoDir)
-	initRunIntegrationRepo(t, repoDir)
+		repoDir := t.TempDir()
+		t.Chdir(repoDir)
+		initRunIntegrationRepo(t, repoDir)
 
-	// Create the bare remote inside the repo so it's accessible inside the container.
-	remoteDir := filepath.Join(repoDir, "remote")
-	if err := os.MkdirAll(remoteDir, 0755); err != nil {
-		t.Fatalf("create remote dir: %v", err)
-	}
-	bareInit := exec.Command("git", "init", "--bare")
-	bareInit.Dir = remoteDir
-	if out, err := bareInit.CombinedOutput(); err != nil {
-		t.Fatalf("init bare remote: %v: %s", err, out)
-	}
-	runGit(t, repoDir, "remote", "add", "origin", remoteDir)
-	runGit(t, repoDir, "push", "-u", "origin", "main")
-
-	seedPRFlowRepo(t, repoDir)
-	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
-
-	runRootCommand(t, prFlowDeps(repoDir), "init")
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		remoteDir := filepath.Join(repoDir, "remote")
+		if err := os.MkdirAll(remoteDir, 0755); err != nil {
+			t.Fatalf("create remote dir: %v", err)
 		}
-	}
-	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-
-	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-")
-	if err != nil {
-		t.Fatalf("create home dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
-	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
-		t.Fatalf("create ssh dir: %v", err)
-	}
-	// Use the host absolute path in insteadOf; container startup rewrites the
-	// mounted gitconfig copy to the container path.
-	absRepo, _ := filepath.Abs(repoDir)
-	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
-		"file://"+filepath.Join(absRepo, "remote"))
-	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
-		t.Fatalf("write gitconfig: %v", err)
-	}
-	// Link real opencode config into the isolated home so the container mounts it
-	for _, dir := range []string{".config/opencode", ".local/share/opencode"} {
-		src := filepath.Join(realHome, dir)
-		dst := filepath.Join(homeDir, dir)
-		if _, err := os.Stat(src); os.IsNotExist(err) {
-			continue
+		bareInit := exec.Command("git", "init", "--bare")
+		bareInit.Dir = remoteDir
+		if out, err := bareInit.CombinedOutput(); err != nil {
+			t.Fatalf("init bare remote: %v: %s", err, out)
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			t.Fatalf("create parent for %s: %v", dst, err)
+		runGit(t, repoDir, "remote", "add", "origin", remoteDir)
+		runGit(t, repoDir, "push", "-u", "origin", "main")
+
+		seedPRFlowRepo(t, repoDir)
+		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--default-agent", tc.name)
+		if err != nil {
+			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 		}
-		if err := os.Symlink(src, dst); err != nil {
-			t.Fatalf("link %s: %v", dir, err)
+		for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+			if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+				t.Fatalf("expected scaffolded %s: %v", rel, err)
+			}
 		}
-	}
-	t.Setenv("HOME", homeDir)
-	// Warm podman with isolated HOME so image cache lives outside repo tree
-	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
-		t.Fatalf("warm podman image for test home: %v: %s", err, out)
-	}
+		if tc.name == "pi" {
+			writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
+			appendPiTestShimToDockerfile(t, repoDir)
+		}
+		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
-	ghShimDir := t.TempDir()
-	writeFakeGHShim(t, ghShimDir)
-	prependPath(t, ghShimDir)
+		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-binary-", tc.authPaths)
 
-	deps := prFlowDeps(repoDir)
+		ghShimDir := t.TempDir()
+		writeFakeGHShim(t, ghShimDir)
+		prependPath(t, ghShimDir)
 
-	containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
-	writeFakeGHShimForContainer(t, containerGhShimDir)
+		containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
+		writeFakeGHShimForContainer(t, containerGhShimDir)
 
-	// Build the image and detect the model from inside the container (models
-	// available may differ from the host's cached model list).
-	buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect", "-f",
-		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build image for model detection: %v: %s", err, out)
-	}
-	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
-		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
-	}
-	containerModel := "opencode/big-pickle"
-	t.Logf("using container model: %s", containerModel)
+		buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect", "-f",
+			filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			t.Fatalf("build image for model detection: %v: %s", err, out)
+		}
+		if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+			t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
+		}
+		t.Logf("using provider model: %s", tc.model)
 
-	customizeOpenCodeAgentForContainer(t, repoDir, containerModel)
-	writePRFlowPrompt(t, repoDir)
+		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true})
+		writePRFlowPrompt(t, repoDir)
 
-	_, err = runRootCommand(t, deps, "run", "--sandbox", "podman", strconv.Itoa(prFlowIssueNumber))
-	t.Logf("sandman run returned err=%v", err)
+		out, err = runSandmanBinary(t, binPath, repoDir, "run", "--agent", tc.name, "--sandbox", "podman", strconv.Itoa(prFlowIssueNumber))
+		t.Logf("sandman run returned err=%v output=%s", err, out)
 
-	logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", prFlowIssueNumber))
-	logData, logErr := os.ReadFile(logPath)
-	if logErr != nil {
-		t.Fatalf("read log: %v", logErr)
-	}
-	log := string(logData)
+		logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", prFlowIssueNumber))
+		logData, logErr := os.ReadFile(logPath)
+		if logErr != nil {
+			t.Fatalf("read log: %v", logErr)
+		}
+		log := string(logData)
 
-	if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
-		t.Fatalf("expected fake PR URL in log, got:\n%s", log)
-	}
+		if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
+			t.Fatalf("expected fake PR URL in log, got:\n%s", log)
+		}
 
-	argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.args"))
-	if err != nil {
-		t.Fatalf("read pr create args: %v", err)
-	}
-	args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
-	if got := prFlowFlagValue(args, "--base"); got != "main" {
-		t.Fatalf("pr create --base: got %q, want %q", got, "main")
-	}
-	if got := prFlowFlagValue(args, "--head"); got != prFlowBranch {
-		t.Fatalf("pr create --head: got %q, want %q", got, prFlowBranch)
-	}
-	if got := prFlowFlagValue(args, "--title"); got != "Fix failing test" {
-		t.Fatalf("pr create --title: got %q, want %q", got, "Fix failing test")
-	}
+		argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.args"))
+		if err != nil {
+			t.Fatalf("read pr create args: %v", err)
+		}
+		args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+		if got := prFlowFlagValue(args, "--base"); got != "main" {
+			t.Fatalf("pr create --base: got %q, want %q", got, "main")
+		}
+		if got := prFlowFlagValue(args, "--head"); got != prFlowBranch {
+			t.Fatalf("pr create --head: got %q, want %q", got, prFlowBranch)
+		}
+		if got := prFlowFlagValue(args, "--title"); got != "Fix failing test" {
+			t.Fatalf("pr create --title: got %q, want %q", got, "Fix failing test")
+		}
 
-	bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.body"))
-	if err != nil {
-		t.Fatalf("read pr create body: %v", err)
-	}
-	if got := strings.TrimSpace(string(bodyData)); got != "Fixes #1" {
-		t.Fatalf("pr create body: got %q, want %q", got, "Fixes #1")
-	}
+		bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.body"))
+		if err != nil {
+			t.Fatalf("read pr create body: %v", err)
+		}
+		if got := strings.TrimSpace(string(bodyData)); got != "Fixes #1" {
+			t.Fatalf("pr create body: got %q, want %q", got, "Fixes #1")
+		}
 
-	countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
-	if err != nil {
-		t.Fatalf("read pr create count: %v", err)
-	}
-	if got := strings.TrimSpace(string(countData)); got != "1" {
-		t.Fatalf("expected exactly one pr create invocation, got %q", got)
-	}
+		countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
+		if err != nil {
+			t.Fatalf("read pr create count: %v", err)
+		}
+		if got := strings.TrimSpace(string(countData)); got != "1" {
+			t.Fatalf("expected exactly one pr create invocation, got %q", got)
+		}
 
-	branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", prFlowBranch))
-	if branchHash == baselineHash {
-		t.Fatalf("expected branch commit beyond baseline, got %s", branchHash)
-	}
-	if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
-		t.Fatalf("expected branch commit to descend from baseline: %v\n%s", err, out)
-	}
+		branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", prFlowBranch))
+		if branchHash == baselineHash {
+			t.Fatalf("expected branch commit beyond baseline, got %s", branchHash)
+		}
+		if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
+			t.Fatalf("expected branch commit to descend from baseline: %v\n%s", err, out)
+		}
 
-	remoteHash := strings.TrimSpace(runGit(t, repoDir, "ls-remote", "origin", "refs/heads/"+prFlowBranch))
-	if remoteHash == "" {
-		t.Fatal("expected pushed remote branch")
-	}
-	fields := strings.Fields(remoteHash)
-	if len(fields) == 0 || fields[0] != branchHash {
-		t.Fatalf("remote branch hash mismatch: got %q, want %q", remoteHash, branchHash)
-	}
+		remoteHash := strings.TrimSpace(runGit(t, repoDir, "ls-remote", "origin", "refs/heads/"+prFlowBranch))
+		if remoteHash == "" {
+			t.Fatal("expected pushed remote branch")
+		}
+		fields := strings.Fields(remoteHash)
+		if len(fields) == 0 || fields[0] != branchHash {
+			t.Fatalf("remote branch hash mismatch: got %q, want %q", remoteHash, branchHash)
+		}
+	})
 }
 
-func TestPRFlow_WorktreeSandboxOpencodeCommitsAndPushes(t *testing.T) {
+func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
 
-	allowed, err := parseE2EProviders()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !allowed["opencode"] {
-		t.Skip("set SANDMAN_E2E_PROVIDERS=opencode and run `go test -tags e2e ./internal/cmd -run PRFlow`")
-	}
+	runPRFlowProviderCases(t, func(t *testing.T, tc prFlowProviderCase) {
+		realHome := requirePRFlowProvider(t, tc)
+		requirePodmanE2E(t)
 
-	realHome, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("resolve home dir: %v", err)
-	}
-	if !hasOpenCodeAuth(realHome) {
-		t.Skipf("skip opencode e2e: missing auth under %s", realHome)
-	}
-	if _, err := exec.LookPath("opencode"); err != nil {
-		t.Skipf("skip opencode e2e: host CLI unavailable: %v", err)
-	}
-	model := "opencode/big-pickle"
+		repoDir := t.TempDir()
+		t.Chdir(repoDir)
+		initRunIntegrationRepo(t, repoDir)
 
-	repoDir := t.TempDir()
-	t.Chdir(repoDir)
-	bareRemote := initRunIntegrationRepoWithRemote(t, repoDir)
-	seedPRFlowRepo(t, repoDir)
-	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-
-	ghShimDir := t.TempDir()
-	writeFakeGHShim(t, ghShimDir)
-	prependPath(t, ghShimDir)
-
-	deps := prFlowDeps(repoDir)
-
-	runRootCommand(t, deps, "init")
-
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		remoteDir := filepath.Join(repoDir, "remote")
+		if err := os.MkdirAll(remoteDir, 0755); err != nil {
+			t.Fatalf("create remote dir: %v", err)
 		}
+		bareInit := exec.Command("git", "init", "--bare")
+		bareInit.Dir = remoteDir
+		if out, err := bareInit.CombinedOutput(); err != nil {
+			t.Fatalf("init bare remote: %v: %s", err, out)
+		}
+		runGit(t, repoDir, "remote", "add", "origin", remoteDir)
+		runGit(t, repoDir, "push", "-u", "origin", "main")
+
+		seedPRFlowRepo(t, repoDir)
+		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+		runRootCommand(t, prFlowDeps(repoDir), "init", "--default-agent", tc.name)
+		for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+			if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+				t.Fatalf("expected scaffolded %s: %v", rel, err)
+			}
+		}
+		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-", tc.authPaths)
+
+		ghShimDir := t.TempDir()
+		writeFakeGHShim(t, ghShimDir)
+		prependPath(t, ghShimDir)
+
+		deps := prFlowDeps(repoDir)
+
+		containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
+		writeFakeGHShimForContainer(t, containerGhShimDir)
+
+		buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect", "-f",
+			filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			t.Fatalf("build image for model detection: %v: %s", err, out)
+		}
+		if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+			t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
+		}
+		t.Logf("using provider model: %s", tc.model)
+
+		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true})
+		writePRFlowPrompt(t, repoDir)
+
+		_, err := runRootCommand(t, deps, "run", "--agent", tc.name, "--sandbox", "podman", strconv.Itoa(prFlowIssueNumber))
+		t.Logf("sandman run returned err=%v", err)
+
+		logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", prFlowIssueNumber))
+		logData, logErr := os.ReadFile(logPath)
+		if logErr != nil {
+			t.Fatalf("read log: %v", logErr)
+		}
+		log := string(logData)
+
+		if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
+			t.Fatalf("expected fake PR URL in log, got:\n%s", log)
+		}
+
+		argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.args"))
+		if err != nil {
+			t.Fatalf("read pr create args: %v", err)
+		}
+		args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+		if got := prFlowFlagValue(args, "--base"); got != "main" {
+			t.Fatalf("pr create --base: got %q, want %q", got, "main")
+		}
+		if got := prFlowFlagValue(args, "--head"); got != prFlowBranch {
+			t.Fatalf("pr create --head: got %q, want %q", got, prFlowBranch)
+		}
+		if got := prFlowFlagValue(args, "--title"); got != "Fix failing test" {
+			t.Fatalf("pr create --title: got %q, want %q", got, "Fix failing test")
+		}
+
+		bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.body"))
+		if err != nil {
+			t.Fatalf("read pr create body: %v", err)
+		}
+		if got := strings.TrimSpace(string(bodyData)); got != "Fixes #1" {
+			t.Fatalf("pr create body: got %q, want %q", got, "Fixes #1")
+		}
+
+		countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
+		if err != nil {
+			t.Fatalf("read pr create count: %v", err)
+		}
+		if got := strings.TrimSpace(string(countData)); got != "1" {
+			t.Fatalf("expected exactly one pr create invocation, got %q", got)
+		}
+
+		branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", prFlowBranch))
+		if branchHash == baselineHash {
+			t.Fatalf("expected branch commit beyond baseline, got %s", branchHash)
+		}
+		if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
+			t.Fatalf("expected branch commit to descend from baseline: %v\n%s", err, out)
+		}
+
+		remoteHash := strings.TrimSpace(runGit(t, repoDir, "ls-remote", "origin", "refs/heads/"+prFlowBranch))
+		if remoteHash == "" {
+			t.Fatal("expected pushed remote branch")
+		}
+		fields := strings.Fields(remoteHash)
+		if len(fields) == 0 || fields[0] != branchHash {
+			t.Fatalf("remote branch hash mismatch: got %q, want %q", remoteHash, branchHash)
+		}
+	})
+}
+
+func TestPRFlow_WorktreeSandboxCommitsAndPushes(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("skip e2e in CI")
 	}
 
-	customizeOpenCodeAgent(t, repoDir, model)
-	writePRFlowPrompt(t, repoDir)
+	runPRFlowProviderCases(t, func(t *testing.T, tc prFlowProviderCase) {
+		requirePRFlowProvider(t, tc)
 
-	out, err := runRootCommand(t, deps, "run", "--sandbox", "worktree", strconv.Itoa(prFlowIssueNumber))
-	if err != nil {
-		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
-	}
+		repoDir := t.TempDir()
+		t.Chdir(repoDir)
+		bareRemote := initRunIntegrationRepoWithRemote(t, repoDir)
+		seedPRFlowRepo(t, repoDir)
+		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
-		t.Fatalf("expected success summary, got:\n%s", out)
-	}
-	if !strings.Contains(out, prFlowBranch) {
-		t.Fatalf("expected branch %q in output, got:\n%s", prFlowBranch, out)
-	}
+		ghShimDir := t.TempDir()
+		writeFakeGHShim(t, ghShimDir)
+		prependPath(t, ghShimDir)
 
-	logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", prFlowIssueNumber))
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log: %v", err)
-	}
-	log := string(logData)
-	if !strings.Contains(log, "go test ./...") {
-		t.Fatalf("expected go test command in log, got:\n%s", log)
-	}
-	if !strings.Contains(log, "ok") && !strings.Contains(log, "PASS") {
-		t.Fatalf("expected passing go test output in log, got:\n%s", log)
-	}
-	if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
-		t.Fatalf("expected fake PR URL in log, got:\n%s", log)
-	}
+		deps := prFlowDeps(repoDir)
 
-	argsData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.args"))
-	if err != nil {
-		t.Fatalf("read pr create args: %v", err)
-	}
-	args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
-	if got := prFlowFlagValue(args, "--base"); got != "main" {
-		t.Fatalf("pr create --base: got %q, want %q", got, "main")
-	}
-	if got := prFlowFlagValue(args, "--head"); got != prFlowBranch {
-		t.Fatalf("pr create --head: got %q, want %q", got, prFlowBranch)
-	}
-	if got := prFlowFlagValue(args, "--title"); got != "Fix failing test" {
-		t.Fatalf("pr create --title: got %q, want %q", got, "Fix failing test")
-	}
+		runRootCommand(t, deps, "init", "--default-agent", tc.name)
 
-	bodyData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.body"))
-	if err != nil {
-		t.Fatalf("read pr create body: %v", err)
-	}
-	if got := strings.TrimSpace(string(bodyData)); got != "Fixes #1" {
-		t.Fatalf("pr create body: got %q, want %q", got, "Fixes #1")
-	}
+		for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+			if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+				t.Fatalf("expected scaffolded %s: %v", rel, err)
+			}
+		}
 
-	countData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.count"))
-	if err != nil {
-		t.Fatalf("read pr create count: %v", err)
-	}
-	if got := strings.TrimSpace(string(countData)); got != "1" {
-		t.Fatalf("expected exactly one pr create invocation, got %q", got)
-	}
+		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{})
+		writePRFlowPrompt(t, repoDir)
 
-	branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", prFlowBranch))
-	if branchHash == baselineHash {
-		t.Fatalf("expected branch commit beyond baseline, got %s", branchHash)
-	}
-	if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
-		t.Fatalf("expected branch commit to descend from baseline: %v\n%s", err, out)
-	}
+		out, err := runRootCommand(t, deps, "run", "--agent", tc.name, "--sandbox", "worktree", strconv.Itoa(prFlowIssueNumber))
+		if err != nil {
+			t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+		}
 
-	remoteHash := strings.TrimSpace(runGit(t, bareRemote, "rev-parse", "refs/heads/"+prFlowBranch))
-	if remoteHash != branchHash {
-		t.Fatalf("remote branch hash mismatch: got %q, want %q", remoteHash, branchHash)
-	}
+		if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+			t.Fatalf("expected success summary, got:\n%s", out)
+		}
+		if !strings.Contains(out, prFlowBranch) {
+			t.Fatalf("expected branch %q in output, got:\n%s", prFlowBranch, out)
+		}
 
-	worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", prFlowBranch)
-	if _, err := os.Stat(worktreePath); err != nil {
-		t.Fatalf("expected worktree to remain, got: %v", err)
-	}
+		logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", prFlowIssueNumber))
+		logData, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("read log: %v", err)
+		}
+		log := string(logData)
+		if !strings.Contains(log, "https://example.test/example/sandbox/pull/1") {
+			t.Fatalf("expected fake PR URL in log, got:\n%s", log)
+		}
+
+		argsData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.args"))
+		if err != nil {
+			t.Fatalf("read pr create args: %v", err)
+		}
+		args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+		if got := prFlowFlagValue(args, "--base"); got != "main" {
+			t.Fatalf("pr create --base: got %q, want %q", got, "main")
+		}
+		if got := prFlowFlagValue(args, "--head"); got != prFlowBranch {
+			t.Fatalf("pr create --head: got %q, want %q", got, prFlowBranch)
+		}
+		if got := prFlowFlagValue(args, "--title"); got != "Fix failing test" {
+			t.Fatalf("pr create --title: got %q, want %q", got, "Fix failing test")
+		}
+
+		bodyData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.body"))
+		if err != nil {
+			t.Fatalf("read pr create body: %v", err)
+		}
+		if got := strings.TrimSpace(string(bodyData)); got != "Fixes #1" {
+			t.Fatalf("pr create body: got %q, want %q", got, "Fixes #1")
+		}
+
+		countData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.count"))
+		if err != nil {
+			t.Fatalf("read pr create count: %v", err)
+		}
+		if got := strings.TrimSpace(string(countData)); got != "1" {
+			t.Fatalf("expected exactly one pr create invocation, got %q", got)
+		}
+
+		branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", prFlowBranch))
+		if branchHash == baselineHash {
+			t.Fatalf("expected branch commit beyond baseline, got %s", branchHash)
+		}
+		if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
+			t.Fatalf("expected branch commit to descend from baseline: %v\n%s", err, out)
+		}
+
+		remoteHash := strings.TrimSpace(runGit(t, bareRemote, "rev-parse", "refs/heads/"+prFlowBranch))
+		if remoteHash != branchHash {
+			t.Fatalf("remote branch hash mismatch: got %q, want %q", remoteHash, branchHash)
+		}
+
+		worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", prFlowBranch)
+		if _, err := os.Stat(worktreePath); err != nil {
+			t.Fatalf("expected worktree to remain, got: %v", err)
+		}
+	})
 }
 
 func prFlowDeps(repoDir string) Dependencies {
@@ -569,7 +499,80 @@ func TestDouble(t *testing.T) {
 	runGit(t, dir, "push", "origin", "main")
 }
 
-func customizeOpenCodeAgent(t *testing.T, repoDir, model string) {
+func requirePRFlowProvider(t *testing.T, tc prFlowProviderCase) string {
+	t.Helper()
+
+	if tc.name == "pi" {
+		setupPiTestShim(t)
+	}
+
+	realHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("resolve home dir: %v", err)
+	}
+	if !hasProviderAuth(realHome, tc.requiredAuthPaths) {
+		t.Skipf("skip %s e2e: missing auth under %s", tc.name, realHome)
+	}
+	if _, err := exec.LookPath(tc.hostCLI); err != nil {
+		t.Skipf("skip %s e2e: host CLI unavailable: %v", tc.name, err)
+	}
+	return realHome
+}
+
+func requirePodmanE2E(t *testing.T) {
+	t.Helper()
+
+	if _, err := exec.LookPath("podman"); err != nil {
+		t.Skipf("skip podman e2e: podman unavailable: %v", err)
+	}
+}
+
+func setupIsolatedPRFlowHome(t *testing.T, realHome, repoDir, prefix string, authPaths []string) string {
+	t.Helper()
+
+	homeDir, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		t.Fatalf("create home dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
+	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
+		t.Fatalf("create ssh dir: %v", err)
+	}
+	absRepo, _ := filepath.Abs(repoDir)
+	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
+		"file://"+filepath.Join(absRepo, "remote"))
+	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	linkPRFlowAuthPaths(t, realHome, homeDir, authPaths)
+	t.Setenv("HOME", homeDir)
+	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
+		t.Fatalf("warm podman image for test home: %v: %s", err, out)
+	}
+	return homeDir
+}
+
+func linkPRFlowAuthPaths(t *testing.T, realHome, tempHome string, paths []string) {
+	t.Helper()
+
+	for _, rel := range paths {
+		src := homePath(realHome, rel)
+		if _, err := os.Stat(src); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			t.Fatalf("stat %s: %v", rel, err)
+		}
+		dst := homePath(tempHome, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			t.Fatalf("create parent for %s: %v", dst, err)
+		}
+		if err := os.Symlink(src, dst); err != nil {
+			t.Fatalf("link %s: %v", rel, err)
+		}
+	}
+}
+
+func customizePRFlowAgent(t *testing.T, repoDir string, tc prFlowProviderCase, opts prFlowAgentOptions) {
 	t.Helper()
 
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
@@ -577,15 +580,34 @@ func customizeOpenCodeAgent(t *testing.T, repoDir, model string) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	agent, err := cfg.ResolveAgentProvider("opencode")
+	agent, err := cfg.ResolveAgentProvider(tc.name)
 	if err != nil {
-		t.Fatalf("resolve opencode agent: %v", err)
+		t.Fatalf("resolve %s agent: %v", tc.name, err)
 	}
-	agent.Command = fmt.Sprintf(`opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Model = tc.model
+	var prefix strings.Builder
+	if opts.echo {
+		prefix.WriteString(`printf 'containerhostname=%s\ncontainerworkdir=%s\n' "$(hostname)" "$(pwd)" && `)
+	}
+	if opts.container {
+		prefix.WriteString(`PATH=/workspace/.sandman/bin:${PATH} `)
+	}
+	switch tc.name {
+	case "opencode":
+		agent.Command = prefix.String() + fmt.Sprintf(`opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, tc.model)
+	case "pi":
+		agent.Command = prefix.String() + `pi --print{{if .ModelProvider}} --provider {{.ModelProvider}}{{end}}{{if .ModelName}} --model {{.ModelName}}{{end}} "$(cat {{.PromptFile}})"`
+	default:
+		t.Fatalf("unsupported provider %q", tc.name)
+	}
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
-	cfg.AgentProviders["opencode"] = agent
+	cfg.AgentProviders[tc.name] = agent
+	if cfg.Agents == nil {
+		cfg.Agents = map[string]config.Agent{}
+	}
+	cfg.Agents[tc.name] = agent
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -922,579 +944,463 @@ exit 1
 	}
 }
 
-func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRuns(t *testing.T) {
+func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
 
-	allowed, err := parseE2EProviders()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !allowed["opencode"] {
-		t.Skip("set SANDMAN_E2E_PROVIDERS=opencode and run `go test -tags e2e ./internal/cmd -run PRFlow`")
-	}
+	runPRFlowProviderCases(t, func(t *testing.T, tc prFlowProviderCase) {
+		realHome := requirePRFlowProvider(t, tc)
+		requirePodmanE2E(t)
 
-	realHome, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("resolve home dir: %v", err)
-	}
-	if !hasOpenCodeAuth(realHome) {
-		t.Skipf("skip opencode e2e: missing auth under %s", realHome)
-	}
-	if _, err := exec.LookPath("opencode"); err != nil {
-		t.Skipf("skip opencode e2e: host CLI unavailable: %v", err)
-	}
-	if _, err := exec.LookPath("podman"); err != nil {
-		t.Skipf("skip podman e2e: podman unavailable: %v", err)
-	}
+		binPath := buildSandmanBinary(t)
 
-	binPath := buildSandmanBinary(t)
+		repoDir := t.TempDir()
+		t.Chdir(repoDir)
+		initRunIntegrationRepo(t, repoDir)
 
-	repoDir := t.TempDir()
-	t.Chdir(repoDir)
-	initRunIntegrationRepo(t, repoDir)
-
-	// Create the bare remote inside the repo so it's accessible inside the container.
-	remoteDir := filepath.Join(repoDir, "remote")
-	if err := os.MkdirAll(remoteDir, 0755); err != nil {
-		t.Fatalf("create remote dir: %v", err)
-	}
-	bareInit := exec.Command("git", "init", "--bare")
-	bareInit.Dir = remoteDir
-	if out, err := bareInit.CombinedOutput(); err != nil {
-		t.Fatalf("init bare remote: %v: %s", err, out)
-	}
-	runGit(t, repoDir, "remote", "add", "origin", remoteDir)
-	runGit(t, repoDir, "push", "-u", "origin", "main")
-
-	seedParallelPRFlowRepo(t, repoDir)
-	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
-
-	out, err := runSandmanBinary(t, binPath, repoDir, "init")
-	if err != nil {
-		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
-	}
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		remoteDir := filepath.Join(repoDir, "remote")
+		if err := os.MkdirAll(remoteDir, 0755); err != nil {
+			t.Fatalf("create remote dir: %v", err)
 		}
-	}
-	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-
-	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-parallel-")
-	if err != nil {
-		t.Fatalf("create home dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
-	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
-		t.Fatalf("create ssh dir: %v", err)
-	}
-	absRepo, _ := filepath.Abs(repoDir)
-	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
-		"file://"+filepath.Join(absRepo, "remote"))
-	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
-		t.Fatalf("write gitconfig: %v", err)
-	}
-	for _, dir := range []string{".config/opencode", ".local/share/opencode"} {
-		src := filepath.Join(realHome, dir)
-		dst := filepath.Join(homeDir, dir)
-		if _, err := os.Stat(src); os.IsNotExist(err) {
-			continue
+		bareInit := exec.Command("git", "init", "--bare")
+		bareInit.Dir = remoteDir
+		if out, err := bareInit.CombinedOutput(); err != nil {
+			t.Fatalf("init bare remote: %v: %s", err, out)
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			t.Fatalf("create parent for %s: %v", dst, err)
-		}
-		if err := os.Symlink(src, dst); err != nil {
-			t.Fatalf("link %s: %v", dir, err)
-		}
-	}
-	t.Setenv("HOME", homeDir)
-	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
-		t.Fatalf("warm podman image for test home: %v: %s", err, out)
-	}
+		runGit(t, repoDir, "remote", "add", "origin", remoteDir)
+		runGit(t, repoDir, "push", "-u", "origin", "main")
 
-	ghShimDir := t.TempDir()
-	writeFakeGHShimParallel(t, ghShimDir)
-	prependPath(t, ghShimDir)
+		seedParallelPRFlowRepo(t, repoDir)
+		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
-	containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
-	writeFakeGHShimForContainerParallel(t, containerGhShimDir)
-
-	buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect-parallel", "-f",
-		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build image for model detection: %v: %s", err, out)
-	}
-	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
-		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
-	}
-	containerModel := "opencode/big-pickle"
-	t.Logf("using container model: %s", containerModel)
-
-	customizeOpenCodeAgentForContainerWithEcho(t, repoDir, containerModel)
-	writeParallelPRFlowPrompt(t, repoDir)
-
-	out, err = runSandmanBinary(t, binPath, repoDir, "run",
-		"--sandbox", "podman",
-		"--parallel", "2",
-		"--container-capacity", "2",
-		"--max-containers", "1",
-		strconv.Itoa(parallelIssue150), strconv.Itoa(parallelIssue151))
-	t.Logf("sandman run returned err=%v output=%s", err, out)
-
-	// ---- Assertions ----
-
-	// 1. Event timeline: both run.started before first run.finished
-	eventsPath := filepath.Join(repoDir, ".sandman", "events.jsonl")
-	eventsData, err := os.ReadFile(eventsPath)
-	if err != nil {
-		t.Fatalf("read events: %v", err)
-	}
-	var started, finished []time.Time
-	for _, line := range strings.Split(strings.TrimSpace(string(eventsData)), "\n") {
-		if line == "" {
-			continue
-		}
-		var evt events.Event
-		if err := json.Unmarshal([]byte(line), &evt); err != nil {
-			t.Fatalf("parse event: %v: %s", err, line)
-		}
-		switch evt.Type {
-		case "run.started":
-			started = append(started, evt.Timestamp)
-		case "run.finished":
-			finished = append(finished, evt.Timestamp)
-		}
-	}
-	if len(started) != 2 {
-		t.Fatalf("expected 2 run.started events, got %d", len(started))
-	}
-	if len(finished) != 2 {
-		t.Fatalf("expected 2 run.finished events, got %d", len(finished))
-	}
-	lastStarted := started[0]
-	if started[1].After(started[0]) {
-		lastStarted = started[1]
-	}
-	firstFinished := finished[0]
-	if finished[1].Before(finished[0]) {
-		firstFinished = finished[1]
-	}
-	if !lastStarted.Before(firstFinished) {
-		t.Fatal("expected both run.started events before first run.finished — runs did not overlap")
-	}
-
-	// 2. Both branches pushed beyond baseline
-	for _, branch := range []string{parallelBranch150, parallelBranch151} {
-		branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", branch))
-		if branchHash == baselineHash {
-			t.Fatalf("expected branch %s commit beyond baseline, got %s", branch, branchHash)
-		}
-		if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
-			t.Fatalf("expected branch %s to descend from baseline: %v\n%s", branch, err, out)
-		}
-		remoteHash := strings.TrimSpace(runGit(t, repoDir, "ls-remote", "origin", "refs/heads/"+branch))
-		if remoteHash == "" {
-			t.Fatalf("expected pushed remote branch %s", branch)
-		}
-		fields := strings.Fields(remoteHash)
-		if len(fields) == 0 || fields[0] != branchHash {
-			t.Fatalf("remote branch %s hash mismatch: got %q, want %q", branch, remoteHash, branchHash)
-		}
-	}
-
-	// 4. Branch-local correctness: check out each branch in a temp dir
-	for _, tc := range []struct {
-		issue      int
-		branch     string
-		wantReturn string
-		wantTest   string
-		failTest   string
-	}{
-		{parallelIssue150, parallelBranch150, "5", "TestDoubleFor150", "TestDoubleFor151"},
-		{parallelIssue151, parallelBranch151, "7", "TestDoubleFor151", "TestDoubleFor150"},
-	} {
-		checkoutDir := t.TempDir()
-		clone := exec.Command("git", "clone", "--branch", tc.branch, "--single-branch", remoteDir, checkoutDir)
-		if out, err := clone.CombinedOutput(); err != nil {
-			t.Fatalf("clone branch %s: %v: %s", tc.branch, err, out)
-		}
-
-		// Verify same-hunk edit
-		doubleSrc, err := os.ReadFile(filepath.Join(checkoutDir, "double.go"))
+		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--default-agent", tc.name)
 		if err != nil {
-			t.Fatalf("read double.go on branch %s: %v", tc.branch, err)
+			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 		}
-		if !strings.Contains(string(doubleSrc), "return "+tc.wantReturn) {
-			t.Fatalf("branch %s double.go: expected return %s, got:\n%s", tc.branch, tc.wantReturn, doubleSrc)
+		for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+			if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+				t.Fatalf("expected scaffolded %s: %v", rel, err)
+			}
 		}
+		if tc.name == "pi" {
+			writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
+			appendPiTestShimToDockerfile(t, repoDir)
+		}
+		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
-		// Verify test passes for own test function
-		testCmd := exec.Command("go", "test", "-run", tc.wantTest, "./...")
-		testCmd.Dir = checkoutDir
-		if out, err := testCmd.CombinedOutput(); err != nil {
-			t.Fatalf("branch %s test %s failed: %v: %s", tc.branch, tc.wantTest, err, out)
-		}
+		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-parallel-", tc.authPaths)
 
-		// Verify test fails for other test function
-		testFailCmd := exec.Command("go", "test", "-run", tc.failTest, "./...")
-		testFailCmd.Dir = checkoutDir
-		if err := testFailCmd.Run(); err == nil {
-			t.Fatalf("branch %s test %s should have failed but passed", tc.branch, tc.failTest)
-		}
-	}
+		ghShimDir := t.TempDir()
+		writeFakeGHShimParallel(t, ghShimDir)
+		prependPath(t, ghShimDir)
 
-	// 5. Exactly two gh pr create calls (order-independent)
-	for i := 1; i <= 2; i++ {
-		argsFile := filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i))
-		if _, err := os.Stat(argsFile); err != nil {
-			t.Fatalf("missing pr-create.args.%d: %v", i, err)
-		}
-	}
-	countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
-	if err != nil {
-		t.Fatalf("read pr create count: %v", err)
-	}
-	if got := strings.TrimSpace(string(countData)); got != "2" {
-		t.Fatalf("expected exactly two pr create invocations, got %q", got)
-	}
+		containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
+		writeFakeGHShimForContainerParallel(t, containerGhShimDir)
 
-	type prCreateCall struct {
-		branch string
-		title  string
-		body   string
-	}
-	expected := map[string]prCreateCall{
-		parallelBranch150: {parallelBranch150, "Fix 150", "Fixes #150"},
-		parallelBranch151: {parallelBranch151, "Fix 151", "Fixes #151"},
-	}
-	seen := make(map[string]bool)
-	for i := 1; i <= 2; i++ {
-		argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i)))
+		buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect-parallel", "-f",
+			filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			t.Fatalf("build image for model detection: %v: %s", err, out)
+		}
+		if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+			t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
+		}
+		t.Logf("using provider model: %s", tc.model)
+
+		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true, echo: true})
+		writeParallelPRFlowPrompt(t, repoDir)
+
+		out, err = runSandmanBinary(t, binPath, repoDir, "run",
+			"--agent", tc.name,
+			"--sandbox", "podman",
+			"--parallel", "2",
+			"--container-capacity", "2",
+			"--max-containers", "1",
+			strconv.Itoa(parallelIssue150), strconv.Itoa(parallelIssue151))
+		t.Logf("sandman run returned err=%v output=%s", err, out)
+
+		eventsPath := filepath.Join(repoDir, ".sandman", "events.jsonl")
+		eventsData, err := os.ReadFile(eventsPath)
 		if err != nil {
-			t.Fatalf("read pr create args.%d: %v", i, err)
+			t.Fatalf("read events: %v", err)
 		}
-		args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
-		head := prFlowFlagValue(args, "--head")
-		if head == "" {
-			t.Fatalf("pr create %d: missing --head flag in args:\n%s", i, argsData)
+		var started, finished []time.Time
+		for _, line := range strings.Split(strings.TrimSpace(string(eventsData)), "\n") {
+			if line == "" {
+				continue
+			}
+			var evt events.Event
+			if err := json.Unmarshal([]byte(line), &evt); err != nil {
+				t.Fatalf("parse event: %v: %s", err, line)
+			}
+			switch evt.Type {
+			case "run.started":
+				started = append(started, evt.Timestamp)
+			case "run.finished":
+				finished = append(finished, evt.Timestamp)
+			}
 		}
-		if seen[head] {
-			t.Fatalf("pr create %d: duplicate branch %q", i, head)
+		if len(started) != 2 {
+			t.Fatalf("expected 2 run.started events, got %d", len(started))
 		}
-		seen[head] = true
+		if len(finished) != 2 {
+			t.Fatalf("expected 2 run.finished events, got %d", len(finished))
+		}
+		lastStarted := started[0]
+		if started[1].After(started[0]) {
+			lastStarted = started[1]
+		}
+		firstFinished := finished[0]
+		if finished[1].Before(finished[0]) {
+			firstFinished = finished[1]
+		}
+		if !lastStarted.Before(firstFinished) {
+			t.Fatal("expected both run.started events before first run.finished — runs did not overlap")
+		}
 
-		call, ok := expected[head]
-		if !ok {
-			t.Fatalf("pr create %d: unexpected --head %q, expected one of %q or %q", i, head, parallelBranch150, parallelBranch151)
-		}
-		if got := prFlowFlagValue(args, "--base"); got != "main" {
-			t.Fatalf("pr create %d (%s): --base got %q, want %q", i, head, got, "main")
-		}
-		if got := prFlowFlagValue(args, "--title"); got != call.title {
-			t.Fatalf("pr create %d (%s): --title got %q, want %q", i, head, got, call.title)
+		for _, branch := range []string{parallelBranch150, parallelBranch151} {
+			branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", branch))
+			if branchHash == baselineHash {
+				t.Fatalf("expected branch %s commit beyond baseline, got %s", branch, branchHash)
+			}
+			if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
+				t.Fatalf("expected branch %s to descend from baseline: %v\n%s", branch, err, out)
+			}
+			remoteHash := strings.TrimSpace(runGit(t, repoDir, "ls-remote", "origin", "refs/heads/"+branch))
+			if remoteHash == "" {
+				t.Fatalf("expected pushed remote branch %s", branch)
+			}
+			fields := strings.Fields(remoteHash)
+			if len(fields) == 0 || fields[0] != branchHash {
+				t.Fatalf("remote branch %s hash mismatch: got %q, want %q", branch, remoteHash, branchHash)
+			}
 		}
 
-		bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.body.%d", i)))
+		for _, tc := range []struct {
+			issue    int
+			branch   string
+			wantTest string
+			failTest string
+		}{
+			{parallelIssue150, parallelBranch150, "TestDoubleFor150", "TestDoubleFor151"},
+			{parallelIssue151, parallelBranch151, "TestDoubleFor151", "TestDoubleFor150"},
+		} {
+			checkoutDir := t.TempDir()
+			clone := exec.Command("git", "clone", "--branch", tc.branch, "--single-branch", remoteDir, checkoutDir)
+			if out, err := clone.CombinedOutput(); err != nil {
+				t.Fatalf("clone branch %s: %v: %s", tc.branch, err, out)
+			}
+
+			testCmd := exec.Command("go", "test", "-run", tc.wantTest, "./...")
+			testCmd.Dir = checkoutDir
+			if out, err := testCmd.CombinedOutput(); err != nil {
+				t.Fatalf("branch %s test %s failed: %v: %s", tc.branch, tc.wantTest, err, out)
+			}
+
+			testFailCmd := exec.Command("go", "test", "-run", tc.failTest, "./...")
+			testFailCmd.Dir = checkoutDir
+			if err := testFailCmd.Run(); err == nil {
+				t.Fatalf("branch %s test %s should have failed but passed", tc.branch, tc.failTest)
+			}
+		}
+
+		for i := 1; i <= 2; i++ {
+			argsFile := filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i))
+			if _, err := os.Stat(argsFile); err != nil {
+				t.Fatalf("missing pr-create.args.%d: %v", i, err)
+			}
+		}
+		countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
 		if err != nil {
-			t.Fatalf("read pr create body.%d: %v", i, err)
+			t.Fatalf("read pr create count: %v", err)
 		}
-		if got := strings.TrimSpace(string(bodyData)); got != call.body {
-			t.Fatalf("pr create %d (%s): body got %q, want %q", i, head, got, call.body)
+		if got := strings.TrimSpace(string(countData)); got != "2" {
+			t.Fatalf("expected exactly two pr create invocations, got %q", got)
 		}
-	}
-	if len(seen) != 2 {
-		t.Fatalf("expected pr creates for both branches, got %v", seen)
-	}
+
+		type prCreateCall struct {
+			branch string
+			title  string
+			body   string
+		}
+		expected := map[string]prCreateCall{
+			parallelBranch150: {parallelBranch150, "Fix 150", "Fixes #150"},
+			parallelBranch151: {parallelBranch151, "Fix 151", "Fixes #151"},
+		}
+		seen := make(map[string]bool)
+		for i := 1; i <= 2; i++ {
+			argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i)))
+			if err != nil {
+				t.Fatalf("read pr create args.%d: %v", i, err)
+			}
+			args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+			head := prFlowFlagValue(args, "--head")
+			if head == "" {
+				t.Fatalf("pr create %d: missing --head flag in args:\n%s", i, argsData)
+			}
+			if seen[head] {
+				t.Fatalf("pr create %d: duplicate branch %q", i, head)
+			}
+			seen[head] = true
+
+			call, ok := expected[head]
+			if !ok {
+				t.Fatalf("pr create %d: unexpected --head %q, expected one of %q or %q", i, head, parallelBranch150, parallelBranch151)
+			}
+			if got := prFlowFlagValue(args, "--base"); got != "main" {
+				t.Fatalf("pr create %d (%s): --base got %q, want %q", i, head, got, "main")
+			}
+			if got := prFlowFlagValue(args, "--title"); got != call.title {
+				t.Fatalf("pr create %d (%s): --title got %q, want %q", i, head, got, call.title)
+			}
+
+			bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.body.%d", i)))
+			if err != nil {
+				t.Fatalf("read pr create body.%d: %v", i, err)
+			}
+			if got := strings.TrimSpace(string(bodyData)); got != call.body {
+				t.Fatalf("pr create %d (%s): body got %q, want %q", i, head, got, call.body)
+			}
+		}
+		if len(seen) != 2 {
+			t.Fatalf("expected pr creates for both branches, got %v", seen)
+		}
+	})
 }
 
-func TestPRFlow_PodmanSandboxOpencodeBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
+func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
 
-	allowed, err := parseE2EProviders()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !allowed["opencode"] {
-		t.Skip("set SANDMAN_E2E_PROVIDERS=opencode and run `go test -tags e2e ./internal/cmd -run PRFlow`")
-	}
+	runPRFlowProviderCases(t, func(t *testing.T, tc prFlowProviderCase) {
+		realHome := requirePRFlowProvider(t, tc)
+		requirePodmanE2E(t)
 
-	realHome, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("resolve home dir: %v", err)
-	}
-	if !hasOpenCodeAuth(realHome) {
-		t.Skipf("skip opencode e2e: missing auth under %s", realHome)
-	}
-	if _, err := exec.LookPath("opencode"); err != nil {
-		t.Skipf("skip opencode e2e: host CLI unavailable: %v", err)
-	}
-	if _, err := exec.LookPath("podman"); err != nil {
-		t.Skipf("skip podman e2e: podman unavailable: %v", err)
-	}
+		binPath := buildSandmanBinary(t)
 
-	binPath := buildSandmanBinary(t)
+		repoDir := t.TempDir()
+		t.Chdir(repoDir)
+		initRunIntegrationRepo(t, repoDir)
 
-	repoDir := t.TempDir()
-	t.Chdir(repoDir)
-	initRunIntegrationRepo(t, repoDir)
-
-	// Create the bare remote inside the repo so it's accessible inside the container.
-	remoteDir := filepath.Join(repoDir, "remote")
-	if err := os.MkdirAll(remoteDir, 0755); err != nil {
-		t.Fatalf("create remote dir: %v", err)
-	}
-	bareInit := exec.Command("git", "init", "--bare")
-	bareInit.Dir = remoteDir
-	if out, err := bareInit.CombinedOutput(); err != nil {
-		t.Fatalf("init bare remote: %v: %s", err, out)
-	}
-	runGit(t, repoDir, "remote", "add", "origin", remoteDir)
-	runGit(t, repoDir, "push", "-u", "origin", "main")
-
-	seedParallelPRFlowRepo(t, repoDir)
-	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
-
-	out, err := runSandmanBinary(t, binPath, repoDir, "init")
-	if err != nil {
-		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
-	}
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
-		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
-			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		remoteDir := filepath.Join(repoDir, "remote")
+		if err := os.MkdirAll(remoteDir, 0755); err != nil {
+			t.Fatalf("create remote dir: %v", err)
 		}
-	}
-	baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-
-	homeDir, err := os.MkdirTemp("", "sandman-podman-e2e-parallel-auto-")
-	if err != nil {
-		t.Fatalf("create home dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(homeDir) })
-	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
-		t.Fatalf("create ssh dir: %v", err)
-	}
-	absRepo, _ := filepath.Abs(repoDir)
-	gitConfigContent := fmt.Sprintf("[user]\n\tname = Test\n\temail = test@test.com\n[url %q]\n\tinsteadOf = git@github.com:rafaelromao/sandman.git\n",
-		"file://"+filepath.Join(absRepo, "remote"))
-	if err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(gitConfigContent), 0644); err != nil {
-		t.Fatalf("write gitconfig: %v", err)
-	}
-	for _, dir := range []string{".config/opencode", ".local/share/opencode"} {
-		src := filepath.Join(realHome, dir)
-		dst := filepath.Join(homeDir, dir)
-		if _, err := os.Stat(src); os.IsNotExist(err) {
-			continue
+		bareInit := exec.Command("git", "init", "--bare")
+		bareInit.Dir = remoteDir
+		if out, err := bareInit.CombinedOutput(); err != nil {
+			t.Fatalf("init bare remote: %v: %s", err, out)
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			t.Fatalf("create parent for %s: %v", dst, err)
-		}
-		if err := os.Symlink(src, dst); err != nil {
-			t.Fatalf("link %s: %v", dir, err)
-		}
-	}
-	t.Setenv("HOME", homeDir)
-	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
-		t.Fatalf("warm podman image for test home: %v: %s", err, out)
-	}
+		runGit(t, repoDir, "remote", "add", "origin", remoteDir)
+		runGit(t, repoDir, "push", "-u", "origin", "main")
 
-	ghShimDir := t.TempDir()
-	writeFakeGHShimParallel(t, ghShimDir)
-	prependPath(t, ghShimDir)
+		seedParallelPRFlowRepo(t, repoDir)
+		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
-	containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
-	writeFakeGHShimForContainerParallel(t, containerGhShimDir)
-
-	buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect-parallel-auto", "-f",
-		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build image for model detection: %v: %s", err, out)
-	}
-	if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel-auto", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
-		t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
-	}
-	containerModel := "opencode/big-pickle"
-	t.Logf("using container model: %s", containerModel)
-
-	customizeOpenCodeAgentForContainerWithEcho(t, repoDir, containerModel)
-	writeParallelPRFlowPrompt(t, repoDir)
-
-	out, err = runSandmanBinary(t, binPath, repoDir, "run",
-		"--sandbox", "podman",
-		"--parallel", "2",
-		"--container-capacity", "0",
-		"--max-containers", "1",
-		strconv.Itoa(parallelIssue150), strconv.Itoa(parallelIssue151))
-	t.Logf("sandman run returned err=%v output=%s", err, out)
-
-	// ---- Assertions ----
-
-	// 1. Event timeline: both run.started before first run.finished
-	eventsPath := filepath.Join(repoDir, ".sandman", "events.jsonl")
-	eventsData, err := os.ReadFile(eventsPath)
-	if err != nil {
-		t.Fatalf("read events: %v", err)
-	}
-	var started, finished []time.Time
-	for _, line := range strings.Split(strings.TrimSpace(string(eventsData)), "\n") {
-		if line == "" {
-			continue
-		}
-		var evt events.Event
-		if err := json.Unmarshal([]byte(line), &evt); err != nil {
-			t.Fatalf("parse event: %v: %s", err, line)
-		}
-		switch evt.Type {
-		case "run.started":
-			started = append(started, evt.Timestamp)
-		case "run.finished":
-			finished = append(finished, evt.Timestamp)
-		}
-	}
-	if len(started) != 2 {
-		t.Fatalf("expected 2 run.started events, got %d", len(started))
-	}
-	if len(finished) != 2 {
-		t.Fatalf("expected 2 run.finished events, got %d", len(finished))
-	}
-	lastStarted := started[0]
-	if started[1].After(started[0]) {
-		lastStarted = started[1]
-	}
-	firstFinished := finished[0]
-	if finished[1].Before(finished[0]) {
-		firstFinished = finished[1]
-	}
-	if !lastStarted.Before(firstFinished) {
-		t.Fatal("expected both run.started events before first run.finished — runs did not overlap")
-	}
-
-	// 2. Shared container identity + different workdirs
-	// 3. Both branches pushed beyond baseline
-	for _, branch := range []string{parallelBranch150, parallelBranch151} {
-		branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", branch))
-		if branchHash == baselineHash {
-			t.Fatalf("expected branch %s commit beyond baseline, got %s", branch, branchHash)
-		}
-		if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
-			t.Fatalf("expected branch %s to descend from baseline: %v\n%s", branch, err, out)
-		}
-		remoteHash := strings.TrimSpace(runGit(t, repoDir, "ls-remote", "origin", "refs/heads/"+branch))
-		if remoteHash == "" {
-			t.Fatalf("expected pushed remote branch %s", branch)
-		}
-		fields := strings.Fields(remoteHash)
-		if len(fields) == 0 || fields[0] != branchHash {
-			t.Fatalf("remote branch %s hash mismatch: got %q, want %q", branch, remoteHash, branchHash)
-		}
-	}
-
-	// 4. Branch-local correctness: check out each branch in a temp dir
-	for _, tc := range []struct {
-		issue      int
-		branch     string
-		wantReturn string
-		wantTest   string
-		failTest   string
-	}{
-		{parallelIssue150, parallelBranch150, "5", "TestDoubleFor150", "TestDoubleFor151"},
-		{parallelIssue151, parallelBranch151, "7", "TestDoubleFor151", "TestDoubleFor150"},
-	} {
-		checkoutDir := t.TempDir()
-		clone := exec.Command("git", "clone", "--branch", tc.branch, "--single-branch", remoteDir, checkoutDir)
-		if out, err := clone.CombinedOutput(); err != nil {
-			t.Fatalf("clone branch %s: %v: %s", tc.branch, err, out)
-		}
-
-		// Verify same-hunk edit
-		doubleSrc, err := os.ReadFile(filepath.Join(checkoutDir, "double.go"))
+		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--default-agent", tc.name)
 		if err != nil {
-			t.Fatalf("read double.go on branch %s: %v", tc.branch, err)
+			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 		}
-		if !strings.Contains(string(doubleSrc), "return "+tc.wantReturn) {
-			t.Fatalf("branch %s double.go: expected return %s, got:\n%s", tc.branch, tc.wantReturn, doubleSrc)
+		for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+			if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+				t.Fatalf("expected scaffolded %s: %v", rel, err)
+			}
 		}
+		if tc.name == "pi" {
+			writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
+			appendPiTestShimToDockerfile(t, repoDir)
+		}
+		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
-		// Verify test passes for own test function
-		testCmd := exec.Command("go", "test", "-run", tc.wantTest, "./...")
-		testCmd.Dir = checkoutDir
-		if out, err := testCmd.CombinedOutput(); err != nil {
-			t.Fatalf("branch %s test %s failed: %v: %s", tc.branch, tc.wantTest, err, out)
-		}
+		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-parallel-auto-", tc.authPaths)
 
-		// Verify test fails for other test function
-		testFailCmd := exec.Command("go", "test", "-run", tc.failTest, "./...")
-		testFailCmd.Dir = checkoutDir
-		if err := testFailCmd.Run(); err == nil {
-			t.Fatalf("branch %s test %s should have failed but passed", tc.branch, tc.failTest)
-		}
-	}
+		ghShimDir := t.TempDir()
+		writeFakeGHShimParallel(t, ghShimDir)
+		prependPath(t, ghShimDir)
 
-	// 5. Exactly two gh pr create calls (order-independent)
-	for i := 1; i <= 2; i++ {
-		argsFile := filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i))
-		if _, err := os.Stat(argsFile); err != nil {
-			t.Fatalf("missing pr-create.args.%d: %v", i, err)
-		}
-	}
-	countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
-	if err != nil {
-		t.Fatalf("read pr create count: %v", err)
-	}
-	if got := strings.TrimSpace(string(countData)); got != "2" {
-		t.Fatalf("expected exactly two pr create invocations, got %q", got)
-	}
+		containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
+		writeFakeGHShimForContainerParallel(t, containerGhShimDir)
 
-	type prCreateCall struct {
-		branch string
-		title  string
-		body   string
-	}
-	expected := map[string]prCreateCall{
-		parallelBranch150: {parallelBranch150, "Fix 150", "Fixes #150"},
-		parallelBranch151: {parallelBranch151, "Fix 151", "Fixes #151"},
-	}
-	seen := make(map[string]bool)
-	for i := 1; i <= 2; i++ {
-		argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i)))
+		buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect-parallel-auto", "-f",
+			filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			t.Fatalf("build image for model detection: %v: %s", err, out)
+		}
+		if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel-auto", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
+			t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
+		}
+		t.Logf("using provider model: %s", tc.model)
+
+		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true, echo: true})
+		writeParallelPRFlowPrompt(t, repoDir)
+
+		out, err = runSandmanBinary(t, binPath, repoDir, "run",
+			"--agent", tc.name,
+			"--sandbox", "podman",
+			"--parallel", "2",
+			"--container-capacity", "0",
+			"--max-containers", "1",
+			strconv.Itoa(parallelIssue150), strconv.Itoa(parallelIssue151))
+		t.Logf("sandman run returned err=%v output=%s", err, out)
+
+		eventsPath := filepath.Join(repoDir, ".sandman", "events.jsonl")
+		eventsData, err := os.ReadFile(eventsPath)
 		if err != nil {
-			t.Fatalf("read pr create args.%d: %v", i, err)
+			t.Fatalf("read events: %v", err)
 		}
-		args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
-		head := prFlowFlagValue(args, "--head")
-		if head == "" {
-			t.Fatalf("pr create %d: missing --head flag in args:\n%s", i, argsData)
+		var started, finished []time.Time
+		for _, line := range strings.Split(strings.TrimSpace(string(eventsData)), "\n") {
+			if line == "" {
+				continue
+			}
+			var evt events.Event
+			if err := json.Unmarshal([]byte(line), &evt); err != nil {
+				t.Fatalf("parse event: %v: %s", err, line)
+			}
+			switch evt.Type {
+			case "run.started":
+				started = append(started, evt.Timestamp)
+			case "run.finished":
+				finished = append(finished, evt.Timestamp)
+			}
 		}
-		if seen[head] {
-			t.Fatalf("pr create %d: duplicate branch %q", i, head)
+		if len(started) != 2 {
+			t.Fatalf("expected 2 run.started events, got %d", len(started))
 		}
-		seen[head] = true
+		if len(finished) != 2 {
+			t.Fatalf("expected 2 run.finished events, got %d", len(finished))
+		}
+		lastStarted := started[0]
+		if started[1].After(started[0]) {
+			lastStarted = started[1]
+		}
+		firstFinished := finished[0]
+		if finished[1].Before(finished[0]) {
+			firstFinished = finished[1]
+		}
+		if !lastStarted.Before(firstFinished) {
+			t.Fatal("expected both run.started events before first run.finished — runs did not overlap")
+		}
 
-		call, ok := expected[head]
-		if !ok {
-			t.Fatalf("pr create %d: unexpected --head %q, expected one of %q or %q", i, head, parallelBranch150, parallelBranch151)
-		}
-		if got := prFlowFlagValue(args, "--base"); got != "main" {
-			t.Fatalf("pr create %d (%s): --base got %q, want %q", i, head, got, "main")
-		}
-		if got := prFlowFlagValue(args, "--title"); got != call.title {
-			t.Fatalf("pr create %d (%s): --title got %q, want %q", i, head, got, call.title)
+		for _, branch := range []string{parallelBranch150, parallelBranch151} {
+			branchHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", branch))
+			if branchHash == baselineHash {
+				t.Fatalf("expected branch %s commit beyond baseline, got %s", branch, branchHash)
+			}
+			if out, err := exec.Command("git", "merge-base", "--is-ancestor", baselineHash, branchHash).CombinedOutput(); err != nil {
+				t.Fatalf("expected branch %s to descend from baseline: %v\n%s", branch, err, out)
+			}
+			remoteHash := strings.TrimSpace(runGit(t, repoDir, "ls-remote", "origin", "refs/heads/"+branch))
+			if remoteHash == "" {
+				t.Fatalf("expected pushed remote branch %s", branch)
+			}
+			fields := strings.Fields(remoteHash)
+			if len(fields) == 0 || fields[0] != branchHash {
+				t.Fatalf("remote branch %s hash mismatch: got %q, want %q", branch, remoteHash, branchHash)
+			}
 		}
 
-		bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.body.%d", i)))
+		for _, tc := range []struct {
+			issue      int
+			branch     string
+			wantReturn string
+			wantTest   string
+			failTest   string
+		}{
+			{parallelIssue150, parallelBranch150, "5", "TestDoubleFor150", "TestDoubleFor151"},
+			{parallelIssue151, parallelBranch151, "7", "TestDoubleFor151", "TestDoubleFor150"},
+		} {
+			checkoutDir := t.TempDir()
+			clone := exec.Command("git", "clone", "--branch", tc.branch, "--single-branch", remoteDir, checkoutDir)
+			if out, err := clone.CombinedOutput(); err != nil {
+				t.Fatalf("clone branch %s: %v: %s", tc.branch, err, out)
+			}
+
+			doubleSrc, err := os.ReadFile(filepath.Join(checkoutDir, "double.go"))
+			if err != nil {
+				t.Fatalf("read double.go on branch %s: %v", tc.branch, err)
+			}
+			if !strings.Contains(string(doubleSrc), "return "+tc.wantReturn) {
+				t.Fatalf("branch %s double.go: expected return %s, got:\n%s", tc.branch, tc.wantReturn, doubleSrc)
+			}
+
+			testCmd := exec.Command("go", "test", "-run", tc.wantTest, "./...")
+			testCmd.Dir = checkoutDir
+			if out, err := testCmd.CombinedOutput(); err != nil {
+				t.Fatalf("branch %s test %s failed: %v: %s", tc.branch, tc.wantTest, err, out)
+			}
+
+			testFailCmd := exec.Command("go", "test", "-run", tc.failTest, "./...")
+			testFailCmd.Dir = checkoutDir
+			if err := testFailCmd.Run(); err == nil {
+				t.Fatalf("branch %s test %s should have failed but passed", tc.branch, tc.failTest)
+			}
+		}
+
+		for i := 1; i <= 2; i++ {
+			argsFile := filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i))
+			if _, err := os.Stat(argsFile); err != nil {
+				t.Fatalf("missing pr-create.args.%d: %v", i, err)
+			}
+		}
+		countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
 		if err != nil {
-			t.Fatalf("read pr create body.%d: %v", i, err)
+			t.Fatalf("read pr create count: %v", err)
 		}
-		if got := strings.TrimSpace(string(bodyData)); got != call.body {
-			t.Fatalf("pr create %d (%s): body got %q, want %q", i, head, got, call.body)
+		if got := strings.TrimSpace(string(countData)); got != "2" {
+			t.Fatalf("expected exactly two pr create invocations, got %q", got)
 		}
-	}
-	if len(seen) != 2 {
-		t.Fatalf("expected pr creates for both branches, got %v", seen)
-	}
+
+		type prCreateCall struct {
+			branch string
+			title  string
+			body   string
+		}
+		expected := map[string]prCreateCall{
+			parallelBranch150: {parallelBranch150, "Fix 150", "Fixes #150"},
+			parallelBranch151: {parallelBranch151, "Fix 151", "Fixes #151"},
+		}
+		seen := make(map[string]bool)
+		for i := 1; i <= 2; i++ {
+			argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i)))
+			if err != nil {
+				t.Fatalf("read pr create args.%d: %v", i, err)
+			}
+			args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+			head := prFlowFlagValue(args, "--head")
+			if head == "" {
+				t.Fatalf("pr create %d: missing --head flag in args:\n%s", i, argsData)
+			}
+			if seen[head] {
+				t.Fatalf("pr create %d: duplicate branch %q", i, head)
+			}
+			seen[head] = true
+
+			call, ok := expected[head]
+			if !ok {
+				t.Fatalf("pr create %d: unexpected --head %q, expected one of %q or %q", i, head, parallelBranch150, parallelBranch151)
+			}
+			if got := prFlowFlagValue(args, "--base"); got != "main" {
+				t.Fatalf("pr create %d (%s): --base got %q, want %q", i, head, got, "main")
+			}
+			if got := prFlowFlagValue(args, "--title"); got != call.title {
+				t.Fatalf("pr create %d (%s): --title got %q, want %q", i, head, got, call.title)
+			}
+
+			bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.body.%d", i)))
+			if err != nil {
+				t.Fatalf("read pr create body.%d: %v", i, err)
+			}
+			if got := strings.TrimSpace(string(bodyData)); got != call.body {
+				t.Fatalf("pr create %d (%s): body got %q, want %q", i, head, got, call.body)
+			}
+		}
+		if len(seen) != 2 {
+			t.Fatalf("expected pr creates for both branches, got %v", seen)
+		}
+	})
 }
 
 func seedParallelPRFlowRepo(t *testing.T, dir string) {
@@ -1636,6 +1542,18 @@ JSON
       printf 'https://example.test/example/sandbox/pull/%s\n' "$count"
       exit 0
     fi
+    if [ "${2:-}" = "checks" ]; then
+      printf 'all checks passed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "comment" ]; then
+      printf 'commented\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "view" ]; then
+      printf 'https://example.test/example/sandbox/pull/1\n'
+      exit 0
+    fi
     ;;
   api)
     path=""
@@ -1760,6 +1678,18 @@ JSON
       printf 'https://example.test/example/sandbox/pull/%s\n' "$current"
       exit 0
     fi
+    if [ "${2:-}" = "checks" ]; then
+      printf 'all checks passed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "comment" ]; then
+      printf 'commented\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "view" ]; then
+      printf 'https://example.test/example/sandbox/pull/1\n'
+      exit 0
+    fi
     ;;
   api)
     path=""
@@ -1864,7 +1794,11 @@ func parseE2EProviders() (map[string]bool, error) {
 		return nil, nil
 	}
 	if raw == "all" || raw == "*" {
-		return map[string]bool{"opencode": true}, nil
+		allowed := make(map[string]bool, len(prFlowProviderCases))
+		for _, tc := range prFlowProviderCases {
+			allowed[tc.name] = true
+		}
+		return allowed, nil
 	}
 
 	allowed := make(map[string]bool)
@@ -1873,19 +1807,28 @@ func parseE2EProviders() (map[string]bool, error) {
 		if name == "" {
 			continue
 		}
-		switch name {
-		case "opencode":
-			allowed[name] = true
-		default:
+		known := false
+		for _, tc := range prFlowProviderCases {
+			if tc.name == name {
+				allowed[name] = true
+				known = true
+				break
+			}
+		}
+		if !known {
 			return nil, fmt.Errorf("unknown e2e provider %q", name)
 		}
 	}
 	return allowed, nil
 }
 
-func hasOpenCodeAuth(home string) bool {
-	_, err := os.Stat(homePath(home, "~/.local/share/opencode/auth.json"))
-	return err == nil
+func hasProviderAuth(home string, paths []string) bool {
+	for _, rel := range paths {
+		if _, err := os.Stat(homePath(home, rel)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func homePath(home, rel string) string {
@@ -1959,10 +1902,11 @@ func buildSandmanBinary(t *testing.T) string {
 func runSandmanBinary(t *testing.T, binPath, workDir string, args ...string) (string, error) {
 	t.Helper()
 
+	ghBin := filepath.Join(workDir, ".sandman", "bin")
 	cmd := exec.Command(binPath, args...)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
-		"PATH=/workspace/.sandman/bin:"+os.Getenv("PATH"),
+		"PATH="+ghBin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"GH_TOKEN=fake",
 		"GITHUB_TOKEN=fake",
 	)
