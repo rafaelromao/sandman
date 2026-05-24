@@ -33,6 +33,7 @@ type Config struct {
 	MaxContainers     int              `yaml:"max_containers"`
 	WorktreeDir       string           `yaml:"worktree_dir"`
 	Sandbox           string           `yaml:"sandbox"`
+	Agents            map[string]Agent `yaml:"agents,omitempty"`
 	Git               GitConfig        `yaml:"git"`
 	Agent             string           `yaml:"-"`
 	AgentProviders    map[string]Agent `yaml:"-"`
@@ -101,16 +102,17 @@ func Load(path string) (*Config, error) {
 	}
 
 	type rawConfig struct {
-		DefaultAgent      string    `yaml:"default_agent"`
-		BuildTools        string    `yaml:"build_tools"`
-		ReviewCommand     string    `yaml:"review_command"`
-		DefaultParallel   int       `yaml:"default_parallel"`
-		StartDelay        int       `yaml:"start_delay"`
-		ContainerCapacity *int      `yaml:"container_capacity"`
-		MaxContainers     *int      `yaml:"max_containers"`
-		WorktreeDir       string    `yaml:"worktree_dir"`
-		Sandbox           string    `yaml:"sandbox"`
-		Git               GitConfig `yaml:"git"`
+		DefaultAgent      string           `yaml:"default_agent"`
+		BuildTools        string           `yaml:"build_tools"`
+		ReviewCommand     string           `yaml:"review_command"`
+		DefaultParallel   int              `yaml:"default_parallel"`
+		StartDelay        int              `yaml:"start_delay"`
+		ContainerCapacity *int             `yaml:"container_capacity"`
+		MaxContainers     *int             `yaml:"max_containers"`
+		WorktreeDir       string           `yaml:"worktree_dir"`
+		Sandbox           string           `yaml:"sandbox"`
+		Agents            map[string]Agent `yaml:"agents"`
+		Git               GitConfig        `yaml:"git"`
 	}
 
 	var raw rawConfig
@@ -126,6 +128,7 @@ func Load(path string) (*Config, error) {
 		StartDelay:      raw.StartDelay,
 		WorktreeDir:     raw.WorktreeDir,
 		Sandbox:         raw.Sandbox,
+		Agents:          raw.Agents,
 		Git:             raw.Git,
 	}
 
@@ -175,6 +178,9 @@ func Load(path string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("validate config: %w", err)
 		}
+		cfg.AgentProviders[name] = agent
+	}
+	for name, agent := range cfg.Agents {
 		cfg.AgentProviders[name] = agent
 	}
 	agentCfg, err := cfg.ResolveAgentProvider(cfg.DefaultAgent)

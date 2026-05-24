@@ -31,6 +31,8 @@ const pythonBuildToolsPreset = "python"
 
 const DefaultMISEVersion = "v2026.5.8"
 
+const piNodeVersion = "22.19.0"
+
 // Options configures the scaffolding behavior.
 type Options struct {
 	BuildTools   string // --build-tools override
@@ -191,7 +193,7 @@ var KnownBuildToolsPresets = func() []string {
 
 var builtInAgentVersionCatalog = map[string][]string{
 	"opencode": {"1.15.0", "1.14.0", "1.13.0"},
-	"pi":       {"0.1.2", "0.1.1", "0.1.0"},
+	"pi":       {"0.75.5", "0.75.4", "0.75.3"},
 }
 
 var bundledGoVersionCatalog = map[string]string{
@@ -978,6 +980,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
 	}
+	if defaultAgent == "pi" {
+		out.WriteString(renderNodeInstallCommand(piNodeVersion))
+	}
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
 	out.WriteString(renderAgentInstallCommand("pi", DefaultBuiltInAgentVersion("pi")))
 	return out.String()
@@ -1310,7 +1315,7 @@ func renderAgentInstallCommand(agent, version string) string {
 	case "opencode":
 		return fmt.Sprintf("RUN npm install -g opencode-ai@%s\n", version)
 	case "pi":
-		return fmt.Sprintf("RUN python3 -m pip install --break-system-packages pi==%s\n", version)
+		return fmt.Sprintf("RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@%s\n", version)
 	default:
 		return ""
 	}

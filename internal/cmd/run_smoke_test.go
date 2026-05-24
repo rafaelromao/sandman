@@ -40,6 +40,7 @@ type smokeProviderCase struct {
 	name         string
 	hostCLI      string
 	buildTools   string
+	model        string
 	issue        github.Issue
 	requiredAuth []string
 	authPaths    []string
@@ -61,6 +62,7 @@ var smokeProviderCases = []smokeProviderCase{
 		name:       "opencode",
 		hostCLI:    "opencode",
 		buildTools: "generic",
+		model:      "opencode/big-pickle",
 		issue: github.Issue{
 			Number: 421,
 			Title:  "Smoke opencode",
@@ -79,6 +81,7 @@ var smokeProviderCases = []smokeProviderCase{
 		name:       "pi",
 		hostCLI:    "pi",
 		buildTools: "generic",
+		model:      "kilo/kilo-auto/free",
 		issue: github.Issue{
 			Number: 424,
 			Title:  "Smoke pi",
@@ -164,6 +167,9 @@ func parseSmokeProviders() (map[string]bool, error) {
 
 func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	t.Helper()
+	if tc.name == "pi" {
+		setupPiTestShim(t)
+	}
 	ensureSmokeHostCLI(t, tc)
 
 	runtime, err := sandbox.ResolveRuntime("podman")
@@ -180,11 +186,6 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	if err != nil {
 		t.Fatalf("resolve home dir: %v", err)
 	}
-	opencodeModel := ""
-	if tc.name == "opencode" {
-		opencodeModel = "opencode/big-pickle"
-	}
-
 	homeDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
 		t.Fatalf("create ssh dir: %v", err)
@@ -205,6 +206,9 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	}
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+	if tc.name == "pi" {
+		ensurePiFreePackage(t, homeDir)
+	}
 
 	warmSmokeRuntime(t, runtime)
 
@@ -212,10 +216,14 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: tc.buildTools, Agent: tc.name}, smokePrompter{}); err != nil {
 		t.Fatalf("scaffold repo: %v", err)
 	}
+	if tc.name == "pi" {
+		writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
+		appendPiTestShimToDockerfile(t, repoDir)
+	}
 	if err := addSmokeDockerDeps(repoDir, tc.name); err != nil {
 		t.Fatalf("update Dockerfile: %v", err)
 	}
-	smokeCfg, err := customizeSmokeConfig(repoDir, tc.name, opencodeModel)
+	smokeCfg, err := customizeSmokeConfig(repoDir, tc.name, tc.model)
 	if err != nil {
 		t.Fatalf("update config: %v", err)
 	}
@@ -454,7 +462,7 @@ func addSmokeDockerDeps(repoDir, provider string) error {
 	return os.WriteFile(dockerfilePath, data, 0644)
 }
 
-func customizeSmokeConfig(repoDir, provider, opencodeModel string) (*config.Config, error) {
+func customizeSmokeConfig(repoDir, provider, model string) (*config.Config, error) {
 	configPath := filepath.Join(repoDir, ".sandman", "config.yaml")
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -464,22 +472,29 @@ func customizeSmokeConfig(repoDir, provider, opencodeModel string) (*config.Conf
 	if err != nil {
 		return nil, err
 	}
+	resolved.Model = model
 	if provider == "opencode" {
 		resolved.Command = strings.Join([]string{
 			fmt.Sprintf(`test "$(git config user.name)" = %q`, smokeGitName),
 			fmt.Sprintf(`test "$(git config user.email)" = %q`, smokeGitEmail),
-			fmt.Sprintf(`opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, opencodeModel),
+			fmt.Sprintf(`opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, model),
 		}, " && ")
 		for _, dir := range []string{"~/.cache/opencode", "~/.cache/opencode/bin"} {
 			if !containsSmokePath(resolved.ConfigDirs, dir) {
 				resolved.ConfigDirs = append(resolved.ConfigDirs, dir)
 			}
 		}
+	} else if provider == "pi" {
+		resolved.Command = `PATH=/workspace/.sandman/bin:${PATH} pi --print --provider {{.ModelProvider}}{{if .ModelName}} --model {{.ModelName}}{{end}} "$(cat {{.PromptFile}})"`
 	}
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
 	cfg.AgentProviders[provider] = resolved
+	if cfg.Agents == nil {
+		cfg.Agents = map[string]config.Agent{}
+	}
+	cfg.Agents[provider] = resolved
 	return cfg, nil
 }
 
@@ -515,6 +530,16 @@ func ensureSmokeWritableDirs(t *testing.T, homeDir, provider string) {
 		if err := os.Chmod(path, 0777); err != nil {
 			t.Fatalf("chmod %s: %v", rel, err)
 		}
+	}
+}
+
+func ensurePiFreePackage(t *testing.T, homeDir string) {
+	t.Helper()
+
+	cmd := exec.Command("pi", "install", "git:github.com/apmantza/pi-free")
+	cmd.Env = append(os.Environ(), "HOME="+homeDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("install pi-free: %v: %s", err, out)
 	}
 }
 

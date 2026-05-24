@@ -398,8 +398,11 @@ func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	if !strings.Contains(string(dockerfileData), "RUN npm install -g opencode-ai@"+scaffold.DefaultBuiltInAgentVersion("opencode")) {
 		t.Errorf("Dockerfile missing opencode install, got:\n%s", dockerfileData)
 	}
-	if !strings.Contains(string(dockerfileData), "RUN python3 -m pip install --break-system-packages pi=="+scaffold.DefaultBuiltInAgentVersion("pi")) {
+	if !strings.Contains(string(dockerfileData), "RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@"+scaffold.DefaultBuiltInAgentVersion("pi")) {
 		t.Errorf("Dockerfile missing pi install, got:\n%s", dockerfileData)
+	}
+	if !strings.Contains(string(dockerfileData), "RUN mise use -g --pin node@22.19.0") {
+		t.Errorf("Dockerfile missing node pin for pi, got:\n%s", dockerfileData)
 	}
 }
 
