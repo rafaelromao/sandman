@@ -33,7 +33,7 @@ The component that fetches issues, extracts their BlockedBy relationships, valid
 _Avoid_: scheduler, planner.
 
 **Batch**:
-The set of AgentRuns triggered by a single `sandman run` invocation. Coordinated for parallel execution with a concurrency limit.
+The set of AgentRuns triggered by a single `sandman run` invocation. Coordinated for parallel execution with a concurrency limit; prompt-only runs may produce an empty Batch when no issue-specific execution is needed.
 _Avoid_: Batch run, invocation.
 
 **Branch**:
@@ -143,7 +143,7 @@ _Avoid_: Replay mode.
 - A **Daemon Process** stops the **Control Socket** and releases the **PID Lock** when its **Batch** completes
 - An **Attach** client connects to the **Control Socket** and reads the daemon's output until EOF
 
-- A **Batch** contains one or more **AgentRuns**
+- A **Batch** contains zero or more **AgentRuns**
 - An **AgentRun** targets exactly one **Issue** and produces exactly one **Branch**
 - An **Issue** may have **BlockedBy** relationships to other **Issues**
 - A **DependencyResolver** produces a **ResolvedBatch** from a set of **Issues**

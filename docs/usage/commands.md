@@ -26,7 +26,7 @@ sandman run [issue...] [flags]
 
 ### Issue selection modes
 
-Exactly one selection mode is required:
+Exactly one selection mode is required, unless `--prompt` or `--template` is used without `{{ISSUE_NUMBER}}`.
 
 | Mode | Example | Description |
 |------|---------|-------------|
@@ -59,6 +59,7 @@ Exactly one selection mode is required:
 ### Flag interactions
 
 - `--next` is mutually exclusive with issue arguments, `--label`, and `--query`
+- If the final selected prompt does not contain `{{ISSUE_NUMBER}}`, `--prompt` and `--template` enter prompt-only mode: no issue selection is required, and issue arguments / selection flags are rejected
 - `run` preserves worktrees by default; use `sandman clean` to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
 - `--start-delay` is batch-local pacing; it waits after any `AgentRun` finishes before the next start, and `0` disables the delay
