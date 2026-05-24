@@ -321,7 +321,7 @@ func TestRun_PromptOnlyAllowsNoIssueSelection(t *testing.T) {
 	}
 }
 
-func TestRun_PromptOnlyRejectsIssueSelection(t *testing.T) {
+func TestRun_CustomPromptWithIssueSelectionStillUsesIssueDrivenFlow(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -342,9 +342,6 @@ func TestRun_PromptOnlyRejectsIssueSelection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			spy := &spyBatchRunner{result: &batch.Result{}}
 			deps := newRunDeps(spy)
-			deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch should not run")}
-			deps.IsTTY = func() bool { return true }
-			deps.IssuePicker = &fakeIssuePicker{err: errors.New("picker should not run")}
 
 			var buf bytes.Buffer
 			cmd := NewRunCmd(deps)
@@ -353,14 +350,14 @@ func TestRun_PromptOnlyRejectsIssueSelection(t *testing.T) {
 			cmd.SetArgs(tt.args)
 
 			err := cmd.Execute()
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if !strings.Contains(err.Error(), "prompt-only mode does not accept issue selection") {
+			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if spy.called {
-				t.Fatal("expected batch runner not to be called")
+			if !spy.called {
+				t.Fatal("expected batch runner to be called")
+			}
+			if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
+				t.Fatalf("expected issue 42, got %v", spy.req.Issues)
 			}
 		})
 	}
@@ -371,11 +368,11 @@ func TestRun_PromptOnlyStillRequiresIssueNumberWhenPromptUsesIt(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "inline prompt", args: []string{"--prompt", "Issue {{ISSUE_NUMBER}}"}},
+		{name: "inline prompt", args: []string{"--prompt", "Issue {{ISSUE_TITLE}}"}},
 		{name: "template file", args: func() []string {
 			dir := t.TempDir()
 			path := dir + "/prompt.md"
-			if err := os.WriteFile(path, []byte("Issue {{ISSUE_NUMBER}}"), 0644); err != nil {
+			if err := os.WriteFile(path, []byte("Issue {{ISSUE_BODY}}"), 0644); err != nil {
 				t.Fatalf("write template: %v", err)
 			}
 			return []string{"--template", path}
@@ -399,7 +396,7 @@ func TestRun_PromptOnlyStillRequiresIssueNumberWhenPromptUsesIt(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !strings.Contains(err.Error(), "prompt requires {{ISSUE_NUMBER}} but no issue selection was provided") {
+			if !strings.Contains(err.Error(), "prompt requires issue selection but no issue selection was provided") {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if spy.called {
