@@ -32,6 +32,14 @@ sandman run --next 3
 
 Selects the 3 lowest-numbered open issues labeled `ready-for-agent`. This is useful for CI/CD pipelines or automated triage workflows.
 
+## Running without an issue
+
+```bash
+sandman run --prompt "Return only OK."
+```
+
+When the final prompt omits `{{ISSUE_NUMBER}}`, Sandman runs in prompt-only mode: it skips GitHub issue lookup, records `issue: null` in events and history, and names the branch `sandman/<slug>-<timestamp>`.
+
 ## Continuing a failed run
 
 ```bash

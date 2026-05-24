@@ -29,7 +29,7 @@ One execution of an agent against one issue, producing commits on a branch. The 
 _Avoid_: Run, job, task.
 
 **Prompt-only run**:
-A Batch execution that runs without fetching a GitHub Issue. Prompt-only runs use a `sandman/<slug>-<timestamp>` branch name and may carry a null issue in events and result output.
+A Batch execution that runs without fetching a GitHub Issue. Also called a no-issue run. Prompt-only runs use a `sandman/<slug>-<timestamp>` branch name and carry a null issue in events and result output.
 _Avoid_: synthetic issue run.
 
 **DependencyResolver**:
