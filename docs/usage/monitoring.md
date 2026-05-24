@@ -25,14 +25,14 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 | `type` | Event type (e.g. `run.started`, `run.finished`, `run.blocked`, `run.warning`) |
 | `timestamp` | ISO 8601 timestamp |
 | `run_id` | Unique run identifier |
-| `issue` | GitHub issue number |
+| `issue` | GitHub issue number, or `null` for prompt-only runs |
 | `payload` | Event-specific data (status, branch, error message, etc.) |
 
 Because `sandman continue` replays branch, agent, model, and review command data, `run.started` payloads include `agent` and may include `model` and `review_command`. `run.continued` events also include `previous_run_id`.
 
-## Per-issue logs
+## Run logs
 
-Each agent run writes its output to `.sandman/logs/<issue>.log`. This file captures both stdout and stderr from the agent process, prefixed with issue-specific timestamps.
+Each agent run writes its output to `.sandman/logs/<issue>.log` for issue-driven runs, or a branch-derived filename for prompt-only runs. The file captures both stdout and stderr from the agent process, prefixed with run-specific timestamps.
 
 ## Worktree hints
 
@@ -41,6 +41,8 @@ sandman run 42
 ```
 
 Every completed run prints `worktree: <path>` on stdout. Worktrees stay on disk until you remove them with `sandman clean`.
+
+Prompt-only runs print the same summary shape, but their issue column appears as `prompt-only` instead of `#<number>`.
 
 ## Graceful shutdown
 
@@ -81,3 +83,5 @@ Summary: 2 succeeded, 1 failed
   #43  failure  sandman/43-add-tests
   #44  success  sandman/44-update-docs
 ```
+
+Prompt-only runs show the same summary with `prompt-only` in the issue column.

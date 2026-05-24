@@ -26,7 +26,7 @@ sandman run [issue...] [flags]
 
 ### Issue selection modes
 
-Exactly one selection mode is required, unless `--prompt` or `--template` is used without `{{ISSUE_NUMBER}}`.
+Issue-driven runs require exactly one selection mode. `--prompt` and `--template` can enter prompt-only mode only when no issue selection is provided and the final prompt omits issue placeholders.
 
 | Mode | Example | Description |
 |------|---------|-------------|
@@ -59,7 +59,8 @@ Exactly one selection mode is required, unless `--prompt` or `--template` is use
 ### Flag interactions
 
 - `--next` is mutually exclusive with issue arguments, `--label`, and `--query`
-- If the final selected prompt does not contain `{{ISSUE_NUMBER}}`, `--prompt` and `--template` enter prompt-only mode: no issue selection is required, and issue arguments / selection flags are rejected
+- If `--prompt` or `--template` is used with no issue arguments, `--label`, `--query`, or `--next`, and the final selected prompt omits `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`, Sandman enters prompt-only mode and skips GitHub issue lookup
+- If any issue selection is provided, Sandman stays in issue-driven mode even when `--prompt` or `--template` is set
 - `run` preserves worktrees by default; use `sandman clean` to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
 - `--start-delay` is batch-local pacing; it waits after any `AgentRun` finishes before the next start, and `0` disables the delay
