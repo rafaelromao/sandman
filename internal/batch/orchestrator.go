@@ -25,6 +25,11 @@ func generateRunID(issueNum int) string {
 	return fmt.Sprintf("run-%d-%d", issueNum, time.Now().UnixNano())
 }
 
+func issueRef(num int) *int {
+	n := num
+	return &n
+}
+
 // Orchestrator coordinates parallel AgentRun execution.
 type Orchestrator struct {
 	githubClient            github.Client
@@ -463,6 +468,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("materialize prompt template: %w", err)
 		}
 	}
+	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "") {
+		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, func() (gitIdentity, error) { return resolveGitIdentity(".") }, sbFactory, containerAlloc, req, startDelay, parallel)
+	}
 
 	startGate := newBatchStartGate(parallel, startDelay)
 	var wg sync.WaitGroup
@@ -549,7 +557,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			mu.Unlock()
 			if len(blockedBy) > 0 {
-				res := AgentRunResult{IssueNumber: issueNum, Status: "blocked", Branch: req.Branches[issueNum]}
+				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "blocked", Branch: req.Branches[issueNum]}
 				o.logBlocked(issueNum, blockedBy)
 
 				mu.Lock()
@@ -561,7 +569,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 			if err := startGate.Acquire(ctx); err != nil {
 				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Status: "failure", Branch: req.Branches[issueNum]}
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "failure", Branch: req.Branches[issueNum]}
 				statuses[issueNum] = "failure"
 				failureCount++
 				mu.Unlock()
@@ -597,6 +605,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					Type:      "run.warning",
 					Timestamp: time.Now(),
 					Issue:     result.IssueNumber,
+					IssueRef:  result.Issue,
 					Payload: map[string]any{
 						"branch":  result.Branch,
 						"message": err.Error(),
@@ -621,6 +630,7 @@ func (o *Orchestrator) logBlocked(issueNum int, blockers []int) {
 		Timestamp: time.Now(),
 		RunID:     generateRunID(issueNum),
 		Issue:     issueNum,
+		IssueRef:  issueRef(issueNum),
 		Payload:   map[string]any{"blocked_by": blockers},
 	})
 }
@@ -687,7 +697,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
-		return AgentRunResult{IssueNumber: num, Status: "failure"}, false
+		return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure"}, false
 	}
 
 	branch := branches[num]
@@ -699,7 +709,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		lease, err := containerAlloc.Acquire()
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: acquire container for issue %d: %v\n", num, err)
-			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}, false
+			return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
 		}
 		container = lease.container
 		defer lease.Release()
@@ -710,13 +720,13 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		identity, err := resolveGitIdentity()
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", num, err)
-			return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}, false
+			return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
 		}
 		setter.SetGitIdentity(identity.Name, identity.Email)
 	}
 	if err := wt.Start(); err != nil {
 		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", num, err)
-		return AgentRunResult{IssueNumber: num, Status: "failure", Branch: branch}, false
+		return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
 	}
 
 	activeMu.Lock()
@@ -787,6 +797,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			Timestamp: time.Now(),
 			RunID:     runID,
 			Issue:     num,
+			IssueRef:  issueRef(num),
 			Payload:   payload,
 		})
 	}
@@ -799,6 +810,12 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	}
 
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
+	if result.Issue == nil {
+		result.Issue = issueRef(num)
+	}
+	if result.IssueNumber == 0 {
+		result.IssueNumber = num
+	}
 
 	worktreeState := "preserved"
 
@@ -808,6 +825,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			Timestamp: time.Now(),
 			RunID:     runID,
 			Issue:     num,
+			IssueRef:  issueRef(num),
 			Payload: map[string]any{
 				"status":         result.Status,
 				"branch":         result.Branch,
@@ -818,6 +836,116 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	return result, true
 }
+
+func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, startDelay time.Duration, parallel int) (*Result, error) {
+	_ = startDelay
+	_ = parallel
+	branch := promptOnlyBranch(req.PromptConfig)
+	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, resolveGitIdentity, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc)
+	if !started {
+		return &Result{Runs: []AgentRunResult{result}}, nil
+	}
+	return &Result{Runs: []AgentRunResult{result}}, nil
+}
+
+func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
+	var container sandbox.Container
+	if containerAlloc != nil {
+		lease, err := containerAlloc.Acquire()
+		if err != nil {
+			fmt.Fprintf(o.errorLog, "error: acquire container for prompt-only run: %v\n", err)
+			return AgentRunResult{Status: "failure", Branch: branch}, false
+		}
+		container = lease.container
+		defer lease.Release()
+	}
+
+	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch, container)
+	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
+		identity, err := resolveGitIdentity()
+		if err != nil {
+			fmt.Fprintf(o.errorLog, "error: resolve git identity for prompt-only run: %v\n", err)
+			return AgentRunResult{Status: "failure", Branch: branch}, false
+		}
+		setter.SetGitIdentity(identity.Name, identity.Email)
+	}
+	if err := wt.Start(); err != nil {
+		fmt.Fprintf(o.errorLog, "error: start sandbox for prompt-only run: %v\n", err)
+		return AgentRunResult{Status: "failure", Branch: branch}, false
+	}
+
+	activeRuns := map[int]sandbox.Sandbox{0: wt}
+	defer func() { delete(activeRuns, 0) }()
+
+	factory := o.runnableFactory
+	if factory == nil {
+		factory = defaultRunnableFactory{}
+	}
+	runnable := factory.NewRunnable(nil, branch, wt)
+	if agentRun, ok := runnable.(*AgentRun); ok {
+		agentRun.env = agentCfg.Env
+		agentRun.preset = agentCfg.Preset
+		agentRun.model = agentCfg.Model
+		agentRun.modelProvider = agentCfg.ModelProvider
+		agentRun.modelName = agentCfg.ModelName
+		agentRun.defaultBranch = cfg.Git.DefaultBranch
+		agentRun.outputWriter = outputWriter
+	}
+
+	runID := generateRunID(0)
+	if o.eventLog != nil {
+		payload := map[string]any{"branch": branch, "prompt_source_type": "prompt"}
+		if renderCfg.PromptFlag != "" {
+			payload["prompt_source_value"] = renderCfg.PromptFlag
+		} else if renderCfg.TemplateFlag != "" {
+			payload["prompt_source_value"] = renderCfg.TemplateFlag
+		}
+		if len(renderCfg.PromptArgs) > 0 {
+			payload["prompt_args"] = renderCfg.PromptArgs
+		}
+		if renderCfg.ReviewCommandSet {
+			payload["review_command"] = renderCfg.ReviewCommand
+		}
+		if agentName != "" {
+			payload["agent"] = agentName
+		}
+		if model := strings.TrimSpace(agentCfg.Model); model != "" {
+			payload["model"] = model
+		}
+		_ = o.eventLog.Log(events.Event{Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
+	}
+
+	if renderCfg.PromptFile == "" {
+		renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
+	}
+	if renderCfg.RenderedPromptFile == "" {
+		renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+	}
+
+	result := runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
+	if o.eventLog != nil {
+		_ = o.eventLog.Log(events.Event{Type: "run.finished", Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": result.Status, "branch": result.Branch, "worktree_state": "preserved"}})
+	}
+
+	return result, true
+}
+
+func promptOnlyBranch(cfg prompt.RenderConfig) string {
+	source := strings.TrimSpace(cfg.PromptFlag)
+	if source == "" && cfg.TemplateFlag != "" {
+		if data, err := os.ReadFile(cfg.TemplateFlag); err == nil {
+			source = string(data)
+		} else {
+			source = filepath.Base(cfg.TemplateFlag)
+		}
+	}
+	slug := slugify(source)
+	if slug == "" {
+		slug = "prompt-only"
+	}
+	return fmt.Sprintf("sandman/%s-%d", slug, time.Now().UnixNano())
+}
+
 func slugify(title string) string {
 	var result []rune
 	for _, r := range strings.ToLower(title) {

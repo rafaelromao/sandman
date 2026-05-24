@@ -41,10 +41,11 @@ func NewAgentRun(issue *github.Issue, branch string, sandbox sandbox.Sandbox) *A
 
 // Prepare renders the prompt for the issue and writes it to the sandbox.
 func (r *AgentRun) Prepare(renderer prompt.Renderer, cfg prompt.RenderConfig) error {
+	issue := r.issueData()
 	rendered, err := renderer.Render(cfg, prompt.IssueData{
-		Number:       r.issue.Number,
-		Title:        r.issue.Title,
-		Body:         r.issue.Body,
+		Number:       issue.Number,
+		Title:        issue.Title,
+		Body:         issue.Body,
 		SourceBranch: r.branch,
 		TargetBranch: r.defaultBranch,
 	})
@@ -65,7 +66,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)
 	}
-	logPath := filepath.Join(logDir, fmt.Sprintf("%d.log", r.issue.Number))
+	logPath := filepath.Join(logDir, r.logFileName())
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("create log file: %w", err)
@@ -77,8 +78,8 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		stderr = io.MultiWriter(stderr, r.outputWriter)
 	}
 
-	prefixedOut := NewLinePrefixWriter(r.issue.Number, stdout)
-	prefixedErr := NewLinePrefixWriter(r.issue.Number, stderr)
+	prefixedOut := NewLinePrefixWriter(r.prefixLabel(), stdout)
+	prefixedErr := NewLinePrefixWriter(r.prefixLabel(), stderr)
 
 	combinedOut := io.MultiWriter(logFile, prefixedOut)
 	combinedErr := io.MultiWriter(logFile, prefixedErr)
@@ -160,10 +161,45 @@ func (r *AgentRun) modelFlag(command string) string {
 
 // Result returns the current outcome of the AgentRun.
 func (r *AgentRun) Result() AgentRunResult {
+	issue := r.issueData()
 	return AgentRunResult{
-		IssueNumber:  r.issue.Number,
+		IssueNumber:  issue.Number,
+		Issue:        r.issuePointer(),
 		Status:       r.status,
 		Branch:       r.branch,
 		WorktreePath: r.sandbox.WorkDir(),
 	}
+}
+
+func (r *AgentRun) issueData() github.Issue {
+	if r.issue != nil {
+		return *r.issue
+	}
+	return github.Issue{}
+}
+
+func (r *AgentRun) issuePointer() *int {
+	if r.issue == nil {
+		return nil
+	}
+	n := r.issue.Number
+	return &n
+}
+
+func (r *AgentRun) prefixLabel() string {
+	if r.issue != nil {
+		return fmt.Sprintf("issue-%d", r.issue.Number)
+	}
+	return "prompt-only"
+}
+
+func (r *AgentRun) logFileName() string {
+	if r.issue != nil {
+		return fmt.Sprintf("%d.log", r.issue.Number)
+	}
+	name := strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(r.branch)
+	if name == "" {
+		name = "prompt-only"
+	}
+	return name + ".log"
 }

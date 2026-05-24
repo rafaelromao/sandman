@@ -326,6 +326,13 @@ func printSummary(cmd *cobra.Command, result *batch.Result) {
 		fmt.Fprintf(cmd.OutOrStdout(), "Summary: %d succeeded, %d failed\n", successCount, failureCount)
 	}
 	for _, run := range result.Runs {
-		fmt.Fprintf(cmd.OutOrStdout(), "  #%d  %s  %s\n", run.IssueNumber, run.Status, run.Branch)
+		fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s\n", formatIssueLabel(run.IssueNumber, run.Issue), run.Status, run.Branch)
 	}
+}
+
+func formatIssueLabel(issueNumber int, issue *int) string {
+	if issue == nil && issueNumber == 0 {
+		return "prompt-only"
+	}
+	return fmt.Sprintf("#%d", issueNumber)
 }

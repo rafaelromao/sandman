@@ -44,12 +44,15 @@ func NewStatusCmd(log events.EventLog) *cobra.Command {
 			}
 
 			sort.Slice(active, func(i, j int) bool {
+				if (active[i].IssueRef == nil && active[i].Issue == 0) || (active[j].IssueRef == nil && active[j].Issue == 0) {
+					return active[i].Timestamp.Before(active[j].Timestamp)
+				}
 				return active[i].Issue < active[j].Issue
 			})
 			fmt.Fprintln(cmd.OutOrStdout(), "Active runs:")
 			for _, e := range active {
 				elapsed := time.Since(e.Timestamp).Round(time.Second)
-				fmt.Fprintf(cmd.OutOrStdout(), "  #%d  elapsed %s\n", e.Issue, elapsed)
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s  elapsed %s\n", formatEventIssueLabel(e), elapsed)
 			}
 			return nil
 		},
