@@ -80,7 +80,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				if issueSelectionProvided {
 					return fmt.Errorf("prompt-only mode does not accept issue selection")
 				}
-				promptNeedsIssueNumber = false
 			} else if overridePrompt && promptNeedsIssueNumber && !issueSelectionProvided {
 				return fmt.Errorf("prompt requires {{ISSUE_NUMBER}} but no issue selection was provided")
 			} else {
