@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -238,6 +239,173 @@ func TestRun_NoIssues(t *testing.T) {
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called when no issues provided")
+	}
+}
+
+func TestRun_HelpMentionsPromptOnlyMode(t *testing.T) {
+	deps := newRunDeps(&spyBatchRunner{result: &batch.Result{}})
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--help"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "prompt-only mode") {
+		t.Fatalf("expected help to mention prompt-only mode, got:\n%s", out)
+	}
+	if !strings.Contains(out, "{{ISSUE_NUMBER}}") {
+		t.Fatalf("expected help to mention ISSUE_NUMBER gating, got:\n%s", out)
+	}
+}
+
+func TestRun_PromptOnlyAllowsNoIssueSelection(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		setup func(*Dependencies)
+	}{
+		{
+			name: "inline prompt",
+			args: []string{"--prompt", "Return only OK."},
+			setup: func(deps *Dependencies) {
+				deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch should not run")}
+			},
+		},
+		{
+			name: "template file",
+			args: func() []string {
+				dir := t.TempDir()
+				path := dir + "/prompt.md"
+				if err := os.WriteFile(path, []byte("Return only OK."), 0644); err != nil {
+					t.Fatalf("write template: %v", err)
+				}
+				return []string{"--template", path}
+			}(),
+			setup: func(deps *Dependencies) {
+				deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch should not run")}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(spy)
+			tt.setup(&deps)
+
+			var buf bytes.Buffer
+			cmd := NewRunCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !spy.called {
+				t.Fatal("expected batch runner to be called")
+			}
+			if len(spy.req.Issues) != 0 {
+				t.Fatalf("expected no issues, got %v", spy.req.Issues)
+			}
+		})
+	}
+}
+
+func TestRun_PromptOnlyRejectsIssueSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "inline prompt", args: []string{"--prompt", "Return only OK.", "42"}},
+		{name: "template file", args: func() []string {
+			dir := t.TempDir()
+			path := dir + "/prompt.md"
+			if err := os.WriteFile(path, []byte("Return only OK."), 0644); err != nil {
+				t.Fatalf("write template: %v", err)
+			}
+			return []string{"--template", path, "42"}
+		}()},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(spy)
+			deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch should not run")}
+			deps.IsTTY = func() bool { return true }
+			deps.IssuePicker = &fakeIssuePicker{err: errors.New("picker should not run")}
+
+			var buf bytes.Buffer
+			cmd := NewRunCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), "prompt-only mode does not accept issue selection") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if spy.called {
+				t.Fatal("expected batch runner not to be called")
+			}
+		})
+	}
+}
+
+func TestRun_PromptOnlyStillRequiresIssueNumberWhenPromptUsesIt(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "inline prompt", args: []string{"--prompt", "Issue {{ISSUE_NUMBER}}"}},
+		{name: "template file", args: func() []string {
+			dir := t.TempDir()
+			path := dir + "/prompt.md"
+			if err := os.WriteFile(path, []byte("Issue {{ISSUE_NUMBER}}"), 0644); err != nil {
+				t.Fatalf("write template: %v", err)
+			}
+			return []string{"--template", path}
+		}()},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(spy)
+			deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch should not run")}
+
+			var buf bytes.Buffer
+			cmd := NewRunCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), "prompt requires {{ISSUE_NUMBER}} but no issue selection was provided") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if spy.called {
+				t.Fatal("expected batch runner not to be called")
+			}
+		})
 	}
 }
 
@@ -1144,35 +1312,40 @@ func TestRun_PromptFlagPassedToBatchRunner(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--prompt", "custom template", "42"})
+	cmd.SetArgs([]string{"--prompt", "custom template {{ISSUE_NUMBER}}", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.req.PromptConfig.PromptFlag != "custom template" {
-		t.Errorf("expected PromptFlag='custom template', got %q", spy.req.PromptConfig.PromptFlag)
+	if spy.req.PromptConfig.PromptFlag != "custom template {{ISSUE_NUMBER}}" {
+		t.Errorf("expected PromptFlag='custom template {{ISSUE_NUMBER}}', got %q", spy.req.PromptConfig.PromptFlag)
 	}
 }
 
 func TestRun_TemplateFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
+	dir := t.TempDir()
+	templatePath := dir + "/my-prompt.md"
+	if err := os.WriteFile(templatePath, []byte("template file {{ISSUE_NUMBER}}"), 0644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--template", "./my-prompt.md", "42"})
+	cmd.SetArgs([]string{"--template", templatePath, "42"})
 
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.req.PromptConfig.TemplateFlag != "./my-prompt.md" {
-		t.Errorf("expected TemplateFlag='./my-prompt.md', got %q", spy.req.PromptConfig.TemplateFlag)
+	if spy.req.PromptConfig.TemplateFlag != templatePath {
+		t.Errorf("expected TemplateFlag=%q, got %q", templatePath, spy.req.PromptConfig.TemplateFlag)
 	}
 }
 
@@ -1321,23 +1494,28 @@ func TestRun_ReviewCommandFlagOverridesConfig(t *testing.T) {
 func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
+	dir := t.TempDir()
+	templatePath := dir + "/template.md"
+	if err := os.WriteFile(templatePath, []byte("template file {{ISSUE_NUMBER}}"), 0644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--prompt", "inline", "--template", "./t.md", "--prompt-arg", "K=V", "42"})
+	cmd.SetArgs([]string{"--prompt", "inline {{ISSUE_NUMBER}}", "--template", templatePath, "--prompt-arg", "K=V", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.req.PromptConfig.PromptFlag != "inline" {
-		t.Errorf("expected PromptFlag='inline', got %q", spy.req.PromptConfig.PromptFlag)
+	if spy.req.PromptConfig.PromptFlag != "inline {{ISSUE_NUMBER}}" {
+		t.Errorf("expected PromptFlag='inline {{ISSUE_NUMBER}}', got %q", spy.req.PromptConfig.PromptFlag)
 	}
-	if spy.req.PromptConfig.TemplateFlag != "./t.md" {
-		t.Errorf("expected TemplateFlag='./t.md', got %q", spy.req.PromptConfig.TemplateFlag)
+	if spy.req.PromptConfig.TemplateFlag != templatePath {
+		t.Errorf("expected TemplateFlag=%q, got %q", templatePath, spy.req.PromptConfig.TemplateFlag)
 	}
 	if spy.req.PromptConfig.PromptArgs["K"] != "V" {
 		t.Errorf("expected K=V, got K=%q", spy.req.PromptConfig.PromptArgs["K"])

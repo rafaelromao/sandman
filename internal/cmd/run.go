@@ -23,68 +23,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [issue...]",
 		Short: "Run an AFK agent for specific issues",
-		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Use \"sandman clean\" to delete preserved worktrees.",
+		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Prompt or template overrides that omit {{ISSUE_NUMBER}} run without issue lookup. Use \"sandman clean\" to delete preserved worktrees.",
+		Example: `  sandman run 42 43
+  sandman run --prompt "Return only OK."
+  sandman run --template ./prompt.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := deps.ConfigStore.Load()
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
-			}
-
-			label, _ := cmd.Flags().GetString("label")
-			query, _ := cmd.Flags().GetString("query")
-			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
-			nextFlag := cmd.Flags().Lookup("next")
-			nextProvided := nextFlag != nil && nextFlag.Changed
-			nextCount, _ := cmd.Flags().GetInt("next")
-
-			var issues []int
-			if nextProvided {
-				if len(args) > 0 || label != "" || query != "" {
-					return fmt.Errorf("cannot combine --next with issue arguments, --label or --query")
-				}
-				if nextCount <= 0 {
-					return fmt.Errorf("--next count must be at least 1")
-				}
-				issues, err = resolveNextIssues(cmd.Context(), deps.GitHubClient, nextCount)
-				if err != nil {
-					return err
-				}
-			} else if len(args) > 0 {
-				if label != "" || query != "" {
-					return fmt.Errorf("cannot combine issue arguments with --label or --query")
-				}
-				issues = make([]int, len(args))
-				for i, arg := range args {
-					n, err := strconv.Atoi(arg)
-					if err != nil {
-						return fmt.Errorf("invalid issue number %q: %w", arg, err)
-					}
-					issues[i] = n
-				}
-			} else if label != "" {
-				searchQuery := "label:" + label + " is:open"
-				issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, searchQuery)
-				if err != nil {
-					return err
-				}
-			} else if query != "" {
-				issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, query)
-				if err != nil {
-					return err
-				}
-			} else {
-				if deps.IsTTY != nil && deps.IsTTY() {
-					issues, err = pickIssues(cmd.Context(), deps.GitHubClient, deps.IssuePicker)
-					if err != nil {
-						return err
-					}
-				} else {
-					return fmt.Errorf("no issues provided")
-				}
-			}
-
-			if len(issues) == 0 {
-				return fmt.Errorf("no issues selected")
 			}
 
 			promptFlag, _ := cmd.Flags().GetString("prompt")
@@ -100,6 +46,91 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return fmt.Errorf("invalid --prompt-arg format %q: expected KEY=VALUE", arg)
 				}
 				promptArgs[parts[0]] = parts[1]
+			}
+
+			selectedPrompt := ""
+			overridePrompt := false
+			switch {
+			case strings.TrimSpace(promptFlag) != "":
+				selectedPrompt = promptFlag
+				overridePrompt = true
+			case strings.TrimSpace(templateFlag) != "":
+				content, err := os.ReadFile(templateFlag)
+				if err != nil {
+					return fmt.Errorf("read template file: %w", err)
+				}
+				selectedPrompt = string(content)
+				overridePrompt = true
+			}
+			promptNeedsIssueNumber := true
+			if overridePrompt {
+				promptNeedsIssueNumber = strings.Contains(selectedPrompt, "{{ISSUE_NUMBER}}")
+			}
+
+			label, _ := cmd.Flags().GetString("label")
+			query, _ := cmd.Flags().GetString("query")
+			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
+			nextFlag := cmd.Flags().Lookup("next")
+			nextProvided := nextFlag != nil && nextFlag.Changed
+			nextCount, _ := cmd.Flags().GetInt("next")
+			issueSelectionProvided := len(args) > 0 || nextProvided || label != "" || query != "" || includeDependencies
+
+			var issues []int
+			if overridePrompt && !promptNeedsIssueNumber {
+				if issueSelectionProvided {
+					return fmt.Errorf("prompt-only mode does not accept issue selection")
+				}
+			} else if overridePrompt && promptNeedsIssueNumber && !issueSelectionProvided {
+				return fmt.Errorf("prompt requires {{ISSUE_NUMBER}} but no issue selection was provided")
+			} else {
+				if nextProvided {
+					if len(args) > 0 || label != "" || query != "" {
+						return fmt.Errorf("cannot combine --next with issue arguments, --label or --query")
+					}
+					if nextCount <= 0 {
+						return fmt.Errorf("--next count must be at least 1")
+					}
+					issues, err = resolveNextIssues(cmd.Context(), deps.GitHubClient, nextCount)
+					if err != nil {
+						return err
+					}
+				} else if len(args) > 0 {
+					if label != "" || query != "" {
+						return fmt.Errorf("cannot combine issue arguments with --label or --query")
+					}
+					issues = make([]int, len(args))
+					for i, arg := range args {
+						n, err := strconv.Atoi(arg)
+						if err != nil {
+							return fmt.Errorf("invalid issue number %q: %w", arg, err)
+						}
+						issues[i] = n
+					}
+				} else if label != "" {
+					searchQuery := "label:" + label + " is:open"
+					issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, searchQuery)
+					if err != nil {
+						return err
+					}
+				} else if query != "" {
+					issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, query)
+					if err != nil {
+						return err
+					}
+				} else {
+					if deps.IsTTY != nil && deps.IsTTY() {
+						issues, err = pickIssues(cmd.Context(), deps.GitHubClient, deps.IssuePicker)
+						if err != nil {
+							return err
+						}
+					} else {
+						return fmt.Errorf("no issues provided")
+					}
+				}
+			}
+
+			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueNumber) {
+				return fmt.Errorf("no issues selected")
 			}
 
 			reviewCommand := cfg.EffectiveReviewCommand()
@@ -218,8 +249,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("include-dependencies", false, "Expand the batch to include transitive blockers")
 	cmd.Flags().String("label", "", "Select issues by label")
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")
-	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md)")
-	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md)")
+	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
+	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("review-command", "", "Review command to inject into the prompt template")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode or pi)")

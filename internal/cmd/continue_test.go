@@ -337,7 +337,6 @@ func TestContinue_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected second continue to reference first continue, got %#v", log.events[2].Payload["previous_run_id"])
 	}
 }
-
 func TestContinue_FailsWhenWorktreeMissing(t *testing.T) {
 	branch := "sandman/42-fix-bug"
 	log := &fakeEventLog{events: []events.Event{

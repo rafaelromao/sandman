@@ -39,8 +39,8 @@ func TestRunDir_NoIssues(t *testing.T) {
 	if !strings.HasPrefix(last, "run-") {
 		t.Fatalf("expected run- prefix, got %q", last)
 	}
-	if strings.Contains(last, "42") {
-		t.Fatalf("unexpected issue number in path with no issues: %q", last)
+	if strings.Count(last, "-") != 1 {
+		t.Fatalf("expected no embedded issue number in path with no issues: %q", last)
 	}
 }
 
