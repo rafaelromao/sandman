@@ -29,5 +29,7 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: fireworks-ai/accounts/fireworks/models/kimi-k2p6
+          alternate_model: fireworks-ai/accounts/fireworks/models/kimi-k2p6
+          model: opencode-go/kimi-k2.6
