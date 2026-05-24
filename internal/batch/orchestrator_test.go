@@ -270,6 +270,14 @@ func (f *controlledRunnableFactory) NewRunnable(issue *github.Issue, branch stri
 	return r
 }
 
+type promptOnlyRunnableFactory struct {
+	hook func(issue *github.Issue, branch string) AgentRunResult
+}
+
+func (f *promptOnlyRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return &fakeRunnable{result: f.hook(issue, branch)}
+}
+
 type continuationFlowState struct {
 	mu       sync.Mutex
 	prompts  []string
@@ -1584,6 +1592,52 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 	}
 	if started.Payload["agent"] != "test-agent" {
 		t.Fatalf("expected agent replay, got %#v", started.Payload["agent"])
+	}
+}
+
+func TestRunBatch_PromptOnlyRunSkipsIssueLookupAndUsesNullIssue(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	spyLog := &spyEventLog{}
+	var sawIssueNil bool
+	var sawBranch string
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "return-only-ok-123")}}
+	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		sawIssueNil = issue == nil
+		sawBranch = branch
+		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+	}}
+
+	result, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{PromptFlag: "Return only OK."}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || len(result.Runs) != 1 {
+		t.Fatalf("expected 1 prompt-only run, got %#v", result)
+	}
+	if !sawIssueNil {
+		t.Fatal("expected prompt-only run to skip issue lookup")
+	}
+	if !strings.HasPrefix(sawBranch, "sandman/return-only-ok-") {
+		t.Fatalf("expected prompt-only branch prefix, got %q", sawBranch)
+	}
+	if result.Runs[0].IssueNumber != 0 {
+		t.Fatalf("expected zero legacy issue number, got %d", result.Runs[0].IssueNumber)
+	}
+	if result.Runs[0].Issue != nil {
+		t.Fatalf("expected nil issue ref in result, got %v", *result.Runs[0].Issue)
+	}
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	for _, evt := range spyLog.events {
+		if evt.IssueRef != nil {
+			t.Fatalf("expected null issue in event %q, got %d", evt.Type, *evt.IssueRef)
+		}
 	}
 }
 

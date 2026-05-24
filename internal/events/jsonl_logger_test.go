@@ -58,6 +58,46 @@ func TestJSONLLogger_LogWritesValidJSONLine(t *testing.T) {
 	}
 }
 
+func TestJSONLLogger_LogWritesNullIssue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	logger := &JSONLLogger{Path: path}
+
+	event := Event{
+		Type:      "run.started",
+		Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC),
+		RunID:     "run-prompt-only",
+		Payload:   map[string]any{"branch": "sandman/return-only-ok-123"},
+	}
+
+	if err := logger.Log(event); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+
+	if !strings.Contains(string(data), `"issue":null`) {
+		t.Fatalf("expected null issue in JSON, got %s", string(data))
+	}
+
+	got, err := logger.Read()
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(got))
+	}
+	if got[0].Issue != 0 {
+		t.Fatalf("expected zero issue value after read, got %d", got[0].Issue)
+	}
+	if got[0].IssueRef != nil {
+		t.Fatalf("expected nil issue ref after read, got %v", *got[0].IssueRef)
+	}
+}
+
 func TestJSONLLogger_ReadParsesEvents(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")

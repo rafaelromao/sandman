@@ -10,17 +10,17 @@ import (
 // LinePrefixWriter prefixes every line written to it with the issue identifier and current timestamp.
 type LinePrefixWriter struct {
 	w     io.Writer
-	issue int
+	label string
 	buf   []byte
 }
 
-// NewLinePrefixWriter creates a writer that prefixes each line with [issue-N] HH:MM:SS.
-func NewLinePrefixWriter(issue int, w io.Writer) *LinePrefixWriter {
-	return &LinePrefixWriter{w: w, issue: issue}
+// NewLinePrefixWriter creates a writer that prefixes each line with a label and HH:MM:SS.
+func NewLinePrefixWriter(label string, w io.Writer) *LinePrefixWriter {
+	return &LinePrefixWriter{w: w, label: label}
 }
 
 func (lp *LinePrefixWriter) prefix() string {
-	return fmt.Sprintf("[issue-%d] %s ", lp.issue, time.Now().Format("15:04:05"))
+	return fmt.Sprintf("[%s] %s ", lp.label, time.Now().Format("15:04:05"))
 }
 
 // Write buffers input until a newline is found, then writes the prefixed line.

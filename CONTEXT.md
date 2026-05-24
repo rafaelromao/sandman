@@ -28,16 +28,20 @@ _Avoid_: agent model, default model.
 One execution of an agent against one issue, producing commits on a branch. The unit of work within a batch.
 _Avoid_: Run, job, task.
 
+**Prompt-only run**:
+A Batch execution that runs without fetching a GitHub Issue. Prompt-only runs use a `sandman/<slug>-<timestamp>` branch name and may carry a null issue in events and result output.
+_Avoid_: synthetic issue run.
+
 **DependencyResolver**:
 The component that fetches issues, extracts their BlockedBy relationships, validates the dependency graph (detecting cycles and missing blockers), and produces a topologically sorted ResolvedBatch.
 _Avoid_: scheduler, planner.
 
 **Batch**:
-The set of AgentRuns triggered by a single `sandman run` invocation. Coordinated for parallel execution with a concurrency limit; prompt-only runs may produce an empty Batch when no issue-specific execution is needed.
+The set of AgentRuns triggered by a single `sandman run` invocation. Coordinated for parallel execution with a concurrency limit; prompt-only runs may execute without issue lookup and may emit null-issue run entries.
 _Avoid_: Batch run, invocation.
 
 **Branch**:
-A git branch named `sandman/<issue-number>-<slugified-title>`, created per AgentRun.
+A git branch named `sandman/<issue-number>-<slugified-title>` for issue-driven AgentRuns, or `sandman/<slug>-<timestamp>` for prompt-only runs.
 _Avoid_: Feature branch, PR branch.
 
 **BuildToolsPreset**:

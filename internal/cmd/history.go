@@ -43,7 +43,7 @@ func NewHistoryCmd(log events.EventLog) *cobra.Command {
 				branch, _ := e.Payload["branch"].(string)
 				startedEvt := started[e.RunID]
 				duration := e.Timestamp.Sub(startedEvt.Timestamp).Round(time.Second)
-				fmt.Fprintf(cmd.OutOrStdout(), "  #%d  %s  %s  %s\n", e.Issue, status, duration, branch)
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s  %s\n", formatEventIssueLabel(e), status, duration, branch)
 			}
 			return nil
 		},

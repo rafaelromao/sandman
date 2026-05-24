@@ -40,6 +40,7 @@ type Result struct {
 // AgentRunResult describes the outcome of a single AgentRun.
 type AgentRunResult struct {
 	IssueNumber  int
+	Issue        *int
 	Status       string
 	Branch       string
 	WorktreePath string

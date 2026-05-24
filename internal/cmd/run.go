@@ -62,10 +62,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				selectedPrompt = string(content)
 				overridePrompt = true
 			}
-			promptNeedsIssueNumber := true
-			if overridePrompt {
-				promptNeedsIssueNumber = strings.Contains(selectedPrompt, "{{ISSUE_NUMBER}}")
-			}
+			promptNeedsIssueSelection := overridePrompt && promptRequiresIssueSelection(selectedPrompt)
 
 			label, _ := cmd.Flags().GetString("label")
 			query, _ := cmd.Flags().GetString("query")
@@ -76,12 +73,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			issueSelectionProvided := len(args) > 0 || nextProvided || label != "" || query != "" || includeDependencies
 
 			var issues []int
-			if overridePrompt && !promptNeedsIssueNumber {
-				if issueSelectionProvided {
-					return fmt.Errorf("prompt-only mode does not accept issue selection")
+			if overridePrompt && !issueSelectionProvided {
+				if promptNeedsIssueSelection {
+					return fmt.Errorf("prompt requires issue selection but no issue selection was provided")
 				}
-			} else if overridePrompt && promptNeedsIssueNumber && !issueSelectionProvided {
-				return fmt.Errorf("prompt requires {{ISSUE_NUMBER}} but no issue selection was provided")
 			} else {
 				if nextProvided {
 					if len(args) > 0 || label != "" || query != "" {
@@ -129,7 +124,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 
-			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueNumber) {
+			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) {
 				return fmt.Errorf("no issues selected")
 			}
 
@@ -326,6 +321,17 @@ func printSummary(cmd *cobra.Command, result *batch.Result) {
 		fmt.Fprintf(cmd.OutOrStdout(), "Summary: %d succeeded, %d failed\n", successCount, failureCount)
 	}
 	for _, run := range result.Runs {
-		fmt.Fprintf(cmd.OutOrStdout(), "  #%d  %s  %s\n", run.IssueNumber, run.Status, run.Branch)
+		fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s\n", formatIssueLabel(run.IssueNumber, run.Issue), run.Status, run.Branch)
 	}
+}
+
+func formatIssueLabel(issueNumber int, issue *int) string {
+	if issue == nil && issueNumber == 0 {
+		return "prompt-only"
+	}
+	return fmt.Sprintf("#%d", issueNumber)
+}
+
+func promptRequiresIssueSelection(promptText string) bool {
+	return strings.Contains(promptText, "{{ISSUE_NUMBER}}") || strings.Contains(promptText, "{{ISSUE_TITLE}}") || strings.Contains(promptText, "{{ISSUE_BODY}}")
 }
