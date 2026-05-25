@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +30,8 @@ const (
 	portalReadLimit    = 64 * 1024
 	portalReadTimeout  = 250 * time.Millisecond
 )
+
+var portalANSISequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 type portalInstance struct {
 	Name       string `json:"name"`
@@ -633,9 +636,9 @@ func readPortalTextFile(path string) string {
 	}
 	if len(data) > portalReadLimit {
 		tail := data[len(data)-portalReadLimit:]
-		return "[truncated]\n" + string(tail)
+		return cleanPortalText("[truncated]\n" + string(tail))
 	}
-	return string(data)
+	return cleanPortalText(string(data))
 }
 
 func readPortalSocketOutput(sockPath string) string {
@@ -664,7 +667,24 @@ func readPortalSocketOutput(sockPath string) string {
 			break
 		}
 	}
-	return buf.String()
+	return cleanPortalText(buf.String())
+}
+
+func cleanPortalText(text string) string {
+	text = portalANSISequence.ReplaceAllString(text, "")
+	text = strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\t':
+			return r
+		case '\r':
+			return -1
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, text)
+	return text
 }
 
 func parseRunDirIssue(name string) (int, bool) {

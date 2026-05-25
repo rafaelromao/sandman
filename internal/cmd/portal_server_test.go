@@ -134,7 +134,7 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 		if err != nil {
 			return
 		}
-		_, _ = conn.Write([]byte("live output\n"))
+		_, _ = conn.Write([]byte("\x1b[0mlive output\n"))
 		_ = conn.Close()
 	}()
 
@@ -150,7 +150,7 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1.log"), []byte("issue one log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "2.log"), []byte("issue two log\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "2.log"), []byte("\x1b[0missue two log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,13 +164,13 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	if runs[0].Kind != "active" || runs[0].RunID != "run-1" || runs[0].IssueLabel != "#1" {
 		t.Fatalf("unexpected active run: %#v", runs[0])
 	}
-	if !strings.Contains(runs[0].Output, "live output") {
+	if !strings.Contains(runs[0].Output, "live output") || strings.Contains(runs[0].Output, "\x1b[") {
 		t.Fatalf("expected active run output, got %#v", runs[0].Output)
 	}
 	if runs[1].Status != "success" || runs[1].Kind != "completed" || runs[1].RunID != "run-2" {
 		t.Fatalf("unexpected completed run: %#v", runs[1])
 	}
-	if !strings.Contains(runs[1].Log, "issue two log") {
+	if !strings.Contains(runs[1].Log, "issue two log") || strings.Contains(runs[1].Log, "\x1b[") {
 		t.Fatalf("expected completed run log, got %#v", runs[1].Log)
 	}
 }
