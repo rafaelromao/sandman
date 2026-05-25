@@ -84,7 +84,7 @@ func TestLoad_IgnoresLegacyGitAuthorFields(t *testing.T) {
 	}
 }
 
-func TestLoad_RejectsLegacyGitDefaultBranch(t *testing.T) {
+func TestLoad_RejectsLegacyGitBranchKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `git:

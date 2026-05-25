@@ -18,7 +18,7 @@ import (
 type AgentRun struct {
 	issue         *github.Issue
 	branch        string
-	defaultBranch string
+	baseBranch    string
 	preset        string
 	model         string
 	modelProvider string
@@ -47,7 +47,7 @@ func (r *AgentRun) Prepare(renderer prompt.Renderer, cfg prompt.RenderConfig) er
 		Title:        issue.Title,
 		Body:         issue.Body,
 		SourceBranch: r.branch,
-		TargetBranch: r.defaultBranch,
+		BaseBranch:   r.baseBranch,
 	})
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)

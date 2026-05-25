@@ -107,7 +107,7 @@ func TestAgentRun_Prepare_PopulatesBranchFields(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	run.defaultBranch = "main"
+	run.baseBranch = "main"
 
 	if err := run.Prepare(spy, prompt.RenderConfig{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -116,8 +116,8 @@ func TestAgentRun_Prepare_PopulatesBranchFields(t *testing.T) {
 	if spy.data.SourceBranch != "sandman/42-fix-bug" {
 		t.Errorf("expected SourceBranch 'sandman/42-fix-bug', got %q", spy.data.SourceBranch)
 	}
-	if spy.data.TargetBranch != "main" {
-		t.Errorf("expected TargetBranch 'main', got %q", spy.data.TargetBranch)
+	if spy.data.BaseBranch != "main" {
+		t.Errorf("expected BaseBranch 'main', got %q", spy.data.BaseBranch)
 	}
 }
 
@@ -426,7 +426,7 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt for auth fix"}
 
 	run := NewAgentRun(issue, "sandman/7-fix-auth", sb)
-	run.defaultBranch = "main"
+	run.baseBranch = "main"
 	run.env = map[string]string{"API_KEY": "sk-test123", "MODEL": "gpt-4"}
 
 	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{
@@ -452,8 +452,8 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	if spy.data.SourceBranch != "sandman/7-fix-auth" {
 		t.Errorf("expected SourceBranch 'sandman/7-fix-auth', got %q", spy.data.SourceBranch)
 	}
-	if spy.data.TargetBranch != "main" {
-		t.Errorf("expected TargetBranch 'main', got %q", spy.data.TargetBranch)
+	if spy.data.BaseBranch != "main" {
+		t.Errorf("expected BaseBranch 'main', got %q", spy.data.BaseBranch)
 	}
 
 	if !sb.writePromptCalled {

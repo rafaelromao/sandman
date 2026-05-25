@@ -614,7 +614,7 @@ func preflightSmokeWorktree(t *testing.T, repoDir, branch string) {
 
 	preflightBranch := branch + "-preflight"
 
-	if err := sandbox.SyncDefaultBranch(repoDir, "main"); err != nil {
+	if err := sandbox.SyncBaseBranch(repoDir, "main"); err != nil {
 		t.Skipf("skip smoke: default branch sync unavailable: %v", err)
 	}
 

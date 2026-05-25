@@ -38,7 +38,7 @@ type Orchestrator struct {
 	eventLog                events.EventLog
 	runnableFactory         RunnableFactory
 	sandboxFactory          SandboxFactory
-	defaultBranchSync       func(repoPath, sourceBranch string) error
+	baseBranchSync          func(repoPath, sourceBranch string) error
 	containerRuntimeFactory ContainerRuntimeFactory
 	killTimeout             time.Duration
 	errorLog                io.Writer
@@ -378,10 +378,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, err
 	}
 
-	if len(req.Issues) > 0 && (o.sandboxFactory == nil || o.defaultBranchSync != nil) {
-		syncFn := o.defaultBranchSync
+	if len(req.Issues) > 0 && (o.sandboxFactory == nil || o.baseBranchSync != nil) {
+		syncFn := o.baseBranchSync
 		if syncFn == nil {
-			syncFn = sandbox.SyncDefaultBranch
+			syncFn = sandbox.SyncBaseBranch
 		}
 		if err := syncFn(".", cfg.Git.BaseBranch); err != nil {
 			return nil, err
@@ -772,7 +772,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		agentRun.model = agentCfg.Model
 		agentRun.modelProvider = agentCfg.ModelProvider
 		agentRun.modelName = agentCfg.ModelName
-		agentRun.defaultBranch = cfg.Git.BaseBranch
+		agentRun.baseBranch = cfg.Git.BaseBranch
 		agentRun.outputWriter = outputWriter
 	}
 
@@ -911,7 +911,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		agentRun.model = agentCfg.Model
 		agentRun.modelProvider = agentCfg.ModelProvider
 		agentRun.modelName = agentCfg.ModelName
-		agentRun.defaultBranch = cfg.Git.BaseBranch
+		agentRun.baseBranch = cfg.Git.BaseBranch
 		agentRun.outputWriter = outputWriter
 	}
 

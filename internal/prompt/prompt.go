@@ -18,7 +18,7 @@ type IssueData struct {
 	Title        string
 	Body         string
 	SourceBranch string
-	TargetBranch string
+	BaseBranch   string
 }
 
 // Renderer renders prompt templates with substitutions.

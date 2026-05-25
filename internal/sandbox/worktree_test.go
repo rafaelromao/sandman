@@ -94,7 +94,7 @@ func TestWorktreeSandbox_CreatesBranchFromSourceBranchWithTrackedFilesOnly(t *te
 	runGit(t, localDir, "config", "user.name", "Test")
 	writeGitFile(t, localDir, "untracked.txt", "should not appear\n")
 
-	if err := SyncDefaultBranch(localDir, "main"); err != nil {
+	if err := SyncBaseBranch(localDir, "main"); err != nil {
 		t.Fatalf("sync error: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 	}
 }
 
-func TestSyncDefaultBranchFastForwardsDefaultBranchBeforeAddingWorktree(t *testing.T) {
+func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
 	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
@@ -161,7 +161,7 @@ func TestSyncDefaultBranchFastForwardsDefaultBranchBeforeAddingWorktree(t *testi
 	commitGitFile(t, seedDir, "tracked.txt", "remote\n", "remote update")
 	runGit(t, seedDir, "push", "origin", "main")
 
-	if err := SyncDefaultBranch(localDir, "main"); err != nil {
+	if err := SyncBaseBranch(localDir, "main"); err != nil {
 		t.Fatalf("unexpected sync error: %v", err)
 	}
 
@@ -194,7 +194,7 @@ func TestSyncDefaultBranchFastForwardsDefaultBranchBeforeAddingWorktree(t *testi
 	}
 }
 
-func TestSyncDefaultBranchFailsWhenDefaultBranchCannotFastForward(t *testing.T) {
+func TestSyncBaseBranchFailsWhenBaseBranchCannotFastForward(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
 	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
@@ -210,7 +210,7 @@ func TestSyncDefaultBranchFailsWhenDefaultBranchCannotFastForward(t *testing.T) 
 	commitGitFile(t, seedDir, "remote-only.txt", "remote\n", "remote divergence")
 	runGit(t, seedDir, "push", "origin", "main")
 
-	if err := SyncDefaultBranch(localDir, "main"); err == nil {
+	if err := SyncBaseBranch(localDir, "main"); err == nil {
 		t.Fatal("expected sync failure when default branch cannot fast-forward")
 	} else if !strings.Contains(err.Error(), "sync default branch") {
 		t.Fatalf("expected sync error, got %v", err)

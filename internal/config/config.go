@@ -113,8 +113,8 @@ func Load(path string) (*Config, error) {
 		Sandbox           string           `yaml:"sandbox"`
 		Agents            map[string]Agent `yaml:"agents"`
 		Git               struct {
-			BaseBranch    string  `yaml:"base_branch"`
-			DefaultBranch *string `yaml:"default_branch"`
+			BaseBranch   string  `yaml:"base_branch"`
+			LegacyBranch *string `yaml:"default_branch"`
 		} `yaml:"git"`
 	}
 
@@ -135,7 +135,7 @@ func Load(path string) (*Config, error) {
 		Git:             GitConfig{BaseBranch: raw.Git.BaseBranch},
 	}
 
-	if raw.Git.DefaultBranch != nil {
+	if raw.Git.LegacyBranch != nil {
 		return nil, fmt.Errorf("validate config: git.default_branch was renamed to git.base_branch")
 	}
 

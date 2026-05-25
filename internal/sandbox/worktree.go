@@ -74,10 +74,10 @@ func (s *WorktreeSandbox) configureGitIdentity() error {
 	return nil
 }
 
-// SyncDefaultBranch fast-forwards the local default branch from origin.
-func SyncDefaultBranch(repoPath, sourceBranch string) error {
+// SyncBaseBranch fast-forwards the local base branch from origin.
+func SyncBaseBranch(repoPath, sourceBranch string) error {
 	if out, err := runGitCommand(repoPath, "fetch", "origin", sourceBranch); err != nil {
-		return fmt.Errorf("sync default branch %q: %w\n%s", sourceBranch, err, out)
+		return fmt.Errorf("sync base branch %q: %w\n%s", sourceBranch, err, out)
 	}
 
 	remoteRef := "refs/remotes/origin/" + sourceBranch
@@ -85,7 +85,7 @@ func SyncDefaultBranch(repoPath, sourceBranch string) error {
 
 	remoteHash, err := gitRevParse(repoPath, remoteRef)
 	if err != nil {
-		return fmt.Errorf("sync default branch %q: resolve %s: %w", sourceBranch, remoteRef, err)
+		return fmt.Errorf("sync base branch %q: resolve %s: %w", sourceBranch, remoteRef, err)
 	}
 
 	localHash, err := gitRevParse(repoPath, "--verify", localRef)

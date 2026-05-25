@@ -714,7 +714,7 @@ func TestRunBatch_NoIssues(t *testing.T) {
 	}
 }
 
-func TestRunBatch_SyncsDefaultBranchOnceBeforeCreatingWorktrees(t *testing.T) {
+func TestRunBatch_SyncsBaseBranchOnceBeforeCreatingWorktrees(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			1: {Number: 1, Title: "One"},
@@ -727,7 +727,7 @@ func TestRunBatch_SyncsDefaultBranchOnceBeforeCreatingWorktrees(t *testing.T) {
 	var mu sync.Mutex
 	syncCalls := 0
 	tracker := &syncTrackingSandboxFactory{}
-	o.defaultBranchSync = func(repoPath, sourceBranch string) error {
+	o.baseBranchSync = func(repoPath, sourceBranch string) error {
 		mu.Lock()
 		syncCalls++
 		tracker.mu.Lock()

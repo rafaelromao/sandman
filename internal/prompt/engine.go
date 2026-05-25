@@ -68,7 +68,7 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 	result = strings.ReplaceAll(result, "{{ISSUE_TITLE}}", data.Title)
 	result = strings.ReplaceAll(result, "{{ISSUE_BODY}}", data.Body)
 	result = strings.ReplaceAll(result, "{{SOURCE_BRANCH}}", data.SourceBranch)
-	result = strings.ReplaceAll(result, "{{BASE_BRANCH}}", data.TargetBranch)
+	result = strings.ReplaceAll(result, "{{BASE_BRANCH}}", data.BaseBranch)
 	result = strings.ReplaceAll(result, "{{BRANCH}}", data.SourceBranch)
 	result = ApplySubstitutions(result, cfg)
 
