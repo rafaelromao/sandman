@@ -259,7 +259,7 @@ func newPortalHandler(repoRoot string) http.Handler {
 			InstancesPath:  "/api/instances",
 			RefreshPath:    "/api/runs",
 			PortalTitle:    "Sandman Portal",
-			PortalSubtitle: "Merged active and completed runs for the current repository.",
+			PortalSubtitle: "A control room for your Sandman runs.",
 		}
 		_ = portalPageTemplate.Execute(w, data)
 	})
@@ -708,22 +708,110 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.PortalTitle}}</title>
+  <script>
+    (function () {
+      const themes = new Set(['latte', 'frappe', 'macchiato', 'mocha']);
+      const storageKey = 'sandman.portal.theme';
+      let theme = 'frappe';
+      try {
+        const saved = localStorage.getItem(storageKey);
+        if (themes.has(saved)) {
+          theme = saved;
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          theme = 'mocha';
+        }
+      } catch (err) {
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          theme = 'mocha';
+        }
+      }
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
   <style>
     :root {
       color-scheme: dark;
-      --bg: oklch(0.17 0.012 245);
-      --surface: oklch(0.22 0.012 245);
-      --surface-2: oklch(0.26 0.012 245);
-      --surface-3: oklch(0.31 0.013 245);
-      --border: oklch(0.35 0.012 245);
-      --text: oklch(0.94 0.01 245);
-      --muted: oklch(0.71 0.012 245);
-      --accent: oklch(0.54 0.01 245);
+      --bg: oklch(0.33 0.03 275);
+      --surface: oklch(0.30 0.03 276);
+      --surface-2: oklch(0.39 0.03 276);
+      --surface-3: oklch(0.46 0.03 273);
+      --border: oklch(0.52 0.03 274);
+      --text: oklch(0.86 0.05 273);
+      --muted: oklch(0.75 0.04 274);
+      --accent: oklch(0.76 0.11 304);
       --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.95 0.01 245);
-      --success: oklch(0.77 0.12 155);
-      --danger: oklch(0.7 0.13 28);
-      --warning: oklch(0.81 0.1 85);
+      --accent-ink: oklch(0.18 0.03 275);
+      --success: oklch(0.81 0.11 133);
+      --danger: oklch(0.72 0.12 19);
+      --warning: oklch(0.84 0.08 83);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+    }
+    html[data-theme="latte"] {
+      color-scheme: light;
+      --bg: oklch(0.96 0.01 265);
+      --surface: oklch(0.93 0.01 265);
+      --surface-2: oklch(0.91 0.01 268);
+      --surface-3: oklch(0.86 0.01 271);
+      --border: oklch(0.76 0.02 273);
+      --text: oklch(0.44 0.04 279);
+      --muted: oklch(0.55 0.03 279);
+      --accent: oklch(0.55 0.25 297);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.96 0.01 265);
+      --success: oklch(0.63 0.18 140);
+      --danger: oklch(0.55 0.22 20);
+      --warning: oklch(0.71 0.15 68);
+      --shadow: 0 1px 0 oklch(0.44 0.04 279 / 0.05), 0 24px 48px oklch(0.44 0.04 279 / 0.12);
+    }
+    html[data-theme="frappe"] {
+      color-scheme: dark;
+      --bg: oklch(0.33 0.03 275);
+      --surface: oklch(0.30 0.03 276);
+      --surface-2: oklch(0.39 0.03 276);
+      --surface-3: oklch(0.46 0.03 273);
+      --border: oklch(0.52 0.03 274);
+      --text: oklch(0.86 0.05 273);
+      --muted: oklch(0.75 0.04 274);
+      --accent: oklch(0.76 0.11 312);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.17 0.03 275);
+      --success: oklch(0.81 0.11 133);
+      --danger: oklch(0.72 0.12 19);
+      --warning: oklch(0.84 0.08 83);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+    }
+    html[data-theme="macchiato"] {
+      color-scheme: dark;
+      --bg: oklch(0.28 0.03 277);
+      --surface: oklch(0.25 0.03 278);
+      --surface-2: oklch(0.35 0.03 276);
+      --surface-3: oklch(0.40 0.03 277);
+      --border: oklch(0.46 0.03 274);
+      --text: oklch(0.87 0.05 274);
+      --muted: oklch(0.75 0.04 274);
+      --accent: oklch(0.77 0.13 304);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.15 0.03 278);
+      --success: oklch(0.83 0.11 138);
+      --danger: oklch(0.74 0.13 11);
+      --warning: oklch(0.88 0.07 85);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+    }
+    html[data-theme="mocha"] {
+      color-scheme: dark;
+      --bg: oklch(0.24 0.03 284);
+      --surface: oklch(0.22 0.03 284);
+      --surface-2: oklch(0.32 0.03 282);
+      --surface-3: oklch(0.40 0.03 280);
+      --border: oklch(0.48 0.03 279);
+      --text: oklch(0.88 0.04 272);
+      --muted: oklch(0.75 0.04 274);
+      --accent: oklch(0.79 0.12 305);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.14 0.03 284);
+      --success: oklch(0.86 0.11 143);
+      --danger: oklch(0.76 0.13 3);
+      --warning: oklch(0.92 0.07 87);
       --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
     }
     * { box-sizing: border-box; }
@@ -751,9 +839,9 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
     }
     .masthead {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 18px;
-      align-items: stretch;
+      align-items: start;
       padding: 20px 20px 18px;
       margin-bottom: 16px;
       border-bottom: 1px solid var(--border);
@@ -761,6 +849,36 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       border-radius: 22px;
       background: linear-gradient(180deg, color-mix(in oklch, var(--surface) 92%, var(--text) 8%), var(--surface));
       box-shadow: var(--shadow);
+    }
+    .masthead-copy {
+      min-width: 0;
+    }
+    .settings-wrap {
+      display: grid;
+      justify-items: end;
+      gap: 10px;
+    }
+    .settings-toggle {
+      align-self: start;
+    }
+    .meta-line {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      align-items: baseline;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .meta-line span {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 10px;
+    }
+    .meta-line code,
+    .meta-line strong {
+      color: var(--text);
+      font-weight: 500;
     }
     .eyebrow {
       display: inline-flex;
@@ -802,6 +920,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       color: var(--muted);
       font-size: 12px;
     }
+    .meta[hidden] { display: none; }
     .meta div {
       display: grid;
       gap: 4px;
@@ -817,6 +936,32 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       color: var(--text);
       font-weight: 500;
       overflow-wrap: anywhere;
+    }
+    .theme-control {
+      display: grid;
+      gap: 4px;
+    }
+    .theme-control select {
+      width: 100%;
+      min-width: 0;
+    }
+    .poll-control {
+      display: grid;
+      gap: 4px;
+    }
+    .poll-control-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .poll-control-row input {
+      width: 96px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: var(--surface-3);
+      color: var(--text);
+      font: inherit;
     }
     .toolbar {
       display: flex;
@@ -1139,6 +1284,20 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       justify-self: start;
       width: fit-content;
     }
+    .settings-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .settings-toggle:hover { background: var(--surface-3); }
     .run-row {
       cursor: pointer;
     }
@@ -1167,7 +1326,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       .detail-grid {
         grid-template-columns: 1fr;
       }
-      .masthead { align-items: start; }
+      .settings-wrap { justify-items: start; }
       .detail-panel { min-height: 0; }
     }
     @media (max-width: 760px) {
@@ -1182,24 +1341,36 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
 <body>
   <main>
     <header class="masthead">
-      <div>
+      <div class="masthead-copy">
         <p class="eyebrow">Local portal</p>
         <h1>{{.PortalTitle}}</h1>
         <p class="subtitle">{{.PortalSubtitle}}</p>
-      </div>
-      <div class="meta">
-        <div>
+        <div class="meta-line">
           <span>Repo</span>
           <code>{{.RepoRoot}}</code>
-        </div>
-        <div>
-          <span>Poll</span>
-          <code>{{.PollInterval}}ms</code>
-          <code>{{.RunsPath}}</code>
-        </div>
-        <div>
           <span>Updated</span>
           <strong id="last-updated">Waiting for first refresh</strong>
+        </div>
+      </div>
+      <div class="settings-wrap">
+        <button id="settings-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel">Settings</button>
+        <div id="settings-panel" class="meta" hidden>
+          <div class="theme-control">
+            <span>Theme</span>
+            <select id="theme-picker" aria-label="Select theme">
+              <option value="latte">Latte</option>
+              <option value="frappe">Frappe</option>
+              <option value="macchiato">Macchiato</option>
+              <option value="mocha">Mocha</option>
+            </select>
+          </div>
+          <div class="poll-control">
+            <span>Poll interval</span>
+            <label class="poll-control-row" for="poll-interval">
+              <input id="poll-interval" type="number" min="500" step="500" value="{{.PollInterval}}" inputmode="numeric" aria-label="Poll interval in milliseconds">
+              <span>ms</span>
+            </label>
+          </div>
         </div>
       </div>
     </header>
@@ -1244,13 +1415,81 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
 
   <script>
     const apiPath = "{{.RefreshPath}}";
-    const pollInterval = {{.PollInterval}};
+    let pollInterval = {{.PollInterval}};
+    const settingsToggle = document.getElementById('settings-toggle');
+    const settingsPanel = document.getElementById('settings-panel');
+    const themePicker = document.getElementById('theme-picker');
+    const pollIntervalInput = document.getElementById('poll-interval');
+    const themeStorageKey = 'sandman.portal.theme';
+    const supportedThemes = new Set(['latte', 'frappe', 'macchiato', 'mocha']);
     const statusFilter = document.getElementById('status-filter');
     const activeOnlyToggle = document.getElementById('active-only');
     const runsBody = document.getElementById('runs-body');
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
     const lastUpdated = document.getElementById('last-updated');
+
+    function systemTheme() {
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'mocha' : 'frappe';
+    }
+
+    function normalizeTheme(value) {
+      return supportedThemes.has(value) ? value : 'frappe';
+    }
+
+    function readStoredTheme() {
+      try {
+        return normalizeTheme(localStorage.getItem(themeStorageKey) || '');
+      } catch (err) {
+        return systemTheme();
+      }
+    }
+
+    function applyTheme(theme, persist) {
+      const nextTheme = normalizeTheme(theme);
+      document.documentElement.dataset.theme = nextTheme;
+      if (themePicker && themePicker.value !== nextTheme) {
+        themePicker.value = nextTheme;
+      }
+      if (persist) {
+        try {
+          localStorage.setItem(themeStorageKey, nextTheme);
+        } catch (err) {
+        }
+      }
+    }
+
+    applyTheme(document.documentElement.dataset.theme || readStoredTheme() || systemTheme(), false);
+    if (themePicker) {
+      themePicker.value = document.documentElement.dataset.theme || 'frappe';
+      themePicker.addEventListener('change', () => applyTheme(themePicker.value, true));
+    }
+
+    if (settingsToggle && settingsPanel) {
+      settingsToggle.addEventListener('click', () => {
+        const isOpen = !settingsPanel.hidden;
+        settingsPanel.hidden = isOpen;
+        settingsToggle.setAttribute('aria-expanded', String(!isOpen));
+      });
+    }
+
+    let refreshTimer = null;
+
+    function restartPolling() {
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+      }
+      refreshTimer = setInterval(refresh, pollInterval);
+    }
+
+    if (pollIntervalInput) {
+      pollIntervalInput.addEventListener('change', () => {
+        const next = Number.parseInt(pollIntervalInput.value, 10);
+        pollInterval = Number.isFinite(next) && next >= 500 ? next : 500;
+        pollIntervalInput.value = String(pollInterval);
+        restartPolling();
+      });
+    }
 
     const state = {
       runs: [],
@@ -1451,7 +1690,6 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
 
     function renderDetailFields(run) {
       return [
-        renderDetailKV('Key', run.key),
         renderDetailKV('Run ID', run.runId),
         renderDetailKV('Status', run.status),
         renderDetailKV('Started', formatTime(run.startedAt)),
@@ -1594,7 +1832,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
     });
 
     refresh();
-    setInterval(refresh, pollInterval);
+    restartPolling();
   </script>
 </body>
 </html>`))
