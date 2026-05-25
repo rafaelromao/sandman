@@ -62,8 +62,8 @@ func NewPortalCmd() *cobra.Command {
 func signalContext(parent context.Context) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(parent)
 	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 		select {
 		case <-sigCh:
 			cancel()
@@ -246,7 +246,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       }
       for (const inst of data.instances) {
         const row = document.createElement('tr');
-		row.innerHTML = '<td>' + inst.name + '</td><td><code>' + inst.socketPath + '</code></td>';
+        row.innerHTML = '<td>' + inst.name + '</td><td><code>' + inst.socketPath + '</code></td>';
         tbody.appendChild(row);
       }
     }
