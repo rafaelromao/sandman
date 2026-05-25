@@ -48,6 +48,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				promptArgs[parts[0]] = parts[1]
 			}
 
+			reviewCommand := cfg.EffectiveReviewCommand()
+			if strings.TrimSpace(reviewCommandFlag) != "" {
+				reviewCommand = reviewCommandFlag
+			}
+
 			selectedPrompt := ""
 			overridePrompt := false
 			switch {
@@ -62,7 +67,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				selectedPrompt = string(content)
 				overridePrompt = true
 			}
-			promptNeedsIssueSelection := overridePrompt && promptRequiresIssueSelection(selectedPrompt)
+			promptNeedsIssueSelection := overridePrompt && promptRequiresIssueSelection(prompt.ApplySubstitutions(selectedPrompt, prompt.RenderConfig{ReviewCommand: reviewCommand, PromptArgs: promptArgs}))
 
 			label, _ := cmd.Flags().GetString("label")
 			query, _ := cmd.Flags().GetString("query")
@@ -70,7 +75,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			nextFlag := cmd.Flags().Lookup("next")
 			nextProvided := nextFlag != nil && nextFlag.Changed
 			nextCount, _ := cmd.Flags().GetInt("next")
-			issueSelectionProvided := len(args) > 0 || nextProvided || label != "" || query != "" || includeDependencies
+			issueSelectionProvided := len(args) > 0 || nextProvided || label != "" || query != ""
 
 			var issues []int
 			if overridePrompt && !issueSelectionProvided {
@@ -126,11 +131,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) {
 				return fmt.Errorf("no issues selected")
-			}
-
-			reviewCommand := cfg.EffectiveReviewCommand()
-			if strings.TrimSpace(reviewCommandFlag) != "" {
-				reviewCommand = reviewCommandFlag
 			}
 
 			agentName := strings.TrimSpace(agentFlag)

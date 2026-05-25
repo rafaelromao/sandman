@@ -1595,6 +1595,41 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 	}
 }
 
+func TestRunBatch_LogsPromptOnlyTemplateSource(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	templatePath := filepath.Join(dir, "prompt.md")
+	if err := os.WriteFile(templatePath, []byte("Return only OK."), 0644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "return-only-ok-123")}}
+	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+	}}
+
+	_, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{TemplateFlag: templatePath}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) == 0 {
+		t.Fatal("expected run.started event")
+	}
+	started := spyLog.events[0]
+	if started.Payload["prompt_source_type"] != "template" {
+		t.Fatalf("expected prompt source type template, got %#v", started.Payload["prompt_source_type"])
+	}
+	if started.Payload["prompt_source_value"] != templatePath {
+		t.Fatalf("expected prompt source value template path, got %#v", started.Payload["prompt_source_value"])
+	}
+}
+
 func TestRunBatch_PromptOnlyRunSkipsIssueLookupAndUsesNullIssue(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
