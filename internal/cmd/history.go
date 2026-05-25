@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/spf13/cobra"
@@ -19,16 +18,11 @@ func NewHistoryCmd(log events.EventLog) *cobra.Command {
 				return fmt.Errorf("read event log: %w", err)
 			}
 
-			started := make(map[string]events.Event)
-			var completed []events.Event
-			for _, e := range eventsList {
-				switch e.Type {
-				case "run.started":
-					started[e.RunID] = e
-				case "run.finished":
-					if _, ok := started[e.RunID]; ok {
-						completed = append(completed, e)
-					}
+			runs := events.ProjectRunStates(eventsList)
+			var completed []events.RunState
+			for _, run := range runs {
+				if !run.IsActive() {
+					completed = append(completed, run)
 				}
 			}
 
@@ -38,12 +32,8 @@ func NewHistoryCmd(log events.EventLog) *cobra.Command {
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Completed runs:")
-			for _, e := range completed {
-				status, _ := e.Payload["status"].(string)
-				branch, _ := e.Payload["branch"].(string)
-				startedEvt := started[e.RunID]
-				duration := e.Timestamp.Sub(startedEvt.Timestamp).Round(time.Second)
-				fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s  %s\n", formatEventIssueLabel(e), status, duration, branch)
+			for _, run := range completed {
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s  %s\n", formatRunStateIssueLabel(run), run.Status(), run.Duration(), run.Branch())
 			}
 			return nil
 		},

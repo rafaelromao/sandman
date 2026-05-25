@@ -20,21 +20,11 @@ func NewStatusCmd(log events.EventLog) *cobra.Command {
 				return fmt.Errorf("read event log: %w", err)
 			}
 
-			started := make(map[string]events.Event)
-			finished := make(map[string]bool)
-			for _, e := range eventsList {
-				switch e.Type {
-				case "run.started":
-					started[e.RunID] = e
-				case "run.finished":
-					finished[e.RunID] = true
-				}
-			}
-
-			var active []events.Event
-			for runID, e := range started {
-				if !finished[runID] {
-					active = append(active, e)
+			runs := events.ProjectRunStates(eventsList)
+			var active []events.RunState
+			for _, run := range runs {
+				if run.IsActive() {
+					active = append(active, run)
 				}
 			}
 
@@ -44,15 +34,15 @@ func NewStatusCmd(log events.EventLog) *cobra.Command {
 			}
 
 			sort.Slice(active, func(i, j int) bool {
-				if (active[i].IssueRef == nil && active[i].Issue == 0) || (active[j].IssueRef == nil && active[j].Issue == 0) {
-					return active[i].Timestamp.Before(active[j].Timestamp)
+				if active[i].IsPromptOnly() || active[j].IsPromptOnly() {
+					return active[i].Started.Timestamp.Before(active[j].Started.Timestamp)
 				}
-				return active[i].Issue < active[j].Issue
+				return active[i].IssueNumber() < active[j].IssueNumber()
 			})
 			fmt.Fprintln(cmd.OutOrStdout(), "Active runs:")
-			for _, e := range active {
-				elapsed := time.Since(e.Timestamp).Round(time.Second)
-				fmt.Fprintf(cmd.OutOrStdout(), "  %s  elapsed %s\n", formatEventIssueLabel(e), elapsed)
+			for _, run := range active {
+				elapsed := time.Since(run.Started.Timestamp).Round(time.Second)
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s  elapsed %s\n", formatRunStateIssueLabel(run), elapsed)
 			}
 			return nil
 		},

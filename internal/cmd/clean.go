@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/spf13/cobra"
 )
 
@@ -124,23 +125,11 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("read event log: %w", err)
 			}
 
-			started := make(map[string]map[string]any)
-			issues := make(map[string]int)
-			statuses := make(map[string]string)
-			for _, e := range eventsList {
-				switch e.Type {
-				case "run.started":
-					started[e.RunID] = e.Payload
-					issues[e.RunID] = e.Issue
-				case "run.finished":
-					s, _ := e.Payload["status"].(string)
-					statuses[e.RunID] = s
-				}
-			}
+			runs := events.ProjectRunStates(eventsList)
 
 			var removed int
-			for runID, payload := range started {
-				status := statuses[runID]
+			for _, run := range runs {
+				status := run.Status()
 				if success && status != "success" {
 					continue
 				}
@@ -148,14 +137,14 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 					continue
 				}
 
-				branch, _ := payload["branch"].(string)
+				branch := run.Branch()
 				if branch != "" {
 					wtPath := filepath.Join(cfg.WorktreeDir, branch)
 					if err := gr.removeWorktree(wtPath); err != nil {
 						_ = gr.pruneAndDeleteBranch(branch)
 					}
 				}
-				if issueNum := issues[runID]; issueNum > 0 {
+				if issueNum := run.IssueNumber(); issueNum > 0 {
 					_ = os.RemoveAll(filepath.Join(".sandman", "logs", fmt.Sprintf("%d.log", issueNum)))
 				}
 				removed++
