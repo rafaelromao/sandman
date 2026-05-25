@@ -113,6 +113,22 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if all {
+				eventsList, err := deps.EventLog.Read()
+				if err != nil {
+					return fmt.Errorf("read event log: %w", err)
+				}
+				runs := events.ProjectRunStates(eventsList)
+				for _, run := range runs {
+					if branch := run.Branch(); branch != "" {
+						wtPath := filepath.Join(cfg.WorktreeDir, branch)
+						if err := gr.removeWorktree(wtPath); err != nil {
+							_ = gr.pruneAndDeleteBranch(branch)
+						}
+					}
+					if issueNum := run.IssueNumber(); issueNum > 0 {
+						_ = os.RemoveAll(filepath.Join(".sandman", "logs", fmt.Sprintf("%d.log", issueNum)))
+					}
+				}
 				removed, _ := gr.removeOrphanBranches()
 				_ = os.RemoveAll(cfg.WorktreeDir)
 				_ = os.RemoveAll(".sandman/logs")
