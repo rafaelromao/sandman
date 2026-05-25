@@ -389,14 +389,6 @@ func hasSmokeAuth(realHome string, requiredPaths, fallbackPaths []string) bool {
 	return false
 }
 
-func homePath(home, rel string) string {
-	if strings.HasPrefix(rel, "~") {
-		rel = strings.TrimPrefix(rel, "~")
-	}
-	rel = strings.TrimPrefix(rel, string(filepath.Separator))
-	return filepath.Join(home, rel)
-}
-
 func copySmokePath(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {

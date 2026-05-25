@@ -1831,14 +1831,6 @@ func hasProviderAuth(home string, paths []string) bool {
 	return false
 }
 
-func homePath(home, rel string) string {
-	if strings.HasPrefix(rel, "~") {
-		rel = strings.TrimPrefix(rel, "~")
-	}
-	rel = strings.TrimPrefix(rel, string(filepath.Separator))
-	return filepath.Join(home, rel)
-}
-
 func runRootCommand(t *testing.T, deps Dependencies, args ...string) (string, error) {
 	t.Helper()
 
