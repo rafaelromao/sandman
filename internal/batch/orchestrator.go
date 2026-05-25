@@ -59,6 +59,19 @@ type containerAllocator interface {
 	Acquire() (*containerLease, error)
 }
 
+type sandboxExecutionPolicy struct {
+	mode           string
+	sandboxFactory SandboxFactory
+	containerAlloc containerAllocator
+	close          func()
+}
+
+func (p *sandboxExecutionPolicy) Close() {
+	if p != nil && p.close != nil {
+		p.close()
+	}
+}
+
 type pooledContainer struct {
 	container sandbox.Container
 	active    int
@@ -339,90 +352,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, err
 	}
 
-	sbFactory := o.sandboxFactory
-	if sbFactory == nil {
-		switch sandboxMode {
-		case "docker", "podman":
-			sbFactory = SharedContainerSandboxFactory{Binary: sandboxMode, RepoPath: "."}
-		default:
-			sbFactory = defaultSandboxFactory{}
-		}
-	}
-
-	startOpts, err := buildStartOptions(agentCfg)
+	policy, err := o.resolveSandboxExecutionPolicy(cfg, agentCfg, req, sandboxMode)
 	if err != nil {
 		return nil, err
 	}
-	remoteScheme := sandbox.DetectRemoteScheme(".")
-	if remoteScheme == "ssh" {
-		startOpts.SSH = true
-	}
-	startOpts.RemoteScheme = remoteScheme
-
-	containerFactory := o.containerRuntimeFactory
-	if containerFactory == nil {
-		containerFactory = defaultContainerRuntimeFactory{}
-	}
-
-	var containerAlloc containerAllocator
-	var pool *containerPool
-	if sandboxMode == "docker" || sandboxMode == "podman" {
-		defaultAgent := strings.TrimSpace(cfg.DefaultAgent)
-		if defaultAgent == "" {
-			defaultAgent = strings.TrimSpace(cfg.Agent)
-		}
-		if err := scaffold.ValidateDockerfileMetadata(".", cfg.BuildTools, defaultAgent); err != nil {
-			return nil, err
-		}
-
-		containerCapacity := cfg.ContainerCapacity
-		if containerCapacity < 0 {
-			return nil, fmt.Errorf("container_capacity must be 0 or greater")
-		}
-		if containerCapacity == 0 {
-			containerCapacity = config.DefaultContainerCapacity
-		}
-		if req.ContainerCapacitySet {
-			if req.ContainerCapacity < 0 {
-				return nil, fmt.Errorf("container_capacity must be 0 or greater")
-			}
-			if req.ContainerCapacity == 0 {
-				containerCapacity = config.DefaultContainerCapacity
-			} else {
-				containerCapacity = req.ContainerCapacity
-			}
-		}
-		if containerCapacity < 1 {
-			return nil, fmt.Errorf("container_capacity must be 0 or greater")
-		}
-
-		maxContainers := cfg.MaxContainers
-		if req.MaxContainersSet {
-			maxContainers = req.MaxContainers
-		}
-		if maxContainers < 0 {
-			return nil, fmt.Errorf("max_containers must be 0 or greater")
-		}
-
-		cleanup, err := PrepareContainerConfigMounts(".", &startOpts)
-		if err != nil {
-			return nil, fmt.Errorf("prepare container config mounts: %w", err)
-		}
-		defer cleanup()
-
-		starter := containerFactory.New(sandboxMode)
-		image, err := starter.BuildImage(".")
-		if err != nil {
-			return nil, fmt.Errorf("build container image: %w", err)
-		}
-		pool = newContainerPool(starter, image, ".", startOpts, containerCapacity, maxContainers)
-		containerAlloc = pool
-		defer func() {
-			if pool != nil {
-				_ = pool.Close()
-			}
-		}()
-	}
+	defer policy.Close()
 
 	parallel := req.Parallel
 	if parallel == 0 {
@@ -469,7 +403,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "") {
-		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, func() (gitIdentity, error) { return resolveGitIdentity(".") }, sbFactory, containerAlloc, req, startDelay, parallel)
+		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, func() (gitIdentity, error) { return resolveGitIdentity(".") }, policy.sandboxFactory, policy.containerAlloc, req, startDelay, parallel)
 	}
 
 	startGate := newBatchStartGate(parallel, startDelay)
@@ -576,7 +510,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
-			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunID, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, sbFactory, containerAlloc)
+			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunID, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -594,7 +528,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	wg.Wait()
 
-	if sandboxMode == "docker" || sandboxMode == "podman" {
+	if policy.mode == "docker" || policy.mode == "podman" {
 		for _, result := range results {
 			if strings.TrimSpace(result.Branch) == "" {
 				continue
@@ -619,6 +553,95 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return &Result{Runs: results}, fmt.Errorf("%d of %d runs failed", failureCount, len(req.Issues))
 	}
 	return &Result{Runs: results}, nil
+}
+
+func (o *Orchestrator) resolveSandboxExecutionPolicy(cfg *config.Config, agentCfg config.Agent, req Request, sandboxMode string) (*sandboxExecutionPolicy, error) {
+	startOpts, err := buildStartOptions(agentCfg)
+	if err != nil {
+		return nil, err
+	}
+	rm := sandbox.DetectRemoteScheme(".")
+	if rm == "ssh" {
+		startOpts.SSH = true
+	}
+	startOpts.RemoteScheme = rm
+
+	sbFactory := o.sandboxFactory
+	if sbFactory == nil {
+		switch sandboxMode {
+		case "docker", "podman":
+			sbFactory = SharedContainerSandboxFactory{Binary: sandboxMode, RepoPath: "."}
+		default:
+			sbFactory = defaultSandboxFactory{}
+		}
+	}
+
+	if sandboxMode != "docker" && sandboxMode != "podman" {
+		return &sandboxExecutionPolicy{mode: sandboxMode, sandboxFactory: sbFactory}, nil
+	}
+
+	defaultAgent := strings.TrimSpace(cfg.DefaultAgent)
+	if defaultAgent == "" {
+		defaultAgent = strings.TrimSpace(cfg.Agent)
+	}
+	if err := scaffold.ValidateDockerfileMetadata(".", cfg.BuildTools, defaultAgent); err != nil {
+		return nil, err
+	}
+
+	containerCapacity := cfg.ContainerCapacity
+	if containerCapacity < 0 {
+		return nil, fmt.Errorf("container_capacity must be 0 or greater")
+	}
+	if containerCapacity == 0 {
+		containerCapacity = config.DefaultContainerCapacity
+	}
+	if req.ContainerCapacitySet {
+		if req.ContainerCapacity < 0 {
+			return nil, fmt.Errorf("container_capacity must be 0 or greater")
+		}
+		if req.ContainerCapacity == 0 {
+			containerCapacity = config.DefaultContainerCapacity
+		} else {
+			containerCapacity = req.ContainerCapacity
+		}
+	}
+	if containerCapacity < 1 {
+		return nil, fmt.Errorf("container_capacity must be 0 or greater")
+	}
+
+	maxContainers := cfg.MaxContainers
+	if req.MaxContainersSet {
+		maxContainers = req.MaxContainers
+	}
+	if maxContainers < 0 {
+		return nil, fmt.Errorf("max_containers must be 0 or greater")
+	}
+
+	cleanup, err := PrepareContainerConfigMounts(".", &startOpts)
+	if err != nil {
+		return nil, fmt.Errorf("prepare container config mounts: %w", err)
+	}
+
+	containerFactory := o.containerRuntimeFactory
+	if containerFactory == nil {
+		containerFactory = defaultContainerRuntimeFactory{}
+	}
+	starter := containerFactory.New(sandboxMode)
+	image, err := starter.BuildImage(".")
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("build container image: %w", err)
+	}
+	pool := newContainerPool(starter, image, ".", startOpts, containerCapacity, maxContainers)
+	return &sandboxExecutionPolicy{
+		mode:           sandboxMode,
+		sandboxFactory: sbFactory,
+		containerAlloc: pool,
+		close: func() {
+			_ = pool.Close()
+			cleanup()
+		},
+	}, nil
 }
 
 func (o *Orchestrator) logBlocked(issueNum int, blockers []int) {
