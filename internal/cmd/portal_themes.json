@@ -1,0 +1,17 @@
+[
+  {"id":"catppuccin-frappe","label":"Catppuccin Frappe"},
+  {"id":"catppuccin-latte","label":"Catppuccin Latte"},
+  {"id":"catppuccin-macchiato","label":"Catppuccin Macchiato"},
+  {"id":"catppuccin-mocha","label":"Catppuccin Mocha"},
+  {"id":"dracula","label":"Dracula"},
+  {"id":"everforest","label":"Everforest"},
+  {"id":"everforest-light","label":"Everforest Light"},
+  {"id":"github-light","label":"GitHub Light"},
+  {"id":"gruvbox","label":"Gruvbox"},
+  {"id":"nord","label":"Nord"},
+  {"id":"nord-light","label":"Nord Light"},
+  {"id":"rose-pine","label":"Rose Pine"},
+  {"id":"solarized-light","label":"Solarized Light"},
+  {"id":"tokyo-night","label":"Tokyo Night"},
+  {"id":"tokyo-night-day","label":"Tokyo Night Day"}
+]
