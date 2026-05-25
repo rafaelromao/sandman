@@ -48,6 +48,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				promptArgs[parts[0]] = parts[1]
 			}
 
+			reviewCommand := cfg.EffectiveReviewCommand()
+			if strings.TrimSpace(reviewCommandFlag) != "" {
+				reviewCommand = reviewCommandFlag
+			}
+
 			selectedPrompt := ""
 			overridePrompt := false
 			switch {
@@ -62,7 +67,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				selectedPrompt = string(content)
 				overridePrompt = true
 			}
-			promptNeedsIssueSelection := overridePrompt && promptRequiresIssueSelection(selectedPrompt)
+			promptNeedsIssueSelection := overridePrompt && promptRequiresIssueSelectionAfterSubstitutions(selectedPrompt, promptArgs, reviewCommand)
 
 			label, _ := cmd.Flags().GetString("label")
 			query, _ := cmd.Flags().GetString("query")
@@ -126,11 +131,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) {
 				return fmt.Errorf("no issues selected")
-			}
-
-			reviewCommand := cfg.EffectiveReviewCommand()
-			if strings.TrimSpace(reviewCommandFlag) != "" {
-				reviewCommand = reviewCommandFlag
 			}
 
 			agentName := strings.TrimSpace(agentFlag)
@@ -334,4 +334,16 @@ func formatIssueLabel(issueNumber int, issue *int) string {
 
 func promptRequiresIssueSelection(promptText string) bool {
 	return strings.Contains(promptText, "{{ISSUE_NUMBER}}") || strings.Contains(promptText, "{{ISSUE_TITLE}}") || strings.Contains(promptText, "{{ISSUE_BODY}}")
+}
+
+func promptRequiresIssueSelectionAfterSubstitutions(promptText string, promptArgs map[string]string, reviewCommand string) bool {
+	rendered := promptText
+	for k, v := range promptArgs {
+		rendered = strings.ReplaceAll(rendered, fmt.Sprintf("{{%s}}", k), v)
+	}
+	if strings.TrimSpace(reviewCommand) == "" {
+		reviewCommand = ""
+	}
+	rendered = strings.ReplaceAll(rendered, "{{REVIEW_COMMAND}}", reviewCommand)
+	return promptRequiresIssueSelection(rendered)
 }

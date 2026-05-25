@@ -58,3 +58,26 @@ func TestStatus_NoActiveRuns(t *testing.T) {
 		t.Errorf("expected no active runs, but output contains #42:\n%s", out)
 	}
 }
+
+func TestStatus_ShowsPromptOnlyRun(t *testing.T) {
+	log := &fakeEventLog{
+		events: []events.Event{
+			{Type: "run.started", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "run-prompt-only", Payload: map[string]any{"branch": "sandman/return-only-ok-123"}},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewStatusCmd(log)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "prompt-only") {
+		t.Fatalf("expected prompt-only label, got:\n%s", out)
+	}
+}

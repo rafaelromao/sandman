@@ -894,12 +894,16 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 
 	runID := generateRunID(0)
 	if o.eventLog != nil {
+		promptSourceType := "current"
 		payload := map[string]any{"branch": branch, "prompt_source_type": "prompt"}
 		if renderCfg.PromptFlag != "" {
+			promptSourceType = "prompt"
 			payload["prompt_source_value"] = renderCfg.PromptFlag
 		} else if renderCfg.TemplateFlag != "" {
+			promptSourceType = "template"
 			payload["prompt_source_value"] = renderCfg.TemplateFlag
 		}
+		payload["prompt_source_type"] = promptSourceType
 		if len(renderCfg.PromptArgs) > 0 {
 			payload["prompt_args"] = renderCfg.PromptArgs
 		}
