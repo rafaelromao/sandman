@@ -74,6 +74,16 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 		t.Fatalf("expected initial context contents, got:\n%s", initialContext)
 	}
 
+	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Git.BaseBranch = "trunk"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
 	out, err = runSandmanBinary(t, binPath, repoDir, "continue", "1", "finish the tests")
 	if err != nil {
 		t.Fatalf("first continue failed: %v\noutput:\n%s", err, out)
@@ -158,8 +168,14 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if got, ok := payloadString(runEvents[1].Payload, "previous_run_id"); !ok || got != runEvents[0].RunID {
 		t.Fatalf("expected first continue previous_run_id %q, got %#v", runEvents[0].RunID, runEvents[1].Payload["previous_run_id"])
 	}
+	if got, ok := payloadString(runEvents[1].Payload, "base_branch"); !ok || got != "main" {
+		t.Fatalf("expected first continue base_branch to stay on original branch, got %#v", runEvents[1].Payload["base_branch"])
+	}
 	if got, ok := payloadString(runEvents[2].Payload, "previous_run_id"); !ok || got != runEvents[1].RunID {
 		t.Fatalf("expected second continue previous_run_id %q, got %#v", runEvents[1].RunID, runEvents[2].Payload["previous_run_id"])
+	}
+	if got, ok := payloadString(runEvents[2].Payload, "base_branch"); !ok || got != "main" {
+		t.Fatalf("expected second continue base_branch to stay on original branch, got %#v", runEvents[2].Payload["base_branch"])
 	}
 	if _, err := os.Stat(worktreePath); err != nil {
 		t.Fatalf("expected preserved worktree, got: %v", err)

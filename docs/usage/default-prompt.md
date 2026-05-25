@@ -175,4 +175,4 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
 - **Default Prompt**: Sandman's embedded source of truth.
 - **Project Prompt Template**: `.sandman/prompt.md`, created from the Default Prompt during `sandman init` and materialized on run when missing.
 - **Prompt**: `.sandman/rendered-prompt.md`, the rendered instruction file handed to the agent.
-- **Continue replay**: `sandman continue` reuses stored branch, agent, model, and review command from the prior run, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
+- **Continue replay**: `sandman continue` reuses stored branch, base branch, agent, model, and review command from the prior run. It ignores current base-branch config changes, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.

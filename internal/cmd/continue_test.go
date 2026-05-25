@@ -71,12 +71,12 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 
 	spy := &spyContinueBatchRunner{result: &batch.Result{}}
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "model": "gpt-4.1", "agent": "opencode", "review_command": "/custom review"}},
-		{Type: "run.continued", RunID: "run-42-2", Issue: 42, Payload: map[string]any{"branch": branch, "model": "gpt-4.2", "agent": "pi", "review_command": "/custom review 2"}},
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "model": "gpt-4.1", "agent": "opencode", "review_command": "/custom review"}},
+		{Type: "run.continued", RunID: "run-42-2", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "model": "gpt-4.2", "agent": "pi", "review_command": "/custom review 2"}},
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/current review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/current review", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -108,6 +108,9 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	}
 	if spy.req.Model != "gpt-4.2" {
 		t.Fatalf("expected model replay, got %q", spy.req.Model)
+	}
+	if spy.req.BaseBranch != "main" {
+		t.Fatalf("expected base branch replay, got %q", spy.req.BaseBranch)
 	}
 	if spy.req.Agent != "pi" {
 		t.Fatalf("expected agent replay, got %q", spy.req.Agent)
@@ -141,7 +144,7 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 
 	spy := &spyContinueBatchRunner{result: &batch.Result{}}
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "model": "gpt-4.1", "agent": "opencode"}},
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "model": "gpt-4.1", "agent": "opencode"}},
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
@@ -176,7 +179,7 @@ func TestContinue_WarnsAndUsesBarePromptWhenContinuationContextMissing(t *testin
 	}
 
 	spy := &spyContinueBatchRunner{result: &batch.Result{}}
-	log := &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "agent": "opencode"}}}}
+	log := &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
 	deps := Dependencies{
 		BatchRunner: spy,
 		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
@@ -240,10 +243,10 @@ func (r *continuationFlowBatchRunner) RunBatch(ctx context.Context, req batch.Re
 		}
 	}
 	eventType := "run.started"
-	payload := map[string]any{"branch": branch, "agent": req.Agent}
+	payload := map[string]any{"branch": branch, "base_branch": req.BaseBranch, "agent": req.Agent}
 	if req.Continuation {
 		eventType = "run.continued"
-		payload = map[string]any{"branch": branch, "previous_run_id": req.PreviousRunID}
+		payload = map[string]any{"branch": branch, "base_branch": req.BaseBranch, "previous_run_id": req.PreviousRunID}
 		r.state.prompts = append(r.state.prompts, req.PromptConfig.ContinuePrompt)
 	}
 	r.log.events = append(r.log.events, events.Event{Type: eventType, RunID: runID, Issue: issue, Payload: payload})
@@ -271,7 +274,7 @@ func TestContinue_ChainedContinuationFlow(t *testing.T) {
 		EventLog:    log,
 	}
 
-	_, err := runner.RunBatch(context.Background(), batch.Request{Issues: []int{42}, Branches: map[int]string{42: branch}, Agent: "opencode"})
+	_, err := runner.RunBatch(context.Background(), batch.Request{Issues: []int{42}, Branches: map[int]string{42: branch}, Agent: "opencode", BaseBranch: "main"})
 	if err != nil {
 		t.Fatalf("initial run failed: %v", err)
 	}
@@ -340,7 +343,7 @@ func TestContinue_ChainedContinuationFlow(t *testing.T) {
 func TestContinue_FailsWhenWorktreeMissing(t *testing.T) {
 	branch := "sandman/42-fix-bug"
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "agent": "opencode"}},
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
 	}}
 	deps := Dependencies{
 		BatchRunner: &spyContinueBatchRunner{result: &batch.Result{}},

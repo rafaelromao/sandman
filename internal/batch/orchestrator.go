@@ -726,9 +726,11 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	if branch == "" {
 		branch = fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
 	}
-	if err := o.syncBaseBranch(".", baseBranch); err != nil {
-		fmt.Fprintf(o.errorLog, "error: sync base branch for issue %d: %v\n", num, err)
-		return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
+	if !continuation {
+		if err := o.syncBaseBranch(".", baseBranch); err != nil {
+			fmt.Fprintf(o.errorLog, "error: sync base branch for issue %d: %v\n", num, err)
+			return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
+		}
 	}
 	var container sandbox.Container
 	if containerAlloc != nil {
