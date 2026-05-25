@@ -130,6 +130,10 @@ _Avoid_: Lock file, process file.
 Connect a terminal to a running daemon via the control socket to stream its output. Invoked via `sandman attach`.
 _Avoid_: Tail, follow.
 
+**Portal**:
+A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the current repository's `.sandman/runs/` tree on each poll and shows active and recent Sandman instances. It observes multiple instances in the same repository but does not manage them.
+_Avoid_: dashboard, monitor, control panel.
+
 **Continue**:
 Re-run the latest AgentRun for an issue with a new raw prompt while reusing the prior branch, base branch, agent, model, and review command. Continuation keeps branch checkout unchanged and uses the stored base branch for prompt rendering and event metadata only. Invoked via `sandman continue`.
 _Avoid_: Retry.
@@ -146,6 +150,8 @@ _Avoid_: Replay mode.
 - A **Control Socket** at `.sandman/run.sock` accepts **Attach** connections for the duration of the **Batch**
 - A **Daemon Process** stops the **Control Socket** and releases the **PID Lock** when its **Batch** completes
 - An **Attach** client connects to the **Control Socket** and reads the daemon's output until EOF
+- A **Portal** is repo-scoped and can show multiple **Daemon Process** instances from the same repository at once
+- A **Portal** rescans the current repository's `.sandman/runs/` tree on each poll so newly started **Daemon Process** instances appear without restarting the portal
 
 - A **Batch** contains zero or more **AgentRuns**
 - An **AgentRun** targets exactly one **Issue** and produces exactly one **Branch**

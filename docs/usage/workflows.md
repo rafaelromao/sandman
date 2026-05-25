@@ -40,6 +40,14 @@ sandman run --base-branch main --prompt "Return only OK."
 
 When `sandman run` uses `--prompt` or `--template` without any issue selectors and the final prompt omits `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`, Sandman runs in prompt-only mode: it skips GitHub issue lookup, records `issue: null` in events and history, syncs the selected base branch before the run starts, and names the branch `sandman/<slug>-<timestamp>`.
 
+## Watching runs in the browser
+
+```bash
+sandman portal
+```
+
+`sandman portal` gives you a repo-scoped view of current and recent runs. It rescans `.sandman/runs/` on each poll, so multiple Sandman instances in the same repository show up as they start. This is useful when you want to watch live output, review logs, and compare runs without jumping between terminals.
+
 ## Continuing a failed run
 
 ```bash
