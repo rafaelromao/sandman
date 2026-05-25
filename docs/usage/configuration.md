@@ -75,7 +75,7 @@ The following built-in substitution keys are available in prompt templates:
 
 Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
 
-`sandman continue` replays the stored branch, agent, model, and review command from the prior run, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
+`sandman continue` replays the stored branch, base branch, agent, model, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
 
 ## Container scheduling configuration
 

@@ -1774,7 +1774,7 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunID: "run-42-1", PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunID: "run-42-1", BaseBranch: "main", PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1791,6 +1791,46 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	}
 	if continued.Payload["agent"] != "test-agent" {
 		t.Fatalf("expected agent replay, got %#v", continued.Payload["agent"])
+	}
+	if continued.Payload["base_branch"] != "main" {
+		t.Fatalf("expected base branch replay, got %#v", continued.Payload["base_branch"])
+	}
+}
+
+func TestRunBatch_ContinuationSkipsBaseBranchSync(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	tracker := &baseBranchSyncTracker{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.baseBranchSync = func(repoPath, sourceBranch string) error {
+		tracker.mu.Lock()
+		tracker.syncCalls++
+		tracker.mu.Unlock()
+		return nil
+	}
+	o.sandboxFactory = &syncAwareSandboxFactory{tracker: tracker}
+	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
+
+	worktreePath := filepath.Join(".sandman", "worktrees", "sandman", "42-fix-bug")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunID: "run-42-1", PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if tracker.syncCalls != 0 {
+		t.Fatalf("expected no base branch sync, got %d", tracker.syncCalls)
+	}
+	if !reflect.DeepEqual(tracker.branches, []string{"main"}) {
+		t.Fatalf("expected stored base branch passed to sandbox, got %v", tracker.branches)
 	}
 }
 
@@ -1826,7 +1866,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected initial context to be written, got %q", string(initialContext))
 	}
 
-	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunID: log.events[0].RunID, PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunID: log.events[0].RunID, PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
@@ -1838,7 +1878,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected first continue context to be written, got %q", string(firstContinueContext))
 	}
 
-	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunID: log.events[2].RunID, PromptConfig: prompt.RenderConfig{ContinuePrompt: "push the PR"}})
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunID: log.events[2].RunID, PromptConfig: prompt.RenderConfig{ContinuePrompt: "push the PR"}})
 	if err != nil {
 		t.Fatalf("second continue failed: %v", err)
 	}

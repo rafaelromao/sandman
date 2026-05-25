@@ -18,7 +18,7 @@ import (
 func NewContinueCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "continue [issue-number] <prompt-text>",
-		Short: "Continue the last agent run for an issue",
+		Short: "Continue the last agent run for an issue on the same branch",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			issueNum, err := strconv.Atoi(args[0])
@@ -76,6 +76,11 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				reviewCommand = storedReviewCommand
 			}
 
+			baseBranch, ok := payloadString(lastRun.Payload, "base_branch")
+			if !ok || strings.TrimSpace(baseBranch) == "" {
+				return fmt.Errorf("missing base branch in previous run for issue #%d", issueNum)
+			}
+
 			agentName := strings.TrimSpace(cmdFlag(cmd, "agent"))
 			if agentName == "" {
 				if storedAgent, ok := payloadString(lastRun.Payload, "agent"); ok {
@@ -118,6 +123,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				Branches:      map[int]string{issueNum: branch},
 				Agent:         agentName,
 				Model:         model,
+				BaseBranch:    strings.TrimSpace(baseBranch),
 				Continuation:  true,
 				PreviousRunID: lastRun.RunID,
 				PromptConfig: prompt.RenderConfig{

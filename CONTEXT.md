@@ -131,7 +131,7 @@ Connect a terminal to a running daemon via the control socket to stream its outp
 _Avoid_: Tail, follow.
 
 **Continue**:
-Re-run the latest AgentRun for an issue with a new raw prompt while reusing the prior branch, agent, model, and review command. Invoked via `sandman continue`.
+Re-run the latest AgentRun for an issue with a new raw prompt while reusing the prior branch, base branch, agent, model, and review command. Continuation keeps branch checkout unchanged and uses the stored base branch for prompt rendering and event metadata only. Invoked via `sandman continue`.
 _Avoid_: Retry.
 
 **Continuation**:
