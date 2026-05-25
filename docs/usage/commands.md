@@ -43,6 +43,7 @@ Issue-driven runs require exactly one selection mode. `--prompt` and `--template
 | `--parallel` | `default_parallel` from config (4) | Maximum concurrent agent runs |
 | `--start-delay` | config `start_delay` (0) | Wait this many seconds after any `AgentRun` finishes before starting the next one; `0` disables pacing |
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
+| `--base-branch` | config `git.base_branch` (`main`) | Base branch to fetch from origin before each `AgentRun` starts |
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = auto/default mode, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = auto mode |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
@@ -64,6 +65,7 @@ Issue-driven runs require exactly one selection mode. `--prompt` and `--template
 - `run` preserves worktrees by default; use `sandman clean` to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
 - `--start-delay` is batch-local pacing; it waits after any `AgentRun` finishes before the next start, and `0` disables the delay
+- `--base-branch` controls which branch Sandman fetches from origin before each `AgentRun` starts and which branch new worktrees are cut from
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
 - `--container-capacity` accepts `0` as auto/default mode and resolves it to the default container capacity behavior
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means auto-scale

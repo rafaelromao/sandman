@@ -17,6 +17,7 @@ type Request struct {
 	Dependencies         map[int][]int
 	Agent                string
 	Model                string
+	BaseBranch           string
 	Continuation         bool
 	PreviousRunID        string
 	Parallel             int

@@ -23,8 +23,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [issue...]",
 		Short: "Run an AFK agent for specific issues",
-		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Prompt or template overrides that omit {{ISSUE_NUMBER}} run without issue lookup. Use \"sandman clean\" to delete preserved worktrees.",
+		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Prompt or template overrides that omit {{ISSUE_NUMBER}} run without issue lookup. Use --base-branch to fetch a different origin branch before each run starts. Use \"sandman clean\" to delete preserved worktrees.",
 		Example: `  sandman run 42 43
+  sandman run --base-branch main 42 43
   sandman run --prompt "Return only OK."
   sandman run --template ./prompt.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -144,6 +145,15 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return err
 			}
 
+			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
+			baseBranch := strings.TrimSpace(baseBranchFlag)
+			if baseBranch == "" {
+				baseBranch = strings.TrimSpace(cfg.Git.BaseBranch)
+			}
+			if baseBranch == "" {
+				baseBranch = "main"
+			}
+
 			resolvedBatch, err := batch.NewDependencyResolver(deps.GitHubClient).Resolve(cmd.Context(), issues, includeDependencies)
 			if err != nil {
 				return fmt.Errorf("resolve dependencies: %w", err)
@@ -204,6 +214,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				Dependencies:         resolvedBatch.Deps,
 				Agent:                agentName,
 				Model:                strings.TrimSpace(modelFlag),
+				BaseBranch:           baseBranch,
 				Parallel:             parallel,
 				StartDelay:           time.Duration(startDelay) * time.Second,
 				StartDelaySet:        startDelaySet,
@@ -249,6 +260,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("review-command", "", "Review command to inject into the prompt template")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode or pi)")
+	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
 
 	cmd.Flags().Int("next", 0, "Delegate the N lowest-numbered open issues labeled ready-for-agent")

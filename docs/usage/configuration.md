@@ -51,6 +51,8 @@ Sandman supports two built-in presets: `opencode` and `pi`. Both are installed i
 
 `sandman run --agent` selects one of those built-ins per invocation. `sandman config set default_agent` changes the project default.
 
+Use `sandman run --base-branch` to override `git.base_branch` for a single invocation.
+
 ### Prompt templates
 
 Sandman's prompt lifecycle has three steps:
