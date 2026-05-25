@@ -75,7 +75,7 @@ func NewPortalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "portal",
 		Short: "Serve a local portal for current Sandman runs",
-		Long:  "Serve a localhost portal for the current repository and poll .sandman/runs for live Sandman instances.",
+		Long:  "Serve a portal for the current repository and poll .sandman/runs for live Sandman instances.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port, err := cmd.Flags().GetInt("port")
 			if err != nil {
@@ -98,7 +98,7 @@ func NewPortalCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int("port", 5000, "Port to bind on 127.0.0.1")
+	cmd.Flags().Int("port", 5000, "Port to bind on 0.0.0.0")
 	return cmd
 }
 
@@ -119,9 +119,9 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 }
 
 func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writer) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
-		return fmt.Errorf("bind portal on 127.0.0.1:%d: %w", port, err)
+		return fmt.Errorf("bind portal on 0.0.0.0:%d: %w", port, err)
 	}
 	defer listener.Close()
 
@@ -131,7 +131,7 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 		actualPort = tcpAddr.Port
 	}
 
-	if _, err := fmt.Fprintf(out, "Portal listening on http://127.0.0.1:%d\n", actualPort); err != nil {
+	if _, err := fmt.Fprintf(out, "Portal listening on http://0.0.0.0:%d\n", actualPort); err != nil {
 		return fmt.Errorf("write portal address: %w", err)
 	}
 
@@ -718,9 +718,9 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       --border: oklch(0.35 0.012 245);
       --text: oklch(0.94 0.01 245);
       --muted: oklch(0.71 0.012 245);
-      --accent: oklch(0.72 0.12 245);
+      --accent: oklch(0.54 0.01 245);
       --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.16 0.01 245);
+      --accent-ink: oklch(0.95 0.01 245);
       --success: oklch(0.77 0.12 155);
       --danger: oklch(0.7 0.13 28);
       --warning: oklch(0.81 0.1 85);
@@ -967,6 +967,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       background: var(--surface-2);
       color: var(--text);
       font: inherit;
+      font-weight: 600;
       border-radius: 12px;
       padding: 8px 12px;
       cursor: pointer;
@@ -1027,14 +1028,14 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
     .detail-box {
       border: 1px solid var(--border);
       border-radius: 16px;
-      background: var(--surface-3);
+      background: color-mix(in oklch, var(--bg) 40%, var(--surface-2));
       overflow: hidden;
     }
     .detail-box h3 {
       margin: 0;
       padding: 12px 14px 10px;
       border-bottom: 1px solid var(--border);
-      background: color-mix(in oklch, var(--surface-2) 90%, var(--bg));
+      background: color-mix(in oklch, var(--bg) 50%, var(--surface-2));
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 0.12em;
@@ -1050,13 +1051,28 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       overflow: auto;
       line-height: 1.5;
       font-size: 12.5px;
+      background: color-mix(in oklch, var(--bg) 72%, var(--surface-2));
+      color: var(--text);
+      text-shadow: 0 1px 0 oklch(0 0 0 / 0.2);
     }
+    .terminal-text {
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .term-prompt { color: var(--accent); }
+    .term-string { color: color-mix(in oklch, var(--warning) 65%, var(--text)); }
+    .term-number { color: color-mix(in oklch, var(--success) 55%, var(--text)); }
+    .term-url { color: color-mix(in oklch, var(--accent) 65%, var(--text)); }
+    .term-path { color: color-mix(in oklch, var(--muted) 35%, var(--text)); }
+    .term-keyword { color: color-mix(in oklch, var(--danger) 42%, var(--text)); }
     .tab-events {
       display: grid;
       gap: 0;
       align-content: start;
-      padding: 0;
-      overflow: auto;
+      margin: 0 14px 14px;
+      border-radius: 14px;
+      overflow: hidden;
     }
     .tab-events .event-row {
       padding: 12px 14px;
@@ -1090,6 +1106,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       word-break: break-word;
       color: var(--muted);
       font-size: 12px;
+      background: color-mix(in oklch, var(--bg) 72%, var(--surface-2));
     }
     .empty-state {
       padding: 30px 16px;
@@ -1117,6 +1134,24 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       font-weight: 500;
       color: var(--text);
       word-break: break-word;
+    }
+    .kv .action-btn {
+      justify-self: start;
+      width: fit-content;
+    }
+    .run-row {
+      cursor: pointer;
+    }
+    .run-row:focus-visible td {
+      background: color-mix(in oklch, var(--accent) 12%, var(--surface));
+    }
+    .row-hint {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100%;
+      color: var(--muted);
+      font-size: 12px;
     }
     .error-banner {
       display: none;
@@ -1328,7 +1363,6 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
 
     function renderRunRow(run) {
       const isOpen = state.expanded.has(run.key);
-      const detailsButtonLabel = isOpen ? 'Hide details' : 'Show details';
       const tabName = state.tabs.get(run.key) || 'output';
       const output = run.output && String(run.output).trim()
         ? run.output
@@ -1337,7 +1371,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       const events = Array.isArray(run.events) ? run.events : [];
 
       return [
-        '<tr class="run-row ' + escapeHTML(run.kind || '') + '" data-run-key="' + escapeHTML(run.key) + '">',
+        '<tr class="run-row ' + escapeHTML(run.kind || '') + '" data-action="toggle-run" data-run-key="' + escapeHTML(run.key) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
         '  <td>',
         '    <div class="run-title">',
         '      <span class="name">' + escapeHTML(run.issueLabel || run.key) + '</span>',
@@ -1349,7 +1383,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
         '  <td class="mono">' + escapeHTML(formatDuration(run.duration)) + '</td>',
         '  <td class="mono">' + escapeHTML(formatBranch(run)) + '</td>',
         '  <td class="mono">' + escapeHTML(formatSource(run)) + '</td>',
-        '  <td><button class="action-btn" type="button" data-action="toggle-run" data-run-key="' + escapeHTML(run.key) + '" aria-expanded="' + (isOpen ? 'true' : 'false') + '">' + escapeHTML(detailsButtonLabel) + '</button></td>',
+        '  <td><span class="row-hint mono">' + escapeHTML(isOpen ? 'Open' : 'Click row') + '</span></td>',
         '</tr>',
         isOpen ? (
           '<tr class="detail-row" data-detail-for="' + escapeHTML(run.key) + '">'
@@ -1394,6 +1428,27 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       return '<div class="kv"><span>Log file</span><a class="action-btn" href="' + escapeHTML(run.logUrl) + '" download>Download log</a></div>';
     }
 
+    function highlightTerminalText(text) {
+      const escaped = escapeHTML(text || '');
+      if (!escaped) return '';
+      return escaped.split('\n').map((line) => {
+        let styled = line;
+        if (styled.startsWith('&gt; ')) {
+          styled = '<span class="term-prompt">&gt;</span> ' + styled.slice(5);
+        }
+        styled = styled
+          .replace(/(https?:\/\/[^\s<]+)/g, '<span class="term-url">$1</span>')
+          .replace(/\b([0-9]+(?:\.[0-9]+)?)\b/g, '<span class="term-number">$1</span>')
+          .replace(/(&quot;[^&]*?&quot;|'[^']*?')/g, '<span class="term-string">$1</span>')
+          .replace(/\b(build|success|failure|error|warning|active|completed|waiting|running)\b/gi, '<span class="term-keyword">$1</span>');
+        return styled;
+      }).join('\n');
+    }
+
+    function renderTerminalBlock(text, extraClass) {
+      return '<pre class="terminal-text' + (extraClass ? ' ' + escapeHTML(extraClass) : '') + '">' + highlightTerminalText(text) + '</pre>';
+    }
+
     function renderDetailFields(run) {
       return [
         renderDetailKV('Key', run.key),
@@ -1410,19 +1465,10 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
 
     function renderTabPanel(run, tabKey, output, log, events) {
       if (tabKey === 'details') {
-        const context = output && String(output).trim()
-          ? output
-          : (run.kind === 'active' ? 'No live output captured yet.' : 'Run completed. Open Output, Log or Events for persisted details.');
         return [
-          '<section class="detail-grid">',
-          '  <div class="detail-box">',
-          '    <h3>Run details</h3>',
-          '    <div class="detail-meta">' + renderDetailFields(run) + '</div>',
-          '  </div>',
-          '  <div class="detail-box tab-pane fill">',
-          '    <h3>Context</h3>',
-          '    <pre>' + escapeHTML(context) + '</pre>',
-          '  </div>',
+          '<section class="detail-box tab-pane fill">',
+          '  <h3>Run details</h3>',
+          '  <div class="detail-meta">' + renderDetailFields(run) + '</div>',
           '</section>',
         ].join('');
       }
@@ -1435,7 +1481,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
         return '<section class="detail-box tab-pane fill"><h3>Events</h3><div class="tab-events">' + content + '</div></section>';
       }
 
-      return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(currentTabLabel(tabKey)) + '</h3><pre>' + escapeHTML(content) + '</pre></section>';
+      return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(currentTabLabel(tabKey)) + '</h3>' + renderTerminalBlock(content) + '</section>';
     }
 
     function renderTabContent(run, tabKey, output, log, events) {
@@ -1449,7 +1495,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
             '    <span class="event-type">' + escapeHTML(event.type || 'event') + '</span>',
             '    <span class="event-time">' + escapeHTML(event.timestamp ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(event.timestamp)) : '—') + '</span>',
             '  </div>',
-            payload ? '<pre class="event-payload">' + escapeHTML(payload) + '</pre>' : '',
+            payload ? '<pre class="event-payload terminal-text">' + highlightTerminalText(payload) + '</pre>' : '',
             '</div>',
           ].join('');
         }).join('');
@@ -1500,24 +1546,41 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       }
     }
 
+    function toggleRun(runKey) {
+      if (state.expanded.has(runKey)) state.expanded.delete(runKey);
+      else state.expanded.add(runKey);
+      render();
+    }
+
     runsBody.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
-      if (!button) return;
-      const runKey = button.getAttribute('data-run-key');
-      if (!runKey) return;
-      const action = button.getAttribute('data-action');
-      if (action === 'toggle-run') {
-        if (state.expanded.has(runKey)) state.expanded.delete(runKey);
-        else state.expanded.add(runKey);
-        render();
+      if (button) {
+        const runKey = button.getAttribute('data-run-key');
+        if (!runKey) return;
+        const action = button.getAttribute('data-action');
+        if (action === 'set-tab') {
+          const tab = button.getAttribute('data-tab') || 'output';
+          state.tabs.set(runKey, tab);
+          state.expanded.add(runKey);
+          render();
+        }
         return;
       }
-      if (action === 'set-tab') {
-        const tab = button.getAttribute('data-tab') || 'output';
-        state.tabs.set(runKey, tab);
-        state.expanded.add(runKey);
-        render();
-      }
+
+      const row = event.target.closest('tr[data-action="toggle-run"]');
+      if (!row) return;
+      const runKey = row.getAttribute('data-run-key');
+      if (!runKey) return;
+      toggleRun(runKey);
+    });
+
+    runsBody.addEventListener('keydown', (event) => {
+      const row = event.target.closest('tr[data-action="toggle-run"]');
+      if (!row) return;
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      const runKey = row.getAttribute('data-run-key');
+      if (runKey) toggleRun(runKey);
     });
 
     statusFilter.addEventListener('change', () => {
