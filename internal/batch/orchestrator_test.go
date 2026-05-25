@@ -2911,6 +2911,29 @@ func TestRunBatch_WorktreeSandboxIgnoresContainerSettings(t *testing.T) {
 	}
 }
 
+func TestResolveSandboxExecutionPolicy_WorktreeModeDoesNotBuildContainerImage(t *testing.T) {
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+	o := &Orchestrator{containerRuntimeFactory: factory}
+
+	policy, err := o.resolveSandboxExecutionPolicy(&config.Config{DefaultAgent: "test-agent", Agent: "test-agent", BuildTools: "generic"}, config.Agent{Command: "true"}, Request{}, "worktree")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if policy == nil {
+		t.Fatal("expected policy")
+	}
+	if policy.mode != "worktree" {
+		t.Fatalf("expected worktree mode, got %q", policy.mode)
+	}
+	if policy.containerAlloc != nil {
+		t.Fatal("expected no container allocator in worktree mode")
+	}
+	if starter.buildImageCount != 0 {
+		t.Fatalf("expected no container image build in worktree mode, got %d", starter.buildImageCount)
+	}
+}
+
 func TestRunBatch_UsesNonInteractiveRunPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
