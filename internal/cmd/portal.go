@@ -1094,7 +1094,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
   </main>
 
   <script>
-    const apiPath = {{printf "%q" .RefreshPath}};
+    const apiPath = "{{.RefreshPath}}";
     const pollInterval = {{.PollInterval}};
     const statusFilter = document.getElementById('status-filter');
     const activeOnlyToggle = document.getElementById('active-only');

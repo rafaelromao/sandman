@@ -194,7 +194,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active only", "Output", "Log", "Events", "Download log", "/api/runs"} {
+	for _, want := range []string{"Active only", "Output", "Log", "Events", "Download log", `const apiPath = "\/api\/runs";`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q", want)
 		}
