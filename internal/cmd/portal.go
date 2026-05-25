@@ -708,21 +708,29 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.PortalTitle}}</title>
-  <script>
-    (function () {
-      const themes = new Set(['latte', 'frappe', 'macchiato', 'mocha']);
+    <script>
+      (function () {
+      const themes = new Set(['catppuccin-latte', 'catppuccin-frappe', 'catppuccin-macchiato', 'catppuccin-mocha', 'tokyo-night', 'gruvbox', 'everforest', 'nord', 'dracula', 'rose-pine', 'tokyo-night-day', 'everforest-light', 'solarized-light', 'nord-light', 'github-light']);
+      const aliases = new Map([
+        ['latte', 'catppuccin-latte'],
+        ['frappe', 'catppuccin-frappe'],
+        ['macchiato', 'catppuccin-macchiato'],
+        ['mocha', 'catppuccin-mocha'],
+      ]);
       const storageKey = 'sandman.portal.theme';
-      let theme = 'frappe';
+      let theme = 'catppuccin-frappe';
       try {
         const saved = localStorage.getItem(storageKey);
         if (themes.has(saved)) {
           theme = saved;
+        } else if (aliases.has(saved)) {
+          theme = aliases.get(saved);
         } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-          theme = 'mocha';
+          theme = 'catppuccin-mocha';
         }
       } catch (err) {
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-          theme = 'mocha';
+          theme = 'catppuccin-mocha';
         }
       }
       document.documentElement.dataset.theme = theme;
@@ -745,8 +753,10 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       --danger: oklch(0.72 0.12 19);
       --warning: oklch(0.84 0.08 83);
       --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+      --page-top: oklch(0.15 0.012 245);
+      --page-bottom: var(--bg);
     }
-    html[data-theme="latte"] {
+    html[data-theme="catppuccin-latte"] {
       color-scheme: light;
       --bg: oklch(0.96 0.01 265);
       --surface: oklch(0.93 0.01 265);
@@ -762,8 +772,10 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       --danger: oklch(0.55 0.22 20);
       --warning: oklch(0.71 0.15 68);
       --shadow: 0 1px 0 oklch(0.44 0.04 279 / 0.05), 0 24px 48px oklch(0.44 0.04 279 / 0.12);
+      --page-top: oklch(0.98 0.01 265);
+      --page-bottom: oklch(0.94 0.01 265);
     }
-    html[data-theme="frappe"] {
+    html[data-theme="catppuccin-frappe"] {
       color-scheme: dark;
       --bg: oklch(0.33 0.03 275);
       --surface: oklch(0.30 0.03 276);
@@ -779,8 +791,10 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       --danger: oklch(0.72 0.12 19);
       --warning: oklch(0.84 0.08 83);
       --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+      --page-top: oklch(0.23 0.03 275);
+      --page-bottom: var(--bg);
     }
-    html[data-theme="macchiato"] {
+    html[data-theme="catppuccin-macchiato"] {
       color-scheme: dark;
       --bg: oklch(0.28 0.03 277);
       --surface: oklch(0.25 0.03 278);
@@ -796,8 +810,10 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       --danger: oklch(0.74 0.13 11);
       --warning: oklch(0.88 0.07 85);
       --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+      --page-top: oklch(0.19 0.03 277);
+      --page-bottom: var(--bg);
     }
-    html[data-theme="mocha"] {
+    html[data-theme="catppuccin-mocha"] {
       color-scheme: dark;
       --bg: oklch(0.24 0.03 284);
       --surface: oklch(0.22 0.03 284);
@@ -813,6 +829,217 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       --danger: oklch(0.76 0.13 3);
       --warning: oklch(0.92 0.07 87);
       --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+      --page-top: oklch(0.18 0.03 284);
+      --page-bottom: var(--bg);
+    }
+    html[data-theme="tokyo-night"] {
+      color-scheme: dark;
+      --bg: oklch(0.19 0.03 261);
+      --surface: oklch(0.23 0.03 261);
+      --surface-2: oklch(0.28 0.03 261);
+      --surface-3: oklch(0.34 0.03 261);
+      --border: oklch(0.41 0.03 261);
+      --text: oklch(0.86 0.05 260);
+      --muted: oklch(0.71 0.04 260);
+      --accent: oklch(0.69 0.16 260);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.18 0.03 261);
+      --success: oklch(0.78 0.10 145);
+      --danger: oklch(0.72 0.13 10);
+      --warning: oklch(0.85 0.08 85);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+      --page-top: oklch(0.16 0.03 261);
+      --page-bottom: var(--bg);
+    }
+    html[data-theme="gruvbox"] {
+      color-scheme: dark;
+      --bg: oklch(0.28 0.03 75);
+      --surface: oklch(0.32 0.03 75);
+      --surface-2: oklch(0.38 0.03 75);
+      --surface-3: oklch(0.44 0.03 75);
+      --border: oklch(0.50 0.03 75);
+      --text: oklch(0.88 0.05 88);
+      --muted: oklch(0.73 0.04 88);
+      --accent: oklch(0.75 0.12 85);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.20 0.03 75);
+      --success: oklch(0.78 0.12 140);
+      --danger: oklch(0.68 0.14 30);
+      --warning: oklch(0.82 0.12 60);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+      --page-top: oklch(0.24 0.03 75);
+      --page-bottom: var(--bg);
+    }
+    html[data-theme="everforest"] {
+      color-scheme: dark;
+      --bg: oklch(0.27 0.02 135);
+      --surface: oklch(0.31 0.02 135);
+      --surface-2: oklch(0.37 0.02 135);
+      --surface-3: oklch(0.43 0.02 135);
+      --border: oklch(0.49 0.02 135);
+      --text: oklch(0.86 0.04 120);
+      --muted: oklch(0.71 0.03 120);
+      --accent: oklch(0.70 0.11 145);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.18 0.02 135);
+      --success: oklch(0.78 0.10 145);
+      --danger: oklch(0.70 0.13 30);
+      --warning: oklch(0.83 0.10 85);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+      --page-top: oklch(0.23 0.02 135);
+      --page-bottom: var(--bg);
+    }
+    html[data-theme="nord"] {
+      color-scheme: dark;
+      --bg: oklch(0.25 0.02 260);
+      --surface: oklch(0.29 0.02 260);
+      --surface-2: oklch(0.35 0.02 260);
+      --surface-3: oklch(0.41 0.02 260);
+      --border: oklch(0.47 0.02 260);
+      --text: oklch(0.88 0.03 260);
+      --muted: oklch(0.73 0.03 260);
+      --accent: oklch(0.68 0.09 235);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.16 0.02 260);
+      --success: oklch(0.79 0.10 145);
+      --danger: oklch(0.70 0.13 10);
+      --warning: oklch(0.84 0.08 85);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+      --page-top: oklch(0.21 0.02 260);
+      --page-bottom: var(--bg);
+    }
+    html[data-theme="dracula"] {
+      color-scheme: dark;
+      --bg: oklch(0.18 0.03 290);
+      --surface: oklch(0.22 0.03 290);
+      --surface-2: oklch(0.28 0.03 290);
+      --surface-3: oklch(0.35 0.03 290);
+      --border: oklch(0.42 0.03 290);
+      --text: oklch(0.88 0.04 290);
+      --muted: oklch(0.75 0.04 290);
+      --accent: oklch(0.74 0.16 340);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.18 0.03 290);
+      --success: oklch(0.80 0.11 145);
+      --danger: oklch(0.73 0.14 10);
+      --warning: oklch(0.88 0.08 85);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+      --page-top: oklch(0.14 0.03 290);
+      --page-bottom: var(--bg);
+    }
+    html[data-theme="rose-pine"] {
+      color-scheme: dark;
+      --bg: oklch(0.19 0.02 290);
+      --surface: oklch(0.23 0.02 290);
+      --surface-2: oklch(0.29 0.02 290);
+      --surface-3: oklch(0.35 0.02 290);
+      --border: oklch(0.42 0.02 290);
+      --text: oklch(0.88 0.03 280);
+      --muted: oklch(0.73 0.03 280);
+      --accent: oklch(0.72 0.11 10);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.18 0.02 290);
+      --success: oklch(0.79 0.10 145);
+      --danger: oklch(0.72 0.14 10);
+      --warning: oklch(0.84 0.08 85);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
+      --page-top: oklch(0.15 0.02 290);
+      --page-bottom: var(--bg);
+    }
+    html[data-theme="tokyo-night-day"] {
+      color-scheme: light;
+      --bg: oklch(0.96 0.01 260);
+      --surface: oklch(0.93 0.01 260);
+      --surface-2: oklch(0.90 0.01 260);
+      --surface-3: oklch(0.87 0.01 260);
+      --border: oklch(0.78 0.01 260);
+      --text: oklch(0.34 0.03 260);
+      --muted: oklch(0.52 0.03 260);
+      --accent: oklch(0.56 0.16 260);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.96 0.01 260);
+      --success: oklch(0.57 0.16 145);
+      --danger: oklch(0.55 0.18 25);
+      --warning: oklch(0.69 0.14 78);
+      --shadow: 0 1px 0 oklch(0.34 0.03 260 / 0.05), 0 24px 48px oklch(0.34 0.03 260 / 0.12);
+      --page-top: oklch(0.99 0.01 260);
+      --page-bottom: oklch(0.95 0.01 260);
+    }
+    html[data-theme="everforest-light"] {
+      color-scheme: light;
+      --bg: oklch(0.97 0.01 135);
+      --surface: oklch(0.94 0.01 135);
+      --surface-2: oklch(0.91 0.01 135);
+      --surface-3: oklch(0.88 0.01 135);
+      --border: oklch(0.79 0.01 135);
+      --text: oklch(0.34 0.02 135);
+      --muted: oklch(0.50 0.02 135);
+      --accent: oklch(0.50 0.12 145);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.96 0.01 135);
+      --success: oklch(0.57 0.15 145);
+      --danger: oklch(0.55 0.18 25);
+      --warning: oklch(0.69 0.12 78);
+      --shadow: 0 1px 0 oklch(0.34 0.02 135 / 0.05), 0 24px 48px oklch(0.34 0.02 135 / 0.12);
+      --page-top: oklch(0.99 0.01 135);
+      --page-bottom: oklch(0.95 0.01 135);
+    }
+    html[data-theme="solarized-light"] {
+      color-scheme: light;
+      --bg: oklch(0.96 0.01 95);
+      --surface: oklch(0.92 0.01 95);
+      --surface-2: oklch(0.89 0.01 95);
+      --surface-3: oklch(0.85 0.01 95);
+      --border: oklch(0.76 0.01 95);
+      --text: oklch(0.34 0.02 95);
+      --muted: oklch(0.50 0.02 95);
+      --accent: oklch(0.54 0.11 200);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.96 0.01 95);
+      --success: oklch(0.56 0.14 145);
+      --danger: oklch(0.55 0.18 25);
+      --warning: oklch(0.70 0.13 78);
+      --shadow: 0 1px 0 oklch(0.34 0.02 95 / 0.05), 0 24px 48px oklch(0.34 0.02 95 / 0.12);
+      --page-top: oklch(0.99 0.01 95);
+      --page-bottom: oklch(0.95 0.01 95);
+    }
+    html[data-theme="nord-light"] {
+      color-scheme: light;
+      --bg: oklch(0.96 0.01 260);
+      --surface: oklch(0.93 0.01 260);
+      --surface-2: oklch(0.90 0.01 260);
+      --surface-3: oklch(0.86 0.01 260);
+      --border: oklch(0.78 0.01 260);
+      --text: oklch(0.33 0.02 260);
+      --muted: oklch(0.52 0.02 260);
+      --accent: oklch(0.55 0.07 235);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.96 0.01 260);
+      --success: oklch(0.57 0.13 145);
+      --danger: oklch(0.55 0.18 25);
+      --warning: oklch(0.68 0.12 78);
+      --shadow: 0 1px 0 oklch(0.33 0.02 260 / 0.05), 0 24px 48px oklch(0.33 0.02 260 / 0.12);
+      --page-top: oklch(0.99 0.01 260);
+      --page-bottom: oklch(0.95 0.01 260);
+    }
+    html[data-theme="github-light"] {
+      color-scheme: light;
+      --bg: oklch(0.98 0.005 265);
+      --surface: oklch(0.96 0.005 265);
+      --surface-2: oklch(0.93 0.005 265);
+      --surface-3: oklch(0.89 0.005 265);
+      --border: oklch(0.82 0.005 265);
+      --text: oklch(0.28 0.02 265);
+      --muted: oklch(0.48 0.02 265);
+      --accent: oklch(0.42 0.08 265);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.98 0.005 265);
+      --success: oklch(0.56 0.14 145);
+      --danger: oklch(0.55 0.18 25);
+      --warning: oklch(0.69 0.12 78);
+      --shadow: 0 1px 0 oklch(0.28 0.02 265 / 0.05), 0 24px 48px oklch(0.28 0.02 265 / 0.12);
+      --page-top: oklch(0.99 0.005 265);
+      --page-bottom: oklch(0.96 0.005 265);
     }
     * { box-sizing: border-box; }
     html, body { min-height: 100%; }
@@ -822,7 +1049,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       color: var(--text);
       background:
         radial-gradient(circle at 18% 0%, color-mix(in oklch, var(--accent) 14%, transparent), transparent 36%),
-        linear-gradient(180deg, oklch(0.15 0.012 245), var(--bg));
+        linear-gradient(180deg, var(--page-top), var(--page-bottom));
     }
     a { color: inherit; }
     code, pre, .mono {
@@ -1358,10 +1585,21 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
           <div class="theme-control">
             <span>Theme</span>
             <select id="theme-picker" aria-label="Select theme">
-              <option value="latte">Latte</option>
-              <option value="frappe">Frappe</option>
-              <option value="macchiato">Macchiato</option>
-              <option value="mocha">Mocha</option>
+              <option value="catppuccin-frappe">Catppuccin Frappe</option>
+              <option value="catppuccin-latte">Catppuccin Latte</option>
+              <option value="catppuccin-macchiato">Catppuccin Macchiato</option>
+              <option value="catppuccin-mocha">Catppuccin Mocha</option>
+              <option value="dracula">Dracula</option>
+              <option value="everforest">Everforest</option>
+              <option value="everforest-light">Everforest Light</option>
+              <option value="github-light">GitHub Light</option>
+              <option value="gruvbox">Gruvbox</option>
+              <option value="nord">Nord</option>
+              <option value="nord-light">Nord Light</option>
+              <option value="rose-pine">Rose Pine</option>
+              <option value="solarized-light">Solarized Light</option>
+              <option value="tokyo-night">Tokyo Night</option>
+              <option value="tokyo-night-day">Tokyo Night Day</option>
             </select>
           </div>
           <div class="poll-control">
@@ -1421,7 +1659,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
     const themePicker = document.getElementById('theme-picker');
     const pollIntervalInput = document.getElementById('poll-interval');
     const themeStorageKey = 'sandman.portal.theme';
-    const supportedThemes = new Set(['latte', 'frappe', 'macchiato', 'mocha']);
+    const supportedThemes = new Set(['catppuccin-latte', 'catppuccin-frappe', 'catppuccin-macchiato', 'catppuccin-mocha', 'tokyo-night', 'gruvbox', 'everforest', 'nord', 'dracula', 'rose-pine', 'tokyo-night-day', 'everforest-light', 'solarized-light', 'nord-light', 'github-light']);
     const statusFilter = document.getElementById('status-filter');
     const activeOnlyToggle = document.getElementById('active-only');
     const runsBody = document.getElementById('runs-body');
@@ -1430,11 +1668,18 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
     const lastUpdated = document.getElementById('last-updated');
 
     function systemTheme() {
-      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'mocha' : 'frappe';
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'catppuccin-mocha' : 'catppuccin-frappe';
     }
 
     function normalizeTheme(value) {
-      return supportedThemes.has(value) ? value : 'frappe';
+      const aliases = new Map([
+        ['latte', 'catppuccin-latte'],
+        ['frappe', 'catppuccin-frappe'],
+        ['macchiato', 'catppuccin-macchiato'],
+        ['mocha', 'catppuccin-mocha'],
+      ]);
+      if (supportedThemes.has(value)) return value;
+      return aliases.get(value) || 'catppuccin-frappe';
     }
 
     function readStoredTheme() {
@@ -1461,7 +1706,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
 
     applyTheme(document.documentElement.dataset.theme || readStoredTheme() || systemTheme(), false);
     if (themePicker) {
-      themePicker.value = document.documentElement.dataset.theme || 'frappe';
+      themePicker.value = document.documentElement.dataset.theme || 'catppuccin-frappe';
       themePicker.addEventListener('change', () => applyTheme(themePicker.value, true));
     }
 
