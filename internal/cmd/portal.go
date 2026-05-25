@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -53,6 +54,7 @@ type portalRun struct {
 	Duration    string        `json:"duration,omitempty"`
 	SocketPath  string        `json:"socketPath,omitempty"`
 	LogPath     string        `json:"logPath,omitempty"`
+	LogURL      string        `json:"logUrl,omitempty"`
 	Output      string        `json:"output,omitempty"`
 	Log         string        `json:"log,omitempty"`
 	Events      []portalEvent `json:"events,omitempty"`
@@ -193,6 +195,44 @@ func newPortalHandler(repoRoot string) http.Handler {
 			"repoRoot": repoRoot,
 			"runs":     runs,
 		})
+	})
+	mux.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+		if relPath == "" {
+			http.Error(w, "missing path", http.StatusBadRequest)
+			return
+		}
+
+		cleanPath := filepath.Clean(relPath)
+		if filepath.IsAbs(cleanPath) || strings.HasPrefix(cleanPath, "..") {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+
+		logDir := filepath.Join(repoRoot, ".sandman", "logs")
+		fullPath := filepath.Join(repoRoot, cleanPath)
+		relToLogs, err := filepath.Rel(logDir, fullPath)
+		if err != nil || strings.HasPrefix(relToLogs, "..") {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+
+		if _, err := os.Stat(fullPath); err != nil {
+			if os.IsNotExist(err) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(fullPath)))
+		http.ServeFile(w, r, fullPath)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -446,6 +486,7 @@ func portalRunFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
+		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, ""),
 		Output:      readPortalSocketOutput(match.instance.SocketPath),
 		Log:         readPortalTextFile(logPath),
 		Events:      eventsByRun[match.instance.Key],
@@ -493,6 +534,7 @@ func portalRunFromState(repoRoot string, runState events.RunState, active *porta
 		FinishedAt:  finishedAt,
 		Duration:    durationForRun(runState),
 		LogPath:     logPath,
+		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, branch),
 		Output:      output,
 		Log:         readPortalTextFile(logPath),
 		Events:      eventsByRun[runID],
@@ -547,6 +589,18 @@ func sanitizePortalFilename(value string) string {
 		return "prompt-only"
 	}
 	return value
+}
+
+func portalLogDownloadURL(repoRoot string, issueNumber int, branch string) string {
+	logPath := portalLogPath(repoRoot, issueNumber, branch)
+	if logPath == "" {
+		return ""
+	}
+	relPath, err := filepath.Rel(repoRoot, logPath)
+	if err != nil {
+		return ""
+	}
+	return "/api/logs?path=" + url.QueryEscape(relPath)
 }
 
 func groupPortalEventsByRun(eventsList []events.Event) map[string][]portalEvent {
@@ -838,6 +892,9 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
     .badge.warning { background: color-mix(in oklch, var(--warning) 12%, var(--surface)); border-color: color-mix(in oklch, var(--warning) 24%, var(--border)); }
     .badge.warning .dot { background: var(--warning); }
     .action-btn, .tab-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       border: 1px solid var(--border);
       background: var(--surface-2);
       color: var(--text);
@@ -847,6 +904,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       cursor: pointer;
       transition: background 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
     }
+    .action-btn { text-decoration: none; }
     .action-btn:hover, .tab-btn:hover { background: var(--surface-3); }
     .action-btn:focus-visible, .tab-btn:focus-visible, select:focus-visible, input[type="checkbox"]:focus-visible {
       outline: 2px solid color-mix(in oklch, var(--accent) 70%, white);
@@ -1201,12 +1259,13 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
           + renderDetailKV('Status', run.status)
           + renderDetailKV('Started', formatTime(run.startedAt))
           + renderDetailKV('Finished', formatTime(run.finishedAt))
-          + renderDetailKV('Duration', formatDuration(run.duration))
-          + renderDetailKV('Branch', formatBranch(run))
-          + renderDetailKV('Source', formatSource(run))
-          + '</div>'
-          + '</aside>'
-          + '</div>'
+           + renderDetailKV('Duration', formatDuration(run.duration))
+           + renderDetailKV('Branch', formatBranch(run))
+           + renderDetailKV('Source', formatSource(run))
+           + renderDownloadLink(run)
+           + '</div>'
+           + '</aside>'
+           + '</div>'
           + '</div>'
           + '</td>'
           + '</tr>'
@@ -1227,6 +1286,13 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
     function renderDetailKV(label, value) {
       const text = value && String(value).trim() ? value : '—';
       return '<div class="kv"><span>' + escapeHTML(label) + '</span><strong>' + escapeHTML(text) + '</strong></div>';
+    }
+
+    function renderDownloadLink(run) {
+      if (!run.logUrl) {
+        return '<div class="kv"><span>Log file</span><strong class="muted">No log file available.</strong></div>';
+      }
+      return '<div class="kv"><span>Log file</span><a class="action-btn" href="' + escapeHTML(run.logUrl) + '" download>Download log</a></div>';
     }
 
     function renderTabContent(run, tabKey, output, log, events) {
