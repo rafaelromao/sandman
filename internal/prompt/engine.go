@@ -68,9 +68,8 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 	result = strings.ReplaceAll(result, "{{ISSUE_TITLE}}", data.Title)
 	result = strings.ReplaceAll(result, "{{ISSUE_BODY}}", data.Body)
 	result = strings.ReplaceAll(result, "{{SOURCE_BRANCH}}", data.SourceBranch)
-	result = strings.ReplaceAll(result, "{{TARGET_BRANCH}}", data.TargetBranch)
+	result = strings.ReplaceAll(result, "{{BASE_BRANCH}}", data.BaseBranch)
 	result = strings.ReplaceAll(result, "{{BRANCH}}", data.SourceBranch)
-	result = strings.ReplaceAll(result, "{{DEFAULT_BRANCH}}", data.TargetBranch)
 	result = ApplySubstitutions(result, cfg)
 
 	if unmatched := keyPattern.FindAllString(result, -1); len(unmatched) > 0 {

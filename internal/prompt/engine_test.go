@@ -16,7 +16,7 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 		Title:        "Fix login bug",
 		Body:         "Users cannot log in with OAuth.",
 		SourceBranch: "main",
-		TargetBranch: "main",
+		BaseBranch:   "main",
 	}
 
 	result, err := engine.Render(cfg, data)
@@ -29,9 +29,8 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 	want = strings.ReplaceAll(want, "{{ISSUE_TITLE}}", data.Title)
 	want = strings.ReplaceAll(want, "{{ISSUE_BODY}}", data.Body)
 	want = strings.ReplaceAll(want, "{{SOURCE_BRANCH}}", data.SourceBranch)
-	want = strings.ReplaceAll(want, "{{TARGET_BRANCH}}", data.TargetBranch)
+	want = strings.ReplaceAll(want, "{{BASE_BRANCH}}", data.BaseBranch)
 	want = strings.ReplaceAll(want, "{{BRANCH}}", data.SourceBranch)
-	want = strings.ReplaceAll(want, "{{DEFAULT_BRANCH}}", data.TargetBranch)
 	want = strings.ReplaceAll(want, "{{REVIEW_COMMAND}}", "/oc review")
 
 	if result != want {
@@ -148,14 +147,14 @@ func TestRender_PromptFlagOverridesAll(t *testing.T) {
 func TestRender_AllBuiltInKeysSubstituted(t *testing.T) {
 	engine := &Engine{}
 	cfg := RenderConfig{
-		PromptFlag: "#{{ISSUE_NUMBER}} {{ISSUE_TITLE}}\n{{ISSUE_BODY}}\n{{SOURCE_BRANCH}}->{{TARGET_BRANCH}}",
+		PromptFlag: "#{{ISSUE_NUMBER}} {{ISSUE_TITLE}}\n{{ISSUE_BODY}}\n{{SOURCE_BRANCH}}->{{BASE_BRANCH}}",
 	}
 	data := IssueData{
 		Number:       99,
 		Title:        "Title",
 		Body:         "Body",
 		SourceBranch: "develop",
-		TargetBranch: "main",
+		BaseBranch:   "main",
 	}
 
 	result, err := engine.Render(cfg, data)
@@ -166,6 +165,19 @@ func TestRender_AllBuiltInKeysSubstituted(t *testing.T) {
 	want := "#99 Title\nBody\ndevelop->main"
 	if result != want {
 		t.Errorf("got:\n%s\nwant:\n%s", result, want)
+	}
+}
+
+func TestRender_LegacyBranchTokensError(t *testing.T) {
+	engine := &Engine{}
+	cfg := RenderConfig{PromptFlag: "{{TARGET_BRANCH}} {{DEFAULT_BRANCH}}"}
+
+	_, err := engine.Render(cfg, IssueData{})
+	if err == nil {
+		t.Fatal("expected error for legacy branch tokens")
+	}
+	if !strings.Contains(err.Error(), "TARGET_BRANCH") || !strings.Contains(err.Error(), "DEFAULT_BRANCH") {
+		t.Fatalf("expected missing key error for legacy tokens, got %v", err)
 	}
 }
 

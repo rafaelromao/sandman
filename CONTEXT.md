@@ -93,7 +93,7 @@ The repo-local `.sandman/prompt.md` template created from the Default Prompt by 
 _Avoid_: User prompt, custom prompt.
 
 **Prompt keys**:
-The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{TARGET_BRANCH}}`, `{{BRANCH}}`, `{{DEFAULT_BRANCH}}`, `{{REVIEW_COMMAND}}`. Custom keys are supported via `promptArgs` in config.
+The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{BASE_BRANCH}}`, `{{BRANCH}}`, `{{REVIEW_COMMAND}}`. Custom keys are supported via `promptArgs` in config.
 
 **Command template key**:
 The `{{.PromptFile}}` key available in agent command templates, resolved to the relative path of the rendered prompt file.
