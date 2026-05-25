@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -133,7 +134,7 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 		if err != nil {
 			return
 		}
-		_, _ = conn.Write([]byte("live output\n"))
+		_, _ = conn.Write([]byte("\x1b[0mlive output\n"))
 		_ = conn.Close()
 	}()
 
@@ -149,7 +150,7 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1.log"), []byte("issue one log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "2.log"), []byte("issue two log\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "2.log"), []byte("\x1b[0missue two log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,13 +164,13 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	if runs[0].Kind != "active" || runs[0].RunID != "run-1" || runs[0].IssueLabel != "#1" {
 		t.Fatalf("unexpected active run: %#v", runs[0])
 	}
-	if !strings.Contains(runs[0].Output, "live output") {
+	if !strings.Contains(runs[0].Output, "live output") || strings.Contains(runs[0].Output, "\x1b[") {
 		t.Fatalf("expected active run output, got %#v", runs[0].Output)
 	}
 	if runs[1].Status != "success" || runs[1].Kind != "completed" || runs[1].RunID != "run-2" {
 		t.Fatalf("unexpected completed run: %#v", runs[1])
 	}
-	if !strings.Contains(runs[1].Log, "issue two log") {
+	if !strings.Contains(runs[1].Log, "issue two log") || strings.Contains(runs[1].Log, "\x1b[") {
 		t.Fatalf("expected completed run log, got %#v", runs[1].Log)
 	}
 }
@@ -193,10 +194,54 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active only", "Output", "Log", "Events", "/api/runs"} {
+	for _, want := range []string{"Active only", "Output", "Log", "Events", "Details", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`} {
 		if !strings.Contains(content, want) {
-			t.Fatalf("page missing %q", want)
+			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func TestPortal_DownloadsLogFiles(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(repoRoot, ".sandman", "logs", "1.log")
+	if err := os.WriteFile(logPath, []byte("full log\nline two\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	href := "/api/logs?path=" + url.QueryEscape(filepath.Join(".sandman", "logs", "1.log"))
+	resp, err := http.Get(server.URL + href)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Disposition"); !strings.Contains(got, "attachment") {
+		t.Fatalf("expected attachment download, got %q", got)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "full log\nline two\n" {
+		t.Fatalf("unexpected log body: %q", string(body))
 	}
 }
 
@@ -219,8 +264,8 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		if err == nil || !strings.Contains(err.Error(), "bind portal on 127.0.0.1") {
-			t.Fatalf("expected bind error on localhost, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "bind portal on 0.0.0.0") {
+			t.Fatalf("expected bind error on wildcard bind, got %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for bind failure")
@@ -247,7 +292,7 @@ func TestPortal_PrintListeningURL(t *testing.T) {
 		t.Fatal("timed out waiting for portal startup")
 	}
 
-	match := regexp.MustCompile(`http://127\.0\.0\.1:(\d+)`).FindStringSubmatch(out.String())
+	match := regexp.MustCompile(`http://0\.0\.0\.0:(\d+)`).FindStringSubmatch(out.String())
 	if len(match) != 2 {
 		cancel()
 		t.Fatalf("startup output missing listening URL: %q", out.String())
