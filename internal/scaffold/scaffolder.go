@@ -307,7 +307,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		WorktreeDir:       config.DefaultWorktreeDir,
 		Sandbox:           config.DefaultSandbox,
 		Git: config.GitConfig{
-			DefaultBranch: "main",
+			BaseBranch: "main",
 		},
 	}
 

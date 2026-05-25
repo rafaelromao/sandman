@@ -20,7 +20,7 @@ start_delay: 5
 worktree_dir: /tmp/wt
 sandbox: worktree
 git:
-  default_branch: trunk
+  base_branch: trunk
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -55,8 +55,8 @@ git:
 	if cfg.Sandbox != "worktree" {
 		t.Errorf("sandbox: got %q, want %q", cfg.Sandbox, "worktree")
 	}
-	if cfg.Git.DefaultBranch != "trunk" {
-		t.Errorf("git.default_branch: got %q, want %q", cfg.Git.DefaultBranch, "trunk")
+	if cfg.Git.BaseBranch != "trunk" {
+		t.Errorf("git.base_branch: got %q, want %q", cfg.Git.BaseBranch, "trunk")
 	}
 	if _, ok := cfg.AgentProviders["opencode"]; !ok {
 		t.Fatal("expected built-in opencode agent in derived map")
@@ -67,7 +67,7 @@ func TestLoad_IgnoresLegacyGitAuthorFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `git:
-  default_branch: main
+  base_branch: main
   author_name: Dev
   author_email: dev@example.com
 `
@@ -79,8 +79,27 @@ func TestLoad_IgnoresLegacyGitAuthorFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Git.DefaultBranch != "main" {
-		t.Fatalf("git.default_branch: got %q, want %q", cfg.Git.DefaultBranch, "main")
+	if cfg.Git.BaseBranch != "main" {
+		t.Fatalf("git.base_branch: got %q, want %q", cfg.Git.BaseBranch, "main")
+	}
+}
+
+func TestLoad_RejectsLegacyGitDefaultBranch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `git:
+  default_branch: main
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "git.default_branch was renamed to git.base_branch") {
+		t.Fatalf("expected rename error, got %v", err)
 	}
 }
 
@@ -88,7 +107,7 @@ func TestLoad_DefaultAgentDefaultsToOpenCode(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `git:
-  default_branch: main
+  base_branch: main
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -109,7 +128,7 @@ func TestLoad_RejectsUnknownDefaultAgent(t *testing.T) {
 	path := filepath.Join(dir, "config.yaml")
 	content := `default_agent: codex
 git:
-  default_branch: main
+  base_branch: main
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -269,8 +288,8 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	if cfg.Sandbox != "podman" {
 		t.Errorf("sandbox: got %q, want %q", cfg.Sandbox, "podman")
 	}
-	if cfg.Git.DefaultBranch != "main" {
-		t.Errorf("git.default_branch: got %q, want %q", cfg.Git.DefaultBranch, "main")
+	if cfg.Git.BaseBranch != "main" {
+		t.Errorf("git.base_branch: got %q, want %q", cfg.Git.BaseBranch, "main")
 	}
 	if cfg.ReviewCommand != "/oc review" {
 		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/oc review")
@@ -422,6 +441,26 @@ func TestConfig_GetAndSetDefaultAgent(t *testing.T) {
 	}
 }
 
+func TestConfig_GetAndSetBaseBranch(t *testing.T) {
+	cfg := &Config{Git: GitConfig{BaseBranch: "main"}}
+
+	if got, err := cfg.GetValue("git.base_branch"); err != nil || got != "main" {
+		t.Fatalf("GetValue(git.base_branch) = %q, %v", got, err)
+	}
+	if err := cfg.SetValue("git.base_branch", "trunk"); err != nil {
+		t.Fatalf("SetValue(git.base_branch): %v", err)
+	}
+	if cfg.Git.BaseBranch != "trunk" {
+		t.Fatalf("base_branch not updated: %#v", cfg)
+	}
+	if _, err := cfg.GetValue("git.default_branch"); err == nil || !strings.Contains(err.Error(), "renamed") {
+		t.Fatal("expected old get key to be rejected with rename error")
+	}
+	if err := cfg.SetValue("git.default_branch", "main"); err == nil || !strings.Contains(err.Error(), "renamed") {
+		t.Fatal("expected old set key to be rejected with rename error")
+	}
+}
+
 func TestBuiltInPresets_AreOnlySupportedAgents(t *testing.T) {
 	want := []string{"opencode", "pi"}
 	got := make([]string, 0, len(BuiltInAgentPresets))
@@ -458,7 +497,8 @@ func TestConfig_SetValue(t *testing.T) {
 		{"max_containers", "0", false},
 		{"worktree_dir", "/tmp/wt", false},
 		{"sandbox", "podman", false},
-		{"git.default_branch", "master", false},
+		{"git.base_branch", "master", false},
+		{"git.default_branch", "master", true},
 		{"unknown_key", "value", true},
 		{"default_parallel", "not-a-number", true},
 		{"default_parallel", "-1", true},

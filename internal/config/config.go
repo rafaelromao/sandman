@@ -41,7 +41,7 @@ type Config struct {
 
 // GitConfig holds git-specific settings.
 type GitConfig struct {
-	DefaultBranch string `yaml:"default_branch"`
+	BaseBranch string `yaml:"base_branch"`
 }
 
 // Agent holds a configured agent provider or a custom override.
@@ -112,7 +112,10 @@ func Load(path string) (*Config, error) {
 		WorktreeDir       string           `yaml:"worktree_dir"`
 		Sandbox           string           `yaml:"sandbox"`
 		Agents            map[string]Agent `yaml:"agents"`
-		Git               GitConfig        `yaml:"git"`
+		Git               struct {
+			BaseBranch    string  `yaml:"base_branch"`
+			DefaultBranch *string `yaml:"default_branch"`
+		} `yaml:"git"`
 	}
 
 	var raw rawConfig
@@ -129,7 +132,11 @@ func Load(path string) (*Config, error) {
 		WorktreeDir:     raw.WorktreeDir,
 		Sandbox:         raw.Sandbox,
 		Agents:          raw.Agents,
-		Git:             raw.Git,
+		Git:             GitConfig{BaseBranch: raw.Git.BaseBranch},
+	}
+
+	if raw.Git.DefaultBranch != nil {
+		return nil, fmt.Errorf("validate config: git.default_branch was renamed to git.base_branch")
 	}
 
 	if cfg.DefaultParallel <= 0 {
@@ -164,8 +171,8 @@ func Load(path string) (*Config, error) {
 	if cfg.Sandbox == "" {
 		cfg.Sandbox = DefaultSandbox
 	}
-	if cfg.Git.DefaultBranch == "" {
-		cfg.Git.DefaultBranch = "main"
+	if cfg.Git.BaseBranch == "" {
+		cfg.Git.BaseBranch = "main"
 	}
 
 	if strings.TrimSpace(cfg.DefaultAgent) == "" {
@@ -318,8 +325,10 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.WorktreeDir, nil
 	case "sandbox":
 		return c.Sandbox, nil
+	case "git.base_branch":
+		return c.Git.BaseBranch, nil
 	case "git.default_branch":
-		return c.Git.DefaultBranch, nil
+		return "", fmt.Errorf("git.default_branch was renamed to git.base_branch")
 	default:
 		return "", fmt.Errorf("unknown config key: %s", key)
 	}
@@ -378,8 +387,10 @@ func (c *Config) SetValue(key, value string) error {
 		c.WorktreeDir = value
 	case "sandbox":
 		c.Sandbox = value
+	case "git.base_branch":
+		c.Git.BaseBranch = value
 	case "git.default_branch":
-		c.Git.DefaultBranch = value
+		return fmt.Errorf("git.default_branch was renamed to git.base_branch")
 	default:
 		return fmt.Errorf("unknown config key: %s", key)
 	}

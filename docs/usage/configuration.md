@@ -37,7 +37,7 @@ sandbox: podman
 
 # Git configuration for branch management.
 git:
-  default_branch: main
+  base_branch: main
 
 # Sandman installs both built-in agents in scaffolded Dockerfiles.
 installed_agents:
@@ -67,9 +67,8 @@ The following built-in substitution keys are available in prompt templates:
 | `{{ISSUE_TITLE}}` | Issue title |
 | `{{ISSUE_BODY}}` | Issue body |
 | `{{SOURCE_BRANCH}}` | Branch the agent starts from |
-| `{{TARGET_BRANCH}}` | Branch the agent will commit to |
+| `{{BASE_BRANCH}}` | Branch the agent will rebase/PR against |
 | `{{BRANCH}}` | Alias for `{{SOURCE_BRANCH}}` |
-| `{{DEFAULT_BRANCH}}` | Alias for `{{TARGET_BRANCH}}` |
 | `{{REVIEW_COMMAND}}` | Review command from config or `--review-command` |
 
 Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
@@ -103,7 +102,7 @@ Use `sandman config get` and `sandman config set` to read and write individual f
 sandman config get default_parallel 4
 sandman config set container_capacity 2
 sandman config set start_delay 5
-sandman config set git.default_branch main
+sandman config set git.base_branch main
 ```
 
 Use `sandman config get` and `sandman config set` for top-level config keys.

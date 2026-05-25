@@ -628,7 +628,7 @@ Run ` + "`go test ./...`" + `.
 Run ` + "`go vet ./...`" + `.
 Run ` + "`gofmt -w .`" + `.
 Fix only what is needed.
-When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{TARGET_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, then run ` + "`gh pr checks`" + `, ` + "`gh pr comment --body \"ready\"`" + `, ` + "`gh pr view`" + `, and print the PR URL.
+When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{BASE_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, then run ` + "`gh pr checks`" + `, ` + "`gh pr comment --body \"ready\"`" + `, ` + "`gh pr view`" + `, and print the PR URL.
 `
 	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
 		t.Fatalf("write prompt: %v", err)
@@ -1457,7 +1457,7 @@ Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 {{ISSUE_BODY}}
 
 Fix only what is needed. Do not modify test files. Only the test named in the issue may pass in this branch; unrelated issue tests must keep failing.
-When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{TARGET_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, and print the PR URL.
+When green, create one commit, push ` + "`{{SOURCE_BRANCH}}`" + ` to origin, run ` + "`gh pr create --base {{BASE_BRANCH}} --head {{SOURCE_BRANCH}} --title \"{{ISSUE_TITLE}}\" --body \"Fixes #{{ISSUE_NUMBER}}\"`" + `, and print the PR URL.
 `
 	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
 		t.Fatalf("write prompt: %v", err)

@@ -152,6 +152,6 @@ sandman config set <key> <value>
 | `max_containers` | int | `0` |
 | `worktree_dir` | string | `.sandman/worktrees` |
 | `sandbox` | string | `podman` |
-| `git.default_branch` | string | `main` |
+| `git.base_branch` | string | `main` |
 
 Agent commits use your host Git identity, not Sandman config keys. Sandman resolves `user.name` and `user.email` from `~/.gitconfig`, then host global/XDG config, then repo-local `.git/config`.

@@ -383,7 +383,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		if syncFn == nil {
 			syncFn = sandbox.SyncDefaultBranch
 		}
-		if err := syncFn(".", cfg.Git.DefaultBranch); err != nil {
+		if err := syncFn(".", cfg.Git.BaseBranch); err != nil {
 			return nil, err
 		}
 	}
@@ -738,7 +738,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		defer lease.Release()
 	}
 
-	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch, container)
+	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.BaseBranch, container)
 	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
 		identity, err := resolveGitIdentity()
 		if err != nil {
@@ -772,7 +772,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		agentRun.model = agentCfg.Model
 		agentRun.modelProvider = agentCfg.ModelProvider
 		agentRun.modelName = agentCfg.ModelName
-		agentRun.defaultBranch = cfg.Git.DefaultBranch
+		agentRun.defaultBranch = cfg.Git.BaseBranch
 		agentRun.outputWriter = outputWriter
 	}
 
@@ -883,7 +883,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		defer lease.Release()
 	}
 
-	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.DefaultBranch, container)
+	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, cfg.Git.BaseBranch, container)
 	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
 		identity, err := resolveGitIdentity()
 		if err != nil {
@@ -911,7 +911,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		agentRun.model = agentCfg.Model
 		agentRun.modelProvider = agentCfg.ModelProvider
 		agentRun.modelName = agentCfg.ModelName
-		agentRun.defaultBranch = cfg.Git.DefaultBranch
+		agentRun.defaultBranch = cfg.Git.BaseBranch
 		agentRun.outputWriter = outputWriter
 	}
 

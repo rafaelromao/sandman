@@ -70,12 +70,12 @@ git commit -m "refactor: self-review fixes"
 - Repeat the Self-review cycle until all tests pass.
 
 ### 6. Push & PR
-- If `{{DEFAULT_BRANCH}}` was rewritten after this branch diverged, rebase onto it before opening the PR.
+- If `{{BASE_BRANCH}}` was rewritten after this branch diverged, rebase onto it before opening the PR.
 - If rebase hits merge conflicts, abort rebase, push current changes, open PR, then stop and report conflict.
 ```bash
-git rebase {{DEFAULT_BRANCH}}
+git rebase {{BASE_BRANCH}}
 git push -u origin {{BRANCH}}
-gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}}" --body "Fixes #{{ISSUE_NUMBER}}"
+gh pr create --base {{BASE_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}}" --body "Fixes #{{ISSUE_NUMBER}}"
 ```
 
 - Capture the PR URL and number.

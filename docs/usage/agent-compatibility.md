@@ -43,7 +43,7 @@ OpenCode stores its session tokens in `~/.claude` alongside its own config. Sand
 Sandman manages worktrees itself — the agent does not need to create or switch branches. Sandman:
 
 1. Creates a git worktree at `.sandman/worktrees/sandman/<issue-number>-<slugified-title>`
-2. Checks out the default branch as a starting point
+2. Checks out the base branch as a starting point
 3. The agent works inside this pre-created worktree directory
 4. When the agent finishes, Sandman records the branch for commit history
 

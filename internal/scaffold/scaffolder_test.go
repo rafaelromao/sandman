@@ -194,8 +194,8 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.Git.DefaultBranch != "main" {
-		t.Fatalf("git.default_branch: got %q, want %q", cfg.Git.DefaultBranch, "main")
+	if cfg.Git.BaseBranch != "main" {
+		t.Fatalf("git.base_branch: got %q, want %q", cfg.Git.BaseBranch, "main")
 	}
 	configData, err := os.ReadFile(configPath)
 	if err != nil {

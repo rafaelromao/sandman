@@ -143,7 +143,7 @@ func writeSandmanDockerfile(t *testing.T, dir string) {
 }
 
 func newRunIntegrationDepsWithSandbox(agent config.Agent, sandboxMode string, gh *fakeGitHubClient) Dependencies {
-	return newRunIntegrationDepsWithSandboxAndGit(agent, sandboxMode, config.GitConfig{DefaultBranch: "main"}, gh)
+	return newRunIntegrationDepsWithSandboxAndGit(agent, sandboxMode, config.GitConfig{BaseBranch: "main"}, gh)
 }
 
 func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode string, gitCfg config.GitConfig, gh *fakeGitHubClient) Dependencies {
@@ -162,8 +162,8 @@ func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode stri
 		}
 	}
 	_ = os.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
-	if gitCfg.DefaultBranch == "" {
-		gitCfg.DefaultBranch = "main"
+	if gitCfg.BaseBranch == "" {
+		gitCfg.BaseBranch = "main"
 	}
 
 	store := &fakeStore{config: &config.Config{
@@ -1217,7 +1217,7 @@ func podmanGitIdentityDeps(t *testing.T, dir, remoteDir, dotGitConfig, xdgGitCon
 		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 	}}
 
-	return newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "podman", config.GitConfig{DefaultBranch: "main"}, gh)
+	return newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "podman", config.GitConfig{BaseBranch: "main"}, gh)
 }
 
 func TestRun_PodmanSandboxUsesDotGitconfigIdentityWithoutMutatingWorktreeConfig(t *testing.T) {
@@ -1364,7 +1364,7 @@ func TestRun_WorktreeSandboxUsesHostGitIdentityWithoutMutatingWorktreeConfig(t *
 	git commit -m "test commit by host identity"
 	git log --format="%an <%ae>" -1
 	`
-	deps := newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "worktree", config.GitConfig{DefaultBranch: "main"}, &fakeGitHubClient{issues: map[int]*github.Issue{
+	deps := newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "worktree", config.GitConfig{BaseBranch: "main"}, &fakeGitHubClient{issues: map[int]*github.Issue{
 		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 	}})
 

@@ -77,12 +77,12 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
     - Repeat the Self-review cycle until all tests pass.
 
     ### 6. Push & PR
-    - If `{{DEFAULT_BRANCH}}` was rewritten after this branch diverged, rebase onto it before opening the PR.
+    - If `{{BASE_BRANCH}}` was rewritten after this branch diverged, rebase onto it before opening the PR.
     - If rebase hits merge conflicts, abort rebase, push current changes, open PR, then stop and report conflict.
     ```bash
-    git rebase {{DEFAULT_BRANCH}}
+    git rebase {{BASE_BRANCH}}
     git push -u origin {{BRANCH}}
-    gh pr create --base {{DEFAULT_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}}" --body "Fixes #{{ISSUE_NUMBER}}"
+    gh pr create --base {{BASE_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}}" --body "Fixes #{{ISSUE_NUMBER}}"
     ```
 
     - Capture the PR URL and number.
@@ -166,8 +166,8 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
 - `Plan (TDD)` asks for behavior-first planning and parallel independent reads.
 - `Implement (TDD)` keeps the loop vertical and strictly sequential: one test, one fix, repeat.
 - `Commit`, `Self-review`, `Push & PR`, `Delegate review`, and `Merge & wrap-up` encode Sandman's PR workflow.
-- `Push & PR` now asks for a rebase onto `{{DEFAULT_BRANCH}}` before opening the PR, to reduce merge conflict risk.
-- `{{BRANCH}}` and `{{DEFAULT_BRANCH}}` are branch aliases filled from the run branch and default branch.
+- `Push & PR` now asks for a rebase onto `{{BASE_BRANCH}}` before opening the PR, to reduce merge conflict risk.
+- `{{BRANCH}}` and `{{BASE_BRANCH}}` are branch aliases filled from the run branch and base branch.
 - `{{REVIEW_COMMAND}}` resolves from config or `--review-command` and defaults to `/oc review`.
 
 ## Prompt lifecycle

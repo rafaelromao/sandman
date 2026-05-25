@@ -55,7 +55,7 @@ sandbox: podman              # podman, docker, or worktree
 container_capacity: 4        # agent runs per container; 0 uses default container capacity behavior
 max_containers: 0            # auto mode; or set a fixed limit
 git:
-  default_branch: main
+  base_branch: main
 installed_agents:
   - opencode
   - pi
