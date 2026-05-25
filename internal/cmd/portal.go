@@ -710,89 +710,131 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
   <title>{{.PortalTitle}}</title>
   <style>
     :root {
-      color-scheme: light;
-      --bg: oklch(0.975 0.006 240);
-      --surface: oklch(0.99 0.004 240);
-      --surface-2: oklch(0.955 0.008 240);
-      --surface-3: oklch(0.93 0.012 240);
-      --border: oklch(0.86 0.01 240);
-      --text: oklch(0.23 0.015 240);
-      --muted: oklch(0.5 0.015 240);
-      --accent: oklch(0.57 0.13 245);
-      --accent-weak: oklch(0.94 0.03 245);
-      --success: oklch(0.58 0.13 150);
-      --danger: oklch(0.58 0.13 28);
-      --warning: oklch(0.7 0.1 85);
-      --shadow: 0 1px 1px oklch(0.15 0.01 240 / 0.04), 0 10px 30px oklch(0.15 0.01 240 / 0.04);
+      color-scheme: dark;
+      --bg: oklch(0.17 0.012 245);
+      --surface: oklch(0.22 0.012 245);
+      --surface-2: oklch(0.26 0.012 245);
+      --surface-3: oklch(0.31 0.013 245);
+      --border: oklch(0.35 0.012 245);
+      --text: oklch(0.94 0.01 245);
+      --muted: oklch(0.71 0.012 245);
+      --accent: oklch(0.72 0.12 245);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.16 0.01 245);
+      --success: oklch(0.77 0.12 155);
+      --danger: oklch(0.7 0.13 28);
+      --warning: oklch(0.81 0.1 85);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
     }
     * { box-sizing: border-box; }
     html, body { min-height: 100%; }
     body {
       margin: 0;
-      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at top, oklch(0.99 0.01 240), transparent 48%),
-        linear-gradient(180deg, oklch(0.985 0.006 240), var(--bg));
+        radial-gradient(circle at 18% 0%, color-mix(in oklch, var(--accent) 14%, transparent), transparent 36%),
+        linear-gradient(180deg, oklch(0.15 0.012 245), var(--bg));
     }
     a { color: inherit; }
-    code, pre, .mono { font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace; }
+    code, pre, .mono {
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+    }
     main {
-      width: min(100%, 1400px);
+      width: min(100%, 1360px);
       margin: 0 auto;
-      padding: 24px 20px 28px;
+      padding: 28px 18px 36px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
     .masthead {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: end;
-      padding-bottom: 18px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+      gap: 18px;
+      align-items: stretch;
+      padding: 20px 20px 18px;
       margin-bottom: 16px;
       border-bottom: 1px solid var(--border);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: linear-gradient(180deg, color-mix(in oklch, var(--surface) 92%, var(--text) 8%), var(--surface));
+      box-shadow: var(--shadow);
     }
     .eyebrow {
-      margin: 0 0 4px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 6px;
       text-transform: uppercase;
       letter-spacing: 0.12em;
       font-size: 11px;
       color: var(--muted);
     }
+    .eyebrow::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
     h1 {
       margin: 0;
-      font-size: 28px;
+      font-size: clamp(28px, 2.6vw, 34px);
       line-height: 1.1;
-      letter-spacing: -0.03em;
+      letter-spacing: -0.04em;
+      text-wrap: balance;
     }
     .subtitle {
-      margin: 8px 0 0;
-      max-width: 72ch;
+      margin: 10px 0 0;
+      max-width: 68ch;
       color: var(--muted);
     }
     .meta {
       display: grid;
-      gap: 4px;
-      justify-items: end;
-      text-align: right;
+      gap: 10px;
+      align-content: start;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--surface-2);
       color: var(--muted);
       font-size: 12px;
+    }
+    .meta div {
+      display: grid;
+      gap: 4px;
+    }
+    .meta span {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .meta code,
+    .meta strong {
+      color: var(--text);
+      font-weight: 500;
+      overflow-wrap: anywhere;
     }
     .toolbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 14px 16px;
+      gap: 16px 20px;
+      padding: 16px 18px;
       margin-bottom: 14px;
       border: 1px solid var(--border);
-      border-radius: 16px;
+      border-radius: 20px;
       background: var(--surface);
       box-shadow: var(--shadow);
+      flex-wrap: wrap;
     }
     .filters {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px 12px;
+      gap: 12px 16px;
       align-items: center;
     }
     .field {
@@ -800,18 +842,20 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       align-items: center;
       gap: 8px;
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
       white-space: nowrap;
     }
     select, input[type="checkbox"] {
       accent-color: var(--accent);
     }
     select {
-      min-width: 160px;
+      min-width: 180px;
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 8px 10px;
-      background: var(--surface-2);
+      border-radius: 12px;
+      padding: 8px 12px;
+      background: var(--surface-3);
       color: var(--text);
       font: inherit;
     }
@@ -834,40 +878,43 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
     }
     .table-shell {
       border: 1px solid var(--border);
-      border-radius: 18px;
+      border-radius: 22px;
       background: var(--surface);
       box-shadow: var(--shadow);
       overflow: auto;
+      flex: 1 1 auto;
+      min-height: 0;
     }
     table {
       width: 100%;
       min-width: 1040px;
       border-collapse: separate;
       border-spacing: 0;
+      font-size: 13px;
     }
     thead th {
       position: sticky;
       top: 0;
       z-index: 1;
-      background: var(--surface);
+      background: color-mix(in oklch, var(--surface) 90%, var(--bg));
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.08em;
       font-size: 11px;
       text-align: left;
-      padding: 14px 14px;
+      padding: 15px 14px;
       border-bottom: 1px solid var(--border);
     }
     tbody td {
-      padding: 14px;
+      padding: 15px 14px;
       border-bottom: 1px solid var(--border);
       vertical-align: top;
     }
     tbody tr.run-row:hover td {
-      background: oklch(0.985 0.005 240);
+      background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
     }
     tbody tr.run-row.active td {
-      background: var(--accent-weak);
+      background: color-mix(in oklch, var(--accent) 12%, var(--surface));
     }
     tbody tr.detail-row td {
       background: var(--surface-2);
@@ -879,8 +926,9 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       gap: 4px;
     }
     .run-title .name {
-      font-weight: 650;
-      letter-spacing: -0.01em;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      font-size: 14px;
     }
     .run-title .meta-line,
     .muted {
@@ -903,7 +951,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       border-radius: 999px;
       background: var(--muted);
     }
-    .badge.active { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 25%, var(--border)); }
+    .badge.active { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 30%, var(--border)); }
     .badge.active .dot { background: var(--accent); }
     .badge.success { background: color-mix(in oklch, var(--success) 12%, var(--surface)); border-color: color-mix(in oklch, var(--success) 24%, var(--border)); }
     .badge.success .dot { background: var(--success); }
@@ -919,56 +967,77 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       background: var(--surface-2);
       color: var(--text);
       font: inherit;
-      border-radius: 10px;
-      padding: 8px 10px;
+      border-radius: 12px;
+      padding: 8px 12px;
       cursor: pointer;
-      transition: background 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
+      transition: background 180ms ease-out, border-color 180ms ease-out, transform 180ms ease-out;
     }
     .action-btn { text-decoration: none; }
-    .action-btn:hover, .tab-btn:hover { background: var(--surface-3); }
+    .action-btn:hover, .tab-btn:hover { background: var(--surface-3); transform: translateY(-1px); }
     .action-btn:focus-visible, .tab-btn:focus-visible, select:focus-visible, input[type="checkbox"]:focus-visible {
-      outline: 2px solid color-mix(in oklch, var(--accent) 70%, white);
+      outline: 2px solid color-mix(in oklch, var(--accent) 72%, var(--surface-3));
       outline-offset: 2px;
     }
     .action-btn[aria-expanded="true"] {
       background: var(--accent);
       border-color: var(--accent);
-      color: white;
+      color: var(--accent-ink);
     }
     .tabs {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }
+    .tab-btn { min-width: 76px; }
     .tab-btn[aria-pressed="true"] {
       background: var(--accent);
       border-color: var(--accent);
-      color: white;
+      color: var(--accent-ink);
     }
     .detail-panel {
       padding: 16px;
       border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-height: clamp(420px, 68vh, 780px);
     }
-    .panel-grid {
+    .detail-content {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .tab-pane {
+      min-height: 0;
+    }
+    .tab-pane.fill {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+    }
+    .detail-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
-      gap: 16px;
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
+      gap: 14px;
       align-items: start;
+      min-height: 0;
     }
     .detail-box {
       border: 1px solid var(--border);
-      border-radius: 14px;
-      background: var(--surface);
+      border-radius: 16px;
+      background: var(--surface-3);
       overflow: hidden;
     }
     .detail-box h3 {
       margin: 0;
       padding: 12px 14px 10px;
       border-bottom: 1px solid var(--border);
+      background: color-mix(in oklch, var(--surface-2) 90%, var(--bg));
       font-size: 12px;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.12em;
       color: var(--muted);
     }
     pre {
@@ -976,10 +1045,24 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       padding: 14px;
       white-space: pre-wrap;
       word-break: break-word;
-      max-height: 420px;
+      flex: 1 1 auto;
+      min-height: 0;
       overflow: auto;
-      line-height: 1.45;
+      line-height: 1.5;
+      font-size: 12.5px;
     }
+    .tab-events {
+      display: grid;
+      gap: 0;
+      align-content: start;
+      padding: 0;
+      overflow: auto;
+    }
+    .tab-events .event-row {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-events .event-row:last-child { border-bottom: 0; }
     .events-list {
       margin: 0;
       padding: 0;
@@ -1009,24 +1092,26 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       font-size: 12px;
     }
     .empty-state {
-      padding: 28px 16px;
+      padding: 30px 16px;
       text-align: center;
       color: var(--muted);
+      background: linear-gradient(180deg, color-mix(in oklch, var(--surface-2) 88%, transparent), transparent);
     }
     .detail-meta {
       display: grid;
-      gap: 8px;
+      gap: 10px;
       min-width: 0;
+      padding: 14px;
     }
     .kv {
       display: grid;
-      gap: 2px;
+      gap: 3px;
     }
     .kv span {
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.12em;
     }
     .kv strong, .kv code {
       font-weight: 500;
@@ -1038,24 +1123,23 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       margin-bottom: 12px;
       padding: 12px 14px;
       border-radius: 14px;
-      border: 1px solid color-mix(in oklch, var(--danger) 24%, var(--border));
-      background: color-mix(in oklch, var(--danger) 8%, var(--surface));
+      border: 1px solid color-mix(in oklch, var(--danger) 28%, var(--border));
+      background: color-mix(in oklch, var(--danger) 10%, var(--surface));
       color: var(--text);
     }
     @media (max-width: 960px) {
-      .masthead, .toolbar, .panel-grid {
+      .masthead,
+      .detail-grid {
         grid-template-columns: 1fr;
-        display: grid;
       }
       .masthead { align-items: start; }
-      .meta { justify-items: start; text-align: left; }
-      .toolbar { justify-content: start; }
+      .detail-panel { min-height: 0; }
     }
     @media (max-width: 760px) {
       main { padding-inline: 12px; }
       h1 { font-size: 24px; }
       .toolbar { padding: 12px; }
-      .table-shell { border-radius: 14px; }
+      .table-shell { border-radius: 16px; }
       .detail-panel { padding: 12px; }
     }
   </style>
@@ -1069,9 +1153,19 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
         <p class="subtitle">{{.PortalSubtitle}}</p>
       </div>
       <div class="meta">
-        <div>Repo <code>{{.RepoRoot}}</code></div>
-        <div>Polls <code>{{.PollInterval}}ms</code> via <code>{{.RunsPath}}</code></div>
-        <div id="last-updated">Waiting for first refresh</div>
+        <div>
+          <span>Repo</span>
+          <code>{{.RepoRoot}}</code>
+        </div>
+        <div>
+          <span>Poll</span>
+          <code>{{.PollInterval}}ms</code>
+          <code>{{.RunsPath}}</code>
+        </div>
+        <div>
+          <span>Updated</span>
+          <strong id="last-updated">Waiting for first refresh</strong>
+        </div>
       </div>
     </header>
 
@@ -1265,27 +1359,11 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
           + renderTabButton(run.key, 'output', 'Output', tabName)
           + renderTabButton(run.key, 'log', 'Log', tabName)
           + renderTabButton(run.key, 'events', 'Events', tabName)
+          + renderTabButton(run.key, 'details', 'Details', tabName)
           + '</div>'
-          + '<div class="panel-grid">'
-          + '<section class="detail-box">'
-          + '<h3>' + escapeHTML(currentTabLabel(tabName)) + '</h3>'
-          + '<pre>' + escapeHTML(renderTabContent(run, tabName, output, log, events)) + '</pre>'
-          + '</section>'
-          + '<aside class="detail-box">'
-          + '<h3>Details</h3>'
-          + '<div class="detail-meta">'
-          + renderDetailKV('Key', run.key)
-          + renderDetailKV('Run ID', run.runId)
-          + renderDetailKV('Status', run.status)
-          + renderDetailKV('Started', formatTime(run.startedAt))
-          + renderDetailKV('Finished', formatTime(run.finishedAt))
-           + renderDetailKV('Duration', formatDuration(run.duration))
-           + renderDetailKV('Branch', formatBranch(run))
-           + renderDetailKV('Source', formatSource(run))
-           + renderDownloadLink(run)
-           + '</div>'
-           + '</aside>'
-           + '</div>'
+          + '<div class="detail-content">'
+          + renderTabPanel(run, tabName, output, log, events)
+          + '</div>'
           + '</div>'
           + '</td>'
           + '</tr>'
@@ -1298,6 +1376,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
     }
 
     function currentTabLabel(tabKey) {
+      if (tabKey === 'details') return 'Details';
       if (tabKey === 'log') return 'Log';
       if (tabKey === 'events') return 'Events';
       return 'Output';
@@ -1315,17 +1394,65 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
       return '<div class="kv"><span>Log file</span><a class="action-btn" href="' + escapeHTML(run.logUrl) + '" download>Download log</a></div>';
     }
 
+    function renderDetailFields(run) {
+      return [
+        renderDetailKV('Key', run.key),
+        renderDetailKV('Run ID', run.runId),
+        renderDetailKV('Status', run.status),
+        renderDetailKV('Started', formatTime(run.startedAt)),
+        renderDetailKV('Finished', formatTime(run.finishedAt)),
+        renderDetailKV('Duration', formatDuration(run.duration)),
+        renderDetailKV('Branch', formatBranch(run)),
+        renderDetailKV('Source', formatSource(run)),
+        renderDownloadLink(run),
+      ].join('');
+    }
+
+    function renderTabPanel(run, tabKey, output, log, events) {
+      if (tabKey === 'details') {
+        const context = output && String(output).trim()
+          ? output
+          : (run.kind === 'active' ? 'No live output captured yet.' : 'Run completed. Open Output, Log or Events for persisted details.');
+        return [
+          '<section class="detail-grid">',
+          '  <div class="detail-box">',
+          '    <h3>Run details</h3>',
+          '    <div class="detail-meta">' + renderDetailFields(run) + '</div>',
+          '  </div>',
+          '  <div class="detail-box tab-pane fill">',
+          '    <h3>Context</h3>',
+          '    <pre>' + escapeHTML(context) + '</pre>',
+          '  </div>',
+          '</section>',
+        ].join('');
+      }
+
+      const content = renderTabContent(run, tabKey, output, log, events);
+      if (tabKey === 'events') {
+        if (!content) {
+          return '<section class="detail-box tab-pane fill"><h3>Events</h3><div class="empty-state">No events captured for this run yet.</div></section>';
+        }
+        return '<section class="detail-box tab-pane fill"><h3>Events</h3><div class="tab-events">' + content + '</div></section>';
+      }
+
+      return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(currentTabLabel(tabKey)) + '</h3><pre>' + escapeHTML(content) + '</pre></section>';
+    }
+
     function renderTabContent(run, tabKey, output, log, events) {
       if (tabKey === 'events') {
-        if (!events.length) return 'No events captured for this run yet.';
+        if (!events.length) return '';
         return events.map((event) => {
           const payload = event.payload && Object.keys(event.payload).length ? JSON.stringify(event.payload, null, 2) : '';
           return [
-            event.timestamp ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(event.timestamp)) : '—',
-            event.type || 'event',
-            payload ? '\n' + payload : ''
-          ].join(' · ');
-        }).join('\n\n');
+            '<div class="event-row">',
+            '  <div class="event-head">',
+            '    <span class="event-type">' + escapeHTML(event.type || 'event') + '</span>',
+            '    <span class="event-time">' + escapeHTML(event.timestamp ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(event.timestamp)) : '—') + '</span>',
+            '  </div>',
+            payload ? '<pre class="event-payload">' + escapeHTML(payload) + '</pre>' : '',
+            '</div>',
+          ].join('');
+        }).join('');
       }
       if (tabKey === 'log') return log;
       return output;
