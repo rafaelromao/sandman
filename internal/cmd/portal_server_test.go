@@ -187,6 +187,48 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	}
 }
 
+func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: time.Now().Add(-25 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: time.Now().Add(-20 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+		{Type: "run.continued", Timestamp: time.Now().Add(-15 * time.Minute), RunID: "run-2", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-2", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+	})
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1.log"), []byte("continued run log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 runs, got %#v", runs)
+	}
+	byID := map[string]portalRun{}
+	for _, run := range runs {
+		byID[run.RunID] = run
+	}
+	continued, ok := byID["run-2"]
+	if !ok {
+		t.Fatal("expected continued run in API response")
+	}
+	if continued.IssueLabel != "#1" || continued.Status != "success" || continued.Kind != "completed" {
+		t.Fatalf("unexpected continued run payload: %#v", continued)
+	}
+	if continued.Branch != "sandman/1-fix" || !strings.Contains(continued.Log, "continued run log") {
+		t.Fatalf("expected continued run metadata, got %#v", continued)
+	}
+}
+
 func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -380,6 +422,25 @@ func readPortalInstances(t *testing.T, baseURL string) []portalInstance {
 		t.Fatal(err)
 	}
 	return payload.Instances
+}
+
+func readPortalRuns(t *testing.T, baseURL string) []portalRun {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Runs
 }
 
 type portalHTTPServer struct {
