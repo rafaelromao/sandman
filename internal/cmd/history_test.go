@@ -65,11 +65,11 @@ func TestHistory_ExcludesIncompleteRuns(t *testing.T) {
 	}
 }
 
-func TestHistory_ShowsPromptOnlyCompletedRun(t *testing.T) {
+func TestHistory_ShowsPromptOnlyRun(t *testing.T) {
 	log := &fakeEventLog{
 		events: []events.Event{
-			{Type: "run.started", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-prompt", Payload: map[string]any{"branch": "sandman/prompt-only-123"}},
-			{Type: "run.finished", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "run-prompt", Payload: map[string]any{"status": "success", "branch": "sandman/prompt-only-123"}},
+			{Type: "run.started", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-prompt-only", Payload: map[string]any{"branch": "sandman/return-only-ok-123"}},
+			{Type: "run.finished", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "run-prompt-only", Payload: map[string]any{"status": "success", "branch": "sandman/return-only-ok-123"}},
 		},
 	}
 
@@ -85,6 +85,9 @@ func TestHistory_ShowsPromptOnlyCompletedRun(t *testing.T) {
 
 	out := buf.String()
 	if !strings.Contains(out, "prompt-only") {
-		t.Fatalf("expected output to contain prompt-only, got:\n%s", out)
+		t.Fatalf("expected prompt-only label, got:\n%s", out)
+	}
+	if !strings.Contains(out, "success") {
+		t.Fatalf("expected success status, got:\n%s", out)
 	}
 }

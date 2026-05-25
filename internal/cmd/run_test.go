@@ -321,6 +321,29 @@ func TestRun_PromptOnlyAllowsNoIssueSelection(t *testing.T) {
 	}
 }
 
+func TestRun_PromptOnlyRejectsSubstitutedIssuePlaceholders(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch should not run")}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt", "{{PROMPT_BODY}}", "--prompt-arg", "PROMPT_BODY=Issue {{ISSUE_TITLE}}"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "prompt requires issue selection but no issue selection was provided") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+}
+
 func TestRun_CustomPromptWithIssueSelectionStillUsesIssueDrivenFlow(t *testing.T) {
 	tests := []struct {
 		name string
@@ -542,6 +565,27 @@ func TestRun_PrintsWorktreeHintForCompletedRuns(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "worktree: .sandman/worktrees/sandman/42-fix-bug") {
 		t.Fatalf("expected worktree hint, got:\n%s", out)
+	}
+}
+
+func TestRun_PrintsPromptOnlySummaryLabel(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", Branch: "sandman/return-only-ok-123"}}}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt", "Return only OK."})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "prompt-only  success  sandman/return-only-ok-123") {
+		t.Fatalf("expected prompt-only summary label, got:\n%s", out)
 	}
 }
 

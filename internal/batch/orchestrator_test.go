@@ -1595,6 +1595,41 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 	}
 }
 
+func TestRunBatch_LogsPromptOnlyTemplateSource(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	templatePath := filepath.Join(dir, "prompt.md")
+	if err := os.WriteFile(templatePath, []byte("Return only OK."), 0644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{DefaultBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "return-only-ok-123")}}
+	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+	}}
+
+	_, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{TemplateFlag: templatePath}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) == 0 {
+		t.Fatal("expected run.started event")
+	}
+	started := spyLog.events[0]
+	if started.Payload["prompt_source_type"] != "template" {
+		t.Fatalf("expected prompt source type template, got %#v", started.Payload["prompt_source_type"])
+	}
+	if started.Payload["prompt_source_value"] != templatePath {
+		t.Fatalf("expected prompt source value template path, got %#v", started.Payload["prompt_source_value"])
+	}
+}
+
 func TestRunBatch_PromptOnlyRunSkipsIssueLookupAndUsesNullIssue(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -2873,6 +2908,29 @@ func TestRunBatch_WorktreeSandboxIgnoresContainerSettings(t *testing.T) {
 
 	if starter.startCount != 0 {
 		t.Fatalf("expected no containers to start in worktree mode, got %d", starter.startCount)
+	}
+}
+
+func TestResolveSandboxExecutionPolicy_WorktreeModeDoesNotBuildContainerImage(t *testing.T) {
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+	o := &Orchestrator{containerRuntimeFactory: factory}
+
+	policy, err := o.resolveSandboxExecutionPolicy(&config.Config{DefaultAgent: "test-agent", Agent: "test-agent", BuildTools: "generic"}, config.Agent{Command: "true"}, Request{}, "worktree")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if policy == nil {
+		t.Fatal("expected policy")
+	}
+	if policy.mode != "worktree" {
+		t.Fatalf("expected worktree mode, got %q", policy.mode)
+	}
+	if policy.containerAlloc != nil {
+		t.Fatal("expected no container allocator in worktree mode")
+	}
+	if starter.buildImageCount != 0 {
+		t.Fatalf("expected no container image build in worktree mode, got %d", starter.buildImageCount)
 	}
 }
 
