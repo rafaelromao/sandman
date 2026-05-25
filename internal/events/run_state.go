@@ -32,7 +32,7 @@ func ProjectRunStates(events []Event) []RunState {
 			continue
 		}
 		switch event.Type {
-		case "run.started":
+		case "run.started", "run.continued":
 			state := getOrCreate(event.RunID)
 			state.Started = event
 		case "run.finished":
