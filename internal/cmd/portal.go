@@ -194,7 +194,8 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 			continue
 		}
 		sockPath := filepath.Join(runsDir, entry.Name(), "run.sock")
-		if info, err := os.Stat(sockPath); err != nil || info.IsDir() {
+		info, err := os.Lstat(sockPath)
+		if err != nil || info.IsDir() || info.Mode()&os.ModeSocket == 0 {
 			continue
 		}
 		instances = append(instances, portalInstance{Name: entry.Name(), SocketPath: sockPath})

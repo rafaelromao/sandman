@@ -90,6 +90,27 @@ func TestPortal_APIRescansRunsOnEachRequest(t *testing.T) {
 	}
 }
 
+func TestPortal_IgnoresNonSocketRunFiles(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "runs", "run-file"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "runs", "run-file", "run.sock"), []byte("not a socket"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	instances, err := discoverPortalInstances(repoRoot)
+	if err != nil {
+		t.Fatalf("discover instances: %v", err)
+	}
+	if len(instances) != 0 {
+		t.Fatalf("expected no instances for regular file, got %#v", instances)
+	}
+}
+
 func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
