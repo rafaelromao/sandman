@@ -344,3 +344,38 @@ func TestClean_All_CallsRemoveOrphanBranches(t *testing.T) {
 		t.Errorf("expected output to confirm 3 branches cleaned, got: %s", buf.String())
 	}
 }
+
+func TestClean_Success_CleansPromptOnlyRun(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(filepath.Join(worktreeDir, "sandman", "prompt-only-123"), 0755); err != nil {
+		t.Fatalf("create prompt-only worktree: %v", err)
+	}
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-prompt", Payload: map[string]any{"branch": "sandman/prompt-only-123"}},
+		{Type: "run.finished", RunID: "run-prompt", Payload: map[string]any{"status": "success", "branch": "sandman/prompt-only-123"}},
+	}}
+	deps := Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: worktreeDir}},
+		EventLog:    log,
+		GitRunner:   &fakeGitRunner{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--success"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(worktreeDir, "sandman", "prompt-only-123")); !os.IsNotExist(err) {
+		t.Fatalf("expected prompt-only worktree to be removed")
+	}
+}
