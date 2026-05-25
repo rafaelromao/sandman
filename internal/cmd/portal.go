@@ -1235,7 +1235,7 @@ var portalPageTemplate = template.Must(template.New("portal").Parse(`<!doctype h
         '  <td class="mono">' + escapeHTML(formatDuration(run.duration)) + '</td>',
         '  <td class="mono">' + escapeHTML(formatBranch(run)) + '</td>',
         '  <td class="mono">' + escapeHTML(formatSource(run)) + '</td>',
-        '  <td><button class="action-btn" type="button" data-action="toggle-run" aria-expanded="' + (isOpen ? 'true' : 'false') + '">' + escapeHTML(detailsButtonLabel) + '</button></td>',
+        '  <td><button class="action-btn" type="button" data-action="toggle-run" data-run-key="' + escapeHTML(run.key) + '" aria-expanded="' + (isOpen ? 'true' : 'false') + '">' + escapeHTML(detailsButtonLabel) + '</button></td>',
         '</tr>',
         isOpen ? (
           '<tr class="detail-row" data-detail-for="' + escapeHTML(run.key) + '">'
