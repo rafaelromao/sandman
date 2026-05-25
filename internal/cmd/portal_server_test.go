@@ -142,6 +142,8 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 		{Type: "run.started", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
 		{Type: "run.started", Timestamp: time.Now().Add(-20 * time.Minute), RunID: "run-2", Issue: 2, Payload: map[string]any{"branch": "sandman/2-fix"}},
 		{Type: "run.finished", Timestamp: time.Now().Add(-15 * time.Minute), RunID: "run-2", Issue: 2, Payload: map[string]any{"status": "success", "branch": "sandman/2-fix"}},
+		{Type: "run.continued", Timestamp: time.Now().Add(-12 * time.Minute), RunID: "run-3", Issue: 3, Payload: map[string]any{"branch": "sandman/3-fix"}},
+		{Type: "run.finished", Timestamp: time.Now().Add(-8 * time.Minute), RunID: "run-3", Issue: 3, Payload: map[string]any{"status": "success", "branch": "sandman/3-fix"}},
 	})
 
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
@@ -153,25 +155,77 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "2.log"), []byte("\x1b[0missue two log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "3.log"), []byte("continued run log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	runs, err := loadPortalRuns(repoRoot)
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 runs, got %#v", runs)
+	}
+	byID := map[string]portalRun{}
+	for _, run := range runs {
+		byID[run.RunID] = run
+	}
+	if run := byID["run-1"]; run.Kind != "active" || run.IssueLabel != "#1" {
+		t.Fatalf("unexpected active run: %#v", run)
+	}
+	if run := byID["run-1"]; !strings.Contains(run.Output, "live output") || strings.Contains(run.Output, "\x1b[") {
+		t.Fatalf("expected active run output, got %#v", run.Output)
+	}
+	if run := byID["run-2"]; run.Status != "success" || run.Kind != "completed" {
+		t.Fatalf("unexpected completed run: %#v", run)
+	}
+	if run := byID["run-3"]; run.Status != "success" || run.Kind != "completed" || run.IssueLabel != "#3" || run.Branch != "sandman/3-fix" {
+		t.Fatalf("unexpected continued run: %#v", run)
+	}
+	if run := byID["run-3"]; !strings.Contains(run.Log, "continued run log") {
+		t.Fatalf("expected continued run log, got %#v", run.Log)
+	}
+}
+
+func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: time.Now().Add(-25 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: time.Now().Add(-20 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+		{Type: "run.continued", Timestamp: time.Now().Add(-15 * time.Minute), RunID: "run-2", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-2", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+	})
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1.log"), []byte("continued run log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
 	if len(runs) != 2 {
 		t.Fatalf("expected 2 runs, got %#v", runs)
 	}
-	if runs[0].Kind != "active" || runs[0].RunID != "run-1" || runs[0].IssueLabel != "#1" {
-		t.Fatalf("unexpected active run: %#v", runs[0])
+	byID := map[string]portalRun{}
+	for _, run := range runs {
+		byID[run.RunID] = run
 	}
-	if !strings.Contains(runs[0].Output, "live output") || strings.Contains(runs[0].Output, "\x1b[") {
-		t.Fatalf("expected active run output, got %#v", runs[0].Output)
+	continued, ok := byID["run-2"]
+	if !ok {
+		t.Fatal("expected continued run in API response")
 	}
-	if runs[1].Status != "success" || runs[1].Kind != "completed" || runs[1].RunID != "run-2" {
-		t.Fatalf("unexpected completed run: %#v", runs[1])
+	if continued.IssueLabel != "#1" || continued.Status != "success" || continued.Kind != "completed" {
+		t.Fatalf("unexpected continued run payload: %#v", continued)
 	}
-	if !strings.Contains(runs[1].Log, "issue two log") || strings.Contains(runs[1].Log, "\x1b[") {
-		t.Fatalf("expected completed run log, got %#v", runs[1].Log)
+	if continued.Branch != "sandman/1-fix" || !strings.Contains(continued.Log, "continued run log") {
+		t.Fatalf("expected continued run metadata, got %#v", continued)
 	}
 }
 
@@ -368,6 +422,25 @@ func readPortalInstances(t *testing.T, baseURL string) []portalInstance {
 		t.Fatal(err)
 	}
 	return payload.Instances
+}
+
+func readPortalRuns(t *testing.T, baseURL string) []portalRun {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Runs
 }
 
 type portalHTTPServer struct {
