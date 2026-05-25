@@ -195,6 +195,40 @@ func (f *syncTrackingSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, 
 	return &fakeSandbox{}
 }
 
+type baseBranchSyncTracker struct {
+	mu          sync.Mutex
+	syncCalls   int
+	startCalls  int
+	beforeStart bool
+	branches    []string
+}
+
+type syncAwareSandboxFactory struct {
+	tracker *baseBranchSyncTracker
+}
+
+func (f *syncAwareSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+	f.tracker.mu.Lock()
+	f.tracker.branches = append(f.tracker.branches, sourceBranch)
+	f.tracker.mu.Unlock()
+	return &syncAwareSandbox{fakeSandbox: &fakeSandbox{}, tracker: f.tracker}
+}
+
+type syncAwareSandbox struct {
+	*fakeSandbox
+	tracker *baseBranchSyncTracker
+}
+
+func (s *syncAwareSandbox) Start() error {
+	s.tracker.mu.Lock()
+	s.tracker.startCalls++
+	if s.tracker.syncCalls < s.tracker.startCalls {
+		s.tracker.beforeStart = true
+	}
+	s.tracker.mu.Unlock()
+	return s.fakeSandbox.Start()
+}
+
 type freshSandboxFactory struct{}
 
 func (f *freshSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
@@ -714,7 +748,7 @@ func TestRunBatch_NoIssues(t *testing.T) {
 	}
 }
 
-func TestRunBatch_SyncsBaseBranchOnceBeforeCreatingWorktrees(t *testing.T) {
+func TestRunBatch_SyncsBaseBranchBeforeEachAgentRunStarts(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			1: {Number: 1, Title: "One"},
@@ -724,38 +758,39 @@ func TestRunBatch_SyncsBaseBranchOnceBeforeCreatingWorktrees(t *testing.T) {
 	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}
 	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
 
-	var mu sync.Mutex
-	syncCalls := 0
-	tracker := &syncTrackingSandboxFactory{}
+	tracker := &baseBranchSyncTracker{}
 	o.baseBranchSync = func(repoPath, sourceBranch string) error {
-		mu.Lock()
-		syncCalls++
 		tracker.mu.Lock()
-		tracker.synced = true
+		tracker.syncCalls++
 		tracker.mu.Unlock()
-		mu.Unlock()
 		return nil
 	}
-	o.sandboxFactory = tracker
+	o.sandboxFactory = &syncAwareSandboxFactory{tracker: tracker}
 	o.runnableFactory = &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}}}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Parallel: 2})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Parallel: 2, BaseBranch: "trunk"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	mu.Lock()
-	if syncCalls != 1 {
-		t.Fatalf("expected one sync, got %d", syncCalls)
-	}
-	mu.Unlock()
-
 	tracker.mu.Lock()
-	beforeSync := tracker.beforeSync
-	tracker.mu.Unlock()
-	if beforeSync {
-		t.Fatal("expected worktrees to be created after default branch sync")
+	if tracker.syncCalls != 2 {
+		tracker.mu.Unlock()
+		t.Fatalf("expected two syncs, got %d", tracker.syncCalls)
 	}
+	if tracker.startCalls != 2 {
+		tracker.mu.Unlock()
+		t.Fatalf("expected two starts, got %d", tracker.startCalls)
+	}
+	if tracker.beforeStart {
+		tracker.mu.Unlock()
+		t.Fatal("expected each worktree to start after base branch sync")
+	}
+	if !reflect.DeepEqual(tracker.branches, []string{"trunk", "trunk"}) {
+		tracker.mu.Unlock()
+		t.Fatalf("expected base branch to be passed to each worktree, got %v", tracker.branches)
+	}
+	tracker.mu.Unlock()
 }
 
 func TestRunBatch_RendersPromptForIssue(t *testing.T) {
@@ -1552,6 +1587,9 @@ func TestRunBatch_LogsStartedAndFinishedEvents(t *testing.T) {
 	if status != "success" {
 		t.Errorf("expected finished status success, got %q", status)
 	}
+	if spyLog.events[1].Payload["base_branch"] != "main" {
+		t.Errorf("expected finished base branch main, got %#v", spyLog.events[1].Payload["base_branch"])
+	}
 }
 
 func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
@@ -1583,6 +1621,9 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 	if started.Payload["prompt_source_value"] != "inline" {
 		t.Fatalf("expected prompt source value inline, got %#v", started.Payload["prompt_source_value"])
 	}
+	if started.Payload["base_branch"] != "main" {
+		t.Fatalf("expected base branch main, got %#v", started.Payload["base_branch"])
+	}
 	args, ok := started.Payload["prompt_args"].(map[string]string)
 	if !ok || args["FOO"] != "bar" {
 		t.Fatalf("expected prompt args replay, got %#v", started.Payload["prompt_args"])
@@ -1608,12 +1649,19 @@ func TestRunBatch_LogsPromptOnlyTemplateSource(t *testing.T) {
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
 	spyLog := &spyEventLog{}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "return-only-ok-123")}}
+	tracker := &baseBranchSyncTracker{}
+	o.baseBranchSync = func(repoPath, sourceBranch string) error {
+		tracker.mu.Lock()
+		tracker.syncCalls++
+		tracker.mu.Unlock()
+		return nil
+	}
+	o.sandboxFactory = &syncAwareSandboxFactory{tracker: tracker}
 	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
 		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
 	}}
 
-	_, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{TemplateFlag: templatePath}})
+	_, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{TemplateFlag: templatePath}, BaseBranch: "trunk"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1627,6 +1675,45 @@ func TestRunBatch_LogsPromptOnlyTemplateSource(t *testing.T) {
 	}
 	if started.Payload["prompt_source_value"] != templatePath {
 		t.Fatalf("expected prompt source value template path, got %#v", started.Payload["prompt_source_value"])
+	}
+	if started.Payload["base_branch"] != "trunk" {
+		t.Fatalf("expected base branch trunk, got %#v", started.Payload["base_branch"])
+	}
+	tracker.mu.Lock()
+	if tracker.syncCalls != 1 {
+		tracker.mu.Unlock()
+		t.Fatalf("expected one sync, got %d", tracker.syncCalls)
+	}
+	if tracker.startCalls != 1 {
+		tracker.mu.Unlock()
+		t.Fatalf("expected one start, got %d", tracker.startCalls)
+	}
+	if tracker.beforeStart {
+		tracker.mu.Unlock()
+		t.Fatal("expected prompt-only worktree to start after base branch sync")
+	}
+	if !reflect.DeepEqual(tracker.branches, []string{"trunk"}) {
+		tracker.mu.Unlock()
+		t.Fatalf("expected prompt-only worktree to use trunk, got %v", tracker.branches)
+	}
+	tracker.mu.Unlock()
+}
+
+func TestRunBatch_PromptOnlyBaseBranchSyncFailureReturnsError(t *testing.T) {
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.baseBranchSync = func(repoPath, sourceBranch string) error { return errors.New("sync failed") }
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		return AgentRunResult{Status: "success", Branch: branch}
+	}}
+
+	_, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{PromptFlag: "Return only OK."}, BaseBranch: "trunk"})
+	if err == nil {
+		t.Fatal("expected prompt-only run to fail when base branch sync fails")
+	}
+	if !strings.Contains(err.Error(), "prompt-only run failed") {
+		t.Fatalf("expected prompt-only failure, got %v", err)
 	}
 }
 

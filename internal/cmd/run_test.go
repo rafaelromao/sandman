@@ -650,6 +650,48 @@ func TestRun_SandboxFlagPassedToBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRun_BaseBranchFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Git: config.GitConfig{BaseBranch: "trunk"}}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--base-branch", "release", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.BaseBranch != "release" {
+		t.Errorf("expected base_branch=release, got %q", spy.req.BaseBranch)
+	}
+}
+
+func TestRun_BaseBranchDefaultsToConfig(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Git: config.GitConfig{BaseBranch: "trunk"}}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.BaseBranch != "trunk" {
+		t.Errorf("expected base_branch=trunk, got %q", spy.req.BaseBranch)
+	}
+}
+
 func TestRun_InteractiveFlagRejected(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
