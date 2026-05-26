@@ -44,7 +44,7 @@ execution, and event logging for automated coding workflows.`,
 	root.AddCommand(NewCleanCmd(deps))
 	root.AddCommand(NewConfigCmd(deps.ConfigStore))
 	root.AddCommand(NewAttachCmd())
-	root.AddCommand(NewPortalCmd())
+	root.AddCommand(NewPortalCmd(deps))
 
 	return root
 }

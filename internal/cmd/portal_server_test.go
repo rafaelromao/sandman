@@ -73,7 +73,7 @@ func TestPortal_APIRescansRunsOnEachRequest(t *testing.T) {
 
 	createUnixRunSocket(t, filepath.Join(repoRoot, ".sandman", "runs", "run-1", "run.sock"))
 
-	handler := newPortalHandler(repoRoot)
+	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
@@ -206,7 +206,7 @@ func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	runs := readPortalRuns(t, server.URL)
@@ -235,7 +235,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -261,7 +261,7 @@ func TestPortal_PageExposesCommandLauncherPresets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -295,7 +295,7 @@ func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
 		return nil
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	body := strings.NewReader(`{"preset":"continue","issue":42,"prompt":"finish the tests"}`)
@@ -326,7 +326,7 @@ func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
 	}
 
 	server.Close()
-	server = startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server = startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	reloaded := readPortalCommands(t, server.URL)
@@ -355,7 +355,7 @@ func TestPortal_DownloadsLogFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	href := "/api/logs?path=" + url.QueryEscape(filepath.Join(".sandman", "logs", "1.log"))
@@ -393,7 +393,7 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- runPortalServer(ctx, t.TempDir(), port, out)
+		errCh <- runPortalServer(ctx, t.TempDir(), port, out, portalLaunchFormData{}, nil)
 	}()
 
 	select {
@@ -416,7 +416,7 @@ func TestPortal_PrintListeningURL(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runPortalServer(ctx, repoRoot, 0, out)
+		done <- runPortalServer(ctx, repoRoot, 0, out, portalLaunchFormData{}, nil)
 	}()
 
 	select {
