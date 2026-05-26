@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/spf13/cobra"
 )
@@ -74,7 +75,7 @@ type portalActiveRun struct {
 }
 
 // NewPortalCmd creates the portal command.
-func NewPortalCmd() *cobra.Command {
+func NewPortalCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "portal",
 		Short: "Serve a local portal for current Sandman runs",
@@ -84,6 +85,12 @@ func NewPortalCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			cfg, err := loadPortalLaunchConfig(deps.ConfigStore)
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			launchData := portalLaunchDataFromConfig(cfg)
 
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -97,7 +104,7 @@ func NewPortalCmd() *cobra.Command {
 			ctx, stop := signalContext(cmd.Context())
 			defer stop()
 
-			return runPortalServer(ctx, repoRoot, port, cmd.OutOrStdout())
+			return runPortalServer(ctx, repoRoot, port, cmd.OutOrStdout(), launchData, cfg)
 		},
 	}
 
@@ -121,10 +128,10 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 	return ctx, cancel
 }
 
-func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writer) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writer, launchData portalLaunchFormData, cfg *config.Config) error {
+	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
-		return fmt.Errorf("bind portal on 127.0.0.1:%d: %w", port, err)
+		return fmt.Errorf("bind portal on 0.0.0.0:%d: %w", port, err)
 	}
 	defer listener.Close()
 
@@ -138,7 +145,7 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 		return fmt.Errorf("write portal address: %w", err)
 	}
 
-	server := &http.Server{Handler: newPortalHandler(repoRoot)}
+	server := &http.Server{Handler: newPortalHandler(repoRoot, launchData, cfg)}
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Serve(listener)
@@ -162,9 +169,37 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 	}
 }
 
-func newPortalHandler(repoRoot string) http.Handler {
+func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *config.Config) http.Handler {
 	launcher, launcherErr := newPortalLauncher(repoRoot)
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/launch", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		req, err := parsePortalLaunchRequest(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		args, err := buildPortalRunArgs(repoRoot, cfg, req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if err := portalStartRun(r.Context(), repoRoot, args); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(portalLaunchResponse{Message: "Started sandman run.", Args: args})
+	})
 	mux.HandleFunc("/api/instances", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -330,6 +365,7 @@ func newPortalHandler(repoRoot string) http.Handler {
 			RefreshPath         string
 			PortalTitle         string
 			PortalSubtitle      string
+			LaunchData          portalLaunchFormData
 			ThemeOptionsHTML    template.HTML
 			SupportedThemesJSON template.JS
 		}{
@@ -341,6 +377,7 @@ func newPortalHandler(repoRoot string) http.Handler {
 			RefreshPath:         "/api/runs",
 			PortalTitle:         "Sandman Portal",
 			PortalSubtitle:      "A control room for your Sandman runs.",
+			LaunchData:          launchData,
 			ThemeOptionsHTML:    portalThemeOptionsHTML,
 			SupportedThemesJSON: portalSupportedThemesJSON,
 		}
