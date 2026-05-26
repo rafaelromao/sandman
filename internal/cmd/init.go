@@ -9,8 +9,11 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/scaffold"
+	"github.com/rafaelromao/sandman/internal/skill"
 	"github.com/spf13/cobra"
 )
+
+var installSandmanSkill = skill.InstallDefault
 
 type cliPrompter struct {
 	in  *bufio.Reader
@@ -69,11 +72,18 @@ func NewInitCmd() *cobra.Command {
 				return fmt.Errorf("get working directory: %w", err)
 			}
 
-			return s.Scaffold(wd, scaffold.Options{
+			if err := s.Scaffold(wd, scaffold.Options{
 				BuildTools:   buildTools,
 				ToolVersion:  toolVersion,
 				DefaultAgent: defaultAgent,
-			}, prompter)
+			}, prompter); err != nil {
+				return err
+			}
+			if err := installSandmanSkill(); err != nil {
+				return fmt.Errorf("install sandman skill: %w", err)
+			}
+
+			return nil
 		},
 	}
 

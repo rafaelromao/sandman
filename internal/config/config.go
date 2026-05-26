@@ -77,6 +77,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.config/opencode",
 			"~/.local/share/opencode",
 			"~/.claude",
+			"~/.agents",
 		},
 	},
 	"pi": {
@@ -84,6 +85,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		Command:     `pi --print{{if .ModelProvider}} --provider {{.ModelProvider}}{{end}}{{if .ModelName}} --model {{.ModelName}}{{end}} "$(cat {{.PromptFile}})"`,
 		ConfigDirs: []string{
 			"~/.pi",
+			"~/.agents",
 		},
 	},
 }

@@ -11,9 +11,21 @@ import (
 	"github.com/rafaelromao/sandman/internal/scaffold"
 )
 
+func init() {
+	installSandmanSkill = func() error { return nil }
+}
+
 func TestInit_CreatesSandmanFiles(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+
+	called := 0
+	oldInstall := installSandmanSkill
+	installSandmanSkill = func() error {
+		called++
+		return nil
+	}
+	t.Cleanup(func() { installSandmanSkill = oldInstall })
 
 	var out bytes.Buffer
 	cmd := NewInitCmd()
@@ -24,6 +36,9 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("expected sandman skill installer to be called once, got %d", called)
 	}
 
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "config.yaml")); err != nil {

@@ -85,8 +85,12 @@ The generated instruction file passed to an Agent, rendered from a template with
 _Avoid_: Instructions, query.
 
 **Default Prompt**:
-The canonical built-in prompt template embedded in Sandman at `internal/prompt/default_prompt.md`.
+The canonical bootstrap prompt template embedded in Sandman at `internal/prompt/default_prompt.md`.
 _Avoid_: Base prompt, stock prompt.
+
+**Sandman Skill**:
+The shared skill folder installed by `sandman init` into `~/.agents/skills/sandman/` and used by Sandman agents for the full plan/implement/review/merge/continuation flow.
+_Avoid_: Prompt workflow, local prompt copy.
 
 **Project Prompt Template**:
 The repo-local `.sandman/prompt.md` template created from the Default Prompt by `sandman init` and materialized on run when missing.
@@ -173,6 +177,7 @@ _Avoid_: Replay mode.
 - A **Batch** may apply **StartDelay** pacing between **AgentRun** starts; the delay is batch-local and does not change container capacity
 - An **AgentRun** generates many **Events**
 - A **Prompt** is rendered per **AgentRun** from the selected built-in **AgentPreset**
+- A **Prompt** is rendered per **AgentRun** from the selected built-in **AgentPreset**, and the shared **Sandman Skill** provides the rest of the workflow guidance
 
 ## Example dialogue
 
