@@ -330,6 +330,9 @@ func TestPortal_CommandLauncherPersistsAndReturnsLiveOutput(t *testing.T) {
 	}
 
 	stopPortalCommand(t, server.URL, record.ID)
+	waitForPortalCommand(t, server.URL, record.ID, func(cmd portalCommandRecord) bool {
+		return cmd.Status == "stopped"
+	})
 }
 
 func TestPortal_CommandLauncherStopsAndRelaunchesCommands(t *testing.T) {
@@ -363,6 +366,9 @@ func TestPortal_CommandLauncherStopsAndRelaunchesCommands(t *testing.T) {
 	}
 
 	stopPortalCommand(t, server.URL, relaunched.ID)
+	waitForPortalCommand(t, server.URL, relaunched.ID, func(cmd portalCommandRecord) bool {
+		return cmd.Status == "stopped"
+	})
 }
 
 func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
