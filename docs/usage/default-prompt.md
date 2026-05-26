@@ -19,8 +19,6 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 
     - Work in the current Sandman-created worktree on `{{BRANCH}}` (`{{SOURCE_BRANCH}}`).
     - Base branch: `{{BASE_BRANCH}}`.
-    - Review command: `{{REVIEW_COMMAND}}`.
-    - Follow the installed `sandman` skill for the full plan, implementation, review, merge, and continuation workflow.
     - For issue work, call `sandman implement` first. If it succeeds and the PR is fully approved, call `sandman pr-merge` next.
 <!-- default-prompt:end -->
 
