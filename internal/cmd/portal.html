@@ -1557,7 +1557,7 @@
 
     async function launchPreset(form) {
       const preset = form.getAttribute('data-preset') || '';
-      const payload = { preset };
+      const payload = { command: preset };
       const formData = new FormData(form);
       if (preset === 'continue') {
         payload.issue = Number.parseInt(formData.get('issue') || '', 10) || 0;

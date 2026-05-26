@@ -69,6 +69,35 @@ type portalLaunchResponse struct {
 	Args    []string `json:"args"`
 }
 
+type portalUnifiedLaunchRequest struct {
+	Command             string `json:"command"`
+	LaunchMode          string `json:"launchMode"`
+	SelectionMode       string `json:"selectionMode"`
+	Issues              string `json:"issues"`
+	Issue               int    `json:"issue,omitempty"`
+	Label               string `json:"label"`
+	Query               string `json:"query"`
+	Next                *int   `json:"next"`
+	IncludeDependencies bool   `json:"includeDependencies"`
+	Prompt              string `json:"prompt"`
+	Template            string `json:"template"`
+	ReviewCommand       string `json:"reviewCommand"`
+	PromptArgs          string `json:"promptArgs"`
+	Agent               string `json:"agent"`
+	Model               string `json:"model"`
+	BaseBranch          string `json:"baseBranch"`
+	Parallel            *int   `json:"parallel"`
+	StartDelay          *int   `json:"startDelay"`
+	ContainerCapacity   *int   `json:"containerCapacity"`
+	MaxContainers       *int   `json:"maxContainers"`
+	Sandbox             string `json:"sandbox"`
+	CleanMode           string `json:"cleanMode,omitempty"`
+	Confirmed           bool   `json:"confirmed,omitempty"`
+	ConfigMode          string `json:"configMode,omitempty"`
+	ConfigKey           string `json:"configKey,omitempty"`
+	ConfigValue         string `json:"configValue,omitempty"`
+}
+
 type portalOption struct {
 	Value    string
 	Label    string
@@ -230,6 +259,51 @@ func portalCheckedAttr(checked bool) string {
 		return " checked"
 	}
 	return ""
+}
+
+func parsePortalUnifiedLaunchRequest(r *http.Request) (portalUnifiedLaunchRequest, error) {
+	var req portalUnifiedLaunchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return portalUnifiedLaunchRequest{}, fmt.Errorf("parse launch request: %w", err)
+	}
+	return req, nil
+}
+
+func (req portalUnifiedLaunchRequest) runRequest() portalLaunchRequest {
+	return portalLaunchRequest{
+		LaunchMode:          req.LaunchMode,
+		SelectionMode:       req.SelectionMode,
+		Issues:              req.Issues,
+		Label:               req.Label,
+		Query:               req.Query,
+		Next:                req.Next,
+		IncludeDependencies: req.IncludeDependencies,
+		Prompt:              req.Prompt,
+		Template:            req.Template,
+		ReviewCommand:       req.ReviewCommand,
+		PromptArgs:          req.PromptArgs,
+		Agent:               req.Agent,
+		Model:               req.Model,
+		BaseBranch:          req.BaseBranch,
+		Parallel:            req.Parallel,
+		StartDelay:          req.StartDelay,
+		ContainerCapacity:   req.ContainerCapacity,
+		MaxContainers:       req.MaxContainers,
+		Sandbox:             req.Sandbox,
+	}
+}
+
+func (req portalUnifiedLaunchRequest) commandRequest() portalCommandLaunchRequest {
+	return portalCommandLaunchRequest{
+		Preset:      req.Command,
+		Issue:       req.Issue,
+		Prompt:      req.Prompt,
+		CleanMode:   req.CleanMode,
+		Confirmed:   req.Confirmed,
+		ConfigMode:  req.ConfigMode,
+		ConfigKey:   req.ConfigKey,
+		ConfigValue: req.ConfigValue,
+	}
 }
 
 func portalSelectedAttr(selected bool) string {

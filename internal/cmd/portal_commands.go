@@ -110,6 +110,16 @@ func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
 	if len(args) == 0 {
 		return portalCommandRecord{}, fmt.Errorf("missing command args")
 	}
+	if err := portalStartCommand(context.Background(), l.repoRoot, args); err != nil {
+		return portalCommandRecord{}, err
+	}
+	return l.record(args)
+}
+
+func (l *portalLauncher) record(args []string) (portalCommandRecord, error) {
+	if len(args) == 0 {
+		return portalCommandRecord{}, fmt.Errorf("missing command args")
+	}
 	record := portalCommandRecord{
 		ID:        nextPortalCommandID(),
 		Command:   strings.Join(append([]string{"sandman"}, args...), " "),
@@ -118,16 +128,12 @@ func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
 		StartedAt: time.Now(),
 		RepoRoot:  l.repoRoot,
 	}
-	if err := portalStartCommand(context.Background(), l.repoRoot, args); err != nil {
-		return portalCommandRecord{}, err
-	}
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.records = append([]portalCommandRecord{record}, l.records...)
 	if err := l.store.Write(l.records); err != nil {
-		l.mu.Unlock()
 		return portalCommandRecord{}, err
 	}
-	l.mu.Unlock()
 	return record, nil
 }
 
