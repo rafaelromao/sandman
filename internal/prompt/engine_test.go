@@ -219,7 +219,7 @@ func TestRender_PromptArgsSubstituted(t *testing.T) {
 func TestRender_ReviewCommandPromptArgOverridesDefault(t *testing.T) {
 	engine := &Engine{}
 	cfg := RenderConfig{
-		PromptFlag:    "review={{REVIEW_COMMAND}}",
+		PromptFlag: "review={{REVIEW_COMMAND}}",
 		PromptArgs: map[string]string{"REVIEW_COMMAND": "/custom review"},
 	}
 	data := IssueData{Number: 1}
