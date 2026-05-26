@@ -1002,7 +1002,7 @@ agents:
 	if !strings.Contains(got, "Work in the current Sandman-created worktree on `sandman/42-fix-login-bug`.") {
 		t.Errorf("prompt missing expected worktree contract, got:\n%s", got)
 	}
-	if !strings.Contains(got, "gh pr comment <N> --body \"/oc review\"") {
+	if !strings.Contains(got, "Review command: `/oc review`.") {
 		t.Errorf("prompt missing review command, got:\n%s", got)
 	}
 
@@ -3451,6 +3451,25 @@ func TestRunBatch_ReturnsErrorWhenBuildImageFails(t *testing.T) {
 	if starter.buildImageCount != 1 {
 		t.Errorf("expected BuildImage to be called once, got %d", starter.buildImageCount)
 	}
+}
+
+func TestBuildStartOptions_IncludesSharedSkillsDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	agentCfg := config.BuiltInAgentPresets["opencode"].Agent("opencode")
+	opts, err := buildStartOptions(agentCfg)
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+
+	want := filepath.Join(home, ".agents")
+	for _, dir := range opts.AgentConfigDirs {
+		if dir == want {
+			return
+		}
+	}
+	t.Fatalf("expected shared skills dir %q in agent config dirs, got %v", want, opts.AgentConfigDirs)
 }
 
 func TestRunBatch_UsesDotGitconfigIdentityOverRepoLocalConfig(t *testing.T) {

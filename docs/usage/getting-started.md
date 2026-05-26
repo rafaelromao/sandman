@@ -40,6 +40,8 @@ This scaffolds the `.sandman/` directory with:
 - **`.sandman/Dockerfile`** — Container image definition for container-backed sandboxing
 - **`.sandman/prompt.md`** — Project Prompt Template seeded from Sandman's Default Prompt
 
+Sandman also installs the shared `sandman` skill folder into `~/.agents/skills/sandman/` if it does not already exist.
+
 Agent commits use your host Git identity. Before the first run, make sure your Git config resolves both values:
 
 - `user.name`
