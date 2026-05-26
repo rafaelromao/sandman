@@ -1,8 +1,10 @@
 package skill
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,14 +15,36 @@ func TestInstallWritesEmbeddedSkill(t *testing.T) {
 		t.Fatalf("install skill: %v", err)
 	}
 
-	path := filepath.Join(home, ".agents", "skills", "sandman", "SKILL.md")
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read installed skill: %v", err)
-	}
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	var checked int
+	err := fs.WalkDir(embeddedSkills, embeddedSkillRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
 
-	if string(got) != DefaultSkill() {
-		t.Fatalf("installed skill mismatch\nwant:\n%s\ngot:\n%s", DefaultSkill(), got)
+		rel := strings.TrimPrefix(path, embeddedSkillRoot+"/")
+		want, err := fs.ReadFile(embeddedSkills, path)
+		if err != nil {
+			return err
+		}
+		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return err
+		}
+		if string(got) != string(want) {
+			t.Fatalf("installed file mismatch for %s", rel)
+		}
+		checked++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk installed skill tree: %v", err)
+	}
+	if checked == 0 {
+		t.Fatal("expected embedded skill files to be installed")
 	}
 }
 
@@ -44,5 +68,8 @@ func TestInstallLeavesExistingSkillUntouched(t *testing.T) {
 	}
 	if string(got) != "custom skill" {
 		t.Fatalf("expected existing skill to stay untouched, got %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "implement", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected install to skip existing skill tree, got err=%v", err)
 	}
 }

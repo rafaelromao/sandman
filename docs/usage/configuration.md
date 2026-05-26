@@ -49,7 +49,7 @@ installed_agents:
 
 Sandman supports two built-in presets: `opencode` and `pi`. Both are installed into scaffolded Dockerfiles. `opencode` is the default `default_agent`.
 
-Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill.
+Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill folder.
 
 `sandman run --agent` selects one of those built-ins per invocation. `sandman config set default_agent` changes the project default.
 
@@ -61,7 +61,7 @@ Sandman's prompt lifecycle has four steps:
 
 - **Default Prompt** — the embedded bootstrap template in `internal/prompt/default_prompt.md`
 - **Project Prompt Template** — `.sandman/prompt.md`, created from the Default Prompt by `sandman init` and materialized on run when missing
-- **Sandman Skill** — the shared workflow in `~/.agents/skills/sandman/SKILL.md`, installed by `sandman init`
+- **Sandman Skill** — the shared skill folder in `~/.agents/skills/sandman/`, installed by `sandman init`
 - **Prompt** — `.sandman/rendered-prompt.md`, the rendered instruction file passed to the agent
 
 The following built-in substitution keys are available in prompt templates:

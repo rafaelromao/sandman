@@ -89,7 +89,7 @@ The canonical bootstrap prompt template embedded in Sandman at `internal/prompt/
 _Avoid_: Base prompt, stock prompt.
 
 **Sandman Skill**:
-The shared workflow installed by `sandman init` into `~/.agents/skills/sandman/SKILL.md` and used by Sandman agents for the full plan/implement/review/merge/continuation flow.
+The shared skill folder installed by `sandman init` into `~/.agents/skills/sandman/` and used by Sandman agents for the full plan/implement/review/merge/continuation flow.
 _Avoid_: Prompt workflow, local prompt copy.
 
 **Project Prompt Template**:
