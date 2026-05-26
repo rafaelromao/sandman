@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -96,6 +97,17 @@ func executeRunCommand(t *testing.T, deps Dependencies, args ...string) (string,
 
 	err := cmd.Execute()
 	return buf.String(), err
+}
+
+func waitForPath(t *testing.T, path string) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", path)
 }
 
 var podmanWarmupOnce sync.Once
@@ -231,6 +243,23 @@ func TestRun_DependencyAwareBatch_IncludeDependenciesExecutesTransitiveChain(t *
 	t.Chdir(dir)
 	_ = initRunIntegrationRepoWithRemote(t, dir)
 
+	release7Fetch := make(chan struct{})
+	release42Fetch := make(chan struct{})
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
+			42:  {Number: 42, Title: "Refactor", BlockedBy: []int{7}, State: "open"},
+			7:   {Number: 7, Title: "Groundwork", State: "open"},
+		},
+		fetchRelease: map[int]<-chan struct{}{
+			7:  release7Fetch,
+			42: release42Fetch,
+		},
+		fetchReleaseAfter: map[int]int{
+			7:  2,
+			42: 2,
+		},
+	}
 	deps := newRunIntegrationDeps(issueAwareAgentCommand(`
 state_dir="$repo_root/.sandman/chain"
 mkdir -p "$state_dir"
@@ -250,13 +279,29 @@ case "$issue" in
 esac
 
 touch "$state_dir/$issue.done"
-`), &fakeGitHubClient{issues: map[int]*github.Issue{
-		100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
-		42:  {Number: 42, Title: "Refactor", BlockedBy: []int{7}},
-		7:   {Number: 7, Title: "Groundwork"},
-	}})
+`), client)
 
-	out, err := executeRunCommand(t, deps, "--include-dependencies", "100")
+	resultCh := make(chan struct {
+		out string
+		err error
+	}, 1)
+	go func() {
+		out, err := executeRunCommand(t, deps, "--include-dependencies", "100")
+		resultCh <- struct {
+			out string
+			err error
+		}{out: out, err: err}
+	}()
+
+	waitForPath(t, filepath.Join(dir, ".sandman", "chain", "7.done"))
+	client.issues[7].State = "closed"
+	close(release7Fetch)
+	waitForPath(t, filepath.Join(dir, ".sandman", "chain", "42.done"))
+	client.issues[42].State = "closed"
+	close(release42Fetch)
+
+	result := <-resultCh
+	out, err := result.out, result.err
 	if err != nil {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
@@ -305,7 +350,7 @@ func TestRun_DependencyAwareBatch_InvalidGraphsFailBeforeExecution(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			t.Chdir(dir)
-			initRunIntegrationRepo(t, dir)
+			initRunIntegrationRepoWithRemote(t, dir)
 
 			deps := newRunIntegrationDeps(issueAwareAgentCommand(`
 state_dir="$repo_root/.sandman/executed"
@@ -1093,6 +1138,24 @@ func TestRun_DependencyAwareBatch_TwoLevelDAGPreservesParallelismWithinLevels(t 
 	// ADR-0003 only requires each AgentRun to wait for its own BlockedBy set.
 	// This test still proves both blockers start before dependents and that
 	// same-level AgentRuns preserve concurrency in both phases.
+	release42Fetch := make(chan struct{})
+	release43Fetch := make(chan struct{})
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker A", State: "open"},
+			43:  {Number: 43, Title: "Blocker B", State: "open"},
+			100: {Number: 100, Title: "Dependent A", BlockedBy: []int{42}},
+			200: {Number: 200, Title: "Dependent B", BlockedBy: []int{43}},
+		},
+		fetchRelease: map[int]<-chan struct{}{
+			42: release42Fetch,
+			43: release43Fetch,
+		},
+		fetchReleaseAfter: map[int]int{
+			42: 2,
+			43: 2,
+		},
+	}
 	deps := newRunIntegrationDeps(issueAwareAgentCommand(`
 state_dir="$repo_root/.sandman/dag"
 mkdir -p "$state_dir"
@@ -1162,14 +1225,33 @@ mkdir -p "$state_dir"
     touch "$state_dir/dependent-finish-$issue"
     ;;
 esac
-`), &fakeGitHubClient{issues: map[int]*github.Issue{
-		42:  {Number: 42, Title: "Blocker A"},
-		43:  {Number: 43, Title: "Blocker B"},
-		100: {Number: 100, Title: "Dependent A", BlockedBy: []int{42}},
-		200: {Number: 200, Title: "Dependent B", BlockedBy: []int{43}},
-	}})
+`), client)
 
-	out, err := executeRunCommand(t, deps, "--parallel", "2", "42", "43", "100", "200")
+	go func() {
+		waitForPath(t, filepath.Join(dir, ".sandman", "dag", "blocker-finish-42"))
+		client.issues[42].State = "closed"
+		close(release42Fetch)
+	}()
+	go func() {
+		waitForPath(t, filepath.Join(dir, ".sandman", "dag", "blocker-finish-43"))
+		client.issues[43].State = "closed"
+		close(release43Fetch)
+	}()
+
+	resultCh := make(chan struct {
+		out string
+		err error
+	}, 1)
+	go func() {
+		out, err := executeRunCommand(t, deps, "--parallel", "2", "42", "43", "100", "200")
+		resultCh <- struct {
+			out string
+			err error
+		}{out: out, err: err}
+	}()
+
+	result := <-resultCh
+	out, err := result.out, result.err
 	if err != nil {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}

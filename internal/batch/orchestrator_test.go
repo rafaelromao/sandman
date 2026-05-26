@@ -1148,7 +1148,7 @@ func TestRunBatch_WaitsForBlockersBeforeStartingDependents(t *testing.T) {
 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			42:  {Number: 42, Title: "Blocker"},
+			42:  {Number: 42, Title: "Blocker", State: "closed"},
 			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
 		},
 	}
@@ -1339,6 +1339,164 @@ func TestRunBatch_SkipsIssuesBlockedByOpenExternalBlockers(t *testing.T) {
 	}
 }
 
+func TestRunBatch_RechecksInBatchBlockerStateBeforeDependentStart(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker", State: "open"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+		},
+	}
+
+	spyLog := &spyEventLog{}
+	blockerStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+	dependentStarted := make(chan struct{})
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42:  &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}, started: blockerStarted, release: releaseBlocker},
+			100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "success"}, started: dependentStarted},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	var result *Result
+	var err error
+	go func() {
+		defer close(done)
+		result, err = o.RunBatch(context.Background(), Request{
+			Issues:       []int{42, 100},
+			Dependencies: map[int][]int{100: {42}},
+			Parallel:     2,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+	assertNoSignal(t, dependentStarted, "dependent should wait for blocker to finish")
+	close(releaseBlocker)
+
+	assertNoSignal(t, dependentStarted, "dependent should stay blocked because blocker issue is still open")
+	waitForSignal(t, done, "expected batch to finish")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(result.Runs))
+	}
+
+	statuses := make(map[int]string)
+	for _, run := range result.Runs {
+		statuses[run.IssueNumber] = run.Status
+	}
+	if statuses[42] != "success" {
+		t.Fatalf("expected blocker success, got %q", statuses[42])
+	}
+	if statuses[100] != "blocked" {
+		t.Fatalf("expected dependent blocked, got %q", statuses[100])
+	}
+
+	var blockedEvent *events.Event
+	for i := range spyLog.events {
+		e := spyLog.events[i]
+		if e.Type == "run.blocked" && e.Issue == 100 {
+			blockedEvent = &e
+		}
+	}
+	if blockedEvent == nil {
+		t.Fatal("expected run.blocked event for dependent")
+	}
+	blockedBy, ok := blockedEvent.Payload["blocked_by"].([]int)
+	if !ok || !reflect.DeepEqual(blockedBy, []int{42}) {
+		t.Fatalf("expected blocked_by [42], got %#v", blockedEvent.Payload["blocked_by"])
+	}
+}
+
+func TestRunBatch_RechecksExternalBlockerStateBeforeDependentStart(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	releaseExternalFetch := make(chan struct{})
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Runnable", State: "closed"},
+			100: {Number: 100, Title: "Blocked", BlockedBy: []int{7}},
+			7:   {Number: 7, Title: "External blocker", State: "open"},
+		},
+		fetchRelease: map[int]<-chan struct{}{
+			7: releaseExternalFetch,
+		},
+	}
+
+	spyLog := &spyEventLog{}
+	blockerStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+	dependentStarted := make(chan struct{})
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42:  &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}, started: blockerStarted, release: releaseBlocker},
+			100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "success"}, started: dependentStarted},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	var result *Result
+	var err error
+	go func() {
+		defer close(done)
+		result, err = o.RunBatch(context.Background(), Request{
+			Issues:       []int{42, 100},
+			Blocked:      map[int][]int{100: {7}},
+			Dependencies: map[int][]int{100: {42}},
+			Parallel:     2,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+	assertNoSignal(t, dependentStarted, "dependent should wait for blocker to finish")
+	close(releaseBlocker)
+
+	assertNoSignal(t, dependentStarted, "dependent should wait for external blocker recheck")
+	client.issues[7].State = "closed"
+	close(releaseExternalFetch)
+	waitForSignal(t, dependentStarted, "expected dependent to start after external blocker closes")
+	waitForSignal(t, done, "expected batch to finish")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(result.Runs))
+	}
+
+	statuses := make(map[int]string)
+	for _, run := range result.Runs {
+		statuses[run.IssueNumber] = run.Status
+	}
+	if statuses[42] != "success" {
+		t.Fatalf("expected blocker success, got %q", statuses[42])
+	}
+	if statuses[100] != "success" {
+		t.Fatalf("expected dependent success after blocker closed, got %q", statuses[100])
+	}
+
+	for i := range spyLog.events {
+		if spyLog.events[i].Type == "run.blocked" && spyLog.events[i].Issue == 100 {
+			t.Fatalf("did not expect blocked event for dependent: %#v", spyLog.events[i])
+		}
+	}
+}
+
 func TestRunBatch_PreservesParallelismWithinDependencyLevel(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -1346,7 +1504,7 @@ func TestRunBatch_PreservesParallelismWithinDependencyLevel(t *testing.T) {
 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			1: {Number: 1, Title: "Blocker"},
+			1: {Number: 1, Title: "Blocker", State: "closed"},
 			3: {Number: 3, Title: "Dependent A", BlockedBy: []int{1}},
 			4: {Number: 4, Title: "Dependent B", BlockedBy: []int{1}},
 		},
@@ -1483,7 +1641,7 @@ func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			1: {Number: 1, Title: "Blocker"},
+			1: {Number: 1, Title: "Blocker", State: "closed"},
 			3: {Number: 3, Title: "Dependent A", BlockedBy: []int{1}},
 			4: {Number: 4, Title: "Dependent B", BlockedBy: []int{1}},
 		},
@@ -2594,7 +2752,7 @@ func TestRunBatch_PrefersLeastLoadedContainerWhenReusingIdleCapacity(t *testing.
 		issues: map[int]*github.Issue{
 			1: {Number: 1, Title: "One"},
 			2: {Number: 2, Title: "Two"},
-			3: {Number: 3, Title: "Three"},
+			3: {Number: 3, Title: "Three", State: "closed"},
 			4: {Number: 4, Title: "Four"},
 		},
 		fetchRelease: map[int]<-chan struct{}{},
