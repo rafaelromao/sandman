@@ -169,34 +169,6 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *config.Config) http.Handler {
 	launcher, launcherErr := newPortalLauncher(repoRoot)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/launch", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		req, err := parsePortalLaunchRequest(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		args, err := buildPortalRunArgs(repoRoot, cfg, req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		if err := portalStartRun(r.Context(), repoRoot, args); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(portalLaunchResponse{Message: "Started sandman run.", Args: args})
-	})
 	mux.HandleFunc("/api/commands", func(w http.ResponseWriter, r *http.Request) {
 		if launcherErr != nil {
 			http.Error(w, launcherErr.Error(), http.StatusInternalServerError)
@@ -213,25 +185,54 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			w.Header().Set("Cache-Control", "no-store")
 			_ = json.NewEncoder(w).Encode(map[string]any{"repoRoot": repoRoot, "commands": commands})
 		case http.MethodPost:
-			var req portalCommandLaunchRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			req, err := parsePortalUnifiedLaunchRequest(r)
+			if err != nil {
 				http.Error(w, "invalid command payload", http.StatusBadRequest)
 				return
 			}
-			args, err := buildPortalCommandArgs(req)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			command, err := launcher.launch(args)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			var (
+				args []string
+				resp any
+			)
+			switch strings.TrimSpace(req.Command) {
+			case "run":
+				args, err = buildPortalRunArgs(repoRoot, cfg, req.runRequest())
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				if err := portalStartRun(r.Context(), repoRoot, args); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				if _, err := launcher.record(args); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				resp = portalLaunchResponse{Message: "Started sandman run.", Args: args}
+			case "continue", "status", "history", "clean", "config":
+				commandReq := req.commandRequest()
+				commandReq.Preset = req.Command
+				args, err = buildPortalCommandArgs(commandReq)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				command, err := launcher.launch(args)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				resp = command
+			default:
+				http.Error(w, "unknown command", http.StatusBadRequest)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Cache-Control", "no-store")
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(command)
+			_ = json.NewEncoder(w).Encode(resp)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}

@@ -281,24 +281,33 @@ func TestPortal_PageExposesCommandLauncherPresets(t *testing.T) {
 	}
 }
 
-func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
+func TestPortal_CommandsEndpointPersistsRunLaunches(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
+	prevRun := portalStartRun
 	prevStart := portalStartCommand
-	defer func() { portalStartCommand = prevStart }()
-	var gotArgs []string
+	defer func() {
+		portalStartRun = prevRun
+		portalStartCommand = prevStart
+	}()
+	var gotRunArgs []string
+	var gotStartArgs []string
+	portalStartRun = func(ctx context.Context, repoRoot string, args []string) error {
+		gotRunArgs = append([]string(nil), args...)
+		return nil
+	}
 	portalStartCommand = func(ctx context.Context, repoRoot string, args []string) error {
-		gotArgs = append([]string(nil), args...)
+		gotStartArgs = append([]string(nil), args...)
 		return nil
 	}
 
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
-	body := strings.NewReader(`{"preset":"continue","issue":42,"prompt":"finish the tests"}`)
+	body := strings.NewReader(`{"command":"run","issues":"42","prompt":"finish the tests"}`)
 	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", body)
 	if err != nil {
 		t.Fatal(err)
@@ -313,15 +322,18 @@ func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
 		data, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, data)
 	}
-	if len(gotArgs) != 3 || gotArgs[0] != "continue" || gotArgs[1] != "42" || gotArgs[2] != "finish the tests" {
-		t.Fatalf("unexpected launch args: %#v", gotArgs)
+	if len(gotRunArgs) == 0 || gotRunArgs[0] != "run" || !strings.Contains(strings.Join(gotRunArgs, " "), "42") {
+		t.Fatalf("unexpected run args: %#v", gotRunArgs)
+	}
+	if len(gotStartArgs) != 0 {
+		t.Fatalf("expected subcommand launcher to stay idle, got %#v", gotStartArgs)
 	}
 
 	commands := readPortalCommands(t, server.URL)
 	if len(commands) != 1 {
 		t.Fatalf("expected 1 persisted command, got %#v", commands)
 	}
-	if commands[0].Command != "sandman continue 42 finish the tests" {
+	if commands[0].Command != "sandman run 42" && !strings.HasPrefix(commands[0].Command, "sandman run ") {
 		t.Fatalf("unexpected command record: %#v", commands[0])
 	}
 
@@ -335,11 +347,106 @@ func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
 	}
 }
 
+func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
+	prevStart := portalStartCommand
+	defer func() { portalStartCommand = prevStart }()
+
+	cases := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{name: "continue", body: `{"command":"continue","issue":42,"prompt":"finish the tests"}`, want: []string{"continue", "42", "finish the tests"}},
+		{name: "status", body: `{"command":"status"}`, want: []string{"status"}},
+		{name: "history", body: `{"command":"history"}`, want: []string{"history"}},
+		{name: "clean", body: `{"command":"clean","cleanMode":"failed","confirmed":true}`, want: []string{"clean", "--failed"}},
+		{name: "config", body: `{"command":"config","configMode":"set","configKey":"default_agent","configValue":"pi"}`, want: []string{"config", "set", "default_agent", "pi"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			prevStart := portalStartCommand
+			t.Cleanup(func() { portalStartCommand = prevStart })
+
+			var gotArgs []string
+			portalStartCommand = func(ctx context.Context, repoRoot string, args []string) error {
+				gotArgs = append([]string(nil), args...)
+				return nil
+			}
+
+			server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+			defer server.Close()
+
+			req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusCreated {
+				data, _ := io.ReadAll(resp.Body)
+				t.Fatalf("expected 201, got %d: %s", resp.StatusCode, data)
+			}
+			if !sameStrings(gotArgs, tc.want) {
+				t.Fatalf("unexpected launch args: %#v", gotArgs)
+			}
+
+			commands := readPortalCommands(t, server.URL)
+			if len(commands) != 1 {
+				t.Fatalf("expected 1 persisted command, got %#v", commands)
+			}
+			if commands[0].Command != strings.Join(append([]string{"sandman"}, tc.want...), " ") {
+				t.Fatalf("unexpected command record: %#v", commands[0])
+			}
+		})
+	}
+}
+
+func TestPortal_CommandsEndpointRejectsLaunchRoute(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/api/launch", "application/json", strings.NewReader(`{"command":"run"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestPortal_DownloadsLogFiles(t *testing.T) {
