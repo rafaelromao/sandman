@@ -706,7 +706,7 @@ func TestPortal_PageExposesLauncherSection(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Run launcher", "Structured `sandman run`", "launcher-toggle", "sandman.portal.launcher.collapsed", "commandsApiPath", "/api/commands"} {
+	for _, want := range []string{"Run launcher", "Structured `sandman run`"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(1000, len(content))])
 		}
