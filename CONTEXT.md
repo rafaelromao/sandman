@@ -135,7 +135,7 @@ Connect a terminal to a running daemon via the control socket to stream its outp
 _Avoid_: Tail, follow.
 
 **Portal**:
-A repo-scoped local HTTP portal started by `sandman portal` that rescans the current repository's `.sandman/runs/` tree on each poll and shows active and recent Sandman launch records. It observes multiple launch records in the same repository but does not manage them.
+A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the current repository's `.sandman/runs/` tree on each poll and shows active and recent Sandman instances. It also exposes a repo-scoped launcher for Sandman commands with persisted history.
 _Avoid_: dashboard, monitor, control panel.
 
 **Continue**:
