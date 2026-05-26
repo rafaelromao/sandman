@@ -46,10 +46,11 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 	blocked := make(map[int][]int)
 	issueCache := make(map[int]*github.Issue, len(requested))
 	known := make(map[int]struct{}, len(requested))
-	ordered := append([]int(nil), requested...)
+	order := make([]int, 0, len(requested))
 	queue := append([]int(nil), requested...)
 	for _, issue := range requested {
 		known[issue] = struct{}{}
+		order = append(order, issue)
 	}
 
 	missing := map[int]struct{}{}
@@ -69,7 +70,7 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 			return nil, fmt.Errorf("fetch issue #%d: %w", issueNum, err)
 		}
 
-		blockers := uniqueIssues(issue.BlockedBy)
+		blockers := uniqueSortedIssues(issue.BlockedBy)
 		activeBlockers := make([]int, 0, len(blockers))
 
 		for _, blocker := range blockers {
@@ -97,8 +98,8 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 
 			activeBlockers = append(activeBlockers, blocker)
 			known[blocker] = struct{}{}
-			ordered = append(ordered, blocker)
 			queue = append(queue, blocker)
+			order = append(order, blocker)
 		}
 
 		if len(activeBlockers) == 0 {
@@ -116,12 +117,12 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 		r.warnExpansion(len(known))
 	}
 
-	orderedIssues, err := topologicalIssues(deps, ordered)
+	ordered, err := topologicalIssues(deps, order)
 	if err != nil {
 		return nil, err
 	}
 
-	return &ResolvedBatch{Issues: orderedIssues, Deps: deps, Blocked: blocked}, nil
+	return &ResolvedBatch{Issues: ordered, Deps: deps, Blocked: blocked}, nil
 }
 
 func fetchDependencyIssue(ctx context.Context, client github.Client, cache map[int]*github.Issue, issueNum int) (*github.Issue, error) {
@@ -158,57 +159,56 @@ func (r *DependencyResolver) warnExpansion(issueCount int) {
 
 func topologicalIssues(deps map[int][]int, order []int) ([]int, error) {
 	issues := uniqueIssues(order)
-	if len(issues) == 0 {
-		issues = make([]int, 0, len(deps))
-		for issue := range deps {
-			issues = append(issues, issue)
-		}
-	}
-	issues = filterKnownIssues(issues, deps)
 
-	position := make(map[int]int, len(issues))
-	for i, issue := range issues {
-		position[issue] = i
-	}
-	indegree := make(map[int]int, len(deps))
-	dependents := make(map[int][]int, len(deps))
-	for issue, blockers := range deps {
-		indegree[issue] = 0
-		for _, blocker := range blockers {
-			if _, ok := deps[blocker]; !ok {
-				return nil, fmt.Errorf("missing blockers: %s", formatIssueList([]int{blocker}))
-			}
-			indegree[issue]++
-			dependents[blocker] = append(dependents[blocker], issue)
-		}
-	}
+	const (
+		unvisited = iota
+		visiting
+		visited
+	)
 
-	ready := make([]int, 0, len(deps))
-	for _, issue := range issues {
-		if indegree[issue] == 0 {
-			ready = append(ready, issue)
-		}
-	}
-
+	state := make(map[int]int, len(deps))
+	stack := make([]int, 0, len(deps))
+	stackIndex := make(map[int]int, len(deps))
 	ordered := make([]int, 0, len(deps))
-	for len(ready) > 0 {
-		issue := ready[0]
-		ready = ready[1:]
-		ordered = append(ordered, issue)
 
-		for _, dependent := range dependents[issue] {
-			indegree[dependent]--
-			if indegree[dependent] == 0 {
-				ready = insertIssueByOrder(ready, dependent, position)
+	var visit func(int) error
+	visit = func(issue int) error {
+		switch state[issue] {
+		case visiting:
+			cycle := append([]int(nil), stack[stackIndex[issue]:]...)
+			cycle = append(cycle, issue)
+			return fmt.Errorf("dependency cycle detected: %s", formatIssuePath(cycle))
+		case visited:
+			return nil
+		}
+
+		state[issue] = visiting
+		stackIndex[issue] = len(stack)
+		stack = append(stack, issue)
+
+		for _, blocker := range deps[issue] {
+			if _, ok := deps[blocker]; !ok {
+				return fmt.Errorf("missing blockers: %s", formatIssueList([]int{blocker}))
+			}
+			if err := visit(blocker); err != nil {
+				return err
 			}
 		}
+
+		stack = stack[:len(stack)-1]
+		delete(stackIndex, issue)
+		state[issue] = visited
+		ordered = append(ordered, issue)
+		return nil
 	}
 
-	if len(ordered) != len(deps) {
-		if err := findDependencyCycle(deps, issues); err != nil {
+	for _, issue := range issues {
+		if state[issue] != unvisited {
+			continue
+		}
+		if err := visit(issue); err != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf("dependency cycle detected")
 	}
 
 	return ordered, nil
@@ -232,90 +232,10 @@ func uniqueIssues(issues []int) []int {
 	return unique
 }
 
-func filterKnownIssues(issues []int, deps map[int][]int) []int {
-	if len(issues) == 0 {
-		return nil
-	}
-
-	filtered := make([]int, 0, len(issues))
-	for _, issue := range issues {
-		if _, ok := deps[issue]; ok {
-			filtered = append(filtered, issue)
-		}
-	}
-	return filtered
-}
-
-func insertIssueByOrder(issues []int, issue int, order map[int]int) []int {
-	idx := order[issue]
-	pos := sort.Search(len(issues), func(i int) bool {
-		return order[issues[i]] > idx
-	})
-	issues = append(issues, 0)
-	copy(issues[pos+1:], issues[pos:])
-	issues[pos] = issue
-	return issues
-}
-
-func findDependencyCycle(deps map[int][]int, order []int) error {
-	const (
-		unvisited = iota
-		visiting
-		visited
-	)
-
-	state := make(map[int]int, len(deps))
-	stack := make([]int, 0, len(deps))
-	stackIndex := make(map[int]int, len(deps))
-
-	var visit func(int) error
-	visit = func(issue int) error {
-		switch state[issue] {
-		case visiting:
-			cycle := append([]int(nil), stack[stackIndex[issue]:]...)
-			cycle = append(cycle, issue)
-			return fmt.Errorf("dependency cycle detected: %s", formatIssuePath(cycle))
-		case visited:
-			return nil
-		}
-
-		state[issue] = visiting
-		stackIndex[issue] = len(stack)
-		stack = append(stack, issue)
-
-		for _, blocker := range deps[issue] {
-			if _, ok := deps[blocker]; !ok {
-				continue
-			}
-			if err := visit(blocker); err != nil {
-				return err
-			}
-		}
-
-		stack = stack[:len(stack)-1]
-		delete(stackIndex, issue)
-		state[issue] = visited
-		return nil
-	}
-
-	for _, issue := range order {
-		if state[issue] != unvisited {
-			continue
-		}
-		if err := visit(issue); err != nil {
-			return err
-		}
-	}
-	for issue := range deps {
-		if state[issue] != unvisited {
-			continue
-		}
-		if err := visit(issue); err != nil {
-			return err
-		}
-	}
-
-	return nil
+func uniqueSortedIssues(issues []int) []int {
+	unique := uniqueIssues(issues)
+	sort.Ints(unique)
+	return unique
 }
 
 func issueNumbersFromSet(issues map[int]struct{}) []int {

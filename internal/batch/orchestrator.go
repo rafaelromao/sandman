@@ -379,10 +379,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	dependencies := make(map[int][]int, len(req.Issues))
+	order := make([]int, 0, len(req.Issues))
 	for _, num := range req.Issues {
 		dependencies[num] = uniqueIssues(req.Dependencies[num])
+		order = append(order, num)
 	}
-	if _, err := topologicalIssues(dependencies, req.Issues); err != nil {
+	if _, err := topologicalIssues(dependencies, order); err != nil {
 		return nil, err
 	}
 

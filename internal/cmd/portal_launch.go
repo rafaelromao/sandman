@@ -516,15 +516,12 @@ func startPortalRun(ctx context.Context, repoRoot string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve sandman executable: %w", err)
 	}
-	// Portal launches should keep running after the HTTP request returns.
 	_ = ctx
 	cmd := exec.CommandContext(context.Background(), exe, args...)
 	cmd.Dir = repoRoot
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start sandman run: %w", err)
 	}
-	go func() {
-		_ = cmd.Wait()
-	}()
+	go func() { _ = cmd.Wait() }()
 	return nil
 }
