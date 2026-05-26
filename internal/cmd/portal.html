@@ -883,18 +883,38 @@
       min-height: 0;
     }
     .commands-panel-body {
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: 16px;
       padding: 18px 20px 20px;
-      overflow: auto;
+      overflow: hidden;
       min-height: 0;
       flex: 1 1 auto;
-      align-content: start;
-      grid-auto-rows: min-content;
+      align-items: stretch;
     }
     .command-picker-field {
       display: grid;
       gap: 6px;
+    }
+    .command-pane-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .command-pane-tabs .tab-btn {
+      min-width: 0;
+    }
+    .command-pane-tabs .tab-btn[aria-selected="true"] {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-ink);
+    }
+    .command-pane {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+      overflow: auto;
     }
     .command-picker-field > span,
     .command-field > span,
@@ -977,9 +997,12 @@
       accent-color: var(--accent);
     }
     .command-history {
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: 10px;
       padding-top: 2px;
+      min-height: 0;
+      flex: 1 1 auto;
     }
     .command-history-head {
       display: flex;
@@ -997,6 +1020,9 @@
     .command-list {
       display: grid;
       gap: 10px;
+      min-height: 0;
+      flex: 1 1 auto;
+      overflow: auto;
     }
     .command-item {
       border: 1px solid var(--border);
@@ -1254,6 +1280,7 @@
         label: '',
         query: '',
         next: String(launchDefaults.next || 1),
+        runPane: 'run',
         includeDependencies: false,
         prompt: '',
         template: '',
@@ -1408,6 +1435,55 @@
       return '<div class="command-note">' + escapeHTML(text) + '</div>';
     }
 
+    function renderPaneTab(activePane, pane, label) {
+      return '<button type="button" class="tab-btn" data-action="set-run-pane" data-run-pane="' + escapeHTML(pane) + '" role="tab" aria-selected="' + (activePane === pane ? 'true' : 'false') + '">' + escapeHTML(label) + '</button>';
+    }
+
+    function renderRunPane(state, pane) {
+      if (pane === 'scope') {
+        return commandSection('Scope', [
+          '<div class="command-grid two">',
+          commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || '') + '">'),
+          commandField('Label', '<input name="label" type="text" placeholder="ready-for-agent" value="' + escapeHTML(state.label || '') + '">'),
+          commandField('Query', '<input name="query" type="text" placeholder="is:open label:ready-for-agent" value="' + escapeHTML(state.query || '') + '">'),
+          commandField('Next', '<input name="next" type="number" min="1" step="1" inputmode="numeric" placeholder="1" value="' + escapeHTML(state.next || String(launchDefaults.next || 1)) + '">'),
+          '</div>',
+          commandField('Dependencies', '<label class="launch-radio"><input name="includeDependencies" type="checkbox"' + (state.includeDependencies ? ' checked' : '') + '> Include dependencies</label>'),
+        ].join(''));
+      }
+
+      if (pane === 'prompt') {
+        return commandSection('Prompt', [
+          commandField('Prompt', '<textarea name="prompt" placeholder="finish the tests">' + escapeHTML(state.prompt || '') + '</textarea>'),
+          commandField('Template', '<input name="template" type="text" placeholder="prompts/launch.md" value="' + escapeHTML(state.template || '') + '">'),
+          commandField('Review command', '<input name="reviewCommand" type="text" placeholder="' + escapeHTML(launchDefaults.reviewCommand || '') + '" value="' + escapeHTML(state.reviewCommand || '') + '">'),
+          commandField('Prompt args', '<textarea name="promptArgs" placeholder="key=value\nmode=fast">' + escapeHTML(state.promptArgs || '') + '</textarea>'),
+        ].join(''));
+      }
+
+      if (pane === 'runtime') {
+        return commandSection('Runtime', [
+          '<div class="command-grid two">',
+          commandField('Agent', '<select name="agent">' + templateHTML('agent-options') + '</select>'),
+          commandField('Model', '<input name="model" type="text" placeholder="opencode-4.0" value="' + escapeHTML(state.model || '') + '">'),
+          commandField('Base branch', '<input name="baseBranch" type="text" placeholder="main" value="' + escapeHTML(state.baseBranch || '') + '">'),
+          commandField('Sandbox', '<select name="sandbox">' + templateHTML('sandbox-options') + '</select>'),
+          commandField('Parallel', '<input name="parallel" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.parallel || '') + '">'),
+          commandField('Start delay', '<input name="startDelay" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.startDelay || '') + '">'),
+          commandField('Container capacity', '<input name="containerCapacity" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.containerCapacity || '') + '">'),
+          commandField('Max containers', '<input name="maxContainers" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.maxContainers || '') + '">'),
+          '</div>',
+        ].join(''));
+      }
+
+      return commandSection('Run', [
+        '<div class="command-grid two">',
+        commandField('Launch mode', '<div class="command-radio-group">' + templateHTML('launch-mode-options') + '</div>'),
+        commandField('Selection mode', '<div class="command-radio-group">' + templateHTML('selection-mode-options') + '</div>'),
+        '</div>',
+      ].join(''));
+    }
+
     function maybeInt(value) {
       const text = String(value ?? '').trim();
       if (!text) return null;
@@ -1421,40 +1497,17 @@
     }
 
     function renderRunCommandBody(state) {
+      const activePane = state.runPane || 'run';
       return [
-        commandSection('Run', [
-          '<div class="command-grid two">',
-          commandField('Launch mode', '<div class="command-radio-group">' + templateHTML('launch-mode-options') + '</div>'),
-          commandField('Selection mode', '<div class="command-radio-group">' + templateHTML('selection-mode-options') + '</div>'),
-          '</div>',
-        ].join('')),
-        commandSection('Scope', [
-          '<div class="command-grid two">',
-          commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || '') + '">'),
-          commandField('Label', '<input name="label" type="text" placeholder="ready-for-agent" value="' + escapeHTML(state.label || '') + '">'),
-          commandField('Query', '<input name="query" type="text" placeholder="is:open label:ready-for-agent" value="' + escapeHTML(state.query || '') + '">'),
-          commandField('Next', '<input name="next" type="number" min="1" step="1" inputmode="numeric" placeholder="1" value="' + escapeHTML(state.next || String(launchDefaults.next || 1)) + '">'),
-          '</div>',
-          commandField('Dependencies', '<label class="launch-radio"><input name="includeDependencies" type="checkbox"' + (state.includeDependencies ? ' checked' : '') + '> Include dependencies</label>'),
-        ].join('')),
-        commandSection('Prompt', [
-          commandField('Prompt', '<textarea name="prompt" placeholder="finish the tests">' + escapeHTML(state.prompt || '') + '</textarea>'),
-          commandField('Template', '<input name="template" type="text" placeholder="prompts/launch.md" value="' + escapeHTML(state.template || '') + '">'),
-          commandField('Review command', '<input name="reviewCommand" type="text" placeholder="' + escapeHTML(launchDefaults.reviewCommand || '') + '" value="' + escapeHTML(state.reviewCommand || '') + '">'),
-          commandField('Prompt args', '<textarea name="promptArgs" placeholder="key=value\nmode=fast">' + escapeHTML(state.promptArgs || '') + '</textarea>'),
-        ].join('')),
-        commandSection('Runtime', [
-          '<div class="command-grid two">',
-          commandField('Agent', '<select name="agent">' + templateHTML('agent-options') + '</select>'),
-          commandField('Model', '<input name="model" type="text" placeholder="opencode-4.0" value="' + escapeHTML(state.model || '') + '">'),
-          commandField('Base branch', '<input name="baseBranch" type="text" placeholder="main" value="' + escapeHTML(state.baseBranch || '') + '">'),
-          commandField('Sandbox', '<select name="sandbox">' + templateHTML('sandbox-options') + '</select>'),
-          commandField('Parallel', '<input name="parallel" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.parallel || '') + '">'),
-          commandField('Start delay', '<input name="startDelay" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.startDelay || '') + '">'),
-          commandField('Container capacity', '<input name="containerCapacity" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.containerCapacity || '') + '">'),
-          commandField('Max containers', '<input name="maxContainers" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.maxContainers || '') + '">'),
-          '</div>',
-        ].join('')),
+        '<div class="command-pane-tabs" role="tablist" aria-label="Run command panes">',
+        renderPaneTab(activePane, 'run', 'Run'),
+        renderPaneTab(activePane, 'scope', 'Scope'),
+        renderPaneTab(activePane, 'prompt', 'Prompt'),
+        renderPaneTab(activePane, 'runtime', 'Runtime'),
+        '</div>',
+        '<div class="command-pane">',
+        renderRunPane(state, activePane),
+        '</div>',
       ].join('');
     }
 
@@ -1620,7 +1673,10 @@
 
     function syncCommandPanelState(type) {
       const nextType = type || commandPanelType || (commandPicker ? commandPicker.value || 'run' : 'run');
-      commandState[nextType] = readCommandFieldState(nextType);
+      commandState[nextType] = {
+        ...(commandState[nextType] || {}),
+        ...readCommandFieldState(nextType),
+      };
       return nextType;
     }
 
@@ -2085,6 +2141,19 @@
       commandPanelForm.addEventListener('submit', (event) => {
         event.preventDefault();
         executeCommand();
+      });
+    }
+
+    if (commandPanelBody) {
+      commandPanelBody.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-action="set-run-pane"]');
+        if (!button || commandPanelType !== 'run') return;
+        const runPane = button.getAttribute('data-run-pane') || 'run';
+        commandState.run = {
+          ...(commandState.run || {}),
+          runPane,
+        };
+        renderCommandPanelBody('run');
       });
     }
 
