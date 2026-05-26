@@ -170,6 +170,7 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 }
 
 func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *config.Config) http.Handler {
+	launcher, launcherErr := newPortalLauncher(repoRoot)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/launch", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

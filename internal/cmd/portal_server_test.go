@@ -594,7 +594,7 @@ func TestPortal_CommandLauncherPersistsAndReturnsLiveOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	record := launchPortalCommand(t, server.URL, `sh -lc 'printf "hello\n"; sleep 20'`)
@@ -607,7 +607,7 @@ func TestPortal_CommandLauncherPersistsAndReturnsLiveOutput(t *testing.T) {
 	})
 
 	server.Close()
-	server = startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server = startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	commands := readPortalCommands(t, server.URL)
@@ -630,7 +630,7 @@ func TestPortal_CommandLauncherStopsAndRelaunchesCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	record := launchPortalCommand(t, server.URL, `sh -lc 'trap "exit 0" TERM; printf "running\n"; while :; do sleep 1; done'`)
@@ -693,7 +693,7 @@ func TestPortal_PageExposesLauncherSection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -706,7 +706,7 @@ func TestPortal_PageExposesLauncherSection(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Launcher", "Start command", "launcher-toggle", "sandman.portal.launcher.collapsed", "commandsApiPath", "/api/commands"} {
+	for _, want := range []string{"Run launcher", "Structured `sandman run`", "launcher-toggle", "sandman.portal.launcher.collapsed", "commandsApiPath", "/api/commands"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(1000, len(content))])
 		}
