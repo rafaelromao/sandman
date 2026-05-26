@@ -229,6 +229,135 @@ func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 	}
 }
 
+func TestPortal_LoadPortalRunsIncludesArtifactsAndEmptyStates(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(repoRoot, ".sandman", "worktrees", branch)
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "rendered-prompt.md"), []byte("# Rendered Prompt\n\nDo the thing.\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "continuation-context.md"), []byte("# Continuation Context\n\n## Completed\nDone.\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "continue-prompt.md"), []byte("Continue with the next step.\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "42.log"), []byte("\x1b[0mstdout line\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: time.Now().Add(-20 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": branch}},
+		{Type: "run.finished", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": branch}},
+		{Type: "run.started", Timestamp: time.Now().Add(-9 * time.Minute), RunID: "run-43", Issue: 43, Payload: map[string]any{"branch": "sandman/43-fix-bug"}},
+		{Type: "run.finished", Timestamp: time.Now().Add(-8 * time.Minute), RunID: "run-43", Issue: 43, Payload: map[string]any{"status": "success", "branch": "sandman/43-fix-bug"}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 runs, got %#v", runs)
+	}
+	byID := map[string]portalRun{}
+	for _, run := range runs {
+		byID[run.RunID] = run
+	}
+
+	run := byID["run-42"]
+	if run.Prompt != "# Rendered Prompt\n\nDo the thing.\n" {
+		t.Fatalf("expected rendered prompt, got %#v", run.Prompt)
+	}
+	if run.ContinuationContext != "# Continuation Context\n\n## Completed\nDone.\n" {
+		t.Fatalf("expected continuation context, got %#v", run.ContinuationContext)
+	}
+	if run.ContinuationPrompt != "Continue with the next step.\n" {
+		t.Fatalf("expected continuation prompt, got %#v", run.ContinuationPrompt)
+	}
+	if run.Log != "stdout line\n" {
+		t.Fatalf("expected sanitized log, got %#v", run.Log)
+	}
+
+	emptyRun := byID["run-43"]
+	if emptyRun.Prompt != "" || emptyRun.ContinuationContext != "" || emptyRun.ContinuationPrompt != "" || emptyRun.Log != "" {
+		t.Fatalf("expected missing artifacts to stay empty, got %#v", emptyRun)
+	}
+}
+
+func TestPortal_LoadPortalRunsFindsArtifactsForActiveRunsWithoutState(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "portal-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(repoRoot, ".sandman", "worktrees", branch)
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "rendered-prompt.md"), []byte("active prompt\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "continuation-context.md"), []byte("active context\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "continue-prompt.md"), []byte("active continue\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	activeSock := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1", "run.sock")
+	if err := os.MkdirAll(filepath.Dir(activeSock), 0755); err != nil {
+		t.Fatal(err)
+	}
+	activeLn, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = activeLn.Close() })
+	go func() {
+		conn, err := activeLn.Accept()
+		if err != nil {
+			return
+		}
+		_, _ = conn.Write([]byte("active output\n"))
+		_ = conn.Close()
+	}()
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %#v", runs)
+	}
+	run := runs[0]
+	if run.Kind != "active" {
+		t.Fatalf("expected active run, got %#v", run)
+	}
+	if run.Prompt != "active prompt\n" {
+		t.Fatalf("expected prompt from issue-number fallback, got %#v", run.Prompt)
+	}
+	if run.ContinuationContext != "active context\n" || run.ContinuationPrompt != "active continue\n" {
+		t.Fatalf("expected continuation artifacts from issue-number fallback, got %#v", run)
+	}
+}
+
 func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -248,7 +377,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active only", "Output", "Log", "Events", "Details", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`} {
+	for _, want := range []string{"Active only", "Output", "Prompt", "Continuation", "Log", "Events", "Details", "No rendered prompt file yet.", "No continuation context file yet.", "No continue prompt file yet.", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`, `renderTabButton(run.key, 'prompt'`, `renderTabButton(run.key, 'continuation'`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
