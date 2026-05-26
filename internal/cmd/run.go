@@ -212,6 +212,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
 				Issues:               resolvedBatch.Issues,
 				Dependencies:         resolvedBatch.Deps,
+				Blocked:              resolvedBatch.Blocked,
 				Agent:                agentName,
 				Model:                strings.TrimSpace(modelFlag),
 				BaseBranch:           baseBranch,

@@ -279,6 +279,7 @@ func TestRun_DependencyAwareBatch_InvalidGraphsFailBeforeExecution(t *testing.T)
 		issues  map[int]*github.Issue
 		args    []string
 		wantErr string
+		wantOut []string
 	}{
 		{
 			name: "cycle detection",
@@ -296,7 +297,7 @@ func TestRun_DependencyAwareBatch_InvalidGraphsFailBeforeExecution(t *testing.T)
 				42:  {Number: 42, Title: "Blocker"},
 			},
 			args:    []string{"100"},
-			wantErr: "missing blockers: #42",
+			wantOut: []string{"Summary:", "blocked"},
 		},
 	}
 
@@ -313,14 +314,25 @@ touch "$state_dir/$issue"
 `), &fakeGitHubClient{issues: tc.issues})
 
 			out, err := executeRunCommand(t, deps, tc.args...)
-			if err == nil {
-				t.Fatal("expected dependency resolution error")
-			}
-			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
-			}
-			if strings.Contains(out, "Summary:") {
-				t.Fatalf("expected dependency resolution to fail before execution, got:\n%s", out)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected dependency resolution error")
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+				if strings.Contains(out, "Summary:") {
+					t.Fatalf("expected dependency resolution to fail before execution, got:\n%s", out)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				for _, want := range tc.wantOut {
+					if !strings.Contains(out, want) {
+						t.Fatalf("expected output to contain %q, got:\n%s", want, out)
+					}
+				}
 			}
 
 			executedDir := filepath.Join(dir, ".sandman", "executed")

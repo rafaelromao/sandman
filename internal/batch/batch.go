@@ -14,7 +14,9 @@ import (
 type Request struct {
 	Issues []int
 	// Dependencies maps each issue to its resolved BlockedBy set.
-	Dependencies         map[int][]int
+	Dependencies map[int][]int
+	// Blocked marks issues that should be skipped before submission.
+	Blocked              map[int][]int
 	Agent                string
 	Model                string
 	BaseBranch           string

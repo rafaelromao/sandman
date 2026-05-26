@@ -15,8 +15,9 @@ const dependencyWarningThreshold = 50
 
 // ResolvedBatch contains a dependency-validated batch ready for execution.
 type ResolvedBatch struct {
-	Issues []int
-	Deps   map[int][]int
+	Issues  []int
+	Deps    map[int][]int
+	Blocked map[int][]int
 }
 
 // DependencyResolver fetches BlockedBy relationships and resolves execution order.
@@ -35,13 +36,14 @@ func NewDependencyResolver(githubClient github.Client) *DependencyResolver {
 func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeDeps bool) (*ResolvedBatch, error) {
 	requested := uniqueIssues(issues)
 	if len(requested) == 0 {
-		return &ResolvedBatch{Deps: map[int][]int{}}, nil
+		return &ResolvedBatch{Deps: map[int][]int{}, Blocked: map[int][]int{}}, nil
 	}
 	if r.githubClient == nil {
 		return nil, fmt.Errorf("github client is required")
 	}
 
 	deps := make(map[int][]int, len(requested))
+	blocked := make(map[int][]int)
 	issueCache := make(map[int]*github.Issue, len(requested))
 	known := make(map[int]struct{}, len(requested))
 	ordered := append([]int(nil), requested...)
@@ -84,15 +86,16 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 				continue
 			}
 
-			activeBlockers = append(activeBlockers, blocker)
 			if _, ok := known[blocker]; ok {
+				activeBlockers = append(activeBlockers, blocker)
 				continue
 			}
 			if !includeDeps {
-				missing[blocker] = struct{}{}
+				blocked[issueNum] = append(blocked[issueNum], blocker)
 				continue
 			}
 
+			activeBlockers = append(activeBlockers, blocker)
 			known[blocker] = struct{}{}
 			ordered = append(ordered, blocker)
 			queue = append(queue, blocker)
@@ -118,7 +121,7 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 		return nil, err
 	}
 
-	return &ResolvedBatch{Issues: orderedIssues, Deps: deps}, nil
+	return &ResolvedBatch{Issues: orderedIssues, Deps: deps, Blocked: blocked}, nil
 }
 
 func fetchDependencyIssue(ctx context.Context, client github.Client, cache map[int]*github.Issue, issueNum int) (*github.Issue, error) {

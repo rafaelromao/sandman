@@ -63,23 +63,32 @@ func TestDependencyResolverResolve_PreservesRequestedOrderWithoutDependencies(t 
 	}
 }
 
-func TestDependencyResolverResolve_ErrorsOnMissingBlockersWithoutExpansion(t *testing.T) {
+func TestDependencyResolverResolve_MarksOpenExternalBlockersWithoutFallingOutOfBatch(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
-			42:  {Number: 42, Title: "Refactor", BlockedBy: []int{7}},
+			42:  {Number: 42, Title: "Runnable"},
+			100: {Number: 100, Title: "Feature", BlockedBy: []int{7}},
+			7:   {Number: 7, Title: "External blocker"},
 		},
 	}
 
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	_, err := resolver.Resolve(context.Background(), []int{100, 42}, false)
-	if err == nil {
-		t.Fatal("expected missing blocker error")
+	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if err.Error() != "missing blockers: #7" {
-		t.Fatalf("expected missing blocker error for #7, got %q", err)
+
+	if !reflect.DeepEqual(resolved.Issues, []int{42, 100}) {
+		t.Fatalf("expected mixed batch order [42 100], got %v", resolved.Issues)
+	}
+
+	wantBlocked := map[int][]int{
+		100: {7},
+	}
+	if !reflect.DeepEqual(resolved.Blocked, wantBlocked) {
+		t.Fatalf("expected blocked metadata %v, got %v", wantBlocked, resolved.Blocked)
 	}
 }
 

@@ -477,6 +477,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			defer wg.Done()
 			defer close(completed[issueNum])
 
+			blockedByExternal := uniqueIssues(req.Blocked[issueNum])
+			if len(blockedByExternal) > 0 {
+				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "blocked", Branch: req.Branches[issueNum]}
+				o.logBlocked(issueNum, blockedByExternal)
+
+				mu.Lock()
+				results[idx] = res
+				statuses[issueNum] = res.Status
+				mu.Unlock()
+				return
+			}
+
 			for _, blocker := range blockers {
 				<-completed[blocker]
 			}
