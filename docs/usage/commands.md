@@ -4,6 +4,8 @@
 
 Scaffolds `.sandman/` configuration files in the current directory.
 
+`sandman init` also installs the shared `sandman` skill into `~/.agents/skills/sandman/SKILL.md` if it is missing.
+
 ```bash
 sandman init [flags]
 ```

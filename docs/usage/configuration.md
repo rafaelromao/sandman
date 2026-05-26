@@ -39,7 +39,7 @@ sandbox: podman
 git:
   base_branch: main
 
-# Sandman installs both built-in agents in scaffolded Dockerfiles.
+# Sandman installs both built-in agents in scaffolded Dockerfiles and mounts the shared skills directory.
 installed_agents:
   - opencode
   - pi
@@ -49,16 +49,19 @@ installed_agents:
 
 Sandman supports two built-in presets: `opencode` and `pi`. Both are installed into scaffolded Dockerfiles. `opencode` is the default `default_agent`.
 
+Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill.
+
 `sandman run --agent` selects one of those built-ins per invocation. `sandman config set default_agent` changes the project default.
 
 Use `sandman run --base-branch` to override `git.base_branch` for a single invocation.
 
 ### Prompt templates
 
-Sandman's prompt lifecycle has three steps:
+Sandman's prompt lifecycle has four steps:
 
-- **Default Prompt** — the embedded canonical template in `internal/prompt/default_prompt.md`
+- **Default Prompt** — the embedded bootstrap template in `internal/prompt/default_prompt.md`
 - **Project Prompt Template** — `.sandman/prompt.md`, created from the Default Prompt by `sandman init` and materialized on run when missing
+- **Sandman Skill** — the shared workflow in `~/.agents/skills/sandman/SKILL.md`, installed by `sandman init`
 - **Prompt** — `.sandman/rendered-prompt.md`, the rendered instruction file passed to the agent
 
 The following built-in substitution keys are available in prompt templates:
@@ -74,6 +77,8 @@ The following built-in substitution keys are available in prompt templates:
 | `{{REVIEW_COMMAND}}` | Review command from config or `--review-command` |
 
 Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
+
+See [Sandman Skills](skills.md) for the shared workflow details.
 
 `sandman continue` replays the stored branch, base branch, agent, model, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
 

@@ -2,6 +2,8 @@
 
 Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandman init` copies it to `.sandman/prompt.md`, which becomes the Project Prompt Template you customize per repo. Sandman then renders that template into `.sandman/rendered-prompt.md` and passes the rendered Prompt to the agent.
 
+The long workflow now lives in the shared Sandman skill. This page describes the bootstrap prompt that passes issue context and runtime values to that skill. See [Sandman Skills](skills.md) for the shared workflow itself.
+
 ## Canonical prompt
 
 <!-- default-prompt:start -->
@@ -13,166 +15,26 @@ Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandma
 
     {{ISSUE_BODY}}
 
-    ## Operating Rules
+    ## Runtime Context
 
-    - Use parallel subagents whenever a stage has independent reads or fixes.
-    - Never parallelize the TDD implementation loop.
-    - Wait for all required subagents before synthesizing a plan or making changes.
-    - Dedupe overlapping findings before acting on them.
-    - Prioritize blockers first, then suggestions, then nits.
-    - The agent is only done when the PR is merged or merge is impossible after exhausting the review loop.
-
-    ## Approach
-
-    ### 1. Setup
-    - Sandman already rendered the issue content and created the current worktree/branch.
-    - Work in the current Sandman-created worktree on `{{BRANCH}}`.
-    - Do not run `gh issue view {{ISSUE_NUMBER}}`, `git checkout main`, `git pull`, or create a new branch.
-    - If a toolchain is missing, use mise first before adding ad hoc installs.
-
-    ### 2. Plan
-    - Read the issue body and linked context.
-    - Run parallel readers:
-      - Reader A: issue/spec/docs plus domain glossary.
-      - Reader B: codebase and test surface.
-    - Wait for both readers.
-    - Synthesize one implementation plan from the combined results.
-    - Keep the plan behavior-first, not implementation-first.
-    - Design testable public interfaces.
-    - List behaviors to test, not implementation steps.
-    - No horizontal slicing: one test -> one impl -> repeat.
-
-    ### 3. Implement (TDD)
-    - RED: write one test for one behavior -> fails.
-    - GREEN: write minimal code to pass -> passes.
-    - Repeat for each behavior.
-    - Keep tests at public interface level, not implementation details.
-    - Run project tests and formatting after each cycle.
-    - Do NOT commit during TDD.
-
-    ### 4. Commit
-    - Commit all changes from the TDD cycle before moving on. Do not proceed to self-review, push, or PR creation until the current TDD changes are committed.
-    ```bash
-    git add -A
-    git commit -m "feat: <issue title>"
-    ```
-
-    ### 5. Self-review
-    Review the diff against the originating issue. For each file/hunk:
-    - Run parallel reviewers:
-      - Standards reviewer: repo standards, glossary, ADRs, and coding guidance.
-      - Spec reviewer: issue, linked context, and expected behavior.
-    - Wait for both reviewers.
-    - Synthesize their findings into one fix list.
-    - Apply fixes, format the code, run all tests, including smoke and e2e, and commit:
-    ```bash
-    git add -A
-    git commit -m "refactor: self-review fixes"
-    ```
-    - Fix the code in case any of the tests fail. Commit again:
-    ```bash
-    git add -A
-    git commit -m "refactor: self-review fixes"
-    ```
-    - Repeat the Self-review cycle until all tests pass.
-
-    ### 6. Push & PR
-    - If `{{BASE_BRANCH}}` was rewritten after this branch diverged, rebase onto it before opening the PR.
-    - If rebase hits merge conflicts, abort rebase, push current changes, open PR, then stop and report conflict.
-    ```bash
-    git rebase {{BASE_BRANCH}}
-    git push -u origin {{BRANCH}}
-    gh pr create --base {{BASE_BRANCH}} --head {{BRANCH}} --title "{{ISSUE_TITLE}}" --body "Fixes #{{ISSUE_NUMBER}}"
-    ```
-
-    - Capture the PR URL and number.
-
-    ### 7. Delegate review (max 10 passes)
-    - Poll `gh pr checks <N>` until CI passes. Do not exit while checks are pending.
-    - If checks fail, fix them, commit, and push.
-    - Post `gh pr comment <N> --body "{{REVIEW_COMMAND}}"`
-    - Poll `gh pr view <N> --comments` every 30-60s, with a 10 minute timeout.
-    - If no review response arrives in time, stop and report the PR as still open.
-    - When feedback arrives, cluster independent comments and fix them in parallel where possible.
-    - Address blockers first, then suggestions, then nits.
-    - Apply fixes, run tests/formatting, commit, and push.
-    - Repeat this loop until approved or max 10 passes.
-    - Do NOT review your own PR, delegate exclusively to `{{REVIEW_COMMAND}}`.
-
-    ### 7.5 Completion Gate
-    - Review is a checkpoint, not completion.
-    - Do not stop, summarize, or return a final result after the review loop.
-    - Immediately continue into step 8.
-    - If the PR is not fully approved, or checks are not green, or GitHub does not report it mergeable, do not merge.
-    - The only valid end states are:
-      - PR merged and verified
-      - merge impossible after exhausting the review loop, with the PR left open
-
-    ### 8. Merge
-    - Only merge when all of these are true:
-      - the PR is fully approved
-      - required checks are green
-      - GitHub reports the PR is mergeable
-    - Merge with squash.
-    - Verify the PR actually merged.
-    - Delete the branch after merge.
-    - If approval is not achieved after 10 review cycles, leave the PR open and report the final blockers.
-
-    ### 9. Write continuation context
-    - Before exiting, write `.sandman/continuation-context.md` in the worktree with this template:
-    ```markdown
-    ## Completed
-    (what was implemented, committed, or merged)
-
-    ## Pending
-    (what remains unfinished)
-
-    ## Blockers
-    (anything preventing completion)
-
-    ## Key Decisions
-    (significant design choices made)
-
-    ## Next Step
-    (single most important next action)
-    ```
-
-    ### 10. Checklist
-    - [ ] 1. Setup
-    - [ ] 2. Plan
-    - [ ] 3. Implement (TDD)
-    - [ ] 4. Commit
-    - [ ] 5. Self-review
-    - [ ] 6. Push & PR
-    - [ ] 7. Delegate review
-    - [ ] 7.5 Completion Gate
-    - [ ] 8. Merge
-    - [ ] 9. Write continuation context
-
-    ## Final Result
-
-    Return:
-    - PR URL
-    - status
-    - number of review cycles used
-    - last blocking feedback if the PR stopped after 10 cycles
+    - Work in the current Sandman-created worktree on `{{BRANCH}}` (`{{SOURCE_BRANCH}}`).
+    - Base branch: `{{BASE_BRANCH}}`.
+    - Review command: `{{REVIEW_COMMAND}}`.
+    - Follow the installed `sandman` skill for the full plan, implementation, review, merge, and continuation workflow.
 <!-- default-prompt:end -->
 
 ## What each part does
 
 - `Task` names the work and injects the issue number/title.
 - `Context` passes the raw issue body through unchanged.
-- `Setup` keeps the agent inside the current Sandman worktree and forbids re-bootstrap.
-- `Plan (TDD)` asks for behavior-first planning and parallel independent reads.
-- `Implement (TDD)` keeps the loop vertical and strictly sequential: one test, one fix, repeat.
-- `Commit`, `Self-review`, `Push & PR`, `Delegate review`, and `Merge & wrap-up` encode Sandman's PR workflow.
-- `Push & PR` now asks for a rebase onto `{{BASE_BRANCH}}` before opening the PR, to reduce merge conflict risk.
-- `{{BRANCH}}` and `{{BASE_BRANCH}}` are branch aliases filled from the run branch and base branch.
+- `Runtime Context` passes the current worktree branch, base branch, and review command into the shared skill.
+- `{{BRANCH}}` and `{{SOURCE_BRANCH}}` identify the run branch.
 - `{{REVIEW_COMMAND}}` resolves from config or `--review-command` and defaults to `/oc review`.
 
 ## Prompt lifecycle
 
-- **Default Prompt**: Sandman's embedded source of truth.
+- **Default Prompt**: Sandman's embedded bootstrap prompt.
 - **Project Prompt Template**: `.sandman/prompt.md`, created from the Default Prompt during `sandman init` and materialized on run when missing.
+- **Sandman Skill**: the shared workflow installed into `~/.agents/skills/sandman/SKILL.md` by `sandman init`.
 - **Prompt**: `.sandman/rendered-prompt.md`, the rendered instruction file handed to the agent.
 - **Continue replay**: `sandman continue` reuses stored branch, base branch, agent, model, and review command from the prior run. It ignores current base-branch config changes, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
