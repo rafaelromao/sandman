@@ -177,6 +177,27 @@ func TestDependencyResolverResolve_DetectsCycles(t *testing.T) {
 	}
 }
 
+func TestDependencyResolverResolve_DetectsCyclesWithClosedBlockersIgnored(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			100: {Number: 100, Title: "Feature", BlockedBy: []int{42, 7}},
+			42:  {Number: 42, Title: "Closed blocker", State: "closed"},
+			7:   {Number: 7, Title: "Refactor", BlockedBy: []int{100}},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	_, err := resolver.Resolve(context.Background(), []int{100}, true)
+	if err == nil {
+		t.Fatal("expected cycle error")
+	}
+	if err.Error() != "dependency cycle detected: #100 -> #7 -> #100" {
+		t.Fatalf("expected cycle path to ignore closed blocker, got %q", err)
+	}
+}
+
 func TestDependencyResolverResolve_WarnsWhenExpansionGetsLarge(t *testing.T) {
 	issues := make(map[int]*github.Issue, 51)
 	for issue := 1; issue <= 51; issue++ {
