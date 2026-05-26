@@ -6,31 +6,30 @@ accepted
 
 ## Context
 
-Sandman already exposes long-lived daemon behavior through `sandman run`, which creates per-run sockets under `.sandman/runs/`. Operators need a lightweight way to inspect active runs from the current repository without attaching to each daemon individually, and a local launcher for repo-scoped Sandman commands that survives refreshes and portal restarts.
+Sandman already exposes long-lived daemon behavior through `sandman run`, which creates per-run sockets under `.sandman/runs/`. Operators need a lightweight way to inspect active runs from the current repository without attaching to each daemon individually.
 
-The portal must stay repo-scoped so it only shows records for the checked-out project, and it must rescan on each poll so new `sandman run` processes appear without restarting the portal.
+The portal must stay repo-scoped so it only shows runs for the checked-out project, and it must rescan on each poll so new `sandman run` processes appear without restarting the portal.
 
 ## Decision
 
-Add a new `sandman portal` command that binds a local HTTP server to `127.0.0.1`, defaults to port `5000`, discovers run sockets by scanning the current repository's `.sandman/runs/` tree on every request, and exposes a `/api/commands` launcher surface for repo-scoped Sandman commands.
+Add a new `sandman portal` command that binds a local HTTP server to `127.0.0.1`, defaults to port `5000`, and discovers run sockets by scanning the current repository's `.sandman/runs/` tree on every request.
 
-The portal serves a simple HTML view and JSON polling endpoints. Discovery only treats actual UNIX socket files named `run.sock` as live instances.
+The portal serves a simple HTML view and a JSON polling endpoint. Discovery only treats actual UNIX socket files named `run.sock` as live instances.
 
 ## Consequences
 
 ### Positive
 
-- Operators get a stable local portal for current repo launch records.
+- Operators get a stable localhost dashboard for current repo runs.
 - Late-starting daemons appear on the next poll without restarting the portal.
 - Socket discovery stays aligned with repo-local Sandman state.
-- Command launch history survives refreshes and portal restarts.
 
 ### Negative
 
-- The portal adds another long-lived CLI command, a polling UI, and persisted launcher state.
+- The portal adds another long-lived CLI command and a polling UI.
 - Repo root detection becomes a required part of command startup.
 
 ### Neutral
 
-- The portal observes run instances and manages repo-scoped command launch lifecycle.
+- The portal does not manage runs; it only observes them.
 - The implementation stays local-only and does not expose network access beyond loopback.

@@ -486,120 +486,6 @@
       color: var(--text);
       font: inherit;
     }
-    .launcher {
-      display: grid;
-      gap: 14px;
-      margin-bottom: 14px;
-      padding: 18px;
-      border: 1px solid var(--border);
-      border-radius: 22px;
-      background: var(--surface);
-      box-shadow: var(--shadow);
-    }
-    .launcher-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: start;
-      gap: 18px;
-    }
-    .launcher-head h2 {
-      margin: 0;
-      font-size: 18px;
-      line-height: 1.2;
-      letter-spacing: -0.03em;
-    }
-    .launcher-subtitle {
-      margin: 6px 0 0;
-      color: var(--muted);
-    }
-    .launcher-form {
-      display: grid;
-      gap: 14px;
-    }
-    .launcher-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 14px;
-    }
-    .launch-card {
-      display: grid;
-      gap: 12px;
-      padding: 14px;
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      background: var(--surface-2);
-      min-width: 0;
-    }
-    .launch-card[hidden] { display: none; }
-    .launch-card h3 {
-      margin: 0;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--muted);
-    }
-    .launch-field {
-      display: grid;
-      gap: 6px;
-      min-width: 0;
-    }
-    .launch-field > span,
-    .launch-field > label:first-child {
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-    }
-    .launch-field input,
-    .launch-field textarea,
-    .launch-field select {
-      width: 100%;
-      min-width: 0;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 10px 12px;
-      background: var(--surface-3);
-      color: var(--text);
-      font: inherit;
-    }
-    .launch-field textarea {
-      min-height: 88px;
-      resize: vertical;
-    }
-    .launch-field input[type="number"] {
-      width: 120px;
-    }
-    .launch-radio-group {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px 12px;
-    }
-    .launch-radio {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--text);
-      font-size: 13px;
-      text-transform: none;
-      letter-spacing: normal;
-    }
-    .launch-radio input {
-      margin: 0;
-      accent-color: var(--accent);
-    }
-    .launch-note {
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .launcher-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 12px;
-    }
-    .launcher-actions .action-btn[disabled] {
-      cursor: progress;
-      opacity: 0.72;
-    }
     .toolbar {
       display: flex;
       align-items: center;
@@ -800,36 +686,6 @@
       flex-direction: column;
       flex: 1 1 auto;
     }
-    .artifact-stack {
-      display: grid;
-      gap: 14px;
-      min-height: 0;
-    }
-    .artifact-pane {
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      overflow: hidden;
-      background: color-mix(in oklch, var(--bg) 44%, var(--surface-2));
-    }
-    .artifact-pane h4 {
-      margin: 0;
-      padding: 10px 12px 8px;
-      border-bottom: 1px solid var(--border);
-      background: color-mix(in oklch, var(--bg) 52%, var(--surface-2));
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--muted);
-    }
-    .artifact-pane-body {
-      min-height: 0;
-      display: flex;
-      flex-direction: column;
-      flex: 1 1 auto;
-    }
     .detail-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
@@ -965,6 +821,112 @@
       cursor: pointer;
     }
     .settings-toggle:hover { background: var(--surface-3); }
+    .launcher {
+      display: grid;
+      gap: 14px;
+      margin: 14px 0;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .launcher-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      gap: 18px;
+    }
+    .launcher-head h2 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      letter-spacing: -0.03em;
+    }
+    .launcher-subtitle {
+      margin: 6px 0 0;
+      color: var(--muted);
+    }
+    .launcher-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .launch-card {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--surface-2);
+      min-width: 0;
+    }
+    .launch-card h3 {
+      margin: 0;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+    .launch-field {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .launch-field > span {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    .launch-field input,
+    .launch-field textarea,
+    .launch-field select {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: var(--surface-3);
+      color: var(--text);
+      font: inherit;
+    }
+    .launch-field textarea {
+      min-height: 88px;
+      resize: vertical;
+    }
+    .launch-field input[type="number"] {
+      width: 120px;
+    }
+    .launch-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+    .command-list {
+      display: grid;
+      gap: 10px;
+    }
+    .command-item {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: color-mix(in oklch, var(--bg) 36%, var(--surface-2));
+      display: grid;
+      gap: 8px;
+    }
+    .command-item-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+    .command-item-command {
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+      font-size: 12px;
+      word-break: break-word;
+    }
     .run-row {
       cursor: pointer;
     }
@@ -1043,120 +1005,102 @@
       </div>
     </header>
 
-    <section class="launcher" aria-label="Run launcher">
+    <section class="launcher" aria-label="Command launcher">
       <div class="launcher-head">
         <div>
-          <p class="eyebrow">Run launcher</p>
-          <h2>Structured `sandman run`</h2>
-          <p class="launcher-subtitle">Launch issue-driven or prompt-only runs with current config defaults prefilled.</p>
+          <p class="eyebrow">Command launcher</p>
+          <h2>Preset `sandman` subcommands</h2>
+          <p class="launcher-subtitle">Launch common repo-scoped commands from typed presets.</p>
         </div>
-        <div id="launch-status" class="status-pill"><span class="dot"></span><strong>Ready</strong></div>
+        <div id="command-launch-status" class="status-pill"><span class="dot"></span><strong>Ready</strong></div>
       </div>
 
-      <form id="run-launcher" class="launcher-form">
-        <div class="launcher-grid">
-          <section class="launch-card">
-            <h3>Selection</h3>
-            <div class="launch-field">
-              <span>Launch mode</span>
-              <div class="launch-radio-group">
-                {{.LaunchData.LaunchModeOptionsHTML}}
-              </div>
-              <div class="launch-note">Prompt-only skips issue lookup. Issue-driven can select issues, label, query, or next ready issue.</div>
-            </div>
+      <div class="launcher-grid">
+        <form class="launch-card" data-preset="continue">
+          <h3>Continue</h3>
+          <label class="launch-field">
+            <span>Issue number</span>
+            <input name="issue" type="number" min="1" step="1" inputmode="numeric" placeholder="42">
+          </label>
+          <label class="launch-field">
+            <span>Prompt</span>
+            <textarea name="prompt" placeholder="finish the tests"></textarea>
+          </label>
+          <div class="launch-actions">
+            <button type="submit" class="action-btn">Launch continue</button>
+          </div>
+        </form>
 
-            <div class="launch-field" data-launch-mode-panel="issue-driven">
-              <span>Issue selection mode</span>
-              <div class="launch-radio-group">
-                {{.LaunchData.SelectionModeOptionsHTML}}
-              </div>
-            </div>
+        <form class="launch-card" data-preset="status">
+          <h3>Status</h3>
+          <div class="launch-field">
+            <span>Type</span>
+            <div class="launch-note">No inputs required.</div>
+          </div>
+          <div class="launch-actions">
+            <button type="submit" class="action-btn">Launch status</button>
+          </div>
+        </form>
 
-            <div class="launch-field" data-selection-panel="issues">
-              <span>Issue numbers</span>
-              <textarea id="launcher-issues" spellcheck="false" placeholder="42, 43">{{.LaunchData.Issues}}</textarea>
-            </div>
-            <div class="launch-field" data-selection-panel="label" hidden>
-              <span>Label</span>
-              <input id="launcher-label" type="text" value="{{.LaunchData.Label}}" placeholder="ready-for-agent">
-            </div>
-            <div class="launch-field" data-selection-panel="query" hidden>
-              <span>Query</span>
-              <textarea id="launcher-query" spellcheck="false" placeholder="is:open label:ready-for-agent">{{.LaunchData.Query}}</textarea>
-            </div>
-            <div class="launch-field" data-selection-panel="next" hidden>
-              <span>Next</span>
-              <input id="launcher-next" type="number" min="1" step="1" value="{{.LaunchData.Next}}">
-            </div>
-            <label class="launch-radio">
-              <input id="launcher-include-dependencies" type="checkbox"{{if .LaunchData.IncludeDependencies}} checked{{end}}>
-              Include dependencies
-            </label>
-          </section>
+        <form class="launch-card" data-preset="history">
+          <h3>History</h3>
+          <div class="launch-field">
+            <span>Type</span>
+            <div class="launch-note">No inputs required.</div>
+          </div>
+          <div class="launch-actions">
+            <button type="submit" class="action-btn">Launch history</button>
+          </div>
+        </form>
 
-          <section class="launch-card">
-            <h3>Prompt and runtime</h3>
-            <div class="launch-field">
-              <span>Prompt</span>
-              <textarea id="launcher-prompt" spellcheck="false" placeholder="Return only OK.">{{.LaunchData.Prompt}}</textarea>
-            </div>
-            <div class="launch-field">
-              <span>Template</span>
-              <input id="launcher-template" type="text" value="{{.LaunchData.Template}}" placeholder=".sandman/prompt.md">
-            </div>
-            <div class="launch-field">
-              <span>Review command</span>
-              <input id="launcher-review-command" type="text" value="{{.LaunchData.ReviewCommand}}" placeholder="/oc review">
-            </div>
-            <div class="launch-field">
-              <span>Prompt args</span>
-              <textarea id="launcher-prompt-args" spellcheck="false" placeholder="KEY=VALUE, one per line"></textarea>
-              <div class="launch-note">Repeatable `--prompt-arg` values. One `KEY=VALUE` per line.</div>
-            </div>
+        <form class="launch-card" data-preset="clean">
+          <h3>Clean</h3>
+          <label class="launch-field">
+            <span>Scope</span>
+            <select name="cleanMode">
+              <option value="success">Success only</option>
+              <option value="failed">Failed only</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+          <label class="launch-field launch-note">
+            <input name="confirmed" type="checkbox">
+            Confirm cleanup
+          </label>
+          <div class="launch-actions">
+            <button type="submit" class="action-btn">Launch clean</button>
+          </div>
+        </form>
 
-            <div class="launch-field">
-              <span>Agent</span>
-              <select id="launcher-agent">
-{{.LaunchData.AgentOptionsHTML}}
-              </select>
-            </div>
-            <div class="launch-field">
-              <span>Model</span>
-              <input id="launcher-model" type="text" value="{{.LaunchData.Model}}" placeholder="gpt-4.1">
-            </div>
-            <div class="launch-field">
-              <span>Base branch</span>
-              <input id="launcher-base-branch" type="text" value="{{.LaunchData.BaseBranch}}" placeholder="main">
-            </div>
-            <div class="launch-field">
-              <span>Sandbox</span>
-              <select id="launcher-sandbox">
-{{.LaunchData.SandboxOptionsHTML}}
-              </select>
-            </div>
-            <div class="launch-field">
-              <span>Parallel</span>
-              <input id="launcher-parallel" type="number" min="0" step="1" value="{{.LaunchData.Parallel}}">
-            </div>
-            <div class="launch-field">
-              <span>Start delay (seconds)</span>
-              <input id="launcher-start-delay" type="number" min="0" step="1" value="{{.LaunchData.StartDelay}}">
-            </div>
-            <div class="launch-field">
-              <span>Container capacity</span>
-              <input id="launcher-container-capacity" type="number" min="0" step="1" value="{{.LaunchData.ContainerCapacity}}">
-            </div>
-            <div class="launch-field">
-              <span>Max containers</span>
-              <input id="launcher-max-containers" type="number" min="0" step="1" value="{{.LaunchData.MaxContainers}}">
-            </div>
-          </section>
+        <form class="launch-card" data-preset="config">
+          <h3>Config</h3>
+          <label class="launch-field">
+            <span>Mode</span>
+            <select name="configMode">
+              <option value="get">Get</option>
+              <option value="set">Set</option>
+            </select>
+          </label>
+          <label class="launch-field">
+            <span>Key</span>
+            <input name="configKey" type="text" placeholder="default_agent">
+          </label>
+          <label class="launch-field">
+            <span>Value</span>
+            <input name="configValue" type="text" placeholder="opencode">
+          </label>
+          <div class="launch-actions">
+            <button type="submit" class="action-btn">Launch config</button>
+          </div>
+        </form>
+      </div>
+
+      <div>
+        <p class="eyebrow">Launcher history</p>
+        <div id="commands-list" class="command-list">
+          <div class="empty-state">Loading commands.</div>
         </div>
-
-        <div class="launcher-actions">
-          <button id="launch-run-button" class="action-btn" type="submit">Launch run</button>
-        </div>
-      </form>
+      </div>
     </section>
 
     <div id="error-banner" class="error-banner" role="status" aria-live="polite"></div>
@@ -1199,16 +1143,10 @@
 
   <script>
     const apiPath = "{{.RefreshPath}}";
+    const commandsPath = "{{.CommandsPath}}";
     let pollInterval = {{.PollInterval}};
     const settingsToggle = document.getElementById('settings-toggle');
     const settingsPanel = document.getElementById('settings-panel');
-    const launchForm = document.getElementById('run-launcher');
-    const launchButton = document.getElementById('launch-run-button');
-    const launchStatus = document.getElementById('launch-status');
-    const launchModePanels = launchForm ? Array.from(launchForm.querySelectorAll('[data-launch-mode-panel]')) : [];
-    const selectionPanels = launchForm ? Array.from(launchForm.querySelectorAll('[data-selection-panel]')) : [];
-    const launchModeInputs = launchForm ? Array.from(launchForm.querySelectorAll('input[name="launch-mode"]')) : [];
-    const selectionModeInputs = launchForm ? Array.from(launchForm.querySelectorAll('input[name="selection-mode"]')) : [];
     const themePicker = document.getElementById('theme-picker');
     const pollIntervalInput = document.getElementById('poll-interval');
     const themeStorageKey = 'sandman.portal.theme';
@@ -1216,6 +1154,8 @@
     const statusFilter = document.getElementById('status-filter');
     const activeOnlyToggle = document.getElementById('active-only');
     const runsBody = document.getElementById('runs-body');
+    const commandsList = document.getElementById('commands-list');
+    const commandLaunchStatus = document.getElementById('command-launch-status');
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
     const lastUpdated = document.getElementById('last-updated');
@@ -1268,107 +1208,6 @@
         const isOpen = !settingsPanel.hidden;
         settingsPanel.hidden = isOpen;
         settingsToggle.setAttribute('aria-expanded', String(!isOpen));
-      });
-    }
-
-    function currentLaunchValue(name, fallback) {
-      const input = launchForm ? launchForm.querySelector('input[name="' + name + '"]:checked') : null;
-      return input ? input.value : fallback;
-    }
-
-    function setLaunchStatus(message) {
-      if (!launchStatus) return;
-      launchStatus.innerHTML = '<span class="dot"></span><strong>' + escapeHTML(message) + '</strong>';
-    }
-
-    function parseLaunchNumber(id) {
-      const input = document.getElementById(id);
-      if (!input) return null;
-      const raw = input.value.trim();
-      if (!raw) return null;
-      const value = Number.parseInt(raw, 10);
-      return Number.isFinite(value) ? value : null;
-    }
-
-    function syncLaunchPanels() {
-      if (!launchForm) return;
-      const launchMode = currentLaunchValue('launch-mode', 'issue-driven');
-      for (const panel of launchModePanels) {
-        panel.hidden = panel.getAttribute('data-launch-mode-panel') !== launchMode;
-      }
-
-      const selectionMode = currentLaunchValue('selection-mode', 'issues');
-      for (const panel of selectionPanels) {
-        panel.hidden = launchMode !== 'issue-driven' || panel.getAttribute('data-selection-panel') !== selectionMode;
-      }
-    }
-
-    if (launchModeInputs.length) {
-      for (const input of launchModeInputs) {
-        input.addEventListener('change', syncLaunchPanels);
-      }
-    }
-    if (selectionModeInputs.length) {
-      for (const input of selectionModeInputs) {
-        input.addEventListener('change', syncLaunchPanels);
-      }
-    }
-    syncLaunchPanels();
-
-    if (launchForm) {
-      launchForm.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const launchButtonLabel = launchButton ? launchButton.textContent : '';
-        if (launchButton) {
-          launchButton.disabled = true;
-          launchButton.textContent = 'Launching...';
-        }
-        setLaunchStatus('Launching...');
-
-        const payload = {
-          launchMode: currentLaunchValue('launch-mode', 'issue-driven'),
-          selectionMode: currentLaunchValue('selection-mode', 'issues'),
-          issues: (document.getElementById('launcher-issues')?.value || ''),
-          label: (document.getElementById('launcher-label')?.value || '').trim(),
-          query: (document.getElementById('launcher-query')?.value || ''),
-          next: parseLaunchNumber('launcher-next'),
-          includeDependencies: Boolean(document.getElementById('launcher-include-dependencies')?.checked),
-          prompt: (document.getElementById('launcher-prompt')?.value || ''),
-          template: (document.getElementById('launcher-template')?.value || '').trim(),
-          reviewCommand: (document.getElementById('launcher-review-command')?.value || '').trim(),
-          promptArgs: (document.getElementById('launcher-prompt-args')?.value || ''),
-          agent: (document.getElementById('launcher-agent')?.value || '').trim(),
-          model: (document.getElementById('launcher-model')?.value || '').trim(),
-          baseBranch: (document.getElementById('launcher-base-branch')?.value || '').trim(),
-          parallel: parseLaunchNumber('launcher-parallel'),
-          startDelay: parseLaunchNumber('launcher-start-delay'),
-          containerCapacity: parseLaunchNumber('launcher-container-capacity'),
-          maxContainers: parseLaunchNumber('launcher-max-containers'),
-          sandbox: (document.getElementById('launcher-sandbox')?.value || '').trim(),
-        };
-
-        try {
-          const res = await fetch('/api/launch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            throw new Error(body.message || body.error || 'launch failed');
-          }
-          setLaunchStatus(body.message || 'Started sandman run.');
-          await refresh();
-        } catch (err) {
-          errorBanner.textContent = 'Launch failed: ' + err.message;
-          errorBanner.style.display = 'block';
-          setLaunchStatus('Launch failed');
-        } finally {
-          if (launchButton) {
-            launchButton.disabled = false;
-            launchButton.textContent = launchButtonLabel || 'Launch run';
-          }
-        }
       });
     }
 
@@ -1435,6 +1274,39 @@
       return '—';
     }
 
+    function setCommandLaunchStatus(message) {
+      if (!commandLaunchStatus) return;
+      commandLaunchStatus.innerHTML = '<span class="dot"></span><strong>' + escapeHTML(message) + '</strong>';
+    }
+
+    function renderCommandItem(command) {
+      return [
+        '<div class="command-item">',
+        '  <div class="command-item-head">',
+        '    <strong>' + escapeHTML(command.status || 'running') + '</strong>',
+        '    <span class="muted mono">' + escapeHTML(formatTime(command.startedAt)) + '</span>',
+        '  </div>',
+        '  <div class="command-item-command mono">' + escapeHTML(command.command || '') + '</div>',
+        '</div>',
+      ].join('');
+    }
+
+    async function refreshCommands() {
+      try {
+        const res = await fetch(commandsPath, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const payload = await res.json();
+        const commands = Array.isArray(payload.commands) ? payload.commands : [];
+        if (!commands.length) {
+          commandsList.innerHTML = '<div class="empty-state">No launched commands yet.</div>';
+          return;
+        }
+        commandsList.innerHTML = commands.map(renderCommandItem).join('');
+      } catch (err) {
+        commandsList.innerHTML = '<div class="empty-state">Failed to load commands.</div>';
+      }
+    }
+
     function sortStatusValues(values) {
       return Array.from(values).sort((a, b) => {
         if (a === 'active') return -1;
@@ -1482,7 +1354,7 @@
       if (run.kind === 'active') return 'active';
       if (status === 'success') return 'success';
       if (status === 'failure' || status === 'failed' || status === 'error') return 'failure';
-      if (status === 'warning' || status === 'stale' || status === 'blocked' || status === 'stopped' || status === 'exited') return 'warning';
+      if (status === 'warning' || status === 'stale' || status === 'blocked') return 'warning';
       return status || 'default';
     }
 
@@ -1505,6 +1377,7 @@
       const output = run.output && String(run.output).trim()
         ? run.output
         : (run.kind === 'active' ? 'No live output captured yet.' : 'Run completed. Open Log or Events for persisted details.');
+      const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       const events = Array.isArray(run.events) ? run.events : [];
 
       return [
@@ -1528,14 +1401,12 @@
           + '<div class="detail-panel">'
           + '<div class="tabs" role="tablist" aria-label="Run details tabs">'
           + renderTabButton(run.key, 'output', 'Output', tabName)
-          + renderTabButton(run.key, 'prompt', 'Prompt', tabName)
-          + renderTabButton(run.key, 'continuation', 'Continuation', tabName)
           + renderTabButton(run.key, 'log', 'Log', tabName)
           + renderTabButton(run.key, 'events', 'Events', tabName)
           + renderTabButton(run.key, 'details', 'Details', tabName)
           + '</div>'
           + '<div class="detail-content">'
-          + renderTabPanel(run, tabName, output, events)
+          + renderTabPanel(run, tabName, output, log, events)
           + '</div>'
           + '</div>'
           + '</td>'
@@ -1550,8 +1421,6 @@
 
     function currentTabLabel(tabKey) {
       if (tabKey === 'details') return 'Details';
-      if (tabKey === 'continuation') return 'Continuation';
-      if (tabKey === 'prompt') return 'Prompt';
       if (tabKey === 'log') return 'Log';
       if (tabKey === 'events') return 'Events';
       return 'Output';
@@ -1590,36 +1459,6 @@
       return '<pre class="terminal-text' + (extraClass ? ' ' + escapeHTML(extraClass) : '') + '">' + highlightTerminalText(text) + '</pre>';
     }
 
-    function hasArtifactContent(text) {
-      return !!(text && String(text).trim());
-    }
-
-    function renderSingleArtifactTab(title, content, emptyMessage) {
-      if (!hasArtifactContent(content)) {
-        return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(title) + '</h3><div class="empty-state">' + escapeHTML(emptyMessage) + '</div></section>';
-      }
-      return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(title) + '</h3>' + renderTerminalBlock(content) + '</section>';
-    }
-
-    function renderArtifactPane(title, content, emptyMessage) {
-      const body = hasArtifactContent(content)
-        ? renderTerminalBlock(content)
-        : '<div class="empty-state">' + escapeHTML(emptyMessage) + '</div>';
-      return '<section class="artifact-pane"><h4>' + escapeHTML(title) + '</h4><div class="artifact-pane-body">' + body + '</div></section>';
-    }
-
-    function renderContinuationTab(run) {
-      return [
-        '<section class="detail-box tab-pane fill">',
-        '  <h3>Continuation</h3>',
-        '  <div class="artifact-stack">',
-        renderArtifactPane('Continuation Context', run.continuationContext, 'No continuation context file yet.'),
-        renderArtifactPane('Continuation Prompt', run.continuationPrompt, 'No continue prompt file yet.'),
-        '  </div>',
-        '</section>',
-      ].join('');
-    }
-
     function renderDetailFields(run) {
       return [
         renderDetailKV('Run ID', run.runId),
@@ -1633,7 +1472,7 @@
       ].join('');
     }
 
-    function renderTabPanel(run, tabKey, output, events) {
+    function renderTabPanel(run, tabKey, output, log, events) {
       if (tabKey === 'details') {
         return [
           '<section class="detail-box tab-pane fill">',
@@ -1643,16 +1482,7 @@
         ].join('');
       }
 
-      const content = renderTabContent(run, tabKey, output, events);
-      if (tabKey === 'prompt') {
-        return renderSingleArtifactTab('Prompt', content, 'No rendered prompt file yet.');
-      }
-      if (tabKey === 'continuation') {
-        return renderContinuationTab(run);
-      }
-      if (tabKey === 'log') {
-        return renderSingleArtifactTab('Log', content, 'No log file yet.');
-      }
+      const content = renderTabContent(run, tabKey, output, log, events);
       if (tabKey === 'events') {
         if (!content) {
           return '<section class="detail-box tab-pane fill"><h3>Events</h3><div class="empty-state">No events captured for this run yet.</div></section>';
@@ -1663,7 +1493,7 @@
       return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(currentTabLabel(tabKey)) + '</h3>' + renderTerminalBlock(content) + '</section>';
     }
 
-    function renderTabContent(run, tabKey, output, events) {
+    function renderTabContent(run, tabKey, output, log, events) {
       if (tabKey === 'events') {
         if (!events.length) return '';
         return events.map((event) => {
@@ -1679,12 +1509,9 @@
           ].join('');
         }).join('');
       }
-      if (tabKey === 'prompt') return run.prompt;
-      if (tabKey === 'log') return run.log;
+      if (tabKey === 'log') return log;
       return output;
     }
-
-
 
     function renderEmpty(message) {
       return '<tr><td colspan="7"><div class="empty-state">' + escapeHTML(message) + '</div></td></tr>';
@@ -1710,7 +1537,7 @@
       lastUpdated.textContent = 'Updated ' + now;
     }
 
-    async function refreshRuns() {
+    async function refresh() {
       try {
         const res = await fetch(apiPath, { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1728,8 +1555,38 @@
       }
     }
 
-    async function refresh() {
-      await refreshRuns();
+    async function launchPreset(form) {
+      const preset = form.getAttribute('data-preset') || '';
+      const payload = { preset };
+      const formData = new FormData(form);
+      if (preset === 'continue') {
+        payload.issue = Number.parseInt(formData.get('issue') || '', 10) || 0;
+        payload.prompt = String(formData.get('prompt') || '');
+      } else if (preset === 'clean') {
+        payload.cleanMode = String(formData.get('cleanMode') || 'success');
+        payload.confirmed = formData.get('confirmed') === 'on';
+      } else if (preset === 'config') {
+        payload.configMode = String(formData.get('configMode') || 'get');
+        payload.configKey = String(formData.get('configKey') || '');
+        payload.configValue = String(formData.get('configValue') || '');
+      }
+
+      setCommandLaunchStatus('Launching...');
+      try {
+        const res = await fetch(commandsPath, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || body.message || 'launch failed');
+        setCommandLaunchStatus('Ready');
+        await refreshCommands();
+      } catch (err) {
+        setCommandLaunchStatus('Launch failed');
+        errorBanner.textContent = 'Launch failed: ' + err.message;
+        errorBanner.style.display = 'block';
+      }
     }
 
     function toggleRun(runKey) {
@@ -1737,8 +1594,6 @@
       else state.expanded.add(runKey);
       render();
     }
-
-
 
     runsBody.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
@@ -1771,8 +1626,6 @@
       if (runKey) toggleRun(runKey);
     });
 
-
-
     statusFilter.addEventListener('change', () => {
       state.selectedStatus = statusFilter.value || 'all';
       render();
@@ -1783,7 +1636,23 @@
       render();
     });
 
+    document.querySelectorAll('form.launch-card').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        if (form.getAttribute('data-preset') === 'clean') {
+          const confirmed = form.querySelector('input[name="confirmed"]');
+          if (!confirmed || !confirmed.checked) {
+            errorBanner.textContent = 'Launch failed: clean preset requires confirmation';
+            errorBanner.style.display = 'block';
+            return;
+          }
+        }
+        launchPreset(form);
+      });
+    });
+
     refresh();
+    refreshCommands();
     restartPolling();
   </script>
 </body>

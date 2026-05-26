@@ -19,7 +19,7 @@ sandman run --base-branch main 42 43
 sandman status
 sandman history
 
-# 5. Open the portal for current repo launch records
+# 5. Open the browser portal for current repo runs
 sandman portal
 ```
 
@@ -32,7 +32,7 @@ Sandman manages the lifecycle of automated coding workflows:
 - Creates isolated sandboxes (git worktrees or containers)
 - Orchestrates parallel agent execution with dependency-aware scheduling
 - Logs structured events for observability
-- Serves a local portal for watching current repo launch records in the browser
+- Serves a local portal for watching current repo runs in the browser
 
 ## Documentation
 
@@ -41,7 +41,7 @@ Sandman manages the lifecycle of automated coding workflows:
 | [Getting Started](docs/usage/getting-started.md) | Prerequisites, installation, and first project setup |
 | [Commands Reference](docs/usage/commands.md) | All CLI commands, flags, and issue selection modes |
 | [Configuration](docs/usage/configuration.md) | Full config schema, default agent, and CLI config |
-| [Portal](docs/usage/portal.md) | Local portal for repo-scoped Sandman launch records |
+| [Portal](docs/usage/portal.md) | Local browser dashboard for repo-scoped Sandman runs |
 | [Default Prompt](docs/usage/default-prompt.md) | Canonical prompt text, lifecycle, and section-by-section guide |
 | [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
 | [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, continue and cleanup |

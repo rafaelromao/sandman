@@ -13,8 +13,8 @@ import (
 func TestDependencyResolverResolve_SortsIssuesTopologically(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			100: {Number: 100, Title: "Feature", BlockedBy: []int{42, 7, 42}},
-			42:  {Number: 42, Title: "Refactor", BlockedBy: []int{7, 7}},
+			100: {Number: 100, Title: "Feature", BlockedBy: []int{42, 7}},
+			42:  {Number: 42, Title: "Refactor", BlockedBy: []int{7}},
 			7:   {Number: 7, Title: "Groundwork"},
 		},
 	}
@@ -34,32 +34,10 @@ func TestDependencyResolverResolve_SortsIssuesTopologically(t *testing.T) {
 	wantDeps := map[int][]int{
 		7:   nil,
 		42:  {7},
-		100: {42, 7},
+		100: {7, 42},
 	}
 	if !reflect.DeepEqual(resolved.Deps, wantDeps) {
 		t.Fatalf("expected deps %v, got %v", wantDeps, resolved.Deps)
-	}
-}
-
-func TestDependencyResolverResolve_PreservesRequestedOrderWithoutDependencies(t *testing.T) {
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			12: {Number: 12, Title: "Third"},
-			10: {Number: 10, Title: "First"},
-			11: {Number: 11, Title: "Second"},
-		},
-	}
-
-	resolver := NewDependencyResolver(client)
-	resolver.warningWriter = &bytes.Buffer{}
-
-	resolved, err := resolver.Resolve(context.Background(), []int{12, 10, 11}, false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !reflect.DeepEqual(resolved.Issues, []int{12, 10, 11}) {
-		t.Fatalf("expected requested order [12 10 11], got %v", resolved.Issues)
 	}
 }
 
@@ -105,28 +83,6 @@ func TestDependencyResolverResolve_ExpandsTransitiveBlockers(t *testing.T) {
 	}
 }
 
-func TestDependencyResolverResolve_PreservesStableOrderAcrossIndependentIssues(t *testing.T) {
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			100: {Number: 100, Title: "Feature", BlockedBy: []int{7}},
-			42:  {Number: 42, Title: "Refactor"},
-			7:   {Number: 7, Title: "Groundwork"},
-		},
-	}
-
-	resolver := NewDependencyResolver(client)
-	resolver.warningWriter = &bytes.Buffer{}
-
-	resolved, err := resolver.Resolve(context.Background(), []int{100, 42, 7}, false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !reflect.DeepEqual(resolved.Issues, []int{42, 7, 100}) {
-		t.Fatalf("expected stable topo order [42 7 100], got %v", resolved.Issues)
-	}
-}
-
 func TestDependencyResolverResolve_DetectsCycles(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -142,7 +98,7 @@ func TestDependencyResolverResolve_DetectsCycles(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected cycle error")
 	}
-	if err.Error() != "dependency cycle detected: #100 -> #42 -> #100" {
+	if err.Error() != "dependency cycle detected: #42 -> #100 -> #42" {
 		t.Fatalf("expected cycle path in error, got %q", err)
 	}
 }

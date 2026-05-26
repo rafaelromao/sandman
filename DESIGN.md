@@ -1,6 +1,6 @@
 ---
 name: Sandman
-description: Local portal for monitoring AFK agent launch records
+description: Local portal for monitoring AFK agent runs
 ---
 
 <!-- SEED: re-run /impeccable document once there's code to capture the actual tokens and components. -->
