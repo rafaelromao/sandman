@@ -679,7 +679,7 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		if err == nil || !strings.Contains(err.Error(), "bind portal on 127.0.0.1") {
+		if err == nil || !strings.Contains(err.Error(), "bind portal on 0.0.0.0") {
 			t.Fatalf("expected bind error on wildcard bind, got %v", err)
 		}
 	case <-time.After(5 * time.Second):

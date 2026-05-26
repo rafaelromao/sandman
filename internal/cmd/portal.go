@@ -131,7 +131,7 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writer, launchData portalLaunchFormData, cfg *config.Config) error {
 	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
-		return fmt.Errorf("bind portal on 127.0.0.1:%d: %w", port, err)
+		return fmt.Errorf("bind portal on 0.0.0.0:%d: %w", port, err)
 	}
 	defer listener.Close()
 
