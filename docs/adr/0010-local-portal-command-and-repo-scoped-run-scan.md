@@ -12,7 +12,7 @@ The portal must stay repo-scoped so it only shows runs for the checked-out proje
 
 ## Decision
 
-Add a new `sandman portal` command that binds a local HTTP server to `127.0.0.1`, defaults to port `5000`, and discovers run sockets by scanning the current repository's `.sandman/runs/` tree on every request.
+Add a new `sandman portal` command that binds a local HTTP server to `127.0.0.1`, defaults to port `5000`, discovers run sockets by scanning the current repository's `.sandman/runs/` tree on every request, and exposes a `/api/commands` preset launcher surface for repo-scoped Sandman commands.
 
 The portal serves a simple HTML view and a JSON polling endpoint. Discovery only treats actual UNIX socket files named `run.sock` as live instances.
 

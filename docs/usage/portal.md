@@ -22,7 +22,7 @@ When the server starts, it prints the URL to open in your browser.
 - Active and completed runs from `.sandman/events.jsonl`
 - Run output and log links from `.sandman/logs/`
 
-The portal rescans the repository on each poll, so new `sandman run` processes appear without restarting it. It also provides a structured launcher for `sandman run` plus repo-scoped command presets.
+The portal rescans the repository on each poll, so new `sandman run` processes appear without restarting it. It also provides a typed preset launcher for common repo-scoped Sandman commands.
 
 ## Notes
 
