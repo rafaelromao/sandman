@@ -777,7 +777,7 @@ func TestRun_IncludeDependenciesResolvesBatchBeforeRunning(t *testing.T) {
 	}
 }
 
-func TestRun_MissingBlockersWithoutIncludeDependenciesReturnsError(t *testing.T) {
+func TestRun_OpenExternalBlockersAreMarkedBlockedWithoutIncludeDependencies(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
 	deps.GitHubClient = &fakeGitHubClient{
@@ -794,14 +794,18 @@ func TestRun_MissingBlockersWithoutIncludeDependenciesReturnsError(t *testing.T)
 	cmd.SetArgs([]string{"100"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected missing blockers error")
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
 	}
-	if spy.called {
-		t.Fatal("expected batch runner not to be called")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "missing blockers: #42") {
-		t.Fatalf("expected missing blocker error, got %v", err)
+	if !reflect.DeepEqual(spy.req.Issues, []int{100}) {
+		t.Fatalf("expected resolved issues [100], got %v", spy.req.Issues)
+	}
+	wantBlocked := map[int][]int{100: {42}}
+	if !reflect.DeepEqual(spy.req.Blocked, wantBlocked) {
+		t.Fatalf("expected blocked metadata %v, got %v", wantBlocked, spy.req.Blocked)
 	}
 }
 

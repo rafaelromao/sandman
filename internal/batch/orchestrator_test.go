@@ -1272,6 +1272,73 @@ func TestRunBatch_SkipsDependentsWhenBlockerFails(t *testing.T) {
 	}
 }
 
+func TestRunBatch_SkipsIssuesBlockedByOpenExternalBlockers(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Runnable"},
+			100: {Number: 100, Title: "Blocked", BlockedBy: []int{7}},
+			7:   {Number: 7, Title: "External blocker"},
+		},
+	}
+
+	spyLog := &spyEventLog{}
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42:  &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
+			100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "failure"}},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.runnableFactory = factory
+
+	result, err := o.RunBatch(context.Background(), Request{
+		Issues:   []int{42, 100},
+		Blocked:  map[int][]int{100: {7}},
+		Parallel: 2,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(result.Runs))
+	}
+
+	statuses := make(map[int]string)
+	for _, run := range result.Runs {
+		statuses[run.IssueNumber] = run.Status
+	}
+	if statuses[42] != "success" {
+		t.Fatalf("expected runnable issue to succeed, got %q", statuses[42])
+	}
+	if statuses[100] != "blocked" {
+		t.Fatalf("expected external-blocked issue to be skipped, got %q", statuses[100])
+	}
+	if len(factory.created) != 1 || factory.created[0] != 42 {
+		t.Fatalf("expected only runnable issue to start, got %v", factory.created)
+	}
+
+	var blockedEvent *events.Event
+	for i := range spyLog.events {
+		e := spyLog.events[i]
+		if e.Type == "run.blocked" && e.Issue == 100 {
+			blockedEvent = &e
+		}
+	}
+	if blockedEvent == nil {
+		t.Fatal("expected run.blocked event for external blocker")
+	}
+	blockedBy, ok := blockedEvent.Payload["blocked_by"].([]int)
+	if !ok || !reflect.DeepEqual(blockedBy, []int{7}) {
+		t.Fatalf("expected blocked_by [7], got %#v", blockedEvent.Payload["blocked_by"])
+	}
+}
+
 func TestRunBatch_PreservesParallelismWithinDependencyLevel(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
