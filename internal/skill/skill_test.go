@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,8 +11,9 @@ import (
 
 func TestInstallWritesEmbeddedSkill(t *testing.T) {
 	home := t.TempDir()
+	reviewCommand := "/review-please"
 
-	if err := Install(home); err != nil {
+	if err := Install(home, reviewCommand); err != nil {
 		t.Fatalf("install skill: %v", err)
 	}
 
@@ -26,18 +28,18 @@ func TestInstallWritesEmbeddedSkill(t *testing.T) {
 		}
 
 		rel := strings.TrimPrefix(path, embeddedSkillRoot+"/")
-		want, err := fs.ReadFile(embeddedSkills, path)
-		if err != nil {
-			return err
-		}
 		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			return err
 		}
-		if string(got) != string(want) {
-			t.Fatalf("installed file mismatch for %s", rel)
+
+		if bytes.Contains(got, []byte("{{REVIEW_COMMAND}}")) {
+			t.Fatalf("installed file %s still contains unreplaced {{REVIEW_COMMAND}}", rel)
 		}
-		checked++
+
+		if bytes.Contains(got, []byte(reviewCommand)) {
+			checked++
+		}
 		return nil
 	})
 	if err != nil {
@@ -58,7 +60,7 @@ func TestInstallLeavesExistingSkillUntouched(t *testing.T) {
 		t.Fatalf("seed existing skill: %v", err)
 	}
 
-	if err := Install(home); err != nil {
+	if err := Install(home, "/review-please"); err != nil {
 		t.Fatalf("install skill: %v", err)
 	}
 

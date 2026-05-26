@@ -1,12 +1,15 @@
 package skill
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/config"
 )
 
 const embeddedSkillRoot = "sandman"
@@ -23,8 +26,9 @@ func DefaultSkill() string {
 	return string(data)
 }
 
-// Install writes the embedded Sandman skill into the shared agent skills directory.
-func Install(homeDir string) error {
+// Install writes the embedded Sandman skill into the shared agent skills directory,
+// substituting {{REVIEW_COMMAND}} with the given reviewCommand value.
+func Install(homeDir, reviewCommand string) error {
 	if homeDir == "" {
 		return fmt.Errorf("home dir required")
 	}
@@ -61,6 +65,7 @@ func Install(homeDir string) error {
 		if err != nil {
 			return fmt.Errorf("read embedded skill file %q: %w", path, err)
 		}
+		data = bytes.ReplaceAll(data, []byte("{{REVIEW_COMMAND}}"), []byte(reviewCommand))
 		if err := os.WriteFile(targetPath, data, 0o644); err != nil {
 			return fmt.Errorf("write skill file %q: %w", targetPath, err)
 		}
@@ -71,11 +76,18 @@ func Install(homeDir string) error {
 	return nil
 }
 
-// InstallDefault writes the embedded skill into the current user's shared skills directory.
+// InstallDefault writes the embedded skill into the current user's shared skills directory,
+// using the configured review command or the default.
 func InstallDefault() error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolve home dir: %w", err)
 	}
-	return Install(homeDir)
+	wd, err := os.Getwd()
+	if err == nil {
+		if cfg, err := config.Load(filepath.Join(wd, ".sandman", "config.yaml")); err == nil {
+			return Install(homeDir, cfg.EffectiveReviewCommand())
+		}
+	}
+	return Install(homeDir, config.DefaultReviewCommand)
 }
