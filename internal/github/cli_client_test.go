@@ -167,7 +167,7 @@ func TestCLIClient_ResolveRepo_Error(t *testing.T) {
 func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `{"number":61,"title":"Implement FetchIssue","body":"Blocked by #60\nDepends on #7","labels":[{"name":"enhancement"},{"name":"ready-for-agent"}]}`},
+		{output: `{"number":61,"state":"closed","title":"Implement FetchIssue","body":"Blocked by #60\nDepends on #7","labels":[{"name":"enhancement"},{"name":"ready-for-agent"}]}`},
 		{output: `[]`},
 	}}
 	client := &CLIClient{runner: runner}
@@ -178,6 +178,9 @@ func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	}
 	if issue.Number != 61 {
 		t.Fatalf("expected issue 61, got %d", issue.Number)
+	}
+	if issue.State != "closed" {
+		t.Fatalf("expected state closed, got %q", issue.State)
 	}
 	if issue.Title != "Implement FetchIssue" {
 		t.Fatalf("expected title %q, got %q", "Implement FetchIssue", issue.Title)

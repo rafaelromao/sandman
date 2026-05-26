@@ -39,6 +39,7 @@ type repoRef struct {
 
 type issuePayload struct {
 	Number                   int                      `json:"number"`
+	State                    string                   `json:"state"`
 	Title                    string                   `json:"title"`
 	Body                     string                   `json:"body"`
 	BlockedBy                json.RawMessage          `json:"blocked_by"`
@@ -134,6 +135,7 @@ func (c *CLIClient) FetchIssue(number int) (*Issue, error) {
 
 	return &Issue{
 		Number:    issue.Number,
+		State:     issue.State,
 		Title:     issue.Title,
 		Body:      issue.Body,
 		Labels:    labelNames(issue.Labels),
@@ -344,6 +346,7 @@ func (c *CLIClient) SearchIssues(query string) ([]Issue, error) {
 	for _, payload := range payloads {
 		issues = append(issues, Issue{
 			Number: payload.Number,
+			State:  payload.State,
 			Title:  payload.Title,
 			Body:   payload.Body,
 			Labels: labelNames(payload.Labels),
