@@ -88,6 +88,7 @@ func (s *portalCommandStore) Write(records []portalCommandRecord) error {
 type portalCommandProcess struct {
 	cmd     *exec.Cmd
 	logFile *os.File
+	done    chan struct{}
 }
 
 type portalLauncher struct {
@@ -165,7 +166,8 @@ func (l *portalLauncher) launchWithRelaunchOf(command, relaunchOf string) (porta
 
 	l.mu.Lock()
 	l.records = append([]portalCommandRecord{record}, l.records...)
-	l.running[record.ID] = &portalCommandProcess{cmd: cmd, logFile: logFile}
+	proc := &portalCommandProcess{cmd: cmd, logFile: logFile, done: make(chan struct{})}
+	l.running[record.ID] = proc
 	if err := l.saveLocked(); err != nil {
 		delete(l.running, record.ID)
 		l.records = removePortalCommandRecord(l.records, record.ID)
@@ -179,25 +181,28 @@ func (l *portalLauncher) launchWithRelaunchOf(command, relaunchOf string) (porta
 	decorated := l.decorateRecordLocked(record)
 	l.mu.Unlock()
 
-	go l.waitForCommand(record.ID, cmd, logFile)
+	go l.waitForCommand(record.ID, proc)
 	return decorated, nil
 }
 
 func (l *portalLauncher) stop(id string) (portalCommandRecord, error) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 
 	idx := l.findRecordIndexLocked(id)
 	if idx < 0 {
+		l.mu.Unlock()
 		return portalCommandRecord{}, fmt.Errorf("command %s not found", id)
 	}
 	record := l.records[idx]
 	if record.Status != "running" {
-		return l.decorateRecordLocked(record), nil
+		decorated := l.decorateRecordLocked(record)
+		l.mu.Unlock()
+		return decorated, nil
 	}
 
+	proc := l.running[id]
 	pid := record.PID
-	if proc := l.running[id]; proc != nil && proc.cmd != nil && proc.cmd.Process != nil {
+	if proc != nil && proc.cmd != nil && proc.cmd.Process != nil {
 		pid = proc.cmd.Process.Pid
 	}
 	if pid > 0 {
@@ -209,18 +214,39 @@ func (l *portalLauncher) stop(id string) (portalCommandRecord, error) {
 				record.Duration = time.Since(record.StartedAt).Round(time.Second).String()
 				l.records[idx] = record
 				_ = l.saveLocked()
-				return l.decorateRecordLocked(record), fmt.Errorf("stop command: %w", err)
+				decorated := l.decorateRecordLocked(record)
+				l.mu.Unlock()
+				return decorated, fmt.Errorf("stop command: %w", err)
 			}
-			return l.decorateRecordLocked(record), fmt.Errorf("stop command: %w", err)
+			decorated := l.decorateRecordLocked(record)
+			l.mu.Unlock()
+			return decorated, fmt.Errorf("stop command: %w", err)
 		}
 	}
+	l.mu.Unlock()
+	if proc != nil && proc.done != nil {
+		select {
+		case <-proc.done:
+		case <-time.After(5 * time.Second):
+			return portalCommandRecord{}, fmt.Errorf("stop command: timed out waiting for command to exit")
+		}
+	}
+	l.mu.Lock()
+	idx = l.findRecordIndexLocked(id)
+	if idx < 0 {
+		l.mu.Unlock()
+		return portalCommandRecord{}, fmt.Errorf("command %s not found", id)
+	}
+	record = l.records[idx]
 	finishedAt := time.Now()
 	record.Status = "stopped"
 	record.FinishedAt = &finishedAt
 	record.Duration = time.Since(record.StartedAt).Round(time.Second).String()
 	l.records[idx] = record
 	_ = l.saveLocked()
-	return l.decorateRecordLocked(record), nil
+	decorated := l.decorateRecordLocked(record)
+	l.mu.Unlock()
+	return decorated, nil
 }
 
 func (l *portalLauncher) relaunch(id string) (portalCommandRecord, error) {
@@ -236,9 +262,10 @@ func (l *portalLauncher) relaunch(id string) (portalCommandRecord, error) {
 	return l.launchWithRelaunchOf(command, id)
 }
 
-func (l *portalLauncher) waitForCommand(id string, cmd *exec.Cmd, logFile *os.File) {
-	defer logFile.Close()
-	err := cmd.Wait()
+func (l *portalLauncher) waitForCommand(id string, proc *portalCommandProcess) {
+	defer close(proc.done)
+	defer proc.logFile.Close()
+	err := proc.cmd.Wait()
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -250,7 +277,7 @@ func (l *portalLauncher) waitForCommand(id string, cmd *exec.Cmd, logFile *os.Fi
 	record := l.records[idx]
 	record.FinishedAt = ptrTime(time.Now())
 	record.Duration = time.Since(record.StartedAt).Round(time.Second).String()
-	record.PID = cmd.Process.Pid
+	record.PID = proc.cmd.Process.Pid
 	status, exitCode := portalCommandStatusFromWait(err)
 	record.Status = status
 	record.ExitCode = exitCode
