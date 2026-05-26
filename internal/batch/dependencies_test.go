@@ -3,6 +3,7 @@ package batch
 import (
 	"bytes"
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -90,6 +91,47 @@ func TestDependencyResolverResolve_MarksOpenExternalBlockersWithoutFallingOutOfB
 	if !reflect.DeepEqual(resolved.Blocked, wantBlocked) {
 		t.Fatalf("expected blocked metadata %v, got %v", wantBlocked, resolved.Blocked)
 	}
+}
+
+func TestDependencyResolverResolve_StillErrorsOnUnfetchableBlockers(t *testing.T) {
+	client := &fetchIssueErrorClient{
+		issues: map[int]*github.Issue{
+			100: {Number: 100, Title: "Feature", BlockedBy: []int{999}},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	_, err := resolver.Resolve(context.Background(), []int{100}, false)
+	if err == nil {
+		t.Fatal("expected error for unfetchable blocker")
+	}
+	if err.Error() != "missing blockers: #999" {
+		t.Fatalf("expected missing blocker error for #999, got %q", err)
+	}
+}
+
+type fetchIssueErrorClient struct {
+	issues map[int]*github.Issue
+}
+
+func (c *fetchIssueErrorClient) FetchIssue(number int) (*github.Issue, error) {
+	if number == 999 {
+		return nil, errors.New("boom")
+	}
+	return c.issues[number], nil
+}
+
+func (c *fetchIssueErrorClient) FetchIssueDependencies(number int) ([]int, error) {
+	if issue := c.issues[number]; issue != nil {
+		return issue.BlockedBy, nil
+	}
+	return nil, nil
+}
+
+func (c *fetchIssueErrorClient) SearchIssues(query string) ([]github.Issue, error) {
+	return nil, nil
 }
 
 func TestDependencyResolverResolve_IgnoresClosedBlockers(t *testing.T) {

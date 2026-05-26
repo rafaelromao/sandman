@@ -291,7 +291,7 @@ func TestRun_DependencyAwareBatch_InvalidGraphsFailBeforeExecution(t *testing.T)
 			wantErr: "dependency cycle detected: #100 -> #101 -> #100",
 		},
 		{
-			name: "missing blocker in strict mode",
+			name: "external open blocker without include-dependencies",
 			issues: map[int]*github.Issue{
 				100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
 				42:  {Number: 42, Title: "Blocker"},
