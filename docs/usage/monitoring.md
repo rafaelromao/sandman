@@ -24,7 +24,7 @@ sandman portal
 
 `sandman portal` is the browser view for the same repo-local launch data that powers `status` and `history`. It rescans the current repository on each poll, so live launch records appear without restarting the portal.
 
-Use it when you want one place to inspect active launch records, completed launch records, and recent logs across multiple instances in the same repo.
+Use it when you want one place to inspect active launch records, completed launch records, and recent logs across multiple launch records in the same repo.
 
 ## Event log
 

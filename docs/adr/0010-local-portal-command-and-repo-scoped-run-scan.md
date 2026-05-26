@@ -32,4 +32,3 @@ The portal serves a simple HTML view and JSON polling endpoints. Discovery only 
 ### Neutral
 
 - The portal does not manage launch records; it only observes them.
-- The implementation stays focused on local repo inspection and does not manage launch records.
