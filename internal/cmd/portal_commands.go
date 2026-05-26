@@ -230,6 +230,14 @@ func (l *portalLauncher) stop(id string) (portalCommandRecord, error) {
 		case <-time.After(5 * time.Second):
 			return portalCommandRecord{}, fmt.Errorf("stop command: timed out waiting for command to exit")
 		}
+	} else if pid > 0 {
+		deadline := time.Now().Add(5 * time.Second)
+		for processAlive(pid) && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if processAlive(pid) {
+			return portalCommandRecord{}, fmt.Errorf("stop command: timed out waiting for command to exit")
+		}
 	}
 	l.mu.Lock()
 	idx = l.findRecordIndexLocked(id)
