@@ -42,6 +42,7 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 	}
 
 	deps := make(map[int][]int, len(requested))
+	issueCache := make(map[int]*github.Issue, len(requested))
 	known := make(map[int]struct{}, len(requested))
 	order := make([]int, 0, len(requested))
 	queue := append([]int(nil), requested...)
@@ -62,18 +63,29 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 			continue
 		}
 
-		issue, err := r.githubClient.FetchIssue(issueNum)
+		issue, err := fetchDependencyIssue(ctx, r.githubClient, issueCache, issueNum)
 		if err != nil {
 			return nil, fmt.Errorf("fetch issue #%d: %w", issueNum, err)
 		}
-		if issue == nil {
-			return nil, fmt.Errorf("fetch issue #%d: not found", issueNum)
-		}
 
 		blockers := uniqueSortedIssues(issue.BlockedBy)
-		deps[issueNum] = blockers
+		activeBlockers := make([]int, 0, len(blockers))
 
 		for _, blocker := range blockers {
+			blockerIssue, err := fetchDependencyIssue(ctx, r.githubClient, issueCache, blocker)
+			if err != nil {
+				if includeDeps {
+					return nil, fmt.Errorf("fetch issue #%d: %w", blocker, err)
+				}
+				missing[blocker] = struct{}{}
+				continue
+			}
+
+			if isClosedIssue(blockerIssue) {
+				continue
+			}
+
+			activeBlockers = append(activeBlockers, blocker)
 			if _, ok := known[blocker]; ok {
 				continue
 			}
@@ -85,6 +97,12 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 			known[blocker] = struct{}{}
 			queue = append(queue, blocker)
 			order = append(order, blocker)
+		}
+
+		if len(activeBlockers) == 0 {
+			deps[issueNum] = nil
+		} else {
+			deps[issueNum] = activeBlockers
 		}
 	}
 
@@ -102,6 +120,31 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 	}
 
 	return &ResolvedBatch{Issues: ordered, Deps: deps}, nil
+}
+
+func fetchDependencyIssue(ctx context.Context, client github.Client, cache map[int]*github.Issue, issueNum int) (*github.Issue, error) {
+	if issue, ok := cache[issueNum]; ok {
+		return issue, nil
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	issue, err := client.FetchIssue(issueNum)
+	if err != nil {
+		return nil, err
+	}
+	if issue == nil {
+		return nil, fmt.Errorf("not found")
+	}
+
+	cache[issueNum] = issue
+	return issue, nil
+}
+
+func isClosedIssue(issue *github.Issue) bool {
+	return issue != nil && strings.EqualFold(strings.TrimSpace(issue.State), "closed")
 }
 
 func (r *DependencyResolver) warnExpansion(issueCount int) {

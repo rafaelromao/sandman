@@ -3,6 +3,7 @@ package github
 // Issue holds metadata fetched from GitHub.
 type Issue struct {
 	Number int
+	State  string
 	Title  string
 	Body   string
 	Labels []string
