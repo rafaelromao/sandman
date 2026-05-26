@@ -19,17 +19,15 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 
     - Work in the current Sandman-created worktree on `{{BRANCH}}` (`{{SOURCE_BRANCH}}`).
     - Base branch: `{{BASE_BRANCH}}`.
-    - Review command: `{{REVIEW_COMMAND}}`.
-    - Follow the installed `sandman` skill for the full plan, implementation, review, merge, and continuation workflow.
+    - For issue work, call `sandman implement` first. If it succeeds and the PR is fully approved, call `sandman pr-merge` next.
 <!-- default-prompt:end -->
 
 ## What each part does
 
 - `Task` names the work and injects the issue number/title.
 - `Context` passes the raw issue body through unchanged.
-- `Runtime Context` passes the current worktree branch, base branch, and review command into the shared skill.
+- `Runtime Context` passes the current worktree branch and base branch into the shared skill.
 - `{{BRANCH}}` and `{{SOURCE_BRANCH}}` identify the run branch.
-- `{{REVIEW_COMMAND}}` resolves from config or `--review-command` and defaults to `/oc review`.
 
 ## Prompt lifecycle
 

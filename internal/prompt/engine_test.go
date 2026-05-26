@@ -219,7 +219,7 @@ func TestRender_PromptArgsSubstituted(t *testing.T) {
 func TestRender_ReviewCommandPromptArgOverridesDefault(t *testing.T) {
 	engine := &Engine{}
 	cfg := RenderConfig{
-		PromptFlag: DefaultPrompt(),
+		PromptFlag: "review={{REVIEW_COMMAND}}",
 		PromptArgs: map[string]string{"REVIEW_COMMAND": "/custom review"},
 	}
 	data := IssueData{Number: 1}
@@ -229,18 +229,15 @@ func TestRender_ReviewCommandPromptArgOverridesDefault(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(result, "/custom review") {
+	if result != "review=/custom review" {
 		t.Fatalf("expected custom review command, got:\n%s", result)
-	}
-	if strings.Contains(result, "/oc review") {
-		t.Fatalf("expected default review command to be overridden, got:\n%s", result)
 	}
 }
 
 func TestRender_ReviewCommandFieldOverridesDefault(t *testing.T) {
 	engine := &Engine{}
 	cfg := RenderConfig{
-		PromptFlag:    DefaultPrompt(),
+		PromptFlag:    "review={{REVIEW_COMMAND}}",
 		ReviewCommand: "/field review",
 	}
 	data := IssueData{Number: 1}
@@ -250,11 +247,8 @@ func TestRender_ReviewCommandFieldOverridesDefault(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(result, "/field review") {
+	if result != "review=/field review" {
 		t.Fatalf("expected field review command, got:\n%s", result)
-	}
-	if strings.Contains(result, "/oc review") {
-		t.Fatalf("expected default review command to be overridden, got:\n%s", result)
 	}
 }
 
