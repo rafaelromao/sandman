@@ -15,7 +15,6 @@ type portalCommandLaunchRequest struct {
 	ConfigMode  string `json:"configMode,omitempty"`
 	ConfigKey   string `json:"configKey,omitempty"`
 	ConfigValue string `json:"configValue,omitempty"`
-	Command     string `json:"command,omitempty"`
 }
 
 func buildPortalCommandArgs(req portalCommandLaunchRequest) ([]string, error) {

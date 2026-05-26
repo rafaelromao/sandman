@@ -802,7 +802,7 @@ func TestRun_DependencyCycleReturnsError(t *testing.T) {
 	if spy.called {
 		t.Fatal("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "dependency cycle detected: #42 -> #100 -> #42") {
+	if !strings.Contains(err.Error(), "dependency cycle detected: #100 -> #42 -> #100") {
 		t.Fatalf("expected dependency cycle error, got %v", err)
 	}
 }

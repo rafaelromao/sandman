@@ -33,7 +33,7 @@ func NewDependencyResolver(githubClient github.Client) *DependencyResolver {
 }
 
 func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeDeps bool) (*ResolvedBatch, error) {
-	requested := uniqueSortedIssues(issues)
+	requested := uniqueIssues(issues)
 	if len(requested) == 0 {
 		return &ResolvedBatch{Deps: map[int][]int{}}, nil
 	}
@@ -43,9 +43,11 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 
 	deps := make(map[int][]int, len(requested))
 	known := make(map[int]struct{}, len(requested))
+	order := make([]int, 0, len(requested))
 	queue := append([]int(nil), requested...)
 	for _, issue := range requested {
 		known[issue] = struct{}{}
+		order = append(order, issue)
 	}
 
 	missing := map[int]struct{}{}
@@ -82,6 +84,7 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 
 			known[blocker] = struct{}{}
 			queue = append(queue, blocker)
+			order = append(order, blocker)
 		}
 	}
 
@@ -93,7 +96,7 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 		r.warnExpansion(len(known))
 	}
 
-	ordered, err := topologicalIssues(deps)
+	ordered, err := topologicalIssues(deps, order)
 	if err != nil {
 		return nil, err
 	}
@@ -108,12 +111,8 @@ func (r *DependencyResolver) warnExpansion(issueCount int) {
 	_, _ = fmt.Fprintf(r.warningWriter, "warning: resolved batch expanded to %d issues\n", issueCount)
 }
 
-func topologicalIssues(deps map[int][]int) ([]int, error) {
-	issues := make([]int, 0, len(deps))
-	for issue := range deps {
-		issues = append(issues, issue)
-	}
-	sort.Ints(issues)
+func topologicalIssues(deps map[int][]int, order []int) ([]int, error) {
+	issues := uniqueIssues(order)
 
 	const (
 		unvisited = iota
@@ -169,7 +168,7 @@ func topologicalIssues(deps map[int][]int) ([]int, error) {
 	return ordered, nil
 }
 
-func uniqueSortedIssues(issues []int) []int {
+func uniqueIssues(issues []int) []int {
 	if len(issues) == 0 {
 		return nil
 	}
@@ -184,6 +183,11 @@ func uniqueSortedIssues(issues []int) []int {
 		unique = append(unique, issue)
 	}
 
+	return unique
+}
+
+func uniqueSortedIssues(issues []int) []int {
+	unique := uniqueIssues(issues)
 	sort.Ints(unique)
 	return unique
 }

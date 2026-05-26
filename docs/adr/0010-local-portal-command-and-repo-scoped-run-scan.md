@@ -31,5 +31,5 @@ The portal serves a simple HTML view and a JSON polling endpoint. Discovery only
 
 ### Neutral
 
-- The portal does not manage runs; it only observes them.
+- The portal observes runs and can launch repo-scoped Sandman commands from typed presets.
 - The implementation stays local-only and does not expose network access beyond loopback.

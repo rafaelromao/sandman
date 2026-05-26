@@ -41,6 +41,28 @@ func TestDependencyResolverResolve_SortsIssuesTopologically(t *testing.T) {
 	}
 }
 
+func TestDependencyResolverResolve_PreservesRequestedOrderForIndependentIssues(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			3: {Number: 3, Title: "Third"},
+			1: {Number: 1, Title: "First"},
+			2: {Number: 2, Title: "Second"},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{3, 1, 2}, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Issues, []int{3, 1, 2}) {
+		t.Fatalf("expected requested order [3 1 2], got %v", resolved.Issues)
+	}
+}
+
 func TestDependencyResolverResolve_ErrorsOnMissingBlockersWithoutExpansion(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -98,7 +120,7 @@ func TestDependencyResolverResolve_DetectsCycles(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected cycle error")
 	}
-	if err.Error() != "dependency cycle detected: #42 -> #100 -> #42" {
+	if err.Error() != "dependency cycle detected: #100 -> #42 -> #100" {
 		t.Fatalf("expected cycle path in error, got %q", err)
 	}
 }

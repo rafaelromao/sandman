@@ -98,6 +98,10 @@ The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`
 **Command template key**:
 The `{{.PromptFile}}` key available in agent command templates, resolved to the relative path of the rendered prompt file.
 
+**Portal launcher**:
+A repo-scoped browser launcher in `sandman portal` that can start Sandman commands from typed presets while observing live runs in the current repository.
+_Avoid_: run dashboard only.
+
 **ResolvedBatch**:
 A batch where all issues have been fetched, their BlockedBy relationships resolved, and the execution order topologically sorted. Ready for the Orchestrator.
 _Avoid_: planned batch, execution plan.
