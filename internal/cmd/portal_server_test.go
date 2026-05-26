@@ -660,7 +660,7 @@ func TestPortal_CommandLauncherStopsAndRelaunchesCommands(t *testing.T) {
 	})
 }
 
-func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
+func TestPortal_BindsToWildcardAndFailsWhenPortBusy(t *testing.T) {
 	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

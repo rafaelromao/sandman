@@ -658,96 +658,6 @@
       border-radius: 999px;
       background: var(--accent);
     }
-    .launcher-shell {
-      margin-bottom: 16px;
-      padding: 18px;
-      border: 1px solid var(--border);
-      border-radius: 22px;
-      background: linear-gradient(180deg, color-mix(in oklch, var(--surface) 92%, var(--text) 8%), var(--surface));
-      box-shadow: var(--shadow);
-    }
-    .launcher-head {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-    .launcher-head h2 {
-      margin: 0;
-      font-size: 20px;
-      letter-spacing: -0.03em;
-    }
-    .launcher-head .subtitle {
-      margin: 8px 0 0;
-      color: var(--muted);
-    }
-    .launcher-toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: var(--surface-2);
-      color: var(--text);
-      font: inherit;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .launcher-panel {
-      display: grid;
-      gap: 14px;
-      margin-top: 16px;
-    }
-    .launch-form {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 12px;
-      align-items: end;
-    }
-    .launch-field {
-      display: grid;
-      gap: 8px;
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-    }
-    .launch-field textarea {
-      width: 100%;
-      min-height: 74px;
-      resize: vertical;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 12px 14px;
-      background: var(--surface-2);
-      color: var(--text);
-      font: inherit;
-      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
-    }
-    .launch-field textarea::placeholder {
-      color: var(--muted);
-    }
-    .launch-note {
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .command-row {
-      cursor: pointer;
-    }
-    .command-row:hover td {
-      background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
-    }
-    .command-row.running td {
-      background: color-mix(in oklch, var(--accent) 10%, var(--surface));
-    }
-    .command-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
     .table-shell {
       border: 1px solid var(--border);
       border-radius: 22px;
@@ -1080,7 +990,6 @@
     }
     @media (max-width: 960px) {
       .masthead,
-      .launch-form,
       .detail-grid {
         grid-template-columns: 1fr;
       }
