@@ -297,7 +297,7 @@ func TestPortal_LoadPortalRunsIncludesArtifactsAndEmptyStates(t *testing.T) {
 }
 
 func TestPortal_LoadPortalRunsFindsArtifactsForActiveRunsWithoutState(t *testing.T) {
-	repoRoot, err := os.MkdirTemp("/tmp/opencode", "portal-")
+	repoRoot, err := os.MkdirTemp("/tmp", "portal-")
 	if err != nil {
 		t.Fatal(err)
 	}
