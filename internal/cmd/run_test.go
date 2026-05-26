@@ -100,14 +100,14 @@ func TestRun_MultipleIssuesInvokesBatchRunner(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"1", "2", "3"})
+	cmd.SetArgs([]string{"3", "1", "2"})
 
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	want := []int{1, 2, 3}
+	want := []int{3, 1, 2}
 	if len(spy.req.Issues) != len(want) {
 		t.Errorf("expected issues %v, got %v", want, spy.req.Issues)
 	}
@@ -115,6 +115,32 @@ func TestRun_MultipleIssuesInvokesBatchRunner(t *testing.T) {
 		if spy.req.Issues[i] != v {
 			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
 		}
+	}
+}
+
+func TestRun_DependentAndIndependentIssuesPreserveStableTopoOrder(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{
+		100: {Number: 100, Title: "Feature", BlockedBy: []int{7}},
+		42:  {Number: 42, Title: "Refactor"},
+		7:   {Number: 7, Title: "Groundwork"},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"100", "42", "7"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []int{42, 7, 100}
+	if !reflect.DeepEqual(spy.req.Issues, want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
 }
 
@@ -802,7 +828,7 @@ func TestRun_DependencyCycleReturnsError(t *testing.T) {
 	if spy.called {
 		t.Fatal("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "dependency cycle detected: #42 -> #100 -> #42") {
+	if !strings.Contains(err.Error(), "dependency cycle detected: #100 -> #42 -> #100") {
 		t.Fatalf("expected dependency cycle error, got %v", err)
 	}
 }
