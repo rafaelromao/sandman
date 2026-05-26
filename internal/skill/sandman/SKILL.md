@@ -32,3 +32,7 @@ sandman continuation
 ## Use
 
 Load the matching subskill for the requested mode and follow it end to end.
+
+## Default flow
+
+For issue work, use `sandman implement`. After the PR is fully approved, follow with `sandman pr-merge`.

@@ -15,7 +15,7 @@ This skill implements a GitHub issue by modifying the current repository's sourc
 
 - `gh` CLI authenticated
 - Working directory at repo root
-- `/tdd`, `/review`, and `/merge` skills available
+- `sandman-tdd`, `sandman-review`, and `sandman-merge` skills available
 
 ## Workflow
 
@@ -34,13 +34,13 @@ gh issue view <ID> --json title,number
 ### 2. Plan
 
 - Read the issue body and any linked context
-- Load the `/tdd` skill
-- Let `/tdd` handle the plan draft and user approval internally, scoped to the repository codebase
-- Do NOT add a separate confirmation prompt — `/tdd` already asks for approval before writing code
+- Load the `sandman-tdd` skill
+- Let `sandman-tdd` handle the plan draft and user approval internally, scoped to the repository codebase
+- Do NOT add a separate confirmation prompt — `sandman-tdd` already asks for approval before writing code
 
 ### 3. Implement (TDD)
 
-- Follow `/tdd` workflow: vertical slices, one test → one implementation, within the repository codebase
+- Follow `sandman-tdd` workflow: vertical slices, one test → one implementation, within the repository codebase
 - Run project tests and formatting after each cycle
 - Do NOT commit during TDD; keep working
 
@@ -55,7 +55,7 @@ git commit -m "feat: <issue title>"
 
 ### 5. Self-review
 
-- Load the `/review` skill
+- Load the `sandman-review` skill
 - Perform a self-review of the changes
 - Apply fixes, format the code, run all tests, including smoke and e2e, and commit:
 
@@ -75,9 +75,9 @@ git commit -m "refactor: self-review fixes"
 
 ### 6. Merge base branch before PR
 
-- Load the `/merge` skill
+- Load the `sandman-merge` skill
 - Use it to merge the base branch into the current branch before creating the PR
-- Resolve conflicts using the merge skill's 3-way workflow
+- Resolve conflicts using the `sandman-merge` skill's 3-way workflow
 - Run relevant tests and formatting after the merge
 - Do NOT rebase
 - Do NOT force-push
@@ -93,19 +93,17 @@ Capture the PR URL and number.
 
 ### 8. Delegate review
 
-- Load the `/delegate_review` skill
+- Load the `sandman-delegate-review` skill
 - Run the delegated review loop on the PR
 - Address all review feedback from the PR, including requests, suggestions, recommendations, and nits, unless there is a strong reason to ignore a specific item.
 - If you do ignore feedback, explain why in the PR thread before continuing.
 - Stop when opencode approves or after max passes
 
-### 9. Final prompt
+### 9. Write continuation context
 
-Ask user:
-
-> "PR #<N> is approved and ready. Would you like me to merge it now?"
-
-Wait for explicit approval before merging. Do NOT auto-merge.
+- Load the `sandman-continuation` skill
+- Write `.sandman/continuation-context.md`
+- Do this last, even if any previous step failed
 
 ## Checklist
 
@@ -114,7 +112,7 @@ Wait for explicit approval before merging. Do NOT auto-merge.
 - [ ] User confirmed plan before TDD
 - [ ] Implementation committed
 - [ ] Self-review performed and fixes committed
-- [ ] Base branch merged into current branch with `/merge`
+- [ ] Base branch merged into current branch with `sandman-merge`
 - [ ] PR created with `Fixes #<ID>`
 - [ ] Delegate review completed
-- [ ] User explicitly approved merge
+- [ ] Continuation context written last
