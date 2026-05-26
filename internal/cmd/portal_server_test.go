@@ -255,7 +255,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 	}
 }
 
-func TestPortal_PageExposesCommandLauncherPresets(t *testing.T) {
+func TestPortal_PageExposesCommandPanelShell(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -274,10 +274,27 @@ func TestPortal_PageExposesCommandLauncherPresets(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Command launcher", "Continue", "Status", "History", "Clean", "Config", `name="issue"`, `name="confirmed"`, `name="configKey"`} {
+	for _, want := range []string{
+		"Commands",
+		`id="commands-toggle"`,
+		`id="commands-panel"`,
+		`id="command-picker"`,
+		`id="command-panel-form"`,
+		`id="command-panel-body"`,
+		`id="command-execute-status"`,
+		`value="run"`,
+		`value="continue"`,
+		`value="status"`,
+		`value="history"`,
+		`value="clean"`,
+		`value="config"`,
+	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(1000, len(content))])
 		}
+	}
+	if strings.Contains(content, "class=\"launcher\"") {
+		t.Fatalf("expected launcher section to be removed\n%s", content[:min(1000, len(content))])
 	}
 }
 
