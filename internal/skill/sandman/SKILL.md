@@ -19,6 +19,8 @@ sandman pr-merge
 sandman continuation
 ```
 
+For issue work, default to `sandman implement`. If it succeeds and the PR is fully approved, follow with `sandman pr-merge`.
+
 ## Modes
 
 - `implement` -> `sandman-implement`
@@ -32,7 +34,3 @@ sandman continuation
 ## Use
 
 Load the matching subskill for the requested mode and follow it end to end.
-
-## Default flow
-
-For issue work, call `sandman implement` first. If it succeeds and the PR is fully approved, call `sandman pr-merge` next.
