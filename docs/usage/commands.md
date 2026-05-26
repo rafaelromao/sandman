@@ -134,7 +134,7 @@ Useful for monitoring a long-running batch from a separate terminal.
 
 ## `sandman portal`
 
-Serve a local browser portal for the current repository's Sandman instances.
+Serve a local browser portal for the current repository's Sandman instances and launcher presets.
 
 ```bash
 sandman portal [flags]
@@ -144,9 +144,9 @@ sandman portal [flags]
 |------|---------|-------------|
 | `--port` | `5000` | Port to bind on `0.0.0.0` |
 
-The portal is repo-scoped: it scans the current repository's `.sandman/runs/` tree on each poll and shows every live Sandman instance it finds there, plus run status and logs from the event and log files. New `sandman run` processes appear on the next poll without restarting the portal.
+The portal is repo-scoped: it scans the current repository's `.sandman/runs/` tree on each poll and shows every live Sandman instance it finds there, plus run status and logs from the event and log files. It also exposes a launcher for `sandman run` and other repo-scoped command presets.
 
-Use it when you want a browser view of multiple runs in the same repo. The portal observes runs; it does not start, stop, or retry them.
+Use it when you want a browser view of multiple runs in the same repo and a launcher for common Sandman commands.
 
 ## `sandman config`
 
