@@ -336,6 +336,15 @@ func TestPortal_CommandsEndpointPersistsRunLaunches(t *testing.T) {
 	if commands[0].Command != "sandman run 42" && !strings.HasPrefix(commands[0].Command, "sandman run ") {
 		t.Fatalf("unexpected command record: %#v", commands[0])
 	}
+
+	server.Close()
+	server = startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	reloaded := readPortalCommands(t, server.URL)
+	if len(reloaded) != 1 || reloaded[0].Command != commands[0].Command {
+		t.Fatalf("expected persisted command after restart, got %#v", reloaded)
+	}
 }
 
 func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {

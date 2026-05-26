@@ -313,14 +313,6 @@ func portalSelectedAttr(selected bool) string {
 	return ""
 }
 
-func parsePortalLaunchRequest(r *http.Request) (portalLaunchRequest, error) {
-	var req portalLaunchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return portalLaunchRequest{}, fmt.Errorf("parse launch request: %w", err)
-	}
-	return req, nil
-}
-
 func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchRequest) ([]string, error) {
 	launchMode := strings.TrimSpace(req.LaunchMode)
 	if launchMode == "" {
