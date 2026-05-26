@@ -1002,7 +1002,7 @@ agents:
 	if !strings.Contains(got, "Work in the current Sandman-created worktree on `sandman/42-fix-login-bug`.") {
 		t.Errorf("prompt missing expected worktree contract, got:\n%s", got)
 	}
-	if !strings.Contains(got, "gh pr comment <N> --body \"/oc review\"") {
+	if !strings.Contains(got, "Review command: `/oc review`.") {
 		t.Errorf("prompt missing review command, got:\n%s", got)
 	}
 
