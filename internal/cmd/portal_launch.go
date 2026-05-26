@@ -98,6 +98,9 @@ func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 
 	agentName := strings.TrimSpace(cfg.DefaultAgent)
 	if agentName == "" {
+		agentName = strings.TrimSpace(cfg.Agent)
+	}
+	if agentName == "" {
 		agentName = config.DefaultAgent
 	}
 
@@ -266,6 +269,9 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 	if agent == "" && cfg != nil {
 		agent = strings.TrimSpace(cfg.DefaultAgent)
 	}
+	if agent == "" && cfg != nil {
+		agent = strings.TrimSpace(cfg.Agent)
+	}
 	if agent == "" {
 		agent = config.DefaultAgent
 	}
@@ -293,7 +299,7 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 		parallel = *req.Parallel
 	}
 	if parallel < 0 {
-		return nil, fmt.Errorf("default_parallel must be greater than 0")
+		return nil, fmt.Errorf("parallel must be 0 or greater")
 	}
 
 	startDelay := config.DefaultStartDelay

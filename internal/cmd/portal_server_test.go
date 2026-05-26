@@ -297,6 +297,35 @@ func TestPortal_PageIncludesRunLauncherDefaults(t *testing.T) {
 	}
 }
 
+func TestPortal_PageIncludesLegacyAgentFallback(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Agent: "pi"}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(cfg), cfg))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	if !strings.Contains(content, `<option value="pi" selected>Pi</option>`) {
+		t.Fatalf("page missing selected legacy agent fallback\n%s", content[:min(900, len(content))])
+	}
+	if !strings.Contains(content, `id="launcher-parallel" type="number" min="0"`) {
+		t.Fatalf("page missing parallel zero parity\n%s", content[:min(900, len(content))])
+	}
+}
+
 func TestPortal_LaunchEndpointBuildsSandmanRunCommand(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -345,6 +374,11 @@ func TestPortal_LaunchEndpointBuildsSandmanRunCommand(t *testing.T) {
 			name: "prompt only",
 			body: `{"launchMode":"prompt-only","prompt":"Return only OK.","reviewCommand":"/custom review","agent":"opencode","baseBranch":"main","parallel":4,"sandbox":"podman"}`,
 			want: []string{"run", "--prompt", "Return only OK.", "--review-command", "/custom review", "--agent", "opencode", "--base-branch", "main", "--parallel", "4", "--sandbox", "podman", "--container-capacity", "4"},
+		},
+		{
+			name: "issue driven zero parallel uses explicit zero",
+			body: `{"launchMode":"issue-driven","selectionMode":"issues","issues":"42","parallel":0,"agent":"opencode","baseBranch":"main","sandbox":"podman"}`,
+			want: []string{"run", "--review-command", "/oc review", "--agent", "opencode", "--base-branch", "main", "--parallel", "0", "--sandbox", "podman", "--container-capacity", "4", "42"},
 		},
 	}
 
