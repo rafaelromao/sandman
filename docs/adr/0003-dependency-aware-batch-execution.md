@@ -34,7 +34,7 @@ We will implement dependency-aware batch execution with the following rules:
 
 1. **Dual-source dependency detection**: Sandman parses both the issue body (for phrases like `blocked by`, `depends on`, `blocked-by` followed by `#<number>`) and queries the GitHub REST API for native `blocked_by` relationships. The union of both sources forms the `BlockedBy` set for each issue.
 
-2. **Success dependency semantics**: An AgentRun for issue A cannot start until every issue in A's `BlockedBy` set has an AgentRun that completed with status `"success"`. If any blocker fails, A is skipped with status `"blocked"` and a `run.blocked` event is logged.
+2. **Success dependency semantics**: An AgentRun for issue A cannot start until every issue in A's `BlockedBy` set has an AgentRun that completed with status `"success"` and the corresponding GitHub issue is closed immediately before start time. If any blocker fails or is still open when the run is about to start, A is skipped with status `"blocked"` and a `run.blocked` event is logged.
 
 3. **Strict mode by default**: When resolving the batch, if any blocker is outside the initially requested set of issues, `RunBatch` returns an error listing the missing blockers. This forces explicit batch composition.
 
