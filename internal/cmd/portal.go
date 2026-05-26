@@ -46,22 +46,25 @@ type portalEvent struct {
 }
 
 type portalRun struct {
-	Key         string        `json:"key"`
-	RunID       string        `json:"runId"`
-	Kind        string        `json:"kind"`
-	Status      string        `json:"status"`
-	IssueLabel  string        `json:"issueLabel"`
-	IssueNumber int           `json:"issueNumber,omitempty"`
-	Branch      string        `json:"branch,omitempty"`
-	StartedAt   time.Time     `json:"startedAt"`
-	FinishedAt  *time.Time    `json:"finishedAt,omitempty"`
-	Duration    string        `json:"duration,omitempty"`
-	SocketPath  string        `json:"socketPath,omitempty"`
-	LogPath     string        `json:"logPath,omitempty"`
-	LogURL      string        `json:"logUrl,omitempty"`
-	Output      string        `json:"output,omitempty"`
-	Log         string        `json:"log,omitempty"`
-	Events      []portalEvent `json:"events,omitempty"`
+	Key                 string        `json:"key"`
+	RunID               string        `json:"runId"`
+	Kind                string        `json:"kind"`
+	Status              string        `json:"status"`
+	IssueLabel          string        `json:"issueLabel"`
+	IssueNumber         int           `json:"issueNumber,omitempty"`
+	Branch              string        `json:"branch,omitempty"`
+	StartedAt           time.Time     `json:"startedAt"`
+	FinishedAt          *time.Time    `json:"finishedAt,omitempty"`
+	Duration            string        `json:"duration,omitempty"`
+	SocketPath          string        `json:"socketPath,omitempty"`
+	LogPath             string        `json:"logPath,omitempty"`
+	LogURL              string        `json:"logUrl,omitempty"`
+	Output              string        `json:"output,omitempty"`
+	Prompt              string        `json:"prompt,omitempty"`
+	ContinuationContext string        `json:"continuationContext,omitempty"`
+	ContinuationPrompt  string        `json:"continuationPrompt,omitempty"`
+	Log                 string        `json:"log,omitempty"`
+	Events              []portalEvent `json:"events,omitempty"`
 }
 
 type portalActiveRun struct {
@@ -105,7 +108,7 @@ func NewPortalCmd(deps Dependencies) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int("port", 5000, "Port to bind on 0.0.0.0")
+	cmd.Flags().Int("port", 5000, "Port to bind on 127.0.0.1")
 	return cmd
 }
 
@@ -128,7 +131,7 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writer, launchData portalLaunchFormData, cfg *config.Config) error {
 	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
-		return fmt.Errorf("bind portal on 0.0.0.0:%d: %w", port, err)
+		return fmt.Errorf("bind portal on 127.0.0.1:%d: %w", port, err)
 	}
 	defer listener.Close()
 
@@ -138,7 +141,7 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 		actualPort = tcpAddr.Port
 	}
 
-	if _, err := fmt.Fprintf(out, "Portal listening on http://0.0.0.0:%d\n", actualPort); err != nil {
+	if _, err := fmt.Fprintf(out, "Portal listening on http://127.0.0.1:%d\n", actualPort); err != nil {
 		return fmt.Errorf("write portal address: %w", err)
 	}
 
@@ -215,6 +218,79 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			"instances": instances,
 		})
 	})
+	mux.HandleFunc("/api/commands", func(w http.ResponseWriter, r *http.Request) {
+		if launcherErr != nil {
+			http.Error(w, launcherErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			commands, err := launcher.list()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(map[string]any{"repoRoot": repoRoot, "commands": commands})
+		case http.MethodPost:
+			var payload struct {
+				Command string `json:"command"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid command payload", http.StatusBadRequest)
+				return
+			}
+			command, err := launcher.launch(payload.Command)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(command)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	mux.HandleFunc("/api/commands/", func(w http.ResponseWriter, r *http.Request) {
+		if launcherErr != nil {
+			http.Error(w, launcherErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/commands/"), "/")
+		if len(parts) != 2 || parts[0] == "" {
+			http.NotFound(w, r)
+			return
+		}
+		id, action := parts[0], parts[1]
+		switch r.Method {
+		case http.MethodPost:
+			var (
+				command portalCommandRecord
+				err     error
+			)
+			switch action {
+			case "stop":
+				command, err = launcher.stop(id)
+			case "relaunch":
+				command, err = launcher.relaunch(id)
+			default:
+				http.NotFound(w, r)
+				return
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(command)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
 	mux.HandleFunc("/api/runs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -282,6 +358,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 		data := struct {
 			RepoRoot            string
 			PollInterval        int
+			CommandsPath        string
 			RunsPath            string
 			InstancesPath       string
 			RefreshPath         string
@@ -293,6 +370,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 		}{
 			RepoRoot:            repoRoot,
 			PollInterval:        int(portalPollInterval / time.Millisecond),
+			CommandsPath:        "/api/commands",
 			RunsPath:            "/api/runs",
 			InstancesPath:       "/api/instances",
 			RefreshPath:         "/api/runs",
@@ -521,21 +599,27 @@ func portalRunFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun
 		issueLabel = fmt.Sprintf("#%d", issueNumber)
 	}
 	logPath := portalLogPath(repoRoot, issueNumber, "")
+	promptPath := portalArtifactPath(repoRoot, issueNumber, "", ".sandman/rendered-prompt.md")
+	continuationContextPath := portalArtifactPath(repoRoot, issueNumber, "", ".sandman/continuation-context.md")
+	continuationPromptPath := portalArtifactPath(repoRoot, issueNumber, "", ".sandman/continue-prompt.md")
 	return portalRun{
-		Key:         match.instance.Key,
-		RunID:       match.instance.Key,
-		Kind:        "active",
-		Status:      "active",
-		IssueLabel:  issueLabel,
-		IssueNumber: issueNumber,
-		StartedAt:   startedAt,
-		Duration:    time.Since(startedAt).Round(time.Second).String(),
-		SocketPath:  match.instance.SocketPath,
-		LogPath:     logPath,
-		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, ""),
-		Output:      readPortalSocketOutput(match.instance.SocketPath),
-		Log:         readPortalTextFile(logPath),
-		Events:      eventsByRun[match.instance.Key],
+		Key:                 match.instance.Key,
+		RunID:               match.instance.Key,
+		Kind:                "active",
+		Status:              "active",
+		IssueLabel:          issueLabel,
+		IssueNumber:         issueNumber,
+		StartedAt:           startedAt,
+		Duration:            time.Since(startedAt).Round(time.Second).String(),
+		SocketPath:          match.instance.SocketPath,
+		LogPath:             logPath,
+		LogURL:              portalLogDownloadURL(repoRoot, issueNumber, ""),
+		Output:              readPortalSocketOutput(match.instance.SocketPath),
+		Prompt:              readPortalTextFile(promptPath),
+		ContinuationContext: readPortalTextFile(continuationContextPath),
+		ContinuationPrompt:  readPortalTextFile(continuationPromptPath),
+		Log:                 readPortalTextFile(logPath),
+		Events:              eventsByRun[match.instance.Key],
 	}
 }
 
@@ -563,27 +647,33 @@ func portalRunFromState(repoRoot string, runState events.RunState, active *porta
 	}
 
 	logPath := portalLogPath(repoRoot, issueNumber, branch)
+	promptPath := portalArtifactPath(repoRoot, issueNumber, branch, ".sandman/rendered-prompt.md")
+	continuationContextPath := portalArtifactPath(repoRoot, issueNumber, branch, ".sandman/continuation-context.md")
+	continuationPromptPath := portalArtifactPath(repoRoot, issueNumber, branch, ".sandman/continue-prompt.md")
 	output := ""
 	if active != nil {
 		output = readPortalSocketOutput(active.SocketPath)
 	}
 
 	portalRun := portalRun{
-		Key:         runID,
-		RunID:       runID,
-		Kind:        kindForRun(runState),
-		Status:      statusOrDefault(status, runState.IsActive()),
-		IssueLabel:  issueLabel,
-		IssueNumber: issueNumber,
-		Branch:      branch,
-		StartedAt:   startedAt,
-		FinishedAt:  finishedAt,
-		Duration:    durationForRun(runState),
-		LogPath:     logPath,
-		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, branch),
-		Output:      output,
-		Log:         readPortalTextFile(logPath),
-		Events:      eventsByRun[runID],
+		Key:                 runID,
+		RunID:               runID,
+		Kind:                kindForRun(runState),
+		Status:              statusOrDefault(status, runState.IsActive()),
+		IssueLabel:          issueLabel,
+		IssueNumber:         issueNumber,
+		Branch:              branch,
+		StartedAt:           startedAt,
+		FinishedAt:          finishedAt,
+		Duration:            durationForRun(runState),
+		LogPath:             logPath,
+		LogURL:              portalLogDownloadURL(repoRoot, issueNumber, branch),
+		Output:              output,
+		Prompt:              readPortalTextFile(promptPath),
+		ContinuationContext: readPortalTextFile(continuationContextPath),
+		ContinuationPrompt:  readPortalTextFile(continuationPromptPath),
+		Log:                 readPortalTextFile(logPath),
+		Events:              eventsByRun[runID],
 	}
 	if active != nil {
 		portalRun.SocketPath = active.SocketPath
@@ -647,6 +737,22 @@ func portalLogDownloadURL(repoRoot string, issueNumber int, branch string) strin
 		return ""
 	}
 	return "/api/logs?path=" + url.QueryEscape(relPath)
+}
+
+func portalArtifactPath(repoRoot string, issueNumber int, branch, artifact string) string {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		if issueNumber <= 0 {
+			return ""
+		}
+		pattern := filepath.Join(repoRoot, ".sandman", "worktrees", "*", fmt.Sprintf("%d-*", issueNumber), artifact)
+		matches, err := filepath.Glob(pattern)
+		if err != nil || len(matches) == 0 {
+			return ""
+		}
+		return matches[0]
+	}
+	return filepath.Join(repoRoot, ".sandman", "worktrees", branch, artifact)
 }
 
 func groupPortalEventsByRun(eventsList []events.Event) map[string][]portalEvent {

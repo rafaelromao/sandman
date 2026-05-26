@@ -6,11 +6,11 @@ product
 
 ## Users
 
-Developers using Sandman locally to orchestrate AFK coding agents, especially when they need a web portal to monitor active and completed runs, inspect live output, and review logs or events without leaving the browser.
+Developers using Sandman locally to orchestrate AFK coding agents, especially when they need a portal to monitor active and completed launch records, inspect live output, and review logs or events without leaving the browser.
 
 ## Product Purpose
 
-Sandman exists to run coding agents in isolated sandboxes and keep those runs observable. The portal adds a local, repo-scoped monitoring surface for current and recent runs so users can track status, output, and history while work continues in the background.
+Sandman exists to run coding agents in isolated sandboxes and keep those launch records observable. The portal adds a local, repo-scoped view for current and recent launch records so users can track status, output, and history while work continues in the background.
 
 ## Brand Personality
 
@@ -27,7 +27,7 @@ Pragmatic, sharp, calm. It should feel reliable, technical, and in control, with
 ## Design Principles
 
 - Make state obvious fast, especially which runs are active, finished, blocked, or stale.
-- Keep the portal local-first and repo-scoped, with no ambiguity about what instance is being shown.
+- Keep the portal local-first and repo-scoped, with no ambiguity about what launch record is being shown.
 - Prefer familiar monitoring patterns over custom interaction when standard UI already solves the task.
 - Reveal detail progressively, so the main table stays scannable and deeper inspection is one step away.
 - Treat reliability as part of the design, with clear errors, empty states, and live updates that feel trustworthy.

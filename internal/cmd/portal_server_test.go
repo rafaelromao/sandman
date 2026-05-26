@@ -230,6 +230,135 @@ func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 	}
 }
 
+func TestPortal_LoadPortalRunsIncludesArtifactsAndEmptyStates(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(repoRoot, ".sandman", "worktrees", branch)
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "rendered-prompt.md"), []byte("# Rendered Prompt\n\nDo the thing.\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "continuation-context.md"), []byte("# Continuation Context\n\n## Completed\nDone.\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "continue-prompt.md"), []byte("Continue with the next step.\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "42.log"), []byte("\x1b[0mstdout line\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: time.Now().Add(-20 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": branch}},
+		{Type: "run.finished", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": branch}},
+		{Type: "run.started", Timestamp: time.Now().Add(-9 * time.Minute), RunID: "run-43", Issue: 43, Payload: map[string]any{"branch": "sandman/43-fix-bug"}},
+		{Type: "run.finished", Timestamp: time.Now().Add(-8 * time.Minute), RunID: "run-43", Issue: 43, Payload: map[string]any{"status": "success", "branch": "sandman/43-fix-bug"}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 runs, got %#v", runs)
+	}
+	byID := map[string]portalRun{}
+	for _, run := range runs {
+		byID[run.RunID] = run
+	}
+
+	run := byID["run-42"]
+	if run.Prompt != "# Rendered Prompt\n\nDo the thing.\n" {
+		t.Fatalf("expected rendered prompt, got %#v", run.Prompt)
+	}
+	if run.ContinuationContext != "# Continuation Context\n\n## Completed\nDone.\n" {
+		t.Fatalf("expected continuation context, got %#v", run.ContinuationContext)
+	}
+	if run.ContinuationPrompt != "Continue with the next step.\n" {
+		t.Fatalf("expected continuation prompt, got %#v", run.ContinuationPrompt)
+	}
+	if run.Log != "stdout line\n" {
+		t.Fatalf("expected sanitized log, got %#v", run.Log)
+	}
+
+	emptyRun := byID["run-43"]
+	if emptyRun.Prompt != "" || emptyRun.ContinuationContext != "" || emptyRun.ContinuationPrompt != "" || emptyRun.Log != "" {
+		t.Fatalf("expected missing artifacts to stay empty, got %#v", emptyRun)
+	}
+}
+
+func TestPortal_LoadPortalRunsFindsArtifactsForActiveRunsWithoutState(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "portal-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(repoRoot, ".sandman", "worktrees", branch)
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "rendered-prompt.md"), []byte("active prompt\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "continuation-context.md"), []byte("active context\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "continue-prompt.md"), []byte("active continue\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	activeSock := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1", "run.sock")
+	if err := os.MkdirAll(filepath.Dir(activeSock), 0755); err != nil {
+		t.Fatal(err)
+	}
+	activeLn, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = activeLn.Close() })
+	go func() {
+		conn, err := activeLn.Accept()
+		if err != nil {
+			return
+		}
+		_, _ = conn.Write([]byte("active output\n"))
+		_ = conn.Close()
+	}()
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %#v", runs)
+	}
+	run := runs[0]
+	if run.Kind != "active" {
+		t.Fatalf("expected active run, got %#v", run)
+	}
+	if run.Prompt != "active prompt\n" {
+		t.Fatalf("expected prompt from issue-number fallback, got %#v", run.Prompt)
+	}
+	if run.ContinuationContext != "active context\n" || run.ContinuationPrompt != "active continue\n" {
+		t.Fatalf("expected continuation artifacts from issue-number fallback, got %#v", run)
+	}
+}
+
 func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -249,7 +378,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active only", "Output", "Log", "Events", "Details", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`} {
+	for _, want := range []string{"Active only", "Output", "Prompt", "Continuation", "Log", "Events", "Details", "No rendered prompt file yet.", "No continuation context file yet.", "No continue prompt file yet.", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`, `renderTabButton(run.key, 'prompt'`, `renderTabButton(run.key, 'continuation'`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
@@ -459,6 +588,78 @@ func TestPortal_DownloadsLogFiles(t *testing.T) {
 	}
 }
 
+func TestPortal_CommandLauncherPersistsAndReturnsLiveOutput(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	record := launchPortalCommand(t, server.URL, `sh -lc 'printf "hello\n"; sleep 20'`)
+	if record.Status != "running" {
+		t.Fatalf("expected running command, got %#v", record)
+	}
+
+	waitForPortalCommand(t, server.URL, record.ID, func(cmd portalCommandRecord) bool {
+		return strings.Contains(cmd.Output, "hello")
+	})
+
+	server.Close()
+	server = startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	commands := readPortalCommands(t, server.URL)
+	if len(commands) != 1 {
+		t.Fatalf("expected 1 persisted command, got %#v", commands)
+	}
+	if commands[0].ID != record.ID || !strings.Contains(commands[0].Output, "hello") {
+		t.Fatalf("expected persisted command output, got %#v", commands[0])
+	}
+
+	stopPortalCommand(t, server.URL, record.ID)
+	waitForPortalCommand(t, server.URL, record.ID, func(cmd portalCommandRecord) bool {
+		return cmd.Status == "stopped"
+	})
+}
+
+func TestPortal_CommandLauncherStopsAndRelaunchesCommands(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	record := launchPortalCommand(t, server.URL, `sh -lc 'trap "exit 0" TERM; printf "running\n"; while :; do sleep 1; done'`)
+	stopPortalCommand(t, server.URL, record.ID)
+
+	stopped := waitForPortalCommand(t, server.URL, record.ID, func(cmd portalCommandRecord) bool {
+		return cmd.Status == "stopped"
+	})
+	if stopped.FinishedAt == nil {
+		t.Fatalf("expected stopped command to have finished timestamp: %#v", stopped)
+	}
+
+	relaunched := relaunchPortalCommand(t, server.URL, record.ID)
+	if relaunched.ID == record.ID {
+		t.Fatalf("expected relaunch to create new record, got %#v", relaunched)
+	}
+	if relaunched.RelaunchOf != record.ID {
+		t.Fatalf("expected relaunch link to original command, got %#v", relaunched)
+	}
+	if relaunched.Status != "running" {
+		t.Fatalf("expected relaunched command to be running, got %#v", relaunched)
+	}
+
+	stopPortalCommand(t, server.URL, relaunched.ID)
+	waitForPortalCommand(t, server.URL, relaunched.ID, func(cmd portalCommandRecord) bool {
+		return cmd.Status == "stopped"
+	})
+}
+
 func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -478,11 +679,37 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		if err == nil || !strings.Contains(err.Error(), "bind portal on 0.0.0.0") {
+		if err == nil || !strings.Contains(err.Error(), "bind portal on 127.0.0.1") {
 			t.Fatalf("expected bind error on wildcard bind, got %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for bind failure")
+	}
+}
+
+func TestPortal_PageExposesLauncherSection(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	for _, want := range []string{"Launcher", "Start command", "launcher-toggle", "sandman.portal.launcher.collapsed", "commandsApiPath", "/api/commands"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing %q\n%s", want, content[:min(1000, len(content))])
+		}
 	}
 }
 
@@ -506,7 +733,7 @@ func TestPortal_PrintListeningURL(t *testing.T) {
 		t.Fatal("timed out waiting for portal startup")
 	}
 
-	match := regexp.MustCompile(`http://0\.0\.0\.0:(\d+)`).FindStringSubmatch(out.String())
+	match := regexp.MustCompile(`http://127\.0\.0\.1:(\d+)`).FindStringSubmatch(out.String())
 	if len(match) != 2 {
 		cancel()
 		t.Fatalf("startup output missing listening URL: %q", out.String())
@@ -601,6 +828,94 @@ func readPortalRuns(t *testing.T, baseURL string) []portalRun {
 		t.Fatal(err)
 	}
 	return payload.Runs
+}
+
+func readPortalCommands(t *testing.T, baseURL string) []portalCommandRecord {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Commands []portalCommandRecord `json:"commands"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Commands
+}
+
+func launchPortalCommand(t *testing.T, baseURL, command string) portalCommandRecord {
+	t.Helper()
+	body := strings.NewReader(`{"command":` + strconv.Quote(command) + `}`)
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/commands", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var record portalCommandRecord
+	if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
+func stopPortalCommand(t *testing.T, baseURL, id string) portalCommandRecord {
+	t.Helper()
+	return portalCommandAction(t, baseURL, id, "stop")
+}
+
+func relaunchPortalCommand(t *testing.T, baseURL, id string) portalCommandRecord {
+	t.Helper()
+	return portalCommandAction(t, baseURL, id, "relaunch")
+}
+
+func portalCommandAction(t *testing.T, baseURL, id, action string) portalCommandRecord {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/commands/"+url.PathEscape(id)+"/"+action, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var record portalCommandRecord
+	if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
+func waitForPortalCommand(t *testing.T, baseURL, id string, predicate func(portalCommandRecord) bool) portalCommandRecord {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, record := range readPortalCommands(t, baseURL) {
+			if record.ID == id && predicate(record) {
+				return record
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for command %s", id)
+	return portalCommandRecord{}
 }
 
 type portalHTTPServer struct {
