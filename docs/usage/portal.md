@@ -21,7 +21,7 @@ When the server starts, it prints the URL to open in your browser.
 - Live Sandman launch records in the current repository
 - Active and completed launch records from `.sandman/events.jsonl`
 - Command history and log links from `.sandman/logs/`
-- JSON API endpoints at `/api/commands`, `/api/instances`, and `/api/logs`
+- JSON API endpoints at `/api/runs`, `/api/instances`, and `/api/logs`
 
 The portal rescans the repository on each poll, so new `sandman run` processes appear without restarting it. That makes it useful when several launch records are active in the same repo.
 

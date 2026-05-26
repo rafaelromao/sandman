@@ -144,7 +144,7 @@ sandman portal [flags]
 |------|---------|-------------|
 | `--port` | `5000` | Port to bind on `0.0.0.0` |
 
-The portal is repo-scoped: it scans the current repository's `.sandman/runs/` tree on each poll and shows every live Sandman launch record it finds there, plus command status and logs from the event and log files. It exposes `/api/commands`, `/api/instances`, and `/api/logs`. New `sandman run` processes appear on the next poll without restarting the portal.
+The portal is repo-scoped: it scans the current repository's `.sandman/runs/` tree on each poll and shows every live Sandman launch record it finds there, plus command status and logs from the event and log files. It exposes `/api/runs`, `/api/instances`, and `/api/logs`. New `sandman run` processes appear on the next poll without restarting the portal.
 
 Use it when you want a browser view of multiple launch records in the same repo. The portal observes launch records; it does not start, stop, or retry them.
 

@@ -99,7 +99,7 @@ The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`
 The `{{.PromptFile}}` key available in agent command templates, resolved to the relative path of the rendered prompt file.
 
 **Command**:
-A tracked launch record surfaced by the portal. This is the canonical noun for a launch row and its API representation.
+A tracked launch record surfaced by the portal. This is the canonical noun for a launch row.
 _Avoid_: run record, launch record, job.
 
 **ResolvedBatch**:
