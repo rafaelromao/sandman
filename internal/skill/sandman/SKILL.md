@@ -19,8 +19,6 @@ sandman pr-merge
 sandman continuation
 ```
 
-For issue work, default to `sandman implement`. If it succeeds and the PR is fully approved, follow with `sandman pr-merge`.
-
 ## Modes
 
 - `implement` -> `sandman-implement`
