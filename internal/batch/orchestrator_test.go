@@ -999,11 +999,10 @@ agents:
 		t.Fatalf("read prompt: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, "Work in the current Sandman-created worktree on `sandman/42-fix-login-bug`.") {
-		t.Errorf("prompt missing expected worktree contract, got:\n%s", got)
-	}
-	if !strings.Contains(got, "gh pr comment <N> --body \"/oc review\"") {
-		t.Errorf("prompt missing review command, got:\n%s", got)
+	for _, want := range []string{"Sandman Bootstrap", "~/.agents/skills/sandman/SKILL.md", "/oc review"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing %q, got:\n%s", want, got)
+		}
 	}
 
 	markerPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-login-bug", "agent-ran.txt")
@@ -2432,6 +2431,12 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 		t.Fatalf("create git config dir: %v", err)
 	}
 
+	// Ensure the shared skill exists so buildStartOptions includes it.
+	sharedSkillDir := filepath.Join(home, ".agents", "skills")
+	if err := os.MkdirAll(sharedSkillDir, 0755); err != nil {
+		t.Fatalf("create shared skill dir: %v", err)
+	}
+
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},
@@ -2453,8 +2458,8 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	if starter.startOpts.GitConfigPath != "" {
 		t.Errorf("expected GitConfigPath to be moved into ConfigMounts, got %q", starter.startOpts.GitConfigPath)
 	}
-	if len(starter.startOpts.AgentConfigDirs) != 3 {
-		t.Errorf("expected 3 agent config dirs (preset + gh + xdg git), got %d", len(starter.startOpts.AgentConfigDirs))
+	if len(starter.startOpts.AgentConfigDirs) != 4 {
+		t.Errorf("expected 4 agent config dirs (preset + skills + gh + xdg git), got %d", len(starter.startOpts.AgentConfigDirs))
 	}
 	if len(starter.startOpts.AgentConfigFiles) != 1 {
 		t.Errorf("expected 1 agent config file, got %d", len(starter.startOpts.AgentConfigFiles))
@@ -2486,7 +2491,7 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	for _, mount := range starter.startOpts.ConfigMounts {
 		seenTargets[mount.Target] = true
 	}
-	for _, target := range []string{"/.gitconfig", "/.config/gh", "/.config/git"} {
+	for _, target := range []string{"/.gitconfig", "/.config/gh", "/.config/git", "/.agents/skills"} {
 		if !seenTargets[target] {
 			t.Errorf("expected ConfigMount target %q, got %v", target, seenTargets)
 		}

@@ -693,6 +693,8 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 		if _, err := os.Stat(ghConfig); err == nil {
 			opts.AgentConfigDirs = append(opts.AgentConfigDirs, ghConfig)
 		}
+
+		opts.AgentConfigDirs = append(opts.AgentConfigDirs, filepath.Join(home, ".agents", "skills"))
 	}
 
 	for _, dir := range agentCfg.ConfigDirs {

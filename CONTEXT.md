@@ -85,11 +85,15 @@ The generated instruction file passed to an Agent, rendered from a template with
 _Avoid_: Instructions, query.
 
 **Default Prompt**:
-The canonical built-in prompt template embedded in Sandman at `internal/prompt/default_prompt.md`.
+The canonical bootstrap prompt template embedded in Sandman at `internal/prompt/default_prompt.md`. It injects issue-specific runtime context and points the agent at the shared Sandman skill.
 _Avoid_: Base prompt, stock prompt.
 
+**Shared Skill**:
+The embedded workflow artifact installed at `~/.agents/skills/sandman/SKILL.md` by `sandman init` and mounted into container runs.
+_Avoid_: global prompt, standalone prompt.
+
 **Project Prompt Template**:
-The repo-local `.sandman/prompt.md` template created from the Default Prompt by `sandman init` and materialized on run when missing.
+The repo-local `.sandman/prompt.md` bootstrap template created from the Default Prompt by `sandman init` and materialized on run when missing.
 _Avoid_: User prompt, custom prompt.
 
 **Prompt keys**:

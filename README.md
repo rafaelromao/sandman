@@ -23,6 +23,8 @@ sandman history
 sandman portal
 ```
 
+`sandman init` also installs the shared Sandman skill at `~/.agents/skills/sandman/SKILL.md` and mounts that directory into container runs.
+
 ## Overview
 
 Sandman manages the lifecycle of automated coding workflows:
