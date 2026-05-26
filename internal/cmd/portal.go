@@ -98,7 +98,7 @@ func NewPortalCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int("port", 5000, "Port to bind on 0.0.0.0")
+	cmd.Flags().Int("port", 5000, "Port to bind on 127.0.0.1")
 	return cmd
 }
 
@@ -119,9 +119,9 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 }
 
 func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writer) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
-		return fmt.Errorf("bind portal on 0.0.0.0:%d: %w", port, err)
+		return fmt.Errorf("bind portal on 127.0.0.1:%d: %w", port, err)
 	}
 	defer listener.Close()
 
@@ -131,7 +131,7 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 		actualPort = tcpAddr.Port
 	}
 
-	if _, err := fmt.Fprintf(out, "Portal listening on http://0.0.0.0:%d\n", actualPort); err != nil {
+	if _, err := fmt.Fprintf(out, "Portal listening on http://127.0.0.1:%d\n", actualPort); err != nil {
 		return fmt.Errorf("write portal address: %w", err)
 	}
 
@@ -160,6 +160,7 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 }
 
 func newPortalHandler(repoRoot string) http.Handler {
+	launcher, launcherErr := newPortalLauncher(repoRoot)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/instances", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -179,6 +180,79 @@ func newPortalHandler(repoRoot string) http.Handler {
 			"repoRoot":  repoRoot,
 			"instances": instances,
 		})
+	})
+	mux.HandleFunc("/api/commands", func(w http.ResponseWriter, r *http.Request) {
+		if launcherErr != nil {
+			http.Error(w, launcherErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			commands, err := launcher.list()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(map[string]any{"repoRoot": repoRoot, "commands": commands})
+		case http.MethodPost:
+			var payload struct {
+				Command string `json:"command"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid command payload", http.StatusBadRequest)
+				return
+			}
+			command, err := launcher.launch(payload.Command)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(command)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	mux.HandleFunc("/api/commands/", func(w http.ResponseWriter, r *http.Request) {
+		if launcherErr != nil {
+			http.Error(w, launcherErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/commands/"), "/")
+		if len(parts) != 2 || parts[0] == "" {
+			http.NotFound(w, r)
+			return
+		}
+		id, action := parts[0], parts[1]
+		switch r.Method {
+		case http.MethodPost:
+			var (
+				command portalCommandRecord
+				err     error
+			)
+			switch action {
+			case "stop":
+				command, err = launcher.stop(id)
+			case "relaunch":
+				command, err = launcher.relaunch(id)
+			default:
+				http.NotFound(w, r)
+				return
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(command)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	})
 	mux.HandleFunc("/api/runs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -247,6 +321,7 @@ func newPortalHandler(repoRoot string) http.Handler {
 		data := struct {
 			RepoRoot            string
 			PollInterval        int
+			CommandsPath        string
 			RunsPath            string
 			InstancesPath       string
 			RefreshPath         string
@@ -257,6 +332,7 @@ func newPortalHandler(repoRoot string) http.Handler {
 		}{
 			RepoRoot:            repoRoot,
 			PollInterval:        int(portalPollInterval / time.Millisecond),
+			CommandsPath:        "/api/commands",
 			RunsPath:            "/api/runs",
 			InstancesPath:       "/api/instances",
 			RefreshPath:         "/api/runs",

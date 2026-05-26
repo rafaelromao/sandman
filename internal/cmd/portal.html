@@ -544,6 +544,96 @@
       border-radius: 999px;
       background: var(--accent);
     }
+    .launcher-shell {
+      margin-bottom: 16px;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: linear-gradient(180deg, color-mix(in oklch, var(--surface) 92%, var(--text) 8%), var(--surface));
+      box-shadow: var(--shadow);
+    }
+    .launcher-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .launcher-head h2 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: -0.03em;
+    }
+    .launcher-head .subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+    .launcher-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .launcher-panel {
+      display: grid;
+      gap: 14px;
+      margin-top: 16px;
+    }
+    .launch-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: end;
+    }
+    .launch-field {
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    .launch-field textarea {
+      width: 100%;
+      min-height: 74px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: var(--surface-2);
+      color: var(--text);
+      font: inherit;
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+    }
+    .launch-field textarea::placeholder {
+      color: var(--muted);
+    }
+    .launch-note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .command-row {
+      cursor: pointer;
+    }
+    .command-row:hover td {
+      background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
+    }
+    .command-row.running td {
+      background: color-mix(in oklch, var(--accent) 10%, var(--surface));
+    }
+    .command-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
     .table-shell {
       border: 1px solid var(--border);
       border-radius: 22px;
@@ -846,6 +936,7 @@
     }
     @media (max-width: 960px) {
       .masthead,
+      .launch-form,
       .detail-grid {
         grid-template-columns: 1fr;
       }
@@ -895,6 +986,44 @@
       </div>
     </header>
 
+    <section class="launcher-shell" aria-label="Command launcher">
+      <div class="launcher-head">
+        <div>
+          <p class="eyebrow">Launcher</p>
+          <h2>Launch Sandman commands</h2>
+          <p class="subtitle">Repo-scoped shell. History and output stay after refresh.</p>
+        </div>
+        <button id="launcher-toggle" class="launcher-toggle" type="button" aria-expanded="true" aria-controls="launcher-panel">Collapse</button>
+      </div>
+      <div id="launcher-panel" class="launcher-panel">
+        <form id="launch-form" class="launch-form">
+          <label class="launch-field" for="command-input">
+            Start command
+            <textarea id="command-input" placeholder="sandman run --help"></textarea>
+          </label>
+          <button class="action-btn" type="submit">Launch</button>
+        </form>
+        <div class="launch-note">Runs in <code>{{.RepoRoot}}</code>. Output is captured live.</div>
+        <div class="table-shell" aria-label="Launched commands">
+          <table>
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Duration</th>
+                <th>PID</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="commands-body">
+              <tr><td colspan="6"><div class="empty-state">Loading launcher history.</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <div id="error-banner" class="error-banner" role="status" aria-live="polite"></div>
 
     <section class="toolbar" aria-label="Run filters">
@@ -935,6 +1064,7 @@
 
   <script>
     const apiPath = "{{.RefreshPath}}";
+    const commandsApiPath = "{{.CommandsPath}}";
     let pollInterval = {{.PollInterval}};
     const settingsToggle = document.getElementById('settings-toggle');
     const settingsPanel = document.getElementById('settings-panel');
@@ -944,10 +1074,16 @@
     const supportedThemes = new Set({{.SupportedThemesJSON}});
     const statusFilter = document.getElementById('status-filter');
     const activeOnlyToggle = document.getElementById('active-only');
+    const launcherToggle = document.getElementById('launcher-toggle');
+    const launcherPanel = document.getElementById('launcher-panel');
+    const launchForm = document.getElementById('launch-form');
+    const commandInput = document.getElementById('command-input');
+    const commandsBody = document.getElementById('commands-body');
     const runsBody = document.getElementById('runs-body');
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
     const lastUpdated = document.getElementById('last-updated');
+    const launcherStorageKey = 'sandman.portal.launcher.collapsed';
 
     function systemTheme() {
       return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'catppuccin-mocha' : 'catppuccin-frappe';
@@ -986,10 +1122,42 @@
       }
     }
 
+    function readStoredLauncherCollapsed() {
+      try {
+        return localStorage.getItem(launcherStorageKey) === 'true';
+      } catch (err) {
+        return false;
+      }
+    }
+
+    function applyLauncherCollapsed(collapsed, persist) {
+      const isCollapsed = Boolean(collapsed);
+      if (launcherPanel) {
+        launcherPanel.hidden = isCollapsed;
+      }
+      if (launcherToggle) {
+        launcherToggle.setAttribute('aria-expanded', String(!isCollapsed));
+        launcherToggle.textContent = isCollapsed ? 'Expand' : 'Collapse';
+      }
+      if (persist) {
+        try {
+          localStorage.setItem(launcherStorageKey, String(isCollapsed));
+        } catch (err) {
+        }
+      }
+    }
+
     applyTheme(document.documentElement.dataset.theme || readStoredTheme() || systemTheme(), false);
     if (themePicker) {
       themePicker.value = document.documentElement.dataset.theme || 'catppuccin-frappe';
       themePicker.addEventListener('change', () => applyTheme(themePicker.value, true));
+    }
+
+    applyLauncherCollapsed(readStoredLauncherCollapsed(), false);
+    if (launcherToggle) {
+      launcherToggle.addEventListener('click', () => {
+        applyLauncherCollapsed(!launcherPanel.hidden, true);
+      });
     }
 
     if (settingsToggle && settingsPanel) {
@@ -1019,6 +1187,9 @@
     }
 
     const state = {
+      commands: [],
+      commandsLoaded: false,
+      commandExpanded: new Set(),
       runs: [],
       expanded: new Set(),
       tabs: new Map(),
@@ -1110,7 +1281,7 @@
       if (run.kind === 'active') return 'active';
       if (status === 'success') return 'success';
       if (status === 'failure' || status === 'failed' || status === 'error') return 'failure';
-      if (status === 'warning' || status === 'stale' || status === 'blocked') return 'warning';
+      if (status === 'warning' || status === 'stale' || status === 'blocked' || status === 'stopped' || status === 'exited') return 'warning';
       return status || 'default';
     }
 
@@ -1269,6 +1440,91 @@
       return output;
     }
 
+    function commandStatusClass(command) {
+      const status = (command.status || '').toLowerCase();
+      if (status === 'running') return 'active';
+      if (status === 'success') return 'success';
+      if (status === 'failure' || status === 'failed' || status === 'error') return 'failure';
+      if (status === 'stopped' || status === 'exited') return 'warning';
+      return status || 'default';
+    }
+
+    function renderCommandStatusBadge(command) {
+      const klass = commandStatusClass(command);
+      const label = command.status || 'unknown';
+      return '<span class="badge ' + escapeHTML(klass) + '"><span class="dot"></span>' + escapeHTML(label) + '</span>';
+    }
+
+    function formatPid(pid) {
+      return Number.isFinite(pid) && pid > 0 ? String(pid) : '—';
+    }
+
+    function renderCommandActions(command) {
+      const buttons = [];
+      if ((command.status || '').toLowerCase() === 'running') {
+        buttons.push('<button type="button" class="action-btn" data-action="stop-command" data-command-id="' + escapeHTML(command.id) + '">Stop</button>');
+      }
+      buttons.push('<button type="button" class="action-btn" data-action="relaunch-command" data-command-id="' + escapeHTML(command.id) + '">Relaunch</button>');
+      return '<div class="command-actions">' + buttons.join('') + '</div>';
+    }
+
+    function renderCommandRow(command) {
+      const isOpen = state.commandExpanded.has(command.id);
+      const output = command.output && String(command.output).trim()
+        ? command.output
+        : ((command.status || '').toLowerCase() === 'running' ? 'No live output captured yet.' : 'Command finished. Open log for details.');
+      const log = command.logUrl ? '<a class="action-btn" href="' + escapeHTML(command.logUrl) + '" download>Download log</a>' : '<span class="muted">No log file yet.</span>';
+      return [
+        '<tr class="command-row ' + escapeHTML((command.status || '').toLowerCase()) + '" data-action="toggle-command" data-command-id="' + escapeHTML(command.id) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
+        '  <td>',
+        '    <div class="run-title">',
+        '      <span class="name">' + escapeHTML(command.command || command.id) + '</span>',
+        '      <span class="meta-line mono">' + escapeHTML(command.workingDir || 'Repo scoped') + '</span>',
+        '    </div>',
+        '  </td>',
+        '  <td>' + renderCommandStatusBadge(command) + '</td>',
+        '  <td class="mono">' + escapeHTML(formatTime(command.startedAt)) + '</td>',
+        '  <td class="mono">' + escapeHTML(formatDuration(command.duration)) + '</td>',
+        '  <td class="mono">' + escapeHTML(formatPid(command.pid)) + '</td>',
+        '  <td>' + renderCommandActions(command) + '</td>',
+        '</tr>',
+        isOpen ? (
+          '<tr class="detail-row" data-detail-for="' + escapeHTML(command.id) + '">' +
+          '<td colspan="6">' +
+          '<div class="detail-panel">' +
+          '<div class="detail-grid">' +
+          renderDetailKV('Command', command.command) +
+          renderDetailKV('Status', command.status) +
+          renderDetailKV('Started', formatTime(command.startedAt)) +
+          renderDetailKV('Finished', formatTime(command.finishedAt)) +
+          renderDetailKV('Duration', formatDuration(command.duration)) +
+          renderDetailKV('PID', formatPid(command.pid)) +
+          renderDetailKV('Source', command.workingDir) +
+          '<div class="kv"><span>Log file</span>' + log + '</div>' +
+          '</div>' +
+          '<section class="detail-box tab-pane fill">' +
+          '<h3>Output</h3>' +
+          renderTerminalBlock(output) +
+          '</section>' +
+          '</div>' +
+          '</td>' +
+          '</tr>'
+        ) : ''
+      ].join('');
+    }
+
+    function renderCommandEmpty(message) {
+      return '<tr><td colspan="6"><div class="empty-state">' + escapeHTML(message) + '</div></td></tr>';
+    }
+
+    function renderCommands() {
+      if (!state.commands.length) {
+        commandsBody.innerHTML = renderCommandEmpty(state.commandsLoaded ? 'No launched commands yet.' : 'Loading launcher history.');
+        return;
+      }
+      commandsBody.innerHTML = state.commands.map(renderCommandRow).join('');
+    }
+
     function renderEmpty(message) {
       return '<tr><td colspan="7"><div class="empty-state">' + escapeHTML(message) + '</div></td></tr>';
     }
@@ -1293,7 +1549,7 @@
       lastUpdated.textContent = 'Updated ' + now;
     }
 
-    async function refresh() {
+    async function refreshRuns() {
       try {
         const res = await fetch(apiPath, { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1311,10 +1567,64 @@
       }
     }
 
+    async function refreshCommands() {
+      try {
+        const res = await fetch(commandsApiPath, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const payload = await res.json();
+        state.commands = Array.isArray(payload.commands) ? payload.commands : [];
+        state.commandsLoaded = true;
+        errorBanner.style.display = 'none';
+        errorBanner.textContent = '';
+        renderCommands();
+      } catch (err) {
+        state.commandsLoaded = true;
+        errorBanner.textContent = 'Launcher refresh failed: ' + err.message;
+        errorBanner.style.display = 'block';
+      }
+    }
+
+    async function refresh() {
+      await Promise.allSettled([refreshCommands(), refreshRuns()]);
+    }
+
     function toggleRun(runKey) {
       if (state.expanded.has(runKey)) state.expanded.delete(runKey);
       else state.expanded.add(runKey);
       render();
+    }
+
+    function toggleCommand(commandId) {
+      if (state.commandExpanded.has(commandId)) state.commandExpanded.delete(commandId);
+      else state.commandExpanded.add(commandId);
+      renderCommands();
+    }
+
+    if (launchForm) {
+      launchForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const command = String(commandInput ? commandInput.value : '').trim();
+        if (!command) {
+          errorBanner.textContent = 'Enter command to launch.';
+          errorBanner.style.display = 'block';
+          return;
+        }
+        try {
+          const res = await fetch(commandsApiPath, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command }),
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const launched = await res.json();
+          if (commandInput) commandInput.value = '';
+          state.commandExpanded.add(launched.id);
+          await refresh();
+        } catch (err) {
+          errorBanner.textContent = 'Launch failed: ' + err.message;
+          errorBanner.style.display = 'block';
+        }
+      });
     }
 
     runsBody.addEventListener('click', (event) => {
@@ -1346,6 +1656,44 @@
       event.preventDefault();
       const runKey = row.getAttribute('data-run-key');
       if (runKey) toggleRun(runKey);
+    });
+
+    commandsBody.addEventListener('click', async (event) => {
+      const button = event.target.closest('button[data-action]');
+      if (button) {
+        event.preventDefault();
+        event.stopPropagation();
+        const commandId = button.getAttribute('data-command-id');
+        if (!commandId) return;
+        const action = button.getAttribute('data-action');
+        try {
+          const res = await fetch('/api/commands/' + encodeURIComponent(commandId) + '/' + action.replace('-command', ''), { method: 'POST' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const record = await res.json();
+          state.commandExpanded.add(record.id);
+          await refresh();
+        } catch (err) {
+          errorBanner.textContent = action === 'stop-command' ? 'Stop failed: ' + err.message : 'Relaunch failed: ' + err.message;
+          errorBanner.style.display = 'block';
+        }
+        return;
+      }
+
+      const row = event.target.closest('tr[data-action="toggle-command"]');
+      if (!row) return;
+      const commandId = row.getAttribute('data-command-id');
+      if (!commandId) return;
+      toggleCommand(commandId);
+    });
+
+    commandsBody.addEventListener('keydown', (event) => {
+      if (event.target.closest('button[data-action]')) return;
+      const row = event.target.closest('tr[data-action="toggle-command"]');
+      if (!row) return;
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      const commandId = row.getAttribute('data-command-id');
+      if (commandId) toggleCommand(commandId);
     });
 
     statusFilter.addEventListener('change', () => {
