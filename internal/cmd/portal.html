@@ -380,12 +380,16 @@
       min-width: 0;
     }
     .settings-wrap {
-      display: grid;
-      justify-items: end;
-      gap: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
     }
     .settings-toggle {
       align-self: start;
+      min-width: 0;
+      padding-inline: 14px;
     }
     .meta-line {
       margin-top: 10px;
@@ -903,6 +907,7 @@
     }
     .command-pane-tabs .tab-btn {
       min-width: 0;
+      padding-inline: 14px;
     }
     .command-pane-tabs .tab-btn[aria-selected="true"] {
       background: var(--accent);
@@ -915,6 +920,7 @@
       gap: 12px;
       min-height: 0;
       overflow: auto;
+      padding-top: 2px;
     }
     .command-picker-field > span,
     .command-field > span,
@@ -1436,7 +1442,8 @@
     }
 
     function renderPaneTab(activePane, pane, label) {
-      return '<button type="button" class="tab-btn" data-action="set-run-pane" data-run-pane="' + escapeHTML(pane) + '" role="tab" aria-selected="' + (activePane === pane ? 'true' : 'false') + '">' + escapeHTML(label) + '</button>';
+      const active = activePane === pane;
+      return '<button type="button" id="command-pane-tab-' + escapeHTML(pane) + '" class="tab-btn" data-action="set-run-pane" data-run-pane="' + escapeHTML(pane) + '" role="tab" aria-selected="' + (active ? 'true' : 'false') + '" aria-controls="command-pane" tabindex="' + (active ? '0' : '-1') + '">' + escapeHTML(label) + '</button>';
     }
 
     function renderRunPane(state, pane) {
@@ -1505,7 +1512,7 @@
         renderPaneTab(activePane, 'prompt', 'Prompt'),
         renderPaneTab(activePane, 'runtime', 'Runtime'),
         '</div>',
-        '<div class="command-pane">',
+        '<div id="command-pane" class="command-pane" role="tabpanel" aria-labelledby="command-pane-tab-' + escapeHTML(activePane) + '">',
         renderRunPane(state, activePane),
         '</div>',
       ].join('');
@@ -1570,6 +1577,12 @@
         commandPanelBody.innerHTML = renderConfigCommandBody(state);
       }
       applyCommandFieldState(type, state);
+    }
+
+    function focusActiveRunPaneTab() {
+      if (!commandPanelBody) return;
+      const tab = commandPanelBody.querySelector('#command-pane-tab-' + (commandState.run.runPane || 'run'));
+      if (tab) tab.focus({ preventScroll: true });
     }
 
     function applyCommandFieldState(type, state) {
@@ -2148,12 +2161,14 @@
       commandPanelBody.addEventListener('click', (event) => {
         const button = event.target.closest('button[data-action="set-run-pane"]');
         if (!button || commandPanelType !== 'run') return;
+        syncCommandPanelState('run');
         const runPane = button.getAttribute('data-run-pane') || 'run';
         commandState.run = {
           ...(commandState.run || {}),
           runPane,
         };
         renderCommandPanelBody('run');
+        focusActiveRunPaneTab();
       });
     }
 
