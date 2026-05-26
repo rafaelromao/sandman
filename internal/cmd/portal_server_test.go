@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -73,7 +74,7 @@ func TestPortal_APIRescansRunsOnEachRequest(t *testing.T) {
 
 	createUnixRunSocket(t, filepath.Join(repoRoot, ".sandman", "runs", "run-1", "run.sock"))
 
-	handler := newPortalHandler(repoRoot)
+	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
@@ -206,7 +207,7 @@ func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	runs := readPortalRuns(t, server.URL)
@@ -235,7 +236,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -252,6 +253,131 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
+	}
+}
+
+func TestPortal_PageIncludesRunLauncherDefaults(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		DefaultAgent:      "pi",
+		ReviewCommand:     "/review please",
+		DefaultParallel:   6,
+		StartDelay:        9,
+		ContainerCapacity: 3,
+		MaxContainers:     2,
+		Sandbox:           "worktree",
+		Git:               config.GitConfig{BaseBranch: "trunk"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+			"pi":       {Preset: "pi", Command: "pi", Model: "anthropic/opus"},
+		},
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(cfg), cfg))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	for _, want := range []string{"Run launcher", "Structured `sandman run`", "Prompt-only", "Issue-driven", "Launch run", "/review please", "trunk", "pi", "worktree", "6", "9", "3", "2"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing %q\n%s", want, content[:min(900, len(content))])
+		}
+	}
+}
+
+func TestPortal_LaunchEndpointBuildsSandmanRunCommand(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		DefaultAgent:      "opencode",
+		ReviewCommand:     "/oc review",
+		DefaultParallel:   4,
+		ContainerCapacity: 4,
+		MaxContainers:     0,
+		Sandbox:           "podman",
+		Git:               config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+			"pi":       {Preset: "pi", Command: "pi"},
+		},
+	}
+
+	prevStart := portalStartRun
+	defer func() { portalStartRun = prevStart }()
+
+	var gotRepoRoot string
+	var gotArgs []string
+	portalStartRun = func(ctx context.Context, repoRoot string, args []string) error {
+		gotRepoRoot = repoRoot
+		gotArgs = append([]string(nil), args...)
+		return nil
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(cfg), cfg))
+	defer server.Close()
+
+	tests := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{
+			name: "issue driven label",
+			body: `{"launchMode":"issue-driven","selectionMode":"label","label":"ready-for-agent","includeDependencies":true,"prompt":"Return only OK.","reviewCommand":"/custom review","agent":"pi","model":"anthropic/opus","baseBranch":"trunk","parallel":6,"startDelay":7,"containerCapacity":3,"maxContainers":2,"sandbox":"worktree","promptArgs":"FOO=bar\nBAZ=qux"}`,
+			want: []string{"run", "--prompt", "Return only OK.", "--review-command", "/custom review", "--agent", "pi", "--model", "anthropic/opus", "--base-branch", "trunk", "--parallel", "6", "--start-delay", "7", "--sandbox", "worktree", "--container-capacity", "3", "--max-containers", "2", "--include-dependencies", "--prompt-arg", "FOO=bar", "--prompt-arg", "BAZ=qux", "--label", "ready-for-agent"},
+		},
+		{
+			name: "prompt only",
+			body: `{"launchMode":"prompt-only","prompt":"Return only OK.","reviewCommand":"/custom review","agent":"opencode","baseBranch":"main","parallel":4,"sandbox":"podman"}`,
+			want: []string{"run", "--prompt", "Return only OK.", "--review-command", "/custom review", "--agent", "opencode", "--base-branch", "main", "--parallel", "4", "--sandbox", "podman", "--container-capacity", "4"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRepoRoot = ""
+			gotArgs = nil
+			req, err := http.NewRequest(http.MethodPost, server.URL+"/api/launch", strings.NewReader(tt.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusAccepted {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("expected 202, got %d: %s", resp.StatusCode, body)
+			}
+			if gotRepoRoot != repoRoot {
+				t.Fatalf("expected repo root %q, got %q", repoRoot, gotRepoRoot)
+			}
+			if len(gotArgs) != len(tt.want) {
+				t.Fatalf("expected %d args, got %d: %#v", len(tt.want), len(gotArgs), gotArgs)
+			}
+			for i, want := range tt.want {
+				if gotArgs[i] != want {
+					t.Fatalf("arg %d: got %q want %q (all args %#v)", i, gotArgs[i], want, gotArgs)
+				}
+			}
+		})
 	}
 }
 
@@ -275,7 +401,7 @@ func TestPortal_DownloadsLogFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	href := "/api/logs?path=" + url.QueryEscape(filepath.Join(".sandman", "logs", "1.log"))
@@ -313,7 +439,7 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- runPortalServer(ctx, t.TempDir(), port, out)
+		errCh <- runPortalServer(ctx, t.TempDir(), port, out, portalLaunchDataFromConfig(nil), nil)
 	}()
 
 	select {
@@ -336,7 +462,7 @@ func TestPortal_PrintListeningURL(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runPortalServer(ctx, repoRoot, 0, out)
+		done <- runPortalServer(ctx, repoRoot, 0, out, portalLaunchDataFromConfig(nil), nil)
 	}()
 
 	select {

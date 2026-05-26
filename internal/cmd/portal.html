@@ -486,6 +486,120 @@
       color: var(--text);
       font: inherit;
     }
+    .launcher {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 14px;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .launcher-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      gap: 18px;
+    }
+    .launcher-head h2 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      letter-spacing: -0.03em;
+    }
+    .launcher-subtitle {
+      margin: 6px 0 0;
+      color: var(--muted);
+    }
+    .launcher-form {
+      display: grid;
+      gap: 14px;
+    }
+    .launcher-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .launch-card {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--surface-2);
+      min-width: 0;
+    }
+    .launch-card[hidden] { display: none; }
+    .launch-card h3 {
+      margin: 0;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+    .launch-field {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .launch-field > span,
+    .launch-field > label:first-child {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    .launch-field input,
+    .launch-field textarea,
+    .launch-field select {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: var(--surface-3);
+      color: var(--text);
+      font: inherit;
+    }
+    .launch-field textarea {
+      min-height: 88px;
+      resize: vertical;
+    }
+    .launch-field input[type="number"] {
+      width: 120px;
+    }
+    .launch-radio-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 12px;
+    }
+    .launch-radio {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+      font-size: 13px;
+      text-transform: none;
+      letter-spacing: normal;
+    }
+    .launch-radio input {
+      margin: 0;
+      accent-color: var(--accent);
+    }
+    .launch-note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .launcher-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+    .launcher-actions .action-btn[disabled] {
+      cursor: progress;
+      opacity: 0.72;
+    }
     .toolbar {
       display: flex;
       align-items: center;
@@ -849,12 +963,16 @@
       .detail-grid {
         grid-template-columns: 1fr;
       }
+      .launcher-grid {
+        grid-template-columns: 1fr;
+      }
       .settings-wrap { justify-items: start; }
       .detail-panel { min-height: 0; }
     }
     @media (max-width: 760px) {
       main { padding-inline: 12px; }
       h1 { font-size: 24px; }
+      .launcher { padding: 14px; }
       .toolbar { padding: 12px; }
       .table-shell { border-radius: 16px; }
       .detail-panel { padding: 12px; }
@@ -894,6 +1012,122 @@
         </div>
       </div>
     </header>
+
+    <section class="launcher" aria-label="Run launcher">
+      <div class="launcher-head">
+        <div>
+          <p class="eyebrow">Run launcher</p>
+          <h2>Structured `sandman run`</h2>
+          <p class="launcher-subtitle">Launch issue-driven or prompt-only runs with current config defaults prefilled.</p>
+        </div>
+        <div id="launch-status" class="status-pill"><span class="dot"></span><strong>Ready</strong></div>
+      </div>
+
+      <form id="run-launcher" class="launcher-form">
+        <div class="launcher-grid">
+          <section class="launch-card">
+            <h3>Selection</h3>
+            <div class="launch-field">
+              <span>Launch mode</span>
+              <div class="launch-radio-group">
+                {{.LaunchData.LaunchModeOptionsHTML}}
+              </div>
+              <div class="launch-note">Prompt-only skips issue lookup. Issue-driven can select issues, label, query, or next ready issue.</div>
+            </div>
+
+            <div class="launch-field" data-launch-mode-panel="issue-driven">
+              <span>Issue selection mode</span>
+              <div class="launch-radio-group">
+                {{.LaunchData.SelectionModeOptionsHTML}}
+              </div>
+            </div>
+
+            <div class="launch-field" data-selection-panel="issues">
+              <span>Issue numbers</span>
+              <textarea id="launcher-issues" spellcheck="false" placeholder="42, 43">{{.LaunchData.Issues}}</textarea>
+            </div>
+            <div class="launch-field" data-selection-panel="label" hidden>
+              <span>Label</span>
+              <input id="launcher-label" type="text" value="{{.LaunchData.Label}}" placeholder="ready-for-agent">
+            </div>
+            <div class="launch-field" data-selection-panel="query" hidden>
+              <span>Query</span>
+              <textarea id="launcher-query" spellcheck="false" placeholder="is:open label:ready-for-agent">{{.LaunchData.Query}}</textarea>
+            </div>
+            <div class="launch-field" data-selection-panel="next" hidden>
+              <span>Next</span>
+              <input id="launcher-next" type="number" min="1" step="1" value="{{.LaunchData.Next}}">
+            </div>
+            <label class="launch-radio">
+              <input id="launcher-include-dependencies" type="checkbox"{{if .LaunchData.IncludeDependencies}} checked{{end}}>
+              Include dependencies
+            </label>
+          </section>
+
+          <section class="launch-card">
+            <h3>Prompt and runtime</h3>
+            <div class="launch-field">
+              <span>Prompt</span>
+              <textarea id="launcher-prompt" spellcheck="false" placeholder="Return only OK.">{{.LaunchData.Prompt}}</textarea>
+            </div>
+            <div class="launch-field">
+              <span>Template</span>
+              <input id="launcher-template" type="text" value="{{.LaunchData.Template}}" placeholder=".sandman/prompt.md">
+            </div>
+            <div class="launch-field">
+              <span>Review command</span>
+              <input id="launcher-review-command" type="text" value="{{.LaunchData.ReviewCommand}}" placeholder="/oc review">
+            </div>
+            <div class="launch-field">
+              <span>Prompt args</span>
+              <textarea id="launcher-prompt-args" spellcheck="false" placeholder="KEY=VALUE, one per line"></textarea>
+              <div class="launch-note">Repeatable `--prompt-arg` values. One `KEY=VALUE` per line.</div>
+            </div>
+
+            <div class="launch-field">
+              <span>Agent</span>
+              <select id="launcher-agent">
+{{.LaunchData.AgentOptionsHTML}}
+              </select>
+            </div>
+            <div class="launch-field">
+              <span>Model</span>
+              <input id="launcher-model" type="text" value="{{.LaunchData.Model}}" placeholder="gpt-4.1">
+            </div>
+            <div class="launch-field">
+              <span>Base branch</span>
+              <input id="launcher-base-branch" type="text" value="{{.LaunchData.BaseBranch}}" placeholder="main">
+            </div>
+            <div class="launch-field">
+              <span>Sandbox</span>
+              <select id="launcher-sandbox">
+{{.LaunchData.SandboxOptionsHTML}}
+              </select>
+            </div>
+            <div class="launch-field">
+              <span>Parallel</span>
+              <input id="launcher-parallel" type="number" min="1" step="1" value="{{.LaunchData.Parallel}}">
+            </div>
+            <div class="launch-field">
+              <span>Start delay (seconds)</span>
+              <input id="launcher-start-delay" type="number" min="0" step="1" value="{{.LaunchData.StartDelay}}">
+            </div>
+            <div class="launch-field">
+              <span>Container capacity</span>
+              <input id="launcher-container-capacity" type="number" min="0" step="1" value="{{.LaunchData.ContainerCapacity}}">
+            </div>
+            <div class="launch-field">
+              <span>Max containers</span>
+              <input id="launcher-max-containers" type="number" min="0" step="1" value="{{.LaunchData.MaxContainers}}">
+            </div>
+          </section>
+        </div>
+
+        <div class="launcher-actions">
+          <button id="launch-run-button" class="action-btn" type="submit">Launch run</button>
+        </div>
+      </form>
+    </section>
 
     <div id="error-banner" class="error-banner" role="status" aria-live="polite"></div>
 
@@ -938,6 +1172,13 @@
     let pollInterval = {{.PollInterval}};
     const settingsToggle = document.getElementById('settings-toggle');
     const settingsPanel = document.getElementById('settings-panel');
+    const launchForm = document.getElementById('run-launcher');
+    const launchButton = document.getElementById('launch-run-button');
+    const launchStatus = document.getElementById('launch-status');
+    const launchModePanels = launchForm ? Array.from(launchForm.querySelectorAll('[data-launch-mode-panel]')) : [];
+    const selectionPanels = launchForm ? Array.from(launchForm.querySelectorAll('[data-selection-panel]')) : [];
+    const launchModeInputs = launchForm ? Array.from(launchForm.querySelectorAll('input[name="launch-mode"]')) : [];
+    const selectionModeInputs = launchForm ? Array.from(launchForm.querySelectorAll('input[name="selection-mode"]')) : [];
     const themePicker = document.getElementById('theme-picker');
     const pollIntervalInput = document.getElementById('poll-interval');
     const themeStorageKey = 'sandman.portal.theme';
@@ -997,6 +1238,107 @@
         const isOpen = !settingsPanel.hidden;
         settingsPanel.hidden = isOpen;
         settingsToggle.setAttribute('aria-expanded', String(!isOpen));
+      });
+    }
+
+    function currentLaunchValue(name, fallback) {
+      const input = launchForm ? launchForm.querySelector('input[name="' + name + '"]:checked') : null;
+      return input ? input.value : fallback;
+    }
+
+    function setLaunchStatus(message) {
+      if (!launchStatus) return;
+      launchStatus.innerHTML = '<span class="dot"></span><strong>' + escapeHTML(message) + '</strong>';
+    }
+
+    function parseLaunchNumber(id) {
+      const input = document.getElementById(id);
+      if (!input) return null;
+      const raw = input.value.trim();
+      if (!raw) return null;
+      const value = Number.parseInt(raw, 10);
+      return Number.isFinite(value) ? value : null;
+    }
+
+    function syncLaunchPanels() {
+      if (!launchForm) return;
+      const launchMode = currentLaunchValue('launch-mode', 'issue-driven');
+      for (const panel of launchModePanels) {
+        panel.hidden = panel.getAttribute('data-launch-mode-panel') !== launchMode;
+      }
+
+      const selectionMode = currentLaunchValue('selection-mode', 'issues');
+      for (const panel of selectionPanels) {
+        panel.hidden = launchMode !== 'issue-driven' || panel.getAttribute('data-selection-panel') !== selectionMode;
+      }
+    }
+
+    if (launchModeInputs.length) {
+      for (const input of launchModeInputs) {
+        input.addEventListener('change', syncLaunchPanels);
+      }
+    }
+    if (selectionModeInputs.length) {
+      for (const input of selectionModeInputs) {
+        input.addEventListener('change', syncLaunchPanels);
+      }
+    }
+    syncLaunchPanels();
+
+    if (launchForm) {
+      launchForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const launchButtonLabel = launchButton ? launchButton.textContent : '';
+        if (launchButton) {
+          launchButton.disabled = true;
+          launchButton.textContent = 'Launching...';
+        }
+        setLaunchStatus('Launching...');
+
+        const payload = {
+          launchMode: currentLaunchValue('launch-mode', 'issue-driven'),
+          selectionMode: currentLaunchValue('selection-mode', 'issues'),
+          issues: (document.getElementById('launcher-issues')?.value || ''),
+          label: (document.getElementById('launcher-label')?.value || '').trim(),
+          query: (document.getElementById('launcher-query')?.value || ''),
+          next: parseLaunchNumber('launcher-next'),
+          includeDependencies: Boolean(document.getElementById('launcher-include-dependencies')?.checked),
+          prompt: (document.getElementById('launcher-prompt')?.value || ''),
+          template: (document.getElementById('launcher-template')?.value || '').trim(),
+          reviewCommand: (document.getElementById('launcher-review-command')?.value || '').trim(),
+          promptArgs: (document.getElementById('launcher-prompt-args')?.value || ''),
+          agent: (document.getElementById('launcher-agent')?.value || '').trim(),
+          model: (document.getElementById('launcher-model')?.value || '').trim(),
+          baseBranch: (document.getElementById('launcher-base-branch')?.value || '').trim(),
+          parallel: parseLaunchNumber('launcher-parallel'),
+          startDelay: parseLaunchNumber('launcher-start-delay'),
+          containerCapacity: parseLaunchNumber('launcher-container-capacity'),
+          maxContainers: parseLaunchNumber('launcher-max-containers'),
+          sandbox: (document.getElementById('launcher-sandbox')?.value || '').trim(),
+        };
+
+        try {
+          const res = await fetch('/api/launch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(body.message || body.error || 'launch failed');
+          }
+          setLaunchStatus(body.message || 'Started sandman run.');
+          await refresh();
+        } catch (err) {
+          errorBanner.textContent = 'Launch failed: ' + err.message;
+          errorBanner.style.display = 'block';
+          setLaunchStatus('Launch failed');
+        } finally {
+          if (launchButton) {
+            launchButton.disabled = false;
+            launchButton.textContent = launchButtonLabel || 'Launch run';
+          }
+        }
       });
     }
 
