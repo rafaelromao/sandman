@@ -75,8 +75,17 @@ func TestRender_PromptFileOverridesBuiltIn(t *testing.T) {
 	if !strings.Contains(result, "Custom: 7 - Refactor auth") {
 		t.Errorf("result missing custom header, got:\n%s", result)
 	}
-	if strings.Contains(result, "Work in the current Sandman-created worktree") {
+	if strings.Contains(result, "Sandman Bootstrap") {
 		t.Errorf("result should not contain built-in template text, got:\n%s", result)
+	}
+}
+
+func TestDefaultPrompt_IsBootstrapForSharedSkill(t *testing.T) {
+	got := DefaultPrompt()
+	for _, want := range []string{"Sandman Bootstrap", "~/.agents/skills/sandman/SKILL.md", "{{REVIEW_COMMAND}}"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("default prompt missing %q, got:\n%s", want, got)
+		}
 	}
 }
 

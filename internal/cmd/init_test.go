@@ -11,9 +11,17 @@ import (
 	"github.com/rafaelromao/sandman/internal/scaffold"
 )
 
+func newInitTestHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	return home
+}
+
 func TestInit_CreatesSandmanFiles(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	newInitTestHome(t)
 
 	var out bytes.Buffer
 	cmd := NewInitCmd()
@@ -35,11 +43,20 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "prompt.md")); err != nil {
 		t.Errorf("prompt.md not created: %v", err)
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("resolve home dir: %v", err)
+	}
+	skillPath := filepath.Join(home, ".agents", "skills", "sandman", "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Errorf("shared skill not created: %v", err)
+	}
 }
 
 func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	home := newInitTestHome(t)
 
 	var out bytes.Buffer
 	cmd := NewInitCmd()
@@ -101,11 +118,51 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if want := prompt.DefaultPrompt(); promptText != want {
 		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, promptText)
 	}
+	skillPath := filepath.Join(home, ".agents", "skills", "sandman", "SKILL.md")
+	skillData, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read shared skill: %v", err)
+	}
+	if want := prompt.SandmanSkill(); string(skillData) != want {
+		t.Fatalf("shared skill mismatch\nwant:\n%s\ngot:\n%s", want, skillData)
+	}
+}
+
+func TestInit_LeavesExistingSharedSkillUntouched(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	home := newInitTestHome(t)
+	skillPath := filepath.Join(home, ".agents", "skills", "sandman", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0755); err != nil {
+		t.Fatalf("create skill dir: %v", err)
+	}
+	if err := os.WriteFile(skillPath, []byte("custom skill"), 0644); err != nil {
+		t.Fatalf("seed skill: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read shared skill: %v", err)
+	}
+	if got := string(data); got != "custom skill" {
+		t.Fatalf("shared skill should not be overwritten\nwant:\n%s\ngot:\n%s", "custom skill", got)
+	}
 }
 
 func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	newInitTestHome(t)
 
 	var out bytes.Buffer
 	cmd := NewInitCmd()
@@ -166,6 +223,7 @@ func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 func TestInit_DefaultsToPythonPresetForPythonRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	newInitTestHome(t)
 
 	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\nname = \"demo\"\n"), 0644); err != nil {
 		t.Fatalf("write pyproject.toml: %v", err)
@@ -212,6 +270,7 @@ func TestInit_DefaultsToPythonPresetForPythonRepo(t *testing.T) {
 func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	newInitTestHome(t)
 
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
@@ -259,6 +318,7 @@ func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
 func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	newInitTestHome(t)
 
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
 		t.Fatalf("write package.json: %v", err)
@@ -298,6 +358,7 @@ func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
 func TestInit_DefaultsToDotnetPresetForDotnetRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	newInitTestHome(t)
 
 	if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte(`{"sdk":{"version":"8.0.100"}}`), 0644); err != nil {
 		t.Fatalf("write global.json: %v", err)
@@ -341,6 +402,7 @@ func TestInit_DefaultsToDotnetPresetForDotnetRepo(t *testing.T) {
 func TestInit_ExplicitGenericOverridesNodeRepoHint(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	newInitTestHome(t)
 
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
 		t.Fatalf("write package.json: %v", err)
@@ -368,6 +430,7 @@ func TestInit_ExplicitGenericOverridesNodeRepoHint(t *testing.T) {
 func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	newInitTestHome(t)
 
 	var out bytes.Buffer
 	cmd := NewInitCmd()
@@ -409,6 +472,7 @@ func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 func TestInit_InfersToolVersionRepoWhenUnset(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	newInitTestHome(t)
 
 	var out bytes.Buffer
 	cmd := NewInitCmd()
@@ -432,6 +496,7 @@ func TestInit_InfersToolVersionRepoWhenUnset(t *testing.T) {
 func TestInit_ExistingDirectoryPrompts(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	newInitTestHome(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
 		t.Fatalf("create .sandman: %v", err)
 	}

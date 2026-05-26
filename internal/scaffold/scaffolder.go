@@ -240,7 +240,7 @@ var bundledDotnetVersionCatalog = map[string]string{
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
 
-// Scaffold writes config.yaml, Dockerfile, and prompt.md into .sandman/.
+// Scaffold writes config.yaml, Dockerfile, prompt.md, and the shared skill.
 func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	sandmanDir := filepath.Join(repoRoot, ".sandman")
 
@@ -327,6 +327,32 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("write prompt.md: %w", err)
 	}
 
+	if err := s.installSharedSkill(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Scaffolder) installSharedSkill() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home dir for shared skill: %w", err)
+	}
+
+	skillPath := filepath.Join(home, ".agents", "skills", "sandman", "SKILL.md")
+	if _, err := os.Stat(skillPath); err == nil {
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("check shared skill: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0755); err != nil {
+		return fmt.Errorf("create shared skill directory: %w", err)
+	}
+	if err := os.WriteFile(skillPath, []byte(prompt.SandmanSkill()), 0644); err != nil {
+		return fmt.Errorf("write shared skill: %w", err)
+	}
 	return nil
 }
 

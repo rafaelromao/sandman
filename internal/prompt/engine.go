@@ -14,8 +14,14 @@ import (
 //go:embed default_prompt.md
 var defaultPrompt string
 
-// DefaultPrompt returns Sandman's canonical prompt template.
+//go:embed sandman_skill.md
+var sandmanSkill string
+
+// DefaultPrompt returns Sandman's bootstrap prompt template.
 func DefaultPrompt() string { return defaultPrompt }
+
+// SandmanSkill returns the embedded shared workflow skill.
+func SandmanSkill() string { return sandmanSkill }
 
 var keyPattern = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 

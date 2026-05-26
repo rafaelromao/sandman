@@ -158,7 +158,7 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 	if agent.Command != wantCmd {
 		t.Errorf("command: got %q, want %q", agent.Command, wantCmd)
 	}
-	wantDirs := []string{"~/.config/opencode", "~/.local/share/opencode", "~/.claude"}
+	wantDirs := []string{"~/.config/opencode", "~/.local/share/opencode", "~/.claude", "~/.agents/skills"}
 	if !reflect.DeepEqual(agent.ConfigDirs, wantDirs) {
 		t.Errorf("config_dirs: got %v, want %v", agent.ConfigDirs, wantDirs)
 	}
@@ -176,6 +176,9 @@ func TestConfig_ResolveAgentProvider_Pi(t *testing.T) {
 	}
 	if agent.Preset != "pi" {
 		t.Fatalf("preset: got %q, want %q", agent.Preset, "pi")
+	}
+	if !reflect.DeepEqual(agent.ConfigDirs, []string{"~/.pi", "~/.agents/skills"}) {
+		t.Fatalf("pi config_dirs: got %v", agent.ConfigDirs)
 	}
 	if !strings.Contains(agent.Command, "--provider {{.ModelProvider}}") {
 		t.Fatalf("expected pi command to use provider/model flags, got %q", agent.Command)
