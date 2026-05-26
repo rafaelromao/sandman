@@ -98,6 +98,10 @@ The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`
 **Command template key**:
 The `{{.PromptFile}}` key available in agent command templates, resolved to the relative path of the rendered prompt file.
 
+**Command**:
+A tracked launch record surfaced by the portal. This is the canonical noun for a launch row.
+_Avoid_: run record, launch record, job.
+
 **ResolvedBatch**:
 A batch where all issues have been fetched, their BlockedBy relationships resolved, and the execution order topologically sorted. Ready for the Orchestrator.
 _Avoid_: planned batch, execution plan.
@@ -150,8 +154,8 @@ _Avoid_: Replay mode.
 - A **Control Socket** at `.sandman/run.sock` accepts **Attach** connections for the duration of the **Batch**
 - A **Daemon Process** stops the **Control Socket** and releases the **PID Lock** when its **Batch** completes
 - An **Attach** client connects to the **Control Socket** and reads the daemon's output until EOF
-- A **Portal** is repo-scoped and can show multiple **Daemon Process** instances from the same repository at once
-- A **Portal** rescans the current repository's `.sandman/runs/` tree on each poll so newly started **Daemon Process** instances appear without restarting the portal
+- A **Portal** is repo-scoped and can show multiple **Command** records from the same repository at once
+- A **Portal** rescans the current repository's `.sandman/runs/` tree on each poll so newly started **Command** records appear without restarting the portal
 
 - A **Batch** contains zero or more **AgentRuns**
 - An **AgentRun** targets exactly one **Issue** and produces exactly one **Branch**

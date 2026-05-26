@@ -776,6 +776,36 @@
       flex-direction: column;
       flex: 1 1 auto;
     }
+    .artifact-stack {
+      display: grid;
+      gap: 14px;
+      min-height: 0;
+    }
+    .artifact-pane {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      background: color-mix(in oklch, var(--bg) 44%, var(--surface-2));
+    }
+    .artifact-pane h4 {
+      margin: 0;
+      padding: 10px 12px 8px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in oklch, var(--bg) 52%, var(--surface-2));
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+    .artifact-pane-body {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+    }
     .detail-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
@@ -1304,7 +1334,6 @@
       const output = run.output && String(run.output).trim()
         ? run.output
         : (run.kind === 'active' ? 'No live output captured yet.' : 'Run completed. Open Log or Events for persisted details.');
-      const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       const events = Array.isArray(run.events) ? run.events : [];
 
       return [
@@ -1328,12 +1357,14 @@
           + '<div class="detail-panel">'
           + '<div class="tabs" role="tablist" aria-label="Run details tabs">'
           + renderTabButton(run.key, 'output', 'Output', tabName)
+          + renderTabButton(run.key, 'prompt', 'Prompt', tabName)
+          + renderTabButton(run.key, 'continuation', 'Continuation', tabName)
           + renderTabButton(run.key, 'log', 'Log', tabName)
           + renderTabButton(run.key, 'events', 'Events', tabName)
           + renderTabButton(run.key, 'details', 'Details', tabName)
           + '</div>'
           + '<div class="detail-content">'
-          + renderTabPanel(run, tabName, output, log, events)
+          + renderTabPanel(run, tabName, output, events)
           + '</div>'
           + '</div>'
           + '</td>'
@@ -1348,6 +1379,8 @@
 
     function currentTabLabel(tabKey) {
       if (tabKey === 'details') return 'Details';
+      if (tabKey === 'continuation') return 'Continuation';
+      if (tabKey === 'prompt') return 'Prompt';
       if (tabKey === 'log') return 'Log';
       if (tabKey === 'events') return 'Events';
       return 'Output';
@@ -1386,6 +1419,36 @@
       return '<pre class="terminal-text' + (extraClass ? ' ' + escapeHTML(extraClass) : '') + '">' + highlightTerminalText(text) + '</pre>';
     }
 
+    function hasArtifactContent(text) {
+      return !!(text && String(text).trim());
+    }
+
+    function renderSingleArtifactTab(title, content, emptyMessage) {
+      if (!hasArtifactContent(content)) {
+        return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(title) + '</h3><div class="empty-state">' + escapeHTML(emptyMessage) + '</div></section>';
+      }
+      return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(title) + '</h3>' + renderTerminalBlock(content) + '</section>';
+    }
+
+    function renderArtifactPane(title, content, emptyMessage) {
+      const body = hasArtifactContent(content)
+        ? renderTerminalBlock(content)
+        : '<div class="empty-state">' + escapeHTML(emptyMessage) + '</div>';
+      return '<section class="artifact-pane"><h4>' + escapeHTML(title) + '</h4><div class="artifact-pane-body">' + body + '</div></section>';
+    }
+
+    function renderContinuationTab(run) {
+      return [
+        '<section class="detail-box tab-pane fill">',
+        '  <h3>Continuation</h3>',
+        '  <div class="artifact-stack">',
+        renderArtifactPane('Continuation Context', run.continuationContext, 'No continuation context file yet.'),
+        renderArtifactPane('Continuation Prompt', run.continuationPrompt, 'No continue prompt file yet.'),
+        '  </div>',
+        '</section>',
+      ].join('');
+    }
+
     function renderDetailFields(run) {
       return [
         renderDetailKV('Run ID', run.runId),
@@ -1399,7 +1462,7 @@
       ].join('');
     }
 
-    function renderTabPanel(run, tabKey, output, log, events) {
+    function renderTabPanel(run, tabKey, output, events) {
       if (tabKey === 'details') {
         return [
           '<section class="detail-box tab-pane fill">',
@@ -1409,7 +1472,16 @@
         ].join('');
       }
 
-      const content = renderTabContent(run, tabKey, output, log, events);
+      const content = renderTabContent(run, tabKey, output, events);
+      if (tabKey === 'prompt') {
+        return renderSingleArtifactTab('Prompt', content, 'No rendered prompt file yet.');
+      }
+      if (tabKey === 'continuation') {
+        return renderContinuationTab(run);
+      }
+      if (tabKey === 'log') {
+        return renderSingleArtifactTab('Log', content, 'No log file yet.');
+      }
       if (tabKey === 'events') {
         if (!content) {
           return '<section class="detail-box tab-pane fill"><h3>Events</h3><div class="empty-state">No events captured for this run yet.</div></section>';
@@ -1420,7 +1492,7 @@
       return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(currentTabLabel(tabKey)) + '</h3>' + renderTerminalBlock(content) + '</section>';
     }
 
-    function renderTabContent(run, tabKey, output, log, events) {
+    function renderTabContent(run, tabKey, output, events) {
       if (tabKey === 'events') {
         if (!events.length) return '';
         return events.map((event) => {
@@ -1436,7 +1508,8 @@
           ].join('');
         }).join('');
       }
-      if (tabKey === 'log') return log;
+      if (tabKey === 'prompt') return run.prompt;
+      if (tabKey === 'log') return run.log;
       return output;
     }
 
