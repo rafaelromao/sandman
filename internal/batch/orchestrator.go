@@ -477,18 +477,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			defer wg.Done()
 			defer close(completed[issueNum])
 
-			blockedByExternal := uniqueIssues(req.Blocked[issueNum])
-			if len(blockedByExternal) > 0 {
-				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "blocked", Branch: req.Branches[issueNum]}
-				o.logBlocked(issueNum, blockedByExternal)
-
-				mu.Lock()
-				results[idx] = res
-				statuses[issueNum] = res.Status
-				mu.Unlock()
-				return
-			}
-
 			for _, blocker := range blockers {
 				<-completed[blocker]
 			}
@@ -521,7 +509,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
-			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunID, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, baseBranch)
+			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunID, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, baseBranch, blockers, req.Blocked[issueNum])
 			if started {
 				defer startGate.Release()
 			} else {
@@ -727,7 +715,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunID string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, baseBranch string) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunID string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, baseBranch string, blockers []int, externalBlockers []int) (AgentRunResult, bool) {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
@@ -767,6 +755,19 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	if err := wt.Start(); err != nil {
 		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", num, err)
 		return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
+	}
+
+	blockedBy, err := o.recheckBlockedBy(ctx, append(blockers, externalBlockers...))
+	if err != nil {
+		fmt.Fprintf(o.errorLog, "error: recheck blockers for issue %d: %v\n", num, err)
+		_ = wt.Stop()
+		return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
+	}
+	if len(blockedBy) > 0 {
+		res := AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "blocked", Branch: branch}
+		o.logBlocked(num, blockedBy)
+		_ = wt.Stop()
+		return res, false
 	}
 
 	activeMu.Lock()
@@ -877,6 +878,30 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	}
 
 	return result, true
+}
+
+func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]int, error) {
+	blockers = uniqueIssues(blockers)
+	if len(blockers) == 0 {
+		return nil, nil
+	}
+
+	blockedBy := make([]int, 0, len(blockers))
+	for _, blocker := range blockers {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		issue, err := o.githubClient.FetchIssue(blocker)
+		if err != nil {
+			return nil, fmt.Errorf("fetch blocker issue %d: %w", blocker, err)
+		}
+		if !isClosedIssue(issue) {
+			blockedBy = append(blockedBy, blocker)
+		}
+	}
+
+	return blockedBy, nil
 }
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int) (*Result, error) {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,10 @@ func (s *spyBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batc
 // fakeGitHubClient is a test double for github.Client.
 type fakeGitHubClient struct {
 	issues             map[int]*github.Issue
+	fetchRelease       map[int]<-chan struct{}
+	fetchReleaseAfter  map[int]int
+	fetchCount         map[int]int
+	mu                 sync.Mutex
 	fetchIssueError    error
 	searchIssuesQuery  string
 	searchIssuesResult []github.Issue
@@ -39,8 +44,26 @@ type fakeGitHubClient struct {
 }
 
 func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
+	f.mu.Lock()
+	if f.fetchCount == nil {
+		f.fetchCount = make(map[int]int)
+	}
+	f.fetchCount[number]++
+	count := f.fetchCount[number]
+	release := f.fetchRelease[number]
+	f.mu.Unlock()
+
 	if f.fetchIssueError != nil {
 		return nil, f.fetchIssueError
+	}
+	threshold := 1
+	if f.fetchReleaseAfter != nil {
+		if after, ok := f.fetchReleaseAfter[number]; ok {
+			threshold = after
+		}
+	}
+	if release != nil && count > threshold {
+		<-release
 	}
 	if issue, ok := f.issues[number]; ok {
 		return issue, nil
