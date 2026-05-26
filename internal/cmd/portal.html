@@ -1022,10 +1022,75 @@
       runs: [],
       expanded: new Set(),
       tabs: new Map(),
+      selectedRunKey: '',
       selectedStatus: 'all',
       activeOnly: false,
       loading: true,
     };
+
+    const selectionStorageKey = 'sandman.portal.selection:' + {{printf "%q" .RepoRoot}};
+    const validRunTabs = new Set(['output', 'log', 'events', 'details']);
+
+    function loadSelectionState() {
+      try {
+        const raw = sessionStorage.getItem(selectionStorageKey);
+        if (!raw) return null;
+        const saved = JSON.parse(raw);
+        return {
+          expanded: Array.isArray(saved.expanded) ? saved.expanded.filter((key) => typeof key === 'string' && key) : [],
+          selectedRunKey: typeof saved.selectedRunKey === 'string' ? saved.selectedRunKey : '',
+          tabs: Array.isArray(saved.tabs) ? saved.tabs.filter((entry) => Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'string' && entry[0] && validRunTabs.has(entry[1])) : [],
+        };
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function saveSelectionState() {
+      try {
+        sessionStorage.setItem(selectionStorageKey, JSON.stringify({
+          expanded: Array.from(state.expanded),
+          selectedRunKey: state.selectedRunKey,
+          tabs: Array.from(state.tabs.entries()),
+        }));
+      } catch (err) {
+      }
+    }
+
+    function selectionKeyForRun(run) {
+      return run.selectionKey || run.key;
+    }
+
+    function selectedTabForRun(runKey) {
+      const tab = state.tabs.get(runKey);
+      return validRunTabs.has(tab) ? tab : 'output';
+    }
+
+    function reconcileSelectionState() {
+      const runKeys = new Set(state.runs.map((run) => selectionKeyForRun(run)));
+      state.expanded = new Set(Array.from(state.expanded).filter((runKey) => runKeys.has(runKey)));
+      state.tabs = new Map(Array.from(state.tabs.entries()).filter(([runKey, tab]) => runKeys.has(runKey) && validRunTabs.has(tab)));
+
+      if (state.selectedRunKey && !runKeys.has(state.selectedRunKey)) {
+        state.selectedRunKey = '';
+      }
+      if (!state.selectedRunKey && state.runs.length) {
+        const fallback = state.runs.find((run) => state.expanded.has(selectionKeyForRun(run)));
+        if (fallback) state.selectedRunKey = selectionKeyForRun(fallback);
+      }
+      if (state.selectedRunKey && !validRunTabs.has(state.tabs.get(state.selectedRunKey))) {
+        state.tabs.set(state.selectedRunKey, 'output');
+      }
+
+      saveSelectionState();
+    }
+
+    const savedSelection = loadSelectionState();
+    if (savedSelection) {
+      state.expanded = new Set(savedSelection.expanded);
+      state.selectedRunKey = savedSelection.selectedRunKey;
+      state.tabs = new Map(savedSelection.tabs);
+    }
 
     function escapeHTML(value) {
       return String(value)
@@ -1128,8 +1193,9 @@
     }
 
     function renderRunRow(run) {
-      const isOpen = state.expanded.has(run.key);
-      const tabName = state.tabs.get(run.key) || 'output';
+      const selectionKey = selectionKeyForRun(run);
+      const isOpen = state.expanded.has(selectionKey);
+      const tabName = selectedTabForRun(selectionKey);
       const output = run.output && String(run.output).trim()
         ? run.output
         : (run.kind === 'active' ? 'No live output captured yet.' : 'Run completed. Open Log or Events for persisted details.');
@@ -1137,7 +1203,7 @@
       const events = Array.isArray(run.events) ? run.events : [];
 
       return [
-        '<tr class="run-row ' + escapeHTML(run.kind || '') + '" data-action="toggle-run" data-run-key="' + escapeHTML(run.key) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
+        '<tr class="run-row ' + escapeHTML(run.kind || '') + '" data-action="toggle-run" data-run-key="' + escapeHTML(run.key) + '" data-selection-key="' + escapeHTML(selectionKey) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
         '  <td>',
         '    <div class="run-title">',
         '      <span class="name">' + escapeHTML(run.issueLabel || run.key) + '</span>',
@@ -1156,10 +1222,10 @@
           + '<td colspan="7">'
           + '<div class="detail-panel">'
           + '<div class="tabs" role="tablist" aria-label="Run details tabs">'
-          + renderTabButton(run.key, 'output', 'Output', tabName)
-          + renderTabButton(run.key, 'log', 'Log', tabName)
-          + renderTabButton(run.key, 'events', 'Events', tabName)
-          + renderTabButton(run.key, 'details', 'Details', tabName)
+          + renderTabButton(selectionKey, 'output', 'Output', tabName, run.key)
+          + renderTabButton(selectionKey, 'log', 'Log', tabName, run.key)
+          + renderTabButton(selectionKey, 'events', 'Events', tabName, run.key)
+          + renderTabButton(selectionKey, 'details', 'Details', tabName, run.key)
           + '</div>'
           + '<div class="detail-content">'
           + renderTabPanel(run, tabName, output, log, events)
@@ -1171,8 +1237,8 @@
       ].join('');
     }
 
-    function renderTabButton(runKey, tabKey, label, activeTab) {
-      return '<button type="button" class="tab-btn" data-action="set-tab" data-run-key="' + escapeHTML(runKey) + '" data-tab="' + escapeHTML(tabKey) + '" role="tab" aria-pressed="' + (activeTab === tabKey ? 'true' : 'false') + '">' + escapeHTML(label) + '</button>';
+    function renderTabButton(selectionKey, tabKey, label, activeTab, runKey) {
+      return '<button type="button" class="tab-btn" data-action="set-tab" data-run-key="' + escapeHTML(runKey) + '" data-selection-key="' + escapeHTML(selectionKey) + '" data-tab="' + escapeHTML(tabKey) + '" role="tab" aria-pressed="' + (activeTab === tabKey ? 'true' : 'false') + '">' + escapeHTML(label) + '</button>';
     }
 
     function currentTabLabel(tabKey) {
@@ -1300,6 +1366,7 @@
         const payload = await res.json();
         state.runs = Array.isArray(payload.runs) ? payload.runs : [];
         state.loading = false;
+        reconcileSelectionState();
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';
         updateLastUpdated();
@@ -1312,21 +1379,25 @@
     }
 
     function toggleRun(runKey) {
+      state.selectedRunKey = runKey;
       if (state.expanded.has(runKey)) state.expanded.delete(runKey);
       else state.expanded.add(runKey);
+      saveSelectionState();
       render();
     }
 
     runsBody.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
       if (button) {
-        const runKey = button.getAttribute('data-run-key');
-        if (!runKey) return;
+        const selectionKey = button.getAttribute('data-selection-key') || button.getAttribute('data-run-key');
+        if (!selectionKey) return;
         const action = button.getAttribute('data-action');
         if (action === 'set-tab') {
           const tab = button.getAttribute('data-tab') || 'output';
-          state.tabs.set(runKey, tab);
-          state.expanded.add(runKey);
+          state.selectedRunKey = selectionKey;
+          state.tabs.set(selectionKey, tab);
+          state.expanded.add(selectionKey);
+          saveSelectionState();
           render();
         }
         return;
@@ -1334,7 +1405,7 @@
 
       const row = event.target.closest('tr[data-action="toggle-run"]');
       if (!row) return;
-      const runKey = row.getAttribute('data-run-key');
+      const runKey = row.getAttribute('data-selection-key') || row.getAttribute('data-run-key');
       if (!runKey) return;
       toggleRun(runKey);
     });
@@ -1344,7 +1415,7 @@
       if (!row) return;
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
-      const runKey = row.getAttribute('data-run-key');
+      const runKey = row.getAttribute('data-selection-key') || row.getAttribute('data-run-key');
       if (runKey) toggleRun(runKey);
     });
 

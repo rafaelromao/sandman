@@ -45,22 +45,23 @@ type portalEvent struct {
 }
 
 type portalRun struct {
-	Key         string        `json:"key"`
-	RunID       string        `json:"runId"`
-	Kind        string        `json:"kind"`
-	Status      string        `json:"status"`
-	IssueLabel  string        `json:"issueLabel"`
-	IssueNumber int           `json:"issueNumber,omitempty"`
-	Branch      string        `json:"branch,omitempty"`
-	StartedAt   time.Time     `json:"startedAt"`
-	FinishedAt  *time.Time    `json:"finishedAt,omitempty"`
-	Duration    string        `json:"duration,omitempty"`
-	SocketPath  string        `json:"socketPath,omitempty"`
-	LogPath     string        `json:"logPath,omitempty"`
-	LogURL      string        `json:"logUrl,omitempty"`
-	Output      string        `json:"output,omitempty"`
-	Log         string        `json:"log,omitempty"`
-	Events      []portalEvent `json:"events,omitempty"`
+	Key          string        `json:"key"`
+	SelectionKey string        `json:"selectionKey"`
+	RunID        string        `json:"runId"`
+	Kind         string        `json:"kind"`
+	Status       string        `json:"status"`
+	IssueLabel   string        `json:"issueLabel"`
+	IssueNumber  int           `json:"issueNumber,omitempty"`
+	Branch       string        `json:"branch,omitempty"`
+	StartedAt    time.Time     `json:"startedAt"`
+	FinishedAt   *time.Time    `json:"finishedAt,omitempty"`
+	Duration     string        `json:"duration,omitempty"`
+	SocketPath   string        `json:"socketPath,omitempty"`
+	LogPath      string        `json:"logPath,omitempty"`
+	LogURL       string        `json:"logUrl,omitempty"`
+	Output       string        `json:"output,omitempty"`
+	Log          string        `json:"log,omitempty"`
+	Events       []portalEvent `json:"events,omitempty"`
 }
 
 type portalActiveRun struct {
@@ -485,20 +486,21 @@ func portalRunFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun
 	}
 	logPath := portalLogPath(repoRoot, issueNumber, "")
 	return portalRun{
-		Key:         match.instance.Key,
-		RunID:       match.instance.Key,
-		Kind:        "active",
-		Status:      "active",
-		IssueLabel:  issueLabel,
-		IssueNumber: issueNumber,
-		StartedAt:   startedAt,
-		Duration:    time.Since(startedAt).Round(time.Second).String(),
-		SocketPath:  match.instance.SocketPath,
-		LogPath:     logPath,
-		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, ""),
-		Output:      readPortalSocketOutput(match.instance.SocketPath),
-		Log:         readPortalTextFile(logPath),
-		Events:      eventsByRun[match.instance.Key],
+		Key:          match.instance.Key,
+		SelectionKey: selectionKeyForRun(issueNumber, match.instance.Key),
+		RunID:        match.instance.Key,
+		Kind:         "active",
+		Status:       "active",
+		IssueLabel:   issueLabel,
+		IssueNumber:  issueNumber,
+		StartedAt:    startedAt,
+		Duration:     time.Since(startedAt).Round(time.Second).String(),
+		SocketPath:   match.instance.SocketPath,
+		LogPath:      logPath,
+		LogURL:       portalLogDownloadURL(repoRoot, issueNumber, ""),
+		Output:       readPortalSocketOutput(match.instance.SocketPath),
+		Log:          readPortalTextFile(logPath),
+		Events:       eventsByRun[match.instance.Key],
 	}
 }
 
@@ -532,26 +534,38 @@ func portalRunFromState(repoRoot string, runState events.RunState, active *porta
 	}
 
 	portalRun := portalRun{
-		Key:         runID,
-		RunID:       runID,
-		Kind:        kindForRun(runState),
-		Status:      statusOrDefault(status, runState.IsActive()),
-		IssueLabel:  issueLabel,
-		IssueNumber: issueNumber,
-		Branch:      branch,
-		StartedAt:   startedAt,
-		FinishedAt:  finishedAt,
-		Duration:    durationForRun(runState),
-		LogPath:     logPath,
-		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, branch),
-		Output:      output,
-		Log:         readPortalTextFile(logPath),
-		Events:      eventsByRun[runID],
+		Key:          runID,
+		SelectionKey: selectionKeyForRun(issueNumber, runID),
+		RunID:        runID,
+		Kind:         kindForRun(runState),
+		Status:       statusOrDefault(status, runState.IsActive()),
+		IssueLabel:   issueLabel,
+		IssueNumber:  issueNumber,
+		Branch:       branch,
+		StartedAt:    startedAt,
+		FinishedAt:   finishedAt,
+		Duration:     durationForRun(runState),
+		LogPath:      logPath,
+		LogURL:       portalLogDownloadURL(repoRoot, issueNumber, branch),
+		Output:       output,
+		Log:          readPortalTextFile(logPath),
+		Events:       eventsByRun[runID],
 	}
 	if active != nil {
 		portalRun.SocketPath = active.SocketPath
 	}
 	return portalRun
+}
+
+func selectionKeyForRun(issueNumber int, runID string) string {
+	if issueNumber > 0 {
+		return fmt.Sprintf("issue:%d", issueNumber)
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return "run:unknown"
+	}
+	return "run:" + runID
 }
 
 func kindForRun(runState events.RunState) string {
