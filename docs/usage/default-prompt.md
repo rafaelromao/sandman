@@ -26,9 +26,8 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 
 - `Task` names the work and injects the issue number/title.
 - `Context` passes the raw issue body through unchanged.
-- `Runtime Context` passes the current worktree branch, base branch, and review command into the shared skill.
+- `Runtime Context` passes the current worktree branch and base branch into the shared skill.
 - `{{BRANCH}}` and `{{SOURCE_BRANCH}}` identify the run branch.
-- `{{REVIEW_COMMAND}}` resolves from config or `--review-command` and defaults to `/oc review`.
 
 ## Prompt lifecycle
 
