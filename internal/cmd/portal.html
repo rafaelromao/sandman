@@ -1581,7 +1581,7 @@
 
     function focusActiveRunPaneTab() {
       if (!commandPanelBody) return;
-      const tab = commandPanelBody.querySelector('#command-pane-tab-' + (commandState.run.runPane || 'run'));
+      const tab = commandPanelBody.querySelector('button[aria-selected="true"]');
       if (tab) tab.focus({ preventScroll: true });
     }
 
@@ -2168,7 +2168,9 @@
           runPane,
         };
         renderCommandPanelBody('run');
-        focusActiveRunPaneTab();
+        window.requestAnimationFrame(() => {
+          focusActiveRunPaneTab();
+        });
       });
     }
 
