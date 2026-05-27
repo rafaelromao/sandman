@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -119,9 +120,13 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
 
 	activeSock := filepath.Join(repoRoot, ".sandman", "runs", "run-1-100", "run.sock")
 	if err := os.MkdirAll(filepath.Dir(activeSock), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(filepath.Dir(activeSock), daemon.BatchManifest{Issues: []int{1, 2, 3, 4}, CreatedAt: batchStartedAt}); err != nil {
 		t.Fatal(err)
 	}
 	activeLn, err := net.Listen("unix", activeSock)
@@ -134,16 +139,17 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 		if err != nil {
 			return
 		}
-		_, _ = conn.Write([]byte("\x1b[0mlive output\n"))
+		_, _ = conn.Write([]byte("[issue-1] 12:00:00 live output\n[issue-2] 12:00:00 hidden output\n"))
 		_ = conn.Close()
 	}()
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
-		{Type: "run.started", Timestamp: time.Now().Add(-20 * time.Minute), RunID: "run-2", Issue: 2, Payload: map[string]any{"branch": "sandman/2-fix"}},
-		{Type: "run.finished", Timestamp: time.Now().Add(-15 * time.Minute), RunID: "run-2", Issue: 2, Payload: map[string]any{"status": "success", "branch": "sandman/2-fix"}},
-		{Type: "run.continued", Timestamp: time.Now().Add(-12 * time.Minute), RunID: "run-3", Issue: 3, Payload: map[string]any{"branch": "sandman/3-fix"}},
-		{Type: "run.finished", Timestamp: time.Now().Add(-8 * time.Minute), RunID: "run-3", Issue: 3, Payload: map[string]any{"status": "success", "branch": "sandman/3-fix"}},
+		{Type: "run.started", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: batchStartedAt.Add(2 * time.Minute), RunID: "run-2", Issue: 2, Payload: map[string]any{"branch": "sandman/2-fix"}},
+		{Type: "run.finished", Timestamp: batchStartedAt.Add(3 * time.Minute), RunID: "run-2", Issue: 2, Payload: map[string]any{"status": "success", "branch": "sandman/2-fix"}},
+		{Type: "run.blocked", Timestamp: batchStartedAt.Add(4 * time.Minute), RunID: "run-3", Issue: 3, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.started", Timestamp: batchStartedAt.Add(-30 * time.Minute), RunID: "run-9", Issue: 9, Payload: map[string]any{"branch": "sandman/9-fix"}},
+		{Type: "run.finished", Timestamp: batchStartedAt.Add(-25 * time.Minute), RunID: "run-9", Issue: 9, Payload: map[string]any{"status": "success", "branch": "sandman/9-fix"}},
 	})
 
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
@@ -155,7 +161,7 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "2.log"), []byte("\x1b[0missue two log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "3.log"), []byte("continued run log\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "9.log"), []byte("issue nine log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,27 +169,30 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
-	if len(runs) != 3 {
-		t.Fatalf("expected 3 runs, got %#v", runs)
+	if len(runs) != 5 {
+		t.Fatalf("expected 5 runs, got %#v", runs)
 	}
-	byID := map[string]portalRun{}
+	byIssue := map[int]portalRun{}
 	for _, run := range runs {
-		byID[run.RunID] = run
+		byIssue[run.IssueNumber] = run
 	}
-	if run := byID["run-1"]; run.Kind != "active" || run.IssueLabel != "#1" {
+	if run := byIssue[1]; run.Kind != "active" || run.IssueLabel != "#1" || run.Status != "active" {
 		t.Fatalf("unexpected active run: %#v", run)
 	}
-	if run := byID["run-1"]; !strings.Contains(run.Output, "live output") || strings.Contains(run.Output, "\x1b[") {
-		t.Fatalf("expected active run output, got %#v", run.Output)
+	if run := byIssue[1]; !strings.Contains(run.Log, "live output") || strings.Contains(run.Log, "hidden output") || strings.Contains(run.Log, "\x1b[") {
+		t.Fatalf("expected filtered active log, got %#v", run.Log)
 	}
-	if run := byID["run-2"]; run.Status != "success" || run.Kind != "completed" {
+	if run := byIssue[2]; run.Status != "success" || run.Kind != "active" || !strings.Contains(run.Log, "issue two log") {
 		t.Fatalf("unexpected completed run: %#v", run)
 	}
-	if run := byID["run-3"]; run.Status != "success" || run.Kind != "completed" || run.IssueLabel != "#3" || run.Branch != "sandman/3-fix" {
-		t.Fatalf("unexpected continued run: %#v", run)
+	if run := byIssue[3]; run.Status != "blocked" || !strings.Contains(run.Log, "Blocked by #99.") {
+		t.Fatalf("unexpected blocked run: %#v", run)
 	}
-	if run := byID["run-3"]; !strings.Contains(run.Log, "continued run log") {
-		t.Fatalf("expected continued run log, got %#v", run.Log)
+	if run := byIssue[4]; run.Status != "queued" || !strings.Contains(run.Log, "Queued. Waiting to start.") {
+		t.Fatalf("unexpected queued run: %#v", run)
+	}
+	if run := byIssue[9]; run.Status != "success" || run.Kind != "completed" || !strings.Contains(run.Log, "issue nine log") {
+		t.Fatalf("unexpected historical completed run: %#v", run)
 	}
 }
 
@@ -248,10 +257,13 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active only", "Output", "Log", "Events", "Details", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`} {
+	for _, want := range []string{"Active only", "Log", "Events", "Details", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
+	}
+	if strings.Contains(content, ">Output<") {
+		t.Fatalf("page should not expose Output tab\n%s", content[:min(800, len(content))])
 	}
 }
 

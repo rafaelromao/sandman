@@ -208,6 +208,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			defer ctlSocket.Stop()
 			defer os.RemoveAll(runDir)
+			if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: append([]int(nil), resolvedBatch.Issues...), CreatedAt: time.Now()}); err != nil {
+				return err
+			}
 
 			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
 				Issues:               resolvedBatch.Issues,

@@ -1832,7 +1832,7 @@
 
     function runStatusClass(run) {
       const status = (run.status || '').toLowerCase();
-      if (run.kind === 'active') return 'active';
+      if (status === 'active') return 'active';
       if (status === 'success') return 'success';
       if (status === 'failure' || status === 'failed' || status === 'error') return 'failure';
       if (status === 'warning' || status === 'stale' || status === 'blocked') return 'warning';
@@ -1841,7 +1841,7 @@
 
     function renderStatusBadge(run) {
       const klass = runStatusClass(run);
-      const label = run.kind === 'active' ? 'active' : (run.status || 'completed');
+      const label = run.status || (run.kind === 'active' ? 'active' : 'completed');
       return '<span class="badge ' + escapeHTML(klass) + '"><span class="dot"></span>' + escapeHTML(label) + '</span>';
     }
 
@@ -1854,10 +1854,7 @@
 
     function renderRunRow(run) {
       const isOpen = state.expanded.has(run.key);
-      const tabName = state.tabs.get(run.key) || 'output';
-      const output = run.output && String(run.output).trim()
-        ? run.output
-        : (run.kind === 'active' ? 'No live output captured yet.' : 'Run completed. Open Log or Events for persisted details.');
+      const tabName = state.tabs.get(run.key) || 'log';
       const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       const events = Array.isArray(run.events) ? run.events : [];
 
@@ -1881,13 +1878,12 @@
           + '<td colspan="7">'
           + '<div class="detail-panel">'
           + '<div class="tabs" role="tablist" aria-label="Run details tabs">'
-          + renderTabButton(run.key, 'output', 'Output', tabName)
           + renderTabButton(run.key, 'log', 'Log', tabName)
           + renderTabButton(run.key, 'events', 'Events', tabName)
           + renderTabButton(run.key, 'details', 'Details', tabName)
           + '</div>'
           + '<div class="detail-content">'
-          + renderTabPanel(run, tabName, output, log, events)
+          + renderTabPanel(run, tabName, log, events)
           + '</div>'
           + '</div>'
           + '</td>'
@@ -1904,7 +1900,7 @@
       if (tabKey === 'details') return 'Details';
       if (tabKey === 'log') return 'Log';
       if (tabKey === 'events') return 'Events';
-      return 'Output';
+      return 'Log';
     }
 
     function renderDetailKV(label, value) {
@@ -1962,7 +1958,7 @@
       ].join('');
     }
 
-    function renderTabPanel(run, tabKey, output, log, events) {
+    function renderTabPanel(run, tabKey, log, events) {
       if (tabKey === 'details') {
         return [
           '<section class="detail-box tab-pane fill">',
@@ -1972,7 +1968,7 @@
         ].join('');
       }
 
-      const content = renderTabContent(run, tabKey, output, log, events);
+      const content = renderTabContent(run, tabKey, log, events);
       if (tabKey === 'events') {
         if (!content) {
           return '<section class="detail-box tab-pane fill"><h3>Events</h3><div class="empty-state">No events captured for this run yet.</div></section>';
@@ -1983,7 +1979,7 @@
       return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(currentTabLabel(tabKey)) + '</h3>' + renderTerminalBlock(content) + '</section>';
     }
 
-    function renderTabContent(run, tabKey, output, log, events) {
+    function renderTabContent(run, tabKey, log, events) {
       if (tabKey === 'events') {
         if (!events.length) return '';
         return events.map((event) => {
@@ -1999,8 +1995,7 @@
           ].join('');
         }).join('');
       }
-      if (tabKey === 'log') return log;
-      return output;
+      return log;
     }
 
     function renderEmpty(message) {

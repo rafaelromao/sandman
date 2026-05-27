@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/spf13/cobra"
 )
@@ -59,16 +60,18 @@ type portalRun struct {
 	SocketPath  string        `json:"socketPath,omitempty"`
 	LogPath     string        `json:"logPath,omitempty"`
 	LogURL      string        `json:"logUrl,omitempty"`
-	Output      string        `json:"output,omitempty"`
 	Log         string        `json:"log,omitempty"`
 	Events      []portalEvent `json:"events,omitempty"`
 }
 
 type portalActiveRun struct {
-	Key         string
-	SocketPath  string
-	IssueNumber int
-	ModTime     time.Time
+	Key          string
+	Dir          string
+	SocketPath   string
+	IssueNumber  int
+	IssueNumbers []int
+	StartedAt    time.Time
+	ModTime      time.Time
 }
 
 // NewPortalCmd creates the portal command.
@@ -416,21 +419,39 @@ func loadPortalRuns(repoRoot string) ([]portalRun, error) {
 	runStates := events.ProjectRunStates(eventList)
 	eventsByRun := groupPortalEventsByRun(eventList)
 	activeStates := make([]events.RunState, 0, len(runStates))
-	completedStates := make([]events.RunState, 0, len(runStates))
 	for _, run := range runStates {
 		if run.IsActive() {
 			activeStates = append(activeStates, run)
-			continue
 		}
-		completedStates = append(completedStates, run)
 	}
 
-	matchedActive := matchPortalActiveRuns(activeInstances, activeStates)
-	runs := make([]portalRun, 0, len(matchedActive)+len(completedStates))
-	for _, match := range matchedActive {
-		runs = append(runs, portalRunFromActiveMatch(repoRoot, match, eventsByRun))
+	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
+	consumedRunIDs := make(map[string]struct{})
+	promptActive := make([]portalActiveRun, 0, len(activeInstances))
+	for _, active := range activeInstances {
+		if len(active.IssueNumbers) == 0 {
+			promptActive = append(promptActive, active)
+			continue
+		}
+		batchRuns, usedRunIDs := portalRunsFromActiveBatch(repoRoot, active, runStates, eventList, eventsByRun)
+		runs = append(runs, batchRuns...)
+		for runID := range usedRunIDs {
+			consumedRunIDs[runID] = struct{}{}
+		}
 	}
-	for _, runState := range completedStates {
+
+	matchedActive := matchPortalActiveRuns(promptActive, activeStates)
+	for _, match := range matchedActive {
+		run := portalRunFromActiveMatch(repoRoot, match, eventsByRun)
+		runs = append(runs, run)
+		if run.RunID != "" {
+			consumedRunIDs[run.RunID] = struct{}{}
+		}
+	}
+	for _, runState := range runStates {
+		if _, ok := consumedRunIDs[runState.RunID]; ok {
+			continue
+		}
 		runs = append(runs, portalRunFromState(repoRoot, runState, nil, eventsByRun))
 	}
 
@@ -450,12 +471,6 @@ func loadPortalRuns(repoRoot string) ([]portalRun, error) {
 		return runs[i].RunID > runs[j].RunID
 	})
 
-	for i := range runs {
-		if runs[i].Output == "" && runs[i].Kind == "active" {
-			runs[i].Output = "No live output captured yet."
-		}
-	}
-
 	return runs, nil
 }
 
@@ -471,15 +486,143 @@ func discoverPortalActiveRuns(repoRoot string) ([]portalActiveRun, error) {
 		if err != nil {
 			continue
 		}
+		runDir := filepath.Dir(instance.SocketPath)
+		manifest, manifestErr := daemon.ReadManifest(runDir)
 		issueNumber, _ := parseRunDirIssue(instance.Name)
+		issueNumbers := []int(nil)
+		startedAt := info.ModTime()
+		if manifestErr == nil {
+			issueNumbers = append(issueNumbers, manifest.Issues...)
+			if !manifest.CreatedAt.IsZero() {
+				startedAt = manifest.CreatedAt
+			}
+		}
+		if len(issueNumbers) == 0 && issueNumber > 0 {
+			issueNumbers = []int{issueNumber}
+		}
 		active = append(active, portalActiveRun{
-			Key:         instance.Name,
-			SocketPath:  instance.SocketPath,
-			IssueNumber: issueNumber,
-			ModTime:     info.ModTime(),
+			Key:          instance.Name,
+			Dir:          runDir,
+			SocketPath:   instance.SocketPath,
+			IssueNumber:  issueNumber,
+			IssueNumbers: issueNumbers,
+			StartedAt:    startedAt,
+			ModTime:      info.ModTime(),
 		})
 	}
 	return active, nil
+}
+
+func portalRunsFromActiveBatch(repoRoot string, active portalActiveRun, runStates []events.RunState, eventList []events.Event, eventsByRun map[string][]portalEvent) ([]portalRun, map[string]struct{}) {
+	batchStart := active.StartedAt
+	if batchStart.IsZero() {
+		batchStart = active.ModTime
+	}
+	liveOutput := readPortalSocketOutput(active.SocketPath)
+	runs := make([]portalRun, 0, len(active.IssueNumbers))
+	usedRunIDs := make(map[string]struct{})
+	for _, issueNumber := range active.IssueNumbers {
+		state := latestPortalRunStateForIssue(runStates, issueNumber, batchStart)
+		blocked := latestPortalBlockedEventForIssue(eventList, issueNumber, batchStart)
+		runs = append(runs, portalRunFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, liveOutput, eventsByRun))
+		if state != nil && state.RunID != "" {
+			usedRunIDs[state.RunID] = struct{}{}
+		}
+	}
+	return runs, usedRunIDs
+}
+
+func latestPortalRunStateForIssue(runStates []events.RunState, issueNumber int, batchStart time.Time) *events.RunState {
+	var latest *events.RunState
+	for i := range runStates {
+		state := runStates[i]
+		if state.IssueNumber() != issueNumber {
+			continue
+		}
+		if !portalEventBelongsToBatch(state.Started.Timestamp, batchStart) {
+			continue
+		}
+		if latest == nil || state.Started.Timestamp.After(latest.Started.Timestamp) {
+			copy := state
+			latest = &copy
+		}
+	}
+	return latest
+}
+
+func latestPortalBlockedEventForIssue(eventList []events.Event, issueNumber int, batchStart time.Time) *events.Event {
+	var latest *events.Event
+	for i := range eventList {
+		event := eventList[i]
+		if event.Type != "run.blocked" || event.Issue != issueNumber {
+			continue
+		}
+		if !portalEventBelongsToBatch(event.Timestamp, batchStart) {
+			continue
+		}
+		if latest == nil || event.Timestamp.After(latest.Timestamp) {
+			copy := event
+			latest = &copy
+		}
+	}
+	return latest
+}
+
+func portalEventBelongsToBatch(timestamp, batchStart time.Time) bool {
+	if batchStart.IsZero() {
+		return true
+	}
+	return !timestamp.Before(batchStart.Add(-time.Second))
+}
+
+func portalRunFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, liveOutput string, eventsByRun map[string][]portalEvent) portalRun {
+	issueLabel := fmt.Sprintf("#%d", issueNumber)
+	run := portalRun{
+		Key:         fmt.Sprintf("%s-issue-%d", active.Key, issueNumber),
+		Kind:        "active",
+		Status:      "queued",
+		IssueLabel:  issueLabel,
+		IssueNumber: issueNumber,
+		StartedAt:   active.StartedAt,
+		SocketPath:  active.SocketPath,
+		LogPath:     portalLogPath(repoRoot, issueNumber, ""),
+		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, ""),
+		Log:         "Queued. Waiting to start.",
+	}
+	if state != nil {
+		run.Key = state.RunID
+		run.RunID = state.RunID
+		run.Status = statusOrDefault(state.Status(), state.IsActive())
+		run.Branch = state.Branch()
+		run.StartedAt = state.Started.Timestamp
+		run.Duration = durationForRun(*state)
+		run.Events = eventsByRun[state.RunID]
+		run.LogPath = portalLogPath(repoRoot, issueNumber, state.Branch())
+		run.LogURL = portalLogDownloadURL(repoRoot, issueNumber, state.Branch())
+		if state.Finished != nil {
+			finishedAt := state.Finished.Timestamp
+			run.FinishedAt = &finishedAt
+			run.Log = readPortalTextFile(run.LogPath)
+			if strings.TrimSpace(run.Log) == "" {
+				run.Log = "No log file yet."
+			}
+		} else {
+			run.Log = filterPortalIssueOutput(liveOutput, issueNumber)
+			if strings.TrimSpace(run.Log) == "" {
+				run.Log = "No live output captured yet."
+			}
+		}
+		return run
+	}
+	if blocked != nil {
+		run.Key = blocked.RunID
+		run.RunID = blocked.RunID
+		run.Status = "blocked"
+		run.StartedAt = blocked.Timestamp
+		run.Events = []portalEvent{{Type: blocked.Type, Timestamp: blocked.Timestamp, Payload: blocked.Payload}}
+		run.Log = portalBlockedMessage(blocked.Payload)
+	}
+	return run
 }
 
 func matchPortalActiveRuns(instances []portalActiveRun, activeStates []events.RunState) []portalRunMatch {
@@ -576,8 +719,7 @@ func portalRunFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
 		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, ""),
-		Output:      readPortalSocketOutput(match.instance.SocketPath),
-		Log:         readPortalTextFile(logPath),
+		Log:         readPortalSocketOutput(match.instance.SocketPath),
 		Events:      eventsByRun[match.instance.Key],
 	}
 }
@@ -606,9 +748,9 @@ func portalRunFromState(repoRoot string, runState events.RunState, active *porta
 	}
 
 	logPath := portalLogPath(repoRoot, issueNumber, branch)
-	output := ""
+	logContent := readPortalTextFile(logPath)
 	if active != nil {
-		output = readPortalSocketOutput(active.SocketPath)
+		logContent = readPortalSocketOutput(active.SocketPath)
 	}
 
 	portalRun := portalRun{
@@ -624,8 +766,7 @@ func portalRunFromState(repoRoot string, runState events.RunState, active *porta
 		Duration:    durationForRun(runState),
 		LogPath:     logPath,
 		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, branch),
-		Output:      output,
-		Log:         readPortalTextFile(logPath),
+		Log:         logContent,
 		Events:      eventsByRun[runID],
 	}
 	if active != nil {
@@ -710,6 +851,57 @@ func groupPortalEventsByRun(eventsList []events.Event) map[string][]portalEvent 
 		})
 	}
 	return grouped
+}
+
+func filterPortalIssueOutput(text string, issueNumber int) string {
+	prefix := fmt.Sprintf("[issue-%d] ", issueNumber)
+	lines := strings.Split(text, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, prefix) {
+			filtered = append(filtered, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(filtered, "\n"))
+}
+
+func portalBlockedMessage(payload map[string]any) string {
+	blockers := portalBlockedByIssues(payload)
+	if len(blockers) == 0 {
+		return "Blocked. Waiting on unresolved blockers."
+	}
+	parts := make([]string, 0, len(blockers))
+	for _, blocker := range blockers {
+		parts = append(parts, fmt.Sprintf("#%d", blocker))
+	}
+	return fmt.Sprintf("Blocked by %s.", strings.Join(parts, ", "))
+}
+
+func portalBlockedByIssues(payload map[string]any) []int {
+	if payload == nil {
+		return nil
+	}
+	raw, ok := payload["blocked_by"]
+	if !ok {
+		return nil
+	}
+	switch values := raw.(type) {
+	case []int:
+		return append([]int(nil), values...)
+	case []any:
+		issues := make([]int, 0, len(values))
+		for _, value := range values {
+			switch n := value.(type) {
+			case float64:
+				issues = append(issues, int(n))
+			case int:
+				issues = append(issues, n)
+			}
+		}
+		return issues
+	default:
+		return nil
+	}
 }
 
 func readPortalTextFile(path string) string {
