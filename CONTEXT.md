@@ -17,7 +17,7 @@ A built-in command, config source, and auth profile for a known AI coding tool k
 _Avoid_: Provider template, agent type.
 
 **Agent Provider**:
-Deprecated language for repo-local provider configuration. Sandman now supports built-in agents only.
+A configured agent preset or custom provider definition. Sandman supports built-in presets (`opencode`, `pi`) and optional repo-local custom providers via the `agents` config map.
 _Avoid_: Agent type, runner.
 
 **AgentModel**:
@@ -97,7 +97,7 @@ The repo-local `.sandman/prompt.md` template created from the Default Prompt by 
 _Avoid_: User prompt, custom prompt.
 
 **Prompt keys**:
-The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{BASE_BRANCH}}`, `{{BRANCH}}`, `{{REVIEW_COMMAND}}`. Custom keys are supported via `promptArgs` in config.
+The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{BASE_BRANCH}}`, `{{BRANCH}}`, `{{REVIEW_COMMAND}}`. Custom keys are supported via the `--prompt-arg KEY=VALUE` CLI flag.
 
 **Command template key**:
 The `{{.PromptFile}}` key available in agent command templates, resolved to the relative path of the rendered prompt file.
@@ -123,16 +123,12 @@ A sandbox adapter that uses only a git worktree for isolation, with no container
 _Avoid_: Local sandbox.
 
 **Daemon Process**:
-A long-lived sandman process executing a Batch in the background. Writes `.sandman/run.pid` and listens on the control socket.
+A long-lived sandman process executing a Batch in the background. Listens on the control socket.
 _Avoid_: Background job, server.
 
 **Control Socket**:
-A Unix domain socket at `.sandman/run.sock` that accepts attach client connections. Created when a daemon starts, removed when it stops.
+A Unix domain socket at `.sandman/runs/<run-id>/run.sock` that accepts attach client connections. Created when a daemon starts, removed when it stops.
 _Avoid_: IPC socket, management socket.
-
-**PID Lock**:
-A file at `.sandman/run.pid` containing the PID of the running daemon process. Prevents concurrent `sandman run` invocations in the same project directory.
-_Avoid_: Lock file, process file.
 
 **Attach**:
 Connect a terminal to a running daemon via the control socket to stream its output. Invoked via `sandman attach`.
@@ -152,11 +148,9 @@ _Avoid_: Replay mode.
 
 ## Relationships
 
-- A **Daemon Process** is created by `sandman run`, which acquires a **PID Lock** and starts a **Control Socket**
-- A **PID Lock** at `.sandman/run.pid` prevents a second `sandman run` while the first is alive
-- A stale **PID Lock** (daemon crashed) is cleaned up automatically on the next `sandman run`
-- A **Control Socket** at `.sandman/run.sock` accepts **Attach** connections for the duration of the **Batch**
-- A **Daemon Process** stops the **Control Socket** and releases the **PID Lock** when its **Batch** completes
+- A **Daemon Process** is created by `sandman run`, which starts a **Control Socket**
+- A **Control Socket** at `.sandman/runs/<run-id>/run.sock` accepts **Attach** connections for the duration of the **Batch**
+- A **Daemon Process** stops the **Control Socket** when its **Batch** completes
 - An **Attach** client connects to the **Control Socket** and reads the daemon's output until EOF
 - A **Portal** is repo-scoped and can show multiple **Daemon Process** instances from the same repository at once
 - A **Portal** rescans the current repository's `.sandman/runs/` tree on each poll so newly started **Daemon Process** instances appear without restarting the portal

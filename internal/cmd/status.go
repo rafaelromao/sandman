@@ -13,7 +13,7 @@ import (
 func NewStatusCmd(log events.EventLog) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Show the status of current and recent agent runs",
+		Short: "Show the status of active agent runs",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			eventsList, err := log.Read()
 			if err != nil {

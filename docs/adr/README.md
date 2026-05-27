@@ -51,3 +51,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0008 | Config mount resolution via temporary copy | accepted |
 | 0009 | Stabilize container-backed smoke and e2e tests | accepted |
 | 0010 | Local portal command and repo-scoped run scan | accepted |
+| 0011 | Remove interactive agent mode | accepted |

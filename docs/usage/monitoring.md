@@ -61,9 +61,8 @@ When Sandman receives SIGINT or SIGTERM (e.g., Ctrl+C):
 1. Running agents are notified (SIGTERM forwarded to agent process)
 2. Sandman waits up to 10 seconds for agents to finish gracefully
 3. If agents are still running after the timeout, Sandman sends SIGKILL
-4. The control socket (`.sandman/run.sock`) is closed — any connected `sandman attach` clients see EOF and exit
-5. The PID lock (`.sandman/run.pid`) is released
-6. Partial results and events are preserved in the event log
+4. The control socket (`.sandman/runs/<run-id>/run.sock`) is closed — any connected `sandman attach` clients see EOF and exit
+5. Partial results and events are preserved in the event log
 
 ## Understanding run status
 

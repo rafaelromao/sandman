@@ -40,9 +40,6 @@ git:
   base_branch: main
 
 # Sandman installs both built-in agents in scaffolded Dockerfiles and mounts the shared skills directory.
-installed_agents:
-  - opencode
-  - pi
 ```
 
 ## Built-in agents
@@ -106,7 +103,7 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 Use `sandman config get` and `sandman config set` to read and write individual fields:
 
 ```bash
-sandman config get default_parallel 4
+sandman config get default_parallel
 sandman config set container_capacity 2
 sandman config set start_delay 5
 sandman config set git.base_branch main
