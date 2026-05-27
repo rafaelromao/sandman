@@ -1620,6 +1620,7 @@
         commandField('Launch mode', '<div class="command-radio-group">' + templateHTML('launch-mode-options') + '</div>'),
         smVisible ? commandField('Selection mode', '<div class="command-radio-group">' + templateHTML('selection-mode-options') + '</div>') : '',
         '</div>',
+        smVisible ? '' : commandNote('Selection and scope fields are not used in prompt-only mode.'),
       ].join(''));
     }
 
@@ -1648,7 +1649,7 @@
         } else if (state.selectionMode === 'label') {
           summary = 'Label  ' + (state.label || '–');
         } else if (state.selectionMode === 'query') {
-          summary = 'Query  ' + (state.query ? 'set' : '–');
+          summary = 'Query  ' + (state.query || '–');
         } else if (state.selectionMode === 'next') {
           summary = 'Next  ' + (state.next || String(launchDefaults.next || 1));
         }
@@ -1658,6 +1659,7 @@
         summary = 'Clean  ' + (state.cleanMode || 'success') + (state.confirmed ? ' \u2713' : '');
       } else if (type === 'config') {
         summary = (state.configMode || 'get') + '  ' + (state.configKey || '–');
+        if (state.configMode === 'set' && state.configValue) summary += ' = ' + state.configValue;
       }
       commandExecuteStatus.innerHTML = '<span class="dot"></span><strong>' + escapeHTML(summary) + '</strong>';
     }
@@ -2345,9 +2347,6 @@
         if (radio || configMode) {
           syncCommandPanelState(commandPanelType);
           renderCommandPanelBody(commandPanelType);
-          window.requestAnimationFrame(() => {
-            if (commandPicker) commandPicker.focus({ preventScroll: true });
-          });
         }
       });
 
