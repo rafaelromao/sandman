@@ -104,7 +104,7 @@ Continue the last agent run for a given issue with a fresh prompt plus prior con
 sandman continue <issue-number> <prompt-text>
 ```
 
-Reuses the previously created branch and recorded agent/model/review command. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. Then it prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
+Reuses the previously created branch and recorded agent, model, and review command from the prior run, though `--agent` and `--model` flags can override. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. Then it prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
 
 ## `sandman clean`
 
@@ -130,7 +130,7 @@ Attach to a running sandman daemon and stream its output.
 sandman attach
 ```
 
-If no daemon is running (`.sandman/run.sock` doesn't exist), prints a clear error. Otherwise connects to the daemon's control socket and reads raw bytes to stdout until the socket closes (EOF).
+If no daemon is running (no socket under `.sandman/runs/` exists), prints a clear error. Otherwise connects to the daemon's control socket and reads raw bytes to stdout until the socket closes (EOF).
 
 Useful for monitoring a long-running batch from a separate terminal.
 

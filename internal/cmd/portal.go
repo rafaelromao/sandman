@@ -214,7 +214,25 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 					return
 				}
 				resp = portalLaunchResponse{Message: "Started sandman run.", Args: args}
-			case "continue", "status", "history", "clean", "config":
+			case "continue":
+				commandReq := req.commandRequest()
+				commandReq.Preset = req.Command
+				args, err = buildPortalCommandArgs(commandReq)
+				if err != nil {
+					writeJSONError(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				if err := portalStartRun(r.Context(), repoRoot, args); err != nil {
+					writeJSONError(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				command, err := launcher.record(args)
+				if err != nil {
+					writeJSONError(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				resp = command
+			case "status", "history", "clean", "config":
 				commandReq := req.commandRequest()
 				commandReq.Preset = req.Command
 				args, err = buildPortalCommandArgs(commandReq)

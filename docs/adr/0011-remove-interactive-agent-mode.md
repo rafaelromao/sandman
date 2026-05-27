@@ -1,4 +1,4 @@
-# ADR-0008: Remove Interactive Agent Mode
+# ADR-0011: Remove Interactive Agent Mode
 
 ## Status
 

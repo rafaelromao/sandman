@@ -55,7 +55,7 @@ Sandman creates the minimum number of containers needed for the currently active
 - Container 1 hosts runs 1-4
 - Container 2 hosts runs 5-6
 
-No containers sit idle. Additional containers are created or removed as runs start and finish, up to the minimum needed.
+No containers sit idle. Additional containers are created as needed. Idle containers persist for reuse within the batch and are stopped when the batch completes.
 
 #### Fixed pool (`max_containers: N`)
 

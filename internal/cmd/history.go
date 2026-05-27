@@ -11,7 +11,7 @@ import (
 func NewHistoryCmd(log events.EventLog) *cobra.Command {
 	return &cobra.Command{
 		Use:   "history",
-		Short: "Show the event log of all agent runs",
+		Short: "Show completed agent runs",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			eventsList, err := log.Read()
 			if err != nil {
