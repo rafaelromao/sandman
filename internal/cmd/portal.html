@@ -902,6 +902,7 @@
     }
     .command-pane-tabs {
       display: flex;
+      flex-wrap: wrap;
       gap: 0;
       border-bottom: 1px solid var(--border);
       margin-bottom: 2px;
@@ -2373,7 +2374,6 @@
       });
       commandPanelForm.addEventListener('change', () => {
         syncCommandPanelState(commandPanelType);
-        updateExecuteSummary();
       });
       commandPanelForm.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -2389,13 +2389,15 @@
       });
 
       commandPanelBody.addEventListener('change', (event) => {
-        if (commandPanelType !== 'run' && commandPanelType !== 'config') return;
         const radio = event.target.closest('[name="launchMode"], [name="selectionMode"]');
         const configMode = event.target.closest('select[name="configMode"]');
-        if (radio || configMode) {
+        if ((commandPanelType === 'run' || commandPanelType === 'config') && (radio || configMode)) {
           syncCommandPanelState(commandPanelType);
           renderCommandPanelBody(commandPanelType);
+          return;
         }
+        syncCommandPanelState(commandPanelType);
+        updateExecuteSummary();
       });
 
       commandPanelBody.addEventListener('keydown', (event) => {
