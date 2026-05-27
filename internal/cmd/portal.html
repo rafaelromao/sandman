@@ -1572,12 +1572,20 @@
 
     function renderRunPane(state, pane) {
       if (pane === 'scope') {
+        if (state.launchMode === 'prompt-only') {
+          return commandSection('Scope', commandNote('Not used in prompt-only mode. Switch to Issue-driven to configure issue selection.'));
+        }
+        const scopeField = (() => {
+          const sm = state.selectionMode || 'issues';
+          if (sm === 'issues') return commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || '') + '">');
+          if (sm === 'label') return commandField('Label', '<input name="label" type="text" placeholder="ready-for-agent" value="' + escapeHTML(state.label || '') + '">');
+          if (sm === 'query') return commandField('Query', '<input name="query" type="text" placeholder="is:open label:ready-for-agent" value="' + escapeHTML(state.query || '') + '">');
+          if (sm === 'next') return commandField('Next', '<input name="next" type="number" min="1" step="1" inputmode="numeric" placeholder="1" value="' + escapeHTML(state.next || String(launchDefaults.next || 1)) + '">');
+          return '';
+        })();
         return commandSection('Scope', [
-          '<div class="command-grid two">',
-          commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || '') + '">'),
-          commandField('Label', '<input name="label" type="text" placeholder="ready-for-agent" value="' + escapeHTML(state.label || '') + '">'),
-          commandField('Query', '<input name="query" type="text" placeholder="is:open label:ready-for-agent" value="' + escapeHTML(state.query || '') + '">'),
-          commandField('Next', '<input name="next" type="number" min="1" step="1" inputmode="numeric" placeholder="1" value="' + escapeHTML(state.next || String(launchDefaults.next || 1)) + '">'),
+          '<div class="command-grid">',
+          scopeField,
           '</div>',
           commandField('Dependencies', '<label class="launch-radio"><input name="includeDependencies" type="checkbox"' + (state.includeDependencies ? ' checked' : '') + '> Include dependencies</label>'),
         ].join(''));
@@ -1606,11 +1614,13 @@
         ].join(''));
       }
 
+      const smVisible = state.launchMode !== 'prompt-only';
       return commandSection('Run', [
-        '<div class="command-grid two">',
+        '<div class="command-grid' + (smVisible ? ' two' : '') + '">',
         commandField('Launch mode', '<div class="command-radio-group">' + templateHTML('launch-mode-options') + '</div>'),
-        commandField('Selection mode', '<div class="command-radio-group">' + templateHTML('selection-mode-options') + '</div>'),
+        smVisible ? commandField('Selection mode', '<div class="command-radio-group">' + templateHTML('selection-mode-options') + '</div>') : '',
         '</div>',
+        smVisible ? '' : commandNote('Selection and scope fields are not used in prompt-only mode.'),
       ].join(''));
     }
 
@@ -1624,6 +1634,34 @@
     function setCommandExecuteStatus(message) {
       if (!commandExecuteStatus) return;
       commandExecuteStatus.innerHTML = '<span class="dot"></span><strong>' + escapeHTML(message) + '</strong>';
+    }
+
+    function updateExecuteSummary() {
+      if (!commandExecuteStatus) return;
+      const type = commandPanelType || (commandPicker ? commandPicker.value || 'run' : 'run');
+      const state = commandState[type] || {};
+      let summary = 'Ready';
+      if (type === 'run') {
+        if (state.launchMode === 'prompt-only') {
+          summary = 'Prompt-only';
+        } else if (state.selectionMode === 'issues') {
+          summary = 'Issues  #' + (state.issues || '–');
+        } else if (state.selectionMode === 'label') {
+          summary = 'Label  ' + (state.label || '–');
+        } else if (state.selectionMode === 'query') {
+          summary = 'Query  ' + (state.query || '–');
+        } else if (state.selectionMode === 'next') {
+          summary = 'Next  ' + (state.next || String(launchDefaults.next || 1));
+        }
+      } else if (type === 'continue') {
+        summary = 'Continue  ' + (state.issue ? '#' + state.issue : '–');
+      } else if (type === 'clean') {
+        summary = 'Clean  ' + (state.cleanMode || 'success') + (state.confirmed ? ' \u2713' : '');
+      } else if (type === 'config') {
+        summary = (state.configMode || 'get') + '  ' + (state.configKey || '–');
+        if (state.configMode === 'set' && state.configValue) summary += ' = ' + state.configValue;
+      }
+      commandExecuteStatus.innerHTML = '<span class="dot"></span><strong>' + escapeHTML(summary) + '</strong>';
     }
 
     function renderRunCommandBody(state) {
@@ -1672,12 +1710,13 @@
     }
 
     function renderConfigCommandBody(state) {
+      const isGet = state.configMode === 'get';
       return commandSection('Config', [
         commandNote('Read or write repo-scoped configuration values.'),
         '<div class="command-grid two">',
         commandField('Mode', '<select name="configMode"><option value="get"' + (state.configMode === 'get' ? ' selected' : '') + '>Get</option><option value="set"' + (state.configMode === 'set' ? ' selected' : '') + '>Set</option></select>'),
         commandField('Key', '<input name="configKey" type="text" placeholder="default_agent" value="' + escapeHTML(state.configKey || '') + '">'),
-        commandField('Value', '<input name="configValue" type="text" placeholder="opencode" value="' + escapeHTML(state.configValue || '') + '">'),
+        isGet ? '' : commandField('Value', '<input name="configValue" type="text" placeholder="opencode" value="' + escapeHTML(state.configValue || '') + '">'),
         '</div>',
       ].join(''));
     }
@@ -1700,6 +1739,7 @@
         commandPanelBody.innerHTML = renderConfigCommandBody(state);
       }
       applyCommandFieldState(type, state);
+      updateExecuteSummary();
     }
 
     function focusActiveRunPaneTab() {
@@ -2281,9 +2321,11 @@
     if (commandPanelForm) {
       commandPanelForm.addEventListener('input', () => {
         syncCommandPanelState(commandPanelType);
+        updateExecuteSummary();
       });
       commandPanelForm.addEventListener('change', () => {
         syncCommandPanelState(commandPanelType);
+        updateExecuteSummary();
       });
       commandPanelForm.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -2296,6 +2338,16 @@
         const button = event.target.closest('button[data-action="set-run-pane"]');
         if (!button || commandPanelType !== 'run') return;
         setRunPane(button.getAttribute('data-run-pane') || 'run');
+      });
+
+      commandPanelBody.addEventListener('change', (event) => {
+        if (commandPanelType !== 'run' && commandPanelType !== 'config') return;
+        const radio = event.target.closest('[name="launchMode"], [name="selectionMode"]');
+        const configMode = event.target.closest('select[name="configMode"]');
+        if (radio || configMode) {
+          syncCommandPanelState(commandPanelType);
+          renderCommandPanelBody(commandPanelType);
+        }
       });
 
       commandPanelBody.addEventListener('keydown', (event) => {
