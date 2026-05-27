@@ -1820,8 +1820,14 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error || body.message || 'launch failed');
+        const text = await res.text();
+        let body;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          body = {};
+        }
+        if (!res.ok) throw new Error(body.error || body.message || text.trim() || 'launch failed');
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';
         setCommandExecuteStatus('Started');

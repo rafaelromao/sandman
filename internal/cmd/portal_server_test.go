@@ -459,6 +459,91 @@ func TestPortal_CommandsEndpointRejectsLaunchRoute(t *testing.T) {
 	}
 }
 
+func TestPortal_CommandsEndpointReturnsJSONErrors(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	t.Run("invalid payload", func(t *testing.T) {
+		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`not json`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+			t.Fatalf("expected application/json, got %q", ct)
+		}
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error == "" {
+			t.Fatal("expected non-empty error message")
+		}
+	})
+
+	t.Run("unknown command", func(t *testing.T) {
+		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"nope"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+			t.Fatalf("expected application/json, got %q", ct)
+		}
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error != "unknown command" {
+			t.Fatalf("expected 'unknown command', got %q", body.Error)
+		}
+	})
+
+	t.Run("launch failure", func(t *testing.T) {
+		prevStart := portalStartCommand
+		t.Cleanup(func() { portalStartCommand = prevStart })
+		portalStartCommand = func(ctx context.Context, repoRoot string, args []string) error {
+			return fmt.Errorf("exec: not found")
+		}
+
+		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"status"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+			t.Fatalf("expected application/json, got %q", ct)
+		}
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error != "exec: not found" {
+			t.Fatalf("expected 'exec: not found', got %q", body.Error)
+		}
+	})
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

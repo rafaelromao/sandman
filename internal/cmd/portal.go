@@ -190,7 +190,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 		case http.MethodPost:
 			req, err := parsePortalUnifiedLaunchRequest(r)
 			if err != nil {
-				http.Error(w, "invalid command payload", http.StatusBadRequest)
+				writeJSONError(w, "invalid command payload", http.StatusBadRequest)
 				return
 			}
 
@@ -202,15 +202,15 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			case "run":
 				args, err = buildPortalRunArgs(repoRoot, cfg, req.runRequest())
 				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
+					writeJSONError(w, err.Error(), http.StatusBadRequest)
 					return
 				}
 				if err := portalStartRun(r.Context(), repoRoot, args); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+					writeJSONError(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
 				if _, err := launcher.record(args); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+					writeJSONError(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
 				resp = portalLaunchResponse{Message: "Started sandman run.", Args: args}
@@ -219,17 +219,17 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 				commandReq.Preset = req.Command
 				args, err = buildPortalCommandArgs(commandReq)
 				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
+					writeJSONError(w, err.Error(), http.StatusBadRequest)
 					return
 				}
 				command, err := launcher.launch(args)
 				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+					writeJSONError(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
 				resp = command
 			default:
-				http.Error(w, "unknown command", http.StatusBadRequest)
+				writeJSONError(w, "unknown command", http.StatusBadRequest)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -353,6 +353,12 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 		}
 	})
 	return mux
+}
+
+func writeJSONError(w http.ResponseWriter, msg string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 func findRepoRoot(start string) (string, error) {
