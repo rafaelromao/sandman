@@ -71,6 +71,54 @@ func TestSyncOverwritesManagedTreeWithoutPrompt(t *testing.T) {
 	if !strings.Contains(text, "/new-review") {
 		t.Fatalf("expected new review command in skill, got:\n%s", text)
 	}
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, manifestFileName)); err != nil {
+		t.Fatalf("expected manifest to be written: %v", err)
+	}
+	if bytes.Contains(data, []byte("{{REVIEW_COMMAND}}")) {
+		t.Fatalf("expected installed skill to be rendered, got:\n%s", text)
+	}
+}
+
+func TestSyncTreatsLegacyManagedTreeAsUpgradeable(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	err := fs.WalkDir(embeddedSkills, embeddedSkillRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel := strings.TrimPrefix(path, embeddedSkillRoot)
+		rel = strings.TrimPrefix(rel, "/")
+		target := root
+		if rel != "" {
+			target = filepath.Join(root, filepath.FromSlash(rel))
+		}
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := fs.ReadFile(embeddedSkills, path)
+		if err != nil {
+			return err
+		}
+		data = bytes.ReplaceAll(data, []byte("{{REVIEW_COMMAND}}"), []byte("/legacy review"))
+		return os.WriteFile(target, data, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("seed legacy managed tree: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, manifestFileName)); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove manifest: %v", err)
+	}
+
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/new review"}); err != nil {
+		t.Fatalf("expected legacy tree to upgrade cleanly, got %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "delegate-review", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read updated delegate-review skill: %v", err)
+	}
+	if !strings.Contains(string(data), "/new review") {
+		t.Fatalf("expected legacy tree to upgrade review command, got:\n%s", data)
+	}
 }
 
 func TestSyncRejectsLocalEditsWithoutTTY(t *testing.T) {

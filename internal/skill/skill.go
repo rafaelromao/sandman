@@ -3,7 +3,10 @@ package skill
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,6 +17,8 @@ import (
 )
 
 const embeddedSkillRoot = "sandman"
+
+const manifestFileName = ".sandman-sync-manifest.json"
 
 //go:embed sandman/**
 var embeddedSkills embed.FS
@@ -102,6 +107,9 @@ func Sync(opts SyncOptions) error {
 	}); err != nil {
 		return err
 	}
+	if err := writeManifest(targetDir); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -117,6 +125,17 @@ func pathExists(path string) (bool, error) {
 }
 
 func matchesManagedTree(targetDir string) (bool, error) {
+	manifest, err := readManifest(targetDir)
+	if err != nil {
+		return false, err
+	}
+	if manifest != nil {
+		return matchesManifest(targetDir, manifest)
+	}
+	return matchesLegacyManagedTree(targetDir)
+}
+
+func matchesLegacyManagedTree(targetDir string) (bool, error) {
 	expectedFiles, err := embeddedFileSet()
 	if err != nil {
 		return false, err
@@ -130,17 +149,6 @@ func matchesManagedTree(targetDir string) (bool, error) {
 	}
 	for _, rel := range expectedFiles {
 		if _, ok := actualFiles[rel]; !ok {
-			return false, nil
-		}
-		tmpl, err := fs.ReadFile(embeddedSkills, filepath.ToSlash(filepath.Join(embeddedSkillRoot, rel)))
-		if err != nil {
-			return false, fmt.Errorf("read embedded skill file %q: %w", rel, err)
-		}
-		actual, err := os.ReadFile(filepath.Join(targetDir, rel))
-		if err != nil {
-			return false, fmt.Errorf("read installed skill file %q: %w", rel, err)
-		}
-		if !matchesTemplate(actual, tmpl) {
 			return false, nil
 		}
 	}
@@ -180,38 +188,92 @@ func diskFileSet(targetDir string) (map[string]struct{}, error) {
 		if err != nil {
 			return err
 		}
+		if rel == manifestFileName {
+			return nil
+		}
 		files[rel] = struct{}{}
 		return nil
 	})
 	return files, err
 }
 
-func matchesTemplate(actual, tmpl []byte) bool {
-	const placeholder = "{{REVIEW_COMMAND}}"
-	text := string(tmpl)
-	if !strings.Contains(text, placeholder) {
-		return bytes.Equal(actual, tmpl)
+type manifest struct {
+	Files map[string]string `json:"files"`
+}
+
+func readManifest(targetDir string) (*manifest, error) {
+	path := filepath.Join(targetDir, manifestFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read installed skill manifest: %w", err)
 	}
-	parts := strings.Split(text, placeholder)
-	remaining := string(actual)
-	for i, part := range parts {
-		if i == 0 {
-			if !strings.HasPrefix(remaining, part) {
-				return false
-			}
-			remaining = strings.TrimPrefix(remaining, part)
-			continue
-		}
-		if i == len(parts)-1 {
-			return strings.HasSuffix(remaining, part)
-		}
-		idx := strings.Index(remaining, part)
-		if idx < 0 {
-			return false
-		}
-		remaining = remaining[idx+len(part):]
+	var m manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parse installed skill manifest: %w", err)
 	}
-	return true
+	if m.Files == nil {
+		m.Files = map[string]string{}
+	}
+	return &m, nil
+}
+
+func writeManifest(targetDir string) error {
+	files, err := diskFileSet(targetDir)
+	if err != nil {
+		return fmt.Errorf("walk installed skill tree for manifest: %w", err)
+	}
+	m := manifest{Files: map[string]string{}}
+	for rel := range files {
+		hash, err := fileHash(filepath.Join(targetDir, rel))
+		if err != nil {
+			return fmt.Errorf("hash installed skill file %q: %w", rel, err)
+		}
+		m.Files[rel] = hash
+	}
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal skill manifest: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, manifestFileName), data, 0o644); err != nil {
+		return fmt.Errorf("write skill manifest: %w", err)
+	}
+	return nil
+}
+
+func matchesManifest(targetDir string, m *manifest) (bool, error) {
+	actualFiles, err := diskFileSet(targetDir)
+	if err != nil {
+		return false, fmt.Errorf("walk installed skill tree: %w", err)
+	}
+	if len(actualFiles) != len(m.Files) {
+		return false, nil
+	}
+	for rel := range actualFiles {
+		expectedHash, ok := m.Files[rel]
+		if !ok {
+			return false, nil
+		}
+		actualHash, err := fileHash(filepath.Join(targetDir, rel))
+		if err != nil {
+			return false, fmt.Errorf("hash installed skill file %q: %w", rel, err)
+		}
+		if actualHash != expectedHash {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func fileHash(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func confirmOverwrite(in io.Reader, out io.Writer, msg string) (bool, error) {

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -231,6 +232,37 @@ func TestConfigSet_ReviewCommand_UpdatesFile(t *testing.T) {
 	}
 	if cfg.ReviewCommand != "/review please" {
 		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/review please")
+	}
+}
+
+func TestConfigSet_ReviewCommand_DoesNotSaveWhenSyncFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("default_agent: opencode\nreview_command: /old review\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	oldSync := syncSandmanSkill
+	syncSandmanSkill = func(opts skill.SyncOptions) error {
+		return fmt.Errorf("boom")
+	}
+	t.Cleanup(func() { syncSandmanSkill = oldSync })
+
+	store := &config.FileStore{Path: path}
+	cmd := NewConfigSetCmd(store)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"review_command", "/new review"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected sync failure")
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.ReviewCommand != "/old review" {
+		t.Fatalf("expected config review command to stay old value, got %q", cfg.ReviewCommand)
 	}
 }
 
