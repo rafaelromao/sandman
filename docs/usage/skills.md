@@ -1,6 +1,6 @@
 # Sandman Skills
 
-Sandman installs the full shared `sandman` skill folder during `sandman init`. It lives at `~/.agents/skills/sandman/` and is only written when missing, so local customization is preserved.
+Sandman syncs the full shared `sandman` skill folder during `sandman init`. It lives at `~/.agents/skills/sandman/` and is regenerated when `review_command` changes.
 
 ## What it contains
 
@@ -14,7 +14,7 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 - pr-merge
 - continuation
 
-`docs/usage/default-prompt.md` now acts as a bootstrap that passes issue context, branch context, and the runtime review command into the installed `sandman` skill.
+`docs/usage/default-prompt.md` now acts as a bootstrap that passes issue context, branch context, and the configured review command into the installed `sandman` skill.
 
 ## Container access
 
@@ -22,4 +22,6 @@ Sandman mounts `~/.agents` into built-in agent containers so the shared skill is
 
 ## Review command
 
-`/oc review` stays parameterized at runtime. Sandman still resolves `{{REVIEW_COMMAND}}` from config or `--review-command` before the prompt is rendered.
+`{{REVIEW_COMMAND}}` is rendered from project config. `sandman init --review-command` seeds that value, and `sandman config set review_command ...` updates both config and the installed shared skill tree.
+
+If Sandman detects local edits under `~/.agents/skills/sandman/`, it asks before overwriting in a TTY. In non-interactive mode it fails instead of silently replacing those edits.

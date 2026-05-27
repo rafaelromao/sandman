@@ -8,12 +8,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/scaffold"
-	"github.com/rafaelromao/sandman/internal/skill"
 	"github.com/spf13/cobra"
 )
-
-var installSandmanSkill = skill.InstallDefault
 
 type cliPrompter struct {
 	in  *bufio.Reader
@@ -56,6 +54,7 @@ func NewInitCmd() *cobra.Command {
 			buildTools, _ := cmd.Flags().GetString("build-tools")
 			toolVersion, _ := cmd.Flags().GetString("tool-version")
 			defaultAgent, _ := cmd.Flags().GetString("default-agent")
+			reviewCommand, _ := cmd.Flags().GetString("review-command")
 
 			if toolVersion == "" {
 				toolVersion = "repo"
@@ -73,13 +72,21 @@ func NewInitCmd() *cobra.Command {
 			}
 
 			if err := s.Scaffold(wd, scaffold.Options{
-				BuildTools:   buildTools,
-				ToolVersion:  toolVersion,
-				DefaultAgent: defaultAgent,
+				BuildTools:    buildTools,
+				ToolVersion:   toolVersion,
+				DefaultAgent:  defaultAgent,
+				ReviewCommand: reviewCommand,
 			}, prompter); err != nil {
 				return err
 			}
-			if err := installSandmanSkill(); err != nil {
+			syncOpts, err := sandmanSkillSyncOptions(cmd, reviewCommand)
+			if err != nil {
+				return fmt.Errorf("resolve skill sync options: %w", err)
+			}
+			if syncOpts.ReviewCommand == "" {
+				syncOpts.ReviewCommand = config.DefaultReviewCommand
+			}
+			if err := syncSandmanSkill(syncOpts); err != nil {
 				return fmt.Errorf("install sandman skill: %w", err)
 			}
 
@@ -90,6 +97,7 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().String("build-tools", "", fmt.Sprintf("Build tools preset (%s)", strings.Join(scaffold.KnownBuildToolsPresets, ", ")))
 	cmd.Flags().String("tool-version", "", "Logical version selector (repo, latest, lts, or semver shorthand)")
 	cmd.Flags().String("default-agent", "", "Default built-in agent preset (opencode or pi)")
+	cmd.Flags().String("review-command", "", "Review command to store in config and install into shared skills")
 
 	return cmd
 }

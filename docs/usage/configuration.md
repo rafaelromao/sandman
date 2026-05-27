@@ -11,7 +11,7 @@ default_agent: opencode
 # Build tools preset for the container image (generic, go, node, python).
 build_tools: generic
 
-# Review command injected into the prompt template.
+# Review command injected into the prompt template and shared skill install.
 review_command: /oc review
 
 # Maximum number of concurrent agent runs.
@@ -74,7 +74,7 @@ The following built-in substitution keys are available in prompt templates:
 | `{{SOURCE_BRANCH}}` | Branch the agent starts from |
 | `{{BASE_BRANCH}}` | Branch the agent will rebase/PR against |
 | `{{BRANCH}}` | Alias for `{{SOURCE_BRANCH}}` |
-| `{{REVIEW_COMMAND}}` | Review command from config or `--review-command` |
+| `{{REVIEW_COMMAND}}` | Review command from project config |
 
 Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
 
@@ -113,6 +113,8 @@ sandman config set git.base_branch main
 ```
 
 Use `sandman config get` and `sandman config set` for top-level config keys.
+
+When you change `review_command` with `sandman config set`, Sandman also regenerates the shared `~/.agents/skills/sandman/` tree. If that installed tree has local edits, Sandman prompts before overwriting in a TTY and fails in non-interactive mode.
 
 Sandman does not store a separate commit identity in project config. Agent commits use your host Git identity resolved in this order:
 

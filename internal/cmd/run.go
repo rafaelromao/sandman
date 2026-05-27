@@ -36,7 +36,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			promptFlag, _ := cmd.Flags().GetString("prompt")
 			templateFlag, _ := cmd.Flags().GetString("template")
-			reviewCommandFlag, _ := cmd.Flags().GetString("review-command")
 			modelFlag, _ := cmd.Flags().GetString("model")
 			agentFlag, _ := cmd.Flags().GetString("agent")
 			promptArgsRaw, _ := cmd.Flags().GetStringArray("prompt-arg")
@@ -50,9 +49,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			reviewCommand := cfg.EffectiveReviewCommand()
-			if strings.TrimSpace(reviewCommandFlag) != "" {
-				reviewCommand = reviewCommandFlag
-			}
 
 			selectedPrompt := ""
 			overridePrompt := false
@@ -232,7 +228,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					PromptFlag:       promptFlag,
 					TemplateFlag:     templateFlag,
 					ReviewCommand:    reviewCommand,
-					ReviewCommandSet: strings.TrimSpace(reviewCommandFlag) != "",
+					ReviewCommandSet: true,
 					PromptArgs:       promptArgs,
 				},
 			})
@@ -261,7 +257,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")
 	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
-	cmd.Flags().String("review-command", "", "Review command to inject into the prompt template")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode or pi)")
 	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")

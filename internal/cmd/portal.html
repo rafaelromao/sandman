@@ -1267,7 +1267,6 @@
     const summaryPill = document.getElementById('summary-pill');
     const lastUpdated = document.getElementById('last-updated');
     const launchDefaults = {
-      reviewCommand: {{printf "%q" .LaunchData.ReviewCommand}},
       agent: {{printf "%q" .LaunchData.Agent}},
       model: {{printf "%q" .LaunchData.Model}},
       baseBranch: {{printf "%q" .LaunchData.BaseBranch}},
@@ -1290,7 +1289,6 @@
         includeDependencies: false,
         prompt: '',
         template: '',
-        reviewCommand: launchDefaults.reviewCommand,
         promptArgs: '',
         agent: launchDefaults.agent,
         model: launchDefaults.model,
@@ -1463,7 +1461,6 @@
         return commandSection('Prompt', [
           commandField('Prompt', '<textarea name="prompt" placeholder="finish the tests">' + escapeHTML(state.prompt || '') + '</textarea>'),
           commandField('Template', '<input name="template" type="text" placeholder="prompts/launch.md" value="' + escapeHTML(state.template || '') + '">'),
-          commandField('Review command', '<input name="reviewCommand" type="text" placeholder="' + escapeHTML(launchDefaults.reviewCommand || '') + '" value="' + escapeHTML(state.reviewCommand || '') + '">'),
           commandField('Prompt args', '<textarea name="promptArgs" placeholder="key=value\nmode=fast">' + escapeHTML(state.promptArgs || '') + '</textarea>'),
         ].join(''));
       }
@@ -1625,7 +1622,6 @@
         setValue('includeDependencies', state.includeDependencies);
         setValue('prompt', state.prompt || '');
         setValue('template', state.template || '');
-        setValue('reviewCommand', state.reviewCommand || launchDefaults.reviewCommand || '');
         setValue('promptArgs', state.promptArgs || '');
         setValue('agent', state.agent || launchDefaults.agent || '');
         setValue('model', state.model || launchDefaults.model || '');
@@ -1662,7 +1658,6 @@
           includeDependencies: formData.get('includeDependencies') === 'on',
           prompt: String(formData.get('prompt') || ''),
           template: String(formData.get('template') || ''),
-          reviewCommand: String(formData.get('reviewCommand') || ''),
           promptArgs: String(formData.get('promptArgs') || ''),
           agent: String(formData.get('agent') || ''),
           model: String(formData.get('model') || ''),
@@ -1761,7 +1756,6 @@
           includeDependencies: Boolean(state.includeDependencies),
           prompt: state.prompt || '',
           template: state.template || '',
-          reviewCommand: state.reviewCommand || '',
           promptArgs: state.promptArgs || '',
           agent: state.agent || '',
           model: state.model || '',

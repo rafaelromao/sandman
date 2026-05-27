@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/skill"
 )
 
 func TestConfigGet_DefaultAgent(t *testing.T) {
@@ -205,9 +206,18 @@ func TestConfigSet_ReviewCommand_UpdatesFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	oldSync := syncSandmanSkill
+	syncSandmanSkill = func(opts skill.SyncOptions) error {
+		if opts.ReviewCommand != "/review please" {
+			t.Fatalf("expected sync review command, got %q", opts.ReviewCommand)
+		}
+		return nil
+	}
+	t.Cleanup(func() { syncSandmanSkill = oldSync })
 
 	store := &config.FileStore{Path: path}
 	cmd := NewConfigSetCmd(store)
+	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"review_command", "/review please"})
 
 	err := cmd.Execute()

@@ -58,7 +58,20 @@ func NewConfigSetCmd(store config.Store) *cobra.Command {
 				return err
 			}
 
-			return store.Save(cfg)
+			if err := store.Save(cfg); err != nil {
+				return err
+			}
+			if args[0] == "review_command" {
+				syncOpts, err := sandmanSkillSyncOptions(cmd, cfg.EffectiveReviewCommand())
+				if err != nil {
+					return fmt.Errorf("resolve skill sync options: %w", err)
+				}
+				if err := syncSandmanSkill(syncOpts); err != nil {
+					return fmt.Errorf("sync sandman skill: %w", err)
+				}
+			}
+
+			return nil
 		},
 	}
 }
