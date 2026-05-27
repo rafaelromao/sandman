@@ -1585,6 +1585,18 @@
       if (tab) tab.focus({ preventScroll: true });
     }
 
+    function setRunPane(pane) {
+      syncCommandPanelState('run');
+      commandState.run = {
+        ...(commandState.run || {}),
+        runPane: pane || 'run',
+      };
+      renderCommandPanelBody('run');
+      window.requestAnimationFrame(() => {
+        focusActiveRunPaneTab();
+      });
+    }
+
     function applyCommandFieldState(type, state) {
       if (!commandPanelBody) return;
       const setValue = (name, value) => {
@@ -2161,16 +2173,26 @@
       commandPanelBody.addEventListener('click', (event) => {
         const button = event.target.closest('button[data-action="set-run-pane"]');
         if (!button || commandPanelType !== 'run') return;
-        syncCommandPanelState('run');
-        const runPane = button.getAttribute('data-run-pane') || 'run';
-        commandState.run = {
-          ...(commandState.run || {}),
-          runPane,
-        };
-        renderCommandPanelBody('run');
-        window.requestAnimationFrame(() => {
-          focusActiveRunPaneTab();
-        });
+        setRunPane(button.getAttribute('data-run-pane') || 'run');
+      });
+
+      commandPanelBody.addEventListener('keydown', (event) => {
+        if (commandPanelType !== 'run') return;
+        const tab = event.target.closest('[role="tab"]');
+        if (!tab) return;
+        const tabs = Array.from(commandPanelBody.querySelectorAll('[role="tab"]'));
+        if (!tabs.length) return;
+        const currentIndex = tabs.indexOf(tab);
+        if (currentIndex < 0) return;
+        let nextIndex = null;
+        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+        else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        const nextPane = tabs[nextIndex].getAttribute('data-run-pane') || 'run';
+        setRunPane(nextPane);
       });
     }
 
