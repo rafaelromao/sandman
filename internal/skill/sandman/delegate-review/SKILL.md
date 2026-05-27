@@ -1,6 +1,6 @@
 ---
 name: sandman-delegate-review
-description: Automates the GitHub PR review loop with opencode. Waits for CI to pass, requests review from opencode by posting "{{REVIEW_COMMAND}}" on the PR, then polls for feedback, applies suggestions, commits, pushes, and repeats until approved or max 10 passes. Use when user says sandman delegate-review, wants a PR reviewed iteratively by opencode, wants to auto-address review feedback, or mentions review loop, {{REVIEW_COMMAND}}, or iterative PR approval.
+description: Automates the GitHub PR review loop with the PR Review Agent. Waits for CI to pass, requests review from the PR Review Agent by posting "{{REVIEW_COMMAND}}" on the PR, then polls for feedback, applies suggestions, commits, pushes, and repeats until approved or max 10 passes. Use when user says sandman delegate-review, wants a PR reviewed iteratively by the PR Review Agent, wants to auto-address review feedback, or mentions review loop, {{REVIEW_COMMAND}}, or iterative PR approval.
 ---
 
 # delegate_review
@@ -16,7 +16,7 @@ gh pr view <N> --repo <owner/repo> --comments
 ## Hard rule
 
 **You must NOT review the PR yourself in this session.**
-Your only job is to delegate the review to opencode by posting `{{REVIEW_COMMAND}}` as a PR comment, then wait for opencode's feedback and act on it. Under no circumstances should you read the diff and provide your own review comments.
+Your only job is to delegate the review to the PR Review Agent by posting `{{REVIEW_COMMAND}}` as a PR comment, then wait for the PR Review Agent's feedback and act on it. Under no circumstances should you read the diff and provide your own review comments.
 
 ## Workflow
 
@@ -38,17 +38,17 @@ Your only job is to delegate the review to opencode by posting `{{REVIEW_COMMAND
    - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
    - **Repeat Step 1** (wait for CI again).
 
-2. **Delegate review to opencode**
+2. **Delegate review to the PR Review Agent**
    ```bash
    gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
    ```
-   **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from opencode.
+   **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
 3. **Wait for review** (timeout: 10 minutes)
    ```bash
    gh pr view <N> --repo <owner/repo> --comments
    ```
-   Poll every 30–60s until a new comment or review from opencode appears.
+   Poll every 30–60s until a new comment or review from the PR Review Agent appears.
    If no response arrives within 10 minutes, stop and report to the user.
 
 4. **Read and classify feedback**
@@ -72,4 +72,4 @@ Your only job is to delegate the review to opencode by posting `{{REVIEW_COMMAND
 - Keep commits focused: one commit per review round is fine.
 - If the reviewer asks a question rather than giving actionable feedback, answer in a PR comment and re-request review.
 - Never force-push or amend commits.
-- Always delegate the review request to opencode via `{{REVIEW_COMMAND}}` — you are strictly forbidden from reviewing your own PR in the same session.
+- Always delegate the review request to the PR Review Agent via `{{REVIEW_COMMAND}}` — you are strictly forbidden from reviewing your own PR in the same session.
