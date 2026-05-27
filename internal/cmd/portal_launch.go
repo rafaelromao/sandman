@@ -30,7 +30,6 @@ type portalLaunchFormData struct {
 	IncludeDependencies      bool
 	Prompt                   string
 	Template                 string
-	ReviewCommand            string
 	PromptArgs               string
 	Agent                    string
 	Model                    string
@@ -52,7 +51,6 @@ type portalLaunchRequest struct {
 	IncludeDependencies bool   `json:"includeDependencies"`
 	Prompt              string `json:"prompt"`
 	Template            string `json:"template"`
-	ReviewCommand       string `json:"reviewCommand"`
 	PromptArgs          string `json:"promptArgs"`
 	Agent               string `json:"agent"`
 	Model               string `json:"model"`
@@ -81,7 +79,6 @@ type portalUnifiedLaunchRequest struct {
 	IncludeDependencies bool   `json:"includeDependencies"`
 	Prompt              string `json:"prompt"`
 	Template            string `json:"template"`
-	ReviewCommand       string `json:"reviewCommand"`
 	PromptArgs          string `json:"promptArgs"`
 	Agent               string `json:"agent"`
 	Model               string `json:"model"`
@@ -133,7 +130,6 @@ func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 		agentName = config.DefaultAgent
 	}
 
-	reviewCommand := cfg.EffectiveReviewCommand()
 	baseBranch := strings.TrimSpace(cfg.Git.BaseBranch)
 	if baseBranch == "" {
 		baseBranch = "main"
@@ -170,7 +166,6 @@ func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 		AgentOptionsHTML:         agentOptions,
 		SandboxOptionsHTML:       portalSelectOptionsHTML([]portalOption{{Value: "podman", Label: "podman", Selected: sandbox == "podman"}, {Value: "docker", Label: "docker", Selected: sandbox == "docker"}, {Value: "worktree", Label: "worktree", Selected: sandbox == "worktree"}}, sandbox),
 		Next:                     1,
-		ReviewCommand:            reviewCommand,
 		Agent:                    agentName,
 		Model:                    model,
 		BaseBranch:               baseBranch,
@@ -280,7 +275,6 @@ func (req portalUnifiedLaunchRequest) runRequest() portalLaunchRequest {
 		IncludeDependencies: req.IncludeDependencies,
 		Prompt:              req.Prompt,
 		Template:            req.Template,
-		ReviewCommand:       req.ReviewCommand,
 		PromptArgs:          req.PromptArgs,
 		Agent:               req.Agent,
 		Model:               req.Model,
@@ -323,12 +317,9 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 		selectionMode = "issues"
 	}
 
-	reviewCommand := strings.TrimSpace(req.ReviewCommand)
-	if reviewCommand == "" && cfg != nil {
+	reviewCommand := config.DefaultReviewCommand
+	if cfg != nil {
 		reviewCommand = cfg.EffectiveReviewCommand()
-	}
-	if reviewCommand == "" {
-		reviewCommand = config.DefaultReviewCommand
 	}
 
 	agent := strings.TrimSpace(req.Agent)
@@ -441,9 +432,6 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 	}
 	if templateText != "" {
 		args = append(args, "--template", templateText)
-	}
-	if reviewCommand != "" {
-		args = append(args, "--review-command", reviewCommand)
 	}
 	if agent != "" {
 		args = append(args, "--agent", agent)

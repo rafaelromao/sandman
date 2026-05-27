@@ -9,10 +9,11 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/scaffold"
+	"github.com/rafaelromao/sandman/internal/skill"
 )
 
 func init() {
-	installSandmanSkill = func() error { return nil }
+	syncSandmanSkill = func(skill.SyncOptions) error { return nil }
 }
 
 func TestInit_CreatesSandmanFiles(t *testing.T) {
@@ -20,12 +21,12 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	t.Chdir(dir)
 
 	called := 0
-	oldInstall := installSandmanSkill
-	installSandmanSkill = func() error {
+	oldInstall := syncSandmanSkill
+	syncSandmanSkill = func(skill.SyncOptions) error {
 		called++
 		return nil
 	}
-	t.Cleanup(func() { installSandmanSkill = oldInstall })
+	t.Cleanup(func() { syncSandmanSkill = oldInstall })
 
 	var out bytes.Buffer
 	cmd := NewInitCmd()
@@ -49,6 +50,38 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "prompt.md")); err != nil {
 		t.Errorf("prompt.md not created: %v", err)
+	}
+}
+
+func TestInit_ReviewCommandFlagStoredInConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	oldInstall := syncSandmanSkill
+	syncSandmanSkill = func(opts skill.SyncOptions) error {
+		if opts.ReviewCommand != "/custom review" {
+			t.Fatalf("expected sync review command, got %q", opts.ReviewCommand)
+		}
+		return nil
+	}
+	t.Cleanup(func() { syncSandmanSkill = oldInstall })
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic", "--review-command", "/custom review"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "review_command: /custom review") {
+		t.Fatalf("config missing review command override, got:\n%s", configData)
 	}
 }
 

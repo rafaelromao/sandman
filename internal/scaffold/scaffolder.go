@@ -35,10 +35,11 @@ const piNodeVersion = "22.19.0"
 
 // Options configures the scaffolding behavior.
 type Options struct {
-	BuildTools   string // --build-tools override
-	ToolVersion  string // --tool-version override
-	DefaultAgent string // --default-agent override
-	Agent        string // legacy alias for tests
+	BuildTools    string // --build-tools override
+	ToolVersion   string // --tool-version override
+	DefaultAgent  string // --default-agent override
+	ReviewCommand string // --review-command override
+	Agent         string // legacy alias for tests
 }
 
 // BuildToolsPreset describes a scaffold-time recipe for the container image.
@@ -299,7 +300,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	cfg := &config.Config{
 		DefaultAgent:      defaultAgent,
 		BuildTools:        preset.Name,
-		ReviewCommand:     config.DefaultReviewCommand,
+		ReviewCommand:     effectiveReviewCommand(opts.ReviewCommand),
 		DefaultParallel:   config.DefaultParallel,
 		StartDelay:        config.DefaultStartDelay,
 		ContainerCapacity: config.DefaultContainerCapacity,
@@ -328,6 +329,13 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 
 	return nil
+}
+
+func effectiveReviewCommand(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return config.DefaultReviewCommand
+	}
+	return value
 }
 
 func (s *Scaffolder) resolveDefaultAgent(opts Options) (string, error) {

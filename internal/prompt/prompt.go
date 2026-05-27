@@ -8,7 +8,7 @@ type RenderConfig struct {
 	RenderedPromptFile string            // .sandman/rendered-prompt.md rendered prompt path
 	ContinuePrompt     string            // raw continuation prompt text
 	ReviewCommand      string            // REVIEW_COMMAND substitution value
-	ReviewCommandSet   bool              // true when --review-command was provided
+	ReviewCommandSet   bool              // true when review_command should be recorded in events
 	PromptArgs         map[string]string // arbitrary keys from config
 }
 

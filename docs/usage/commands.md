@@ -4,7 +4,7 @@
 
 Scaffolds `.sandman/` configuration files in the current directory.
 
-`sandman init` also installs the shared `sandman` skill folder into `~/.agents/skills/sandman/` if it is missing.
+`sandman init` also syncs the shared `sandman` skill folder into `~/.agents/skills/sandman/` using the configured review command.
 
 ```bash
 sandman init [flags]
@@ -15,6 +15,7 @@ sandman init [flags]
 | `--build-tools` | `""` | Build tools preset (`generic`, `dotnet`, `go`, `node`, `python`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
 | `--default-agent` | `""` | Default built-in agent preset for `init` (`opencode` or `pi`) |
+| `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/oc review` |
 
 When `--tool-version` is omitted, `init` infers `repo` as the version selector, reading version hints from the repo when available. If flags are completely omitted and no repo hints are found, interactive prompts guide you through the choices.
 
@@ -55,7 +56,6 @@ Issue-driven runs require exactly one selection mode. `--prompt` and `--template
 | `--prompt` | — | Inline prompt template (overrides file-based templates) |
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
-| `--review-command` | — | Review command injected into `{{REVIEW_COMMAND}}` |
 | `--model` | — | Override the `AgentModel` for built-in presets using `provider/model` format |
 | `--agent` | config default (`opencode` or `pi`) | Built-in agent preset for this run |
 
@@ -173,5 +173,7 @@ sandman config set <key> <value>
 | `worktree_dir` | string | `.sandman/worktrees` |
 | `sandbox` | string | `podman` |
 | `git.base_branch` | string | `main` |
+
+`sandman config set review_command ...` also re-syncs the shared `sandman` skill tree. If local edits are detected under `~/.agents/skills/sandman/`, Sandman prompts before overwriting in a TTY and fails in non-interactive mode.
 
 Agent commits use your host Git identity, not Sandman config keys. Sandman resolves `user.name` and `user.email` from `~/.gitconfig`, then host global/XDG config, then repo-local `.git/config`.
