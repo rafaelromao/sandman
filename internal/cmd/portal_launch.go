@@ -161,8 +161,8 @@ func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 	model := strings.TrimSpace(selectedAgent.Model)
 
 	return portalLaunchFormData{
-		LaunchModeOptionsHTML:    portalRadioOptionsHTML("launch-mode", []portalOption{{Value: "issue-driven", Label: "Issue-driven", Selected: true}, {Value: "prompt-only", Label: "Prompt-only"}}, "issue-driven"),
-		SelectionModeOptionsHTML: portalRadioOptionsHTML("selection-mode", []portalOption{{Value: "issues", Label: "Issue numbers", Selected: true}, {Value: "label", Label: "Label"}, {Value: "query", Label: "Query"}, {Value: "next", Label: "Next ready issue"}}, "issues"),
+		LaunchModeOptionsHTML:    portalRadioOptionsHTML("launchMode", []portalOption{{Value: "issue-driven", Label: "Issue-driven", Selected: true}, {Value: "prompt-only", Label: "Prompt-only"}}, "issue-driven"),
+		SelectionModeOptionsHTML: portalRadioOptionsHTML("selectionMode", []portalOption{{Value: "issues", Label: "Issue numbers", Selected: true}, {Value: "label", Label: "Label"}, {Value: "query", Label: "Query"}, {Value: "next", Label: "Next ready issue"}}, "issues"),
 		AgentOptionsHTML:         agentOptions,
 		SandboxOptionsHTML:       portalSelectOptionsHTML([]portalOption{{Value: "podman", Label: "podman", Selected: sandbox == "podman"}, {Value: "docker", Label: "docker", Selected: sandbox == "docker"}, {Value: "worktree", Label: "worktree", Selected: sandbox == "worktree"}}, sandbox),
 		Next:                     1,
