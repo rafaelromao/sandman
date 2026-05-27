@@ -13,7 +13,7 @@ go install github.com/rafaelromao/sandman/cmd/sandman@latest
 cd my-repo && sandman init
 
 # 3. Run agents for GitHub issues
-sandman run --base-branch main 42 43
+sandman run 42 43
 
 # 4. Check progress
 sandman status
