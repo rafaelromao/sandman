@@ -1060,6 +1060,87 @@
       background: color-mix(in oklch, var(--surface) 92%, var(--text) 8%);
       box-shadow: 0 -1px 0 oklch(0.97 0.01 245 / 0.04);
     }
+    .settings-overlay {
+      position: fixed;
+      inset: 0;
+      background: color-mix(in oklch, var(--bg) 64%, transparent);
+      z-index: 38;
+    }
+    .settings-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: min(380px, 100vw);
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      background: linear-gradient(180deg, color-mix(in oklch, var(--surface) 92%, var(--text) 8%), var(--surface));
+      border-left: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      transform: translateX(100%);
+      transition: transform 300ms cubic-bezier(0.165, 0.84, 0.44, 1);
+      will-change: transform;
+      z-index: 39;
+      pointer-events: none;
+    }
+    .settings-panel.open {
+      transform: translateX(0);
+      pointer-events: auto;
+    }
+    .settings-panel-shell {
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .settings-panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: start;
+      padding: 20px 20px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .settings-panel-head h2 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      letter-spacing: -0.03em;
+    }
+    .settings-panel-close {
+      align-self: start;
+      flex: 0 0 auto;
+    }
+    .settings-panel-body {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      padding: 20px;
+      overflow: auto;
+      flex: 1 1 auto;
+    }
+    .settings-panel-body .theme-control,
+    .settings-panel-body .poll-control {
+      display: grid;
+      gap: 8px;
+    }
+    .settings-panel-body .theme-control > span,
+    .settings-panel-body .poll-control > span {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .settings-panel-body .poll-control-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .settings-panel-body .poll-control-row input {
+      width: 100px;
+    }
     .run-row {
       cursor: pointer;
     }
@@ -1098,22 +1179,27 @@
       .toolbar { padding: 12px; }
       .table-shell { border-radius: 16px; }
       .detail-panel { padding: 14px; }
-      .commands-panel {
+      .commands-panel,
+      .settings-panel {
         width: 100vw;
         border-left: 0;
       }
       .commands-panel-head,
       .commands-panel-body,
-      .commands-panel-footer {
+      .commands-panel-footer,
+      .settings-panel-head,
+      .settings-panel-body {
         padding-left: 16px;
         padding-right: 16px;
       }
     }
     @media (prefers-reduced-motion: reduce) {
-      .commands-panel {
+      .commands-panel,
+      .settings-panel {
         transition: none;
       }
-      .commands-overlay {
+      .commands-overlay,
+      .settings-overlay {
         backdrop-filter: none;
       }
     }
@@ -1134,23 +1220,12 @@
         </div>
       </div>
       <div class="settings-wrap">
-        <button id="commands-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="commands-panel">Commands</button>
-        <button id="settings-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel">Settings</button>
-        <div id="settings-panel" class="meta" hidden>
-          <div class="theme-control">
-            <span>Theme</span>
-            <select id="theme-picker" aria-label="Select theme">
-{{.ThemeOptionsHTML}}
-            </select>
-          </div>
-          <div class="poll-control">
-            <span>Poll interval</span>
-            <label class="poll-control-row" for="poll-interval">
-              <input id="poll-interval" type="number" min="500" step="500" value="{{.PollInterval}}" inputmode="numeric" aria-label="Poll interval in milliseconds">
-              <span>ms</span>
-            </label>
-          </div>
-        </div>
+        <button id="commands-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="commands-panel" aria-label="Commands">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        </button>
+        <button id="settings-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel" aria-label="Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
       </div>
     </header>
 
@@ -1194,6 +1269,34 @@
             <button id="command-execute" type="submit" class="action-btn">Execute</button>
           </div>
         </form>
+      </div>
+    </aside>
+
+    <div id="settings-overlay" class="settings-overlay" hidden></div>
+    <aside id="settings-panel" class="settings-panel" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="settings-panel-title">
+      <div class="settings-panel-shell">
+        <div class="settings-panel-head">
+          <div>
+            <p class="eyebrow">Settings</p>
+            <h2 id="settings-panel-title">Portal preferences</h2>
+          </div>
+          <button id="settings-close" class="settings-toggle settings-panel-close" type="button">Close</button>
+        </div>
+        <div class="settings-panel-body">
+          <div class="theme-control">
+            <span>Theme</span>
+            <select id="theme-picker" aria-label="Select theme">
+{{.ThemeOptionsHTML}}
+            </select>
+          </div>
+          <div class="poll-control">
+            <span>Poll interval</span>
+            <label class="poll-control-row" for="poll-interval">
+              <input id="poll-interval" type="number" min="500" step="500" value="{{.PollInterval}}" inputmode="numeric" aria-label="Poll interval in milliseconds">
+              <span>ms</span>
+            </label>
+          </div>
+        </div>
       </div>
     </aside>
 
@@ -1245,7 +1348,9 @@
     const commandsPath = "{{.CommandsPath}}";
     let pollInterval = {{.PollInterval}};
     const settingsToggle = document.getElementById('settings-toggle');
+    const settingsOverlay = document.getElementById('settings-overlay');
     const settingsPanel = document.getElementById('settings-panel');
+    const settingsClose = document.getElementById('settings-close');
     const themePicker = document.getElementById('theme-picker');
     const pollIntervalInput = document.getElementById('poll-interval');
     const themeStorageKey = 'sandman.portal.theme';
@@ -1307,6 +1412,7 @@
     };
     let commandPanelType = commandPicker ? commandPicker.value || 'run' : 'run';
     let commandPanelOpen = false;
+    let settingsPanelOpen = false;
 
     function systemTheme() {
       return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'catppuccin-mocha' : 'catppuccin-frappe';
@@ -1351,12 +1457,32 @@
       themePicker.addEventListener('change', () => applyTheme(themePicker.value, true));
     }
 
-    if (settingsToggle && settingsPanel) {
-      settingsToggle.addEventListener('click', () => {
-        const isOpen = !settingsPanel.hidden;
-        settingsPanel.hidden = isOpen;
-        settingsToggle.setAttribute('aria-expanded', String(!isOpen));
-      });
+    function setSettingsPanelOpen(open) {
+      if (!settingsPanel || !settingsOverlay || !settingsToggle) return;
+      settingsPanelOpen = open;
+      settingsPanel.classList.toggle('open', open);
+      settingsPanel.setAttribute('aria-hidden', String(!open));
+      settingsPanel.toggleAttribute('inert', !open);
+      settingsOverlay.hidden = !open;
+      settingsToggle.setAttribute('aria-expanded', String(open));
+      if (open) {
+        if (commandPanelOpen) setCommandPanelOpen(false);
+        window.requestAnimationFrame(() => {
+          if (themePicker) themePicker.focus({ preventScroll: true });
+        });
+      } else {
+        settingsToggle.focus();
+      }
+    }
+
+    if (settingsToggle) {
+      settingsToggle.addEventListener('click', () => setSettingsPanelOpen(!settingsPanelOpen));
+    }
+    if (settingsClose) {
+      settingsClose.addEventListener('click', () => setSettingsPanelOpen(false));
+    }
+    if (settingsOverlay) {
+      settingsOverlay.addEventListener('click', () => setSettingsPanelOpen(false));
     }
 
     let refreshTimer = null;
@@ -1733,6 +1859,7 @@
       commandsOverlay.hidden = !open;
       commandsToggle.setAttribute('aria-expanded', String(open));
       document.body.classList.toggle('commands-open', open);
+      if (open && settingsPanelOpen) setSettingsPanelOpen(false);
       if (open) {
         renderCommandPanelBody(commandPanelType);
         window.requestAnimationFrame(() => {
