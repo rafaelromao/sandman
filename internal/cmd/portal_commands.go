@@ -147,8 +147,7 @@ func startPortalCommand(ctx context.Context, repoRoot string, args []string) err
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start sandman command: %w", err)
 	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	return cmd.Wait()
 }
 
 func nextPortalCommandID() string {

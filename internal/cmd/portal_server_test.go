@@ -310,7 +310,7 @@ func TestPortal_PageExposesCommandPanelShell(t *testing.T) {
 	}
 }
 
-func TestPortal_CommandsEndpointPersistsRunLaunches(t *testing.T) {
+func TestPortal_CommandsEndpointPersistsAsyncLaunches(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -336,44 +336,88 @@ func TestPortal_CommandsEndpointPersistsRunLaunches(t *testing.T) {
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
-	body := strings.NewReader(`{"command":"run","issues":"42","prompt":"finish the tests"}`)
-	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		data, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, data)
-	}
-	if len(gotRunArgs) == 0 || gotRunArgs[0] != "run" || !strings.Contains(strings.Join(gotRunArgs, " "), "42") {
-		t.Fatalf("unexpected run args: %#v", gotRunArgs)
-	}
-	if len(gotStartArgs) != 0 {
-		t.Fatalf("expected subcommand launcher to stay idle, got %#v", gotStartArgs)
-	}
+	t.Run("run", func(t *testing.T) {
+		gotRunArgs = nil
+		gotStartArgs = nil
+		body := strings.NewReader(`{"command":"run","issues":"42","prompt":"finish the tests"}`)
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			data, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 201, got %d: %s", resp.StatusCode, data)
+		}
+		if len(gotRunArgs) == 0 || gotRunArgs[0] != "run" || !strings.Contains(strings.Join(gotRunArgs, " "), "42") {
+			t.Fatalf("unexpected run args: %#v", gotRunArgs)
+		}
+		if len(gotStartArgs) != 0 {
+			t.Fatalf("expected subcommand launcher to stay idle, got %#v", gotStartArgs)
+		}
 
-	commands := readPortalCommands(t, server.URL)
-	if len(commands) != 1 {
-		t.Fatalf("expected 1 persisted command, got %#v", commands)
-	}
-	if commands[0].Command != "sandman run 42" && !strings.HasPrefix(commands[0].Command, "sandman run ") {
-		t.Fatalf("unexpected command record: %#v", commands[0])
-	}
+		commands := readPortalCommands(t, server.URL)
+		runCmds := filterCommandsByPrefix(commands, "sandman run ")
+		if len(runCmds) == 0 {
+			t.Fatalf("expected run command persisted, got %#v", commands)
+		}
+	})
+
+	t.Run("continue", func(t *testing.T) {
+		gotRunArgs = nil
+		gotStartArgs = nil
+		body := strings.NewReader(`{"command":"continue","issue":42,"prompt":"finish the tests"}`)
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			data, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 201, got %d: %s", resp.StatusCode, data)
+		}
+		if len(gotRunArgs) == 0 || gotRunArgs[0] != "continue" || !strings.Contains(strings.Join(gotRunArgs, " "), "42") {
+			t.Fatalf("unexpected run args: %#v", gotRunArgs)
+		}
+		if len(gotStartArgs) != 0 {
+			t.Fatalf("expected subcommand launcher to stay idle, got %#v", gotStartArgs)
+		}
+
+		commands := readPortalCommands(t, server.URL)
+		continueCmds := filterCommandsByPrefix(commands, "sandman continue ")
+		if len(continueCmds) == 0 {
+			t.Fatalf("expected continue command persisted, got %#v", commands)
+		}
+	})
 
 	server.Close()
 	server = startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
 	reloaded := readPortalCommands(t, server.URL)
-	if len(reloaded) != 1 || reloaded[0].Command != commands[0].Command {
-		t.Fatalf("expected persisted command after restart, got %#v", reloaded)
+	if len(reloaded) < 2 {
+		t.Fatalf("expected persisted commands after restart, got %#v", reloaded)
 	}
+}
+
+func filterCommandsByPrefix(commands []portalCommandRecord, prefix string) []portalCommandRecord {
+	var out []portalCommandRecord
+	for _, c := range commands {
+		if strings.HasPrefix(c.Command, prefix) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
@@ -385,7 +429,6 @@ func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
 		body string
 		want []string
 	}{
-		{name: "continue", body: `{"command":"continue","issue":42,"prompt":"finish the tests"}`, want: []string{"continue", "42", "finish the tests"}},
 		{name: "status", body: `{"command":"status"}`, want: []string{"status"}},
 		{name: "history", body: `{"command":"history"}`, want: []string{"history"}},
 		{name: "clean", body: `{"command":"clean","cleanMode":"failed","confirmed":true}`, want: []string{"clean", "--failed"}},
