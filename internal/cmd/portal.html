@@ -1862,45 +1862,57 @@
     function readCommandFieldState(type) {
       if (!commandPanelForm) return commandState[type] || {};
       const formData = new FormData(commandPanelForm);
+      const current = commandState[type] || {};
+
+      const getVal = (name, fb) => {
+        if (!commandPanelForm.querySelector('[name="' + name + '"]')) return current[name] ?? fb;
+        const v = formData.get(name);
+        return v != null ? String(v) : (current[name] ?? fb);
+      };
+      const getCheck = (name) => {
+        if (!commandPanelForm.querySelector('[name="' + name + '"]')) return current[name] ?? false;
+        return formData.get(name) === 'on';
+      };
+
       if (type === 'run') {
         return {
-          launchMode: String(formData.get('launchMode') || commandState.run.launchMode || 'issue-driven'),
-          selectionMode: String(formData.get('selectionMode') || commandState.run.selectionMode || 'issues'),
-          issues: String(formData.get('issues') || ''),
-          label: String(formData.get('label') || ''),
-          query: String(formData.get('query') || ''),
-          next: String(formData.get('next') || String(launchDefaults.next || 1)),
-          includeDependencies: formData.get('includeDependencies') === 'on',
-          prompt: String(formData.get('prompt') || ''),
-          template: String(formData.get('template') || ''),
-          promptArgs: String(formData.get('promptArgs') || ''),
-          agent: String(formData.get('agent') || ''),
-          model: String(formData.get('model') || ''),
-          baseBranch: String(formData.get('baseBranch') || ''),
-          sandbox: String(formData.get('sandbox') || ''),
-          parallel: String(formData.get('parallel') || ''),
-          startDelay: String(formData.get('startDelay') || ''),
-          containerCapacity: String(formData.get('containerCapacity') || ''),
-          maxContainers: String(formData.get('maxContainers') || ''),
+          launchMode: getVal('launchMode', 'issue-driven'),
+          selectionMode: getVal('selectionMode', 'issues'),
+          issues: getVal('issues', ''),
+          label: getVal('label', ''),
+          query: getVal('query', ''),
+          next: getVal('next', String(launchDefaults.next || 1)),
+          includeDependencies: getCheck('includeDependencies'),
+          prompt: getVal('prompt', ''),
+          template: getVal('template', ''),
+          promptArgs: getVal('promptArgs', ''),
+          agent: getVal('agent', ''),
+          model: getVal('model', ''),
+          baseBranch: getVal('baseBranch', ''),
+          sandbox: getVal('sandbox', ''),
+          parallel: getVal('parallel', ''),
+          startDelay: getVal('startDelay', ''),
+          containerCapacity: getVal('containerCapacity', ''),
+          maxContainers: getVal('maxContainers', ''),
         };
       }
       if (type === 'continue') {
         return {
-          issue: String(formData.get('issue') || ''),
-          prompt: String(formData.get('prompt') || ''),
+          issue: getVal('issue', ''),
+          prompt: getVal('prompt', ''),
         };
       }
       if (type === 'clean') {
         return {
-          cleanMode: String(formData.get('cleanMode') || 'success'),
-          confirmed: formData.get('confirmed') === 'on',
+          cleanMode: getVal('cleanMode', 'success'),
+          confirmed: getCheck('confirmed'),
         };
       }
       if (type === 'config') {
         return {
-          configMode: String(formData.get('configMode') || 'get'),
-          configKey: String(formData.get('configKey') || ''),
-          configValue: String(formData.get('configValue') || ''),
+          configMode: getVal('configMode', 'get'),
+          configKey: getVal('configKey', ''),
+          configValue: getVal('configValue', ''),
         };
       }
       return commandState[type] || {};
@@ -2051,7 +2063,7 @@
         await refreshCommands();
         setCommandExecuteStatus('Ready');
       } catch (err) {
-        setCommandExecuteStatus('Launch failed');
+        setCommandExecuteStatus('Failed: ' + err.message);
         errorBanner.textContent = 'Launch failed: ' + err.message;
         errorBanner.style.display = 'block';
       } finally {
