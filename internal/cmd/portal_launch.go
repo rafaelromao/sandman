@@ -157,8 +157,12 @@ func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 
 	agentOptions := portalAgentOptions(cfg, agentName)
 
-	selectedAgent, _ := cfg.ResolveAgentProvider(agentName)
-	model := strings.TrimSpace(selectedAgent.Model)
+	model := strings.TrimSpace(cfg.DefaultModel)
+	if model == "" {
+		if selectedAgent, err := cfg.ResolveAgentProvider(agentName); err == nil {
+			model = strings.TrimSpace(selectedAgent.Model)
+		}
+	}
 
 	return portalLaunchFormData{
 		LaunchModeOptionsHTML:    portalRadioOptionsHTML("launchMode", []portalOption{{Value: "issue-driven", Label: "Issue-driven", Selected: true}, {Value: "prompt-only", Label: "Prompt-only"}}, "issue-driven"),
@@ -208,11 +212,7 @@ func portalAgentOptions(cfg *config.Config, selected string) template.HTML {
 
 	options := make([]portalOption, 0, len(names))
 	for _, name := range names {
-		label := name
-		if preset, ok := config.BuiltInAgentPresets[name]; ok {
-			label = preset.DisplayName
-		}
-		options = append(options, portalOption{Value: name, Label: label, Selected: name == selected})
+		options = append(options, portalOption{Value: name, Label: name, Selected: name == selected})
 	}
 	if len(options) == 0 {
 		return ""
@@ -334,6 +334,9 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 	}
 
 	model := strings.TrimSpace(req.Model)
+	if model == "" && cfg != nil {
+		model = strings.TrimSpace(cfg.DefaultModel)
+	}
 	if model == "" && cfg != nil {
 		if resolved, err := cfg.ResolveAgentProvider(agent); err == nil {
 			model = strings.TrimSpace(resolved.Model)
