@@ -30,6 +30,10 @@ go.work
 *.swo
 *~
 
+# Codeindex generated files
+codeindex.json
+symbolindex.json
+
 # OS
 .DS_Store
 Thumbs.db
