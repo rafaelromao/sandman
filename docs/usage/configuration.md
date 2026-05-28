@@ -8,6 +8,10 @@ Sandman reads configuration from `.sandman/config.yaml` in the project root. You
 # Default built-in agent preset used by `sandman run` when `--agent` is omitted.
 default_agent: opencode
 
+# Default model passed to the agent when `--model` is omitted.
+# Falls back to the agent provider's configured model if empty.
+default_model: opencode/deepseek-v4-flash-free
+
 # Build tools preset for the container image (generic, go, node, python).
 build_tools: generic
 
@@ -106,6 +110,7 @@ Use `sandman config get` and `sandman config set` to read and write individual f
 sandman config get default_parallel
 sandman config set container_capacity 2
 sandman config set start_delay 5
+sandman config set default_model opencode/deepseek-v4-flash-free
 sandman config set git.base_branch main
 ```
 

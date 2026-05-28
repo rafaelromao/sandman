@@ -56,8 +56,8 @@ Issue-driven runs require exactly one selection mode. `--prompt` and `--template
 | `--prompt` | — | Inline prompt template (overrides file-based templates) |
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
-| `--model` | — | Override the `AgentModel` for built-in presets using `provider/model` format |
-| `--agent` | config default (`opencode` or `pi`) | Built-in agent preset for this run |
+| `--model` | `default_model` from config | Override the model passed to the agent for built-in presets |
+| `--agent` | `default_agent` from config (`opencode`) | Built-in agent preset for this run |
 
 ### Flag interactions
 
@@ -71,7 +71,7 @@ Issue-driven runs require exactly one selection mode. `--prompt` and `--template
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
 - `--container-capacity` accepts `0` as auto/default mode and resolves it to the default container capacity behavior
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means auto-scale
-- `--model` only applies to built-in presets
+- `--model` only applies to built-in presets; if omitted, Sandman uses `default_model` from config, falling back to the agent provider's configured model
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `default_agent` from config
 - Pi splits `provider/model` into separate provider and model flags, and errors if `/` is missing
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
@@ -164,6 +164,7 @@ sandman config set <key> <value>
 | Key | Type | Example |
 |-----|------|---------|
 | `default_agent` | string | `opencode` |
+| `default_model` | string | `opencode/deepseek-v4-flash-free` |
 | `build_tools` | string | `node` |
 | `default_parallel` | int | `4` |
 | `start_delay` | int | `0` |

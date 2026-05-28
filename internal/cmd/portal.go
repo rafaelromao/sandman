@@ -341,6 +341,31 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
+		launchDataJSON, err := json.Marshal(struct {
+			Agent             string `json:"agent"`
+			Model             string `json:"model"`
+			BaseBranch        string `json:"baseBranch"`
+			Sandbox           string `json:"sandbox"`
+			Parallel          int    `json:"parallel"`
+			StartDelay        int    `json:"startDelay"`
+			ContainerCapacity int    `json:"containerCapacity"`
+			MaxContainers     int    `json:"maxContainers"`
+			Next              int    `json:"next"`
+		}{
+			Agent:             launchData.Agent,
+			Model:             launchData.Model,
+			BaseBranch:        launchData.BaseBranch,
+			Sandbox:           launchData.Sandbox,
+			Parallel:          launchData.Parallel,
+			StartDelay:        launchData.StartDelay,
+			ContainerCapacity: launchData.ContainerCapacity,
+			MaxContainers:     launchData.MaxContainers,
+			Next:              launchData.Next,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		data := struct {
 			RepoRoot            string
 			PollInterval        int
@@ -351,6 +376,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			PortalTitle         string
 			PortalSubtitle      string
 			LaunchData          portalLaunchFormData
+			LaunchDataJSON      template.JS
 			ThemeOptionsHTML    template.HTML
 			SupportedThemesJSON template.JS
 		}{
@@ -363,6 +389,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			PortalTitle:         "Sandman Portal",
 			PortalSubtitle:      "A control room for your Sandman runs.",
 			LaunchData:          launchData,
+			LaunchDataJSON:      template.JS(launchDataJSON),
 			ThemeOptionsHTML:    portalThemeOptionsHTML,
 			SupportedThemesJSON: portalSupportedThemesJSON,
 		}

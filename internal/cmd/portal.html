@@ -1401,17 +1401,7 @@
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
     const lastUpdated = document.getElementById('last-updated');
-    const launchDefaults = {
-      agent: {{printf "%q" .LaunchData.Agent}},
-      model: {{printf "%q" .LaunchData.Model}},
-      baseBranch: {{printf "%q" .LaunchData.BaseBranch}},
-      sandbox: {{printf "%q" .LaunchData.Sandbox}},
-      parallel: {{.LaunchData.Parallel}},
-      startDelay: {{.LaunchData.StartDelay}},
-      containerCapacity: {{.LaunchData.ContainerCapacity}},
-      maxContainers: {{.LaunchData.MaxContainers}},
-      next: {{.LaunchData.Next}},
-    };
+    const launchDefaults = {{.LaunchDataJSON}};
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -1419,20 +1409,20 @@
         issues: '',
         label: '',
         query: '',
-        next: String(launchDefaults.next || 1),
+        next: '',
         runPane: 'run',
         includeDependencies: false,
         prompt: '',
         template: '',
         promptArgs: '',
-        agent: launchDefaults.agent,
-        model: launchDefaults.model,
-        baseBranch: launchDefaults.baseBranch,
-        sandbox: launchDefaults.sandbox,
-        parallel: String(launchDefaults.parallel ?? ''),
-        startDelay: String(launchDefaults.startDelay ?? ''),
-        containerCapacity: String(launchDefaults.containerCapacity ?? ''),
-        maxContainers: String(launchDefaults.maxContainers ?? ''),
+        agent: '',
+        model: '',
+        baseBranch: '',
+        sandbox: '',
+        parallel: '',
+        startDelay: '',
+        containerCapacity: '',
+        maxContainers: '',
       },
       continue: { issue: '', prompt: '' },
       clean: { cleanMode: 'success', confirmed: false },
@@ -1610,7 +1600,7 @@
           if (sm === 'issues') return commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || '') + '">');
           if (sm === 'label') return commandField('Label', '<input name="label" type="text" placeholder="ready-for-agent" value="' + escapeHTML(state.label || '') + '">');
           if (sm === 'query') return commandField('Query', '<input name="query" type="text" placeholder="is:open label:ready-for-agent" value="' + escapeHTML(state.query || '') + '">');
-          if (sm === 'next') return commandField('Next', '<input name="next" type="number" min="1" step="1" inputmode="numeric" placeholder="1" value="' + escapeHTML(state.next || String(launchDefaults.next || 1)) + '">');
+          if (sm === 'next') return commandField('Next', '<input name="next" type="number" min="1" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.next || 1)) + '" value="' + escapeHTML(state.next || '') + '">');
           return '';
         })();
         return commandSection('Scope', [
@@ -1633,13 +1623,13 @@
         return commandSection('Runtime', [
           '<div class="command-grid two">',
           commandField('Agent', '<select name="agent">' + templateHTML('agent-options') + '</select>'),
-          commandField('Model', '<input name="model" type="text" placeholder="opencode-4.0" value="' + escapeHTML(state.model || '') + '">'),
-          commandField('Base branch', '<input name="baseBranch" type="text" placeholder="main" value="' + escapeHTML(state.baseBranch || '') + '">'),
+          commandField('Model', '<input name="model" type="text" placeholder="' + escapeHTML(launchDefaults.model || 'opencode-4.0') + '" value="' + escapeHTML(state.model || '') + '">'),
+          commandField('Base branch', '<input name="baseBranch" type="text" placeholder="' + escapeHTML(launchDefaults.baseBranch || 'main') + '" value="' + escapeHTML(state.baseBranch || '') + '">'),
           commandField('Sandbox', '<select name="sandbox">' + templateHTML('sandbox-options') + '</select>'),
-          commandField('Parallel', '<input name="parallel" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.parallel || '') + '">'),
-          commandField('Start delay', '<input name="startDelay" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.startDelay || '') + '">'),
-          commandField('Container capacity', '<input name="containerCapacity" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.containerCapacity || '') + '">'),
-          commandField('Max containers', '<input name="maxContainers" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="' + escapeHTML(state.maxContainers || '') + '">'),
+          commandField('Parallel', '<input name="parallel" type="number" min="0" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.parallel ?? 0)) + '" value="' + escapeHTML(state.parallel || '') + '">'),
+          commandField('Start delay', '<input name="startDelay" type="number" min="0" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.startDelay ?? 0)) + '" value="' + escapeHTML(state.startDelay || '') + '">'),
+          commandField('Container capacity', '<input name="containerCapacity" type="number" min="0" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.containerCapacity ?? 0)) + '" value="' + escapeHTML(state.containerCapacity || '') + '">'),
+          commandField('Max containers', '<input name="maxContainers" type="number" min="0" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.maxContainers ?? 0)) + '" value="' + escapeHTML(state.maxContainers || '') + '">'),
           '</div>',
         ].join(''));
       }
@@ -1678,7 +1668,7 @@
       if (type === 'run') {
         if (s.launchMode === 'prompt-only') {
           cmd += 'run';
-          if (s.prompt) cmd += ' --prompt "' + s.prompt.replace(/"/g, '\\"') + '"';
+          if (s.prompt) cmd += ' --prompt "' + s.prompt.replace(/["\n\r]/g, (c) => c === '"' ? '\\"' : c === '\n' ? '\\n' : '\\r') + '"';
           else if (s.template) cmd += ' --template ' + s.template;
         } else {
           const sm = s.selectionMode || 'issues';
@@ -1693,7 +1683,7 @@
         if (s.baseBranch && s.baseBranch !== bb) cmd += ' --base-branch ' + s.baseBranch;
         if (s.sandbox && s.sandbox !== sa) cmd += ' --sandbox ' + s.sandbox;
       } else if (type === 'continue') {
-        cmd += 'continue ' + (s.issue || '?') + ' "' + ((s.prompt || '').replace(/"/g, '\\"') || '...') + '"';
+        cmd += 'continue ' + (s.issue || '?') + ' "' + ((s.prompt || '').replace(/["\n\r]/g, (c) => c === '"' ? '\\"' : c === '\n' ? '\\n' : '\\r') || '...') + '"';
       } else if (type === 'status') {
         cmd += 'status';
       } else if (type === 'history') {
@@ -1824,6 +1814,7 @@
           });
           return;
         }
+        if (field.tagName === 'SELECT' && !value) return;
         field.value = value == null ? '' : String(value);
       };
 
@@ -1833,15 +1824,15 @@
         setValue('issues', state.issues || '');
         setValue('label', state.label || '');
         setValue('query', state.query || '');
-        setValue('next', state.next || String(launchDefaults.next || 1));
+        setValue('next', state.next || '');
         setValue('includeDependencies', state.includeDependencies);
         setValue('prompt', state.prompt || '');
         setValue('template', state.template || '');
         setValue('promptArgs', state.promptArgs || '');
-        setValue('agent', state.agent || launchDefaults.agent || '');
-        setValue('model', state.model || launchDefaults.model || '');
-        setValue('baseBranch', state.baseBranch || launchDefaults.baseBranch || '');
-        setValue('sandbox', state.sandbox || launchDefaults.sandbox || '');
+        setValue('agent', state.agent || '');
+        setValue('model', state.model || '');
+        setValue('baseBranch', state.baseBranch || '');
+        setValue('sandbox', state.sandbox || '');
         setValue('parallel', state.parallel || '');
         setValue('startDelay', state.startDelay || '');
         setValue('containerCapacity', state.containerCapacity || '');
@@ -1862,45 +1853,57 @@
     function readCommandFieldState(type) {
       if (!commandPanelForm) return commandState[type] || {};
       const formData = new FormData(commandPanelForm);
+      const current = commandState[type] || {};
+
+      const getVal = (name, fb) => {
+        if (!commandPanelForm.querySelector('[name="' + name + '"]')) return current[name] ?? fb;
+        const v = formData.get(name);
+        return v != null ? String(v) : (current[name] ?? fb);
+      };
+      const getCheck = (name) => {
+        if (!commandPanelForm.querySelector('[name="' + name + '"]')) return current[name] ?? false;
+        return formData.get(name) === 'on';
+      };
+
       if (type === 'run') {
         return {
-          launchMode: String(formData.get('launchMode') || commandState.run.launchMode || 'issue-driven'),
-          selectionMode: String(formData.get('selectionMode') || commandState.run.selectionMode || 'issues'),
-          issues: String(formData.get('issues') || ''),
-          label: String(formData.get('label') || ''),
-          query: String(formData.get('query') || ''),
-          next: String(formData.get('next') || String(launchDefaults.next || 1)),
-          includeDependencies: formData.get('includeDependencies') === 'on',
-          prompt: String(formData.get('prompt') || ''),
-          template: String(formData.get('template') || ''),
-          promptArgs: String(formData.get('promptArgs') || ''),
-          agent: String(formData.get('agent') || ''),
-          model: String(formData.get('model') || ''),
-          baseBranch: String(formData.get('baseBranch') || ''),
-          sandbox: String(formData.get('sandbox') || ''),
-          parallel: String(formData.get('parallel') || ''),
-          startDelay: String(formData.get('startDelay') || ''),
-          containerCapacity: String(formData.get('containerCapacity') || ''),
-          maxContainers: String(formData.get('maxContainers') || ''),
+          launchMode: getVal('launchMode', 'issue-driven'),
+          selectionMode: getVal('selectionMode', 'issues'),
+          issues: getVal('issues', ''),
+          label: getVal('label', ''),
+          query: getVal('query', ''),
+          next: getVal('next', ''),
+          includeDependencies: getCheck('includeDependencies'),
+          prompt: getVal('prompt', ''),
+          template: getVal('template', ''),
+          promptArgs: getVal('promptArgs', ''),
+          agent: getVal('agent', ''),
+          model: getVal('model', ''),
+          baseBranch: getVal('baseBranch', ''),
+          sandbox: getVal('sandbox', ''),
+          parallel: getVal('parallel', ''),
+          startDelay: getVal('startDelay', ''),
+          containerCapacity: getVal('containerCapacity', ''),
+          maxContainers: getVal('maxContainers', ''),
         };
       }
       if (type === 'continue') {
         return {
-          issue: String(formData.get('issue') || ''),
-          prompt: String(formData.get('prompt') || ''),
+          issue: getVal('issue', ''),
+          prompt: getVal('prompt', ''),
         };
       }
       if (type === 'clean') {
         return {
-          cleanMode: String(formData.get('cleanMode') || 'success'),
-          confirmed: formData.get('confirmed') === 'on',
+          cleanMode: getVal('cleanMode', 'success'),
+          confirmed: getCheck('confirmed'),
         };
       }
       if (type === 'config') {
         return {
-          configMode: String(formData.get('configMode') || 'get'),
-          configKey: String(formData.get('configKey') || ''),
-          configValue: String(formData.get('configValue') || ''),
+          configMode: getVal('configMode', 'get'),
+          configKey: getVal('configKey', ''),
+          configValue: getVal('configValue', ''),
         };
       }
       return commandState[type] || {};
@@ -1973,11 +1976,11 @@
           prompt: state.prompt || '',
           template: state.template || '',
           promptArgs: state.promptArgs || '',
-          agent: state.agent || '',
-          model: state.model || '',
-          baseBranch: state.baseBranch || '',
-          sandbox: state.sandbox || '',
         };
+        if (state.agent) payload.agent = state.agent;
+        if (state.model) payload.model = state.model;
+        if (state.baseBranch) payload.baseBranch = state.baseBranch;
+        if (state.sandbox) payload.sandbox = state.sandbox;
         const next = maybeInt(state.next);
         if (next != null) payload.next = next;
         const parallel = maybeInt(state.parallel);
@@ -2051,7 +2054,7 @@
         await refreshCommands();
         setCommandExecuteStatus('Ready');
       } catch (err) {
-        setCommandExecuteStatus('Launch failed');
+        setCommandExecuteStatus('Failed: ' + err.message);
         errorBanner.textContent = 'Launch failed: ' + err.message;
         errorBanner.style.display = 'block';
       } finally {

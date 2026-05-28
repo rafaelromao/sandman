@@ -12,6 +12,7 @@ import (
 // Defaults for optional config fields.
 const (
 	DefaultAgent             = "opencode"
+	DefaultModel             = "opencode/deepseek-v4-flash-free"
 	DefaultBuildToolsPreset  = "generic"
 	DefaultReviewCommand     = "/oc review"
 	DefaultParallel          = 4
@@ -25,6 +26,7 @@ const (
 // Config holds the loaded Sandman configuration.
 type Config struct {
 	DefaultAgent      string           `yaml:"default_agent"`
+	DefaultModel      string           `yaml:"default_model"`
 	BuildTools        string           `yaml:"build_tools"`
 	ReviewCommand     string           `yaml:"review_command"`
 	DefaultParallel   int              `yaml:"default_parallel"`
@@ -105,6 +107,7 @@ func Load(path string) (*Config, error) {
 
 	type rawConfig struct {
 		DefaultAgent      string           `yaml:"default_agent"`
+		DefaultModel      string           `yaml:"default_model"`
 		BuildTools        string           `yaml:"build_tools"`
 		ReviewCommand     string           `yaml:"review_command"`
 		DefaultParallel   int              `yaml:"default_parallel"`
@@ -127,6 +130,7 @@ func Load(path string) (*Config, error) {
 
 	cfg := Config{
 		DefaultAgent:    raw.DefaultAgent,
+		DefaultModel:    raw.DefaultModel,
 		BuildTools:      raw.BuildTools,
 		ReviewCommand:   raw.ReviewCommand,
 		DefaultParallel: raw.DefaultParallel,
@@ -311,6 +315,8 @@ func (c *Config) GetValue(key string) (string, error) {
 	switch strings.ToLower(key) {
 	case "default_agent":
 		return c.DefaultAgent, nil
+	case "default_model":
+		return c.DefaultModel, nil
 	case "build_tools":
 		return c.EffectiveBuildTools(), nil
 	case "review_command":
@@ -345,6 +351,8 @@ func (c *Config) SetValue(key, value string) error {
 		}
 		c.DefaultAgent = strings.TrimSpace(value)
 		c.Agent = c.DefaultAgent
+	case "default_model":
+		c.DefaultModel = value
 	case "build_tools":
 		c.BuildTools = value
 	case "review_command":

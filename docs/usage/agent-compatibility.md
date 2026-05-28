@@ -11,11 +11,15 @@ Sandman includes built-in presets for two AI coding agents: `opencode` and `pi`.
 
 ## Model selection
 
-Sandman wires `AgentModel` only for built-in presets. `sandman run --model` overrides the config value for the selected built-in agent. Pi expects `provider/model` and Sandman splits it into separate provider and model flags.
+Sandman wires `AgentModel` only for built-in presets. `sandman run --model` overrides the configured default. Pi expects `provider/model` and Sandman splits it into separate provider and model flags.
 
-`sandman run --model` takes precedence over the configured default model.
+The model resolution order is:
 
-Sandman does not hardcode default models for built-in agents because those defaults vary by tool, account, and provider.
+1. `--model` flag on `sandman run` or `sandman continue`
+2. `default_model` from `.sandman/config.yaml`
+3. The selected agent provider's configured model (e.g., from the agent's `model` field)
+
+If none are set, no model flag is passed to the agent, leaving it to the agent's own default.
 
 ## Compatibility matrix
 
