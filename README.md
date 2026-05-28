@@ -62,9 +62,6 @@ container_capacity: 4        # agent runs per container; 0 uses default containe
 max_containers: 0            # auto mode; or set a fixed limit
 git:
   base_branch: main
-installed_agents:
-  - opencode
-  - pi
 ```
 
 Sandman uses your host Git identity for agent commits. It resolves `user.name` and `user.email` from `~/.gitconfig`, then the host global/XDG Git config, then repo-local `.git/config`, and fails early if either value is missing.
