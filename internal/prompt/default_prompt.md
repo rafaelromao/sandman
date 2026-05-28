@@ -9,5 +9,4 @@ Implement issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 ## Runtime Context
 
 - Work in the current Sandman-created worktree on `{{BRANCH}}` (`{{SOURCE_BRANCH}}`).
-- Base branch: `{{BASE_BRANCH}}`.
-- For issue work, call `sandman implement` first. If it succeeds and the PR is fully approved, call `sandman pr-merge` next.
+- To implement the issue, call `sandman implement` first. Write continuation context by loading the `sandman-continuation`. Do this even if the previous step failed. If the PR is fully approved, call `sandman pr-merge` next.
