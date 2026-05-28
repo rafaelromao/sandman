@@ -97,13 +97,7 @@ Capture the PR URL and number.
 - Run the delegated review loop on the PR
 - Address all review feedback from the PR, including requests, suggestions, recommendations, and nits, unless there is a strong reason to ignore a specific item.
 - If you do ignore feedback, explain why in the PR thread before continuing.
-- Stop when opencode approves or after max passes
-
-### 9. Write continuation context
-
-- Load the `sandman-continuation` skill
-- Write `.sandman/continuation-context.md`
-- Do this last, even if any previous step failed
+- Stop when the PR Review Agent approves or after max passes
 
 ## Checklist
 
@@ -115,4 +109,3 @@ Capture the PR URL and number.
 - [ ] Base branch merged into current branch with `sandman-merge`
 - [ ] PR created with `Fixes #<ID>`
 - [ ] Delegate review completed
-- [ ] Continuation context written last
