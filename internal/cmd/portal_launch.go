@@ -454,7 +454,7 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 	if sandbox != "" {
 		args = append(args, "--sandbox", sandbox)
 	}
-	if req.ContainerCapacity != nil || containerCapacity > 0 {
+	if req.ContainerCapacity != nil || containerCapacity != config.DefaultContainerCapacity {
 		args = append(args, "--container-capacity", strconv.Itoa(containerCapacity))
 	}
 	if req.MaxContainers != nil || maxContainers > 0 {

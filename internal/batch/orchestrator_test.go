@@ -3132,7 +3132,7 @@ func TestRunBatch_UsesConfigContainerSettingsWhenRequestUnset(t *testing.T) {
 	}
 }
 
-func TestRunBatch_ContainerCapacityZeroUsesDefaultWhenRequestUnset(t *testing.T) {
+func TestRunBatch_ContainerCapacityZeroInConfigMeansUnlimited(t *testing.T) {
 	dir := t.TempDir()
 	dockerPath := filepath.Join(dir, "docker")
 	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
@@ -3179,12 +3179,12 @@ func TestRunBatch_ContainerCapacityZeroUsesDefaultWhenRequestUnset(t *testing.T)
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 2 {
-		t.Fatalf("expected config container_capacity=0 to use default capacity and start 2 containers, got %d", starter.startCount)
+	if starter.startCount != 1 {
+		t.Fatalf("expected config container_capacity=0 to mean unlimited and start 1 container, got %d", starter.startCount)
 	}
 }
 
-func TestRunBatch_ContainerCapacityZeroRequestUsesDefaultCapacity(t *testing.T) {
+func TestRunBatch_ContainerCapacityZeroRequestMeansUnlimited(t *testing.T) {
 	dir := t.TempDir()
 	dockerPath := filepath.Join(dir, "docker")
 	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
@@ -3197,7 +3197,7 @@ func TestRunBatch_ContainerCapacityZeroRequestUsesDefaultCapacity(t *testing.T) 
 			1: {Number: 1, Title: "One"},
 			2: {Number: 2, Title: "Two"},
 			3: {Number: 3, Title: "Three"},
-			4: {Number: 4, Title: "Four"},
+			4: {Number: 4, Title: "Three"},
 			5: {Number: 5, Title: "Five"},
 		},
 	}
@@ -3231,8 +3231,8 @@ func TestRunBatch_ContainerCapacityZeroRequestUsesDefaultCapacity(t *testing.T) 
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 2 {
-		t.Fatalf("expected request container_capacity=0 to use default capacity and start 2 containers, got %d", starter.startCount)
+	if starter.startCount != 1 {
+		t.Fatalf("expected request container_capacity=0 to mean unlimited and start 1 container, got %d", starter.startCount)
 	}
 }
 

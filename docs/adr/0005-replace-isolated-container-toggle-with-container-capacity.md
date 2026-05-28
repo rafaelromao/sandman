@@ -34,7 +34,7 @@ We will describe container-backed sandboxing in terms of **ContainerCapacity** a
 Specifically:
 
 1. `ContainerCapacity` defines the maximum concurrent AgentRuns per ContainerSandbox.
-   `ContainerCapacity=0` means auto/default mode: Sandman uses the default container capacity behavior.
+   `ContainerCapacity=0` means unlimited mode: any number of AgentRuns may execute concurrently inside one ContainerSandbox.
 2. `MaxContainers` defines the maximum number of ContainerSandboxes available to one Batch.
 3. `max_containers=0` means auto mode: Sandman may create up to the minimum number of containers needed for the active AgentRuns, given the configured ContainerCapacity.
 4. User-facing domain documentation will treat container pooling as batch-scoped reuse rather than a cross-batch warm pool.

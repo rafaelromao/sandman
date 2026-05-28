@@ -250,7 +250,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
 	cmd.Flags().Int("start-delay", 0, "Wait N seconds after any AgentRun finishes before starting the next one; 0 disables the delay")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
-	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means auto/default mode")
+	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")
 	cmd.Flags().Bool("include-dependencies", false, "Expand the batch to include transitive blockers")
 	cmd.Flags().String("label", "", "Select issues by label")
