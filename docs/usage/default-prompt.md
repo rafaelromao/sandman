@@ -18,16 +18,16 @@ The long workflow now lives in the shared Sandman skill. This page describes the
     ## Runtime Context
 
     - Work in the current Sandman-created worktree on `{{BRANCH}}` (`{{SOURCE_BRANCH}}`).
-    - Base branch: `{{BASE_BRANCH}}`.
-    - For issue work, call `sandman implement` first. If it succeeds and the PR is fully approved, call `sandman pr-merge` next.
+    - To implement the issue, call `sandman implement` first. Write continuation context by loading the `sandman-continuation`. Do this even if the previous step failed. If the PR is fully approved, call `sandman pr-merge` next.
 <!-- default-prompt:end -->
 
 ## What each part does
 
 - `Task` names the work and injects the issue number/title.
 - `Context` passes the raw issue body through unchanged.
-- `Runtime Context` passes the current worktree branch and base branch into the shared skill.
+- `Runtime Context` passes the current worktree branch and the continuation instructions into the shared skill.
 - `{{BRANCH}}` and `{{SOURCE_BRANCH}}` identify the run branch.
+- The continuation-context instruction tells the agent to write `.sandman/continuation-context.md` after implement, even on failure.
 
 ## Prompt lifecycle
 
