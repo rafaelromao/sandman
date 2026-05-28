@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codeindex": {
+      "command": "/home/romao/.local/bin/codeindex",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}

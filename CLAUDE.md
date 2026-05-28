@@ -23,3 +23,9 @@ Before committing any Go code changes, always run `gofmt` to ensure the code is 
 ```bash
 gofmt -w .
 ```
+
+## Codeindex
+
+Dependency index: `codeindex.json` — use `lookup_symbol`, `get_impact`, `get_dependencies` MCP tools before grepping.
+Symbol index embedded in `codeindex.json` — use `lookup_symbol` MCP tool for O(1) symbol lookups.
+Index stale or missing? Run `codeindex analyze . && codeindex symbols . --inline` to regenerate.
