@@ -180,6 +180,10 @@ func TestConfig_ResolveAgentProvider_Pi(t *testing.T) {
 	if !strings.Contains(agent.Command, "--provider {{.ModelProvider}}") {
 		t.Fatalf("expected pi command to use provider/model flags, got %q", agent.Command)
 	}
+	wantDirs := []string{"~/.pi", "~/.claude", "~/.agents"}
+	if !reflect.DeepEqual(agent.ConfigDirs, wantDirs) {
+		t.Errorf("config_dirs: got %v, want %v", agent.ConfigDirs, wantDirs)
+	}
 }
 
 func TestSplitPiModel(t *testing.T) {
