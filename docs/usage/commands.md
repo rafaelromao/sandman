@@ -36,7 +36,7 @@ Issue-driven runs require exactly one selection mode. `--prompt` and `--template
 | Explicit numbers | `sandman run 42 43` | One or more issue numbers |
 | `--label` | `sandman run --label ready-for-agent` | All open issues with the given label |
 | `--query` | `sandman run --query "label:bug is:open"` | GitHub search query |
-| `--next` | `sandman run --next 3` | N lowest-numbered open issues labeled `ready-for-agent` |
+| `--ralph` | `sandman run --ralph 3` | N lowest-numbered open issues labeled `ready-for-agent` |
 | Interactive picker | `sandman run` (in a TTY) | Opens a numbered list of open issues to select from |
 
 ### Execution flags
@@ -52,7 +52,7 @@ Issue-driven runs require exactly one selection mode. `--prompt` and `--template
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
 | `--query` | — | Select issues by GitHub search query |
-| `--next` | — | Select N lowest-numbered open `ready-for-agent` issues |
+| `--ralph` | — | Select N lowest-numbered open `ready-for-agent` issues |
 | `--prompt` | — | Inline prompt template (overrides file-based templates) |
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
@@ -61,8 +61,8 @@ Issue-driven runs require exactly one selection mode. `--prompt` and `--template
 
 ### Flag interactions
 
-- `--next` is mutually exclusive with issue arguments, `--label`, and `--query`
-- If `--prompt` or `--template` is used with no issue arguments, `--label`, `--query`, or `--next`, and the final selected prompt omits `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`, Sandman enters prompt-only mode and skips GitHub issue lookup
+- `--ralph` is mutually exclusive with issue arguments, `--label`, and `--query`
+- If `--prompt` or `--template` is used with no issue arguments, `--label`, `--query`, or `--ralph`, and the final selected prompt omits `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`, Sandman enters prompt-only mode and skips GitHub issue lookup
 - If any issue selection is provided, Sandman stays in issue-driven mode even when `--prompt` or `--template` is set
 - `run` preserves worktrees by default; use `sandman clean` to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes

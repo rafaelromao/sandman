@@ -963,7 +963,7 @@ func TestRun_CombineArgsWithLabelReturnsError(t *testing.T) {
 	}
 }
 
-func TestRun_NextFlagDelegatesLowestIssue(t *testing.T) {
+func TestRun_RalphFlagDelegatesLowestIssue(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -984,7 +984,7 @@ func TestRun_NextFlagDelegatesLowestIssue(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--next"})
+	cmd.SetArgs([]string{"--ralph"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -1006,7 +1006,7 @@ func TestRun_NextFlagDelegatesLowestIssue(t *testing.T) {
 	}
 }
 
-func TestRun_NextFlagWithCountDelegatesN(t *testing.T) {
+func TestRun_RalphFlagWithCountDelegatesN(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -1028,7 +1028,7 @@ func TestRun_NextFlagWithCountDelegatesN(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--next=2"})
+	cmd.SetArgs([]string{"--ralph=2"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -1049,7 +1049,7 @@ func TestRun_NextFlagWithCountDelegatesN(t *testing.T) {
 	}
 }
 
-func TestRun_NextFlagWithFewerAvailableDelegatesAll(t *testing.T) {
+func TestRun_RalphFlagWithFewerAvailableDelegatesAll(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -1069,7 +1069,7 @@ func TestRun_NextFlagWithFewerAvailableDelegatesAll(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--next=5"})
+	cmd.SetArgs([]string{"--ralph=5"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -1090,7 +1090,7 @@ func TestRun_NextFlagWithFewerAvailableDelegatesAll(t *testing.T) {
 	}
 }
 
-func TestRun_NextFlagNoIssuesReturnsError(t *testing.T) {
+func TestRun_RalphFlagNoIssuesReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{},
@@ -1107,7 +1107,7 @@ func TestRun_NextFlagNoIssuesReturnsError(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--next"})
+	cmd.SetArgs([]string{"--ralph"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -1121,7 +1121,7 @@ func TestRun_NextFlagNoIssuesReturnsError(t *testing.T) {
 	}
 }
 
-func TestRun_NextFlagZeroCountReturnsError(t *testing.T) {
+func TestRun_RalphFlagZeroCountReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
@@ -1134,21 +1134,21 @@ func TestRun_NextFlagZeroCountReturnsError(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--next=0"})
+	cmd.SetArgs([]string{"--ralph=0"})
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when --next 0")
+		t.Fatal("expected error when --ralph 0")
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "--next count must be at least 1") {
-		t.Errorf("expected '--next count must be at least 1' error, got: %v", err)
+	if !strings.Contains(err.Error(), "--ralph count must be at least 1") {
+		t.Errorf("expected '--ralph count must be at least 1' error, got: %v", err)
 	}
 }
 
-func TestRun_NextFlagWithArgsReturnsError(t *testing.T) {
+func TestRun_RalphFlagWithArgsReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
@@ -1161,21 +1161,21 @@ func TestRun_NextFlagWithArgsReturnsError(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--next", "42"})
+	cmd.SetArgs([]string{"--ralph", "42"})
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when combining --next with args")
+		t.Fatal("expected error when combining --ralph with args")
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "cannot combine --next with issue arguments") {
+	if !strings.Contains(err.Error(), "cannot combine --ralph with issue arguments") {
 		t.Errorf("expected mutual exclusivity error, got: %v", err)
 	}
 }
 
-func TestRun_NextFlagWithLabelReturnsError(t *testing.T) {
+func TestRun_RalphFlagWithLabelReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
@@ -1188,21 +1188,21 @@ func TestRun_NextFlagWithLabelReturnsError(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--next", "--label", "bug"})
+	cmd.SetArgs([]string{"--ralph", "--label", "bug"})
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when combining --next with --label")
+		t.Fatal("expected error when combining --ralph with --label")
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "cannot combine --next with issue arguments, --label or --query") {
+	if !strings.Contains(err.Error(), "cannot combine --ralph with issue arguments, --label or --query") {
 		t.Errorf("expected mutual exclusivity error, got: %v", err)
 	}
 }
 
-func TestRun_NextFlagWithQueryReturnsError(t *testing.T) {
+func TestRun_RalphFlagWithQueryReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
@@ -1215,21 +1215,21 @@ func TestRun_NextFlagWithQueryReturnsError(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--next", "--query", "is:open"})
+	cmd.SetArgs([]string{"--ralph", "--query", "is:open"})
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when combining --next with --query")
+		t.Fatal("expected error when combining --ralph with --query")
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "cannot combine --next with issue arguments, --label or --query") {
+	if !strings.Contains(err.Error(), "cannot combine --ralph with issue arguments, --label or --query") {
 		t.Errorf("expected mutual exclusivity error, got: %v", err)
 	}
 }
 
-func TestRun_NextFlagNegativeCountReturnsError(t *testing.T) {
+func TestRun_RalphFlagNegativeCountReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
@@ -1242,17 +1242,17 @@ func TestRun_NextFlagNegativeCountReturnsError(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--next=-1"})
+	cmd.SetArgs([]string{"--ralph=-1"})
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when --next -1")
+		t.Fatal("expected error when --ralph -1")
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "--next count must be at least 1") {
-		t.Errorf("expected '--next count must be at least 1' error, got: %v", err)
+	if !strings.Contains(err.Error(), "--ralph count must be at least 1") {
+		t.Errorf("expected '--ralph count must be at least 1' error, got: %v", err)
 	}
 }
 
