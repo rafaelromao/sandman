@@ -1040,31 +1040,76 @@
       color: var(--muted);
     }
     .command-list {
-      display: grid;
-      gap: 10px;
+      display: flex;
+      flex-direction: column;
       min-height: 0;
       flex: 1 1 auto;
       overflow: auto;
     }
-    .command-item {
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 12px 14px;
-      background: color-mix(in oklch, var(--bg) 36%, var(--surface-2));
-      display: grid;
-      gap: 8px;
-    }
-    .command-item-head {
+    .command-row {
       display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: baseline;
-      flex-wrap: wrap;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 120ms ease-out;
     }
-    .command-item-command {
+    .command-row:hover {
+      background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
+    }
+    .command-row.active {
+      background: color-mix(in oklch, var(--accent) 12%, var(--surface));
+    }
+    .command-row:focus-visible {
+      outline: 2px solid color-mix(in oklch, var(--accent) 72%, var(--surface-3));
+      outline-offset: -2px;
+    }
+    .command-row .col-command {
+      flex: 1;
+      min-width: 0;
+      word-break: break-word;
+    }
+    .command-row .col-started {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .command-row-hint {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .command-row-detail {
+      padding: 14px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 12px;
+    }
+    .command-row-detail .kv {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .command-row-detail .kv span {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .command-row-detail .kv strong {
+      font-weight: 600;
+      word-break: break-word;
+    }
+    .command-row-detail .kv code {
       font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
       font-size: 12px;
       word-break: break-word;
+      background: var(--surface-3);
+      padding: 6px 8px;
+      border-radius: 6px;
     }
     .commands-panel-footer {
       display: flex;
@@ -1525,6 +1570,8 @@
 
     const state = {
       runs: [],
+      commands: [],
+      commandExpandedId: null,
       expanded: new Set(),
       tabs: new Map(),
       selectedStatus: 'all',
@@ -1954,6 +2001,7 @@
       if (open && settingsPanelOpen) setSettingsPanelOpen(false);
       if (open) {
         renderCommandPanelBody(commandPanelType);
+        refreshCommands();
         window.requestAnimationFrame(() => {
           if (commandPicker) commandPicker.focus({ preventScroll: true });
         });
@@ -2063,15 +2111,41 @@
     }
 
     function renderCommandItem(command) {
+      const isOpen = state.commandExpandedId === command.id;
+      const statusClass = runStatusClass(command);
+      const statusLabel = command.status || 'running';
       return [
-        '<div class="command-item">',
-        '  <div class="command-item-head">',
-        '    <strong>' + escapeHTML(command.status || 'running') + '</strong>',
-        '    <span class="muted mono">' + escapeHTML(formatTime(command.startedAt)) + '</span>',
-        '  </div>',
-        '  <div class="command-item-command mono">' + escapeHTML(command.command || '') + '</div>',
+        '<div class="command-row' + (isOpen ? ' active' : '') + '" data-action="toggle-command" data-command-id="' + escapeHTML(command.id) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
+        '  <div class="col-status"><span class="badge ' + escapeHTML(statusClass) + '"><span class="dot"></span>' + escapeHTML(statusLabel) + '</span></div>',
+        '  <div class="col-command mono">' + escapeHTML(command.command || '') + '</div>',
+        '  <div class="col-started mono">' + escapeHTML(formatTime(command.startedAt)) + '</div>',
+        '  <div class="col-details"><span class="command-row-hint mono">' + escapeHTML(isOpen ? 'Open' : 'Click row') + '</span></div>',
         '</div>',
+        isOpen ? (
+          '<div class="command-row-detail" data-detail-for="' + escapeHTML(command.id) + '">'
+          + '<div class="kv"><span>Command</span><code>' + escapeHTML(command.command || '') + '</code></div>'
+          + (command.args && command.args.length ? '<div class="kv"><span>Arguments</span><strong class="mono">' + escapeHTML(command.args.join(' ')) + '</strong></div>' : '')
+          + (command.repoRoot ? '<div class="kv"><span>Repository root</span><strong class="mono">' + escapeHTML(command.repoRoot) + '</strong></div>' : '')
+          + '</div>'
+        ) : ''
       ].join('');
+    }
+
+    function toggleCommand(commandId) {
+      if (state.commandExpandedId === commandId) {
+        state.commandExpandedId = null;
+      } else {
+        state.commandExpandedId = commandId;
+      }
+      renderCommands();
+    }
+
+    function renderCommands() {
+      if (!state.commands.length) {
+        commandsList.innerHTML = '<div class="empty-state">No launched commands yet.</div>';
+        return;
+      }
+      commandsList.innerHTML = state.commands.map(renderCommandItem).join('');
     }
 
     async function refreshCommands() {
@@ -2079,12 +2153,8 @@
         const res = await fetch(commandsPath, { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const payload = await res.json();
-        const commands = Array.isArray(payload.commands) ? payload.commands : [];
-        if (!commands.length) {
-          commandsList.innerHTML = '<div class="empty-state">No launched commands yet.</div>';
-          return;
-        }
-        commandsList.innerHTML = commands.map(renderCommandItem).join('');
+        state.commands = Array.isArray(payload.commands) ? payload.commands : [];
+        renderCommands();
       } catch (err) {
         commandsList.innerHTML = '<div class="empty-state">Failed to load commands.</div>';
       }
@@ -2462,6 +2532,22 @@
       event.preventDefault();
       const runKey = row.getAttribute('data-run-key');
       if (runKey) toggleRun(runKey);
+    });
+
+    commandsList.addEventListener('click', (event) => {
+      const row = event.target.closest('[data-action="toggle-command"]');
+      if (!row) return;
+      const commandId = row.getAttribute('data-command-id');
+      if (commandId) toggleCommand(commandId);
+    });
+
+    commandsList.addEventListener('keydown', (event) => {
+      const row = event.target.closest('[data-action="toggle-command"]');
+      if (!row) return;
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      const commandId = row.getAttribute('data-command-id');
+      if (commandId) toggleCommand(commandId);
     });
 
     statusFilter.addEventListener('change', () => {
