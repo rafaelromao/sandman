@@ -1075,6 +1075,9 @@
       font-size: 11px;
       white-space: nowrap;
     }
+    .command-row .col-details {
+      white-space: nowrap;
+    }
     .command-row-hint {
       color: var(--muted);
       font-size: 12px;
@@ -2119,7 +2122,7 @@
         '  <div class="col-status"><span class="badge ' + escapeHTML(statusClass) + '"><span class="dot"></span>' + escapeHTML(statusLabel) + '</span></div>',
         '  <div class="col-command mono">' + escapeHTML(command.command || '') + '</div>',
         '  <div class="col-started mono">' + escapeHTML(formatTime(command.startedAt)) + '</div>',
-        '  <div class="col-details"><span class="command-row-hint mono">' + escapeHTML(isOpen ? 'Open' : 'Click row') + '</span></div>',
+        '  <div class="col-details"><span class="command-row-hint mono">' + escapeHTML(isOpen ? 'Close' : 'Click row') + '</span></div>',
         '</div>',
         isOpen ? (
           '<div class="command-row-detail" data-detail-for="' + escapeHTML(command.id) + '">'
@@ -2138,6 +2141,8 @@
         state.commandExpandedId = commandId;
       }
       renderCommands();
+      const row = commandsList.querySelector('[data-command-id="' + commandId + '"]');
+      if (row) row.focus({ preventScroll: true });
     }
 
     function renderCommands() {
