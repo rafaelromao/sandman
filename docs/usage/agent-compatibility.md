@@ -26,7 +26,7 @@ If none are set, no model flag is passed to the agent, leaving it to the agent's
 | Preset | Worktree | Container | Keychain Auth | Host Config Paths |
 |--------|----------|-----------|---------------|-------------------|
 | `opencode` | Yes | Yes | No | `~/.config/opencode`, `~/.local/share/opencode`, `~/.claude`, `~/.agents` |
-| `pi` | Yes | Yes | No | `~/.pi`, `~/.agents` |
+| `pi` | Yes | Yes | No | `~/.pi`, `~/.claude`, `~/.agents` |
 
 Both presets support worktree and container-backed sandboxing.
 
@@ -40,7 +40,7 @@ To use an agent inside a container:
 2. Use file-based authentication (e.g., API keys stored in config files)
 3. Sandman resolves config files and directories into the container via a temporary copy (see ADR-0008)
 
-OpenCode stores its session tokens in `~/.claude` alongside its own config. Sandman resolves those paths into the container automatically when using the `opencode` preset, and the agent should be configured to use file-based auth.
+Both OpenCode and Pi read `CLAUDE.md` and `.claude/skills/` if they exist. Sandman resolves `~/.claude` into the container automatically when using either preset so those files are available to the agent.
 
 Sandman installs its shared skill into `~/.agents/skills`, so both built-in presets mount `~/.agents` in container mode.
 

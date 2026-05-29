@@ -87,6 +87,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		Command:     `pi --print{{if .ModelProvider}} --provider {{.ModelProvider}}{{end}}{{if .ModelName}} --model {{.ModelName}}{{end}} "$(cat {{.PromptFile}})"`,
 		ConfigDirs: []string{
 			"~/.pi",
+			"~/.claude",
 			"~/.agents",
 		},
 	},
