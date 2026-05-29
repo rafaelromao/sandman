@@ -3197,7 +3197,7 @@ func TestRunBatch_ContainerCapacityZeroRequestMeansUnlimited(t *testing.T) {
 			1: {Number: 1, Title: "One"},
 			2: {Number: 2, Title: "Two"},
 			3: {Number: 3, Title: "Three"},
-			4: {Number: 4, Title: "Three"},
+			4: {Number: 4, Title: "Four"},
 			5: {Number: 5, Title: "Five"},
 		},
 	}
