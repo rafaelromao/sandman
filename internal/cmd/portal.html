@@ -1062,8 +1062,7 @@
       background: color-mix(in oklch, var(--accent) 12%, var(--surface));
     }
     .command-row:focus-visible {
-      outline: 2px solid color-mix(in oklch, var(--accent) 72%, var(--surface-3));
-      outline-offset: -2px;
+      background: color-mix(in oklch, var(--accent) 12%, var(--surface));
     }
     .command-row .col-command {
       flex: 1;
@@ -2115,17 +2114,17 @@
 
     function renderCommandItem(command) {
       const isOpen = state.commandExpandedId === command.id;
-      const statusClass = runStatusClass(command);
+      const klass = statusClass(command);
       const statusLabel = command.status || 'running';
       return [
-        '<div class="command-row' + (isOpen ? ' active' : '') + '" data-action="toggle-command" data-command-id="' + escapeHTML(command.id) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
-        '  <div class="col-status"><span class="badge ' + escapeHTML(statusClass) + '"><span class="dot"></span>' + escapeHTML(statusLabel) + '</span></div>',
+        '<div class="command-row' + (isOpen ? ' active' : '') + '" id="command-row-' + escapeHTML(command.id) + '" data-action="toggle-command" data-command-id="' + escapeHTML(command.id) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
+        '  <div class="col-status"><span class="badge ' + escapeHTML(klass) + '"><span class="dot"></span>' + escapeHTML(statusLabel) + '</span></div>',
         '  <div class="col-command mono">' + escapeHTML(command.command || '') + '</div>',
         '  <div class="col-started mono">' + escapeHTML(formatTime(command.startedAt)) + '</div>',
         '  <div class="col-details"><span class="command-row-hint mono">' + escapeHTML(isOpen ? 'Close' : 'Click row') + '</span></div>',
         '</div>',
         isOpen ? (
-          '<div class="command-row-detail" data-detail-for="' + escapeHTML(command.id) + '">'
+          '<div class="command-row-detail" role="region" aria-labelledby="command-row-' + escapeHTML(command.id) + '">'
           + '<div class="kv"><span>Command</span><code>' + escapeHTML(command.command || '') + '</code></div>'
           + (command.args && command.args.length ? '<div class="kv"><span>Arguments</span><strong class="mono">' + escapeHTML(command.args.join(' ')) + '</strong></div>' : '')
           + (command.repoRoot ? '<div class="kv"><span>Repository root</span><strong class="mono">' + escapeHTML(command.repoRoot) + '</strong></div>' : '')
@@ -2141,7 +2140,7 @@
         state.commandExpandedId = commandId;
       }
       renderCommands();
-      const row = commandsList.querySelector('[data-command-id="' + commandId + '"]');
+      const row = Array.from(commandsList.children).find((child) => child.getAttribute('data-command-id') === commandId);
       if (row) row.focus({ preventScroll: true });
     }
 
@@ -2207,8 +2206,8 @@
       return true;
     }
 
-    function runStatusClass(run) {
-      const status = (run.status || '').toLowerCase();
+    function statusClass(item) {
+      const status = (item.status || '').toLowerCase();
       if (status === 'active') return 'active';
       if (status === 'success') return 'success';
       if (status === 'failure' || status === 'failed' || status === 'error') return 'failure';
@@ -2217,7 +2216,7 @@
     }
 
     function renderStatusBadge(run) {
-      const klass = runStatusClass(run);
+      const klass = statusClass(run);
       const label = run.status || (run.kind === 'active' ? 'active' : 'completed');
       return '<span class="badge ' + escapeHTML(klass) + '"><span class="dot"></span>' + escapeHTML(label) + '</span>';
     }
@@ -2421,6 +2420,8 @@
       if (state.expanded.has(runKey)) state.expanded.delete(runKey);
       else state.expanded.add(runKey);
       render();
+      const row = Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey);
+      if (row) row.focus({ preventScroll: true });
     }
 
     if (commandPicker) {
