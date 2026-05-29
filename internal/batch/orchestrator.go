@@ -190,7 +190,7 @@ func (p *containerPool) acquireShared() (*containerLease, error) {
 		var best *pooledContainer
 		var pending *pooledContainer
 		for _, entry := range p.shared {
-			if entry.startErr != nil || entry.active >= p.capacity {
+			if entry.startErr != nil || (p.capacity > 0 && entry.active >= p.capacity) {
 				continue
 			}
 			if !entry.ready {
@@ -593,21 +593,11 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(cfg *config.Config, agentCf
 	if containerCapacity < 0 {
 		return nil, fmt.Errorf("container_capacity must be 0 or greater")
 	}
-	if containerCapacity == 0 {
-		containerCapacity = config.DefaultContainerCapacity
-	}
 	if req.ContainerCapacitySet {
 		if req.ContainerCapacity < 0 {
 			return nil, fmt.Errorf("container_capacity must be 0 or greater")
 		}
-		if req.ContainerCapacity == 0 {
-			containerCapacity = config.DefaultContainerCapacity
-		} else {
-			containerCapacity = req.ContainerCapacity
-		}
-	}
-	if containerCapacity < 1 {
-		return nil, fmt.Errorf("container_capacity must be 0 or greater")
+		containerCapacity = req.ContainerCapacity
 	}
 
 	maxContainers := cfg.MaxContainers
