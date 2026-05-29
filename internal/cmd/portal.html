@@ -1724,7 +1724,7 @@
           if (sm === 'issues' && s.issues) cmd += 'run ' + s.issues.replace(/,/g, ' ');
           else if (sm === 'label' && s.label) cmd += 'run --label ' + s.label;
           else if (sm === 'query' && s.query) cmd += 'run --query "' + s.query.replace(/"/g, '\\"') + '"';
-          else if (sm === 'next') cmd += 'run --next ' + (s.next || String(launchDefaults.next || 1));
+          else if (sm === 'ralph') cmd += 'run --ralph ' + (s.ralph || String(launchDefaults.ralph || 1));
           else cmd += 'run';
         }
         if (s.agent && s.agent !== ag) cmd += ' --agent ' + s.agent;

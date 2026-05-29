@@ -69,10 +69,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			label, _ := cmd.Flags().GetString("label")
 			query, _ := cmd.Flags().GetString("query")
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
-			nextFlag := cmd.Flags().Lookup("next")
-			nextProvided := nextFlag != nil && nextFlag.Changed
-			nextCount, _ := cmd.Flags().GetInt("next")
-			issueSelectionProvided := len(args) > 0 || nextProvided || label != "" || query != ""
+			ralphFlag := cmd.Flags().Lookup("ralph")
+			ralphProvided := ralphFlag != nil && ralphFlag.Changed
+			ralphCount, _ := cmd.Flags().GetInt("ralph")
+			issueSelectionProvided := len(args) > 0 || ralphProvided || label != "" || query != ""
 
 			var issues []int
 			if overridePrompt && !issueSelectionProvided {
@@ -80,14 +80,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return fmt.Errorf("prompt requires issue selection but no issue selection was provided")
 				}
 			} else {
-				if nextProvided {
+				if ralphProvided {
 					if len(args) > 0 || label != "" || query != "" {
-						return fmt.Errorf("cannot combine --next with issue arguments, --label or --query")
+						return fmt.Errorf("cannot combine --ralph with issue arguments, --label or --query")
 					}
-					if nextCount <= 0 {
-						return fmt.Errorf("--next count must be at least 1")
+					if ralphCount <= 0 {
+						return fmt.Errorf("--ralph count must be at least 1")
 					}
-					issues, err = resolveNextIssues(cmd.Context(), deps.GitHubClient, nextCount)
+					issues, err = resolveRalphIssues(cmd.Context(), deps.GitHubClient, ralphCount)
 					if err != nil {
 						return err
 					}
@@ -262,8 +262,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
 
-	cmd.Flags().Int("next", 0, "Delegate the N lowest-numbered open issues labeled ready-for-agent")
-	if pf := cmd.Flags().Lookup("next"); pf != nil {
+	cmd.Flags().Int("ralph", 0, "Delegate the N lowest-numbered open issues labeled ready-for-agent")
+	if pf := cmd.Flags().Lookup("ralph"); pf != nil {
 		pf.NoOptDefVal = "1"
 	}
 
@@ -282,7 +282,7 @@ func resolveIssues(ctx context.Context, client github.Client, query string) ([]i
 	return numbers, nil
 }
 
-func resolveNextIssues(ctx context.Context, client github.Client, count int) ([]int, error) {
+func resolveRalphIssues(ctx context.Context, client github.Client, count int) ([]int, error) {
 	ghIssues, err := client.SearchIssues("label:ready-for-agent is:open")
 	if err != nil {
 		return nil, fmt.Errorf("search issues: %w", err)

@@ -143,7 +143,7 @@ internal/
 
 ### Data flow
 
-1. `sandman run` parses CLI flags, selects issues (by number, label, query, `--next`, or interactive picker)
+1. `sandman run` parses CLI flags, selects issues (by number, label, query, `--ralph`, or interactive picker)
 2. `DependencyResolver` fetches each issue's `BlockedBy` relationships, validates the graph (cycle detection, missing blockers), and produces a topologically sorted `ResolvedBatch`
 3. `Orchestrator` executes the `ResolvedBatch` — creating sandboxes, running agents, respecting `BlockedBy` ordering and `Parallel`/`ContainerCapacity`/`MaxContainers` limits
 4. Each `AgentRun` renders a prompt, executes the agent command inside its sandbox, and logs structured events

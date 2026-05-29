@@ -80,7 +80,7 @@ Sandman will:
 5. Stream agent output to the terminal, prefixed with `[#42]`
 6. Log structured events to `.sandman/events.jsonl`
 
-If you want a prompt-only run instead, use `--prompt` or `--template` with no issue arguments, `--label`, `--query`, or `--next`, and omit issue placeholders like `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`:
+If you want a prompt-only run instead, use `--prompt` or `--template` with no issue arguments, `--label`, `--query`, or `--ralph`, and omit issue placeholders like `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`:
 
 ```bash
 sandman run --base-branch main --prompt "Return only OK."

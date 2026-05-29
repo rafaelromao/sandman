@@ -26,7 +26,7 @@ type portalLaunchFormData struct {
 	Issues                   string
 	Label                    string
 	Query                    string
-	Next                     int
+	Ralph                    int
 	IncludeDependencies      bool
 	Prompt                   string
 	Template                 string
@@ -42,12 +42,13 @@ type portalLaunchFormData struct {
 }
 
 type portalLaunchRequest struct {
-	LaunchMode          string `json:"launchMode"`
-	SelectionMode       string `json:"selectionMode"`
-	Issues              string `json:"issues"`
-	Label               string `json:"label"`
-	Query               string `json:"query"`
-	Next                *int   `json:"next"`
+	LaunchMode    string `json:"launchMode"`
+	SelectionMode string `json:"selectionMode"`
+	Issues        string `json:"issues"`
+	Label         string `json:"label"`
+	Query         string `json:"query"`
+	Ralph         *int   `json:"ralph"`
+
 	IncludeDependencies bool   `json:"includeDependencies"`
 	Prompt              string `json:"prompt"`
 	Template            string `json:"template"`
@@ -60,6 +61,11 @@ type portalLaunchRequest struct {
 	ContainerCapacity   *int   `json:"containerCapacity"`
 	MaxContainers       *int   `json:"maxContainers"`
 	Sandbox             string `json:"sandbox"`
+	CleanMode           string `json:"cleanMode,omitempty"`
+	Confirmed           bool   `json:"confirmed,omitempty"`
+	ConfigMode          string `json:"configMode,omitempty"`
+	ConfigKey           string `json:"configKey,omitempty"`
+	ConfigValue         string `json:"configValue,omitempty"`
 }
 
 type portalLaunchResponse struct {
@@ -75,7 +81,7 @@ type portalUnifiedLaunchRequest struct {
 	Issue               int    `json:"issue,omitempty"`
 	Label               string `json:"label"`
 	Query               string `json:"query"`
-	Next                *int   `json:"next"`
+	Ralph               *int   `json:"ralph"`
 	IncludeDependencies bool   `json:"includeDependencies"`
 	Prompt              string `json:"prompt"`
 	Template            string `json:"template"`
@@ -166,10 +172,10 @@ func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 
 	return portalLaunchFormData{
 		LaunchModeOptionsHTML:    portalRadioOptionsHTML("launchMode", []portalOption{{Value: "issue-driven", Label: "Issue-driven", Selected: true}, {Value: "prompt-only", Label: "Prompt-only"}}, "issue-driven"),
-		SelectionModeOptionsHTML: portalRadioOptionsHTML("selectionMode", []portalOption{{Value: "issues", Label: "Issue numbers", Selected: true}, {Value: "label", Label: "Label"}, {Value: "query", Label: "Query"}, {Value: "next", Label: "Next ready issue"}}, "issues"),
+		SelectionModeOptionsHTML: portalRadioOptionsHTML("selectionMode", []portalOption{{Value: "issues", Label: "Issue numbers", Selected: true}, {Value: "label", Label: "Label"}, {Value: "query", Label: "Query"}, {Value: "ralph", Label: "Next ready issue"}}, "issues"),
 		AgentOptionsHTML:         agentOptions,
 		SandboxOptionsHTML:       portalSelectOptionsHTML([]portalOption{{Value: "podman", Label: "podman", Selected: sandbox == "podman"}, {Value: "docker", Label: "docker", Selected: sandbox == "docker"}, {Value: "worktree", Label: "worktree", Selected: sandbox == "worktree"}}, sandbox),
-		Next:                     1,
+		Ralph:                    1,
 		Agent:                    agentName,
 		Model:                    model,
 		BaseBranch:               baseBranch,
@@ -271,7 +277,7 @@ func (req portalUnifiedLaunchRequest) runRequest() portalLaunchRequest {
 		Issues:              req.Issues,
 		Label:               req.Label,
 		Query:               req.Query,
-		Next:                req.Next,
+		Ralph:               req.Ralph,
 		IncludeDependencies: req.IncludeDependencies,
 		Prompt:              req.Prompt,
 		Template:            req.Template,
@@ -487,15 +493,15 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 				return nil, fmt.Errorf("query selection requires a query")
 			}
 			args = append(args, "--query", strings.TrimSpace(req.Query))
-		case "next":
-			next := 1
-			if req.Next != nil {
-				next = *req.Next
+		case "ralph":
+			ralph := 1
+			if req.Ralph != nil {
+				ralph = *req.Ralph
 			}
-			if next <= 0 {
-				next = 1
+			if ralph <= 0 {
+				ralph = 1
 			}
-			args = append(args, "--next", strconv.Itoa(next))
+			args = append(args, "--ralph", strconv.Itoa(ralph))
 		default:
 			return nil, fmt.Errorf("unknown selection mode %q", selectionMode)
 		}

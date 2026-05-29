@@ -350,7 +350,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			StartDelay        int    `json:"startDelay"`
 			ContainerCapacity int    `json:"containerCapacity"`
 			MaxContainers     int    `json:"maxContainers"`
-			Next              int    `json:"next"`
+			Ralph             int    `json:"ralph"`
 		}{
 			Agent:             launchData.Agent,
 			Model:             launchData.Model,
@@ -360,7 +360,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			StartDelay:        launchData.StartDelay,
 			ContainerCapacity: launchData.ContainerCapacity,
 			MaxContainers:     launchData.MaxContainers,
-			Next:              launchData.Next,
+			Ralph:             launchData.Ralph,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

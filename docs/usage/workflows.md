@@ -27,7 +27,7 @@ Selects issues matching a GitHub search query. Any valid GitHub issue search que
 ## Running the next N issues
 
 ```bash
-sandman run --next 3
+sandman run --ralph 3
 ```
 
 Selects the 3 lowest-numbered open issues labeled `ready-for-agent`. This is useful for CI/CD pipelines or automated triage workflows.
