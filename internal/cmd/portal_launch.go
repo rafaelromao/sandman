@@ -42,13 +42,12 @@ type portalLaunchFormData struct {
 }
 
 type portalLaunchRequest struct {
-	LaunchMode    string `json:"launchMode"`
-	SelectionMode string `json:"selectionMode"`
-	Issues        string `json:"issues"`
-	Label         string `json:"label"`
-	Query         string `json:"query"`
-	Ralph         *int   `json:"ralph"`
-
+	LaunchMode          string `json:"launchMode"`
+	SelectionMode       string `json:"selectionMode"`
+	Issues              string `json:"issues"`
+	Label               string `json:"label"`
+	Query               string `json:"query"`
+	Ralph               *int   `json:"ralph"`
 	IncludeDependencies bool   `json:"includeDependencies"`
 	Prompt              string `json:"prompt"`
 	Template            string `json:"template"`
@@ -61,11 +60,6 @@ type portalLaunchRequest struct {
 	ContainerCapacity   *int   `json:"containerCapacity"`
 	MaxContainers       *int   `json:"maxContainers"`
 	Sandbox             string `json:"sandbox"`
-	CleanMode           string `json:"cleanMode,omitempty"`
-	Confirmed           bool   `json:"confirmed,omitempty"`
-	ConfigMode          string `json:"configMode,omitempty"`
-	ConfigKey           string `json:"configKey,omitempty"`
-	ConfigValue         string `json:"configValue,omitempty"`
 }
 
 type portalLaunchResponse struct {
