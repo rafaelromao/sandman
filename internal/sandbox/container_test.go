@@ -112,6 +112,34 @@ func TestContainerRuntime_Start_MountsGitConfig(t *testing.T) {
 	}
 }
 
+func TestContainerRuntime_Start_UsesIndefiniteIdleCommand(t *testing.T) {
+	rt := NewContainerRuntime("docker")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "abc123")
+	}
+
+	_, err := rt.Start("alpine", ".", StartOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"alpine", "tail", "-f", "/dev/null"}
+	if len(captured) < len(want) {
+		t.Fatalf("expected at least %d args, got %v", len(want), captured)
+	}
+	got := captured[len(captured)-len(want):]
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("expected idle command %v, got %v", want, got)
+	}
+	for _, arg := range captured {
+		if arg == "3600" {
+			t.Fatalf("unexpected hard-coded timeout in args: %v", captured)
+		}
+	}
+}
+
 func TestContainerRuntime_Start_SetsContainerUser(t *testing.T) {
 	rt := NewContainerRuntime("docker")
 	var captured []string

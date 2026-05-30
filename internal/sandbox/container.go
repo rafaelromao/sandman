@@ -119,7 +119,7 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 		}
 		args = append(args, "--mount", "type=tmpfs,destination="+target)
 	}
-	args = append(args, "-v", absRepo+":/workspace", image, "sleep", "3600")
+	args = append(args, "-v", absRepo+":/workspace", image, "tail", "-f", "/dev/null")
 
 	cmd := r.execFn(r.binary, args...)
 	out, err := cmd.CombinedOutput()
