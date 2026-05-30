@@ -8,7 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+var worktreeGitMu sync.Mutex
 
 // WorktreeSandbox provides isolation via git worktree only.
 type WorktreeSandbox struct {
@@ -34,6 +37,9 @@ func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *Wo
 
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
+	worktreeGitMu.Lock()
+	defer worktreeGitMu.Unlock()
+
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
 	if _, err := os.Stat(s.workDir); err == nil {
 		return s.configureGitIdentity()
@@ -160,6 +166,9 @@ func (s *WorktreeSandbox) ExecInteractive(ctx context.Context, command string) e
 
 // Stop cleans up the worktree.
 func (s *WorktreeSandbox) Stop() error {
+	worktreeGitMu.Lock()
+	defer worktreeGitMu.Unlock()
+
 	cmd := exec.Command("git", "worktree", "remove", "--force", s.workDir)
 	cmd.Dir = s.repoPath
 	if out, err := cmd.CombinedOutput(); err != nil {

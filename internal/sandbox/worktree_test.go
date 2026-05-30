@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -140,6 +141,52 @@ func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 
 	if _, err := os.Stat(worktreePath); err != nil {
 		t.Errorf("worktree directory does not exist: %v", err)
+	}
+}
+
+func TestWorktreeSandbox_ConcurrentStartsDoNotCorruptMetadata(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+
+	branches := []string{"sandman/41-alpha", "sandman/42-beta"}
+	sandboxes := []*WorktreeSandbox{
+		NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), branches[0], "main"),
+		NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), branches[1], "main"),
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(sandboxes))
+	for _, sb := range sandboxes {
+		wg.Add(1)
+		go func(sb *WorktreeSandbox) {
+			defer wg.Done()
+			<-start
+			errCh <- sb.Start()
+		}(sb)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("unexpected concurrent start error: %v", err)
+		}
+	}
+
+	t.Cleanup(func() {
+		for i, sb := range sandboxes {
+			_ = sb.Stop()
+			removeBranch(t, dir, branches[i])
+		}
+	})
+
+	for _, sb := range sandboxes {
+		if _, err := os.Stat(sb.WorkDir()); err != nil {
+			t.Fatalf("expected worktree %q to exist: %v", sb.WorkDir(), err)
+		}
 	}
 }
 
