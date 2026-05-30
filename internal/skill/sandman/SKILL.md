@@ -1,6 +1,6 @@
 ---
 name: sandman
-description: Routes to Sandman modes for issue implementation, test-driven development, review, delegated review, merge, PR merge, and continuation workflows. Use when user mentions sandman or asks for implement, tdd, review, delegate-review, merge, pr-merge, or continuation modes.
+description: Routes to Sandman modes for issue implementation, test-driven development, review, PR review, merge, PR merge, and continuation workflows. Use when user mentions sandman or asks for implement, tdd, review, pr-review, merge, pr-merge, or continuation modes.
 ---
 
 # Sandman
@@ -13,7 +13,7 @@ Use one mode explicitly:
 sandman implement
 sandman tdd
 sandman review
-sandman delegate-review
+sandman pr-review
 sandman merge
 sandman pr-merge
 sandman continuation
@@ -24,7 +24,7 @@ sandman continuation
 - `implement` -> `sandman-implement`
 - `tdd` -> `sandman-tdd`
 - `review` -> `sandman-review`
-- `delegate-review` -> `sandman-delegate-review`
+- `pr-review` -> `sandman-pr-review`
 - `merge` -> `sandman-merge`
 - `pr-merge` -> `sandman-pr-merge`
 - `continuation` -> `sandman-continuation`

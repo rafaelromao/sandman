@@ -60,9 +60,9 @@ func TestSyncOverwritesManagedTreeWithoutPrompt(t *testing.T) {
 		t.Fatalf("resync skill: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "delegate-review", "SKILL.md"))
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "pr-review", "SKILL.md"))
 	if err != nil {
-		t.Fatalf("read delegate-review skill: %v", err)
+		t.Fatalf("read pr-review skill: %v", err)
 	}
 	text := string(data)
 	if strings.Contains(text, "/old-review") {
@@ -112,9 +112,9 @@ func TestSyncTreatsLegacyManagedTreeAsUpgradeable(t *testing.T) {
 	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/new review"}); err != nil {
 		t.Fatalf("expected legacy tree to upgrade cleanly, got %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "delegate-review", "SKILL.md"))
+	data, err := os.ReadFile(filepath.Join(root, "pr-review", "SKILL.md"))
 	if err != nil {
-		t.Fatalf("read updated delegate-review skill: %v", err)
+		t.Fatalf("read updated pr-review skill: %v", err)
 	}
 	if !strings.Contains(string(data), "/new review") {
 		t.Fatalf("expected legacy tree to upgrade review command, got:\n%s", data)

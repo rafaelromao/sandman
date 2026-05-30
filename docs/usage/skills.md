@@ -11,7 +11,7 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 - review
 
 > **Note:** The `tdd` and `review` skills were originally created by Matt Pocock. We strongly recommend checking out his work at [aihero.dev](https://www.aihero.dev/).
-- delegate-review
+- pr-review
 - merge
 - pr-merge
 - continuation
