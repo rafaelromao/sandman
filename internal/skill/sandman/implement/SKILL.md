@@ -93,7 +93,7 @@ Capture the PR URL and number.
 
 ### 8. Delegate review
 
-- Load the `sandman-delegate-review` skill
+- Load the `sandman-pr-review` skill
 - Run the delegated review loop on the PR
 - Address all review feedback from the PR, including requests, suggestions, recommendations, and nits, unless there is a strong reason to ignore a specific item.
 - If you do ignore feedback, explain why in the PR thread before continuing.
