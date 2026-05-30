@@ -311,6 +311,87 @@ func TestRender_MissingTemplateFlagReturnsError(t *testing.T) {
 	}
 }
 
+func TestRender_CandidateIssuesSubstituted(t *testing.T) {
+	engine := &Engine{}
+	cfg := RenderConfig{
+		PromptFlag:      "candidates: {{CANDIDATE_ISSUES}}",
+		CandidateIssues: "#42 Fix login\n#99 Add tests",
+	}
+
+	result, err := engine.Render(cfg, IssueData{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "candidates: #42 Fix login\n#99 Add tests"
+	if result != want {
+		t.Errorf("got: %q, want: %q", result, want)
+	}
+}
+
+func TestRender_MaxCountSubstituted(t *testing.T) {
+	engine := &Engine{}
+	cfg := RenderConfig{
+		PromptFlag: "max: {{MAX_COUNT}}",
+		MaxCount:   5,
+	}
+
+	result, err := engine.Render(cfg, IssueData{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "max: 5"
+	if result != want {
+		t.Errorf("got: %q, want: %q", result, want)
+	}
+}
+
+func TestRender_CandidateIssuesAndMaxCountBothSubstituted(t *testing.T) {
+	engine := &Engine{}
+	cfg := RenderConfig{
+		PromptFlag:      "Pick up to {{MAX_COUNT}} from:\n{{CANDIDATE_ISSUES}}",
+		CandidateIssues: "#1 Fix\n#2 Add",
+		MaxCount:        3,
+	}
+
+	result, err := engine.Render(cfg, IssueData{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "Pick up to 3 from:\n#1 Fix\n#2 Add"
+	if result != want {
+		t.Errorf("got: %q, want: %q", result, want)
+	}
+}
+
+func TestDefaultPriorityPrompt_EmbeddedTemplate(t *testing.T) {
+	data, err := os.ReadFile("priority_selection_prompt.md")
+	if err != nil {
+		t.Fatalf("read priority selection prompt template: %v", err)
+	}
+
+	want := strings.TrimSpace(string(data))
+	got := strings.TrimSpace(DefaultPriorityPrompt())
+	if got != want {
+		t.Fatalf("priority prompt drifted\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestDefaultPriorityPrompt_ContainsRequiredKeys(t *testing.T) {
+	prompt := DefaultPriorityPrompt()
+	if !strings.Contains(prompt, "{{CANDIDATE_ISSUES}}") {
+		t.Error("priority prompt missing {{CANDIDATE_ISSUES}} key")
+	}
+	if !strings.Contains(prompt, "{{MAX_COUNT}}") {
+		t.Error("priority prompt missing {{MAX_COUNT}} key")
+	}
+	if !strings.Contains(prompt, ".sandman/selected-issues.json") {
+		t.Error("priority prompt missing .sandman/selected-issues.json output path")
+	}
+}
+
 func TestMaterializePromptFile_EmptyPromptFileIsNoOp(t *testing.T) {
 	cfg := RenderConfig{}
 	err := MaterializePromptFile(cfg)
