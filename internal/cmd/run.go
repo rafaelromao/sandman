@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -68,11 +69,26 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			label, _ := cmd.Flags().GetString("label")
 			query, _ := cmd.Flags().GetString("query")
+			if label != "" && query != "" {
+				return fmt.Errorf("cannot combine --label with --query")
+			}
+
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
 			ralphFlag := cmd.Flags().Lookup("ralph")
 			ralphProvided := ralphFlag != nil && ralphFlag.Changed
 			ralphCount, _ := cmd.Flags().GetInt("ralph")
 			issueSelectionProvided := len(args) > 0 || ralphProvided || label != "" || query != ""
+
+			agentName := strings.TrimSpace(agentFlag)
+			if agentName == "" {
+				agentName = strings.TrimSpace(cfg.DefaultAgent)
+			}
+			if agentName == "" {
+				agentName = strings.TrimSpace(cfg.Agent)
+			}
+			if _, err := cfg.ResolveAgentProvider(agentName); err != nil {
+				return err
+			}
 
 			var issues []int
 			if overridePrompt && !issueSelectionProvided {
@@ -81,13 +97,13 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			} else {
 				if ralphProvided {
-					if len(args) > 0 || label != "" || query != "" {
-						return fmt.Errorf("cannot combine --ralph with issue arguments, --label or --query")
+					if len(args) > 0 {
+						return fmt.Errorf("cannot combine --ralph with issue arguments")
 					}
 					if ralphCount <= 0 {
 						return fmt.Errorf("--ralph count must be at least 1")
 					}
-					issues, err = resolveRalphIssues(cmd.Context(), deps.GitHubClient, ralphCount)
+					issues, err = resolveRalphIssues(cmd.Context(), deps.GitHubClient, ralphCount, label, query, ".sandman", agentName, modelFlag, cfg)
 					if err != nil {
 						return err
 					}
@@ -128,17 +144,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) {
 				return fmt.Errorf("no issues selected")
-			}
-
-			agentName := strings.TrimSpace(agentFlag)
-			if agentName == "" {
-				agentName = strings.TrimSpace(cfg.DefaultAgent)
-			}
-			if agentName == "" {
-				agentName = strings.TrimSpace(cfg.Agent)
-			}
-			if _, err := cfg.ResolveAgentProvider(agentName); err != nil {
-				return err
 			}
 
 			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
@@ -282,8 +287,13 @@ func resolveIssues(ctx context.Context, client github.Client, query string) ([]i
 	return numbers, nil
 }
 
-func resolveRalphIssues(ctx context.Context, client github.Client, count int) ([]int, error) {
-	ghIssues, err := client.SearchIssues("label:ready-for-agent is:open")
+func resolveRalphIssues(ctx context.Context, client github.Client, count int, label, query, sandmanDir, agentName, modelFlag string, cfg *config.Config) ([]int, error) {
+	if priorityPromptFileExists(sandmanDir) {
+		return runSelectionPhase(ctx, client, count, label, query, sandmanDir, agentName, modelFlag, cfg)
+	}
+
+	searchQuery := resolveRalphQuery(label, query)
+	ghIssues, err := client.SearchIssues(searchQuery)
 	if err != nil {
 		return nil, fmt.Errorf("search issues: %w", err)
 	}
