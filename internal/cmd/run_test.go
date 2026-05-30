@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -1175,13 +1177,19 @@ func TestRun_RalphFlagWithArgsReturnsError(t *testing.T) {
 	}
 }
 
-func TestRun_RalphFlagWithLabelReturnsError(t *testing.T) {
+func TestRun_RalphFlagWithLabelUsesLabelSearch(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Bug A"},
+		},
+	}
 	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:    &fakeEventLog{},
-		IsTTY:       func() bool { return false },
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
 	}
 
 	var buf bytes.Buffer
@@ -1191,18 +1199,53 @@ func TestRun_RalphFlagWithLabelReturnsError(t *testing.T) {
 	cmd.SetArgs([]string{"--ralph", "--label", "bug"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when combining --ralph with --label")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if spy.called {
-		t.Error("expected batch runner not to be called")
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
 	}
-	if !strings.Contains(err.Error(), "cannot combine --ralph with issue arguments, --label or --query") {
-		t.Errorf("expected mutual exclusivity error, got: %v", err)
+	if gh.searchIssuesQuery != "label:bug is:open" {
+		t.Errorf("expected search query 'label:bug is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 
-func TestRun_RalphFlagWithQueryReturnsError(t *testing.T) {
+func TestRun_RalphFlagWithQueryUsesRawQuery(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 3, Title: "Feature A"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--ralph", "--query", "label:bug is:open"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if gh.searchIssuesQuery != "label:bug is:open" {
+		t.Errorf("expected search query 'label:bug is:open', got %q", gh.searchIssuesQuery)
+	}
+}
+
+func TestRun_RalphFlagWithLabelAndQueryReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
@@ -1215,17 +1258,255 @@ func TestRun_RalphFlagWithQueryReturnsError(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph", "--query", "is:open"})
+	cmd.SetArgs([]string{"--ralph", "--label", "bug", "--query", "is:open"})
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when combining --ralph with --query")
+		t.Fatal("expected error when combining --label with --query")
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "cannot combine --ralph with issue arguments, --label or --query") {
+	if !strings.Contains(err.Error(), "cannot combine") {
 		t.Errorf("expected mutual exclusivity error, got: %v", err)
+	}
+}
+
+func TestResolveRalphIssues_PriorityPromptFileSelectsSelectionPhase(t *testing.T) {
+	sandmanDir := t.TempDir()
+	promptPath := filepath.Join(sandmanDir, "priority-selection-prompt.md")
+	if err := os.WriteFile(promptPath, []byte("test"), 0644); err != nil {
+		t.Fatalf("create prompt: %v", err)
+	}
+
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A"},
+		},
+	}
+
+	_, err := resolveRalphIssues(context.Background(), gh, 1, "", "", sandmanDir, "", "", &config.Config{})
+	if err == nil {
+		t.Fatal("expected selection phase error")
+	}
+	if !strings.Contains(err.Error(), "resolve agent") {
+		t.Errorf("expected agent resolution error (empty config), got: %v", err)
+	}
+}
+
+func TestResolveRalphIssues_PriorityPromptFileAbsentUsesNumericSort(t *testing.T) {
+	sandmanDir := t.TempDir()
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 3, Title: "Feature C"},
+			{Number: 1, Title: "Feature A"},
+		},
+	}
+
+	issues, err := resolveRalphIssues(context.Background(), gh, 1, "", "", sandmanDir, "", "", &config.Config{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 1 || issues[0] != 1 {
+		t.Errorf("expected [1], got %v", issues)
+	}
+}
+
+func TestReadSelectedIssues_ValidJSONReturnsNumbers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "selected-issues.json")
+	if err := os.WriteFile(path, []byte("[1, 2, 3]"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := readSelectedIssues(dir, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []int{1, 2, 3}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("expected %d at index %d, got %d", v, i, got[i])
+		}
+	}
+}
+
+func TestReadSelectedIssues_CapsAtMaxCount(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "selected-issues.json")
+	if err := os.WriteFile(path, []byte("[1, 2, 3, 4, 5]"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := readSelectedIssues(dir, 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []int{1, 2, 3}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestReadSelectedIssues_MissingFileReturnsError(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := readSelectedIssues(dir, 5)
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+	if !strings.Contains(err.Error(), "produced no output") {
+		t.Errorf("expected 'produced no output' error, got: %v", err)
+	}
+}
+
+func TestReadSelectedIssues_InvalidJSONReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "selected-issues.json")
+	if err := os.WriteFile(path, []byte("not-json"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	_, err := readSelectedIssues(dir, 5)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+	if !strings.Contains(err.Error(), "invalid selection format") {
+		t.Errorf("expected 'invalid selection format' error, got: %v", err)
+	}
+}
+
+func TestReadSelectedIssues_NonArrayJSONReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "selected-issues.json")
+	if err := os.WriteFile(path, []byte(`{"key": "value"}`), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	_, err := readSelectedIssues(dir, 5)
+	if err == nil {
+		t.Fatal("expected error for non-array JSON")
+	}
+	if !strings.Contains(err.Error(), "invalid selection format") {
+		t.Errorf("expected 'invalid selection format' error, got: %v", err)
+	}
+}
+
+func TestReadSelectedIssues_EmptyArrayReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "selected-issues.json")
+	if err := os.WriteFile(path, []byte("[]"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	_, err := readSelectedIssues(dir, 5)
+	if err == nil {
+		t.Fatal("expected error for empty array")
+	}
+	if !strings.Contains(err.Error(), "selected no issues") {
+		t.Errorf("expected 'selected no issues' error, got: %v", err)
+	}
+}
+
+func TestReadSelectedIssues_NonIntArrayReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "selected-issues.json")
+	if err := os.WriteFile(path, []byte(`["a", "b"]`), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	_, err := readSelectedIssues(dir, 5)
+	if err == nil {
+		t.Fatal("expected error for non-int array")
+	}
+	if !strings.Contains(err.Error(), "invalid selection format") {
+		t.Errorf("expected 'invalid selection format' error, got: %v", err)
+	}
+}
+
+func TestRunSelectionPhase_AgentWritesSelectedIssuesAndReturnsNumbers(t *testing.T) {
+	sandmanDir := t.TempDir()
+
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A", Body: "Description A", Labels: []string{"bug"}},
+			{Number: 2, Title: "Feature B", Body: "Description B", Labels: []string{"enhancement"}},
+			{Number: 3, Title: "Feature C", Body: "Description C", Labels: []string{"bug"}},
+		},
+	}
+
+	cfg := &config.Config{
+		Agent: "test-agent",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"test-agent": {
+			Command: fmt.Sprintf("echo '[2, 1]' > %s/selected-issues.json", sandmanDir),
+		},
+	}
+
+	got, err := runSelectionPhase(context.Background(), gh, 5, "", "", sandmanDir, "test-agent", "", cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []int{2, 1}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("expected %d at index %d, got %d", v, i, got[i])
+		}
+	}
+}
+
+func TestRunSelectionPhase_AgentFailureReturnsError(t *testing.T) {
+	sandmanDir := t.TempDir()
+
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A"},
+		},
+	}
+
+	cfg := &config.Config{
+		Agent: "test-agent",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"test-agent": {
+			Command: "exit 1",
+		},
+	}
+
+	_, err := runSelectionPhase(context.Background(), gh, 5, "", "", sandmanDir, "test-agent", "", cfg)
+	if err == nil {
+		t.Fatal("expected error from agent failure")
+	}
+	if !strings.Contains(err.Error(), "selection agent failed") {
+		t.Errorf("expected agent failure error, got: %v", err)
+	}
+}
+
+func TestSelectionPhase_FormatCandidateIssues(t *testing.T) {
+	issues := []github.Issue{
+		{Number: 1, Title: "Bug", Body: "Fix this bug", Labels: []string{"bug"}},
+		{Number: 2, Title: "Feature", Body: "Add new feature", Labels: []string{"enhancement"}},
+	}
+
+	result := formatCandidateIssues(issues)
+	if !strings.Contains(result, "#1") {
+		t.Error("expected #1 in formatted output")
+	}
+	if !strings.Contains(result, "Bug") {
+		t.Error("expected Bug in formatted output")
+	}
+	if !strings.Contains(result, "[bug]") {
+		t.Error("expected [bug] in formatted output")
+	}
+	if !strings.Contains(result, "Fix this bug") {
+		t.Error("expected body in formatted output")
 	}
 }
 
