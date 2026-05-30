@@ -2479,6 +2479,13 @@
         const configMode = event.target.closest('select[name="configMode"]');
         if ((commandPanelType === 'run' || commandPanelType === 'config') && (radio || configMode)) {
           syncCommandPanelState(commandPanelType);
+          if (commandPanelType === 'run' && radio && radio.name === 'selectionMode') {
+            commandState.run = {
+              ...(commandState.run || {}),
+              query: radio.value === 'ralph' ? '' : (commandState.run && commandState.run.query) || '',
+              ralph: radio.value === 'ralph' ? (commandState.run && commandState.run.ralph) || '' : '',
+            };
+          }
           renderCommandPanelBody(commandPanelType);
           return;
         }
