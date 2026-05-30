@@ -328,6 +328,13 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("write prompt.md: %w", err)
 	}
 
+	priorityPromptPath := filepath.Join(sandmanDir, "priority-selection-prompt.md")
+	if _, err := os.Stat(priorityPromptPath); os.IsNotExist(err) {
+		if err := os.WriteFile(priorityPromptPath, []byte(prompt.DefaultPriorityPrompt()), 0644); err != nil {
+			return fmt.Errorf("write priority-selection-prompt.md: %w", err)
+		}
+	}
+
 	return nil
 }
 

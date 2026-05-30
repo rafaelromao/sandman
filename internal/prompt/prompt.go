@@ -9,6 +9,8 @@ type RenderConfig struct {
 	ContinuePrompt     string            // raw continuation prompt text
 	ReviewCommand      string            // REVIEW_COMMAND substitution value
 	ReviewCommandSet   bool              // true when review_command should be recorded in events
+	CandidateIssues    string            // CANDIDATE_ISSUES substitution value
+	MaxCount           int               // MAX_COUNT substitution value
 	PromptArgs         map[string]string // arbitrary keys from config
 }
 

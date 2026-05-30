@@ -14,8 +14,14 @@ import (
 //go:embed default_prompt.md
 var defaultPrompt string
 
+//go:embed priority_selection_prompt.md
+var prioritySelectionPrompt string
+
 // DefaultPrompt returns Sandman's canonical prompt template.
 func DefaultPrompt() string { return defaultPrompt }
+
+// DefaultPriorityPrompt returns the built-in priority selection prompt template.
+func DefaultPriorityPrompt() string { return prioritySelectionPrompt }
 
 var keyPattern = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
@@ -50,6 +56,8 @@ func ApplySubstitutions(template string, cfg RenderConfig) string {
 		reviewCommand = config.DefaultReviewCommand
 	}
 	result = strings.ReplaceAll(result, "{{REVIEW_COMMAND}}", reviewCommand)
+	result = strings.ReplaceAll(result, "{{CANDIDATE_ISSUES}}", cfg.CandidateIssues)
+	result = strings.ReplaceAll(result, "{{MAX_COUNT}}", fmt.Sprintf("%d", cfg.MaxCount))
 	return result
 }
 
