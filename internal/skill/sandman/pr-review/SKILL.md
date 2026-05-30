@@ -48,7 +48,10 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
    ```bash
    gh pr view <N> --repo <owner/repo> --comments
    ```
-   Poll every 30–60s until a new comment or review from the PR Review Agent appears.
+   Poll every 30–60s until actionable PR Review Agent feedback appears.
+   Read every new PR Review Agent comment, including inline file comments and review-thread comments.
+   Do not overlook comments just because they are attached to a file diff instead of the top-level conversation.
+   Treat any requested change in an inline file comment as actionable feedback.
    If no response arrives within 10 minutes, stop and report to the user.
 
 4. **Read and classify feedback**
