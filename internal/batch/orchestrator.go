@@ -77,6 +77,11 @@ type pooledContainer struct {
 	active    int
 	ready     bool
 	startErr  error
+	dead      bool
+}
+
+type containerAliveChecker interface {
+	Alive() (bool, error)
 }
 
 type containerPool struct {
@@ -187,10 +192,14 @@ func (p *containerPool) Acquire() (*containerLease, error) {
 func (p *containerPool) acquireShared() (*containerLease, error) {
 	p.mu.Lock()
 	for {
+		if p.pruneDeadLocked() {
+			continue
+		}
+
 		var best *pooledContainer
 		var pending *pooledContainer
 		for _, entry := range p.shared {
-			if entry.startErr != nil || (p.capacity > 0 && entry.active >= p.capacity) {
+			if entry.dead || entry.startErr != nil || (p.capacity > 0 && entry.active >= p.capacity) {
 				continue
 			}
 			if !entry.ready {
@@ -263,8 +272,48 @@ func (p *containerPool) acquireShared() (*containerLease, error) {
 func (p *containerPool) releaseShared(entry *pooledContainer) {
 	p.mu.Lock()
 	entry.active--
+	if entry.dead && entry.active == 0 {
+		p.removeShared(entry)
+	}
 	p.cond.Broadcast()
 	p.mu.Unlock()
+}
+
+func (p *containerPool) pruneDeadLocked() bool {
+	changed := false
+	kept := p.shared[:0]
+	for _, entry := range p.shared {
+		if entry.dead {
+			if entry.active == 0 {
+				changed = true
+				continue
+			}
+			kept = append(kept, entry)
+			continue
+		}
+		if entry.ready && !containerAlive(entry.container) {
+			entry.dead = true
+			changed = true
+			if entry.active == 0 {
+				continue
+			}
+		}
+		kept = append(kept, entry)
+	}
+	if changed {
+		p.shared = kept
+		p.cond.Broadcast()
+	}
+	return changed
+}
+
+func containerAlive(container sandbox.Container) bool {
+	checker, ok := container.(containerAliveChecker)
+	if !ok {
+		return true
+	}
+	alive, err := checker.Alive()
+	return err == nil && alive
 }
 
 func (p *containerPool) removeShared(entry *pooledContainer) {
