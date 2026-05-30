@@ -18,7 +18,7 @@ func TestPortalLaunchDataFromConfigUsesRalphLoopLabel(t *testing.T) {
 	}
 }
 
-func TestBuildPortalRunArgsQuerySelectionIncludesRalph(t *testing.T) {
+func TestBuildPortalRunArgsQuerySelectionUsesQueryOnly(t *testing.T) {
 	args, err := buildPortalRunArgs(t.TempDir(), &config.Config{Agent: "opencode"}, portalLaunchRequest{
 		SelectionMode: "query",
 		Query:         "is:open label:bug",
@@ -28,12 +28,28 @@ func TestBuildPortalRunArgsQuerySelectionIncludesRalph(t *testing.T) {
 		t.Fatalf("build run args: %v", err)
 	}
 
-	assertArgsContainSequence(t, args, []string{"--query", "is:open label:bug", "--ralph", "3"})
+	assertArgsContainSequence(t, args, []string{"--query", "is:open label:bug"})
+	assertArgsDoNotContain(t, args, "--ralph")
 }
 
-func TestBuildPortalRunArgsRalphSelectionIncludesQuery(t *testing.T) {
+func TestBuildPortalRunArgsLabelSelectionUsesLabelOnly(t *testing.T) {
+	args, err := buildPortalRunArgs(t.TempDir(), &config.Config{Agent: "opencode"}, portalLaunchRequest{
+		SelectionMode: "label",
+		Label:         "bug",
+		Ralph:         ptrInt(3),
+	})
+	if err != nil {
+		t.Fatalf("build run args: %v", err)
+	}
+
+	assertArgsContainSequence(t, args, []string{"--label", "bug"})
+	assertArgsDoNotContain(t, args, "--ralph")
+}
+
+func TestBuildPortalRunArgsRalphSelectionIncludesLabelAndQuery(t *testing.T) {
 	args, err := buildPortalRunArgs(t.TempDir(), &config.Config{Agent: "opencode"}, portalLaunchRequest{
 		SelectionMode: "ralph",
+		Label:         "bug",
 		Query:         "is:open label:bug",
 		Ralph:         ptrInt(3),
 	})
@@ -41,7 +57,7 @@ func TestBuildPortalRunArgsRalphSelectionIncludesQuery(t *testing.T) {
 		t.Fatalf("build run args: %v", err)
 	}
 
-	assertArgsContainSequence(t, args, []string{"--ralph", "3", "--query", "is:open label:bug"})
+	assertArgsContainSequence(t, args, []string{"--ralph", "3", "--label", "bug", "--query", "is:open label:bug"})
 }
 
 func ptrInt(v int) *int {
@@ -63,4 +79,13 @@ func assertArgsContainSequence(t *testing.T, args []string, want []string) {
 		}
 	}
 	t.Fatalf("expected args to contain sequence %v, got %v", want, args)
+}
+
+func assertArgsDoNotContain(t *testing.T, args []string, want string) {
+	t.Helper()
+	for _, arg := range args {
+		if arg == want {
+			t.Fatalf("expected args not to contain %q, got %v", want, args)
+		}
+	}
 }

@@ -1724,12 +1724,11 @@
           if (sm === 'issues' && s.issues) cmd += 'run ' + s.issues.replace(/,/g, ' ');
           else if (sm === 'label' && s.label) {
             cmd += 'run --label ' + s.label;
-            if (s.ralph) cmd += ' --ralph ' + s.ralph;
           } else if (sm === 'query' && s.query) {
             cmd += 'run --query "' + s.query.replace(/"/g, '\\"') + '"';
-            if (s.ralph) cmd += ' --ralph ' + s.ralph;
           } else if (sm === 'ralph') {
             cmd += 'run --ralph ' + (s.ralph || String(launchDefaults.ralph || 1));
+            if (s.label) cmd += ' --label ' + s.label;
             if (s.query) cmd += ' --query "' + s.query.replace(/"/g, '\\"') + '"';
           }
           else cmd += 'run';
@@ -2479,13 +2478,6 @@
         const configMode = event.target.closest('select[name="configMode"]');
         if ((commandPanelType === 'run' || commandPanelType === 'config') && (radio || configMode)) {
           syncCommandPanelState(commandPanelType);
-          if (commandPanelType === 'run' && radio && radio.name === 'selectionMode') {
-            commandState.run = {
-              ...(commandState.run || {}),
-              query: radio.value === 'ralph' ? '' : (commandState.run && commandState.run.query) || '',
-              ralph: radio.value === 'ralph' ? (commandState.run && commandState.run.ralph) || '' : '',
-            };
-          }
           renderCommandPanelBody(commandPanelType);
           return;
         }

@@ -482,25 +482,11 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 				return nil, fmt.Errorf("label selection requires a label")
 			}
 			args = append(args, "--label", strings.TrimSpace(req.Label))
-			if req.Ralph != nil {
-				ralph := *req.Ralph
-				if ralph <= 0 {
-					ralph = 1
-				}
-				args = append(args, "--ralph", strconv.Itoa(ralph))
-			}
 		case "query":
 			if strings.TrimSpace(req.Query) == "" {
 				return nil, fmt.Errorf("query selection requires a query")
 			}
 			args = append(args, "--query", strings.TrimSpace(req.Query))
-			if req.Ralph != nil {
-				ralph := *req.Ralph
-				if ralph <= 0 {
-					ralph = 1
-				}
-				args = append(args, "--ralph", strconv.Itoa(ralph))
-			}
 		case "ralph":
 			ralph := 1
 			if req.Ralph != nil {
@@ -510,6 +496,9 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 				ralph = 1
 			}
 			args = append(args, "--ralph", strconv.Itoa(ralph))
+			if label := strings.TrimSpace(req.Label); label != "" {
+				args = append(args, "--label", label)
+			}
 			if query := strings.TrimSpace(req.Query); query != "" {
 				args = append(args, "--query", query)
 			}
