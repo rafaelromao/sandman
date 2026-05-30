@@ -166,7 +166,7 @@ func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 
 	return portalLaunchFormData{
 		LaunchModeOptionsHTML:    portalRadioOptionsHTML("launchMode", []portalOption{{Value: "issue-driven", Label: "Issue-driven", Selected: true}, {Value: "prompt-only", Label: "Prompt-only"}}, "issue-driven"),
-		SelectionModeOptionsHTML: portalRadioOptionsHTML("selectionMode", []portalOption{{Value: "issues", Label: "Issue numbers", Selected: true}, {Value: "label", Label: "Label"}, {Value: "query", Label: "Query"}, {Value: "ralph", Label: "Next ready issue"}}, "issues"),
+		SelectionModeOptionsHTML: portalRadioOptionsHTML("selectionMode", []portalOption{{Value: "issues", Label: "Issue numbers", Selected: true}, {Value: "label", Label: "Label"}, {Value: "query", Label: "Query"}, {Value: "ralph", Label: "Ralph Loop"}}, "issues"),
 		AgentOptionsHTML:         agentOptions,
 		SandboxOptionsHTML:       portalSelectOptionsHTML([]portalOption{{Value: "podman", Label: "podman", Selected: sandbox == "podman"}, {Value: "docker", Label: "docker", Selected: sandbox == "docker"}, {Value: "worktree", Label: "worktree", Selected: sandbox == "worktree"}}, sandbox),
 		Ralph:                    1,
@@ -496,6 +496,12 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 				ralph = 1
 			}
 			args = append(args, "--ralph", strconv.Itoa(ralph))
+			if label := strings.TrimSpace(req.Label); label != "" {
+				args = append(args, "--label", label)
+			}
+			if query := strings.TrimSpace(req.Query); query != "" {
+				args = append(args, "--query", query)
+			}
 		default:
 			return nil, fmt.Errorf("unknown selection mode %q", selectionMode)
 		}

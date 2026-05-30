@@ -1649,7 +1649,7 @@
           if (sm === 'issues') return commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || '') + '">');
           if (sm === 'label') return commandField('Label', '<input name="label" type="text" placeholder="ready-for-agent" value="' + escapeHTML(state.label || '') + '">');
           if (sm === 'query') return commandField('Query', '<input name="query" type="text" placeholder="is:open label:ready-for-agent" value="' + escapeHTML(state.query || '') + '">');
-          if (sm === 'ralph') return commandField('Next', '<input name="ralph" type="number" min="1" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.ralph || 1)) + '" value="' + escapeHTML(state.ralph || '') + '">');
+          if (sm === 'ralph') return commandField('Number of issues for Ralph Loop', '<input name="ralph" type="number" min="1" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.ralph || 1)) + '" value="' + escapeHTML(state.ralph || '') + '">');
           return '';
         })();
         return commandSection('Scope', [
@@ -1722,9 +1722,15 @@
         } else {
           const sm = s.selectionMode || 'issues';
           if (sm === 'issues' && s.issues) cmd += 'run ' + s.issues.replace(/,/g, ' ');
-          else if (sm === 'label' && s.label) cmd += 'run --label ' + s.label;
-          else if (sm === 'query' && s.query) cmd += 'run --query "' + s.query.replace(/"/g, '\\"') + '"';
-          else if (sm === 'ralph') cmd += 'run --ralph ' + (s.ralph || String(launchDefaults.ralph || 1));
+          else if (sm === 'label' && s.label) {
+            cmd += 'run --label ' + s.label;
+          } else if (sm === 'query' && s.query) {
+            cmd += 'run --query "' + s.query.replace(/"/g, '\\"') + '"';
+          } else if (sm === 'ralph') {
+            cmd += 'run --ralph ' + (s.ralph || String(launchDefaults.ralph || 1));
+            if (s.label) cmd += ' --label ' + s.label;
+            if (s.query) cmd += ' --query "' + s.query.replace(/"/g, '\\"') + '"';
+          }
           else cmd += 'run';
         }
         if (s.agent && s.agent !== ag) cmd += ' --agent ' + s.agent;
