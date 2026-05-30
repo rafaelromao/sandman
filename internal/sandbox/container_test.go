@@ -126,6 +126,9 @@ func TestContainerRuntime_Start_UsesIndefiniteIdleCommand(t *testing.T) {
 	}
 
 	want := []string{"alpine", "tail", "-f", "/dev/null"}
+	if len(captured) < len(want) {
+		t.Fatalf("expected at least %d args, got %v", len(want), captured)
+	}
 	got := captured[len(captured)-len(want):]
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("expected idle command %v, got %v", want, got)
