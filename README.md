@@ -14,6 +14,8 @@ cd my-repo && sandman init
 
 # 3. Run agents for GitHub issues
 sandman run 42 43
+sandman run 42:45
+sandman run 42:45 --label bug
 
 # 4. Check progress
 sandman status

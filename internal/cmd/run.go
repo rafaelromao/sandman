@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +26,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 		Short: "Run an AFK agent for specific issues",
 		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Prompt or template overrides that omit {{ISSUE_NUMBER}} run without issue lookup. Use --base-branch to fetch a different origin branch before each run starts. Use \"sandman clean\" to delete preserved worktrees.",
 		Example: `  sandman run 42 43
+  sandman run 42:45
+  sandman run :45
+  sandman run 42:45 --label bug
+  sandman run 42:45 --query "label:bug is:open"
   sandman run --base-branch main 42 43
   sandman run --prompt "Return only OK."
   sandman run --template ./prompt.md`,
@@ -107,29 +112,33 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return err
 					}
 				} else if len(args) > 0 {
-					if label != "" || query != "" {
-						return fmt.Errorf("cannot combine issue arguments with --label or --query")
-					}
+					allPlainNumbers := true
 					for _, arg := range args {
-						start, end, isRange, err := parseIssueRange(arg)
+						_, _, isRange, err := parseIssueRange(arg)
 						if err != nil {
 							return fmt.Errorf("invalid issue number %q: %w", arg, err)
 						}
 						if isRange {
-							if end == 0 {
-								return fmt.Errorf("unbounded range %q requires an upper bound", arg)
+							allPlainNumbers = false
+						}
+					}
+
+					if label == "" && query == "" && allPlainNumbers {
+						for _, arg := range args {
+							start, _, _, err := parseIssueRange(arg)
+							if err != nil {
+								return fmt.Errorf("invalid issue number %q: %w", arg, err)
 							}
-							if end-start >= 100 {
-								return fmt.Errorf("range %q expands to more than 100 issues", arg)
-							}
-							for n := start; ; n++ {
-								issues = append(issues, n)
-								if n >= end {
-									break
-								}
-							}
-						} else {
 							issues = append(issues, start)
+						}
+					} else {
+						searchQuery, err := buildIssueQuery(args, label, query)
+						if err != nil {
+							return err
+						}
+						issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, searchQuery)
+						if err != nil {
+							return err
 						}
 					}
 				} else if label != "" {
@@ -286,6 +295,43 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	}
 
 	return cmd
+}
+
+func buildIssueQuery(args []string, label, query string) (string, error) {
+	var groups []string
+
+	var plainNumbers []string
+	for _, arg := range args {
+		start, end, isRange, err := parseIssueRange(arg)
+		if err != nil {
+			return "", fmt.Errorf("invalid issue number %q: %w", arg, err)
+		}
+		if isRange {
+			if end == 0 {
+				groups = append(groups, fmt.Sprintf("issue:>=%d", start))
+			} else {
+				groups = append(groups, fmt.Sprintf("issue:%d..%d", start, end))
+			}
+		} else {
+			plainNumbers = append(plainNumbers, strconv.Itoa(start))
+		}
+	}
+
+	if len(plainNumbers) > 0 {
+		groups = append(groups, "("+strings.Join(plainNumbers, " OR ")+")")
+	}
+
+	if label != "" {
+		groups = append(groups, "label:"+label)
+	}
+
+	if query != "" {
+		groups = append(groups, "("+query+")")
+	}
+
+	groups = append(groups, "is:open")
+
+	return strings.Join(groups, " "), nil
 }
 
 func resolveIssues(ctx context.Context, client github.Client, query string) ([]int, error) {

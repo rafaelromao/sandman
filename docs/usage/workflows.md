@@ -14,11 +14,13 @@ Runs agents for issues #42 and #43. Issues run concurrently up to the `--paralle
 sandman run 42:45
 ```
 
-Expands `42:45` into issues #42, #43, #44, #45 — both bounds inclusive. Combine ranges with individual numbers:
+Selects issues #42 through #45 — both bounds inclusive. Ranges use GitHub's `issue:` search qualifier and can be combined with other selectors:
 
 ```bash
-sandman run 10 42:45 50
+sandman run 42:45 --label bug
 ```
+
+Combines the range with a label filter in a single search query.
 
 Also supports omitting the lower bound to start from 1:
 
@@ -26,9 +28,11 @@ Also supports omitting the lower bound to start from 1:
 sandman run :10
 ```
 
-Expands to issues #1 through #10.
+Or an upper bound for open-ended ranges:
 
-Ranges are capped at 100 issues to prevent accidental massive batches.
+```bash
+sandman run 42:
+```
 
 ## Running by label
 
@@ -36,7 +40,11 @@ Ranges are capped at 100 issues to prevent accidental massive batches.
 sandman run --label ready-for-agent
 ```
 
-Selects all open issues with the given label and runs agents for each.
+Selects all open issues with the given label and runs agents for each. Combine with positional arguments for a narrower selection:
+
+```bash
+sandman run 42:45 --label bug
+```
 
 ## Running by query
 

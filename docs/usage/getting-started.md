@@ -71,6 +71,12 @@ Once initialized, pick an open GitHub issue to delegate:
 sandman run 42
 ```
 
+Or a range of issues:
+
+```bash
+sandman run 42:45
+```
+
 Sandman will:
 
 1. Fetch issue #42 from GitHub
