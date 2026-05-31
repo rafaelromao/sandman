@@ -678,6 +678,7 @@
       flex-direction: column;
       gap: 16px;
       min-height: clamp(420px, 68vh, 780px);
+      max-height: clamp(420px, 68vh, 780px);
     }
     .detail-content {
       flex: 1 1 auto;
@@ -1248,7 +1249,7 @@
       }
       .command-grid.two { grid-template-columns: 1fr; }
       .settings-wrap { justify-items: start; }
-      .detail-panel { min-height: 0; }
+      .detail-panel { min-height: 0; max-height: 0; }
     }
     @media (max-width: 760px) {
       main { padding-inline: 12px; }
