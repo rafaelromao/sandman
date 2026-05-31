@@ -2317,9 +2317,6 @@
     function renderTerminalContent(text) {
       const value = String(text || '');
       if (!value) return '';
-      if (value.length > 12000 || value.split('\n').length > 400) {
-        return escapeHTML(value);
-      }
       return highlightTerminalText(value);
     }
 
