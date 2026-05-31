@@ -63,7 +63,7 @@ func TestCLIClient_SearchIssues_Success(t *testing.T) {
 	if runner.calls[0].name != "gh" {
 		t.Errorf("expected command gh, got %q", runner.calls[0].name)
 	}
-	expectedArgs := []string{"issue", "list", "--search", "is:open label:bug", "--json", "number,title,body,labels", "--limit", "100"}
+	expectedArgs := []string{"issue", "list", "--search", "is:open label:bug", "--json", "number,title,body,labels", "--limit", "1000"}
 	if len(runner.calls[0].args) != len(expectedArgs) {
 		t.Fatalf("expected args %v, got %v", expectedArgs, runner.calls[0].args)
 	}
