@@ -129,7 +129,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						if err != nil {
 							return err
 						}
-						if len(args) > 0 && len(searchResults) >= 1000 {
+						if hasUnboundedEnd && len(searchResults) >= 1000 {
 							return fmt.Errorf("issue range selection exceeds search result limit")
 						}
 						issues = filterIssuesBySelection(searchResults, selection, orderedIssues, hasUnboundedEnd)
