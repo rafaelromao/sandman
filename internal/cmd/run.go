@@ -119,7 +119,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 							if end == 0 {
 								return fmt.Errorf("unbounded range %q requires an upper bound", arg)
 							}
-							if end-start > 1000 {
+							if end-start >= 1000 {
 								return fmt.Errorf("range %q expands to more than 1000 issues", arg)
 							}
 							for n := start; ; n++ {
