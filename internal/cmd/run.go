@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -111,13 +110,21 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					if label != "" || query != "" {
 						return fmt.Errorf("cannot combine issue arguments with --label or --query")
 					}
-					issues = make([]int, len(args))
-					for i, arg := range args {
-						n, err := strconv.Atoi(arg)
+					for _, arg := range args {
+						start, end, isRange, err := parseIssueRange(arg)
 						if err != nil {
 							return fmt.Errorf("invalid issue number %q: %w", arg, err)
 						}
-						issues[i] = n
+						if isRange {
+							if end == 0 {
+								return fmt.Errorf("unbounded range %q requires an upper bound", arg)
+							}
+							for n := start; n <= end; n++ {
+								issues = append(issues, n)
+							}
+						} else {
+							issues = append(issues, start)
+						}
 					}
 				} else if label != "" {
 					searchQuery := "label:" + label + " is:open"
