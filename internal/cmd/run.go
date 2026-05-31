@@ -119,9 +119,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					if label == "" && query == "" && !hasRanges {
 						issues = append(issues, orderedIssues...)
 					} else if label == "" && query == "" && !hasUnboundedEnd {
-						if len(orderedIssues) > 1000 {
-							return fmt.Errorf("issue range selection exceeds search result limit")
-						}
 						issues = append(issues, orderedIssues...)
 					} else {
 						searchQuery := buildIssueQuery(label, query)
@@ -332,6 +329,9 @@ func parseIssueSelection(args []string) (issueSelection, []int, bool, bool, erro
 			if end == 0 {
 				hasUnboundedEnd = true
 				continue
+			}
+			if end-start >= 1000 {
+				return issueSelection{}, nil, false, false, fmt.Errorf("range %q expands to more than 1000 issues", arg)
 			}
 			for n := start; n <= end; n++ {
 				orderedIssues = append(orderedIssues, n)

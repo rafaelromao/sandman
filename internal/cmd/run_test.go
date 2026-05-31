@@ -1249,6 +1249,34 @@ func TestRun_UnboundedStartRangeUsesQuery(t *testing.T) {
 	}
 }
 
+func TestRun_LargeRangeRejectedBeforeExpansion(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: &fakeGitHubClient{},
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1:1001"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for oversized range")
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "more than 1000 issues") {
+		t.Errorf("expected oversized range error, got: %v", err)
+	}
+}
+
 func TestRun_RalphFlagDelegatesLowestIssue(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
