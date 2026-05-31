@@ -33,7 +33,7 @@ Issue-driven runs require exactly one selection mode. `--prompt` and `--template
 
 | Mode | Example | Description |
 |------|---------|-------------|
-| Explicit numbers | `sandman run 42 43` | One or more issue numbers |
+| Explicit numbers | `sandman run 42 43` | One or more issue numbers; ranges like `42:45` expand to `42 43 44 45` |
 | `--label` | `sandman run --label ready-for-agent` | All open issues with the given label |
 | `--query` | `sandman run --query "label:bug is:open"` | GitHub search query |
 | `--ralph` | `sandman run --ralph 3` | N lowest-numbered open issues labeled `ready-for-agent` |

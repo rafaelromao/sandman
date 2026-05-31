@@ -8,6 +8,28 @@ sandman run 42 43
 
 Runs agents for issues #42 and #43. Issues run concurrently up to the `--parallel` limit.
 
+## Running issue ranges
+
+```bash
+sandman run 42:45
+```
+
+Expands `42:45` into issues #42, #43, #44, #45 — both bounds inclusive. Combine ranges with individual numbers:
+
+```bash
+sandman run 10 42:45 50
+```
+
+Also supports omitting the lower bound to start from 1:
+
+```bash
+sandman run :10
+```
+
+Expands to issues #1 through #10.
+
+Ranges are capped at 100 issues to prevent accidental massive batches.
+
 ## Running by label
 
 ```bash
