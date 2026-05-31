@@ -119,8 +119,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 							if end == 0 {
 								return fmt.Errorf("unbounded range %q requires an upper bound", arg)
 							}
-							for n := start; n <= end; n++ {
+							if end-start > 1000 {
+								return fmt.Errorf("range %q expands to more than 1000 issues", arg)
+							}
+							for n := start; ; n++ {
 								issues = append(issues, n)
+								if n >= end {
+									break
+								}
 							}
 						} else {
 							issues = append(issues, start)
