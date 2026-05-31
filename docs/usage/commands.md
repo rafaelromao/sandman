@@ -29,15 +29,18 @@ sandman run [issue...] [flags]
 
 ### Issue selection modes
 
-Issue-driven runs require exactly one selection mode. `--prompt` and `--template` can enter prompt-only mode only when no issue selection is provided and the final prompt omits issue placeholders.
+Issue-driven runs require at least one selection mode. `--prompt` and `--template` can enter prompt-only mode only when no issue selection is provided and the final prompt omits issue placeholders.
 
 | Mode | Example | Description |
 |------|---------|-------------|
-| Explicit numbers | `sandman run 42 43` | One or more issue numbers; ranges like `42:45` expand to `42 43 44 45` |
+| Explicit numbers | `sandman run 42 43` | One or more issue numbers |
+| Issue range | `sandman run 42:45` | Range expression `start:end` (inclusive). `:45` starts from 1, `42:` is unbounded end |
 | `--label` | `sandman run --label ready-for-agent` | All open issues with the given label |
 | `--query` | `sandman run --query "label:bug is:open"` | GitHub search query |
 | `--ralph` | `sandman run --ralph 3` | N lowest-numbered open issues labeled `ready-for-agent` |
 | Interactive picker | `sandman run` (in a TTY) | Opens a numbered list of open issues to select from |
+
+Positional arguments (numbers and ranges) can be combined with `--label` and `--query`; Sandman resolves finite issue selections locally and uses search only when it needs to expand open-ended ranges or evaluate a query that cannot be matched locally.
 
 ### Execution flags
 
@@ -62,6 +65,7 @@ Issue-driven runs require exactly one selection mode. `--prompt` and `--template
 ### Flag interactions
 
 - `--ralph` is mutually exclusive with issue arguments, `--label`, and `--query`
+- Positional arguments (numbers and ranges) can be combined with `--label` or `--query` — finite selections are resolved locally; open-ended ranges and unsupported queries still use GitHub search
 - If `--prompt` or `--template` is used with no issue arguments, `--label`, `--query`, or `--ralph`, and the final selected prompt omits `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`, Sandman enters prompt-only mode and skips GitHub issue lookup
 - If any issue selection is provided, Sandman stays in issue-driven mode even when `--prompt` or `--template` is set
 - `run` preserves worktrees by default; use `sandman clean` to delete them

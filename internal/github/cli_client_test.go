@@ -35,7 +35,7 @@ func (f *fakeRunner) Run(name string, arg ...string) *exec.Cmd {
 }
 
 func TestCLIClient_SearchIssues_Success(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":1,"title":"Bug","body":"bug body","labels":[{"name":"bug"}]},{"number":2,"title":"Feature","body":"feat body","labels":[]}]`}}}
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":1,"state":"open","title":"Bug","body":"bug body","labels":[{"name":"bug"}]},{"number":2,"state":"closed","title":"Feature","body":"feat body","labels":[]}]`}}}
 	client := &CLIClient{runner: runner}
 
 	issues, err := client.SearchIssues("is:open label:bug")
@@ -51,6 +51,9 @@ func TestCLIClient_SearchIssues_Success(t *testing.T) {
 	if issues[0].Title != "Bug" {
 		t.Errorf("expected title 'Bug', got %q", issues[0].Title)
 	}
+	if issues[0].State != "open" {
+		t.Errorf("expected state 'open', got %q", issues[0].State)
+	}
 	if issues[0].Body != "bug body" {
 		t.Errorf("expected body 'bug body', got %q", issues[0].Body)
 	}
@@ -63,7 +66,7 @@ func TestCLIClient_SearchIssues_Success(t *testing.T) {
 	if runner.calls[0].name != "gh" {
 		t.Errorf("expected command gh, got %q", runner.calls[0].name)
 	}
-	expectedArgs := []string{"issue", "list", "--search", "is:open label:bug", "--json", "number,title,body,labels", "--limit", "100"}
+	expectedArgs := []string{"issue", "list", "--search", "is:open label:bug", "--json", "number,state,title,body,labels", "--limit", "1000"}
 	if len(runner.calls[0].args) != len(expectedArgs) {
 		t.Fatalf("expected args %v, got %v", expectedArgs, runner.calls[0].args)
 	}

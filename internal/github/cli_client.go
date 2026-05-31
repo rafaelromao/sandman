@@ -332,7 +332,7 @@ func removeIssueNumber(numbers []int, target int) []int {
 
 // SearchIssues searches for issues via gh CLI.
 func (c *CLIClient) SearchIssues(query string) ([]Issue, error) {
-	cmd := c.command("gh", "issue", "list", "--search", query, "--json", "number,title,body,labels", "--limit", "100")
+	cmd := c.command("gh", "issue", "list", "--search", query, "--json", "number,state,title,body,labels", "--limit", "1000")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("gh issue list: %w\n%s", err, out)

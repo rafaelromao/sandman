@@ -14,10 +14,18 @@ Runs agents for issues #42 and #43. Issues run concurrently up to the `--paralle
 sandman run 42:45
 ```
 
-Expands `42:45` into issues #42, #43, #44, #45 — both bounds inclusive. Combine ranges with individual numbers:
+Selects issues #42 through #45 — both bounds inclusive. Sandman resolves the requested issue numbers locally and can combine them with label/query filters:
 
 ```bash
-sandman run 10 42:45 50
+sandman run 42:45 --label bug
+```
+
+Combines the range with a label filter while keeping only the requested issues.
+
+You can also combine label and query filters directly:
+
+```bash
+sandman run --label bug --query "author:me"
 ```
 
 Also supports omitting the lower bound to start from 1:
@@ -26,9 +34,11 @@ Also supports omitting the lower bound to start from 1:
 sandman run :10
 ```
 
-Expands to issues #1 through #10.
+Or an upper bound for open-ended ranges:
 
-Ranges are capped at 100 issues to prevent accidental massive batches.
+```bash
+sandman run 42:
+```
 
 ## Running by label
 
@@ -36,7 +46,11 @@ Ranges are capped at 100 issues to prevent accidental massive batches.
 sandman run --label ready-for-agent
 ```
 
-Selects all open issues with the given label and runs agents for each.
+Selects all open issues with the given label and runs agents for each. Combine with positional arguments for a narrower selection:
+
+```bash
+sandman run 42:45 --label bug
+```
 
 ## Running by query
 
@@ -88,16 +102,16 @@ sandman clean --all         # Remove all worktrees and logs
 
 Containers are stopped automatically when a batch completes. No dedicated container cleanup command is needed.
 
-## Dependency-aware execution
+## BlockedBy-aware execution
 
-Sandman can detect dependencies between issues and execute them in the correct order.
+Sandman can detect BlockedBy relationships between issues and execute them in the correct order.
 
-### How dependency detection works
+### How BlockedBy detection works
 
 Sandman discovers `BlockedBy` relationships from two sources:
 
 1. **Body references** — issue bodies containing `blocked by #N` or `depends on #N`
-2. **GitHub REST API** — native `issue.blocked_by` and `issue.issue_dependencies.blocked_by` fields
+2. **GitHub REST API** — `gh api` issue and events responses that surface native blocker numbers
 
 The union of both sources forms each issue's `BlockedBy` set.
 
