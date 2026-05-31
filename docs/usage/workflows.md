@@ -28,7 +28,7 @@ sandman run :10
 
 Expands to issues #1 through #10.
 
-Ranges are capped at 1000 issues to prevent accidental massive batches.
+Ranges are capped at 100 issues to prevent accidental massive batches.
 
 ## Running by label
 
