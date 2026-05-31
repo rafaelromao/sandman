@@ -1029,6 +1029,48 @@ func TestRun_CombinePlainArgsWithLabelSkipsClosedIssue(t *testing.T) {
 	}
 }
 
+func TestRun_CombinePlainArgsWithLabelIsCaseInsensitive(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Bug A", State: "open", Labels: []string{"Bug"}},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--label", "bug", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{42}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if gh.fetchCount[42] != 1 {
+		t.Errorf("expected issue 42 to be fetched once, got %d", gh.fetchCount[42])
+	}
+}
+
 func TestRun_CombinePlainArgsWithQueryUsesCombinedQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{

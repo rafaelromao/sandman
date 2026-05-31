@@ -557,8 +557,9 @@ func issueMatchesFilters(issue *github.Issue, label, query string) bool {
 }
 
 func issueHasLabel(labels []string, target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
 	for _, label := range labels {
-		if label == target {
+		if strings.ToLower(strings.TrimSpace(label)) == target {
 			return true
 		}
 	}
