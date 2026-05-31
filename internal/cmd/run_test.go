@@ -112,8 +112,14 @@ func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
-		t.Errorf("expected issues [42], got %v", spy.req.Issues)
+	want := []int{42}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
 	}
 }
 
@@ -945,8 +951,8 @@ func TestRun_NoArgsNoTTYReturnsError(t *testing.T) {
 func TestRun_CombinePlainArgsWithLabelUsesCombinedQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 42, Title: "Bug A"},
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Bug A", State: "open", Labels: []string{"bug"}},
 		},
 	}
 	deps := Dependencies{
@@ -970,19 +976,28 @@ func TestRun_CombinePlainArgsWithLabelUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
-		t.Errorf("expected issues [42], got %v", spy.req.Issues)
+	want := []int{42}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
-	if gh.searchIssuesQuery != "label:bug is:open" {
-		t.Errorf("expected search query 'label:bug is:open', got %q", gh.searchIssuesQuery)
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if gh.searchIssuesQuery != "" {
+		t.Errorf("expected no search query for local label filtering, got %q", gh.searchIssuesQuery)
+	}
+	if gh.fetchCount[42] != 1 {
+		t.Errorf("expected issue 42 to be fetched once, got %d", gh.fetchCount[42])
 	}
 }
 
 func TestRun_CombinePlainArgsWithQueryUsesCombinedQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 42, Title: "Feature A"},
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Feature A", State: "open", Labels: []string{"bug"}},
 		},
 	}
 	deps := Dependencies{
@@ -1009,8 +1024,11 @@ func TestRun_CombinePlainArgsWithQueryUsesCombinedQuery(t *testing.T) {
 	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
 		t.Errorf("expected issues [42], got %v", spy.req.Issues)
 	}
-	if gh.searchIssuesQuery != "(label:bug) is:open" {
-		t.Errorf("expected search query '(label:bug) is:open', got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "" {
+		t.Errorf("expected no search query for local query filtering, got %q", gh.searchIssuesQuery)
+	}
+	if gh.fetchCount[42] != 1 {
+		t.Errorf("expected issue 42 to be fetched once, got %d", gh.fetchCount[42])
 	}
 }
 
@@ -1055,8 +1073,11 @@ func TestRun_RangeArgUsesCombinedQuery(t *testing.T) {
 func TestRun_RangeArgWithLabelUsesCombinedQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 42, Title: "Bug A"},
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Bug A", State: "open", Labels: []string{"bug"}},
+			43: {Number: 43, Title: "Bug B", State: "open", Labels: []string{"bug"}},
+			44: {Number: 44, Title: "Bug C", State: "open", Labels: []string{"bug"}},
+			45: {Number: 45, Title: "Bug D", State: "open", Labels: []string{"bug"}},
 		},
 	}
 	deps := Dependencies{
@@ -1080,19 +1101,33 @@ func TestRun_RangeArgWithLabelUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
-		t.Errorf("expected issues [42], got %v", spy.req.Issues)
+	want := []int{42, 43, 44, 45}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
-	if gh.searchIssuesQuery != "label:bug is:open" {
-		t.Errorf("expected search query 'label:bug is:open', got %q", gh.searchIssuesQuery)
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if gh.searchIssuesQuery != "" {
+		t.Errorf("expected no search query for local label filtering, got %q", gh.searchIssuesQuery)
+	}
+	for _, n := range want {
+		if gh.fetchCount[n] != 1 {
+			t.Errorf("expected issue %d to be fetched once, got %d", n, gh.fetchCount[n])
+		}
 	}
 }
 
 func TestRun_RangeArgWithQueryUsesCombinedQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 42, Title: "Feature A"},
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Feature A", State: "open", Labels: []string{"bug"}},
+			43: {Number: 43, Title: "Feature B", State: "open", Labels: []string{"bug"}},
+			44: {Number: 44, Title: "Feature C", State: "open", Labels: []string{"bug"}},
+			45: {Number: 45, Title: "Feature D", State: "open", Labels: []string{"bug"}},
 		},
 	}
 	deps := Dependencies{
@@ -1116,20 +1151,31 @@ func TestRun_RangeArgWithQueryUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
-		t.Errorf("expected issues [42], got %v", spy.req.Issues)
+	want := []int{42, 43, 44, 45}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
-	if gh.searchIssuesQuery != "(label:bug is:open) is:open" {
-		t.Errorf("expected search query '(label:bug is:open) is:open', got %q", gh.searchIssuesQuery)
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if gh.searchIssuesQuery != "" {
+		t.Errorf("expected no search query for local query filtering, got %q", gh.searchIssuesQuery)
+	}
+	for _, n := range want {
+		if gh.fetchCount[n] != 1 {
+			t.Errorf("expected issue %d to be fetched once, got %d", n, gh.fetchCount[n])
+		}
 	}
 }
 
 func TestRun_MixedArgsWithLabelUsesCombinedQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 42, Title: "Bug A"},
-			{Number: 44, Title: "Bug B"},
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Bug A", State: "open", Labels: []string{"bug"}},
+			44: {Number: 44, Title: "Bug B", State: "open", Labels: []string{"bug"}},
 		},
 	}
 	deps := Dependencies{
@@ -1162,8 +1208,13 @@ func TestRun_MixedArgsWithLabelUsesCombinedQuery(t *testing.T) {
 			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
 		}
 	}
-	if gh.searchIssuesQuery != "label:bug is:open" {
-		t.Errorf("expected search query 'label:bug is:open', got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "" {
+		t.Errorf("expected no search query for local label filtering, got %q", gh.searchIssuesQuery)
+	}
+	for _, n := range want {
+		if gh.fetchCount[n] != 1 {
+			t.Errorf("expected issue %d to be fetched once, got %d", n, gh.fetchCount[n])
+		}
 	}
 }
 
@@ -1252,6 +1303,11 @@ func TestRun_UnboundedStartRangeUsesQuery(t *testing.T) {
 func TestRun_MixedExactAndUnboundedRangePreservesExplicitIssues(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			7:  {Number: 7, Title: "Closed Issue", State: "closed"},
+			42: {Number: 42, Title: "Issue A"},
+			43: {Number: 43, Title: "Issue B"},
+		},
 		searchIssuesResult: []github.Issue{
 			{Number: 42, Title: "Issue A"},
 			{Number: 43, Title: "Issue B"},
@@ -1320,7 +1376,7 @@ func TestRun_LargeRangeRejectedBeforeExpansion(t *testing.T) {
 	}
 }
 
-func TestRun_PositionalSelectionWithLabelRejectsTruncatedSearchResults(t *testing.T) {
+func TestRun_PositionalSelectionWithUnsupportedQueryRejectsTruncatedSearchResults(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	results := make([]github.Issue, 1000)
 	for i := range results {
@@ -1339,7 +1395,7 @@ func TestRun_PositionalSelectionWithLabelRejectsTruncatedSearchResults(t *testin
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--label", "bug", "42"})
+	cmd.SetArgs([]string{"--query", "author:me", "42"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -1957,8 +2013,8 @@ func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 3 {
 		t.Errorf("expected issues [3], got %v", spy.req.Issues)
 	}
-	if gh.searchIssuesQuery != "(author:me) is:open" {
-		t.Errorf("expected search query '(author:me) is:open', got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "author:me is:open" {
+		t.Errorf("expected search query 'author:me is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 
@@ -1988,8 +2044,8 @@ func TestRun_LabelAndQueryFlagsUseCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "label:bug (author:me) is:open" {
-		t.Errorf("expected search query 'label:bug (author:me) is:open', got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "label:bug author:me is:open" {
+		t.Errorf("expected search query 'label:bug author:me is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 
