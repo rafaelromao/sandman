@@ -273,6 +273,9 @@ func (p *containerPool) releaseShared(entry *pooledContainer) {
 	p.mu.Lock()
 	entry.active--
 	if entry.dead && entry.active == 0 {
+		if entry.container != nil {
+			_ = entry.container.Stop()
+		}
 		p.removeShared(entry)
 	}
 	p.cond.Broadcast()
@@ -286,6 +289,9 @@ func (p *containerPool) pruneDeadLocked() bool {
 		if entry.dead {
 			if entry.active == 0 {
 				changed = true
+				if entry.container != nil {
+					_ = entry.container.Stop()
+				}
 				continue
 			}
 			kept = append(kept, entry)
@@ -295,6 +301,9 @@ func (p *containerPool) pruneDeadLocked() bool {
 			entry.dead = true
 			changed = true
 			if entry.active == 0 {
+				if entry.container != nil {
+					_ = entry.container.Stop()
+				}
 				continue
 			}
 		}
