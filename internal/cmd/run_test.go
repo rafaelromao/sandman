@@ -993,6 +993,42 @@ func TestRun_CombinePlainArgsWithLabelUsesCombinedQuery(t *testing.T) {
 	}
 }
 
+func TestRun_CombinePlainArgsWithLabelSkipsClosedIssue(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Bug A", State: "closed", Labels: []string{"bug"}},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--label", "bug", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when label filter excludes the issue")
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "no issues selected") {
+		t.Fatalf("expected no issues selected error, got %v", err)
+	}
+	if gh.fetchCount[42] != 1 {
+		t.Errorf("expected issue 42 to be fetched once, got %d", gh.fetchCount[42])
+	}
+}
+
 func TestRun_CombinePlainArgsWithQueryUsesCombinedQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
@@ -1222,7 +1258,7 @@ func TestRun_UnboundedEndRangeUsesQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
-			{Number: 42, Title: "Issue A"},
+			{Number: 42, State: "open", Title: "Issue A"},
 		},
 	}
 	deps := Dependencies{
@@ -1251,6 +1287,49 @@ func TestRun_UnboundedEndRangeUsesQuery(t *testing.T) {
 	}
 	if gh.searchIssuesQuery != "is:open" {
 		t.Errorf("expected search query 'is:open', got %q", gh.searchIssuesQuery)
+	}
+}
+
+func TestRun_UnboundedEndRangeWithStateQueryUsesIssueState(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 42, State: "open", Title: "Issue A"},
+			{Number: 43, State: "closed", Title: "Issue B"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--query", "state:open", "42:"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{42}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if gh.searchIssuesQuery != "state:open" {
+		t.Errorf("expected search query 'state:open', got %q", gh.searchIssuesQuery)
 	}
 }
 

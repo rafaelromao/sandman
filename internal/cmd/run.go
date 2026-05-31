@@ -187,7 +187,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						}
 						issues = append(issues, resolved...)
 						if hasUnboundedEnd {
-							searchResults, err := searchIssues(cmd.Context(), githubClient, "is:open")
+							searchResults, err := searchIssues(cmd.Context(), githubClient, buildIssueQuery(label, query))
 							if err != nil {
 								return err
 							}
@@ -396,6 +396,20 @@ func queryHasOpenState(query string) bool {
 	return false
 }
 
+func queryHasExplicitState(query string) bool {
+	for _, token := range strings.Fields(strings.TrimSpace(query)) {
+		switch token {
+		case "is:open", "state:open", "is:closed", "state:closed":
+			return true
+		}
+	}
+	return false
+}
+
+func requiresOpenDefault(label, query string) bool {
+	return (label != "" || strings.TrimSpace(query) != "") && !queryHasExplicitState(query)
+}
+
 type issueSelection struct {
 	exact  map[int]struct{}
 	ranges []issueRangeSelection
@@ -509,6 +523,12 @@ func querySupportsLocalFiltering(query string) bool {
 }
 
 func issueMatchesFilters(issue *github.Issue, label, query string) bool {
+	if issue == nil {
+		return false
+	}
+	if requiresOpenDefault(label, query) && !strings.EqualFold(strings.TrimSpace(issue.State), "open") {
+		return false
+	}
 	if label != "" && !issueHasLabel(issue.Labels, label) {
 		return false
 	}
