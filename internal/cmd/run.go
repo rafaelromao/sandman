@@ -111,15 +111,36 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return err
 					}
 				} else if len(args) > 0 {
-					selection, orderedIssues, hasRanges, hasUnboundedEnd, err := parseIssueSelection(args)
+					selection, orderedIssues, _, hasUnboundedEnd, err := parseIssueSelection(args)
 					if err != nil {
 						return err
 					}
 
-					if label == "" && query == "" && !hasRanges {
+					if label == "" && query == "" && !hasUnboundedEnd {
 						issues = append(issues, orderedIssues...)
-					} else if label == "" && query == "" && !hasUnboundedEnd {
+					} else if label == "" && query == "" {
 						issues = append(issues, orderedIssues...)
+						seen := make(map[int]struct{}, len(issues))
+						for _, number := range issues {
+							seen[number] = struct{}{}
+						}
+						searchResults, err := searchIssues(cmd.Context(), deps.GitHubClient, "is:open")
+						if err != nil {
+							return err
+						}
+						if len(searchResults) >= 1000 {
+							return fmt.Errorf("issue selection exceeds search result limit")
+						}
+						for _, issue := range searchResults {
+							if !selection.matches(issue.Number) {
+								continue
+							}
+							if _, ok := seen[issue.Number]; ok {
+								continue
+							}
+							seen[issue.Number] = struct{}{}
+							issues = append(issues, issue.Number)
+						}
 					} else {
 						searchQuery := buildIssueQuery(label, query)
 						if label == "" && query == "" {
@@ -129,8 +150,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						if err != nil {
 							return err
 						}
-						if hasUnboundedEnd && len(searchResults) >= 1000 {
-							return fmt.Errorf("issue range selection exceeds search result limit")
+						if len(searchResults) >= 1000 {
+							return fmt.Errorf("issue selection exceeds search result limit")
 						}
 						issues = filterIssuesBySelection(searchResults, selection, orderedIssues, hasUnboundedEnd)
 					}

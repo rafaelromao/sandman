@@ -1249,6 +1249,49 @@ func TestRun_UnboundedStartRangeUsesQuery(t *testing.T) {
 	}
 }
 
+func TestRun_MixedExactAndUnboundedRangePreservesExplicitIssues(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 42, Title: "Issue A"},
+			{Number: 43, Title: "Issue B"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"7", "42:"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{7, 42, 43}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if gh.searchIssuesQuery != "is:open" {
+		t.Errorf("expected search query 'is:open', got %q", gh.searchIssuesQuery)
+	}
+}
+
 func TestRun_LargeRangeRejectedBeforeExpansion(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
@@ -1274,6 +1317,39 @@ func TestRun_LargeRangeRejectedBeforeExpansion(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "more than 1000 issues") {
 		t.Errorf("expected oversized range error, got: %v", err)
+	}
+}
+
+func TestRun_PositionalSelectionWithLabelRejectsTruncatedSearchResults(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	results := make([]github.Issue, 1000)
+	for i := range results {
+		results[i] = github.Issue{Number: i + 1, Title: fmt.Sprintf("Issue %d", i+1)}
+	}
+	gh := &fakeGitHubClient{searchIssuesResult: results}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--label", "bug", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for truncated search results")
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+	if !strings.Contains(err.Error(), "search result limit") {
+		t.Errorf("expected search result limit error, got: %v", err)
 	}
 }
 
