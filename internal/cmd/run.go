@@ -511,6 +511,9 @@ func querySupportsLocalFiltering(query string) bool {
 	if query == "" {
 		return true
 	}
+	if strings.Contains(query, ",") {
+		return false
+	}
 	for _, token := range strings.Fields(query) {
 		switch {
 		case strings.HasPrefix(token, "label:"):
