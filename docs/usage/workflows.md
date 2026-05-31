@@ -14,13 +14,13 @@ Runs agents for issues #42 and #43. Issues run concurrently up to the `--paralle
 sandman run 42:45
 ```
 
-Selects issues #42 through #45 — both bounds inclusive. Ranges use GitHub's `issue:` search qualifier and can be combined with other selectors:
+Selects issues #42 through #45 — both bounds inclusive. Sandman resolves the requested issue numbers locally and can combine them with label/query filters:
 
 ```bash
 sandman run 42:45 --label bug
 ```
 
-Combines the range with a label filter in a single search query.
+Combines the range with a label filter while keeping only the requested issues.
 
 You can also combine label and query filters directly:
 

@@ -970,8 +970,11 @@ func TestRun_CombinePlainArgsWithLabelUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "(42) label:bug is:open" {
-		t.Errorf("expected search query '(42) label:bug is:open', got %q", gh.searchIssuesQuery)
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
+		t.Errorf("expected issues [42], got %v", spy.req.Issues)
+	}
+	if gh.searchIssuesQuery != "label:bug is:open" {
+		t.Errorf("expected search query 'label:bug is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 
@@ -1003,19 +1006,17 @@ func TestRun_CombinePlainArgsWithQueryUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "(42) (label:bug) is:open" {
-		t.Errorf("expected search query '(42) (label:bug) is:open', got %q", gh.searchIssuesQuery)
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
+		t.Errorf("expected issues [42], got %v", spy.req.Issues)
+	}
+	if gh.searchIssuesQuery != "(label:bug) is:open" {
+		t.Errorf("expected search query '(label:bug) is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 
 func TestRun_RangeArgUsesCombinedQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 42, Title: "Issue A"},
-			{Number: 43, Title: "Issue B"},
-		},
-	}
+	gh := &fakeGitHubClient{}
 	deps := Dependencies{
 		BatchRunner:  spy,
 		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
@@ -1037,8 +1038,17 @@ func TestRun_RangeArgUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "issue:42..45 is:open" {
-		t.Errorf("expected search query 'issue:42..45 is:open', got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "" {
+		t.Errorf("expected no search query for bounded ranges, got %q", gh.searchIssuesQuery)
+	}
+	want := []int{42, 43, 44, 45}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
 	}
 }
 
@@ -1070,8 +1080,11 @@ func TestRun_RangeArgWithLabelUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "issue:42..45 label:bug is:open" {
-		t.Errorf("expected search query 'issue:42..45 label:bug is:open', got %q", gh.searchIssuesQuery)
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
+		t.Errorf("expected issues [42], got %v", spy.req.Issues)
+	}
+	if gh.searchIssuesQuery != "label:bug is:open" {
+		t.Errorf("expected search query 'label:bug is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 
@@ -1103,8 +1116,11 @@ func TestRun_RangeArgWithQueryUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "issue:42..45 (label:bug is:open) is:open" {
-		t.Errorf("expected search query 'issue:42..45 (label:bug is:open) is:open', got %q", gh.searchIssuesQuery)
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
+		t.Errorf("expected issues [42], got %v", spy.req.Issues)
+	}
+	if gh.searchIssuesQuery != "(label:bug is:open) is:open" {
+		t.Errorf("expected search query '(label:bug is:open) is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 
@@ -1137,8 +1153,17 @@ func TestRun_MixedArgsWithLabelUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "(42 OR 44) label:bug is:open" {
-		t.Errorf("expected search query '(42 OR 44) label:bug is:open', got %q", gh.searchIssuesQuery)
+	want := []int{42, 44}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if gh.searchIssuesQuery != "label:bug is:open" {
+		t.Errorf("expected search query 'label:bug is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 
@@ -1170,8 +1195,11 @@ func TestRun_UnboundedEndRangeUsesQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "issue:>=42 is:open" {
-		t.Errorf("expected search query 'issue:>=42 is:open', got %q", gh.searchIssuesQuery)
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
+		t.Errorf("expected issues [42], got %v", spy.req.Issues)
+	}
+	if gh.searchIssuesQuery != "is:open" {
+		t.Errorf("expected search query 'is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 
@@ -1204,8 +1232,20 @@ func TestRun_UnboundedStartRangeUsesQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "issue:1..45 is:open" {
-		t.Errorf("expected search query 'issue:1..45 is:open', got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "" {
+		t.Errorf("expected no search query for bounded start-end range, got %q", gh.searchIssuesQuery)
+	}
+	want := make([]int, 45)
+	for i := range want {
+		want[i] = i + 1
+	}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
 	}
 }
 
@@ -1800,7 +1840,7 @@ func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--query", "is:open author:me"})
+	cmd.SetArgs([]string{"--query", "author:me"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -1813,8 +1853,8 @@ func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 3 {
 		t.Errorf("expected issues [3], got %v", spy.req.Issues)
 	}
-	if gh.searchIssuesQuery != "(is:open author:me) is:open" {
-		t.Errorf("expected search query '(is:open author:me) is:open', got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "(author:me) is:open" {
+		t.Errorf("expected search query '(author:me) is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 

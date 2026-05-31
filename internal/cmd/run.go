@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -112,44 +111,39 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return err
 					}
 				} else if len(args) > 0 {
-					allPlainNumbers := true
-					for _, arg := range args {
-						_, _, isRange, err := parseIssueRange(arg)
-						if err != nil {
-							return fmt.Errorf("invalid issue number %q: %w", arg, err)
-						}
-						if isRange {
-							allPlainNumbers = false
-						}
+					selection, orderedIssues, hasRanges, hasUnboundedEnd, err := parseIssueSelection(args)
+					if err != nil {
+						return err
 					}
 
-					if label == "" && query == "" && allPlainNumbers {
-						for _, arg := range args {
-							start, _, _, err := parseIssueRange(arg)
-							if err != nil {
-								return fmt.Errorf("invalid issue number %q: %w", arg, err)
-							}
-							issues = append(issues, start)
+					if label == "" && query == "" && !hasRanges {
+						issues = append(issues, orderedIssues...)
+					} else if label == "" && query == "" && !hasUnboundedEnd {
+						issues, err = fetchIssuesByNumbers(cmd.Context(), deps.GitHubClient, orderedIssues)
+						if err != nil {
+							return err
 						}
 					} else {
-						searchQuery, err := buildIssueQuery(args, label, query)
+						searchQuery := buildIssueQuery(label, query)
+						if label == "" && query == "" {
+							searchQuery = "is:open"
+						}
+						searchResults, err := searchIssues(cmd.Context(), deps.GitHubClient, searchQuery)
 						if err != nil {
 							return err
 						}
-						issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, searchQuery)
-						if err != nil {
-							return err
+						if len(searchResults) >= 1000 && (hasRanges || hasUnboundedEnd) {
+							return fmt.Errorf("issue range selection exceeds search result limit")
 						}
+						issues = filterIssuesBySelection(searchResults, selection, orderedIssues, hasUnboundedEnd)
 					}
 				} else if label != "" || query != "" {
-					searchQuery, err := buildIssueQuery(nil, label, query)
+					searchQuery := buildIssueQuery(label, query)
+					searchResults, err := searchIssues(cmd.Context(), deps.GitHubClient, searchQuery)
 					if err != nil {
 						return err
 					}
-					issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, searchQuery)
-					if err != nil {
-						return err
-					}
+					issues = extractIssueNumbers(searchResults)
 				} else {
 					if deps.IsTTY != nil && deps.IsTTY() {
 						issues, err = pickIssues(cmd.Context(), deps.GitHubClient, deps.IssuePicker)
@@ -295,29 +289,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
-func buildIssueQuery(args []string, label, query string) (string, error) {
+func buildIssueQuery(label, query string) string {
 	var groups []string
-
-	var plainNumbers []string
-	for _, arg := range args {
-		start, end, isRange, err := parseIssueRange(arg)
-		if err != nil {
-			return "", fmt.Errorf("invalid issue number %q: %w", arg, err)
-		}
-		if isRange {
-			if end == 0 {
-				groups = append(groups, fmt.Sprintf("issue:>=%d", start))
-			} else {
-				groups = append(groups, fmt.Sprintf("issue:%d..%d", start, end))
-			}
-		} else {
-			plainNumbers = append(plainNumbers, strconv.Itoa(start))
-		}
-	}
-
-	if len(plainNumbers) > 0 {
-		groups = append(groups, "("+strings.Join(plainNumbers, " OR ")+")")
-	}
 
 	if label != "" {
 		groups = append(groups, "label:"+label)
@@ -329,19 +302,128 @@ func buildIssueQuery(args []string, label, query string) (string, error) {
 
 	groups = append(groups, "is:open")
 
-	return strings.Join(groups, " "), nil
+	return strings.Join(groups, " ")
 }
 
-func resolveIssues(ctx context.Context, client github.Client, query string) ([]int, error) {
-	ghIssues, err := client.SearchIssues(query)
-	if err != nil {
-		return nil, fmt.Errorf("search issues: %w", err)
+type issueSelection struct {
+	exact  map[int]struct{}
+	ranges []issueRangeSelection
+}
+
+type issueRangeSelection struct {
+	start int
+	end   int
+}
+
+func parseIssueSelection(args []string) (issueSelection, []int, bool, bool, error) {
+	selection := issueSelection{exact: make(map[int]struct{}, len(args))}
+	orderedIssues := make([]int, 0, len(args))
+	hasRanges := false
+	hasUnboundedEnd := false
+
+	for _, arg := range args {
+		start, end, isRange, err := parseIssueRange(arg)
+		if err != nil {
+			return issueSelection{}, nil, false, false, fmt.Errorf("invalid issue number %q: %w", arg, err)
+		}
+		if isRange {
+			hasRanges = true
+			selection.ranges = append(selection.ranges, issueRangeSelection{start: start, end: end})
+			if end == 0 {
+				hasUnboundedEnd = true
+				continue
+			}
+			for n := start; n <= end; n++ {
+				orderedIssues = append(orderedIssues, n)
+			}
+			continue
+		}
+
+		selection.exact[start] = struct{}{}
+		orderedIssues = append(orderedIssues, start)
 	}
+
+	return selection, orderedIssues, hasRanges, hasUnboundedEnd, nil
+}
+
+func (s issueSelection) matches(number int) bool {
+	if _, ok := s.exact[number]; ok {
+		return true
+	}
+	for _, r := range s.ranges {
+		if number < r.start {
+			continue
+		}
+		if r.end == 0 || number <= r.end {
+			return true
+		}
+	}
+	return false
+}
+
+func fetchIssuesByNumbers(ctx context.Context, client github.Client, numbers []int) ([]int, error) {
+	issues := make([]int, 0, len(numbers))
+	for _, number := range numbers {
+		issue, err := client.FetchIssue(number)
+		if err != nil {
+			return nil, fmt.Errorf("fetch issue #%d: %w", number, err)
+		}
+		issues = append(issues, issue.Number)
+	}
+	return issues, nil
+}
+
+func filterIssuesBySelection(searchResults []github.Issue, selection issueSelection, orderedIssues []int, hasUnboundedEnd bool) []int {
+	if len(orderedIssues) == 0 {
+		return extractIssueNumbers(searchResults)
+	}
+
+	if hasUnboundedEnd {
+		issues := make([]int, 0, len(searchResults))
+		for _, issue := range searchResults {
+			if selection.matches(issue.Number) {
+				issues = append(issues, issue.Number)
+			}
+		}
+		return issues
+	}
+
+	found := make(map[int]struct{}, len(searchResults))
+	for _, issue := range searchResults {
+		found[issue.Number] = struct{}{}
+	}
+
+	issues := make([]int, 0, len(orderedIssues))
+	for _, number := range orderedIssues {
+		if _, ok := found[number]; ok {
+			issues = append(issues, number)
+		}
+	}
+	return issues
+}
+
+func extractIssueNumbers(ghIssues []github.Issue) []int {
 	numbers := make([]int, len(ghIssues))
 	for i, issue := range ghIssues {
 		numbers[i] = issue.Number
 	}
-	return numbers, nil
+	return numbers
+}
+
+func searchIssues(ctx context.Context, client github.Client, query string) ([]github.Issue, error) {
+	ghIssues, err := client.SearchIssues(query)
+	if err != nil {
+		return nil, fmt.Errorf("search issues: %w", err)
+	}
+	return ghIssues, nil
+}
+
+func resolveIssues(ctx context.Context, client github.Client, query string) ([]int, error) {
+	ghIssues, err := searchIssues(ctx, client, query)
+	if err != nil {
+		return nil, err
+	}
+	return extractIssueNumbers(ghIssues), nil
 }
 
 func resolveRalphIssues(ctx context.Context, client github.Client, count int, label, query, sandmanDir, agentName, modelFlag string, cfg *config.Config) ([]int, error) {
