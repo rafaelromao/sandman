@@ -119,10 +119,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					if label == "" && query == "" && !hasRanges {
 						issues = append(issues, orderedIssues...)
 					} else if label == "" && query == "" && !hasUnboundedEnd {
-						issues, err = fetchIssuesByNumbers(cmd.Context(), deps.GitHubClient, orderedIssues)
-						if err != nil {
-							return err
+						if len(orderedIssues) > 1000 {
+							return fmt.Errorf("issue range selection exceeds search result limit")
 						}
+						issues = append(issues, orderedIssues...)
 					} else {
 						searchQuery := buildIssueQuery(label, query)
 						if label == "" && query == "" {
@@ -132,7 +132,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						if err != nil {
 							return err
 						}
-						if len(searchResults) >= 1000 && (hasRanges || hasUnboundedEnd) {
+						if len(args) > 0 && len(searchResults) >= 1000 {
 							return fmt.Errorf("issue range selection exceeds search result limit")
 						}
 						issues = filterIssuesBySelection(searchResults, selection, orderedIssues, hasUnboundedEnd)
@@ -361,23 +361,7 @@ func (s issueSelection) matches(number int) bool {
 	return false
 }
 
-func fetchIssuesByNumbers(ctx context.Context, client github.Client, numbers []int) ([]int, error) {
-	issues := make([]int, 0, len(numbers))
-	for _, number := range numbers {
-		issue, err := client.FetchIssue(number)
-		if err != nil {
-			return nil, fmt.Errorf("fetch issue #%d: %w", number, err)
-		}
-		issues = append(issues, issue.Number)
-	}
-	return issues, nil
-}
-
 func filterIssuesBySelection(searchResults []github.Issue, selection issueSelection, orderedIssues []int, hasUnboundedEnd bool) []int {
-	if len(orderedIssues) == 0 {
-		return extractIssueNumbers(searchResults)
-	}
-
 	if hasUnboundedEnd {
 		issues := make([]int, 0, len(searchResults))
 		for _, issue := range searchResults {
