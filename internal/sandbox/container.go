@@ -184,6 +184,15 @@ func (c *runningContainer) ID() string {
 	return c.id
 }
 
+func (c *runningContainer) Alive() (bool, error) {
+	cmd := c.execFn(c.binary, "inspect", "-f", "{{.State.Running}}", c.id)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("inspect container: %w\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out)) == "true", nil
+}
+
 func (c *runningContainer) Stop() error {
 	if c.cleanup != nil {
 		defer c.cleanup()

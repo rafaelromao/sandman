@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2377,13 +2378,20 @@ func TestRunBatch_LogsFinishedEventOnFailure(t *testing.T) {
 }
 
 type fakeContainerForOrchestrator struct {
-	id         string
-	stopCalled bool
-	stopError  error
+	id          string
+	stopCalled  bool
+	stopError   error
+	dead        uint32
+	aliveChecks uint32
 }
 
 func (f *fakeContainerForOrchestrator) ID() string {
 	return f.id
+}
+
+func (f *fakeContainerForOrchestrator) Alive() (bool, error) {
+	atomic.AddUint32(&f.aliveChecks, 1)
+	return atomic.LoadUint32(&f.dead) == 0, nil
 }
 
 func (f *fakeContainerForOrchestrator) Stop() error {
@@ -2522,6 +2530,7 @@ func TestOrchestrator_MetadataFreeDockerfileSkipsDriftValidation(t *testing.T) {
 type trackingSandbox struct {
 	fakeSandbox
 	containerID string
+	container   *fakeContainerForOrchestrator
 }
 
 type trackingSandboxFactory struct{}
@@ -2530,8 +2539,62 @@ func (f *trackingSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sour
 	sb := &trackingSandbox{}
 	if container != nil {
 		sb.containerID = container.ID()
+		if fc, ok := container.(*fakeContainerForOrchestrator); ok {
+			sb.container = fc
+		}
 	}
 	return sb
+}
+
+type deadContainerRunnable struct {
+	container *fakeContainerForOrchestrator
+	result    AgentRunResult
+}
+
+func (r *deadContainerRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	if r.container != nil {
+		atomic.StoreUint32(&r.container.dead, 1)
+	}
+	return r.result
+}
+
+type aliveCheckingRunnable struct {
+	container *fakeContainerForOrchestrator
+	result    AgentRunResult
+}
+
+func (r *aliveCheckingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	if !containerAlive(r.container) {
+		return AgentRunResult{IssueNumber: r.result.IssueNumber, Status: "failure"}
+	}
+	return r.result
+}
+
+type recoveryRunnableFactory struct {
+	mu               sync.Mutex
+	containerByIssue map[int]string
+	issue1           AgentRunResult
+	issue2           AgentRunResult
+}
+
+func (f *recoveryRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ts, ok := sb.(*trackingSandbox)
+	if ok {
+		if f.containerByIssue == nil {
+			f.containerByIssue = make(map[int]string)
+		}
+		f.containerByIssue[issue.Number] = ts.containerID
+	}
+	switch issue.Number {
+	case 1:
+		return &deadContainerRunnable{container: ts.container, result: f.issue1}
+	case 2:
+		return &aliveCheckingRunnable{container: ts.container, result: f.issue2}
+	default:
+		return &fakeRunnable{result: AgentRunResult{IssueNumber: issue.Number, Status: "failure"}}
+	}
 }
 
 type trackingRunnableFactory struct {
@@ -2695,6 +2758,56 @@ func TestRunBatch_ReusesIdleContainerWithinBatchAndStopsItAtEnd(t *testing.T) {
 	}
 	if !first.stopCalled {
 		t.Fatal("expected pooled container to stop when the batch finishes")
+	}
+}
+
+func TestRunBatch_ReplacesDeadContainerBeforeNextRun(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+		},
+	}
+	first := &fakeContainerForOrchestrator{id: "container-1"}
+	second := &fakeContainerForOrchestrator{id: "container-2"}
+	starter := &fakeContainerStarter{containers: []sandbox.Container{first, second}}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+	runnables := &recoveryRunnableFactory{
+		issue1: AgentRunResult{IssueNumber: 1, Status: "success"},
+		issue2: AgentRunResult{IssueNumber: 2, Status: "success"},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 1, ContainerCapacity: 1, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if atomic.LoadUint32(&first.dead) == 0 {
+		t.Fatal("expected the first container to be marked dead")
+	}
+	if containerAlive(first) {
+		t.Fatal("expected the first container live check to fail")
+	}
+	if atomic.LoadUint32(&first.aliveChecks) == 0 {
+		t.Fatal("expected the pool to probe the first container")
+	}
+	if runnables.containerByIssue[2] == "" {
+		t.Fatal("expected issue 2 to run")
+	}
+	if runnables.containerByIssue[1] == "" {
+		t.Fatal("expected issue 1 to run")
 	}
 }
 

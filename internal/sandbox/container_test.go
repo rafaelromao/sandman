@@ -707,6 +707,24 @@ func TestContainerRuntime_Start_ReturnsErrorWhenGhAuthFails(t *testing.T) {
 	}
 }
 
+func TestRunningContainer_Alive_UsesInspect(t *testing.T) {
+	rc := &runningContainer{id: "abc123", binary: "docker"}
+	rc.execFn = func(name string, arg ...string) *exec.Cmd {
+		if len(arg) >= 4 && arg[0] == "inspect" {
+			return exec.Command("sh", "-c", "printf true")
+		}
+		return exec.Command("sh", "-c", "printf false")
+	}
+
+	alive, err := rc.Alive()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !alive {
+		t.Fatal("expected container to be reported alive")
+	}
+}
+
 func TestContainerRuntime_BuildImage_ResolvesSandmanDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	dockerfileDir := filepath.Join(dir, ".sandman")
