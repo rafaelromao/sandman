@@ -1574,7 +1574,7 @@
       runs: [],
       commands: [],
       commandExpandedId: null,
-      expanded: new Set(),
+      expandedRunKey: null,
       tabs: new Map(),
       selectedStatus: 'all',
       activeOnly: false,
@@ -2235,7 +2235,7 @@
     }
 
     function renderRunRow(run) {
-      const isOpen = state.expanded.has(run.key);
+      const isOpen = state.expandedRunKey === run.key;
       const tabName = state.tabs.get(run.key) || 'log';
       const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       const events = Array.isArray(run.events) ? run.events : [];
@@ -2423,8 +2423,11 @@
     }
 
     function toggleRun(runKey) {
-      if (state.expanded.has(runKey)) state.expanded.delete(runKey);
-      else state.expanded.add(runKey);
+      if (state.expandedRunKey === runKey) {
+        state.expandedRunKey = null;
+      } else {
+        state.expandedRunKey = runKey;
+      }
       render();
       const row = Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey);
       if (row) row.focus({ preventScroll: true });
@@ -2524,7 +2527,7 @@
         if (action === 'set-tab') {
           const tab = button.getAttribute('data-tab') || 'output';
           state.tabs.set(runKey, tab);
-          state.expanded.add(runKey);
+          state.expandedRunKey = runKey;
           render();
         }
         return;
