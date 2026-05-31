@@ -333,8 +333,11 @@ func parseIssueSelection(args []string) (issueSelection, []int, bool, bool, erro
 			if end-start >= 1000 {
 				return issueSelection{}, nil, false, false, fmt.Errorf("range %q expands to more than 1000 issues", arg)
 			}
-			for n := start; n <= end; n++ {
+			for n := start; ; n++ {
 				orderedIssues = append(orderedIssues, n)
+				if n >= end {
+					break
+				}
 			}
 			continue
 		}
