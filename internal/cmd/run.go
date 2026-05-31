@@ -73,9 +73,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			label, _ := cmd.Flags().GetString("label")
 			query, _ := cmd.Flags().GetString("query")
-			if label != "" && query != "" {
-				return fmt.Errorf("cannot combine --label with --query")
-			}
 
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
 			ralphFlag := cmd.Flags().Lookup("ralph")
@@ -103,6 +100,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				if ralphProvided {
 					if len(args) > 0 {
 						return fmt.Errorf("cannot combine --ralph with issue arguments")
+					}
+					if label != "" && query != "" {
+						return fmt.Errorf("cannot combine --label with --query")
 					}
 					if ralphCount <= 0 {
 						return fmt.Errorf("--ralph count must be at least 1")
@@ -141,14 +141,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 							return err
 						}
 					}
-				} else if label != "" {
-					searchQuery := "label:" + label + " is:open"
-					issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, searchQuery)
+				} else if label != "" || query != "" {
+					searchQuery, err := buildIssueQuery(nil, label, query)
 					if err != nil {
 						return err
 					}
-				} else if query != "" {
-					issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, query)
+					issues, err = resolveIssues(cmd.Context(), deps.GitHubClient, searchQuery)
 					if err != nil {
 						return err
 					}

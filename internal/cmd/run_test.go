@@ -1813,8 +1813,39 @@ func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 3 {
 		t.Errorf("expected issues [3], got %v", spy.req.Issues)
 	}
-	if gh.searchIssuesQuery != "is:open author:me" {
-		t.Errorf("expected search query 'is:open author:me', got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "(is:open author:me) is:open" {
+		t.Errorf("expected search query '(is:open author:me) is:open', got %q", gh.searchIssuesQuery)
+	}
+}
+
+func TestRun_LabelAndQueryFlagsUseCombinedQuery(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{{Number: 3, Title: "Feature A"}},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--label", "bug", "--query", "author:me"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if gh.searchIssuesQuery != "label:bug (author:me) is:open" {
+		t.Errorf("expected search query 'label:bug (author:me) is:open', got %q", gh.searchIssuesQuery)
 	}
 }
 

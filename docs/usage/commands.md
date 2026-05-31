@@ -40,7 +40,7 @@ Issue-driven runs require at least one selection mode. `--prompt` and `--templat
 | `--ralph` | `sandman run --ralph 3` | N lowest-numbered open issues labeled `ready-for-agent` |
 | Interactive picker | `sandman run` (in a TTY) | Opens a numbered list of open issues to select from |
 
-Positional arguments (numbers and ranges) can be combined with `--label` or `--query` — the selections are AND-ed together in a single GitHub search query.
+Positional arguments (numbers and ranges) can be combined with `--label` and `--query` — Sandman ANDs every clause into a single GitHub search query.
 
 ### Execution flags
 

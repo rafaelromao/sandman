@@ -22,6 +22,12 @@ sandman run 42:45 --label bug
 
 Combines the range with a label filter in a single search query.
 
+You can also combine label and query filters directly:
+
+```bash
+sandman run --label bug --query "author:me"
+```
+
 Also supports omitting the lower bound to start from 1:
 
 ```bash
@@ -96,16 +102,16 @@ sandman clean --all         # Remove all worktrees and logs
 
 Containers are stopped automatically when a batch completes. No dedicated container cleanup command is needed.
 
-## Dependency-aware execution
+## BlockedBy-aware execution
 
-Sandman can detect dependencies between issues and execute them in the correct order.
+Sandman can detect BlockedBy relationships between issues and execute them in the correct order.
 
-### How dependency detection works
+### How BlockedBy detection works
 
 Sandman discovers `BlockedBy` relationships from two sources:
 
 1. **Body references** — issue bodies containing `blocked by #N` or `depends on #N`
-2. **GitHub REST API** — native `issue.blocked_by` and `issue.issue_dependencies.blocked_by` fields
+2. **GitHub REST API** — `gh api` issue and events responses that surface native blocker numbers
 
 The union of both sources forms each issue's `BlockedBy` set.
 
