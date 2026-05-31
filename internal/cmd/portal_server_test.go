@@ -293,6 +293,9 @@ func TestPortal_DetailPanelHasFixedHeightWithScroll(t *testing.T) {
 	if !strings.Contains(content, "max-height: clamp(420px, 68vh, 780px)") {
 		t.Fatalf(".detail-panel missing max-height clamp to match min-height")
 	}
+	if !strings.Contains(content, ".detail-panel { min-height: 0; max-height: none; }") {
+		t.Fatalf(".detail-panel missing max-height:none at 960px breakpoint")
+	}
 }
 
 func TestPortal_SyntaxHighlightingHasNoSizeCutoff(t *testing.T) {
