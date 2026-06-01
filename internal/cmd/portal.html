@@ -1600,10 +1600,11 @@
 
     function normalizePortalViewState() {
       if (!portalState) return;
+      const visibleRuns = state.runs.filter(shouldShowRun);
       const normalized = portalState.normalize({
         expandedRunKey: state.expandedRunKey,
         tabs: state.tabs,
-      }, state.runs);
+      }, visibleRuns);
       if (!normalized.changed) return;
       state.expandedRunKey = normalized.state.expandedRunKey;
       state.tabs = normalized.state.tabs;
@@ -2412,6 +2413,7 @@
 
     function render() {
       syncStatusOptions(state.runs);
+      normalizePortalViewState();
       const filtered = state.runs.filter(shouldShowRun);
       summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong> runs visible';
       if (!state.runs.length) {
@@ -2439,7 +2441,6 @@
         state.loading = false;
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';
-        normalizePortalViewState();
         updateLastUpdated();
         render();
       } catch (err) {
