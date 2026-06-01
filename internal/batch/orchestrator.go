@@ -446,6 +446,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 	defer policy.Close()
 
+	if req.Parallel < 0 {
+		return nil, fmt.Errorf("parallel must be 0 or greater")
+	}
 	parallel := req.Parallel
 	startDelay := time.Duration(cfg.StartDelay) * time.Second
 	if req.StartDelaySet {
