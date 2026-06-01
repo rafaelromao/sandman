@@ -171,6 +171,44 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	}
 }
 
+func TestContinue_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "custom"}}}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{
+			Agent:        "custom",
+			DefaultModel: "openai/gpt-4.1",
+			WorktreeDir:  dir,
+			AgentProviders: map[string]config.Agent{
+				"custom": {Command: "true"},
+			},
+		}},
+		EventLog: log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Model != "" {
+		t.Fatalf("expected empty model for custom agent, got %q", spy.req.Model)
+	}
+}
+
 func TestContinue_WarnsAndUsesBarePromptWhenContinuationContextMissing(t *testing.T) {
 	dir := t.TempDir()
 	branch := "sandman/42-fix-bug"

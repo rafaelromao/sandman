@@ -255,6 +255,33 @@ func TestRun_UsesDefaultModelWhenModelFlagOmitted(t *testing.T) {
 	}
 }
 
+func TestRun_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent:        "custom",
+		DefaultModel: "openai/gpt-4.1",
+		AgentProviders: map[string]config.Agent{
+			"custom": {Command: "true"},
+		},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Model != "" {
+		t.Fatalf("expected empty model for custom agent, got %q", spy.req.Model)
+	}
+}
+
 func TestRun_LoadConfigError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
