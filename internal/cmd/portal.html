@@ -33,6 +33,7 @@
     })();
   </script>
   <script>{{.PortalStateJS}}</script>
+  <script>{{.PortalScrollJS}}</script>
   <style>
     :root {
       color-scheme: dark;
@@ -1456,6 +1457,7 @@
     if (portalState && portalState.configure) {
       portalState.configure({ storageKey: "{{.PortalStateStorageKey}}" });
     }
+    const portalScroll = window.SandmanPortalScroll;
     const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {} };
     const commandState = {
       run: {
@@ -2374,8 +2376,10 @@
       return highlightTerminalText(value);
     }
 
-    function renderTerminalBlock(text, extraClass) {
-      return '<pre class="terminal-text' + (extraClass ? ' ' + escapeHTML(extraClass) : '') + '">' + renderTerminalContent(text) + '</pre>';
+    function renderTerminalBlock(text, extraClass, runKey) {
+      const classes = 'terminal-text' + (extraClass ? ' ' + escapeHTML(extraClass) : '');
+      const attrs = runKey ? ' data-scroll-key="' + escapeHTML(runKey) + '"' : '';
+      return '<pre class="' + classes + '"' + attrs + '>' + renderTerminalContent(text) + '</pre>';
     }
 
     function renderDetailFields(run) {
@@ -2409,7 +2413,7 @@
         return '<section class="detail-box tab-pane fill"><h3>Events</h3><div class="tab-events">' + content + '</div></section>';
       }
 
-      return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(currentTabLabel(tabKey)) + '</h3>' + renderTerminalBlock(content) + '</section>';
+      return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(currentTabLabel(tabKey)) + '</h3>' + renderTerminalBlock(content, '', run.key) + '</section>';
     }
 
     function renderTabContent(run, tabKey, log, events) {
@@ -2440,6 +2444,7 @@
       normalizePortalViewState();
       const filtered = state.runs.filter(shouldShowRun);
       summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong> runs visible';
+      const scrollStates = portalScroll ? portalScroll.capture(runsBody.querySelectorAll('[data-scroll-key]')) : {};
       if (!state.runs.length) {
         runsBody.innerHTML = renderEmpty(state.loading ? 'Loading runs.' : 'No Sandman runs found.');
         return;
@@ -2450,6 +2455,9 @@
       }
       const stopGroups = new Set();
       runsBody.innerHTML = filtered.map((run) => renderRunRow(run, stopGroups)).join('');
+      if (portalScroll && scrollStates) {
+        portalScroll.restore(runsBody.querySelectorAll('[data-scroll-key]'), scrollStates);
+      }
     }
 
     function updateLastUpdated() {
