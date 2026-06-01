@@ -69,6 +69,18 @@ func checkPRMerged(client github.Client, branch string) bool {
 	return pr.Merged || strings.EqualFold(pr.State, "merged")
 }
 
+func buildRetryContinuationPrompt(priorContext string) string {
+	var b strings.Builder
+	b.WriteString("## Prior Context\n\n")
+	b.WriteString(strings.TrimSpace(priorContext))
+	b.WriteString("\n\n## New Instruction\n\n")
+	b.WriteString("Continue with sandman-pr-review until the PR is merged.\n\n")
+	b.WriteString("## Update Continuation Context\n\n")
+	b.WriteString("Before exiting, overwrite `.sandman/continuation-context.md` with an updated summary using this template:\n\n")
+	b.WriteString("```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n")
+	return b.String()
+}
+
 func LogRetryMarker(logPath string, attempt, maxRetries int) {
 	_ = logRetryMarker(logPath, attempt, maxRetries)
 }

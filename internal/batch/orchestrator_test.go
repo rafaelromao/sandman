@@ -679,7 +679,8 @@ func TestRunSingle_RetryUsesContinuationContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
-	if string(data) != "## Completed\nKeep going.\n" {
+	wantPrompt := "## Prior Context\n\n## Completed\nKeep going.\n\n## New Instruction\n\nContinue with sandman-pr-review until the PR is merged.\n\n## Update Continuation Context\n\nBefore exiting, overwrite `.sandman/continuation-context.md` with an updated summary using this template:\n\n```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n"
+	if string(data) != wantPrompt {
 		t.Fatalf("unexpected continue prompt content: %q", string(data))
 	}
 }
@@ -746,6 +747,60 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 	}
 	if string(data) != "Continue with sandman-pr-review until the PR is merged" {
 		t.Fatalf("unexpected continue prompt content: %q", string(data))
+	}
+}
+
+func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "issue-386/smart-completion-detection-phase-aware-retry"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "closed", Merged: false, HeadRefName: branch}},
+		},
+		renderer: renderer,
+		errorLog: io.Discard,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+	var resetCalls int
+	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls++
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, "", func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if resetCalls != 1 {
+		t.Fatalf("reset calls = %d, want 1", resetCalls)
+	}
+	if rtSandbox.execCommand == "opencode run .sandman/continue-prompt.md" {
+		t.Fatal("expected closed PR to skip review continuation")
 	}
 }
 
