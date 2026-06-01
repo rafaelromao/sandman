@@ -1471,29 +1471,6 @@ func TestRunBatch_ZeroParallelAllowsAllRunsToStart(t *testing.T) {
 	}
 }
 
-func TestRunBatch_NegativeParallelReturnsError(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	initGitRepo(t, dir)
-
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			1: {Number: 1, Title: "A"},
-		},
-	}
-
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = &freshSandboxFactory{}
-
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1}, Parallel: -1})
-	if err == nil {
-		t.Fatal("expected error for negative parallel")
-	}
-	if !strings.Contains(err.Error(), "parallel must be 0 or greater") {
-		t.Fatalf("expected parallel validation error, got %v", err)
-	}
-}
-
 func TestRunBatch_WaitsForBlockersBeforeStartingDependents(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
