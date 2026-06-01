@@ -70,3 +70,26 @@ func TestProjectRunStates_IncludesContinuedRun(t *testing.T) {
 		t.Fatalf("expected 2m duration, got %s", got)
 	}
 }
+
+func TestProjectRunStates_TreatsBlockedRunAsTerminal(t *testing.T) {
+	blockedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.blocked", Timestamp: blockedAt, RunID: "run-blocked", Issue: 408, Payload: map[string]any{"blocked_by": []int{123}}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if run.IsActive() {
+		t.Fatal("expected blocked run to be terminal")
+	}
+	if got := run.Status(); got != "blocked" {
+		t.Fatalf("expected blocked status, got %q", got)
+	}
+	if got := run.IssueLabel(); got != "#408" {
+		t.Fatalf("expected issue label #408, got %q", got)
+	}
+}

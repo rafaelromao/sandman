@@ -91,3 +91,29 @@ func TestHistory_ShowsPromptOnlyRun(t *testing.T) {
 		t.Fatalf("expected success status, got:\n%s", out)
 	}
 }
+
+func TestHistory_ShowsBlockedRun(t *testing.T) {
+	log := &fakeEventLog{
+		events: []events.Event{
+			{Type: "run.blocked", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-408", Issue: 408, Payload: map[string]any{"blocked_by": []int{42}}},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewHistoryCmd(log)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "#408") {
+		t.Fatalf("expected blocked run to be listed, got:\n%s", out)
+	}
+	if !strings.Contains(out, "blocked") {
+		t.Fatalf("expected blocked status, got:\n%s", out)
+	}
+}

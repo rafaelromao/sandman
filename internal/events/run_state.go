@@ -35,6 +35,11 @@ func ProjectRunStates(events []Event) []RunState {
 		case "run.started", "run.continued":
 			state := getOrCreate(event.RunID)
 			state.Started = event
+		case "run.blocked":
+			state := getOrCreate(event.RunID)
+			state.Started = event
+			finished := event
+			state.Finished = &finished
 		case "run.finished":
 			state := getOrCreate(event.RunID)
 			finished := event
@@ -88,6 +93,9 @@ func (r RunState) IsActive() bool {
 func (r RunState) Status() string {
 	if r.Finished == nil {
 		return ""
+	}
+	if r.Finished.Type == "run.blocked" {
+		return "blocked"
 	}
 	status, _ := r.Finished.Payload["status"].(string)
 	return status
