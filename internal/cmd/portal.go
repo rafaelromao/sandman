@@ -379,6 +379,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			LaunchDataJSON      template.JS
 			ThemeOptionsHTML    template.HTML
 			SupportedThemesJSON template.JS
+			PortalStateJS       template.JS
 		}{
 			RepoRoot:            repoRoot,
 			PollInterval:        int(portalPollInterval / time.Millisecond),
@@ -392,6 +393,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			LaunchDataJSON:      template.JS(launchDataJSON),
 			ThemeOptionsHTML:    portalThemeOptionsHTML,
 			SupportedThemesJSON: portalSupportedThemesJSON,
+			PortalStateJS:       portalStateJS,
 		}
 		if err := portalPageTemplate.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

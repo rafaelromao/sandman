@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.PortalTitle}}</title>
-    <script>
-      (function () {
+  <script>
+    (function () {
       const themes = new Set({{.SupportedThemesJSON}});
       const aliases = new Map([
         ['latte', 'catppuccin-latte'],
@@ -32,6 +32,7 @@
       document.documentElement.dataset.theme = theme;
     })();
   </script>
+  <script>{{.PortalStateJS}}</script>
   <style>
     :root {
       color-scheme: dark;
@@ -1452,6 +1453,8 @@
     const summaryPill = document.getElementById('summary-pill');
     const lastUpdated = document.getElementById('last-updated');
     const launchDefaults = {{.LaunchDataJSON}};
+    const portalState = window.SandmanPortalState;
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {} };
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -1577,12 +1580,32 @@
       runs: [],
       commands: [],
       commandExpandedId: null,
-      expandedRunKey: null,
-      tabs: new Map(),
+      expandedRunKey: persistedPortalState.expandedRunKey || null,
+      tabs: persistedPortalState.tabs || {},
       selectedStatus: 'all',
       activeOnly: false,
       loading: true,
     };
+
+    function persistPortalViewState() {
+      if (!portalState) return;
+      portalState.save({
+        expandedRunKey: state.expandedRunKey,
+        tabs: state.tabs,
+      });
+    }
+
+    function normalizePortalViewState() {
+      if (!portalState) return;
+      const normalized = portalState.normalize({
+        expandedRunKey: state.expandedRunKey,
+        tabs: state.tabs,
+      }, state.runs);
+      if (!normalized.changed) return;
+      state.expandedRunKey = normalized.state.expandedRunKey;
+      state.tabs = normalized.state.tabs;
+      persistPortalViewState();
+    }
 
     function escapeHTML(value) {
       return String(value)
@@ -2239,7 +2262,7 @@
 
     function renderRunRow(run) {
       const isOpen = state.expandedRunKey === run.key;
-      const tabName = state.tabs.get(run.key) || 'log';
+      const tabName = portalState ? portalState.getSelectedTab(state, run.key) : 'log';
       const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       const events = Array.isArray(run.events) ? run.events : [];
 
@@ -2385,6 +2408,7 @@
     }
 
     function render() {
+      normalizePortalViewState();
       syncStatusOptions(state.runs);
       const filtered = state.runs.filter(shouldShowRun);
       summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong> runs visible';
@@ -2413,6 +2437,7 @@
         state.loading = false;
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';
+        normalizePortalViewState();
         updateLastUpdated();
         render();
       } catch (err) {
@@ -2428,6 +2453,7 @@
       } else {
         state.expandedRunKey = runKey;
       }
+      persistPortalViewState();
       render();
       const row = Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey);
       if (row) row.focus({ preventScroll: true });
@@ -2525,9 +2551,10 @@
         if (!runKey) return;
         const action = button.getAttribute('data-action');
         if (action === 'set-tab') {
-          const tab = button.getAttribute('data-tab') || 'output';
-          state.tabs.set(runKey, tab);
+          const tab = button.getAttribute('data-tab') || 'log';
+          state.tabs[runKey] = tab;
           state.expandedRunKey = runKey;
+          persistPortalViewState();
           render();
         }
         return;
