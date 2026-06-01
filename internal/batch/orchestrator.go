@@ -914,7 +914,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			if head, err := currentBranchHeadFn(wt.WorkDir()); err == nil {
 				headSHA = head
 			}
-			openPR, _ := findOpenPRByBranch(o.githubClient, branch)
+			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
 			contCtxPath := filepath.Join(wt.WorkDir(), ".sandman", "continuation-context.md")
 			if content, err := os.ReadFile(contCtxPath); err == nil {
 				if openPR != nil {
@@ -930,11 +930,15 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 					attemptRenderCfg.ContinuePrompt = "Continue with sandman-pr-review until the PR is merged"
 					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
 					prFound = true
-				} else {
+				} else if prLookupErr == nil {
 					merged, _ := checkPRMergedAtHead(o.githubClient, branch, headSHA)
 					prFound = merged
 				}
 				if !prFound {
+					if prLookupErr != nil {
+						fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", num, prLookupErr)
+						return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+					}
 					if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {
 						fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", num, err)
 						return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
