@@ -909,7 +909,11 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	logPath := filepath.Join(".", ".sandman", "logs", fmt.Sprintf("%d.log", num))
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptRenderCfg := renderCfg
+		headSHA := ""
 		if attempt > 0 {
+			if head, err := currentBranchHeadFn(wt.WorkDir()); err == nil {
+				headSHA = head
+			}
 			openPR, _ := findOpenPRByBranch(o.githubClient, branch)
 			contCtxPath := filepath.Join(wt.WorkDir(), ".sandman", "continuation-context.md")
 			if content, err := os.ReadFile(contCtxPath); err == nil {
@@ -926,8 +930,9 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 					attemptRenderCfg.ContinuePrompt = "Continue with sandman-pr-review until the PR is merged"
 					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
 					prFound = true
-				} else if checkPRMerged(o.githubClient, branch) {
-					prFound = true
+				} else {
+					merged, _ := checkPRMergedAtHead(o.githubClient, branch, headSHA)
+					prFound = merged
 				}
 				if !prFound {
 					if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {
@@ -964,9 +969,20 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			result.IssueNumber = num
 		}
 		result.RetriesTotal = attempt + 1
-		if result.Status == "success" || parseLogForCompletion(logPath) || checkPRMerged(o.githubClient, branch) {
+		if result.Status == "success" || parseLogForCompletion(logPath) {
 			result.Status = "success"
 			break
+		}
+		if headSHA == "" {
+			if head, err := currentBranchHeadFn(wt.WorkDir()); err == nil {
+				headSHA = head
+			}
+		}
+		if headSHA != "" {
+			if merged, err := checkPRMergedAtHead(o.githubClient, branch, headSHA); err == nil && merged {
+				result.Status = "success"
+				break
+			}
 		}
 	}
 

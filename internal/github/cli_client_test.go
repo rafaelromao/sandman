@@ -88,7 +88,7 @@ func TestCLIClient_SearchIssues_Error(t *testing.T) {
 }
 
 func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry"}]`}}}
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123"}]`}}}
 	client := &CLIClient{runner: runner}
 
 	pr, err := client.FindPRByBranch("issue-386/smart-completion-detection-phase-aware-retry")
@@ -110,10 +110,13 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	if pr.HeadRefName != "issue-386/smart-completion-detection-phase-aware-retry" {
 		t.Fatalf("expected head ref name to round-trip, got %q", pr.HeadRefName)
 	}
+	if pr.HeadRefOid != "abc123" {
+		t.Fatalf("expected head ref oid to round-trip, got %q", pr.HeadRefOid)
+	}
 	if len(runner.calls) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(runner.calls))
 	}
-	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,mergedAt,headRefName", "--limit", "1"}
+	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,mergedAt,headRefName,headRefOid", "--limit", "1"}
 	if !reflect.DeepEqual(runner.calls[0].args, expectedArgs) {
 		t.Fatalf("unexpected args: %v", runner.calls[0].args)
 	}

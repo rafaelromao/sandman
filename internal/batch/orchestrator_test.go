@@ -528,25 +528,28 @@ func TestParseLogForCompletion_IgnoresEarlierRunSections(t *testing.T) {
 	}
 }
 
-func TestCheckPRMerged(t *testing.T) {
+func TestCheckPRMergedAtHead(t *testing.T) {
 	client := &fakeGitHubClient{prs: map[string]*github.PR{
-		"open":     {Number: 1, State: "open", Merged: false, HeadRefName: "open"},
-		"merged":   {Number: 2, State: "closed", Merged: true, HeadRefName: "merged"},
-		"closed":   {Number: 3, State: "closed", Merged: false, HeadRefName: "closed"},
-		"explicit": {Number: 4, State: "merged", Merged: false, HeadRefName: "explicit"},
+		"open":     {Number: 1, State: "open", Merged: false, HeadRefName: "open", HeadRefOid: "open-sha"},
+		"merged":   {Number: 2, State: "closed", Merged: true, HeadRefName: "merged", HeadRefOid: "merged-sha"},
+		"closed":   {Number: 3, State: "closed", Merged: false, HeadRefName: "closed", HeadRefOid: "closed-sha"},
+		"explicit": {Number: 4, State: "merged", Merged: false, HeadRefName: "explicit", HeadRefOid: "explicit-sha"},
 	}}
 
-	if checkPRMerged(client, "open") {
-		t.Fatal("expected open PR to be false")
+	if merged, err := checkPRMergedAtHead(client, "open", "open-sha"); err != nil || merged {
+		t.Fatalf("expected open PR to be false, got merged=%v err=%v", merged, err)
 	}
-	if !checkPRMerged(client, "merged") {
-		t.Fatal("expected merged PR to be true")
+	if merged, err := checkPRMergedAtHead(client, "merged", "merged-sha"); err != nil || !merged {
+		t.Fatalf("expected merged PR to be true, got merged=%v err=%v", merged, err)
 	}
-	if checkPRMerged(client, "closed") {
-		t.Fatal("expected closed-unmerged PR to be false")
+	if merged, err := checkPRMergedAtHead(client, "merged", "stale-sha"); err != nil || merged {
+		t.Fatalf("expected stale merged PR to be false, got merged=%v err=%v", merged, err)
 	}
-	if !checkPRMerged(client, "explicit") {
-		t.Fatal("expected merged state to be true")
+	if merged, err := checkPRMergedAtHead(client, "closed", "closed-sha"); err != nil || merged {
+		t.Fatalf("expected closed-unmerged PR to be false, got merged=%v err=%v", merged, err)
+	}
+	if merged, err := checkPRMergedAtHead(client, "explicit", "explicit-sha"); err != nil || !merged {
+		t.Fatalf("expected merged state to be true, got merged=%v err=%v", merged, err)
 	}
 }
 
@@ -566,8 +569,11 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 		execErrors: []error{errors.New("exit 1"), errors.New("exit 1"), nil},
 	}
 	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}},
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 17, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "stale-sha"}}},
 		renderer:     renderer,
 		errorLog:     io.Discard,
 		sandboxFactory: &retrySandboxFactory{
@@ -613,8 +619,53 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if !strings.Contains(string(data), "--- retry 2/3 ---") {
+	if !strings.Contains(string(data), "--- retry 2/4 ---") {
 		t.Fatalf("expected retry marker in log, got:\n%s", data)
+	}
+}
+
+func TestRunSingle_RetryLookupFailurePreservesBranch(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree"), execErrors: []error{errors.New("exit 1")}}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 17, State: "closed", Merged: false, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"}}},
+		renderer:     renderer,
+		errorLog:     io.Discard,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+	var resetCalls int
+	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls++
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, nil, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if resetCalls != 1 {
+		t.Fatalf("reset calls = %d, want 1", resetCalls)
 	}
 }
 
@@ -641,6 +692,9 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 
 	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
 	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}},
 		renderer:     renderer,
@@ -704,10 +758,13 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 
 	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
 	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha"}},
 		},
 		renderer: renderer,
 		errorLog: io.Discard,
@@ -769,6 +826,9 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 
 	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
 	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
@@ -823,6 +883,9 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 
 	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
 	log := &spyEventLog{}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}},
 		renderer:     &retryRenderer{result: "rendered prompt"},

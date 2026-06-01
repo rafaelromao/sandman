@@ -3,6 +3,7 @@ package batch
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -59,14 +60,25 @@ func parseLogForCompletion(logPath string) bool {
 }
 
 func checkPRMerged(client github.Client, branch string) bool {
+	merged, err := checkPRMergedAtHead(client, branch, "")
+	return err == nil && merged
+}
+
+func checkPRMergedAtHead(client github.Client, branch, headSHA string) (bool, error) {
 	if client == nil || strings.TrimSpace(branch) == "" {
-		return false
+		return false, nil
 	}
 	pr, err := client.FindPRByBranch(branch)
 	if err != nil || pr == nil {
-		return false
+		return false, err
 	}
-	return pr.Merged || strings.EqualFold(pr.State, "merged")
+	if !pr.Merged && !strings.EqualFold(pr.State, "merged") {
+		return false, nil
+	}
+	if strings.TrimSpace(headSHA) != "" && strings.TrimSpace(pr.HeadRefOid) != "" && !strings.EqualFold(pr.HeadRefOid, headSHA) {
+		return false, nil
+	}
+	return true, nil
 }
 
 func findOpenPRByBranch(client github.Client, branch string) (*github.PR, error) {
@@ -120,11 +132,22 @@ func logRetryMarker(logPath string, attempt, maxRetries int) error {
 		return fmt.Errorf("open log file: %w", err)
 	}
 	defer file.Close()
-	if _, err := fmt.Fprintf(file, "--- retry %d/%d ---\n", attempt+1, maxRetries); err != nil {
+	if _, err := fmt.Fprintf(file, "--- retry %d/%d ---\n", attempt+1, maxRetries+1); err != nil {
 		return fmt.Errorf("write retry marker: %w", err)
 	}
 	return nil
 }
+
+func currentBranchHead(workDir string) (string, error) {
+	cmd := exec.Command("git", "-C", workDir, "rev-parse", "HEAD")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD: %w\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+var currentBranchHeadFn = currentBranchHead
 
 func logRunMarker(logPath string, attempt, maxRetries int) error {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {

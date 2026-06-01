@@ -17,6 +17,7 @@ type PR struct {
 	State       string
 	Merged      bool
 	HeadRefName string
+	HeadRefOid  string
 }
 
 // Client wraps gh CLI for GitHub operations.
