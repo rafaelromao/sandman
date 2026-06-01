@@ -480,7 +480,7 @@ func TestResolveRetries(t *testing.T) {
 func TestParseLogForCompletion_UsesLastTodosSection(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
-	content := "# Todos\n- [✓] done\n\n# Notes\nignored\n\n# Todos\n- [ ] still open\n"
+	content := "--- run 1/3 ---\n# Todos\n- [✓] done\n\n# Notes\nignored\n\n--- retry 2/3 ---\n# Todos\n- [ ] still open\n"
 	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestParseLogForCompletion_UsesLastTodosSection(t *testing.T) {
 func TestParseLogForCompletion_ReturnsTrueForCheckedTodos(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
-	content := "preamble\n# Todos\n- [✓] done\n- [✓] done too\n"
+	content := "--- run 1/3 ---\npreamble\n# Todos\n- [✓] done\n- [✓] done too\n"
 	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}

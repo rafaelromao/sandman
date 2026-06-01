@@ -16,7 +16,7 @@ func parseLogForCompletion(logPath string) bool {
 	}
 
 	lines := strings.Split(string(data), "\n")
-	start := 0
+	start := -1
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if strings.HasPrefix(line, "--- run ") || strings.HasPrefix(line, "--- retry ") {
@@ -24,13 +24,17 @@ func parseLogForCompletion(logPath string) bool {
 			break
 		}
 	}
+	if start == -1 {
+		return false
+	}
+
 	for i := len(lines) - 1; i >= start; i-- {
 		if strings.TrimSpace(lines[i]) == "# Todos" {
 			start = i
 			break
 		}
 	}
-	if start == 0 && (len(lines) == 0 || strings.TrimSpace(lines[0]) != "# Todos") {
+	if start < 0 || start >= len(lines) || strings.TrimSpace(lines[start]) != "# Todos" {
 		return false
 	}
 
