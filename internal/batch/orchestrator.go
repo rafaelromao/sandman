@@ -908,15 +908,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	if result.IssueNumber == 0 {
 		result.IssueNumber = num
 	}
-	terminalEventType := "run.finished"
-	terminalStatus := result.Status
-	if terminalStatus == "" {
-		terminalStatus = "failure"
-	}
-	if ctx.Err() != nil {
-		terminalEventType = "run.cancelled"
-		terminalStatus = "failure"
-	}
+	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
 
 	worktreeState := "preserved"
 
@@ -1057,8 +1049,9 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 	}
 
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
+	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
 	if o.eventLog != nil {
-		_ = o.eventLog.Log(events.Event{Type: "run.finished", Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": result.Status, "branch": result.Branch, "base_branch": baseBranch, "worktree_state": "preserved"}})
+		_ = o.eventLog.Log(events.Event{Type: terminalEventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": terminalStatus, "branch": result.Branch, "base_branch": baseBranch, "worktree_state": "preserved"}})
 	}
 
 	return result, true
@@ -1078,6 +1071,19 @@ func promptOnlyBranch(cfg prompt.RenderConfig) string {
 		slug = "prompt-only"
 	}
 	return fmt.Sprintf("sandman/%s-%d", slug, time.Now().UnixNano())
+}
+
+func terminalRunEvent(ctx context.Context, status string) (string, string) {
+	eventType := "run.finished"
+	terminalStatus := status
+	if terminalStatus == "" {
+		terminalStatus = "failure"
+	}
+	if ctx.Err() != nil {
+		eventType = "run.cancelled"
+		terminalStatus = "failure"
+	}
+	return eventType, terminalStatus
 }
 
 func (o *Orchestrator) syncBaseBranch(repoPath, baseBranch string) error {

@@ -462,6 +462,38 @@ func TestRunBatch_LogsCancelledEventOnCancel(t *testing.T) {
 	}
 }
 
+func TestRunBatch_LogsCancelledEventOnPromptOnlyCancel(t *testing.T) {
+	client := &fakeGitHubClient{}
+
+	proc := &fakeProcess{}
+	sb := &fakeSandbox{process: proc}
+	factory := &fakeSandboxFactory{sandbox: sb}
+	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+	spyLog := &spyEventLog{}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = factory
+	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	_, _ = o.RunBatch(ctx, Request{PromptConfig: prompt.RenderConfig{PromptFlag: "return only ok"}})
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	if spyLog.events[1].Type != "run.cancelled" {
+		t.Fatalf("expected cancelled terminal event, got %q", spyLog.events[1].Type)
+	}
+	if status, _ := spyLog.events[1].Payload["status"].(string); status != "failure" {
+		t.Fatalf("expected cancelled run to report failure, got %q", status)
+	}
+}
+
 func TestRunBatch_PreservesWorktreeOnInterrupt(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
