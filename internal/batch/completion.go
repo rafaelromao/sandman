@@ -16,14 +16,21 @@ func parseLogForCompletion(logPath string) bool {
 	}
 
 	lines := strings.Split(string(data), "\n")
-	start := -1
+	start := 0
 	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "--- run ") || strings.HasPrefix(line, "--- retry ") {
+			start = i + 1
+			break
+		}
+	}
+	for i := len(lines) - 1; i >= start; i-- {
 		if strings.TrimSpace(lines[i]) == "# Todos" {
 			start = i
 			break
 		}
 	}
-	if start == -1 {
+	if start == 0 && (len(lines) == 0 || strings.TrimSpace(lines[0]) != "# Todos") {
 		return false
 	}
 
@@ -73,6 +80,21 @@ func logRetryMarker(logPath string, attempt, maxRetries int) error {
 	defer file.Close()
 	if _, err := fmt.Fprintf(file, "--- retry %d/%d ---\n", attempt+1, maxRetries); err != nil {
 		return fmt.Errorf("write retry marker: %w", err)
+	}
+	return nil
+}
+
+func logRunMarker(logPath string, attempt, maxRetries int) error {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		return fmt.Errorf("create log dir: %w", err)
+	}
+	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	defer file.Close()
+	if _, err := fmt.Fprintf(file, "--- run %d/%d ---\n", attempt+1, maxRetries); err != nil {
+		return fmt.Errorf("write run marker: %w", err)
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -57,7 +58,7 @@ type issueDependenciesPayload struct {
 type prPayload struct {
 	Number      int    `json:"number"`
 	State       string `json:"state"`
-	Merged      bool   `json:"merged"`
+	MergedAt    string `json:"mergedAt"`
 	HeadRefName string `json:"headRefName"`
 }
 
@@ -181,7 +182,7 @@ func (c *CLIClient) FindPRByBranch(branch string) (*PR, error) {
 		return nil, nil
 	}
 	payload := payloads[0]
-	return &PR{Number: payload.Number, State: payload.State, Merged: payload.Merged, HeadRefName: payload.HeadRefName}, nil
+	return &PR{Number: payload.Number, State: payload.State, Merged: strings.TrimSpace(payload.MergedAt) != "", HeadRefName: payload.HeadRefName}, nil
 }
 
 func (c *CLIClient) fetchIssuePayload(owner, repo string, number int) (issuePayload, error) {

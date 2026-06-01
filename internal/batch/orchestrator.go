@@ -934,6 +934,9 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 				fmt.Fprintf(o.errorLog, "error: write retry marker for issue %d: %v\n", num, err)
 				return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
+		} else if err := logRunMarker(logPath, attempt, retries); err != nil {
+			fmt.Fprintf(o.errorLog, "error: write run marker for issue %d: %v\n", num, err)
+			return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 		}
 
 		runnable := factory.NewRunnable(issue, branch, wt)
@@ -1154,6 +1157,12 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 			}
 			if err := o.writeRetryMarker(0, branch, attempt, retries); err != nil {
 				fmt.Fprintf(o.errorLog, "error: write retry marker for prompt-only run: %v\n", err)
+				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+			}
+		} else {
+			logPath := filepath.Join(".", ".sandman", "logs", fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
+			if err := logRunMarker(logPath, attempt, retries); err != nil {
+				fmt.Fprintf(o.errorLog, "error: write run marker for prompt-only run: %v\n", err)
 				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
 		}

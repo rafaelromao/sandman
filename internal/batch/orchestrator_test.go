@@ -515,6 +515,19 @@ func TestParseLogForCompletion_ReturnsFalseWithoutTodos(t *testing.T) {
 	}
 }
 
+func TestParseLogForCompletion_IgnoresEarlierRunSections(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "42.log")
+	content := "--- run 1/3 ---\n# Todos\n- [✓] old done\n--- retry 2/3 ---\n# Todos\n- [ ] current open\n"
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	if parseLogForCompletion(logPath) {
+		t.Fatal("expected current run section to control completion")
+	}
+}
+
 func TestCheckPRMerged(t *testing.T) {
 	client := &fakeGitHubClient{prs: map[string]*github.PR{
 		"open":     {Number: 1, State: "open", Merged: false, HeadRefName: "open"},

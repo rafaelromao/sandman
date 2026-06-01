@@ -88,7 +88,7 @@ func TestCLIClient_SearchIssues_Error(t *testing.T) {
 }
 
 func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","merged":false,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry"}]`}}}
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry"}]`}}}
 	client := &CLIClient{runner: runner}
 
 	pr, err := client.FindPRByBranch("issue-386/smart-completion-detection-phase-aware-retry")
