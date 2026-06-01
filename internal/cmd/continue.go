@@ -97,12 +97,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				return err
 			}
 
-			model := strings.TrimSpace(cmdFlag(cmd, "model"))
-			if model == "" {
-				if storedModel, ok := payloadString(lastRun.Payload, "model"); ok {
-					model = strings.TrimSpace(storedModel)
-				}
-			}
+			model := resolveModel(cmdFlag(cmd, "model"), cfg.DefaultModel)
 
 			continuePrompt := promptText
 			contextPath := filepath.Join(worktreePath, ".sandman", "continuation-context.md")

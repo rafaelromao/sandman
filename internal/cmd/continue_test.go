@@ -76,7 +76,7 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/current review", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", DefaultModel: "openai/gpt-4.1", WorktreeDir: dir, ReviewCommand: "/current review", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -106,8 +106,8 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if spy.req.Branches[42] != branch {
 		t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])
 	}
-	if spy.req.Model != "gpt-4.2" {
-		t.Fatalf("expected model replay, got %q", spy.req.Model)
+	if spy.req.Model != "openai/gpt-4.1" {
+		t.Fatalf("expected config default model, got %q", spy.req.Model)
 	}
 	if spy.req.BaseBranch != "main" {
 		t.Fatalf("expected base branch replay, got %q", spy.req.BaseBranch)

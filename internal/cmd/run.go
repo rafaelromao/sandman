@@ -312,7 +312,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				Dependencies:         resolvedBatch.Deps,
 				Blocked:              resolvedBatch.Blocked,
 				Agent:                agentName,
-				Model:                strings.TrimSpace(modelFlag),
+				Model:                resolveModel(modelFlag, cfg.DefaultModel),
 				BaseBranch:           baseBranch,
 				Parallel:             parallel,
 				StartDelay:           time.Duration(startDelay) * time.Second,

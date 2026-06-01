@@ -234,6 +234,27 @@ func TestRun_ModelFlagPassedToBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRun_UsesDefaultModelWhenModelFlagOmitted(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultModel: "openai/gpt-4.1"}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Model != "openai/gpt-4.1" {
+		t.Fatalf("expected config default model, got %q", spy.req.Model)
+	}
+}
+
 func TestRun_LoadConfigError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
