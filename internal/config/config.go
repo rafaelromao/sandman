@@ -31,6 +31,7 @@ type Config struct {
 	ReviewCommand     string           `yaml:"review_command"`
 	DefaultParallel   int              `yaml:"default_parallel"`
 	StartDelay        int              `yaml:"start_delay"`
+	Retries           int              `yaml:"retries"`
 	ContainerCapacity int              `yaml:"container_capacity"`
 	MaxContainers     int              `yaml:"max_containers"`
 	WorktreeDir       string           `yaml:"worktree_dir"`
@@ -108,6 +109,7 @@ func SupportedKeys() []string {
 		"review_command",
 		"default_parallel",
 		"start_delay",
+		"retries",
 		"container_capacity",
 		"max_containers",
 		"worktree_dir",
@@ -130,6 +132,7 @@ func Load(path string) (*Config, error) {
 		ReviewCommand     string           `yaml:"review_command"`
 		DefaultParallel   int              `yaml:"default_parallel"`
 		StartDelay        int              `yaml:"start_delay"`
+		Retries           int              `yaml:"retries"`
 		ContainerCapacity *int             `yaml:"container_capacity"`
 		MaxContainers     *int             `yaml:"max_containers"`
 		WorktreeDir       string           `yaml:"worktree_dir"`
@@ -153,6 +156,7 @@ func Load(path string) (*Config, error) {
 		ReviewCommand:   raw.ReviewCommand,
 		DefaultParallel: raw.DefaultParallel,
 		StartDelay:      raw.StartDelay,
+		Retries:         raw.Retries,
 		WorktreeDir:     raw.WorktreeDir,
 		Sandbox:         raw.Sandbox,
 		Agents:          raw.Agents,
@@ -168,6 +172,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.StartDelay < 0 {
 		return nil, fmt.Errorf("validate config: start_delay must be 0 or greater")
+	}
+	if cfg.Retries < 0 {
+		return nil, fmt.Errorf("validate config: retries must be 0 or greater")
 	}
 	if cfg.BuildTools == "" {
 		cfg.BuildTools = DefaultBuildToolsPreset
@@ -343,6 +350,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return fmt.Sprintf("%d", c.DefaultParallel), nil
 	case "start_delay":
 		return fmt.Sprintf("%d", c.StartDelay), nil
+	case "retries":
+		return fmt.Sprintf("%d", c.Retries), nil
 	case "container_capacity":
 		return fmt.Sprintf("%d", c.ContainerCapacity), nil
 	case "max_containers":
@@ -393,6 +402,15 @@ func (c *Config) SetValue(key, value string) error {
 			return fmt.Errorf("start_delay must be 0 or greater")
 		}
 		c.StartDelay = n
+	case "retries":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for retries: %w", err)
+		}
+		if n < 0 {
+			return fmt.Errorf("retries must be 0 or greater")
+		}
+		c.Retries = n
 	case "container_capacity":
 		n, err := strconv.Atoi(value)
 		if err != nil {

@@ -17,6 +17,7 @@ build_tools: go
 review_command: /review please
 default_parallel: 3
 start_delay: 5
+retries: 2
 worktree_dir: /tmp/wt
 sandbox: worktree
 git:
@@ -48,6 +49,9 @@ git:
 	}
 	if cfg.StartDelay != 5 {
 		t.Errorf("start_delay: got %d, want %d", cfg.StartDelay, 5)
+	}
+	if cfg.Retries != 2 {
+		t.Errorf("retries: got %d, want %d", cfg.Retries, 2)
 	}
 	if cfg.WorktreeDir != "/tmp/wt" {
 		t.Errorf("worktree_dir: got %q, want %q", cfg.WorktreeDir, "/tmp/wt")
@@ -298,6 +302,9 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	if cfg.ReviewCommand != "/oc review" {
 		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/oc review")
 	}
+	if cfg.Retries != 0 {
+		t.Errorf("retries: got %d, want %d", cfg.Retries, 0)
+	}
 }
 
 func TestLoad_MissingContainerSettings_AppliesDefaults(t *testing.T) {
@@ -431,6 +438,9 @@ func TestConfig_GetAndSetDefaultAgent(t *testing.T) {
 	if got, err := cfg.GetValue("default_agent"); err != nil || got != DefaultAgent {
 		t.Fatalf("GetValue(default_agent) = %q, %v", got, err)
 	}
+	if got, err := cfg.GetValue("retries"); err != nil || got != "0" {
+		t.Fatalf("GetValue(retries) = %q, %v", got, err)
+	}
 	if err := cfg.SetValue("default_agent", "pi"); err != nil {
 		t.Fatalf("SetValue(default_agent): %v", err)
 	}
@@ -442,6 +452,12 @@ func TestConfig_GetAndSetDefaultAgent(t *testing.T) {
 	}
 	if err := cfg.SetValue("agent", "opencode"); err == nil {
 		t.Fatal("expected old key to be rejected")
+	}
+	if err := cfg.SetValue("retries", "3"); err != nil {
+		t.Fatalf("SetValue(retries): %v", err)
+	}
+	if cfg.Retries != 3 {
+		t.Fatalf("retries not updated: %#v", cfg)
 	}
 }
 
@@ -496,6 +512,8 @@ func TestConfig_SetValue(t *testing.T) {
 		{"default_parallel", "4", false},
 		{"start_delay", "0", false},
 		{"start_delay", "5", false},
+		{"retries", "0", false},
+		{"retries", "3", false},
 		{"container_capacity", "4", false},
 		{"container_capacity", "0", false},
 		{"max_containers", "0", false},
@@ -508,6 +526,7 @@ func TestConfig_SetValue(t *testing.T) {
 		{"default_parallel", "-1", true},
 		{"start_delay", "not-a-number", true},
 		{"start_delay", "-1", true},
+		{"retries", "-1", true},
 		{"container_capacity", "not-a-number", true},
 		{"max_containers", "-1", true},
 		{"max_containers", "not-a-number", true},

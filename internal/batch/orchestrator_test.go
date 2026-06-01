@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,6 +89,17 @@ func (s *spyPromptRenderer) Render(cfg prompt.RenderConfig, data prompt.IssueDat
 	s.cfg = cfg
 	s.data = data
 	return s.result, s.err
+}
+
+type retryRenderer struct {
+	renderCalls int
+	result      string
+	err         error
+}
+
+func (r *retryRenderer) Render(cfg prompt.RenderConfig, data prompt.IssueData) (string, error) {
+	r.renderCalls++
+	return r.result, r.err
 }
 
 type fakeGitHubClient struct {
@@ -178,6 +190,46 @@ type fakeSandboxFactory struct {
 }
 
 func (f *fakeSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+	return f.sandbox
+}
+
+type retrySandbox struct {
+	startCalled      bool
+	writePromptCount int
+	execCount        int
+	execErrors       []error
+	workDir          string
+}
+
+func (s *retrySandbox) Start() error {
+	s.startCalled = true
+	return nil
+}
+
+func (s *retrySandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	s.execCount++
+	if s.execCount <= len(s.execErrors) {
+		if err := s.execErrors[s.execCount-1]; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *retrySandbox) ExecInteractive(ctx context.Context, command string) error { return nil }
+func (s *retrySandbox) Stop() error                                               { return nil }
+func (s *retrySandbox) WorkDir() string                                           { return s.workDir }
+func (s *retrySandbox) WritePrompt(content string) error {
+	s.writePromptCount++
+	return nil
+}
+func (s *retrySandbox) Process() sandbox.Process { return nil }
+
+type retrySandboxFactory struct {
+	sandbox *retrySandbox
+}
+
+func (f *retrySandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
 	return f.sandbox
 }
 
@@ -396,6 +448,88 @@ func containsInt(values []int, want int) bool {
 		}
 	}
 	return false
+}
+
+func TestResolveRetries(t *testing.T) {
+	cfg := &config.Config{Retries: 3}
+
+	if got := resolveRetries(Request{Retries: -1}, cfg); got != 3 {
+		t.Fatalf("resolveRetries fallback = %d, want 3", got)
+	}
+	if got := resolveRetries(Request{Retries: 0}, cfg); got != 0 {
+		t.Fatalf("resolveRetries override = %d, want 0", got)
+	}
+	if got := resolveRetries(Request{Retries: 5}, cfg); got != 5 {
+		t.Fatalf("resolveRetries explicit = %d, want 5", got)
+	}
+}
+
+func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &retrySandbox{
+		workDir:    filepath.Join(workDir, "worktree"),
+		execErrors: []error{errors.New("exit 1"), errors.New("exit 1"), nil},
+	}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}},
+		renderer:     renderer,
+		errorLog:     io.Discard,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+	var resetCalls []struct{ worktreePath, branch, baseBranch string }
+	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls = append(resetCalls, struct{ worktreePath, branch, baseBranch string }{sb.WorkDir(), branch, baseBranch})
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, nil, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 3)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if result.RetriesTotal != 3 {
+		t.Fatalf("RetriesTotal = %d, want 3", result.RetriesTotal)
+	}
+	if renderer.renderCalls != 3 {
+		t.Fatalf("render calls = %d, want 3", renderer.renderCalls)
+	}
+	if rtSandbox.execCount != 3 {
+		t.Fatalf("exec calls = %d, want 3", rtSandbox.execCount)
+	}
+	if rtSandbox.writePromptCount != 3 {
+		t.Fatalf("prompt writes = %d, want 3", rtSandbox.writePromptCount)
+	}
+	if len(resetCalls) != 2 {
+		t.Fatalf("reset calls = %d, want 2", len(resetCalls))
+	}
+	if resetCalls[0].branch != "sandman/42-fix-bug" || resetCalls[0].baseBranch != "main" {
+		t.Fatalf("unexpected reset args: %#v", resetCalls[0])
+	}
+	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), "--- retry 1/3 ---") {
+		t.Fatalf("expected retry marker in log, got:\n%s", data)
+	}
 }
 
 func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {

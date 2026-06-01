@@ -22,6 +22,7 @@ type Request struct {
 	BaseBranch           string
 	Continuation         bool
 	PreviousRunID        string
+	Retries              int
 	Parallel             int
 	StartDelay           time.Duration
 	StartDelaySet        bool
@@ -45,6 +46,7 @@ type AgentRunResult struct {
 	IssueNumber  int
 	Issue        *int
 	Status       string
+	RetriesTotal int
 	Branch       string
 	WorktreePath string
 }

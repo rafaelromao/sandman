@@ -282,6 +282,16 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("max_containers must be 0 or greater")
 			}
 
+			retriesFlag := cmd.Flags().Lookup("retries")
+			retriesSet := retriesFlag != nil && retriesFlag.Changed
+			retries, _ := cmd.Flags().GetInt("retries")
+			if retriesSet && retries < 0 {
+				return fmt.Errorf("retries must be 0 or greater")
+			}
+			if !retriesSet {
+				retries = -1
+			}
+
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
@@ -315,6 +325,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				Agent:                agentName,
 				Model:                resolveModel(modelFlag, cfg.DefaultModel, agentCfg.Preset),
 				BaseBranch:           baseBranch,
+				Retries:              retries,
 				Parallel:             parallel,
 				StartDelay:           time.Duration(startDelay) * time.Second,
 				StartDelaySet:        startDelaySet,
@@ -348,6 +359,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 		},
 	}
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
+	cmd.Flags().Int("retries", 0, "Retry failed AgentRuns up to N times")
 	cmd.Flags().Int("start-delay", 0, "Wait N seconds after any AgentRun finishes before starting the next one; 0 disables the delay")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
@@ -666,7 +678,11 @@ func printSummary(cmd *cobra.Command, result *batch.Result) {
 		fmt.Fprintf(cmd.OutOrStdout(), "Summary: %d succeeded, %d failed\n", successCount, failureCount)
 	}
 	for _, run := range result.Runs {
-		fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s\n", formatIssueLabel(run.IssueNumber, run.Issue), run.Status, run.Branch)
+		status := run.Status
+		if run.RetriesTotal > 1 {
+			status = fmt.Sprintf("%s (%d retries)", status, run.RetriesTotal-1)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s\n", formatIssueLabel(run.IssueNumber, run.Issue), status, run.Branch)
 	}
 }
 

@@ -169,6 +169,26 @@ func TestRun_ParallelFlagPassedToBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRun_RetriesFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--retries", "4", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Retries != 4 {
+		t.Errorf("expected retries=4, got %d", spy.req.Retries)
+	}
+}
+
 func TestRun_StartDelayFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
@@ -534,6 +554,29 @@ func TestRun_PrintsSummaryOnSuccess(t *testing.T) {
 	}
 	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
 		t.Errorf("expected issue 42 in summary, got:\n%s", out)
+	}
+}
+
+func TestRun_PrintsRetryCountInSummary(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{
+		Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", RetriesTotal: 3, Branch: "sandman/42-fix-bug"}},
+	}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "success (2 retries)") {
+		t.Fatalf("expected retry count in summary, got:\n%s", out)
 	}
 }
 

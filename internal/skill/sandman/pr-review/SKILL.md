@@ -19,18 +19,24 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
 
 ### Iteration loop (max 10 passes)
 
-1. **Wait for CI**
+1. **Checkout PR**
+
    ```bash
    gh pr checks <N> --repo <owner/repo>
    ```
-   Poll until status is `pass`. If `fail`:
-   - Read the failed job logs to identify the root cause.
-   - Fix the error in the codebase.
-   - Run local tests/formatting to verify the fix.
-   - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
-   - **Repeat Step 1** (wait for CI again).
 
-2. **Delegate review to the PR Review Agent**
+2. **Wait for CI**
+
+     Poll until status is `pass`. If `fail`:
+
+     - If there are merge conflicts, merge the base branch into the local branch using /sandman-merge.
+     - Read the failed job logs to identify the root cause.
+     - Fix the error in the codebase.
+     - Run local tests/formatting to verify the fix.
+     - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
+     - **Repeat Step 1** (wait for CI again).
+
+3. **Delegate review to the PR Review Agent**
 
    Request a review with this exact command. Do not change the body of the request.
 
@@ -39,8 +45,9 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
    ```
    **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
-3. **Wait for review** (timeout: 10 minutes)
-  Poll every 30–60s using all three commands:
+4. **Wait for review** (timeout: 10 minutes)
+     Poll every 30–60s using all three commands:
+
   ```bash
   gh pr view <N> --repo <owner/repo> --comments
   gh pr view <N> --repo <owner/repo> --json latestReviews,reviews,comments,reviewDecision,mergeStateStatus

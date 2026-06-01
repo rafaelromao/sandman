@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -30,6 +31,16 @@ func issueRef(num int) *int {
 	return &n
 }
 
+func resolveRetries(req Request, cfg *config.Config) int {
+	if req.Retries >= 0 {
+		return req.Retries
+	}
+	if cfg != nil && cfg.Retries >= 0 {
+		return cfg.Retries
+	}
+	return 0
+}
+
 // Orchestrator coordinates parallel AgentRun execution.
 type Orchestrator struct {
 	githubClient            github.Client
@@ -40,6 +51,7 @@ type Orchestrator struct {
 	sandboxFactory          SandboxFactory
 	baseBranchSync          func(repoPath, sourceBranch string) error
 	containerRuntimeFactory ContainerRuntimeFactory
+	retryReset              func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
 	killTimeout             time.Duration
 	errorLog                io.Writer
 }
@@ -369,6 +381,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+	retries := resolveRetries(req, cfg)
 
 	sandboxMode := req.Sandbox
 	if sandboxMode == "" {
@@ -462,7 +475,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "") {
-		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, func() (gitIdentity, error) { return resolveGitIdentity(".") }, policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel)
+		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, func() (gitIdentity, error) { return resolveGitIdentity(".") }, policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries)
 	}
 
 	startGate := newBatchStartGate(parallel, startDelay)
@@ -569,7 +582,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
-			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunID, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, baseBranch, blockers, req.Blocked[issueNum])
+			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunID, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, baseBranch, blockers, req.Blocked[issueNum], retries)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -765,7 +778,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunID string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, baseBranch string, blockers []int, externalBlockers []int) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunID string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, baseBranch string, blockers []int, externalBlockers []int, retries int) (AgentRunResult, bool) {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
@@ -833,16 +846,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	if factory == nil {
 		factory = defaultRunnableFactory{}
 	}
-	runnable := factory.NewRunnable(issue, branch, wt)
-	if agentRun, ok := runnable.(*AgentRun); ok {
-		agentRun.env = agentCfg.Env
-		agentRun.preset = agentCfg.Preset
-		agentRun.model = agentCfg.Model
-		agentRun.modelProvider = agentCfg.ModelProvider
-		agentRun.modelName = agentCfg.ModelName
-		agentRun.baseBranch = baseBranch
-		agentRun.outputWriter = outputWriter
-	}
 
 	runID := generateRunID(num)
 	if o.eventLog != nil {
@@ -901,13 +904,44 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
 	}
 
-	result := runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
-	if result.Issue == nil {
-		result.Issue = issueRef(num)
+	attempts := retries + 1
+	var result AgentRunResult
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {
+				fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", num, err)
+				return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+			}
+			if err := o.writeRetryMarker(num, branch, attempt, retries); err != nil {
+				fmt.Fprintf(o.errorLog, "error: write retry marker for issue %d: %v\n", num, err)
+				return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+			}
+		}
+
+		runnable := factory.NewRunnable(issue, branch, wt)
+		if agentRun, ok := runnable.(*AgentRun); ok {
+			agentRun.env = agentCfg.Env
+			agentRun.preset = agentCfg.Preset
+			agentRun.model = agentCfg.Model
+			agentRun.modelProvider = agentCfg.ModelProvider
+			agentRun.modelName = agentCfg.ModelName
+			agentRun.baseBranch = baseBranch
+			agentRun.outputWriter = outputWriter
+		}
+
+		result = runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
+		if result.Issue == nil {
+			result.Issue = issueRef(num)
+		}
+		if result.IssueNumber == 0 {
+			result.IssueNumber = num
+		}
+		result.RetriesTotal = attempt + 1
+		if result.Status == "success" {
+			break
+		}
 	}
-	if result.IssueNumber == 0 {
-		result.IssueNumber = num
-	}
+
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
 	result.Status = terminalStatus
 
@@ -956,11 +990,49 @@ func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]
 	return blockedBy, nil
 }
 
-func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int) (*Result, error) {
+func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+	if o.retryReset != nil {
+		return o.retryReset(ctx, sb, branch, baseBranch)
+	}
+
+	var output bytes.Buffer
+	command := fmt.Sprintf("git checkout -B %s %s && git reset --hard && git clean -fd", shellQuote(branch), shellQuote(baseBranch))
+	if err := sb.Exec(ctx, command, &output, &output); err != nil {
+		return fmt.Errorf("reset retry branch: %w\n%s", err, output.String())
+	}
+	return nil
+}
+
+func (o *Orchestrator) writeRetryMarker(issueNum int, branch string, attempt, retries int) error {
+	logDir := filepath.Join(".", ".sandman", "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("create log dir: %w", err)
+	}
+	logName := fmt.Sprintf("%d.log", issueNum)
+	if issueNum == 0 {
+		name := strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)
+		if name == "" {
+			name = "prompt-only"
+		}
+		logName = name + ".log"
+	}
+	logPath := filepath.Join(logDir, logName)
+	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	defer file.Close()
+	if _, err := fmt.Fprintf(file, "--- retry %d/%d ---\n", attempt, retries); err != nil {
+		return fmt.Errorf("write retry marker: %w", err)
+	}
+	return nil
+}
+
+func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int) (*Result, error) {
 	_ = startDelay
 	_ = parallel
 	branch := promptOnlyBranch(req.PromptConfig)
-	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, resolveGitIdentity, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, baseBranch)
+	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, resolveGitIdentity, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, baseBranch, retries)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -970,7 +1042,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	return &Result{Runs: []AgentRunResult{result}}, nil
 }
 
-func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, baseBranch string) (AgentRunResult, bool) {
+func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, baseBranch string, retries int) (AgentRunResult, bool) {
 	if err := o.syncBaseBranch(".", baseBranch); err != nil {
 		fmt.Fprintf(o.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
 		return AgentRunResult{Status: "failure", Branch: branch}, false
@@ -1024,16 +1096,6 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 	if factory == nil {
 		factory = defaultRunnableFactory{}
 	}
-	runnable := factory.NewRunnable(nil, branch, wt)
-	if agentRun, ok := runnable.(*AgentRun); ok {
-		agentRun.env = agentCfg.Env
-		agentRun.preset = agentCfg.Preset
-		agentRun.model = agentCfg.Model
-		agentRun.modelProvider = agentCfg.ModelProvider
-		agentRun.modelName = agentCfg.ModelName
-		agentRun.baseBranch = baseBranch
-		agentRun.outputWriter = outputWriter
-	}
 
 	runID := generateRunID(0)
 	if o.eventLog != nil {
@@ -1069,7 +1131,38 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
 	}
 
-	result := runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
+	attempts := retries + 1
+	var result AgentRunResult
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {
+				fmt.Fprintf(o.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
+				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+			}
+			if err := o.writeRetryMarker(0, branch, attempt, retries); err != nil {
+				fmt.Fprintf(o.errorLog, "error: write retry marker for prompt-only run: %v\n", err)
+				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+			}
+		}
+
+		runnable := factory.NewRunnable(nil, branch, wt)
+		if agentRun, ok := runnable.(*AgentRun); ok {
+			agentRun.env = agentCfg.Env
+			agentRun.preset = agentCfg.Preset
+			agentRun.model = agentCfg.Model
+			agentRun.modelProvider = agentCfg.ModelProvider
+			agentRun.modelName = agentCfg.ModelName
+			agentRun.baseBranch = baseBranch
+			agentRun.outputWriter = outputWriter
+		}
+
+		result = runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
+		result.RetriesTotal = attempt + 1
+		if result.Status == "success" {
+			break
+		}
+	}
+
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
 	result.Status = terminalStatus
 	if o.eventLog != nil {
