@@ -771,7 +771,7 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		if err == nil || !strings.Contains(err.Error(), "bind portal on 127.0.0.1") {
+		if err == nil || !strings.Contains(err.Error(), "bind portal on 0.0.0.0") {
 			t.Fatalf("expected bind error on localhost bind, got %v", err)
 		}
 	case <-time.After(5 * time.Second):
@@ -799,7 +799,7 @@ func TestPortal_PrintListeningURL(t *testing.T) {
 		t.Fatal("timed out waiting for portal startup")
 	}
 
-	match := regexp.MustCompile(`http://127\.0\.0\.1:(\d+)`).FindStringSubmatch(out.String())
+	match := regexp.MustCompile(`http://0\.0\.0\.0:(\d+)`).FindStringSubmatch(out.String())
 	if len(match) != 2 {
 		cancel()
 		t.Fatalf("startup output missing listening URL: %q", out.String())

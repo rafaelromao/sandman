@@ -148,7 +148,7 @@ sandman portal [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port` | `5000` | Port to bind on `127.0.0.1` |
+| `--port` | `5000` | Port to bind on `0.0.0.0` |
 
 The portal is repo-scoped: it scans the current repository's `.sandman/runs/` tree on each poll and shows every live Sandman instance it finds there, plus run status and logs from the event and log files. It also exposes a launcher for repo-scoped command presets.
 

@@ -108,7 +108,7 @@ func NewPortalCmd(deps Dependencies) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int("port", 5000, "Port to bind on 127.0.0.1")
+	cmd.Flags().Int("port", 5000, "Port to bind on 0.0.0.0")
 	return cmd
 }
 
@@ -129,9 +129,9 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 }
 
 func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writer, launchData portalLaunchFormData, cfg *config.Config) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
-		return fmt.Errorf("bind portal on 127.0.0.1:%d: %w", port, err)
+		return fmt.Errorf("bind portal on 0.0.0.0:%d: %w", port, err)
 	}
 	defer listener.Close()
 
@@ -141,7 +141,7 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 		actualPort = tcpAddr.Port
 	}
 
-	if _, err := fmt.Fprintf(out, "Portal listening on http://127.0.0.1:%d\n", actualPort); err != nil {
+	if _, err := fmt.Fprintf(out, "Portal listening on http://0.0.0.0:%d\n", actualPort); err != nil {
 		return fmt.Errorf("write portal address: %w", err)
 	}
 
