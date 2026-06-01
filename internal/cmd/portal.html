@@ -1450,6 +1450,7 @@
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
     const lastUpdated = document.getElementById('last-updated');
+    const stopSupported = {{.PortalStopSupported}};
     const launchDefaults = {{.LaunchDataJSON}};
     const portalState = window.SandmanPortalState;
     if (portalState && portalState.configure) {
@@ -2146,7 +2147,7 @@
       }
     }
 
-    async function stopRun(runKey) {
+    async function stopBatch(runKey) {
       try {
         const res = await fetch(stopPath, {
           method: 'POST',
@@ -2290,7 +2291,7 @@
       const tabName = portalState ? portalState.getSelectedTab(state, run.key) : 'log';
       const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       const events = Array.isArray(run.events) ? run.events : [];
-      const canStop = run.kind === 'active' && run.socketPath && !stopGroups.has(run.socketPath);
+      const canStop = stopSupported && run.kind === 'active' && (run.status === 'active' || run.status === 'queued') && run.socketPath && !stopGroups.has(run.socketPath);
       if (canStop) stopGroups.add(run.socketPath);
 
       return [
@@ -2306,7 +2307,7 @@
         '  <td class="mono">' + escapeHTML(formatDuration(run.duration)) + '</td>',
         '  <td class="mono">' + escapeHTML(formatBranch(run)) + '</td>',
         '  <td class="mono">' + escapeHTML(formatSource(run)) + '</td>',
-        '  <td class="run-actions">' + (canStop ? '<button type="button" class="action-btn danger" data-action="stop-run" data-run-key="' + escapeHTML(run.key) + '">Stop batch</button>' : '') + '</td>',
+        '  <td class="run-actions">' + (canStop ? '<button type="button" class="action-btn danger" data-action="stop-batch" data-run-key="' + escapeHTML(run.key) + '">Stop batch</button>' : '') + '</td>',
         '</tr>',
         isOpen ? (
           '<tr class="detail-row" data-detail-for="' + escapeHTML(run.key) + '">'
@@ -2577,9 +2578,9 @@
         const runKey = button.getAttribute('data-run-key');
         if (!runKey) return;
         const action = button.getAttribute('data-action');
-        if (action === 'stop-run') {
+        if (action === 'stop-batch') {
           event.preventDefault();
-          stopRun(runKey);
+          stopBatch(runKey);
           return;
         }
         if (action === 'set-tab') {

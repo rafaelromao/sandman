@@ -306,6 +306,10 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !portalStopSupported() {
+			writeJSONError(w, "stop batch is unsupported on this platform", http.StatusNotImplemented)
+			return
+		}
 
 		var req struct {
 			RunKey string `json:"runKey"`
@@ -419,6 +423,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			ThemeOptionsHTML      template.HTML
 			SupportedThemesJSON   template.JS
 			PortalStateJS         template.JS
+			PortalStopSupported   bool
 		}{
 			RepoRoot:              repoRoot,
 			PollInterval:          int(portalPollInterval / time.Millisecond),
@@ -434,6 +439,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			ThemeOptionsHTML:      portalThemeOptionsHTML,
 			SupportedThemesJSON:   portalSupportedThemesJSON,
 			PortalStateJS:         portalStateJS,
+			PortalStopSupported:   portalStopSupported(),
 		}
 		if err := portalPageTemplate.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
