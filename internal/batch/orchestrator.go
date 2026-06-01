@@ -118,9 +118,6 @@ type batchStartGate struct {
 }
 
 func newBatchStartGate(parallel int, delay time.Duration) *batchStartGate {
-	if parallel < 1 {
-		parallel = 1
-	}
 	return &batchStartGate{parallel: parallel, delay: delay}
 }
 
@@ -136,12 +133,14 @@ func (g *batchStartGate) Acquire(ctx context.Context) error {
 			return err
 		}
 		now := time.Now()
-		if g.active < g.parallel && (g.delay <= 0 || !now.Before(g.nextAllowedStart)) {
+		if (g.parallel <= 0 || g.active < g.parallel) && (g.delay <= 0 || !now.Before(g.nextAllowedStart)) {
 			if err := ctx.Err(); err != nil {
 				g.mu.Unlock()
 				return err
 			}
-			g.active++
+			if g.parallel > 0 {
+				g.active++
+			}
 			g.mu.Unlock()
 			return nil
 		}
@@ -174,6 +173,16 @@ func (g *batchStartGate) ReleaseWithoutDelay() { g.release(false) }
 
 func (g *batchStartGate) release(applyDelay bool) {
 	g.mu.Lock()
+	if g.parallel <= 0 {
+		if applyDelay && g.delay > 0 {
+			next := time.Now().Add(g.delay)
+			if next.After(g.nextAllowedStart) {
+				g.nextAllowedStart = next
+			}
+		}
+		g.mu.Unlock()
+		return
+	}
 	if applyDelay && g.delay > 0 {
 		next := time.Now().Add(g.delay)
 		if next.After(g.nextAllowedStart) {
@@ -438,9 +447,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	defer policy.Close()
 
 	parallel := req.Parallel
-	if parallel == 0 {
-		parallel = 4
-	}
 	startDelay := time.Duration(cfg.StartDelay) * time.Second
 	if req.StartDelaySet {
 		if req.StartDelay < 0 {
