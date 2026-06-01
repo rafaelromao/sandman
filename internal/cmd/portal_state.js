@@ -75,16 +75,6 @@
       }
     }
 
-    if (current.expandedRunKey && !runKeys.has(current.expandedRunKey) && runList.length > 0) {
-      current.expandedRunKey = runList[0];
-      changed = true;
-    }
-
-    if (current.expandedRunKey && !runKeys.has(current.expandedRunKey) && runList.length === 0) {
-      current.expandedRunKey = null;
-      changed = true;
-    }
-
     return { state: current, changed };
   }
 
