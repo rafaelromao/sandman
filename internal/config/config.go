@@ -99,6 +99,23 @@ type Store interface {
 	Save(cfg *Config) error
 }
 
+// SupportedKeys lists config keys exposed by GetValue/SetValue and config list.
+func SupportedKeys() []string {
+	return []string{
+		"default_agent",
+		"default_model",
+		"build_tools",
+		"review_command",
+		"default_parallel",
+		"start_delay",
+		"container_capacity",
+		"max_containers",
+		"worktree_dir",
+		"sandbox",
+		"git.base_branch",
+	}
+}
+
 // Load reads, parses, validates, and applies defaults to the config file at the given path.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)

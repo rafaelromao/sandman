@@ -151,6 +151,76 @@ func TestConfigGet_UnknownKey_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestConfigList_PrintsSupportedKeysAndEffectiveValues(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `default_agent: pi
+default_model: openai/gpt-4.1
+build_tools: go
+review_command: /review please
+default_parallel: 3
+start_delay: 5
+container_capacity: 7
+max_containers: 2
+worktree_dir: /tmp/wt
+sandbox: worktree
+git:
+  base_branch: trunk
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	var buf bytes.Buffer
+	cmd := NewConfigListCmd(&config.FileStore{Path: path})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{
+		"default_agent: pi",
+		"default_model: openai/gpt-4.1",
+		"build_tools: go",
+		"review_command: /review please",
+		"default_parallel: 3",
+		"start_delay: 5",
+		"container_capacity: 7",
+		"max_containers: 2",
+		"worktree_dir: /tmp/wt",
+		"sandbox: worktree",
+		"git.base_branch: trunk",
+	}
+
+	got := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(got) != len(want) {
+		t.Fatalf("unexpected line count: got %d, want %d; output: %q", len(got), len(want), buf.String())
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("line %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestConfigList_LoadError_ReturnsError(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := NewConfigListCmd(&fakeStore{err: fmt.Errorf("boom")})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when config load fails")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected load error to surface, got: %v", err)
+	}
+}
+
 func TestConfigSet_DefaultAgent_UpdatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
