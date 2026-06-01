@@ -37,7 +37,7 @@
 
   function keyOf(element) {
     if (!element || typeof element.getAttribute !== 'function') return null;
-    const value = element.getAttribute('data-log-scroll');
+    const value = element.getAttribute('data-scroll-key');
     return value && String(value).trim() ? String(value) : null;
   }
 

@@ -2378,7 +2378,7 @@
 
     function renderTerminalBlock(text, extraClass, runKey) {
       const classes = 'terminal-text' + (extraClass ? ' ' + escapeHTML(extraClass) : '');
-      const attrs = runKey ? ' data-log-scroll="' + escapeHTML(runKey) + '"' : '';
+      const attrs = runKey ? ' data-scroll-key="' + escapeHTML(runKey) + '"' : '';
       return '<pre class="' + classes + '"' + attrs + '>' + renderTerminalContent(text) + '</pre>';
     }
 
@@ -2444,7 +2444,7 @@
       normalizePortalViewState();
       const filtered = state.runs.filter(shouldShowRun);
       summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong> runs visible';
-      const scrollStates = portalScroll ? portalScroll.capture(runsBody.querySelectorAll('[data-log-scroll]')) : {};
+      const scrollStates = portalScroll ? portalScroll.capture(runsBody.querySelectorAll('[data-scroll-key]')) : {};
       if (!state.runs.length) {
         runsBody.innerHTML = renderEmpty(state.loading ? 'Loading runs.' : 'No Sandman runs found.');
         return;
@@ -2456,7 +2456,7 @@
       const stopGroups = new Set();
       runsBody.innerHTML = filtered.map((run) => renderRunRow(run, stopGroups)).join('');
       if (portalScroll && scrollStates) {
-        portalScroll.restore(runsBody.querySelectorAll('[data-log-scroll]'), scrollStates);
+        portalScroll.restore(runsBody.querySelectorAll('[data-scroll-key]'), scrollStates);
       }
     }
 

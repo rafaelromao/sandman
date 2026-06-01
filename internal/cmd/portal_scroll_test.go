@@ -61,7 +61,7 @@ if (api.isSticky('clean-b') !== false) throw new Error('setSticky with null shou
 }
 
 {
-  const a = { scrollHeight: 1000, clientHeight: 200, scrollTop: 800, getAttribute: (k) => k === 'data-log-scroll' ? 'default-a' : null };
+  const a = { scrollHeight: 1000, clientHeight: 200, scrollTop: 800, getAttribute: (k) => k === 'data-scroll-key' ? 'default-a' : null };
   const states = api.capture([a]);
   if (!states['default-a'] || !states['default-a'].sticky) throw new Error('default sticky should be true on first capture');
 }
@@ -69,9 +69,9 @@ if (api.isSticky('clean-b') !== false) throw new Error('setSticky with null shou
 {
   const key = 'restore-sticky-' + Math.random();
   api.setSticky(key, true);
-  const a = { scrollHeight: 1000, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-log-scroll' ? key : null };
+  const a = { scrollHeight: 1000, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-scroll-key' ? key : null };
   const states = api.capture([a]);
-  const fresh = { scrollHeight: 1500, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-log-scroll' ? key : null, addEventListener: () => {} };
+  const fresh = { scrollHeight: 1500, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-scroll-key' ? key : null, addEventListener: () => {} };
   api.restore([fresh], states);
   if (fresh.scrollTop !== 1500) throw new Error('sticky restore should snap to new bottom (1500), got ' + fresh.scrollTop);
 }
@@ -79,9 +79,9 @@ if (api.isSticky('clean-b') !== false) throw new Error('setSticky with null shou
 {
   const key = 'restore-preserve-' + Math.random();
   api.setSticky(key, false);
-  const a = { scrollHeight: 1000, clientHeight: 200, scrollTop: 250, getAttribute: (k) => k === 'data-log-scroll' ? key : null };
+  const a = { scrollHeight: 1000, clientHeight: 200, scrollTop: 250, getAttribute: (k) => k === 'data-scroll-key' ? key : null };
   const states = api.capture([a]);
-  const fresh = { scrollHeight: 1500, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-log-scroll' ? key : null, addEventListener: () => {} };
+  const fresh = { scrollHeight: 1500, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-scroll-key' ? key : null, addEventListener: () => {} };
   api.restore([fresh], states);
   if (fresh.scrollTop !== 250) throw new Error('non-sticky restore should preserve scrollTop 250, got ' + fresh.scrollTop);
 }
@@ -89,9 +89,9 @@ if (api.isSticky('clean-b') !== false) throw new Error('setSticky with null shou
 {
   const key = 'restore-clamp-' + Math.random();
   api.setSticky(key, false);
-  const a = { scrollHeight: 1000, clientHeight: 200, scrollTop: 800, getAttribute: (k) => k === 'data-log-scroll' ? key : null };
+  const a = { scrollHeight: 1000, clientHeight: 200, scrollTop: 800, getAttribute: (k) => k === 'data-scroll-key' ? key : null };
   const states = api.capture([a]);
-  const fresh = { scrollHeight: 600, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-log-scroll' ? key : null, addEventListener: () => {} };
+  const fresh = { scrollHeight: 600, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-scroll-key' ? key : null, addEventListener: () => {} };
   api.restore([fresh], states);
   if (fresh.scrollTop !== 400) throw new Error('non-sticky restore should clamp to new max (400), got ' + fresh.scrollTop);
 }
@@ -104,7 +104,7 @@ if (api.isSticky('clean-b') !== false) throw new Error('setSticky with null shou
 
 {
   const key = 'restore-fresh-' + Math.random();
-  const el = { scrollHeight: 1200, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-log-scroll' ? key : null, addEventListener: () => {} };
+  const el = { scrollHeight: 1200, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-scroll-key' ? key : null, addEventListener: () => {} };
   api.restore([el], {});
   if (el.scrollTop !== 1200) throw new Error('restore without state should default to sticky (snap to bottom 1200), got ' + el.scrollTop);
 }
@@ -112,7 +112,7 @@ if (api.isSticky('clean-b') !== false) throw new Error('setSticky with null shou
 {
   const key = 'restore-fresh-sticky-off-' + Math.random();
   api.setSticky(key, false);
-  const el = { scrollHeight: 1200, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-log-scroll' ? key : null, addEventListener: () => {} };
+  const el = { scrollHeight: 1200, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-scroll-key' ? key : null, addEventListener: () => {} };
   api.restore([el], {});
   if (el.scrollTop !== 0) throw new Error('restore with sticky=false and no state should keep scrollTop 0, got ' + el.scrollTop);
 }
@@ -122,7 +122,7 @@ if (api.isSticky('clean-b') !== false) throw new Error('setSticky with null shou
   let handler = null;
   const el = {
     scrollHeight: 1000, clientHeight: 200, scrollTop: 500,
-    getAttribute: (k) => k === 'data-log-scroll' ? key : null,
+    getAttribute: (k) => k === 'data-scroll-key' ? key : null,
     addEventListener: (name, fn) => { if (name === 'scroll') handler = fn; },
   };
   api.setSticky(key, true);

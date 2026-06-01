@@ -486,7 +486,7 @@ func TestPortal_PageWiresLogScrollPreservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"SandmanPortalScroll", "data-log-scroll", "portalScroll.capture", "portalScroll.restore"} {
+	for _, want := range []string{"SandmanPortalScroll", "data-scroll-key", "portalScroll.capture", "portalScroll.restore"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q for log scroll preservation\n%s", want, content[:min(800, len(content))])
 		}
