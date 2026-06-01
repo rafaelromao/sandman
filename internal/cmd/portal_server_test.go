@@ -196,6 +196,31 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	}
 }
 
+func TestPortal_LoadPortalRunsTreatsCancelledAsTerminalFailure(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.cancelled", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %#v", runs)
+	}
+	run := runs[0]
+	if run.Kind != "completed" || run.Status != "failure" {
+		t.Fatalf("expected cancelled run to project as completed failure, got %#v", run)
+	}
+}
+
 func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

@@ -657,9 +657,13 @@ func portalRunFromActiveBatchIssue(repoRoot string, active portalActiveRun, issu
 		if state.Finished != nil {
 			finishedAt := state.Finished.Timestamp
 			run.FinishedAt = &finishedAt
-			run.Log = readPortalTextFile(run.LogPath)
-			if strings.TrimSpace(run.Log) == "" {
-				run.Log = "No log file yet."
+			if state.Status() == "blocked" {
+				run.Log = portalBlockedMessage(state.Finished.Payload)
+			} else {
+				run.Log = readPortalTextFile(run.LogPath)
+				if strings.TrimSpace(run.Log) == "" {
+					run.Log = "No log file yet."
+				}
 			}
 		} else {
 			run.Log = filterPortalIssueOutput(liveOutput, issueNumber)
@@ -823,6 +827,9 @@ func portalRunFromState(repoRoot string, runState events.RunState, active *porta
 		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, branch),
 		Log:         logContent,
 		Events:      eventsByRun[runID],
+	}
+	if status == "blocked" {
+		portalRun.Log = portalBlockedMessage(runState.Finished.Payload)
 	}
 	if active != nil {
 		portalRun.SocketPath = active.SocketPath

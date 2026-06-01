@@ -5,16 +5,6 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 # PR Review
 
-## Quick start
-
-```bash
-gh pr checks <N> --repo <owner/repo>
-gh pr comment <N> --body "{{REVIEW_COMMAND}}" --repo <owner/repo>
-gh pr view <N> --repo <owner/repo> --comments
-gh pr view <N> --repo <owner/repo> --json reviews
-gh api repos/<owner>/<repo>/pulls/<N>/comments
-```
-
 ## Hard rule
 
 **You must NOT review the PR yourself in this session.**
@@ -41,26 +31,27 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
    - **Repeat Step 1** (wait for CI again).
 
 2. **Delegate review to the PR Review Agent**
+
+   Request a review with this exact command. Do not change the body of the request.
+
    ```bash
    gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
    ```
    **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
 3. **Wait for review** (timeout: 10 minutes)
-   Poll every 30–60s using all three commands:
-   ```bash
-   gh pr view <N> --repo <owner/repo> --comments
-   gh pr view <N> --repo <owner/repo> --json reviews
-   gh api repos/<owner>/<repo>/pulls/<N>/comments
-   ```
-   - `gh pr view --comments` — issue-level comments (approvals, questions).
-   - `gh pr view --json reviews` — review summary bodies (the review's main text).
-   - `gh api .../pulls/<N>/comments` — inline file-level review comments (line-specific suggestions).
-   Merge all three sources before classifying feedback.
-   Read every new PR Review Agent comment from all sources, including inline file comments.
-   Do not overlook comments attached to a file diff instead of the top-level conversation.
-   Treat any requested change in an inline file comment as actionable feedback.
-   If no response arrives within 10 minutes, stop and report to the user.
+  Poll every 30–60s using all three commands:
+  ```bash
+  gh pr view <N> --repo <owner/repo> --comments
+  gh pr view <N> --repo <owner/repo> --json latestReviews,reviews,comments,reviewDecision,mergeStateStatus
+  gh api repos/<owner>/<repo>/pulls/<N>/comments
+  gh api repos/<owner>/<repo>/pulls/<N>/reviews
+  ```
+  Merge all sources before classifying feedback.
+  Read every new PR Review Agent comment from all sources, including inline file comments.
+  Do not overlook comments attached to a file diff instead of the top-level conversation.
+  Treat any requested change in an inline file comment as actionable feedback.
+  If no response arrives within 10 minutes, stop and report to the user.
 
 4. **Read and classify feedback**
    - **Approve** → done, report to user
