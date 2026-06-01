@@ -68,6 +68,11 @@
     const runKeys = new Set(runList);
     let changed = false;
 
+    if (current.expandedRunKey && !runKeys.has(current.expandedRunKey)) {
+      current.expandedRunKey = runList[0] || null;
+      changed = true;
+    }
+
     for (const runKey of runKeys) {
       if (!VALID_TABS.has(current.tabs[runKey])) {
         current.tabs[runKey] = DEFAULT_TAB;

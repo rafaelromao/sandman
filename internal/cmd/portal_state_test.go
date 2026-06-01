@@ -55,12 +55,12 @@ const loaded = api.load();
 const normalized = api.normalize(loaded, [{ key: 'keep' }]);
 api.save(normalized);
 const persisted = JSON.parse(storage.get(api.storageKey));
-if (persisted.expandedRunKey !== 'gone') throw new Error('expected missing expanded run to survive round trip, got ' + JSON.stringify(persisted));
+if (persisted.expandedRunKey !== 'keep') throw new Error('expected missing expanded run to fall back to first visible run, got ' + JSON.stringify(persisted));
 if (persisted.tabs.gone !== 'events') throw new Error('expected saved run tab to survive round trip, got ' + JSON.stringify(persisted));
 if (persisted.tabs.keep !== 'log') throw new Error('expected visible run tab to normalize to log, got ' + JSON.stringify(persisted));
 if (api.getSelectedTab(persisted, 'keep') !== 'log') throw new Error('expected invalid tab to fall back to log, got ' + JSON.stringify(persisted));
 `
-	cmd := exec.Command("node", "-e", script, portalStatePath)
+  cmd := exec.Command("node", "-e", script, portalStatePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("portal state helper failed: %v\n%s", err, out)
 	}
