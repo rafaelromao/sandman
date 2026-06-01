@@ -107,6 +107,7 @@ type fakeGitHubClient struct {
 	fetchRelease map[int]<-chan struct{}
 	prs          map[string]*github.PR
 	err          error
+	findPRErr    error
 }
 
 func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
@@ -134,6 +135,9 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 }
 
 func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
+	if f.findPRErr != nil {
+		return nil, f.findPRErr
+	}
 	if f.prs == nil {
 		return nil, nil
 	}
@@ -528,6 +532,19 @@ func TestParseLogForCompletion_IgnoresEarlierRunSections(t *testing.T) {
 	}
 }
 
+func TestParseLogForCompletion_AcceptsGFMCheckboxSyntax(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "42.log")
+	content := "--- run 1/3 ---\n# Todos\n- [x] done\n- [X] done too\n"
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	if !parseLogForCompletion(logPath) {
+		t.Fatal("expected GFM checkbox syntax to return true")
+	}
+}
+
 func TestCheckPRMergedAtHead(t *testing.T) {
 	client := &fakeGitHubClient{prs: map[string]*github.PR{
 		"open":     {Number: 1, State: "open", Merged: false, HeadRefName: "open", HeadRefOid: "open-sha"},
@@ -666,6 +683,48 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	}
 	if resetCalls != 1 {
 		t.Fatalf("reset calls = %d, want 1", resetCalls)
+	}
+}
+
+func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree"), execErrors: []error{errors.New("exit 1")}}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, findPRErr: errors.New("lookup failed")},
+		renderer:     renderer,
+		errorLog:     io.Discard,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+	var resetCalls int
+	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls++
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, _ := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure on lookup error", result.Status)
+	}
+	if resetCalls != 0 {
+		t.Fatalf("reset calls = %d, want 0 (branch should be preserved on lookup error)", resetCalls)
 	}
 }
 

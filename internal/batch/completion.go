@@ -50,7 +50,7 @@ func parseLogForCompletion(logPath string) bool {
 		}
 		if strings.HasPrefix(line, "- [") {
 			hasItem = true
-			if !strings.HasPrefix(line, "- [✓]") && !strings.EqualFold(line, "- [x]") && !strings.EqualFold(line, "- [X]") {
+			if !strings.HasPrefix(line, "- [✓]") && !strings.HasPrefix(line, "- [x]") && !strings.HasPrefix(line, "- [X]") {
 				return false
 			}
 		}
