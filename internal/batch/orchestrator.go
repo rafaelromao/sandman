@@ -916,16 +916,12 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 				attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
 			} else {
 				prFound := false
-				if o.githubClient != nil {
-					if pr, err := o.githubClient.FindPRByBranch(branch); err == nil && pr != nil {
-						if strings.EqualFold(pr.State, "open") {
-							attemptRenderCfg.ContinuePrompt = "Continue with sandman-pr-review until the PR is merged"
-							attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
-							prFound = true
-						} else if pr.Merged || strings.EqualFold(pr.State, "merged") {
-							prFound = true
-						}
-					}
+				if pr, err := findOpenPRByBranch(o.githubClient, branch); err == nil && pr != nil {
+					attemptRenderCfg.ContinuePrompt = "Continue with sandman-pr-review until the PR is merged"
+					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
+					prFound = true
+				} else if checkPRMerged(o.githubClient, branch) {
+					prFound = true
 				}
 				if !prFound {
 					if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {

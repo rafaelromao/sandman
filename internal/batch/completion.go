@@ -69,6 +69,20 @@ func checkPRMerged(client github.Client, branch string) bool {
 	return pr.Merged || strings.EqualFold(pr.State, "merged")
 }
 
+func findOpenPRByBranch(client github.Client, branch string) (*github.PR, error) {
+	if client == nil || strings.TrimSpace(branch) == "" {
+		return nil, nil
+	}
+	pr, err := client.FindPRByBranch(branch)
+	if err != nil || pr == nil {
+		return nil, err
+	}
+	if !strings.EqualFold(pr.State, "open") {
+		return nil, nil
+	}
+	return pr, nil
+}
+
 func buildRetryContinuationPrompt(priorContext string) string {
 	var b strings.Builder
 	b.WriteString("## Prior Context\n\n")
