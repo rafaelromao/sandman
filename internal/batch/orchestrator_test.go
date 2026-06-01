@@ -489,8 +489,8 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 		},
 	}
 	var resetCalls []struct{ worktreePath, branch, baseBranch string }
-	o.retryReset = func(worktreePath, branch, baseBranch string) error {
-		resetCalls = append(resetCalls, struct{ worktreePath, branch, baseBranch string }{worktreePath, branch, baseBranch})
+	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls = append(resetCalls, struct{ worktreePath, branch, baseBranch string }{sb.WorkDir(), branch, baseBranch})
 		return nil
 	}
 

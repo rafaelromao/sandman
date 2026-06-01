@@ -1,12 +1,12 @@
 package batch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -51,7 +51,7 @@ type Orchestrator struct {
 	sandboxFactory          SandboxFactory
 	baseBranchSync          func(repoPath, sourceBranch string) error
 	containerRuntimeFactory ContainerRuntimeFactory
-	retryReset              func(worktreePath, branch, baseBranch string) error
+	retryReset              func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
 	killTimeout             time.Duration
 	errorLog                io.Writer
 }
@@ -908,7 +908,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	var result AgentRunResult
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
-			if err := o.resetRetryBranch(wt.WorkDir(), branch, baseBranch); err != nil {
+			if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {
 				fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", num, err)
 				return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
@@ -990,20 +990,15 @@ func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]
 	return blockedBy, nil
 }
 
-func (o *Orchestrator) resetRetryBranch(worktreePath, branch, baseBranch string) error {
+func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 	if o.retryReset != nil {
-		return o.retryReset(worktreePath, branch, baseBranch)
+		return o.retryReset(ctx, sb, branch, baseBranch)
 	}
 
-	checkout := exec.Command("git", "checkout", "-B", branch, baseBranch)
-	checkout.Dir = worktreePath
-	if out, err := checkout.CombinedOutput(); err != nil {
-		return fmt.Errorf("git checkout -B %s %s: %w\n%s", branch, baseBranch, err, out)
-	}
-	clean := exec.Command("git", "clean", "-fd")
-	clean.Dir = worktreePath
-	if out, err := clean.CombinedOutput(); err != nil {
-		return fmt.Errorf("git clean -fd: %w\n%s", err, out)
+	var output bytes.Buffer
+	command := fmt.Sprintf("git checkout -B %s %s && git reset --hard && git clean -fd", shellQuote(branch), shellQuote(baseBranch))
+	if err := sb.Exec(ctx, command, &output, &output); err != nil {
+		return fmt.Errorf("reset retry branch: %w\n%s", err, output.String())
 	}
 	return nil
 }
@@ -1132,7 +1127,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 	var result AgentRunResult
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
-			if err := o.resetRetryBranch(wt.WorkDir(), branch, baseBranch); err != nil {
+			if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {
 				fmt.Fprintf(o.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
 				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
