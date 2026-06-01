@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -221,6 +222,149 @@ func TestPortal_LoadPortalRunsTreatsCancelledAsTerminalFailure(t *testing.T) {
 	}
 }
 
+func TestPortal_StopRunEndpointStopsActiveRunAndRefreshesStatus(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	prevStop := portalRunStopper
+	t.Cleanup(func() { portalRunStopper = prevStop })
+	portalRunStopper = func(ctx context.Context, repoRootArg, runKey string) error {
+		if repoRootArg != repoRoot {
+			t.Fatalf("expected repo root %q, got %q", repoRoot, repoRootArg)
+		}
+		if runKey != "run-42-1" {
+			t.Fatalf("expected run key run-42-1, got %q", runKey)
+		}
+		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+			{Type: "run.cancelled", Timestamp: time.Now(), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
+		})
+		return os.RemoveAll(runDir)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/stop", strings.NewReader(`{"runKey":"run-42-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	runs := readPortalRuns(t, server.URL)
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 projected run after stop, got %#v", runs)
+	}
+	run := runs[0]
+	if run.Kind != "completed" || run.Status != "failure" || run.IssueNumber != 42 {
+		t.Fatalf("expected stopped run to project as completed failure, got %#v", run)
+	}
+}
+
+func TestStopPortalRunSignalsPeerAndWaitsForTerminalState(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-stop-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	prevPeerPID := portalPeerPID
+	prevSignal := portalSignalProcess
+	t.Cleanup(func() {
+		portalPeerPID = prevPeerPID
+		portalSignalProcess = prevSignal
+	})
+	portalPeerPID = func(sockPath string) (int, error) {
+		if sockPath != activeSock {
+			t.Fatalf("expected socket %q, got %q", activeSock, sockPath)
+		}
+		return 12345, nil
+	}
+	portalSignalProcess = func(pid int, sig syscall.Signal) error {
+		if pid != 12345 {
+			t.Fatalf("expected pid 12345, got %d", pid)
+		}
+		if sig != syscall.SIGTERM {
+			t.Fatalf("expected SIGTERM, got %v", sig)
+		}
+		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+			{Type: "run.cancelled", Timestamp: time.Now(), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
+		})
+		return os.RemoveAll(runDir)
+	}
+
+	if err := stopPortalRun(context.Background(), repoRoot, "run-42-1"); err != nil {
+		t.Fatalf("stop portal run: %v", err)
+	}
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 projected run after stop, got %#v", runs)
+	}
+	run := runs[0]
+	if run.Kind != "completed" || run.Status != "failure" || run.IssueNumber != 42 {
+		t.Fatalf("expected stopped run to project as completed failure, got %#v", run)
+	}
+}
+
 func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -282,9 +426,14 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active only", "Log", "Events", "Details", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`} {
+	for _, want := range []string{"Active only", "Log", "Events", "Details", "Actions", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`, `data-action="stop-run" data-run-key="`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
+		}
+	}
+	for _, banned := range []string{"command-row-hint", "row-hint", "Click row"} {
+		if strings.Contains(content, banned) {
+			t.Fatalf("page should not contain %q\n%s", banned, content[:min(800, len(content))])
 		}
 	}
 	if strings.Contains(content, ">Output<") {
@@ -745,7 +894,7 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		if err == nil || !strings.Contains(err.Error(), "bind portal on 0.0.0.0") {
+		if err == nil || !strings.Contains(err.Error(), "bind portal on 127.0.0.1") {
 			t.Fatalf("expected bind error on wildcard bind, got %v", err)
 		}
 	case <-time.After(5 * time.Second):
@@ -773,7 +922,7 @@ func TestPortal_PrintListeningURL(t *testing.T) {
 		t.Fatal("timed out waiting for portal startup")
 	}
 
-	match := regexp.MustCompile(`http://0\.0\.0\.0:(\d+)`).FindStringSubmatch(out.String())
+	match := regexp.MustCompile(`http://127\.0\.0\.1:(\d+)`).FindStringSubmatch(out.String())
 	if len(match) != 2 {
 		cancel()
 		t.Fatalf("startup output missing listening URL: %q", out.String())

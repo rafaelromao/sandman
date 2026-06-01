@@ -35,6 +35,10 @@ const (
 
 var portalANSISequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
+var portalRunStopper = stopPortalRun
+var portalPeerPID = resolvePortalPeerPID
+var portalSignalProcess = signalPortalProcess
+
 type portalInstance struct {
 	Name       string `json:"name"`
 	SocketPath string `json:"socketPath"`
@@ -108,7 +112,7 @@ func NewPortalCmd(deps Dependencies) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int("port", 5000, "Port to bind on 0.0.0.0")
+	cmd.Flags().Int("port", 5000, "Port to bind on 127.0.0.1")
 	return cmd
 }
 
@@ -129,9 +133,9 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 }
 
 func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writer, launchData portalLaunchFormData, cfg *config.Config) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
-		return fmt.Errorf("bind portal on 0.0.0.0:%d: %w", port, err)
+		return fmt.Errorf("bind portal on 127.0.0.1:%d: %w", port, err)
 	}
 	defer listener.Close()
 
@@ -141,7 +145,7 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 		actualPort = tcpAddr.Port
 	}
 
-	if _, err := fmt.Fprintf(out, "Portal listening on http://0.0.0.0:%d\n", actualPort); err != nil {
+	if _, err := fmt.Fprintf(out, "Portal listening on http://127.0.0.1:%d\n", actualPort); err != nil {
 		return fmt.Errorf("write portal address: %w", err)
 	}
 
@@ -296,6 +300,39 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			"runs":     runs,
 		})
 	})
+	mux.HandleFunc("/api/runs/stop", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			RunKey string `json:"runKey"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, "invalid run payload", http.StatusBadRequest)
+			return
+		}
+		req.RunKey = strings.TrimSpace(req.RunKey)
+		if req.RunKey == "" {
+			writeJSONError(w, "missing runKey", http.StatusBadRequest)
+			return
+		}
+
+		if err := portalRunStopper(r.Context(), repoRoot, req.RunKey); err != nil {
+			var stopErr *portalStopError
+			if errors.As(err, &stopErr) {
+				writeJSONError(w, stopErr.Error(), stopErr.status)
+				return
+			}
+			writeJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]any{"runKey": req.RunKey, "status": "stopped"})
+	})
 	mux.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -404,6 +441,131 @@ func writeJSONError(w http.ResponseWriter, msg string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+type portalStopError struct {
+	status  int
+	message string
+}
+
+func (e *portalStopError) Error() string { return e.message }
+
+func stopPortalRun(ctx context.Context, repoRoot, runKey string) error {
+	run, err := portalRunForKey(repoRoot, runKey)
+	if err != nil {
+		return err
+	}
+	if run.SocketPath == "" {
+		return &portalStopError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
+	}
+
+	pid, err := portalPeerPID(run.SocketPath)
+	if err != nil {
+		return fmt.Errorf("resolve active run process: %w", err)
+	}
+	if err := portalSignalProcess(pid, syscall.SIGTERM); err != nil {
+		return fmt.Errorf("signal active run process: %w", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := waitForPortalRunToStop(waitCtx, repoRoot, runKey); err != nil {
+		return fmt.Errorf("wait for active run to stop: %w", err)
+	}
+
+	return nil
+}
+
+func portalRunForKey(repoRoot, runKey string) (portalRun, error) {
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		return portalRun{}, err
+	}
+	for _, run := range runs {
+		if run.Key == runKey && run.Kind == "active" {
+			return run, nil
+		}
+	}
+	return portalRun{}, &portalStopError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
+}
+
+func waitForPortalRunToStop(ctx context.Context, repoRoot, runKey string) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	check := func() (bool, error) {
+		runs, err := loadPortalRuns(repoRoot)
+		if err != nil {
+			return false, err
+		}
+		for _, run := range runs {
+			if run.Key == runKey && run.Kind == "active" {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	if done, err := check(); done || err != nil {
+		return err
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			done, err := check()
+			if err != nil {
+				return err
+			}
+			if done {
+				return nil
+			}
+		}
+	}
+}
+
+func resolvePortalPeerPID(sockPath string) (int, error) {
+	conn, err := net.DialTimeout("unix", sockPath, time.Second)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	unixConn, ok := conn.(*net.UnixConn)
+	if !ok {
+		return 0, fmt.Errorf("connect to run socket: unexpected connection type")
+	}
+	raw, err := unixConn.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+
+	var (
+		cred    *syscall.Ucred
+		ctrlErr error
+	)
+	if err := raw.Control(func(fd uintptr) {
+		cred, ctrlErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
+	}); err != nil {
+		return 0, err
+	}
+	if ctrlErr != nil {
+		return 0, ctrlErr
+	}
+	if cred == nil || cred.Pid == 0 {
+		return 0, fmt.Errorf("resolve run process id: empty peer credentials")
+	}
+	return int(cred.Pid), nil
+}
+
+func signalPortalProcess(pid int, sig syscall.Signal) error {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return proc.Signal(sig)
 }
 
 func findRepoRoot(start string) (string, error) {
