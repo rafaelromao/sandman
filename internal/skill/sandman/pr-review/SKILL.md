@@ -34,7 +34,7 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
      - Fix the error in the codebase.
      - Run local tests/formatting to verify the fix.
      - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
-     - **Repeat Step 1** (wait for CI again).
+     - **Repeat Step 2** (wait for CI again).
 
 3. **Delegate review to the PR Review Agent**
 
