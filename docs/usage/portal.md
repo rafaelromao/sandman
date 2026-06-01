@@ -8,7 +8,7 @@
 sandman portal
 ```
 
-By default, the portal binds to port `5000`. If you need a different port, pass `--port`:
+By default, the portal binds to `0.0.0.0:5000`. If you need a different port, pass `--port`:
 
 ```bash
 sandman portal --port 5050
