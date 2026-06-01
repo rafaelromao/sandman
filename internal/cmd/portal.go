@@ -108,7 +108,7 @@ func NewPortalCmd(deps Dependencies) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int("port", 5000, "Port to bind on 0.0.0.0")
+	cmd.Flags().Int("port", 5000, "Port to bind on 127.0.0.1")
 	return cmd
 }
 
