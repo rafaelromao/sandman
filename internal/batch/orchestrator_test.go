@@ -618,7 +618,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryUsesContinuationContext(t *testing.T) {
+func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -679,7 +679,7 @@ func TestRunSingle_RetryUsesContinuationContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
-	wantPrompt := "## Prior Context\n\n## Completed\nKeep going.\n\n## New Instruction\n\nContinue with sandman-pr-review until the PR is merged.\n\n## Update Continuation Context\n\nBefore exiting, overwrite `.sandman/continuation-context.md` with an updated summary using this template:\n\n```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n"
+	wantPrompt := "## Prior Context\n\n## Completed\nKeep going.\n\n## New Instruction\n\nContinue the work. Resume from the prior context and finish the remaining implementation steps.\n\n## Update Continuation Context\n\nBefore exiting, overwrite `.sandman/continuation-context.md` with an updated summary using this template:\n\n```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n"
 	if string(data) != wantPrompt {
 		t.Fatalf("unexpected continue prompt content: %q", string(data))
 	}

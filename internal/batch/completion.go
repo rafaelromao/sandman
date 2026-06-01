@@ -83,7 +83,19 @@ func findOpenPRByBranch(client github.Client, branch string) (*github.PR, error)
 	return pr, nil
 }
 
-func buildRetryContinuationPrompt(priorContext string) string {
+func buildRetryPrompt(priorContext string) string {
+	var b strings.Builder
+	b.WriteString("## Prior Context\n\n")
+	b.WriteString(strings.TrimSpace(priorContext))
+	b.WriteString("\n\n## New Instruction\n\n")
+	b.WriteString("Continue the work. Resume from the prior context and finish the remaining implementation steps.\n\n")
+	b.WriteString("## Update Continuation Context\n\n")
+	b.WriteString("Before exiting, overwrite `.sandman/continuation-context.md` with an updated summary using this template:\n\n")
+	b.WriteString("```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n")
+	return b.String()
+}
+
+func buildPRReviewContinuationPrompt(priorContext string) string {
 	var b strings.Builder
 	b.WriteString("## Prior Context\n\n")
 	b.WriteString(strings.TrimSpace(priorContext))
@@ -123,7 +135,7 @@ func logRunMarker(logPath string, attempt, maxRetries int) error {
 		return fmt.Errorf("open log file: %w", err)
 	}
 	defer file.Close()
-	if _, err := fmt.Fprintf(file, "--- run %d/%d ---\n", attempt+1, maxRetries); err != nil {
+	if _, err := fmt.Fprintf(file, "--- run %d/%d ---\n", attempt+1, maxRetries+1); err != nil {
 		return fmt.Errorf("write run marker: %w", err)
 	}
 	return nil
