@@ -908,18 +908,27 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	if result.IssueNumber == 0 {
 		result.IssueNumber = num
 	}
+	terminalEventType := "run.finished"
+	terminalStatus := result.Status
+	if terminalStatus == "" {
+		terminalStatus = "failure"
+	}
+	if ctx.Err() != nil {
+		terminalEventType = "run.cancelled"
+		terminalStatus = "failure"
+	}
 
 	worktreeState := "preserved"
 
 	if o.eventLog != nil {
 		_ = o.eventLog.Log(events.Event{
-			Type:      "run.finished",
+			Type:      terminalEventType,
 			Timestamp: time.Now(),
 			RunID:     runID,
 			Issue:     num,
 			IssueRef:  issueRef(num),
 			Payload: map[string]any{
-				"status":         result.Status,
+				"status":         terminalStatus,
 				"branch":         result.Branch,
 				"base_branch":    baseBranch,
 				"worktree_state": worktreeState,
