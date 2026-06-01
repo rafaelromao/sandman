@@ -54,6 +54,13 @@ type issueDependenciesPayload struct {
 	BlockedBy json.RawMessage `json:"blocked_by"`
 }
 
+type prPayload struct {
+	Number      int    `json:"number"`
+	State       string `json:"state"`
+	Merged      bool   `json:"merged"`
+	HeadRefName string `json:"headRefName"`
+}
+
 type dependencySummary struct {
 	BlockedBy      int `json:"blocked_by"`
 	TotalBlockedBy int `json:"total_blocked_by"`
@@ -156,6 +163,25 @@ func (c *CLIClient) FetchIssueDependencies(number int) ([]int, error) {
 	}
 
 	return c.fetchIssueDependencies(owner, repo, number, issue)
+}
+
+// FindPRByBranch finds the most recent pull request for a branch via gh CLI.
+func (c *CLIClient) FindPRByBranch(branch string) (*PR, error) {
+	cmd := c.command("gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,merged,headRefName", "--limit", "1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh pr list: %w\n%s", err, out)
+	}
+
+	var payloads []prPayload
+	if err := json.Unmarshal(out, &payloads); err != nil {
+		return nil, fmt.Errorf("parse prs: %w", err)
+	}
+	if len(payloads) == 0 {
+		return nil, nil
+	}
+	payload := payloads[0]
+	return &PR{Number: payload.Number, State: payload.State, Merged: payload.Merged, HeadRefName: payload.HeadRefName}, nil
 }
 
 func (c *CLIClient) fetchIssuePayload(owner, repo string, number int) (issuePayload, error) {

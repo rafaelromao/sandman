@@ -906,13 +906,31 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	attempts := retries + 1
 	var result AgentRunResult
+	logPath := filepath.Join(".", ".sandman", "logs", fmt.Sprintf("%d.log", num))
 	for attempt := 0; attempt < attempts; attempt++ {
+		attemptRenderCfg := renderCfg
 		if attempt > 0 {
-			if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {
-				fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", num, err)
-				return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+			contCtxPath := filepath.Join(wt.WorkDir(), ".sandman", "continuation-context.md")
+			if content, err := os.ReadFile(contCtxPath); err == nil {
+				attemptRenderCfg.ContinuePrompt = string(content)
+				attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
+			} else {
+				prFound := false
+				if o.githubClient != nil {
+					if pr, err := o.githubClient.FindPRByBranch(branch); err == nil && pr != nil {
+						attemptRenderCfg.ContinuePrompt = "Continue with sandman-pr-review until the PR is merged"
+						attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
+						prFound = true
+					}
+				}
+				if !prFound {
+					if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {
+						fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", num, err)
+						return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+					}
+				}
 			}
-			if err := o.writeRetryMarker(num, branch, attempt, retries); err != nil {
+			if err := logRetryMarker(logPath, attempt, retries); err != nil {
 				fmt.Fprintf(o.errorLog, "error: write retry marker for issue %d: %v\n", num, err)
 				return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
@@ -929,7 +947,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			agentRun.outputWriter = outputWriter
 		}
 
-		result = runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
+		result = runnable.Run(ctx, o.renderer, agentCfg.Command, attemptRenderCfg)
 		if result.Issue == nil {
 			result.Issue = issueRef(num)
 		}
@@ -937,7 +955,8 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			result.IssueNumber = num
 		}
 		result.RetriesTotal = attempt + 1
-		if result.Status == "success" {
+		if result.Status == "success" || parseLogForCompletion(logPath) || checkPRMerged(o.githubClient, branch) {
+			result.Status = "success"
 			break
 		}
 	}
@@ -948,6 +967,10 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	worktreeState := "preserved"
 
 	if o.eventLog != nil {
+		retriesDone := result.RetriesTotal - 1
+		if retriesDone < 0 {
+			retriesDone = 0
+		}
 		_ = o.eventLog.Log(events.Event{
 			Type:      terminalEventType,
 			Timestamp: time.Now(),
@@ -959,6 +982,8 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 				"branch":         result.Branch,
 				"base_branch":    baseBranch,
 				"worktree_state": worktreeState,
+				"retries_total":  retries,
+				"retries_done":   retriesDone,
 			},
 		})
 	}
@@ -1005,9 +1030,6 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 
 func (o *Orchestrator) writeRetryMarker(issueNum int, branch string, attempt, retries int) error {
 	logDir := filepath.Join(".", ".sandman", "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return fmt.Errorf("create log dir: %w", err)
-	}
 	logName := fmt.Sprintf("%d.log", issueNum)
 	if issueNum == 0 {
 		name := strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)
@@ -1016,16 +1038,7 @@ func (o *Orchestrator) writeRetryMarker(issueNum int, branch string, attempt, re
 		}
 		logName = name + ".log"
 	}
-	logPath := filepath.Join(logDir, logName)
-	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
-	}
-	defer file.Close()
-	if _, err := fmt.Fprintf(file, "--- retry %d/%d ---\n", attempt, retries); err != nil {
-		return fmt.Errorf("write retry marker: %w", err)
-	}
-	return nil
+	return logRetryMarker(filepath.Join(logDir, logName), attempt, retries)
 }
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int) (*Result, error) {
@@ -1166,7 +1179,11 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
 	result.Status = terminalStatus
 	if o.eventLog != nil {
-		_ = o.eventLog.Log(events.Event{Type: terminalEventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": terminalStatus, "branch": result.Branch, "base_branch": baseBranch, "worktree_state": "preserved"}})
+		retriesDone := result.RetriesTotal - 1
+		if retriesDone < 0 {
+			retriesDone = 0
+		}
+		_ = o.eventLog.Log(events.Event{Type: terminalEventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": terminalStatus, "branch": result.Branch, "base_branch": baseBranch, "worktree_state": "preserved", "retries_total": retries, "retries_done": retriesDone}})
 	}
 
 	return result, true

@@ -56,6 +56,10 @@ func (c *cachedGitHubClient) SearchIssues(query string) ([]github.Issue, error) 
 	return c.client.SearchIssues(query)
 }
 
+func (c *cachedGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
+	return c.client.FindPRByBranch(branch)
+}
+
 // NewRunCmd creates the run command.
 func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
