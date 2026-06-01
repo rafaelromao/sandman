@@ -9,7 +9,10 @@ import (
 	"sync"
 )
 
-var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)\s+#(\d+)\b`)
+var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)[:\s]+#(\d+)\b`)
+var blockedByHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:blocked by|depends on|blocked-by)\s*$`)
+var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*-\s*#(\d+)`)
+var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
 
 // execRunner abstracts os/exec for testability.
 type execRunner interface {
@@ -197,7 +200,48 @@ func (c *CLIClient) fetchIssueDependencies(owner, repo string, number int, issue
 }
 
 func parseBlockedBy(body string) []int {
-	matches := blockedByPattern.FindAllStringSubmatch(body, -1)
+	inline := blockedByPattern.FindAllStringSubmatch(body, -1)
+
+	var blockedBy []int
+	seen := make(map[int]struct{})
+
+	for _, match := range inline {
+		number, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[number]; ok {
+			continue
+		}
+		seen[number] = struct{}{}
+		blockedBy = append(blockedBy, number)
+	}
+
+	blockedBy = mergeIssueNumbers(blockedBy, parseBlockedByHeading(body))
+
+	if len(blockedBy) == 0 {
+		return nil
+	}
+	return blockedBy
+}
+
+func parseBlockedByHeading(body string) []int {
+	headingIdx := blockedByHeadingPattern.FindStringIndex(body)
+	if headingIdx == nil {
+		return nil
+	}
+
+	afterHeading := body[headingIdx[1]:]
+	nextHeadingIdx := nextHeadingPattern.FindStringIndex(afterHeading)
+
+	var section string
+	if nextHeadingIdx != nil {
+		section = afterHeading[:nextHeadingIdx[0]]
+	} else {
+		section = afterHeading
+	}
+
+	matches := bulletIssuePattern.FindAllStringSubmatch(section, -1)
 	if len(matches) == 0 {
 		return nil
 	}
@@ -215,6 +259,7 @@ func parseBlockedBy(body string) []int {
 		seen[number] = struct{}{}
 		blockedBy = append(blockedBy, number)
 	}
+
 	if len(blockedBy) == 0 {
 		return nil
 	}

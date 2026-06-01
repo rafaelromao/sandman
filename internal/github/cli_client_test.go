@@ -389,19 +389,69 @@ func TestParseBlockedBy(t *testing.T) {
 			want: []int{7, 60, 12},
 		},
 		{
+			name: "colon variant matches blocked-by with colon",
+			body: "blocked-by: #123",
+			want: []int{123},
+		},
+		{
+			name: "inline code variant",
+			body: "`blocked by #456`",
+			want: []int{456},
+		},
+		{
+			name: "bold variant",
+			body: "**blocked by #789**",
+			want: []int{789},
+		},
+		{
+			name: "italic variant",
+			body: "*blocked by #111*",
+			want: []int{111},
+		},
+		{
 			name: "deduplicates repeated issue references",
 			body: "Blocked by #60\nblocked by #60",
 			want: []int{60},
 		},
 		{
 			name: "ignores plain issue references without phrase",
-			body: "## Blocked by\n- #60",
+			body: "## Not a blocker heading\n- #60",
 			want: nil,
+		},
+		{
+			name: "heading plus bullet list extracts numbers",
+			body: "## Blocked by\n- #382\n- #60",
+			want: []int{382, 60},
+		},
+		{
+			name: "heading with multiple bullets",
+			body: "## Blocked by\n- #1\n- #2\n- #3",
+			want: []int{1, 2, 3},
+		},
+		{
+			name: "depends on heading with bullet",
+			body: "## Depends on\n- #5",
+			want: []int{5},
+		},
+		{
+			name: "blocked-by heading case insensitive",
+			body: "## BLOCKED-BY\n- #100",
+			want: []int{100},
 		},
 		{
 			name: "ignores partial phrase matches",
 			body: "notblocked by #60",
 			want: nil,
+		},
+		{
+			name: "mixed inline and heading blocks",
+			body: "Blocked by #1\n## Blocked by\n- #2\n- #3",
+			want: []int{1, 2, 3},
+		},
+		{
+			name: "heading blocks with real issue body format",
+			body: "## What to build\n\nSome description\n\n## Blocked by\n\n- #382\n- #60\n\n## Runtime Context",
+			want: []int{382, 60},
 		},
 	}
 
