@@ -912,7 +912,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 				fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", num, err)
 				return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
-			if err := o.writeRetryMarker(num, attempt+1, retries); err != nil {
+			if err := o.writeRetryMarker(num, branch, attempt, retries); err != nil {
 				fmt.Fprintf(o.errorLog, "error: write retry marker for issue %d: %v\n", num, err)
 				return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
@@ -1003,18 +1003,26 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 	return nil
 }
 
-func (o *Orchestrator) writeRetryMarker(issueNum, retryNum, retries int) error {
+func (o *Orchestrator) writeRetryMarker(issueNum int, branch string, attempt, retries int) error {
 	logDir := filepath.Join(".", ".sandman", "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)
 	}
-	logPath := filepath.Join(logDir, fmt.Sprintf("%d.log", issueNum))
+	logName := fmt.Sprintf("%d.log", issueNum)
+	if issueNum == 0 {
+		name := strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)
+		if name == "" {
+			name = "prompt-only"
+		}
+		logName = name + ".log"
+	}
+	logPath := filepath.Join(logDir, logName)
 	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
 	defer file.Close()
-	if _, err := fmt.Fprintf(file, "--- retry %d/%d ---\n", retryNum, retries); err != nil {
+	if _, err := fmt.Fprintf(file, "--- retry %d/%d ---\n", attempt, retries); err != nil {
 		return fmt.Errorf("write retry marker: %w", err)
 	}
 	return nil
@@ -1131,7 +1139,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 				fmt.Fprintf(o.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
 				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
-			if err := o.writeRetryMarker(0, attempt+1, retries); err != nil {
+			if err := o.writeRetryMarker(0, branch, attempt, retries); err != nil {
 				fmt.Fprintf(o.errorLog, "error: write retry marker for prompt-only run: %v\n", err)
 				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}

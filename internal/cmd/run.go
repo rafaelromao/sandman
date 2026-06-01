@@ -284,6 +284,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			retriesFlag := cmd.Flags().Lookup("retries")
 			retriesSet := retriesFlag != nil && retriesFlag.Changed
 			retries, _ := cmd.Flags().GetInt("retries")
+			if retriesSet && retries < 0 {
+				return fmt.Errorf("retries must be 0 or greater")
+			}
 			if !retriesSet {
 				retries = -1
 			}

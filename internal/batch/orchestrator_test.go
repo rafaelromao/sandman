@@ -527,7 +527,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if !strings.Contains(string(data), "--- retry 2/3 ---") {
+	if !strings.Contains(string(data), "--- retry 1/3 ---") {
 		t.Fatalf("expected retry marker in log, got:\n%s", data)
 	}
 }
