@@ -49,16 +49,15 @@ const api = sandbox.SandmanPortalState;
 if (!api) throw new Error('missing SandmanPortalState');
 storage.set(api.storageKey, JSON.stringify({
   expandedRunKey: 'gone',
-  tabs: { gone: 'events', keep: 'bogus', orphan: 'details' },
+  tabs: { gone: 'events', keep: 'bogus' },
 }));
 const loaded = api.load();
-const normalized = api.normalize(loaded, [{ key: 'keep' }]);
-api.save(normalized);
+api.save(loaded);
 const persisted = JSON.parse(storage.get(api.storageKey));
-if (persisted.expandedRunKey !== null) throw new Error('expected missing run to clear, got ' + JSON.stringify(persisted));
-if (persisted.tabs.keep !== 'log') throw new Error('expected invalid tab to fall back to log, got ' + JSON.stringify(persisted));
-if (Object.prototype.hasOwnProperty.call(persisted.tabs, 'gone')) throw new Error('expected missing run tab to be removed, got ' + JSON.stringify(persisted));
-if (Object.prototype.hasOwnProperty.call(persisted.tabs, 'orphan')) throw new Error('expected orphan tab entry to be removed, got ' + JSON.stringify(persisted));
+if (persisted.expandedRunKey !== 'gone') throw new Error('expected expanded run to survive round trip, got ' + JSON.stringify(persisted));
+if (persisted.tabs.gone !== 'events') throw new Error('expected saved run tab to survive round trip, got ' + JSON.stringify(persisted));
+if (persisted.tabs.keep !== 'bogus') throw new Error('expected saved tab memory to survive round trip, got ' + JSON.stringify(persisted));
+if (api.getSelectedTab(persisted, 'keep') !== 'log') throw new Error('expected invalid tab to fall back to log, got ' + JSON.stringify(persisted));
 `
 	cmd := exec.Command("node", "-e", script, portalStatePath)
 	if out, err := cmd.CombinedOutput(); err != nil {

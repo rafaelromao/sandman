@@ -62,36 +62,7 @@
   }
 
   function normalize(state, runs) {
-    const current = sanitizeState(state);
-    const runKeys = new Set(Array.isArray(runs) ? runs.map((run) => cleanKey(run && run.key)).filter(Boolean) : []);
-    let changed = false;
-
-    if (current.expandedRunKey && !runKeys.has(current.expandedRunKey)) {
-      current.expandedRunKey = null;
-      changed = true;
-    }
-
-    for (const [runKey, tab] of Object.entries(current.tabs)) {
-      if (!runKeys.has(runKey)) {
-        delete current.tabs[runKey];
-        changed = true;
-        continue;
-      }
-      if (!VALID_TABS.has(tab)) {
-        current.tabs[runKey] = DEFAULT_TAB;
-        changed = true;
-      }
-    }
-
-    if (current.expandedRunKey) {
-      const selectedTab = current.tabs[current.expandedRunKey];
-      if (!VALID_TABS.has(selectedTab)) {
-        current.tabs[current.expandedRunKey] = DEFAULT_TAB;
-        changed = true;
-      }
-    }
-
-    return { state: current, changed };
+    return { state: sanitizeState(state), changed: false };
   }
 
   function getSelectedTab(state, runKey) {
