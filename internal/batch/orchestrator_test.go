@@ -134,11 +134,11 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 }
 
 func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
 	if f.prs == nil {
 		return nil, nil
+	}
+	if f.err != nil {
+		return nil, f.err
 	}
 	return f.prs[branch], nil
 }
@@ -589,7 +589,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, nil, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 3)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 3)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -657,7 +657,7 @@ func TestRunSingle_RetryLookupFailurePreservesBranch(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, nil, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
 	if !started {
 		t.Fatal("expected run to start")
 	}
