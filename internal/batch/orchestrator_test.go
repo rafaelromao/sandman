@@ -1414,7 +1414,7 @@ func TestRunBatch_OneFailureDoesNotAbortOthers(t *testing.T) {
 	}
 }
 
-func TestRunBatch_DefaultParallelIsFour(t *testing.T) {
+func TestRunBatch_ZeroParallelAllowsAllRunsToStart(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -1429,29 +1429,61 @@ func TestRunBatch_DefaultParallelIsFour(t *testing.T) {
 		},
 	}
 
-	factory := &fakeRunnableFactory{
-		results: []AgentRunResult{
-			{IssueNumber: 1, Status: "success"},
-			{IssueNumber: 2, Status: "success"},
-			{IssueNumber: 3, Status: "success"},
-			{IssueNumber: 4, Status: "success"},
-			{IssueNumber: 5, Status: "success"},
-		},
-		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
+	release := make(chan struct{})
+	started := make([]chan struct{}, 5)
+	runnables := make(map[int]Runnable, 5)
+	for i := 1; i <= 5; i++ {
+		started[i-1] = make(chan struct{})
+		runnables[i] = &controlledRunnable{
+			result:  AgentRunResult{IssueNumber: i, Status: "success"},
+			started: started[i-1],
+			release: release,
+		}
 	}
+	factory := &controlledRunnableFactory{runnables: runnables}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.runnableFactory = factory
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.sandboxFactory = &freshSandboxFactory{}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4, 5}})
-	if err != nil {
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4, 5}, Parallel: 0})
+		errCh <- err
+	}()
+
+	for i, ch := range started {
+		select {
+		case <-ch:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for run %d to start", i+1)
+		}
+	}
+
+	close(release)
+	if err := <-errCh; err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if factory.max > 4 {
-		t.Errorf("expected max concurrent runs <= 4 (default), got %d", factory.max)
+	if len(factory.created) != 5 {
+		t.Fatalf("expected 5 created runnables, got %d", len(factory.created))
+	}
+}
+
+func TestRunBatch_NegativeParallelRejected(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1}, Parallel: -1})
+	if err == nil {
+		t.Fatal("expected error for negative parallel")
+	}
+	if !strings.Contains(err.Error(), "parallel must be 0 or greater") {
+		t.Fatalf("expected validation error, got %v", err)
 	}
 }
 

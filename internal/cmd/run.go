@@ -255,11 +255,15 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("resolve dependencies: %w", err)
 			}
 
+			parallelFlag := cmd.Flags().Lookup("parallel")
+			parallelSet := parallelFlag != nil && parallelFlag.Changed
 			parallel, _ := cmd.Flags().GetInt("parallel")
-			if parallel == 0 && cfg != nil {
+			if !parallelSet && cfg != nil {
 				parallel = cfg.DefaultParallel
 			}
-			// Let 0 pass through — Orchestrator defaults to 4
+			if parallelSet && parallel < 0 {
+				return fmt.Errorf("parallel must be 0 or greater")
+			}
 
 			startDelayFlag := cmd.Flags().Lookup("start-delay")
 			startDelaySet := startDelayFlag != nil && startDelayFlag.Changed

@@ -99,6 +99,18 @@ func executeRunCommand(t *testing.T, deps Dependencies, args ...string) (string,
 	return buf.String(), err
 }
 
+func waitForLineCount(t *testing.T, path string, want int) {
+	t.Helper()
+	for i := 0; i < 300; i++ {
+		data, err := os.ReadFile(path)
+		if err == nil && len(strings.Split(strings.TrimSpace(string(data)), "\n")) >= want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d lines in %s", want, path)
+}
+
 func waitForPath(t *testing.T, path string) {
 	t.Helper()
 	for i := 0; i < 200; i++ {
@@ -198,6 +210,56 @@ func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode stri
 		GitHubClient:   gh,
 		PromptRenderer: &prompt.Engine{},
 		IsTTY:          func() bool { return false },
+	}
+}
+
+func TestRun_ExplicitZeroParallelRunsThroughOrchestratorEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
+
+	sharedDir := t.TempDir()
+	startFile := filepath.Join(sharedDir, "starts.log")
+	releaseFile := filepath.Join(sharedDir, "release")
+	agentCommand := fmt.Sprintf(`echo start >> %q; while [ ! -f %q ]; do sleep 0.05; done`, startFile, releaseFile)
+
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
+		1: {Number: 1, Title: "A"},
+		2: {Number: 2, Title: "B"},
+		3: {Number: 3, Title: "C"},
+		4: {Number: 4, Title: "D"},
+		5: {Number: 5, Title: "E"},
+	}}
+
+	deps := newRunIntegrationDeps(agentCommand, gh)
+	store := &fakeStore{config: &config.Config{
+		DefaultAgent:    "opencode",
+		Agent:           "opencode",
+		DefaultParallel: 8,
+		WorktreeDir:     ".sandman/worktrees",
+		Sandbox:         "worktree",
+		Git:             config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Command: agentCommand},
+			"pi":       {Command: agentCommand},
+		},
+	}}
+	deps.ConfigStore = store
+	deps.BatchRunner = batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := executeRunCommand(t, deps, "--parallel", "0", "1", "2", "3", "4", "5")
+		errCh <- err
+	}()
+
+	waitForLineCount(t, startFile, 5)
+	if err := os.WriteFile(releaseFile, []byte("go\n"), 0644); err != nil {
+		t.Fatalf("release runs: %v", err)
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
