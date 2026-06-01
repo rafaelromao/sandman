@@ -31,6 +31,8 @@ const pythonBuildToolsPreset = "python"
 
 const DefaultMISEVersion = "v2026.5.8"
 
+const DefaultRTKVersion = "v0.42.0"
+
 const piNodeVersion = "22.19.0"
 
 // Options configures the scaffolding behavior.
@@ -971,6 +973,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 		fmt.Fprintf(&out, "# sandman python-version: %s\n", pythonVersion)
 	}
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
+	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
 	fmt.Fprintf(&out, "FROM %s\n", preset.BaseImage)
 	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(preset.SharedPackages, " "))
 	fmt.Fprintf(&out, "RUN MISE_VERSION=%s curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh\n", preset.MiseVersion)
@@ -1000,6 +1003,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
 	out.WriteString(renderAgentInstallCommand("pi", DefaultBuiltInAgentVersion("pi")))
+	out.WriteString(renderRTKInstallCommand())
 	return out.String()
 }
 
@@ -1336,6 +1340,10 @@ func renderAgentInstallCommand(agent, version string) string {
 	}
 }
 
+func renderRTKInstallCommand() string {
+	return fmt.Sprintf("RUN curl -fsSL https://github.com/rtk-ai/rtk/releases/download/%s/rtk-x86_64-unknown-linux-musl.tar.gz | tar -xz -C /usr/local/bin\n", DefaultRTKVersion)
+}
+
 // ValidateDockerfileMetadata fails when scaffold metadata drift is detected.
 // Metadata-free Dockerfiles are treated as opaque custom files.
 // tool-version and mise-version are intentionally not validated here because
@@ -1377,6 +1385,7 @@ type dockerfileMetadata struct {
 	PythonVersion    string
 	ToolVersion      string
 	MiseVersion      string
+	RtkVersion       string
 }
 
 func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
@@ -1441,6 +1450,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.PythonVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
+		case "rtk-version":
+			meta.RtkVersion = strings.TrimSpace(value)
 		}
 	}
 	if err := scanner.Err(); err != nil {
