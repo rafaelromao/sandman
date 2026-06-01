@@ -1084,7 +1084,7 @@ func terminalRunEvent(ctx context.Context, status string) (string, string) {
 	if terminalStatus == "" {
 		terminalStatus = "failure"
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && terminalStatus != "success" {
 		eventType = "run.cancelled"
 		terminalStatus = "failure"
 	}

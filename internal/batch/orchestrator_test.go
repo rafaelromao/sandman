@@ -493,6 +493,38 @@ func TestRunBatch_ReturnsCancelledStatusOnCancel(t *testing.T) {
 	}
 }
 
+func TestRunBatch_PreservesSuccessfulRunWhenContextCancelsLate(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+
+	proc := &fakeProcess{}
+	sb := &fakeSandbox{process: proc}
+	factory := &fakeSandboxFactory{sandbox: sb}
+	fastSuccess := &fakeRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}, delay: 100 * time.Millisecond}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = factory
+	o.runnableFactory = &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}, delays: []time.Duration{100 * time.Millisecond}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	result, err := o.RunBatch(ctx, Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("expected successful batch result, got error: %v", err)
+	}
+	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "success" {
+		t.Fatalf("expected successful run to stay success, got %#v", result)
+	}
+	_ = fastSuccess
+}
+
 func TestRunBatch_LogsCancelledEventOnPromptOnlyCancel(t *testing.T) {
 	client := &fakeGitHubClient{}
 
