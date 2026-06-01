@@ -261,6 +261,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if !parallelSet && cfg != nil {
 				parallel = cfg.DefaultParallel
 			}
+			if parallelSet && parallel < 0 {
+				return fmt.Errorf("parallel must be 0 or greater")
+			}
 
 			startDelayFlag := cmd.Flags().Lookup("start-delay")
 			startDelaySet := startDelayFlag != nil && startDelayFlag.Changed

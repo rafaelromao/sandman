@@ -169,6 +169,28 @@ func TestRun_ParallelFlagPassedToBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRun_ParallelNegativeValueRejected(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--parallel", "-1", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for negative parallel")
+	}
+	if !strings.Contains(err.Error(), "parallel must be 0 or greater") {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+}
+
 func TestRun_RetriesFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
