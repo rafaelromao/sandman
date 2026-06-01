@@ -168,7 +168,7 @@ func (c *CLIClient) FetchIssueDependencies(number int) ([]int, error) {
 
 // FindPRByBranch finds the most recent pull request for a branch via gh CLI.
 func (c *CLIClient) FindPRByBranch(branch string) (*PR, error) {
-	cmd := c.command("gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,merged,headRefName", "--limit", "1")
+	cmd := c.command("gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,mergedAt,headRefName", "--limit", "1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w\n%s", err, out)
