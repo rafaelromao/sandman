@@ -931,7 +931,11 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
 					prFound = true
 				} else if prLookupErr == nil {
-					merged, _ := checkPRMergedAtHead(o.githubClient, branch, headSHA)
+					merged, err := checkPRMergedAtHead(o.githubClient, branch, headSHA)
+					if err != nil {
+						fmt.Fprintf(o.errorLog, "error: check PR merged status for issue %d: %v\n", num, err)
+						return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+					}
 					prFound = merged
 				}
 				if !prFound {

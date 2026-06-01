@@ -624,7 +624,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryLookupFailurePreservesBranch(t *testing.T) {
+func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
