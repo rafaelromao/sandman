@@ -296,11 +296,15 @@ type controlledRunnableFactory struct {
 
 func (f *controlledRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
 	f.mu.Lock()
-	f.created = append(f.created, issue.Number)
-	r := f.runnables[issue.Number]
+	issueNumber := 0
+	if issue != nil {
+		issueNumber = issue.Number
+	}
+	f.created = append(f.created, issueNumber)
+	r := f.runnables[issueNumber]
 	f.mu.Unlock()
 	if r == nil {
-		return &fakeRunnable{result: AgentRunResult{IssueNumber: issue.Number, Status: "failure"}}
+		return &fakeRunnable{result: AgentRunResult{IssueNumber: issueNumber, Status: "failure"}}
 	}
 	return r
 }
@@ -563,16 +567,27 @@ func TestRunBatch_ReturnsCancelledStatusOnPromptOnlyCancel(t *testing.T) {
 	proc := &fakeProcess{}
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
-	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	signalSent := make(chan struct{})
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.sandboxFactory = factory
-	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{0: &controlledRunnable{result: AgentRunResult{Status: "failure"}, started: started, release: release}}}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		waitForSignal(t, started, "expected prompt-only run to start")
 		cancel()
+		go func() {
+			for !proc.sigTermCalled {
+				time.Sleep(5 * time.Millisecond)
+			}
+			close(signalSent)
+		}()
+		waitForSignal(t, signalSent, "expected SIGTERM to be sent to prompt-only process")
+		close(release)
 	}()
 
 	result, err := o.RunBatch(ctx, Request{PromptConfig: prompt.RenderConfig{PromptFlag: "return only ok"}})

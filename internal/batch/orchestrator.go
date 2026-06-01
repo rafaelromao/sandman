@@ -1001,6 +1001,23 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 	}
 
 	activeRuns := map[int]sandbox.Sandbox{0: wt}
+	shutdownDone := make(chan struct{})
+	defer close(shutdownDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-shutdownDone:
+			return
+		}
+
+		if p := wt.Process(); p != nil {
+			p.Signal(syscall.SIGTERM)
+		}
+		time.Sleep(10 * time.Second)
+		if p := wt.Process(); p != nil {
+			p.Kill()
+		}
+	}()
 	defer func() { delete(activeRuns, 0) }()
 
 	factory := o.runnableFactory
