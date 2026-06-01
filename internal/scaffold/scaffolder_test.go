@@ -48,6 +48,30 @@ func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 	}
 }
 
+func TestScaffold_AllPresetsIncludeRTK(t *testing.T) {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+		t.Run(preset, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+
+			err := s.Scaffold(dir, Options{BuildTools: preset}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(data)
+			want := "RUN curl -fsSL https://github.com/rtk-ai/rtk/releases/download/" + DefaultRTKVersion + "/rtk-x86_64-unknown-linux-musl.tar.gz | tar -xz -C /usr/local/bin"
+			if !strings.Contains(content, want) {
+				t.Fatalf("Dockerfile missing RTK install, got:\n%s", content)
+			}
+		})
+	}
+}
+
 func TestScaffold_DotnetPresetWritesPinnedDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte(`{"sdk":{"version":"8.0.100"}}`), 0644); err != nil {

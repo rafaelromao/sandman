@@ -31,6 +31,8 @@ const pythonBuildToolsPreset = "python"
 
 const DefaultMISEVersion = "v2026.5.8"
 
+const DefaultRTKVersion = "v0.42.0"
+
 const piNodeVersion = "22.19.0"
 
 // Options configures the scaffolding behavior.
@@ -1000,6 +1002,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
 	out.WriteString(renderAgentInstallCommand("pi", DefaultBuiltInAgentVersion("pi")))
+	out.WriteString(renderRTKInstallCommand())
 	return out.String()
 }
 
@@ -1334,6 +1337,10 @@ func renderAgentInstallCommand(agent, version string) string {
 	default:
 		return ""
 	}
+}
+
+func renderRTKInstallCommand() string {
+	return fmt.Sprintf("RUN curl -fsSL https://github.com/rtk-ai/rtk/releases/download/%s/rtk-x86_64-unknown-linux-musl.tar.gz | tar -xz -C /usr/local/bin\n", DefaultRTKVersion)
 }
 
 // ValidateDockerfileMetadata fails when scaffold metadata drift is detected.
