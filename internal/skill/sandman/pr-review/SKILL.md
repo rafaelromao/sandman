@@ -43,7 +43,7 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
   Poll every 30–60s using all three commands:
   ```bash
   gh pr view <N> --repo <owner/repo> --comments
-  gh pr view <N> --repo <owner/repo> --json latestReviews,reviews,comments,reviewDecisions,mergeStateStatus
+  gh pr view <N> --repo <owner/repo> --json latestReviews,reviews,comments,reviewDecision,mergeStateStatus
   gh api repos/<owner>/<repo>/pulls/<N>/comments
   gh api repos/<owner>/<repo>/pulls/<N>/reviews
   ```
