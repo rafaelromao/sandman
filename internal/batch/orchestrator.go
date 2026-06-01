@@ -909,6 +909,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		result.IssueNumber = num
 	}
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	result.Status = terminalStatus
 
 	worktreeState := "preserved"
 
@@ -961,6 +962,9 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	branch := promptOnlyBranch(req.PromptConfig)
 	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, resolveGitIdentity, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, baseBranch)
 	if !started {
+		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
+	}
+	if result.Status != "success" {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
 	return &Result{Runs: []AgentRunResult{result}}, nil
@@ -1050,6 +1054,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	result.Status = terminalStatus
 	if o.eventLog != nil {
 		_ = o.eventLog.Log(events.Event{Type: terminalEventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": terminalStatus, "branch": result.Branch, "base_branch": baseBranch, "worktree_state": "preserved"}})
 	}
