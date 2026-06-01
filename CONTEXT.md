@@ -73,7 +73,7 @@ The maximum number of ContainerSandboxes Sandman may create for one Batch. `max_
 _Avoid_: isolated container toggle, fixed pool size.
 
 **Event**:
-A single structured log entry in the append-only JSONL event log (`.sandman/events.jsonl`). Examples: `run.started`, `agent.stdout`, `run.finished`.
+A single structured log entry in the append-only JSONL event log (`.sandman/events.jsonl`). Examples: `run.started`, `agent.stdout`, `run.finished`, `run.cancelled`.
 _Avoid_: Log line, record.
 
 **Issue**:
