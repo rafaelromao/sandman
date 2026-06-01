@@ -64,7 +64,8 @@
 
   function normalize(state, runs) {
     const current = sanitizeState(state);
-    const runKeys = new Set(Array.isArray(runs) ? runs.map((run) => cleanKey(run && run.key)).filter(Boolean) : []);
+    const runList = Array.isArray(runs) ? runs.map((run) => cleanKey(run && run.key)).filter(Boolean) : [];
+    const runKeys = new Set(runList);
     let changed = false;
 
     for (const runKey of runKeys) {
@@ -72,6 +73,11 @@
         current.tabs[runKey] = DEFAULT_TAB;
         changed = true;
       }
+    }
+
+    if (current.expandedRunKey && !runKeys.has(current.expandedRunKey) && runList.length > 0) {
+      current.expandedRunKey = runList[0];
+      changed = true;
     }
 
     return { state: current, changed };
