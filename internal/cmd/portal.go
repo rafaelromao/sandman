@@ -336,7 +336,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]any{"runKey": req.RunKey, "status": "stopped"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"runKey": req.RunKey, "status": "stopped", "scope": "batch"})
 	})
 	mux.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -461,6 +461,8 @@ type portalStopError struct {
 
 func (e *portalStopError) Error() string { return e.message }
 
+// stopPortalRun signals the batch control socket peer and waits for the run to stop.
+// Because a batch uses a single socket, this stops the entire batch, not just one issue row.
 func stopPortalRun(ctx context.Context, repoRoot, runKey string) error {
 	run, err := portalRunForKey(repoRoot, runKey)
 	if err != nil {
