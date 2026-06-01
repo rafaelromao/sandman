@@ -1078,13 +1078,6 @@
       font-size: 11px;
       white-space: nowrap;
     }
-    .command-row .col-details {
-      white-space: nowrap;
-    }
-    .command-row-hint {
-      color: var(--muted);
-      font-size: 12px;
-    }
     .command-row-detail {
       padding: 14px;
       background: var(--surface-2);
@@ -1228,13 +1221,17 @@
     .run-row:focus-visible td {
       background: color-mix(in oklch, var(--accent) 12%, var(--surface));
     }
-    .row-hint {
-      display: inline-flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100%;
-      color: var(--muted);
-      font-size: 12px;
+    .run-actions {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .action-btn.danger {
+      border-color: color-mix(in oklch, var(--danger) 30%, var(--border));
+      background: color-mix(in oklch, var(--danger) 12%, var(--surface-2));
+      color: color-mix(in oklch, var(--danger) 74%, var(--text));
+    }
+    .action-btn.danger:hover {
+      background: color-mix(in oklch, var(--danger) 18%, var(--surface-3));
     }
     .error-banner {
       display: none;
@@ -1414,7 +1411,7 @@
             <th>Duration</th>
             <th>Branch</th>
             <th>Source</th>
-            <th>Details</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody id="runs-body">
@@ -1427,6 +1424,7 @@
   <script>
     const apiPath = "{{.RefreshPath}}";
     const commandsPath = "{{.CommandsPath}}";
+    const stopPath = "/api/runs/stop";
     let pollInterval = {{.PollInterval}};
     const settingsToggle = document.getElementById('settings-toggle');
     const settingsOverlay = document.getElementById('settings-overlay');
@@ -1452,6 +1450,7 @@
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
     const lastUpdated = document.getElementById('last-updated');
+    const stopSupported = {{.PortalStopSupported}};
     const launchDefaults = {{.LaunchDataJSON}};
     const portalState = window.SandmanPortalState;
     if (portalState && portalState.configure) {
@@ -2148,6 +2147,30 @@
       }
     }
 
+    async function stopBatch(runKey) {
+      try {
+        const res = await fetch(stopPath, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runKey }),
+        });
+        const text = await res.text();
+        let body;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          body = {};
+        }
+        if (!res.ok) throw new Error(body.error || body.message || text.trim() || 'stop failed');
+        errorBanner.style.display = 'none';
+        errorBanner.textContent = '';
+        await refresh();
+      } catch (err) {
+        errorBanner.textContent = 'Stop failed: ' + err.message;
+        errorBanner.style.display = 'block';
+      }
+    }
+
     function renderCommandItem(command) {
       const isOpen = state.commandExpandedId === command.id;
       const klass = statusClass(command);
@@ -2157,7 +2180,6 @@
         '  <div class="col-status"><span class="badge ' + escapeHTML(klass) + '"><span class="dot"></span>' + escapeHTML(statusLabel) + '</span></div>',
         '  <div class="col-command mono">' + escapeHTML(command.command || '') + '</div>',
         '  <div class="col-started mono">' + escapeHTML(formatTime(command.startedAt)) + '</div>',
-        '  <div class="col-details"><span class="command-row-hint mono">' + escapeHTML(isOpen ? 'Close' : 'Click row') + '</span></div>',
         '</div>',
         isOpen ? (
           '<div class="command-row-detail" role="region" aria-labelledby="command-row-' + escapeHTML(command.id) + '">'
@@ -2264,11 +2286,13 @@
       return parts.length ? parts.join(' · ') : 'Run';
     }
 
-    function renderRunRow(run) {
+    function renderRunRow(run, stopGroups) {
       const isOpen = state.expandedRunKey === run.key;
       const tabName = portalState ? portalState.getSelectedTab(state, run.key) : 'log';
       const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       const events = Array.isArray(run.events) ? run.events : [];
+      const canStop = stopSupported && run.kind === 'active' && (run.status === 'active' || run.status === 'queued') && run.socketPath && !stopGroups.has(run.socketPath);
+      if (canStop) stopGroups.add(run.socketPath);
 
       return [
         '<tr class="run-row ' + escapeHTML(run.kind || '') + '" data-action="toggle-run" data-run-key="' + escapeHTML(run.key) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
@@ -2283,7 +2307,7 @@
         '  <td class="mono">' + escapeHTML(formatDuration(run.duration)) + '</td>',
         '  <td class="mono">' + escapeHTML(formatBranch(run)) + '</td>',
         '  <td class="mono">' + escapeHTML(formatSource(run)) + '</td>',
-        '  <td><span class="row-hint mono">' + escapeHTML(isOpen ? 'Open' : 'Click row') + '</span></td>',
+        '  <td class="run-actions">' + (canStop ? '<button type="button" class="action-btn danger" data-action="stop-batch" data-run-key="' + escapeHTML(run.key) + '">Stop batch</button>' : '') + '</td>',
         '</tr>',
         isOpen ? (
           '<tr class="detail-row" data-detail-for="' + escapeHTML(run.key) + '">'
@@ -2424,7 +2448,8 @@
         runsBody.innerHTML = renderEmpty('No runs match the current filters.');
         return;
       }
-      runsBody.innerHTML = filtered.map(renderRunRow).join('');
+      const stopGroups = new Set();
+      runsBody.innerHTML = filtered.map((run) => renderRunRow(run, stopGroups)).join('');
     }
 
     function updateLastUpdated() {
@@ -2553,6 +2578,11 @@
         const runKey = button.getAttribute('data-run-key');
         if (!runKey) return;
         const action = button.getAttribute('data-action');
+        if (action === 'stop-batch') {
+          event.preventDefault();
+          stopBatch(runKey);
+          return;
+        }
         if (action === 'set-tab') {
           const tab = button.getAttribute('data-tab') || 'log';
           state.tabs[runKey] = tab;
@@ -2571,6 +2601,7 @@
     });
 
     runsBody.addEventListener('keydown', (event) => {
+      if (event.target.closest('button, a, input, select, textarea')) return;
       const row = event.target.closest('tr[data-action="toggle-run"]');
       if (!row) return;
       if (event.key !== 'Enter' && event.key !== ' ') return;
