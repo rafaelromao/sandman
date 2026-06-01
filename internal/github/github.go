@@ -11,9 +11,19 @@ type Issue struct {
 	BlockedBy []int
 }
 
+// PR holds pull request metadata fetched from GitHub.
+type PR struct {
+	Number      int
+	State       string
+	Merged      bool
+	HeadRefName string
+	HeadRefOid  string
+}
+
 // Client wraps gh CLI for GitHub operations.
 type Client interface {
 	FetchIssue(number int) (*Issue, error)
 	FetchIssueDependencies(number int) ([]int, error)
+	FindPRByBranch(branch string) (*PR, error)
 	SearchIssues(query string) ([]Issue, error)
 }

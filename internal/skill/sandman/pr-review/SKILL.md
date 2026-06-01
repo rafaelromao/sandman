@@ -46,12 +46,12 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
    **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
 4. **Wait for review** (timeout: 10 minutes)
-     Poll every 30–60s using all three commands:
+     Poll every 30–60s using all 4 commands below. Different PR Review Agents may leave feedback in different GitHub surfaces, so always read every source before classifying feedback:
 
-  ```bash
-  gh pr view <N> --repo <owner/repo> --comments
-  gh pr view <N> --repo <owner/repo> --json latestReviews,reviews,comments,reviewDecision,mergeStateStatus
-  gh api repos/<owner>/<repo>/pulls/<N>/comments
+   ```bash
+   gh pr view <N> --repo <owner/repo> --comments
+   gh pr view <N> --repo <owner/repo> --json latestReviews,reviews,comments,reviewDecision,mergeStateStatus
+   gh api repos/<owner>/<repo>/pulls/<N>/comments
   gh api repos/<owner>/<repo>/pulls/<N>/reviews
   ```
   Merge all sources before classifying feedback.

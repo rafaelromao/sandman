@@ -105,7 +105,9 @@ func (r *retryRenderer) Render(cfg prompt.RenderConfig, data prompt.IssueData) (
 type fakeGitHubClient struct {
 	issues       map[int]*github.Issue
 	fetchRelease map[int]<-chan struct{}
+	prs          map[string]*github.PR
 	err          error
+	findPRErr    error
 }
 
 func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
@@ -130,6 +132,19 @@ func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
 
 func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	return nil, nil
+}
+
+func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
+	if f.findPRErr != nil {
+		return nil, f.findPRErr
+	}
+	if f.prs == nil {
+		return nil, nil
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.prs[branch], nil
 }
 
 type fakeRunnable struct {
@@ -197,6 +212,7 @@ type retrySandbox struct {
 	startCalled      bool
 	writePromptCount int
 	execCount        int
+	execCommand      string
 	execErrors       []error
 	workDir          string
 }
@@ -208,6 +224,7 @@ func (s *retrySandbox) Start() error {
 
 func (s *retrySandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	s.execCount++
+	s.execCommand = command
 	if s.execCount <= len(s.execErrors) {
 		if err := s.execErrors[s.execCount-1]; err != nil {
 			return err
@@ -464,6 +481,95 @@ func TestResolveRetries(t *testing.T) {
 	}
 }
 
+func TestParseLogForCompletion_UsesLastTodosSection(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "42.log")
+	content := "--- run 1/3 ---\n# Todos\n- [✓] done\n\n# Notes\nignored\n\n--- retry 2/3 ---\n# Todos\n- [ ] still open\n"
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	if parseLogForCompletion(logPath) {
+		t.Fatal("expected incomplete last Todos section to return false")
+	}
+}
+
+func TestParseLogForCompletion_ReturnsTrueForCheckedTodos(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "42.log")
+	content := "--- run 1/3 ---\npreamble\n# Todos\n- [✓] done\n- [✓] done too\n"
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	if !parseLogForCompletion(logPath) {
+		t.Fatal("expected checked Todos section to return true")
+	}
+}
+
+func TestParseLogForCompletion_ReturnsFalseWithoutTodos(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "42.log")
+	if err := os.WriteFile(logPath, []byte("no todos here\n"), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	if parseLogForCompletion(logPath) {
+		t.Fatal("expected missing Todos section to return false")
+	}
+}
+
+func TestParseLogForCompletion_IgnoresEarlierRunSections(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "42.log")
+	content := "--- run 1/3 ---\n# Todos\n- [✓] old done\n--- retry 2/3 ---\n# Todos\n- [ ] current open\n"
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	if parseLogForCompletion(logPath) {
+		t.Fatal("expected current run section to control completion")
+	}
+}
+
+func TestParseLogForCompletion_AcceptsGFMCheckboxSyntax(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "42.log")
+	content := "--- run 1/3 ---\n# Todos\n- [x] done\n- [X] done too\n"
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	if !parseLogForCompletion(logPath) {
+		t.Fatal("expected GFM checkbox syntax to return true")
+	}
+}
+
+func TestCheckPRMergedAtHead(t *testing.T) {
+	client := &fakeGitHubClient{prs: map[string]*github.PR{
+		"open":     {Number: 1, State: "open", Merged: false, HeadRefName: "open", HeadRefOid: "open-sha"},
+		"merged":   {Number: 2, State: "closed", Merged: true, HeadRefName: "merged", HeadRefOid: "merged-sha"},
+		"closed":   {Number: 3, State: "closed", Merged: false, HeadRefName: "closed", HeadRefOid: "closed-sha"},
+		"explicit": {Number: 4, State: "merged", Merged: false, HeadRefName: "explicit", HeadRefOid: "explicit-sha"},
+	}}
+
+	if merged, err := checkPRMergedAtHead(client, "open", "open-sha"); err != nil || merged {
+		t.Fatalf("expected open PR to be false, got merged=%v err=%v", merged, err)
+	}
+	if merged, err := checkPRMergedAtHead(client, "merged", "merged-sha"); err != nil || !merged {
+		t.Fatalf("expected merged PR to be true, got merged=%v err=%v", merged, err)
+	}
+	if merged, err := checkPRMergedAtHead(client, "merged", "stale-sha"); err != nil || merged {
+		t.Fatalf("expected stale merged PR to be false, got merged=%v err=%v", merged, err)
+	}
+	if merged, err := checkPRMergedAtHead(client, "closed", "closed-sha"); err != nil || merged {
+		t.Fatalf("expected closed-unmerged PR to be false, got merged=%v err=%v", merged, err)
+	}
+	if merged, err := checkPRMergedAtHead(client, "explicit", "explicit-sha"); err != nil || !merged {
+		t.Fatalf("expected merged state to be true, got merged=%v err=%v", merged, err)
+	}
+}
+
 func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
@@ -480,8 +586,11 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 		execErrors: []error{errors.New("exit 1"), errors.New("exit 1"), nil},
 	}
 	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}},
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 17, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "stale-sha"}}},
 		renderer:     renderer,
 		errorLog:     io.Discard,
 		sandboxFactory: &retrySandboxFactory{
@@ -497,7 +606,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, nil, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 3)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 3)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -527,8 +636,344 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if !strings.Contains(string(data), "--- retry 1/3 ---") {
+	if !strings.Contains(string(data), "--- retry 2/4 ---") {
 		t.Fatalf("expected retry marker in log, got:\n%s", data)
+	}
+}
+
+func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree"), execErrors: []error{errors.New("exit 1")}}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 17, State: "closed", Merged: false, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"}}},
+		renderer:     renderer,
+		errorLog:     io.Discard,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+	var resetCalls int
+	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls++
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if resetCalls != 1 {
+		t.Fatalf("reset calls = %d, want 1", resetCalls)
+	}
+}
+
+func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree"), execErrors: []error{errors.New("exit 1")}}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, findPRErr: errors.New("lookup failed")},
+		renderer:     renderer,
+		errorLog:     io.Discard,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+	var resetCalls int
+	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls++
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, _ := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure on lookup error", result.Status)
+	}
+	if resetCalls != 0 {
+		t.Fatalf("reset calls = %d, want 0 (branch should be preserved on lookup error)", resetCalls)
+	}
+}
+
+func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	contextPath := filepath.Join(worktreePath, ".sandman", "continuation-context.md")
+	if err := os.WriteFile(contextPath, []byte("## Completed\nKeep going.\n"), 0644); err != nil {
+		t.Fatalf("write context: %v", err)
+	}
+
+	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}},
+		renderer:     renderer,
+		errorLog:     io.Discard,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+	var resetCalls int
+	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls++
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, "", func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if renderer.renderCalls != 1 {
+		t.Fatalf("render calls = %d, want 1", renderer.renderCalls)
+	}
+	if resetCalls != 0 {
+		t.Fatalf("reset calls = %d, want 0", resetCalls)
+	}
+	if rtSandbox.execCommand != "opencode run .sandman/continue-prompt.md" {
+		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
+	}
+	continuePromptPath := filepath.Join(worktreePath, ".sandman", "continue-prompt.md")
+	data, err := os.ReadFile(continuePromptPath)
+	if err != nil {
+		t.Fatalf("read continue prompt: %v", err)
+	}
+	wantPrompt := "## Prior Context\n\n## Completed\nKeep going.\n\n## New Instruction\n\nContinue the work. Resume from the prior context and finish the remaining implementation steps.\n\n## Update Continuation Context\n\nBefore exiting, overwrite `.sandman/continuation-context.md` with an updated summary using this template:\n\n```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n"
+	if string(data) != wantPrompt {
+		t.Fatalf("unexpected continue prompt content: %q", string(data))
+	}
+}
+
+func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "issue-386/smart-completion-detection-phase-aware-retry"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha"}},
+		},
+		renderer: renderer,
+		errorLog: io.Discard,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+	var resetCalls int
+	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls++
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, "", func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if renderer.renderCalls != 1 {
+		t.Fatalf("render calls = %d, want 1", renderer.renderCalls)
+	}
+	if resetCalls != 0 {
+		t.Fatalf("reset calls = %d, want 0", resetCalls)
+	}
+	if rtSandbox.execCommand != "opencode run .sandman/continue-prompt.md" {
+		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
+	}
+	continuePromptPath := filepath.Join(worktreePath, ".sandman", "continue-prompt.md")
+	data, err := os.ReadFile(continuePromptPath)
+	if err != nil {
+		t.Fatalf("read continue prompt: %v", err)
+	}
+	if string(data) != "Continue with sandman-pr-review until the PR is merged" {
+		t.Fatalf("unexpected continue prompt content: %q", string(data))
+	}
+}
+
+func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "issue-386/smart-completion-detection-phase-aware-retry"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "closed", Merged: false, HeadRefName: branch}},
+		},
+		renderer: renderer,
+		errorLog: io.Discard,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+	var resetCalls int
+	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls++
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, "", func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if resetCalls != 1 {
+		t.Fatalf("reset calls = %d, want 1", resetCalls)
+	}
+	if rtSandbox.execCommand == "opencode run .sandman/continue-prompt.md" {
+		t.Fatal("expected closed PR to skip review continuation")
+	}
+}
+
+func TestRunSingle_LogsRetryCounters(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
+	log := &spyEventLog{}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}},
+		renderer:     &retryRenderer{result: "rendered prompt"},
+		errorLog:     io.Discard,
+		eventLog:     log,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.RetriesTotal != 2 {
+		t.Fatalf("RetriesTotal = %d, want 2", result.RetriesTotal)
+	}
+	if len(log.events) == 0 {
+		t.Fatal("expected events")
+	}
+	finished := log.events[len(log.events)-1]
+	if got := finished.Payload["retries_total"]; got != 1 {
+		t.Fatalf("retries_total = %#v, want 1", got)
+	}
+	if got := finished.Payload["retries_done"]; got != 1 {
+		t.Fatalf("retries_done = %#v, want 1", got)
 	}
 }
 

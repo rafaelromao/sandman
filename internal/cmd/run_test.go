@@ -85,6 +85,10 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	return f.searchIssuesResult, f.searchIssuesError
 }
 
+func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
+	return nil, nil
+}
+
 func newRunDeps(runner batch.Runner) Dependencies {
 	return Dependencies{
 		BatchRunner:  runner,

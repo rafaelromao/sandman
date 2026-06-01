@@ -134,6 +134,10 @@ func (c *fetchIssueErrorClient) SearchIssues(query string) ([]github.Issue, erro
 	return nil, nil
 }
 
+func (c *fetchIssueErrorClient) FindPRByBranch(branch string) (*github.PR, error) {
+	return nil, nil
+}
+
 func TestDependencyResolverResolve_IgnoresClosedBlockers(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
