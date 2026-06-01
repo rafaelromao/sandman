@@ -1,7 +1,8 @@
 (function (global) {
-  const STORAGE_KEY = 'sandman.portal.view-state.v1';
+  const DEFAULT_STORAGE_KEY = 'sandman.portal.view-state.v1';
   const DEFAULT_TAB = 'log';
   const VALID_TABS = new Set(['log', 'events', 'details']);
+  let storageKey = DEFAULT_STORAGE_KEY;
 
   function defaultState() {
     return { expandedRunKey: null, tabs: {} };
@@ -9,7 +10,7 @@
 
   function readStorage() {
     try {
-      return global.localStorage ? global.localStorage.getItem(STORAGE_KEY) : null;
+      return global.localStorage ? global.localStorage.getItem(storageKey) : null;
     } catch (err) {
       return null;
     }
@@ -17,7 +18,7 @@
 
   function writeStorage(value) {
     try {
-      if (global.localStorage) global.localStorage.setItem(STORAGE_KEY, value);
+      if (global.localStorage) global.localStorage.setItem(storageKey, value);
     } catch (err) {
     }
   }
@@ -62,7 +63,18 @@
   }
 
   function normalize(state, runs) {
-    return { state: sanitizeState(state), changed: false };
+    const current = sanitizeState(state);
+    const runKeys = new Set(Array.isArray(runs) ? runs.map((run) => cleanKey(run && run.key)).filter(Boolean) : []);
+    let changed = false;
+
+    for (const runKey of runKeys) {
+      if (!VALID_TABS.has(current.tabs[runKey])) {
+        current.tabs[runKey] = DEFAULT_TAB;
+        changed = true;
+      }
+    }
+
+    return { state: current, changed };
   }
 
   function getSelectedTab(state, runKey) {
@@ -72,8 +84,14 @@
   }
 
   global.SandmanPortalState = {
-    storageKey: STORAGE_KEY,
+    storageKey: storageKey,
     defaultTab: DEFAULT_TAB,
+    configure(options) {
+      if (options && options.storageKey) {
+        storageKey = String(options.storageKey);
+        this.storageKey = storageKey;
+      }
+    },
     load,
     save,
     normalize,

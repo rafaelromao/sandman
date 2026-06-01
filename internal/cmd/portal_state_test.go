@@ -52,11 +52,12 @@ storage.set(api.storageKey, JSON.stringify({
   tabs: { gone: 'events', keep: 'bogus' },
 }));
 const loaded = api.load();
-api.save(loaded);
+const normalized = api.normalize(loaded, [{ key: 'keep' }]);
+api.save(normalized);
 const persisted = JSON.parse(storage.get(api.storageKey));
 if (persisted.expandedRunKey !== 'gone') throw new Error('expected expanded run to survive round trip, got ' + JSON.stringify(persisted));
 if (persisted.tabs.gone !== 'events') throw new Error('expected saved run tab to survive round trip, got ' + JSON.stringify(persisted));
-if (persisted.tabs.keep !== 'bogus') throw new Error('expected saved tab memory to survive round trip, got ' + JSON.stringify(persisted));
+if (persisted.tabs.keep !== 'log') throw new Error('expected visible run tab to normalize to log, got ' + JSON.stringify(persisted));
 if (api.getSelectedTab(persisted, 'keep') !== 'log') throw new Error('expected invalid tab to fall back to log, got ' + JSON.stringify(persisted));
 `
 	cmd := exec.Command("node", "-e", script, portalStatePath)

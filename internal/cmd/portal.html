@@ -1454,6 +1454,9 @@
     const lastUpdated = document.getElementById('last-updated');
     const launchDefaults = {{.LaunchDataJSON}};
     const portalState = window.SandmanPortalState;
+    if (portalState && portalState.configure) {
+      portalState.configure({ storageKey: "{{.PortalStateStorageKey}}" });
+    }
     const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {} };
     const commandState = {
       run: {
@@ -1593,6 +1596,18 @@
         expandedRunKey: state.expandedRunKey,
         tabs: state.tabs,
       });
+    }
+
+    function normalizePortalViewState() {
+      if (!portalState) return;
+      const normalized = portalState.normalize({
+        expandedRunKey: state.expandedRunKey,
+        tabs: state.tabs,
+      }, state.runs);
+      if (!normalized.changed) return;
+      state.expandedRunKey = normalized.state.expandedRunKey;
+      state.tabs = normalized.state.tabs;
+      persistPortalViewState();
     }
 
     function escapeHTML(value) {
@@ -2424,6 +2439,7 @@
         state.loading = false;
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';
+        normalizePortalViewState();
         updateLastUpdated();
         render();
       } catch (err) {
