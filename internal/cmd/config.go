@@ -14,6 +14,7 @@ func NewConfigCmd(store config.Store) *cobra.Command {
 		Short: "Manage Sandman configuration",
 	}
 	cmd.AddCommand(NewConfigGetCmd(store))
+	cmd.AddCommand(NewConfigListCmd(store))
 	cmd.AddCommand(NewConfigSetCmd(store))
 	return cmd
 }
@@ -36,6 +37,30 @@ func NewConfigGetCmd(store config.Store) *cobra.Command {
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), value)
+			return nil
+		},
+	}
+}
+
+// NewConfigListCmd creates the config list subcommand.
+func NewConfigListCmd(store config.Store) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List supported config keys and values",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := store.Load()
+			if err != nil {
+				return err
+			}
+
+			for _, key := range config.SupportedKeys() {
+				value, err := cfg.GetValue(key)
+				if err != nil {
+					return fmt.Errorf("get %s: %w", key, err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", key, value)
+			}
+
 			return nil
 		},
 	}
