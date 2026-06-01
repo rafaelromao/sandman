@@ -26,7 +26,7 @@ const storage = new Map();
 const sandbox = {
   window: {},
   globalThis: {},
-  localStorage: {
+  sessionStorage: {
     getItem(key) {
       return storage.has(key) ? storage.get(key) : null;
     },

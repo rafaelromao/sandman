@@ -10,7 +10,7 @@
 
   function readStorage() {
     try {
-      return global.localStorage ? global.localStorage.getItem(storageKey) : null;
+      return global.sessionStorage ? global.sessionStorage.getItem(storageKey) : null;
     } catch (err) {
       return null;
     }
@@ -18,7 +18,7 @@
 
   function writeStorage(value) {
     try {
-      if (global.localStorage) global.localStorage.setItem(storageKey, value);
+      if (global.sessionStorage) global.sessionStorage.setItem(storageKey, value);
     } catch (err) {
     }
   }
@@ -77,6 +77,11 @@
 
     if (current.expandedRunKey && !runKeys.has(current.expandedRunKey) && runList.length > 0) {
       current.expandedRunKey = runList[0];
+      changed = true;
+    }
+
+    if (current.expandedRunKey && !runKeys.has(current.expandedRunKey) && runList.length === 0) {
+      current.expandedRunKey = null;
       changed = true;
     }
 
