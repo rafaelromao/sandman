@@ -9,9 +9,10 @@ import (
 	"sync"
 )
 
-var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)\s+#(\d+)\b`)
+var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)[:\s]+#(\d+)\b`)
 var blockedByHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:blocked by|depends on|blocked-by)\s*$`)
 var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*-\s*#(\d+)`)
+var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
 
 // execRunner abstracts os/exec for testability.
 type execRunner interface {
@@ -231,7 +232,7 @@ func parseBlockedByHeading(body string) []int {
 	}
 
 	afterHeading := body[headingIdx[1]:]
-	nextHeadingIdx := regexp.MustCompile(`(?m)^\s*##\s`).FindStringIndex(afterHeading)
+	nextHeadingIdx := nextHeadingPattern.FindStringIndex(afterHeading)
 
 	var section string
 	if nextHeadingIdx != nil {

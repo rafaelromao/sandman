@@ -389,6 +389,26 @@ func TestParseBlockedBy(t *testing.T) {
 			want: []int{7, 60, 12},
 		},
 		{
+			name: "colon variant matches blocked-by with colon",
+			body: "blocked-by: #123",
+			want: []int{123},
+		},
+		{
+			name: "inline code variant",
+			body: "`blocked by #456`",
+			want: []int{456},
+		},
+		{
+			name: "bold variant",
+			body: "**blocked by #789**",
+			want: []int{789},
+		},
+		{
+			name: "italic variant",
+			body: "*blocked by #111*",
+			want: []int{111},
+		},
+		{
 			name: "deduplicates repeated issue references",
 			body: "Blocked by #60\nblocked by #60",
 			want: []int{60},
