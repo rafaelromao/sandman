@@ -60,7 +60,7 @@ if (persisted.tabs.gone !== 'events') throw new Error('expected saved run tab to
 if (persisted.tabs.keep !== 'log') throw new Error('expected visible run tab to normalize to log, got ' + JSON.stringify(persisted));
 if (api.getSelectedTab(persisted, 'keep') !== 'log') throw new Error('expected invalid tab to fall back to log, got ' + JSON.stringify(persisted));
 `
-  cmd := exec.Command("node", "-e", script, portalStatePath)
+	cmd := exec.Command("node", "-e", script, portalStatePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("portal state helper failed: %v\n%s", err, out)
 	}
