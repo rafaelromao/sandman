@@ -19,24 +19,18 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
 
 ### Iteration loop (max 10 passes)
 
-1. **Checkout the PR**
-
+1. **Wait for CI**
    ```bash
    gh pr checks <N> --repo <owner/repo>
    ```
+   Poll until status is `pass`. If `fail`:
+   - Read the failed job logs to identify the root cause.
+   - Fix the error in the codebase.
+   - Run local tests/formatting to verify the fix.
+   - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
+   - **Repeat Step 1** (wait for CI again).
 
-2. **Wait for CI**
-
-     Poll until status is `pass`. If `fail`:
-
-     - If there are merge conflicts, solve them using /sandman-merge. 
-     - Read the failed job logs to identify the root cause.
-     - Fix the error in the codebase.
-     - Run local tests/formatting to verify the fix.
-     - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
-     - **Repeat Step 1** (wait for CI again).
-
-3. **Delegate review to the PR Review Agent**
+2. **Delegate review to the PR Review Agent**
 
    Request a review with this exact command. Do not change the body of the request.
 
@@ -45,19 +39,19 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
    ```
    **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
-4. **Wait for review** (timeout: 10 minutes)
-     Poll every 30–60s using all three commands:
+3. **Wait for review** (timeout: 10 minutes)
+  Poll every 30–60s using all three commands:
   ```bash
   gh pr view <N> --repo <owner/repo> --comments
   gh pr view <N> --repo <owner/repo> --json latestReviews,reviews,comments,reviewDecision,mergeStateStatus
   gh api repos/<owner>/<repo>/pulls/<N>/comments
   gh api repos/<owner>/<repo>/pulls/<N>/reviews
   ```
-  	Merge all sources before classifying feedback.
-  	Read every new PR Review Agent comment from all sources, including inline file comments.
-  	Do not overlook comments attached to a file diff instead of the top-level conversation.
-  	Treat any requested change in an inline file comment as actionable feedback.
-  	If no response arrives within 10 minutes, stop and report to the user.
+  Merge all sources before classifying feedback.
+  Read every new PR Review Agent comment from all sources, including inline file comments.
+  Do not overlook comments attached to a file diff instead of the top-level conversation.
+  Treat any requested change in an inline file comment as actionable feedback.
+  If no response arrives within 10 minutes, stop and report to the user.
 
 4. **Read and classify feedback**
    - **Approve** → done, report to user
