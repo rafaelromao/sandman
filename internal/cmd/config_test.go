@@ -188,6 +188,7 @@ git:
 		"review_command: /review please",
 		"default_parallel: 3",
 		"start_delay: 5",
+		"retries: 0",
 		"container_capacity: 7",
 		"max_containers: 2",
 		"worktree_dir: /tmp/wt",
