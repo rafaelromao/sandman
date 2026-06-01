@@ -62,7 +62,7 @@
       const sticky = state ? state.sticky : isSticky(key);
       const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
       if (sticky) {
-        el.scrollTop = el.scrollHeight;
+        el.scrollTop = maxScroll;
         continue;
       }
       const next = state ? (Number.isFinite(state.scrollTop) ? state.scrollTop : 0) : 0;
