@@ -95,4 +95,4 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 - **Project Prompt Template**: `.sandman/prompt.md`, created from the Default Prompt during `sandman init` and materialized on run when missing.
 - **Sandman Skill**: the shared skill folder installed into `~/.agents/skills/sandman/` by `sandman init`.
 - **Prompt**: `.sandman/rendered-prompt.md`, the rendered instruction file handed to the agent.
-- **Continue replay**: `sandman continue` reuses stored branch, base branch, agent, model, and review command from the prior run. It ignores current base-branch config changes, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
+- **Continue replay**: `sandman continue` reuses stored branch, base branch, agent, and review command from the prior run. It ignores current base-branch config changes, resolves the model from `--model` or `default_model`, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
