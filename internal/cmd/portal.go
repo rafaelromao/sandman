@@ -31,6 +31,7 @@ const (
 	portalPollInterval = 2 * time.Second
 	portalReadLimit    = 64 * 1024
 	portalReadTimeout  = 250 * time.Millisecond
+	portalStopTimeout  = 10 * time.Second
 )
 
 var portalANSISequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -404,31 +405,35 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			return
 		}
 		data := struct {
-			RepoRoot            string
-			PollInterval        int
-			CommandsPath        string
-			RunsPath            string
-			InstancesPath       string
-			RefreshPath         string
-			PortalTitle         string
-			PortalSubtitle      string
-			LaunchData          portalLaunchFormData
-			LaunchDataJSON      template.JS
-			ThemeOptionsHTML    template.HTML
-			SupportedThemesJSON template.JS
+			RepoRoot              string
+			PollInterval          int
+			CommandsPath          string
+			RunsPath              string
+			InstancesPath         string
+			RefreshPath           string
+			PortalTitle           string
+			PortalSubtitle        string
+			PortalStateStorageKey string
+			LaunchData            portalLaunchFormData
+			LaunchDataJSON        template.JS
+			ThemeOptionsHTML      template.HTML
+			SupportedThemesJSON   template.JS
+			PortalStateJS         template.JS
 		}{
-			RepoRoot:            repoRoot,
-			PollInterval:        int(portalPollInterval / time.Millisecond),
-			CommandsPath:        "/api/commands",
-			RunsPath:            "/api/runs",
-			InstancesPath:       "/api/instances",
-			RefreshPath:         "/api/runs",
-			PortalTitle:         "Sandman Portal",
-			PortalSubtitle:      "A control room for your Sandman runs.",
-			LaunchData:          launchData,
-			LaunchDataJSON:      template.JS(launchDataJSON),
-			ThemeOptionsHTML:    portalThemeOptionsHTML,
-			SupportedThemesJSON: portalSupportedThemesJSON,
+			RepoRoot:              repoRoot,
+			PollInterval:          int(portalPollInterval / time.Millisecond),
+			CommandsPath:          "/api/commands",
+			RunsPath:              "/api/runs",
+			InstancesPath:         "/api/instances",
+			RefreshPath:           "/api/runs",
+			PortalTitle:           "Sandman Portal",
+			PortalSubtitle:        "A control room for your Sandman runs.",
+			PortalStateStorageKey: fmt.Sprintf("sandman.portal.view-state.v1:%s", repoRoot),
+			LaunchData:            launchData,
+			LaunchDataJSON:        template.JS(launchDataJSON),
+			ThemeOptionsHTML:      portalThemeOptionsHTML,
+			SupportedThemesJSON:   portalSupportedThemesJSON,
+			PortalStateJS:         portalStateJS,
 		}
 		if err := portalPageTemplate.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -467,7 +472,7 @@ func stopPortalRun(ctx context.Context, repoRoot, runKey string) error {
 		return fmt.Errorf("signal active run process: %w", err)
 	}
 
-	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	waitCtx, cancel := context.WithTimeout(ctx, portalStopTimeout)
 	defer cancel()
 	if err := waitForPortalRunToStop(waitCtx, repoRoot, runKey); err != nil {
 		return fmt.Errorf("wait for active run to stop: %w", err)
@@ -524,40 +529,6 @@ func waitForPortalRunToStop(ctx context.Context, repoRoot, runKey string) error 
 			}
 		}
 	}
-}
-
-func resolvePortalPeerPID(sockPath string) (int, error) {
-	conn, err := net.DialTimeout("unix", sockPath, time.Second)
-	if err != nil {
-		return 0, err
-	}
-	defer conn.Close()
-
-	unixConn, ok := conn.(*net.UnixConn)
-	if !ok {
-		return 0, fmt.Errorf("connect to run socket: unexpected connection type")
-	}
-	raw, err := unixConn.SyscallConn()
-	if err != nil {
-		return 0, err
-	}
-
-	var (
-		cred    *syscall.Ucred
-		ctrlErr error
-	)
-	if err := raw.Control(func(fd uintptr) {
-		cred, ctrlErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-	}); err != nil {
-		return 0, err
-	}
-	if ctrlErr != nil {
-		return 0, ctrlErr
-	}
-	if cred == nil || cred.Pid == 0 {
-		return 0, fmt.Errorf("resolve run process id: empty peer credentials")
-	}
-	return int(cred.Pid), nil
 }
 
 func signalPortalProcess(pid int, sig syscall.Signal) error {

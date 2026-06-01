@@ -139,7 +139,7 @@ A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the 
 _Avoid_: dashboard, monitor, control panel.
 
 **Continue**:
-Re-run the latest AgentRun for an issue with a new raw prompt while reusing the prior branch, base branch, agent, model, and review command. Continuation keeps branch checkout unchanged and uses the stored base branch for prompt rendering and event metadata only. Invoked via `sandman continue`.
+Re-run the latest AgentRun for an issue with a new raw prompt while reusing the prior branch, base branch, agent, and review command. Continuation keeps branch checkout unchanged, resolves the model from `--model` or `default_model`, and uses the stored base branch for prompt rendering and event metadata only. Invoked via `sandman continue`.
 _Avoid_: Retry.
 
 **Continuation**:

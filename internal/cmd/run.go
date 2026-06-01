@@ -125,7 +125,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if agentName == "" {
 				agentName = strings.TrimSpace(cfg.Agent)
 			}
-			if _, err := cfg.ResolveAgentProvider(agentName); err != nil {
+			agentCfg, err := cfg.ResolveAgentProvider(agentName)
+			if err != nil {
 				return err
 			}
 
@@ -312,7 +313,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				Dependencies:         resolvedBatch.Deps,
 				Blocked:              resolvedBatch.Blocked,
 				Agent:                agentName,
-				Model:                strings.TrimSpace(modelFlag),
+				Model:                resolveModel(modelFlag, cfg.DefaultModel, agentCfg.Preset),
 				BaseBranch:           baseBranch,
 				Parallel:             parallel,
 				StartDelay:           time.Duration(startDelay) * time.Second,

@@ -93,16 +93,12 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 			if agentName == "" {
 				agentName = strings.TrimSpace(cfg.Agent)
 			}
-			if _, err := cfg.ResolveAgentProvider(agentName); err != nil {
+			agentCfg, err := cfg.ResolveAgentProvider(agentName)
+			if err != nil {
 				return err
 			}
 
-			model := strings.TrimSpace(cmdFlag(cmd, "model"))
-			if model == "" {
-				if storedModel, ok := payloadString(lastRun.Payload, "model"); ok {
-					model = strings.TrimSpace(storedModel)
-				}
-			}
+			model := resolveModel(cmdFlag(cmd, "model"), cfg.DefaultModel, agentCfg.Preset)
 
 			continuePrompt := promptText
 			contextPath := filepath.Join(worktreePath, ".sandman", "continuation-context.md")

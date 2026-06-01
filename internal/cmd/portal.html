@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.PortalTitle}}</title>
-    <script>
-      (function () {
+  <script>
+    (function () {
       const themes = new Set({{.SupportedThemesJSON}});
       const aliases = new Map([
         ['latte', 'catppuccin-latte'],
@@ -32,6 +32,7 @@
       document.documentElement.dataset.theme = theme;
     })();
   </script>
+  <script>{{.PortalStateJS}}</script>
   <style>
     :root {
       color-scheme: dark;
@@ -1450,6 +1451,11 @@
     const summaryPill = document.getElementById('summary-pill');
     const lastUpdated = document.getElementById('last-updated');
     const launchDefaults = {{.LaunchDataJSON}};
+    const portalState = window.SandmanPortalState;
+    if (portalState && portalState.configure) {
+      portalState.configure({ storageKey: "{{.PortalStateStorageKey}}" });
+    }
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {} };
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -1575,12 +1581,33 @@
       runs: [],
       commands: [],
       commandExpandedId: null,
-      expandedRunKey: null,
-      tabs: new Map(),
+      expandedRunKey: persistedPortalState.expandedRunKey || null,
+      tabs: persistedPortalState.tabs || {},
       selectedStatus: 'all',
       activeOnly: false,
       loading: true,
     };
+
+    function persistPortalViewState() {
+      if (!portalState) return;
+      portalState.save({
+        expandedRunKey: state.expandedRunKey,
+        tabs: state.tabs,
+      });
+    }
+
+    function normalizePortalViewState() {
+      if (!portalState) return;
+      const visibleRuns = state.runs.filter(shouldShowRun);
+      const normalized = portalState.normalize({
+        expandedRunKey: state.expandedRunKey,
+        tabs: state.tabs,
+      }, visibleRuns);
+      if (!normalized.changed) return;
+      state.expandedRunKey = normalized.state.expandedRunKey;
+      state.tabs = normalized.state.tabs;
+      persistPortalViewState();
+    }
 
     function escapeHTML(value) {
       return String(value)
@@ -2258,12 +2285,13 @@
       return parts.length ? parts.join(' · ') : 'Run';
     }
 
-    function renderRunRow(run) {
+    function renderRunRow(run, stopGroups) {
       const isOpen = state.expandedRunKey === run.key;
-      const tabName = state.tabs.get(run.key) || 'log';
+      const tabName = portalState ? portalState.getSelectedTab(state, run.key) : 'log';
       const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       const events = Array.isArray(run.events) ? run.events : [];
-      const canStop = run.kind === 'active';
+      const canStop = run.kind === 'active' && run.socketPath && !stopGroups.has(run.socketPath);
+      if (canStop) stopGroups.add(run.socketPath);
 
       return [
         '<tr class="run-row ' + escapeHTML(run.kind || '') + '" data-action="toggle-run" data-run-key="' + escapeHTML(run.key) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
@@ -2278,7 +2306,7 @@
         '  <td class="mono">' + escapeHTML(formatDuration(run.duration)) + '</td>',
         '  <td class="mono">' + escapeHTML(formatBranch(run)) + '</td>',
         '  <td class="mono">' + escapeHTML(formatSource(run)) + '</td>',
-        '  <td class="run-actions">' + (canStop ? '<button type="button" class="action-btn danger" data-action="stop-run" data-run-key="' + escapeHTML(run.key) + '">Stop</button>' : '') + '</td>',
+        '  <td class="run-actions">' + (canStop ? '<button type="button" class="action-btn danger" data-action="stop-run" data-run-key="' + escapeHTML(run.key) + '">Stop batch</button>' : '') + '</td>',
         '</tr>',
         isOpen ? (
           '<tr class="detail-row" data-detail-for="' + escapeHTML(run.key) + '">'
@@ -2408,6 +2436,7 @@
 
     function render() {
       syncStatusOptions(state.runs);
+      normalizePortalViewState();
       const filtered = state.runs.filter(shouldShowRun);
       summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong> runs visible';
       if (!state.runs.length) {
@@ -2418,7 +2447,8 @@
         runsBody.innerHTML = renderEmpty('No runs match the current filters.');
         return;
       }
-      runsBody.innerHTML = filtered.map(renderRunRow).join('');
+      const stopGroups = new Set();
+      runsBody.innerHTML = filtered.map((run) => renderRunRow(run, stopGroups)).join('');
     }
 
     function updateLastUpdated() {
@@ -2450,6 +2480,7 @@
       } else {
         state.expandedRunKey = runKey;
       }
+      persistPortalViewState();
       render();
       const row = Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey);
       if (row) row.focus({ preventScroll: true });
@@ -2552,9 +2583,10 @@
           return;
         }
         if (action === 'set-tab') {
-          const tab = button.getAttribute('data-tab') || 'output';
-          state.tabs.set(runKey, tab);
+          const tab = button.getAttribute('data-tab') || 'log';
+          state.tabs[runKey] = tab;
           state.expandedRunKey = runKey;
+          persistPortalViewState();
           render();
         }
         return;

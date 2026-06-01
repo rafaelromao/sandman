@@ -108,7 +108,7 @@ Continue the last agent run for a given issue with a fresh prompt plus prior con
 sandman continue <issue-number> <prompt-text>
 ```
 
-Reuses the previously created branch and recorded agent, model, and review command from the prior run, though `--agent` and `--model` flags can override. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. Then it prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
+Reuses the previously created branch and recorded agent and review command from the prior run, though `--agent` can override and `--model` falls back to `default_model` from config when omitted. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. Then it prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
 
 ## `sandman clean`
 

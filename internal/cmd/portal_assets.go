@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-//go:embed portal.html portal_themes.json
+//go:embed portal.html portal_themes.json portal_state.js
 var portalAssets embed.FS
 
 type portalThemeDef struct {
@@ -22,6 +22,7 @@ var (
 	portalThemeDefs           []portalThemeDef
 	portalThemeOptionsHTML    template.HTML
 	portalSupportedThemesJSON template.JS
+	portalStateJS             template.JS
 	portalPageTemplate        = template.Must(template.New("portal.html").ParseFS(portalAssets, "portal.html"))
 )
 
@@ -50,4 +51,10 @@ func init() {
 		panic(fmt.Sprintf("marshal portal themes: %v", err))
 	}
 	portalSupportedThemesJSON = template.JS(b)
+
+	stateJS, err := portalAssets.ReadFile("portal_state.js")
+	if err != nil {
+		panic(fmt.Sprintf("read portal state helper: %v", err))
+	}
+	portalStateJS = template.JS(stateJS)
 }
