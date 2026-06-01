@@ -367,31 +367,35 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			return
 		}
 		data := struct {
-			RepoRoot            string
-			PollInterval        int
-			CommandsPath        string
-			RunsPath            string
-			InstancesPath       string
-			RefreshPath         string
-			PortalTitle         string
-			PortalSubtitle      string
-			LaunchData          portalLaunchFormData
-			LaunchDataJSON      template.JS
-			ThemeOptionsHTML    template.HTML
-			SupportedThemesJSON template.JS
+			RepoRoot              string
+			PollInterval          int
+			CommandsPath          string
+			RunsPath              string
+			InstancesPath         string
+			RefreshPath           string
+			PortalTitle           string
+			PortalSubtitle        string
+			PortalStateStorageKey string
+			LaunchData            portalLaunchFormData
+			LaunchDataJSON        template.JS
+			ThemeOptionsHTML      template.HTML
+			SupportedThemesJSON   template.JS
+			PortalStateJS         template.JS
 		}{
-			RepoRoot:            repoRoot,
-			PollInterval:        int(portalPollInterval / time.Millisecond),
-			CommandsPath:        "/api/commands",
-			RunsPath:            "/api/runs",
-			InstancesPath:       "/api/instances",
-			RefreshPath:         "/api/runs",
-			PortalTitle:         "Sandman Portal",
-			PortalSubtitle:      "A control room for your Sandman runs.",
-			LaunchData:          launchData,
-			LaunchDataJSON:      template.JS(launchDataJSON),
-			ThemeOptionsHTML:    portalThemeOptionsHTML,
-			SupportedThemesJSON: portalSupportedThemesJSON,
+			RepoRoot:              repoRoot,
+			PollInterval:          int(portalPollInterval / time.Millisecond),
+			CommandsPath:          "/api/commands",
+			RunsPath:              "/api/runs",
+			InstancesPath:         "/api/instances",
+			RefreshPath:           "/api/runs",
+			PortalTitle:           "Sandman Portal",
+			PortalSubtitle:        "A control room for your Sandman runs.",
+			PortalStateStorageKey: fmt.Sprintf("sandman.portal.view-state.v1:%s", repoRoot),
+			LaunchData:            launchData,
+			LaunchDataJSON:        template.JS(launchDataJSON),
+			ThemeOptionsHTML:      portalThemeOptionsHTML,
+			SupportedThemesJSON:   portalSupportedThemesJSON,
+			PortalStateJS:         portalStateJS,
 		}
 		if err := portalPageTemplate.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

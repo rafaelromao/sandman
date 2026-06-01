@@ -1130,7 +1130,7 @@ func TestRunBatch_EndToEnd(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		t.Fatalf("create .sandman: %v", err)
 	}
-	configData := `agent: test-agent
+	configData := `default_agent: test-agent
 worktree_dir: .sandman/worktrees
 sandbox: worktree
 agents:
@@ -1176,10 +1176,13 @@ agents:
 		t.Fatalf("read prompt: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, "Work in the current Sandman-created worktree on `sandman/42-fix-login-bug`.") {
-		t.Errorf("prompt missing expected worktree contract, got:\n%s", got)
+	if !strings.Contains(got, "You are running inside a Sandman-created worktree.") {
+		t.Errorf("prompt missing worktree context, got:\n%s", got)
 	}
-	if !strings.Contains(got, "Review command: `/oc review`.") {
+	if !strings.Contains(got, "Current branch: `sandman/42-fix-login-bug`") {
+		t.Errorf("prompt missing branch info, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Review command: `/oc review`") {
 		t.Errorf("prompt missing review command, got:\n%s", got)
 	}
 

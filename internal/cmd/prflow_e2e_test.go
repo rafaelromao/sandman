@@ -116,6 +116,8 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 		seedPRFlowRepo(t, repoDir)
 		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
+		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-binary-", tc.authPaths)
+
 		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--default-agent", tc.name)
 		if err != nil {
 			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
@@ -130,8 +132,6 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 			appendPiTestShimToDockerfile(t, repoDir)
 		}
 		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-
-		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-binary-", tc.authPaths)
 
 		ghShimDir := t.TempDir()
 		writeFakeGHShim(t, ghShimDir)
@@ -245,6 +245,8 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 		seedPRFlowRepo(t, repoDir)
 		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
+		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-", tc.authPaths)
+
 		runRootCommand(t, prFlowDeps(repoDir), "init", "--default-agent", tc.name)
 		for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
 			if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
@@ -252,8 +254,6 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 			}
 		}
 		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-
-		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-", tc.authPaths)
 
 		ghShimDir := t.TempDir()
 		writeFakeGHShim(t, ghShimDir)
@@ -974,6 +974,8 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 		seedParallelPRFlowRepo(t, repoDir)
 		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
+		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-parallel-", tc.authPaths)
+
 		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--default-agent", tc.name)
 		if err != nil {
 			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
@@ -988,8 +990,6 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 			appendPiTestShimToDockerfile(t, repoDir)
 		}
 		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-
-		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-parallel-", tc.authPaths)
 
 		ghShimDir := t.TempDir()
 		writeFakeGHShimParallel(t, ghShimDir)
@@ -1199,6 +1199,8 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 		seedParallelPRFlowRepo(t, repoDir)
 		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
+		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-parallel-auto-", tc.authPaths)
+
 		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--default-agent", tc.name)
 		if err != nil {
 			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
@@ -1213,8 +1215,6 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 			appendPiTestShimToDockerfile(t, repoDir)
 		}
 		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-
-		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-parallel-auto-", tc.authPaths)
 
 		ghShimDir := t.TempDir()
 		writeFakeGHShimParallel(t, ghShimDir)

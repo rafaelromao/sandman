@@ -292,6 +292,32 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 	}
 }
 
+func TestPortal_PageWiresPortalViewStatePersistence(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	for _, want := range []string{"SandmanPortalState", "sandman.portal.view-state.v1:", "persistPortalViewState", "normalizePortalViewState", "const visibleRuns = state.runs.filter(shouldShowRun);", "getSelectedTab"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
+		}
+	}
+}
+
 func TestPortal_DetailPanelHasFixedHeightWithScroll(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -746,7 +772,7 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 	select {
 	case err := <-errCh:
 		if err == nil || !strings.Contains(err.Error(), "bind portal on 0.0.0.0") {
-			t.Fatalf("expected bind error on wildcard bind, got %v", err)
+			t.Fatalf("expected bind error on localhost bind, got %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for bind failure")

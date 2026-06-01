@@ -76,7 +76,7 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/current review", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", DefaultModel: "openai/gpt-4.1", WorktreeDir: dir, ReviewCommand: "/current review", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -106,8 +106,8 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if spy.req.Branches[42] != branch {
 		t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])
 	}
-	if spy.req.Model != "gpt-4.2" {
-		t.Fatalf("expected model replay, got %q", spy.req.Model)
+	if spy.req.Model != "openai/gpt-4.1" {
+		t.Fatalf("expected config default model, got %q", spy.req.Model)
 	}
 	if spy.req.BaseBranch != "main" {
 		t.Fatalf("expected base branch replay, got %q", spy.req.BaseBranch)
@@ -168,6 +168,44 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	}
 	if spy.req.Agent != "pi" {
 		t.Fatalf("expected agent override, got %q", spy.req.Agent)
+	}
+}
+
+func TestContinue_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "custom"}}}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{
+			Agent:        "custom",
+			DefaultModel: "openai/gpt-4.1",
+			WorktreeDir:  dir,
+			AgentProviders: map[string]config.Agent{
+				"custom": {Command: "true"},
+			},
+		}},
+		EventLog: log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Model != "" {
+		t.Fatalf("expected empty model for custom agent, got %q", spy.req.Model)
 	}
 }
 
