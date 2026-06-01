@@ -908,18 +908,20 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	if result.IssueNumber == 0 {
 		result.IssueNumber = num
 	}
+	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	result.Status = terminalStatus
 
 	worktreeState := "preserved"
 
 	if o.eventLog != nil {
 		_ = o.eventLog.Log(events.Event{
-			Type:      "run.finished",
+			Type:      terminalEventType,
 			Timestamp: time.Now(),
 			RunID:     runID,
 			Issue:     num,
 			IssueRef:  issueRef(num),
 			Payload: map[string]any{
-				"status":         result.Status,
+				"status":         terminalStatus,
 				"branch":         result.Branch,
 				"base_branch":    baseBranch,
 				"worktree_state": worktreeState,
@@ -962,6 +964,9 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
+	if result.Status != "success" {
+		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
+	}
 	return &Result{Runs: []AgentRunResult{result}}, nil
 }
 
@@ -996,6 +1001,23 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 	}
 
 	activeRuns := map[int]sandbox.Sandbox{0: wt}
+	shutdownDone := make(chan struct{})
+	defer close(shutdownDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-shutdownDone:
+			return
+		}
+
+		if p := wt.Process(); p != nil {
+			p.Signal(syscall.SIGTERM)
+		}
+		time.Sleep(10 * time.Second)
+		if p := wt.Process(); p != nil {
+			p.Kill()
+		}
+	}()
 	defer func() { delete(activeRuns, 0) }()
 
 	factory := o.runnableFactory
@@ -1048,8 +1070,10 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 	}
 
 	result := runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
+	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	result.Status = terminalStatus
 	if o.eventLog != nil {
-		_ = o.eventLog.Log(events.Event{Type: "run.finished", Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": result.Status, "branch": result.Branch, "base_branch": baseBranch, "worktree_state": "preserved"}})
+		_ = o.eventLog.Log(events.Event{Type: terminalEventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": terminalStatus, "branch": result.Branch, "base_branch": baseBranch, "worktree_state": "preserved"}})
 	}
 
 	return result, true
@@ -1069,6 +1093,19 @@ func promptOnlyBranch(cfg prompt.RenderConfig) string {
 		slug = "prompt-only"
 	}
 	return fmt.Sprintf("sandman/%s-%d", slug, time.Now().UnixNano())
+}
+
+func terminalRunEvent(ctx context.Context, status string) (string, string) {
+	eventType := "run.finished"
+	terminalStatus := status
+	if terminalStatus == "" {
+		terminalStatus = "failure"
+	}
+	if ctx.Err() != nil && terminalStatus != "success" {
+		eventType = "run.cancelled"
+		terminalStatus = "failure"
+	}
+	return eventType, terminalStatus
 }
 
 func (o *Orchestrator) syncBaseBranch(repoPath, baseBranch string) error {
