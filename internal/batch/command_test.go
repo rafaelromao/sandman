@@ -9,8 +9,8 @@ import (
 
 func TestCommandData_ExposesPromptFileAndModelFields(t *testing.T) {
 	typ := reflect.TypeOf(CommandData{})
-	if typ.NumField() != 4 {
-		t.Errorf("expected exactly 4 fields in CommandData, got %d", typ.NumField())
+	if typ.NumField() != 5 {
+		t.Errorf("expected exactly 5 fields in CommandData, got %d", typ.NumField())
 	}
 	field, ok := typ.FieldByName("PromptFile")
 	if !ok {

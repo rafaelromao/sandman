@@ -606,7 +606,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 3)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 3, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -674,7 +674,7 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -719,7 +719,7 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, _ := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if result.Status != "failure" {
 		t.Fatalf("status = %q, want failure on lookup error", result.Status)
 	}
@@ -771,7 +771,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, "", func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -840,7 +840,7 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, "", func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -908,7 +908,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, "", func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -958,7 +958,7 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -3773,27 +3773,99 @@ func TestRunBatch_QueuesEligibleRunsWhenAllContainerSlotsAreOccupied(t *testing.
 		errCh <- err
 	}()
 
-	firstIssue := 0
 	select {
 	case <-started1:
-		firstIssue = 1
 		assertNoSignal(t, started2, "expected issue 2 to stay queued while the only container slot is occupied")
 	case <-started2:
-		firstIssue = 2
-		assertNoSignal(t, started1, "expected issue 1 to stay queued while the only container slot is occupied")
+		t.Fatal("expected issue 1 to start first when only one container slot is available")
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected one issue to start")
 	}
 
-	if firstIssue == 1 {
-		close(release1)
-		waitForSignal(t, started2, "expected issue 2 to start after the container slot is released")
-		close(release2)
-	} else {
-		close(release2)
-		waitForSignal(t, started1, "expected issue 1 to start after the container slot is released")
-		close(release1)
+	close(release1)
+	waitForSignal(t, started2, "expected issue 2 to start after the container slot is released")
+	close(release2)
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestRunBatch_PreservesStartOrderWhenStartCapacityIsOne(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+			3: {Number: 3, Title: "Three"},
+			4: {Number: 4, Title: "Four"},
+		},
+	}
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	releases := map[int]chan struct{}{
+		1: make(chan struct{}),
+		2: make(chan struct{}),
+		3: make(chan struct{}),
+		4: make(chan struct{}),
+	}
+	started := map[int]chan struct{}{
+		1: make(chan struct{}),
+		2: make(chan struct{}),
+		3: make(chan struct{}),
+		4: make(chan struct{}),
+	}
+	runnables := &trackingRunnableFactory{runnables: map[int]Runnable{
+		1: &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}, started: started[1], release: releases[1]},
+		2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started[2], release: releases[2]},
+		3: &controlledRunnable{result: AgentRunResult{IssueNumber: 3, Status: "success"}, started: started[3], release: releases[3]},
+		4: &controlledRunnable{result: AgentRunResult{IssueNumber: 4, Status: "success"}, started: started[4], release: releases[4]},
+	}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{
+			Issues:               []int{1, 2, 3, 4},
+			Sandbox:              "docker",
+			Parallel:             4,
+			ContainerCapacity:    1,
+			ContainerCapacitySet: true,
+			MaxContainers:        1,
+			MaxContainersSet:     true,
+		})
+		errCh <- err
+	}()
+
+	// When effective start capacity is 1, the input order must be preserved.
+	waitForSignal(t, started[1], "expected issue 1 to start first")
+	assertNoSignal(t, started[2], "expected issue 2 to stay queued behind issue 1")
+	assertNoSignal(t, started[3], "expected issue 3 to stay queued behind issue 1")
+	assertNoSignal(t, started[4], "expected issue 4 to stay queued behind issue 1")
+
+	close(releases[1])
+	waitForSignal(t, started[2], "expected issue 2 to start after issue 1 releases the slot")
+	assertNoSignal(t, started[3], "expected issue 3 to stay queued behind issue 2")
+	assertNoSignal(t, started[4], "expected issue 4 to stay queued behind issue 2")
+
+	close(releases[2])
+	waitForSignal(t, started[3], "expected issue 3 to start after issue 2 releases the slot")
+	assertNoSignal(t, started[4], "expected issue 4 to stay queued behind issue 3")
+
+	close(releases[3])
+	waitForSignal(t, started[4], "expected issue 4 to start after issue 3 releases the slot")
+	close(releases[4])
 
 	if err := <-errCh; err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -3872,6 +3944,182 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *test
 
 	if starter.startCount != 2 {
 		t.Fatalf("expected 2 containers to start, got %d", starter.startCount)
+	}
+}
+
+func TestRunBatch_PreservesStartOrderWhenSkippedDependency(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Root", State: "closed"},
+			100: {Number: 100, Title: "Dependent"},
+			200: {Number: 200, Title: "Lone"},
+		},
+	}
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	releaseRoot := make(chan struct{})
+	releaseLone := make(chan struct{})
+	startedRoot := make(chan struct{})
+	startedLone := make(chan struct{})
+	runnables := &trackingRunnableFactory{runnables: map[int]Runnable{
+		100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "blocked"}, started: make(chan struct{}), release: make(chan struct{})},
+		200: &controlledRunnable{result: AgentRunResult{IssueNumber: 200, Status: "success"}, started: startedLone, release: releaseLone},
+	}}
+	runnables.runnables[42] = &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "failure"}, started: startedRoot, release: releaseRoot}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{
+			Issues:               []int{42, 100, 200},
+			Dependencies:         map[int][]int{100: {42}},
+			Sandbox:              "docker",
+			Parallel:             4,
+			ContainerCapacity:    1,
+			ContainerCapacitySet: true,
+			MaxContainers:        1,
+			MaxContainersSet:     true,
+		})
+		errCh <- err
+	}()
+
+	waitForSignal(t, startedRoot, "expected issue 42 to start")
+	close(releaseRoot)
+	waitForSignal(t, startedLone, "expected issue 200 to start after issue 100 was skipped due to dependency failure")
+	close(releaseLone)
+
+	if err := <-errCh; err == nil {
+		t.Fatal("expected batch to surface the failure from issue 42")
+	}
+}
+
+func TestRunBatch_PreservesStartOrderWhenSkippedDependentHasHigherTurn(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Root", State: "closed"},
+			200: {Number: 200, Title: "Independent"},
+			100: {Number: 100, Title: "Dependent"},
+		},
+	}
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	releaseRoot := make(chan struct{})
+	releaseIndependent := make(chan struct{})
+	startedRoot := make(chan struct{})
+	startedIndependent := make(chan struct{})
+	runnables := &trackingRunnableFactory{runnables: map[int]Runnable{
+		200: &controlledRunnable{result: AgentRunResult{IssueNumber: 200, Status: "success"}, started: startedIndependent, release: releaseIndependent},
+		100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "blocked"}, started: make(chan struct{}), release: make(chan struct{})},
+	}}
+	runnables.runnables[42] = &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "failure"}, started: startedRoot, release: releaseRoot}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{
+			Issues:               []int{42, 200, 100},
+			Dependencies:         map[int][]int{100: {42}},
+			Sandbox:              "docker",
+			Parallel:             4,
+			ContainerCapacity:    1,
+			ContainerCapacitySet: true,
+			MaxContainers:        1,
+			MaxContainersSet:     true,
+		})
+		errCh <- err
+	}()
+
+	waitForSignal(t, startedRoot, "expected issue 42 to start")
+	close(releaseRoot)
+	waitForSignal(t, startedIndependent, "expected issue 200 to be served before the skipped dependent 100 jumps the queue")
+	close(releaseIndependent)
+
+	if err := <-errCh; err == nil {
+		t.Fatal("expected batch to surface the failure from issue 42")
+	}
+}
+
+func TestRunBatch_PreservesStartOrderWhenOutOfOrderSkips(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Root", State: "closed"},
+			300: {Number: 300, Title: "Skipped high turn", State: "closed"},
+			200: {Number: 200, Title: "Skipped low turn", State: "closed"},
+			400: {Number: 400, Title: "Independent"},
+		},
+	}
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	releaseRoot := make(chan struct{})
+	releaseIndependent := make(chan struct{})
+	startedRoot := make(chan struct{})
+	startedIndependent := make(chan struct{})
+	runnables := &trackingRunnableFactory{runnables: map[int]Runnable{
+		300: &controlledRunnable{result: AgentRunResult{IssueNumber: 300, Status: "blocked"}, started: make(chan struct{}), release: make(chan struct{})},
+		200: &controlledRunnable{result: AgentRunResult{IssueNumber: 200, Status: "blocked"}, started: make(chan struct{}), release: make(chan struct{})},
+		400: &controlledRunnable{result: AgentRunResult{IssueNumber: 400, Status: "success"}, started: startedIndependent, release: releaseIndependent},
+	}}
+	runnables.runnables[42] = &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "failure"}, started: startedRoot, release: releaseRoot}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{
+			Issues:               []int{42, 300, 200, 400},
+			Dependencies:         map[int][]int{300: {42}, 200: {42}},
+			Sandbox:              "docker",
+			Parallel:             4,
+			ContainerCapacity:    1,
+			ContainerCapacitySet: true,
+			MaxContainers:        1,
+			MaxContainersSet:     true,
+		})
+		errCh <- err
+	}()
+
+	waitForSignal(t, startedRoot, "expected issue 42 to start")
+	close(releaseRoot)
+	waitForSignal(t, startedIndependent, "expected issue 400 to be served even when skipped dependents return out of turn order")
+	close(releaseIndependent)
+
+	if err := <-errCh; err == nil {
+		t.Fatal("expected batch to surface the failure from issue 42")
 	}
 }
 

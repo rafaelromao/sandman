@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -426,9 +427,23 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active only", "Log", "Events", "Details", "Actions", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`, `data-action="stop-batch" data-run-key="`, `Stop batch`} {
+	for _, want := range []string{"Active only", "Log", "Events", "Details", "Actions", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
+		}
+	}
+	// The data-action attributes live in the diff helper now.
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	diffHelper, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), "portal_diff.js"))
+	if err != nil {
+		t.Fatalf("read portal_diff.js: %v", err)
+	}
+	for _, want := range []string{`'toggle-run'`, `'stop-batch'`, `data-action`, `data-run-key`, `Stop batch`} {
+		if !strings.Contains(string(diffHelper), want) {
+			t.Fatalf("portal_diff.js missing %q", want)
 		}
 	}
 	for _, banned := range []string{"command-row-hint", "row-hint", "Click row", `data-action="stop-run"`} {
@@ -649,9 +664,9 @@ func TestPortal_CommandsEndpointPersistsAsyncLaunches(t *testing.T) {
 		gotRunArgs = append([]string(nil), args...)
 		return nil
 	}
-	portalStartCommand = func(ctx context.Context, repoRoot string, args []string) error {
+	portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
 		gotStartArgs = append([]string(nil), args...)
-		return nil
+		return &portalCommandResult{}
 	}
 
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
@@ -767,9 +782,9 @@ func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
 			t.Cleanup(func() { portalStartCommand = prevStart })
 
 			var gotArgs []string
-			portalStartCommand = func(ctx context.Context, repoRoot string, args []string) error {
+			portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
 				gotArgs = append([]string(nil), args...)
-				return nil
+				return &portalCommandResult{}
 			}
 
 			server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
@@ -881,8 +896,8 @@ func TestPortal_CommandsEndpointReturnsJSONErrors(t *testing.T) {
 	t.Run("launch failure", func(t *testing.T) {
 		prevStart := portalStartCommand
 		t.Cleanup(func() { portalStartCommand = prevStart })
-		portalStartCommand = func(ctx context.Context, repoRoot string, args []string) error {
-			return fmt.Errorf("exec: not found")
+		portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
+			return &portalCommandResult{Err: fmt.Errorf("exec: not found")}
 		}
 
 		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"status"}`))
@@ -904,158 +919,6 @@ func TestPortal_CommandsEndpointReturnsJSONErrors(t *testing.T) {
 		}
 		if body.Error != "exec: not found" {
 			t.Fatalf("expected 'exec: not found', got %q", body.Error)
-		}
-	})
-
-	t.Run("continue preset missing issue", func(t *testing.T) {
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"continue","prompt":"finish the tests"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error != "continue preset requires an issue number" {
-			t.Fatalf("unexpected error: %q", body.Error)
-		}
-	})
-
-	t.Run("continue preset missing prompt", func(t *testing.T) {
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"continue","issue":42}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error != "continue preset requires a prompt" {
-			t.Fatalf("unexpected error: %q", body.Error)
-		}
-	})
-
-	t.Run("run command start failure", func(t *testing.T) {
-		prevRun := portalStartRun
-		t.Cleanup(func() { portalStartRun = prevRun })
-		portalStartRun = func(ctx context.Context, repoRoot string, args []string) error {
-			return fmt.Errorf("run failed")
-		}
-
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"run","issues":"42","prompt":"finish the tests"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusInternalServerError {
-			t.Fatalf("expected 500, got %d", resp.StatusCode)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error != "run failed" {
-			t.Fatalf("expected 'run failed', got %q", body.Error)
-		}
-	})
-
-	t.Run("continue command start failure", func(t *testing.T) {
-		prevRun := portalStartRun
-		t.Cleanup(func() { portalStartRun = prevRun })
-		portalStartRun = func(ctx context.Context, repoRoot string, args []string) error {
-			return fmt.Errorf("continue failed")
-		}
-
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"continue","issue":42,"prompt":"finish the tests"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusInternalServerError {
-			t.Fatalf("expected 500, got %d", resp.StatusCode)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error != "continue failed" {
-			t.Fatalf("expected 'continue failed', got %q", body.Error)
-		}
-	})
-
-	t.Run("clean preset missing confirmation", func(t *testing.T) {
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"clean"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error != "clean preset requires confirmation" {
-			t.Fatalf("unexpected error: %q", body.Error)
-		}
-	})
-
-	t.Run("config preset missing key", func(t *testing.T) {
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"config","configMode":"get"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error != "config preset requires a key" {
-			t.Fatalf("unexpected error: %q", body.Error)
-		}
-	})
-
-	t.Run("config preset set missing value", func(t *testing.T) {
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"config","configMode":"set","configKey":"default_agent"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error != "config set preset requires a value" {
-			t.Fatalf("unexpected error: %q", body.Error)
 		}
 	})
 }

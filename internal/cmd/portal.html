@@ -34,6 +34,7 @@
   </script>
   <script>{{.PortalStateJS}}</script>
   <script>{{.PortalScrollJS}}</script>
+  <script>{{.PortalDiffJS}}</script>
   <style>
     :root {
       color-scheme: dark;
@@ -1111,6 +1112,18 @@
       padding: 6px 8px;
       border-radius: 6px;
     }
+    .command-row-detail .kv .output-pre {
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+      font-size: 12px;
+      word-break: break-word;
+      white-space: pre-wrap;
+      background: var(--surface-3);
+      padding: 6px 8px;
+      border-radius: 6px;
+      margin: 0;
+      max-height: 200px;
+      overflow-y: auto;
+    }
     .commands-panel-footer {
       display: flex;
       justify-content: space-between;
@@ -1475,6 +1488,7 @@
       portalState.configure({ storageKey: "{{.PortalStateStorageKey}}" });
     }
     const portalScroll = window.SandmanPortalScroll;
+    const portalDiff = window.SandmanPortalDiff;
     const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {} };
     const commandState = {
       run: {
@@ -2205,6 +2219,8 @@
           + '<div class="kv"><span>Command</span><code>' + escapeHTML(command.command || '') + '</code></div>'
           + (command.args && command.args.length ? '<div class="kv"><span>Arguments</span><strong class="mono">' + escapeHTML(command.args.join(' ')) + '</strong></div>' : '')
           + (command.repoRoot ? '<div class="kv"><span>Repository root</span><strong class="mono">' + escapeHTML(command.repoRoot) + '</strong></div>' : '')
+          + (command.exitCode !== undefined ? '<div class="kv"><span>Exit code</span><code>' + command.exitCode + '</code></div>' : '')
+          + (command.output ? '<div class="kv"><span>Stdout</span><pre class="output-pre">' + escapeHTML(command.output) + '</pre></div>' : '')
           + '</div>'
         ) : ''
       ].join('');
@@ -2292,82 +2308,11 @@
       return status || 'default';
     }
 
-    function renderStatusBadge(run) {
-      const klass = statusClass(run);
-      const label = run.status || (run.kind === 'active' ? 'active' : 'completed');
-      return '<span class="badge ' + escapeHTML(klass) + '"><span class="dot"></span>' + escapeHTML(label) + '</span>';
-    }
-
     function renderRunMeta(run) {
       const parts = [];
       if (run.runId) parts.push('ID ' + run.runId);
       if (run.issueLabel) parts.push(run.issueLabel);
       return parts.length ? parts.join(' · ') : 'Run';
-    }
-
-    function renderRunRow(run, stopGroups) {
-      const isOpen = state.expandedRunKey === run.key;
-      const tabName = portalState ? portalState.getSelectedTab(state, run.key) : 'log';
-      const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
-      const events = Array.isArray(run.events) ? run.events : [];
-      const canStop = stopSupported && run.kind === 'active' && (run.status === 'active' || run.status === 'queued') && run.socketPath && !stopGroups.has(run.socketPath);
-      if (canStop) stopGroups.add(run.socketPath);
-
-      return [
-        '<tr class="run-row ' + escapeHTML(run.kind || '') + '" data-action="toggle-run" data-run-key="' + escapeHTML(run.key) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
-        '  <td>',
-        '    <div class="run-title">',
-        '      <span class="name">' + escapeHTML(run.issueLabel || run.key) + '</span>',
-        '      <span class="meta-line mono">' + escapeHTML(renderRunMeta(run)) + '</span>',
-        '    </div>',
-        '  </td>',
-        '  <td>' + renderStatusBadge(run) + '</td>',
-        '  <td class="mono">' + escapeHTML(formatTime(run.startedAt)) + '</td>',
-        '  <td class="mono">' + escapeHTML(formatDuration(run.duration)) + '</td>',
-        '  <td class="mono">' + escapeHTML(formatBranch(run)) + '</td>',
-        '  <td class="mono">' + escapeHTML(formatSource(run)) + '</td>',
-        '  <td class="run-actions">' + (canStop ? '<button type="button" class="action-btn danger" data-action="stop-batch" data-run-key="' + escapeHTML(run.key) + '">Stop batch</button>' : '') + '</td>',
-        '</tr>',
-        isOpen ? (
-          '<tr class="detail-row" data-detail-for="' + escapeHTML(run.key) + '">'
-          + '<td colspan="7">'
-          + '<div class="detail-panel">'
-          + '<div class="tabs" role="tablist" aria-label="Run details tabs">'
-          + renderTabButton(run.key, 'log', 'Log', tabName)
-          + renderTabButton(run.key, 'events', 'Events', tabName)
-          + renderTabButton(run.key, 'details', 'Details', tabName)
-          + '</div>'
-          + '<div class="detail-content">'
-          + renderTabPanel(run, tabName, log, events)
-          + '</div>'
-          + '</div>'
-          + '</td>'
-          + '</tr>'
-        ) : ''
-      ].join('');
-    }
-
-    function renderTabButton(runKey, tabKey, label, activeTab) {
-      return '<button type="button" class="tab-btn" data-action="set-tab" data-run-key="' + escapeHTML(runKey) + '" data-tab="' + escapeHTML(tabKey) + '" role="tab" aria-pressed="' + (activeTab === tabKey ? 'true' : 'false') + '">' + escapeHTML(label) + '</button>';
-    }
-
-    function currentTabLabel(tabKey) {
-      if (tabKey === 'details') return 'Details';
-      if (tabKey === 'log') return 'Log';
-      if (tabKey === 'events') return 'Events';
-      return 'Log';
-    }
-
-    function renderDetailKV(label, value) {
-      const text = value && String(value).trim() ? value : '—';
-      return '<div class="kv"><span>' + escapeHTML(label) + '</span><strong>' + escapeHTML(text) + '</strong></div>';
-    }
-
-    function renderDownloadLink(run) {
-      if (!run.logUrl) {
-        return '<div class="kv"><span>Log file</span><strong class="muted">No log file available.</strong></div>';
-      }
-      return '<div class="kv"><span>Log file</span><a class="action-btn" href="' + escapeHTML(run.logUrl) + '" download>Download log</a></div>';
     }
 
     function highlightTerminalText(text) {
@@ -2393,67 +2338,12 @@
       return highlightTerminalText(value);
     }
 
-    function renderTerminalBlock(text, extraClass, runKey) {
-      const classes = 'terminal-text' + (extraClass ? ' ' + escapeHTML(extraClass) : '');
-      const attrs = runKey ? ' data-scroll-key="' + escapeHTML(runKey) + '"' : '';
-      return '<pre class="' + classes + '"' + attrs + '>' + renderTerminalContent(text) + '</pre>';
-    }
-
-    function renderDetailFields(run) {
-      return [
-        renderDetailKV('Run ID', run.runId),
-        renderDetailKV('Status', run.status),
-        renderDetailKV('Started', formatTime(run.startedAt)),
-        renderDetailKV('Finished', formatTime(run.finishedAt)),
-        renderDetailKV('Duration', formatDuration(run.duration)),
-        renderDetailKV('Branch', formatBranch(run)),
-        renderDetailKV('Source', formatSource(run)),
-        renderDownloadLink(run),
-      ].join('');
-    }
-
-    function renderTabPanel(run, tabKey, log, events) {
-      if (tabKey === 'details') {
-        return [
-          '<section class="detail-box tab-pane fill">',
-          '  <h3>Run details</h3>',
-          '  <div class="detail-meta">' + renderDetailFields(run) + '</div>',
-          '</section>',
-        ].join('');
-      }
-
-      const content = renderTabContent(run, tabKey, log, events);
-      if (tabKey === 'events') {
-        if (!content) {
-          return '<section class="detail-box tab-pane fill"><h3>Events</h3><div class="empty-state">No events captured for this run yet.</div></section>';
-        }
-        return '<section class="detail-box tab-pane fill"><h3>Events</h3><div class="tab-events">' + content + '</div></section>';
-      }
-
-      return '<section class="detail-box tab-pane fill"><h3>' + escapeHTML(currentTabLabel(tabKey)) + '</h3>' + renderTerminalBlock(content, '', run.key) + '</section>';
-    }
-
-    function renderTabContent(run, tabKey, log, events) {
-      if (tabKey === 'events') {
-        if (!events.length) return '';
-        return events.map((event) => {
-          const payload = event.payload && Object.keys(event.payload).length ? JSON.stringify(event.payload, null, 2) : '';
-          return [
-            '<div class="event-row">',
-            '  <div class="event-head">',
-            '    <span class="event-type">' + escapeHTML(event.type || 'event') + '</span>',
-            '    <span class="event-time">' + escapeHTML(event.timestamp ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(event.timestamp)) : '—') + '</span>',
-            '  </div>',
-            payload ? '<pre class="event-payload terminal-text">' + renderTerminalContent(payload) + '</pre>' : '',
-            '</div>',
-          ].join('');
-        }).join('');
-      }
-      return log;
-    }
-
-    function renderEmpty(message) {
-      return '<tr><td colspan="7"><div class="empty-state">' + escapeHTML(message) + '</div></td></tr>';
+    function isRunStoppable(run, stopGroups) {
+      if (!run || run.kind !== 'active') return false;
+      if (run.status !== 'active' && run.status !== 'queued') return false;
+      if (!run.socketPath) return false;
+      if (stopGroups && stopGroups.has && stopGroups.has(run.socketPath)) return false;
+      return true;
     }
 
     function render() {
@@ -2462,16 +2352,31 @@
       const filtered = state.runs.filter(shouldShowRun);
       summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong> runs visible';
       const scrollStates = portalScroll ? portalScroll.capture(runsBody.querySelectorAll('[data-scroll-key]')) : {};
-      if (!state.runs.length) {
-        runsBody.innerHTML = renderEmpty(state.loading ? 'Loading runs.' : 'No Sandman runs found.');
-        return;
-      }
-      if (!filtered.length) {
-        runsBody.innerHTML = renderEmpty('No runs match the current filters.');
-        return;
-      }
       const stopGroups = new Set();
-      runsBody.innerHTML = filtered.map((run) => renderRunRow(run, stopGroups)).join('');
+      const diffOpts = {
+        helpers: {
+          escapeHTML: escapeHTML,
+          formatTime: formatTime,
+          formatDuration: formatDuration,
+          formatBranch: formatBranch,
+          formatSource: formatSource,
+          statusClass: statusClass,
+          renderRunMeta: renderRunMeta,
+          renderTerminalContent: renderTerminalContent,
+          isRunStoppable: isRunStoppable,
+        },
+        stopGroups: stopGroups,
+        stopSupported: stopSupported,
+        expandedKey: state.expandedRunKey,
+        tabs: state.tabs,
+      };
+      if (!state.runs.length) {
+        portalDiff.setEmpty(runsBody, '<div class="empty-state">' + escapeHTML(state.loading ? 'Loading runs.' : 'No Sandman runs found.') + '</div>');
+      } else if (!filtered.length) {
+        portalDiff.setEmpty(runsBody, '<div class="empty-state">No runs match the current filters.</div>');
+      } else {
+        portalDiff.diffRuns(runsBody, filtered, diffOpts);
+      }
       if (portalScroll && scrollStates) {
         portalScroll.restore(runsBody.querySelectorAll('[data-scroll-key]'), scrollStates);
       }
@@ -2501,6 +2406,7 @@
     }
 
     function toggleRun(runKey) {
+      const prevExpandedRunKey = state.expandedRunKey;
       if (state.expandedRunKey === runKey) {
         state.expandedRunKey = null;
       } else {
@@ -2508,8 +2414,22 @@
       }
       persistPortalViewState();
       render();
-      const row = Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey);
-      if (row) row.focus({ preventScroll: true });
+      if (state.expandedRunKey !== null && state.expandedRunKey !== prevExpandedRunKey) {
+        const detailRow = Array.from(runsBody.children).find(
+          (child) => child.getAttribute('data-detail-for') === state.expandedRunKey
+        );
+        if (detailRow) {
+          detailRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+      if (prevExpandedRunKey !== null && state.expandedRunKey === null) {
+        const row = Array.from(runsBody.children).find(
+          (child) => child.getAttribute('data-run-key') === prevExpandedRunKey
+        );
+        if (row) {
+          row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
     }
 
     if (commandPicker) {

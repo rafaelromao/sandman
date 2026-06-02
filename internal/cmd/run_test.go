@@ -2220,6 +2220,182 @@ func TestRun_RalphFlagNegativeCountReturnsError(t *testing.T) {
 	}
 }
 
+func TestRun_RalphFlagSetsConservativeDefaults(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 5, Title: "Feature E"},
+			{Number: 1, Title: "Feature A"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--ralph=1"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if spy.req.Parallel != 1 {
+		t.Errorf("expected parallel=1, got %d", spy.req.Parallel)
+	}
+	if spy.req.ContainerCapacity != 1 {
+		t.Errorf("expected container-capacity=1, got %d", spy.req.ContainerCapacity)
+	}
+	if spy.req.MaxContainers != 1 {
+		t.Errorf("expected max-containers=1, got %d", spy.req.MaxContainers)
+	}
+	if spy.req.Retries != 3 {
+		t.Errorf("expected retries=3, got %d", spy.req.Retries)
+	}
+}
+
+func TestRun_RalphFlagParallelOverride(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 5, Title: "Feature E"},
+			{Number: 1, Title: "Feature A"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--ralph=1", "--parallel", "4"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if spy.req.Parallel != 4 {
+		t.Errorf("expected parallel=4, got %d", spy.req.Parallel)
+	}
+	if spy.req.ContainerCapacity != 1 {
+		t.Errorf("expected container-capacity=1 (ralph default), got %d", spy.req.ContainerCapacity)
+	}
+	if spy.req.MaxContainers != 1 {
+		t.Errorf("expected max-containers=1 (ralph default), got %d", spy.req.MaxContainers)
+	}
+	if !spy.req.ContainerCapacitySet {
+		t.Error("expected ContainerCapacitySet=true when ralph defaults apply")
+	}
+	if !spy.req.MaxContainersSet {
+		t.Error("expected MaxContainersSet=true when ralph defaults apply")
+	}
+	if spy.req.Retries != 3 {
+		t.Errorf("expected retries=3 (ralph default), got %d", spy.req.Retries)
+	}
+}
+
+func TestRun_RalphFlagRetriesZeroOverride(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 5, Title: "Feature E"},
+			{Number: 1, Title: "Feature A"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--ralph=1", "--retries", "0"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if spy.req.Parallel != 1 {
+		t.Errorf("expected parallel=1 (ralph default), got %d", spy.req.Parallel)
+	}
+	if spy.req.Retries != 0 {
+		t.Errorf("expected retries=0 (CLI override), got %d", spy.req.Retries)
+	}
+}
+
+func TestRun_RalphFlagMaxContainersOverride(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 5, Title: "Feature E"},
+			{Number: 1, Title: "Feature A"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--ralph=1", "--max-containers", "3"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if spy.req.Parallel != 1 {
+		t.Errorf("expected parallel=1 (ralph default), got %d", spy.req.Parallel)
+	}
+	if spy.req.MaxContainers != 3 {
+		t.Errorf("expected max-containers=3 (CLI override), got %d", spy.req.MaxContainers)
+	}
+	if spy.req.ContainerCapacity != 1 {
+		t.Errorf("expected container-capacity=1 (ralph default), got %d", spy.req.ContainerCapacity)
+	}
+	if spy.req.Retries != 3 {
+		t.Errorf("expected retries=3 (ralph default), got %d", spy.req.Retries)
+	}
+}
+
 func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
