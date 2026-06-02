@@ -1,14 +1,19 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
@@ -129,7 +134,35 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				},
 			}
 
-			result, err := deps.BatchRunner.RunBatch(cmd.Context(), req)
+			ctx, cancel := context.WithCancel(cmd.Context())
+			defer cancel()
+
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				select {
+				case <-sigCh:
+					cancel()
+				case <-ctx.Done():
+				}
+			}()
+
+			runDir := daemon.RunDir(".sandman", []int{issueNum})
+			broadcaster := daemon.NewBroadcaster()
+			ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
+
+			if err := ctlSocket.Start(); err != nil {
+				return err
+			}
+			defer ctlSocket.Stop()
+			defer os.RemoveAll(runDir)
+			if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{issueNum}, CreatedAt: time.Now()}); err != nil {
+				return err
+			}
+
+			req.OutputWriter = broadcaster
+
+			result, err := deps.BatchRunner.RunBatch(ctx, req)
 			if result != nil {
 				printSummary(cmd, result)
 			}
