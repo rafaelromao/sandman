@@ -508,6 +508,29 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetailLog_AppendRebuildsOnInlineTokenExtension(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'foo running' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre1) throw new Error('expected log pre');
+const firstChildren = pre1.children.slice();
+SandmanPortalDiff.resetCounters();
+const run2 = Object.assign({}, run1, { log: 'foo runningx' });
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (pre2 !== pre1) throw new Error('pre identity should be preserved');
+if (pre2.textContent !== 'foo runningx') throw new Error('expected pre to contain the combined text, got ' + JSON.stringify(pre2.textContent));
+const allText = pre2.children.map(c => c._textContent != null ? c._textContent : (c.textContent != null ? c.textContent : '')).join('');
+if (allText.indexOf('foo ') !== allText.lastIndexOf('foo ')) throw new Error('foo prefix should not be duplicated, got ' + allText);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailLog_RewriteReplacesNodes(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1' };

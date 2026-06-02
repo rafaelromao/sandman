@@ -204,18 +204,7 @@
       for (const node of nodes) pre.appendChild(node);
       return;
     }
-    const lastNewline = oldLog.lastIndexOf('\n');
-    const partialLastLine = lastNewline >= 0 ? oldLog.slice(lastNewline + 1) : oldLog;
-    const combined = partialLastLine + newSuffix;
-    const html = helpers.renderTerminalContent(combined);
-    if (!html) return;
-    const scratch = global.document.createElement('div');
-    scratch.innerHTML = html;
-    const nodes = Array.from(scratch.childNodes);
-    if (pre.lastChild) {
-      pre.removeChild(pre.lastChild);
-    }
-    for (const node of nodes) pre.appendChild(node);
+    fillTerminalPre(pre, oldLog + newSuffix, helpers);
   }
 
   function appendStartsAtBoundary(suffix) {
