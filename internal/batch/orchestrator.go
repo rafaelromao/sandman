@@ -115,27 +115,50 @@ type batchStartGate struct {
 	delay            time.Duration
 	active           int
 	nextAllowedStart time.Time
+
+	fifoSem chan struct{}
 }
 
-func newBatchStartGate(parallel int, delay time.Duration) *batchStartGate {
-	return &batchStartGate{parallel: parallel, delay: delay}
+func newBatchStartGate(parallel, effectiveParallel int, delay time.Duration) *batchStartGate {
+	g := &batchStartGate{parallel: parallel, delay: delay}
+	if effectiveParallel == 1 {
+		g.fifoSem = make(chan struct{}, 1)
+	}
+	return g
 }
 
 func (g *batchStartGate) Acquire(ctx context.Context) error {
+	if g.fifoSem != nil {
+		select {
+		case g.fifoSem <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
 	for {
 		if err := ctx.Err(); err != nil {
+			if g.fifoSem != nil {
+				<-g.fifoSem
+			}
 			return err
 		}
 
 		g.mu.Lock()
 		if err := ctx.Err(); err != nil {
 			g.mu.Unlock()
+			if g.fifoSem != nil {
+				<-g.fifoSem
+			}
 			return err
 		}
 		now := time.Now()
 		if (g.parallel <= 0 || g.active < g.parallel) && (g.delay <= 0 || !now.Before(g.nextAllowedStart)) {
 			if err := ctx.Err(); err != nil {
 				g.mu.Unlock()
+				if g.fifoSem != nil {
+					<-g.fifoSem
+				}
 				return err
 			}
 			if g.parallel > 0 {
@@ -161,6 +184,9 @@ func (g *batchStartGate) Acquire(ctx context.Context) error {
 			if !timer.Stop() {
 				<-timer.C
 			}
+			if g.fifoSem != nil {
+				<-g.fifoSem
+			}
 			return ctx.Err()
 		case <-timer.C:
 		}
@@ -181,6 +207,9 @@ func (g *batchStartGate) release(applyDelay bool) {
 			}
 		}
 		g.mu.Unlock()
+		if g.fifoSem != nil {
+			<-g.fifoSem
+		}
 		return
 	}
 	if applyDelay && g.delay > 0 {
@@ -191,6 +220,9 @@ func (g *batchStartGate) release(applyDelay bool) {
 	}
 	g.active--
 	g.mu.Unlock()
+	if g.fifoSem != nil {
+		<-g.fifoSem
+	}
 }
 
 func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, startOpts sandbox.StartOptions, capacity, maxContainers int) *containerPool {
@@ -446,6 +478,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 	defer policy.Close()
 
+	isContainer := sandboxMode == "docker" || sandboxMode == "podman"
+
 	parallel := req.Parallel
 	if parallel < 0 {
 		return nil, fmt.Errorf("parallel must be 0 or greater")
@@ -456,6 +490,27 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("start_delay must be 0 or greater")
 		}
 		startDelay = req.StartDelay
+	}
+
+	containerCapacity := 0
+	maxContainers := 0
+	if isContainer {
+		containerCapacity = cfg.ContainerCapacity
+		if req.ContainerCapacitySet {
+			containerCapacity = req.ContainerCapacity
+		}
+		maxContainers = cfg.MaxContainers
+		if req.MaxContainersSet {
+			maxContainers = req.MaxContainers
+		}
+	}
+
+	effectiveParallel := parallel
+	if isContainer && maxContainers > 0 && containerCapacity > 0 {
+		totalSlots := containerCapacity * maxContainers
+		if effectiveParallel == 0 || totalSlots < effectiveParallel {
+			effectiveParallel = totalSlots
+		}
 	}
 
 	dependencies := make(map[int][]int, len(req.Issues))
@@ -484,7 +539,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
-	isContainer := sandboxMode == "docker" || sandboxMode == "podman"
 	dangerouslySkipPermissions := req.DangerouslySkipPermissions
 	if dangerouslySkipPermissions == nil {
 		dangerouslySkipPermissions = &isContainer
@@ -494,7 +548,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, func() (gitIdentity, error) { return resolveGitIdentity(".") }, policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, *dangerouslySkipPermissions)
 	}
 
-	startGate := newBatchStartGate(parallel, startDelay)
+	startGate := newBatchStartGate(parallel, effectiveParallel, startDelay)
 	var wg sync.WaitGroup
 	results := make([]AgentRunResult, len(req.Issues))
 	var mu sync.Mutex
@@ -536,6 +590,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		case <-shutdownDone:
 			return
 		}
+
 		timeout := o.killTimeout
 		if timeout == 0 {
 			timeout = 10 * time.Second
@@ -560,9 +615,17 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		activeMu.Unlock()
 	}()
 
+	// Ticket lock: serializes ready goroutines in spawn order when effective
+	// start capacity is 1. Each goroutine receives a ticket at spawn time and
+	// waits for its turn before proceeding, so issue N+1 cannot start before
+	// issue N has finished when only one AgentRun can run at a time.
+	var ticketMu sync.Mutex
+	var ticketCond = sync.NewCond(&ticketMu)
+	var servingTicket int
+
 	for i, num := range req.Issues {
 		wg.Add(1)
-		go func(idx, issueNum int, blockers []int) {
+		go func(idx, issueNum int, blockers []int, ticket int) {
 			defer wg.Done()
 			defer close(completed[issueNum])
 
@@ -589,7 +652,21 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
+			if effectiveParallel == 1 {
+				ticketMu.Lock()
+				for ticket != servingTicket {
+					ticketCond.Wait()
+				}
+				ticketMu.Unlock()
+			}
+
 			if err := startGate.Acquire(ctx); err != nil {
+				if effectiveParallel == 1 {
+					ticketMu.Lock()
+					servingTicket++
+					ticketCond.Broadcast()
+					ticketMu.Unlock()
+				}
 				mu.Lock()
 				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "failure", Branch: req.Branches[issueNum]}
 				statuses[issueNum] = "failure"
@@ -601,8 +678,24 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunID, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, baseBranch, blockers, req.Blocked[issueNum], retries, *dangerouslySkipPermissions)
 			if started {
 				defer startGate.Release()
+				defer func() {
+					if effectiveParallel == 1 {
+						ticketMu.Lock()
+						servingTicket++
+						ticketCond.Broadcast()
+						ticketMu.Unlock()
+					}
+				}()
 			} else {
 				defer startGate.ReleaseWithoutDelay()
+				defer func() {
+					if effectiveParallel == 1 {
+						ticketMu.Lock()
+						servingTicket++
+						ticketCond.Broadcast()
+						ticketMu.Unlock()
+					}
+				}()
 			}
 			mu.Lock()
 			results[idx] = res
@@ -611,7 +704,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				failureCount++
 			}
 			mu.Unlock()
-		}(i, num, dependencies[num])
+		}(i, num, dependencies[num], i)
 	}
 
 	wg.Wait()

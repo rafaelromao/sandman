@@ -3773,27 +3773,99 @@ func TestRunBatch_QueuesEligibleRunsWhenAllContainerSlotsAreOccupied(t *testing.
 		errCh <- err
 	}()
 
-	firstIssue := 0
 	select {
 	case <-started1:
-		firstIssue = 1
 		assertNoSignal(t, started2, "expected issue 2 to stay queued while the only container slot is occupied")
 	case <-started2:
-		firstIssue = 2
-		assertNoSignal(t, started1, "expected issue 1 to stay queued while the only container slot is occupied")
+		t.Fatal("expected issue 1 to start first when only one container slot is available")
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected one issue to start")
 	}
 
-	if firstIssue == 1 {
-		close(release1)
-		waitForSignal(t, started2, "expected issue 2 to start after the container slot is released")
-		close(release2)
-	} else {
-		close(release2)
-		waitForSignal(t, started1, "expected issue 1 to start after the container slot is released")
-		close(release1)
+	close(release1)
+	waitForSignal(t, started2, "expected issue 2 to start after the container slot is released")
+	close(release2)
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestRunBatch_PreservesStartOrderWhenStartCapacityIsOne(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+			3: {Number: 3, Title: "Three"},
+			4: {Number: 4, Title: "Four"},
+		},
+	}
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	releases := map[int]chan struct{}{
+		1: make(chan struct{}),
+		2: make(chan struct{}),
+		3: make(chan struct{}),
+		4: make(chan struct{}),
+	}
+	started := map[int]chan struct{}{
+		1: make(chan struct{}),
+		2: make(chan struct{}),
+		3: make(chan struct{}),
+		4: make(chan struct{}),
+	}
+	runnables := &trackingRunnableFactory{runnables: map[int]Runnable{
+		1: &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}, started: started[1], release: releases[1]},
+		2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started[2], release: releases[2]},
+		3: &controlledRunnable{result: AgentRunResult{IssueNumber: 3, Status: "success"}, started: started[3], release: releases[3]},
+		4: &controlledRunnable{result: AgentRunResult{IssueNumber: 4, Status: "success"}, started: started[4], release: releases[4]},
+	}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{
+			Issues:               []int{1, 2, 3, 4},
+			Sandbox:              "docker",
+			Parallel:             4,
+			ContainerCapacity:    1,
+			ContainerCapacitySet: true,
+			MaxContainers:        1,
+			MaxContainersSet:     true,
+		})
+		errCh <- err
+	}()
+
+	// When effective start capacity is 1, the input order must be preserved.
+	waitForSignal(t, started[1], "expected issue 1 to start first")
+	assertNoSignal(t, started[2], "expected issue 2 to stay queued behind issue 1")
+	assertNoSignal(t, started[3], "expected issue 3 to stay queued behind issue 1")
+	assertNoSignal(t, started[4], "expected issue 4 to stay queued behind issue 1")
+
+	close(releases[1])
+	waitForSignal(t, started[2], "expected issue 2 to start after issue 1 releases the slot")
+	assertNoSignal(t, started[3], "expected issue 3 to stay queued behind issue 2")
+	assertNoSignal(t, started[4], "expected issue 4 to stay queued behind issue 2")
+
+	close(releases[2])
+	waitForSignal(t, started[3], "expected issue 3 to start after issue 2 releases the slot")
+	assertNoSignal(t, started[4], "expected issue 4 to stay queued behind issue 3")
+
+	close(releases[3])
+	waitForSignal(t, started[4], "expected issue 4 to start after issue 3 releases the slot")
+	close(releases[4])
 
 	if err := <-errCh; err != nil {
 		t.Fatalf("unexpected error: %v", err)
