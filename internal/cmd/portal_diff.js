@@ -338,10 +338,10 @@
     if (tabName === 'log') buildLogContent(content, run, helpers);
     else if (tabName === 'events') {
       buildEventsContent(content, run, helpers);
-      content.setAttribute('data-rendered-fingerprint', eventsFingerprint(run));
+      content.setAttribute('data-rendered-fingerprint', 'events|' + eventsFingerprint(run));
     } else {
       buildDetailsContent(content, run, helpers);
-      content.setAttribute('data-rendered-fingerprint', detailsFingerprint(run, helpers));
+      content.setAttribute('data-rendered-fingerprint', 'details|' + detailsFingerprint(run, helpers));
     }
   }
 
@@ -397,15 +397,16 @@
         return;
       }
       while (content.firstChild) content.removeChild(content.firstChild);
+      content.removeAttribute('data-rendered-fingerprint');
       buildLogContent(content, run, opts.helpers);
       mutationCount += 1;
       return;
     }
-    let fingerprint = '';
+    let fingerprint = tabName;
     if (tabName === 'events') {
-      fingerprint = eventsFingerprint(run);
+      fingerprint = 'events|' + eventsFingerprint(run);
     } else {
-      fingerprint = detailsFingerprint(run, opts.helpers);
+      fingerprint = 'details|' + detailsFingerprint(run, opts.helpers);
     }
     if (content.getAttribute('data-rendered-fingerprint') === fingerprint) {
       return;

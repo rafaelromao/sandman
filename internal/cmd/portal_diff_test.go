@@ -586,6 +586,40 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetail_RebuildsAfterTabRoundTrip(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'log text', events: [{ type: 'start', timestamp: 1, payload: { ok: true } }] };
+const stopGroups = new Set();
+const optsLog = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+const optsEvents = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], optsEvents);
+const detailRow = body.children[1];
+let content = detailRow.querySelector('.detail-content');
+let eventRows = 0;
+function countEventRows(n) {
+  if (!n) return;
+  if (n.classList && n.classList.contains && n.classList.contains('event-row')) eventRows += 1;
+  if (n.children) for (const c of n.children) countEventRows(c);
+}
+countEventRows(content);
+if (eventRows !== 1) throw new Error('expected 1 event row initially, got ' + eventRows);
+SandmanPortalDiff.diffRuns(body, [run], optsLog);
+content = detailRow.querySelector('.detail-content');
+const logPre = content.querySelector('pre[data-scroll-key]');
+if (!logPre) throw new Error('expected log pre after switch to log');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [run], optsEvents);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('returning to events tab should rebuild the pane, got 0 mutations');
+content = detailRow.querySelector('.detail-content');
+eventRows = 0;
+countEventRows(content);
+if (eventRows !== 1) throw new Error('expected 1 event row after returning to events, got ' + eventRows);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetail_TabChangeRebuildsContent(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'log text' };
@@ -777,6 +811,7 @@ func sharedMockBody() string {
     dataset: {},
     setAttribute(name, value) { this[name] = value; log.push(['setAttribute', name, value]); },
     getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
+    removeAttribute(name) { delete this[name]; log.push(['removeAttribute', name]); },
     appendChild(child) {
       const parent = child.parentNode;
       if (parent) {
@@ -869,6 +904,7 @@ function makeMockRow() {
     _log: log,
     setAttribute(name, value) { this[name] = value; log.push(['setAttribute', name, value]); },
     getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
+    removeAttribute(name) { delete this[name]; log.push(['removeAttribute', name]); },
     appendChild(child) {
       const parent = child.parentNode;
       if (parent) { const i = parent.children.indexOf(child); if (i >= 0) parent.children.splice(i, 1); }
