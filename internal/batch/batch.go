@@ -16,24 +16,25 @@ type Request struct {
 	// Dependencies maps each issue to its resolved BlockedBy set.
 	Dependencies map[int][]int
 	// Blocked marks issues that should be skipped before submission.
-	Blocked              map[int][]int
-	Agent                string
-	Model                string
-	BaseBranch           string
-	Continuation         bool
-	PreviousRunID        string
-	Retries              int
-	Parallel             int
-	StartDelay           time.Duration
-	StartDelaySet        bool
-	Branches             map[int]string
-	Sandbox              string
-	ContainerCapacity    int
-	ContainerCapacitySet bool
-	MaxContainers        int
-	MaxContainersSet     bool
-	PromptConfig         prompt.RenderConfig
-	OutputWriter         io.Writer
+	Blocked                    map[int][]int
+	Agent                      string
+	Model                      string
+	BaseBranch                 string
+	Continuation               bool
+	PreviousRunID              string
+	Retries                    int
+	Parallel                   int
+	StartDelay                 time.Duration
+	StartDelaySet              bool
+	Branches                   map[int]string
+	Sandbox                    string
+	ContainerCapacity          int
+	ContainerCapacitySet       bool
+	MaxContainers              int
+	MaxContainersSet           bool
+	DangerouslySkipPermissions *bool
+	PromptConfig               prompt.RenderConfig
+	OutputWriter               io.Writer
 }
 
 // Result describes the outcome of a batch.
