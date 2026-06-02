@@ -137,10 +137,14 @@ func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
 				break
 			}
 		}
+		recordsSnapshot := l.copyRecords()
 		l.mu.Unlock()
-		if err := l.store.Write(l.records); err != nil {
+		l.writeMu.Lock()
+		if err := l.store.Write(recordsSnapshot); err != nil {
+			l.writeMu.Unlock()
 			return completed, fmt.Errorf("persist failed command status: %w", err)
 		}
+		l.writeMu.Unlock()
 		return completed, result.Err
 	}
 	l.mu.Lock()
@@ -153,10 +157,14 @@ func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
 			break
 		}
 	}
+	recordsSnapshot := l.copyRecords()
 	l.mu.Unlock()
-	if err := l.store.Write(l.records); err != nil {
+	l.writeMu.Lock()
+	if err := l.store.Write(recordsSnapshot); err != nil {
+		l.writeMu.Unlock()
 		return completed, fmt.Errorf("persist completed command status: %w", err)
 	}
+	l.writeMu.Unlock()
 	return completed, nil
 }
 
@@ -173,12 +181,20 @@ func (l *portalLauncher) record(args []string) (portalCommandRecord, error) {
 		RepoRoot:  l.repoRoot,
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.records = append([]portalCommandRecord{record}, l.records...)
-	if err := l.store.Write(l.records); err != nil {
+	recordsSnapshot := l.copyRecords()
+	l.mu.Unlock()
+	l.writeMu.Lock()
+	if err := l.store.Write(recordsSnapshot); err != nil {
+		l.writeMu.Unlock()
 		return portalCommandRecord{}, err
 	}
+	l.writeMu.Unlock()
 	return record, nil
+}
+
+func (l *portalLauncher) copyRecords() []portalCommandRecord {
+	return append([]portalCommandRecord(nil), l.records...)
 }
 
 func startPortalCommand(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
