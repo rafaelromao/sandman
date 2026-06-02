@@ -44,7 +44,10 @@ func (b *Broadcaster) Write(p []byte) (int, error) {
 	if b.buffer.Len() > MaxBufferSize {
 		excess := b.buffer.Len() - MaxBufferSize
 		b.dropped += int64(excess)
-		b.buffer.Next(excess)
+		retained := make([]byte, MaxBufferSize)
+		copy(retained, b.buffer.Bytes()[excess:])
+		b.buffer.Reset()
+		b.buffer.Write(retained)
 	}
 
 	clients := make([]*broadcastClient, 0, len(b.clients))

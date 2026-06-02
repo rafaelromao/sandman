@@ -182,6 +182,9 @@ func TestBroadcaster_TrimsBufferOnOverflow(t *testing.T) {
 	if b.dropped == 0 {
 		t.Fatalf("b.dropped = 0, want > 0 after exceeding cap")
 	}
+	if b.buffer.Cap() > 2*MaxBufferSize {
+		t.Fatalf("buffer.Cap() = %d, want <= 2*MaxBufferSize (%d) to avoid oversized allocation", b.buffer.Cap(), 2*MaxBufferSize)
+	}
 }
 
 func TestBroadcaster_NewClientGetsTrimmedReplay(t *testing.T) {
