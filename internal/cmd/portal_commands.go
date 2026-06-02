@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -175,10 +176,11 @@ func startPortalCommand(ctx context.Context, repoRoot string, args []string) *po
 	if err != nil {
 		return &portalCommandResult{Err: fmt.Errorf("resolve sandman executable: %w", err)}
 	}
+	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, exe, args...)
 	cmd.Dir = repoRoot
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return &portalCommandResult{Err: fmt.Errorf("start sandman command: %w", err)}
 	}
@@ -191,7 +193,14 @@ func startPortalCommand(ctx context.Context, repoRoot string, args []string) *po
 			exitCode = -1
 		}
 	}
-	return &portalCommandResult{ExitCode: exitCode, Err: waitErr}
+	output := stdout.String()
+	if stderr.Len() > 0 {
+		if output != "" {
+			output += "\n"
+		}
+		output += stderr.String()
+	}
+	return &portalCommandResult{ExitCode: exitCode, Output: output, Err: waitErr}
 }
 
 func nextPortalCommandID() string {
