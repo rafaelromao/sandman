@@ -587,9 +587,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	// effective start capacity is 1. Each goroutine receives a turn at spawn
 	// time and waits for its turn before proceeding, so issue N+1 cannot start
 	// before issue N has finished when only one AgentRun can run at a time.
+	// Skipped goroutines (e.g. blocked dependents) record their turn as
+	// completed on return; advanceTurn consumes consecutive completed turns so
+	// a later return never strands an earlier outstanding turn.
 	var turnMu sync.Mutex
 	var turnCond = sync.NewCond(&turnMu)
 	servingTurn := 0
+	completedTurns := make(map[int]struct{})
 
 	for i, num := range req.Issues {
 		wg.Add(1)
@@ -602,10 +606,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					return
 				}
 				turnMu.Lock()
-				if turn == servingTurn {
+				completedTurns[turn] = struct{}{}
+				for {
+					if _, ok := completedTurns[servingTurn]; !ok {
+						break
+					}
+					delete(completedTurns, servingTurn)
 					servingTurn++
-					turnCond.Broadcast()
 				}
+				turnCond.Broadcast()
 				turnMu.Unlock()
 			}
 			defer advanceTurn()
