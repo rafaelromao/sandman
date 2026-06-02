@@ -77,7 +77,7 @@ func TestRenderCommand_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := `opencode run -m gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`
+	want := `opencode run --dangerously-skip-permissions -m gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -95,7 +95,7 @@ func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 
 func TestRenderCommand_BuiltInPresets(t *testing.T) {
 	presets := map[string]string{
-		"opencode": `opencode run "$(cat .sandman/rendered-prompt.md)"`,
+		"opencode": `opencode run --dangerously-skip-permissions "$(cat .sandman/rendered-prompt.md)"`,
 		"pi":       `pi --print --provider openai --model gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`,
 	}
 

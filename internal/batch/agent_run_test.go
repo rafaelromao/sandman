@@ -209,7 +209,7 @@ func TestAgentRun_Run_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
 
-	want := `opencode run -m gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`
+	want := `opencode run --dangerously-skip-permissions -m gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`
 	if sb.execCommand != want {
 		t.Errorf("expected command %q, got %q", want, sb.execCommand)
 	}
