@@ -35,6 +35,7 @@ func (s *spyBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batc
 // fakeGitHubClient is a test double for github.Client.
 type fakeGitHubClient struct {
 	issues             map[int]*github.Issue
+	prs                map[string]*github.PR
 	fetchRelease       map[int]<-chan struct{}
 	fetchReleaseAfter  map[int]int
 	fetchCount         map[int]int
@@ -86,6 +87,11 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 }
 
 func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
+	if f.prs != nil {
+		if pr, ok := f.prs[branch]; ok {
+			return pr, nil
+		}
+	}
 	return nil, nil
 }
 
