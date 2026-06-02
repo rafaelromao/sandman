@@ -122,6 +122,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			ralphCount, _ := cmd.Flags().GetInt("ralph")
 			issueSelectionProvided := len(args) > 0 || ralphProvided || label != "" || query != ""
 
+			if ralphProvided {
+				includeDependencies = true
+			}
+
 			agentName := strings.TrimSpace(agentFlag)
 			if agentName == "" {
 				agentName = strings.TrimSpace(cfg.DefaultAgent)
@@ -298,6 +302,23 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			if !retriesSet {
 				retries = -1
+			}
+
+			if ralphProvided {
+				if !parallelSet {
+					parallel = 1
+				}
+				if !containerCapacitySet {
+					containerCapacity = 1
+					containerCapacitySet = true
+				}
+				if !maxContainersSet {
+					maxContainers = 1
+					maxContainersSet = true
+				}
+				if !retriesSet {
+					retries = 3
+				}
 			}
 
 			dangerouslySkipPermFlag := cmd.Flags().Lookup("dangerously-skip-permissions")
