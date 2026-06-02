@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -426,9 +427,23 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active only", "Log", "Events", "Details", "Actions", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, `data-action="toggle-run" data-run-key="`, `data-action="stop-batch" data-run-key="`, `Stop batch`} {
+	for _, want := range []string{"Active only", "Log", "Events", "Details", "Actions", "Download log", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
+		}
+	}
+	// The data-action attributes live in the diff helper now.
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	diffHelper, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), "portal_diff.js"))
+	if err != nil {
+		t.Fatalf("read portal_diff.js: %v", err)
+	}
+	for _, want := range []string{`'toggle-run'`, `'stop-batch'`, `data-action`, `data-run-key`, `Stop batch`} {
+		if !strings.Contains(string(diffHelper), want) {
+			t.Fatalf("portal_diff.js missing %q", want)
 		}
 	}
 	for _, banned := range []string{"command-row-hint", "row-hint", "Click row", `data-action="stop-run"`} {

@@ -424,6 +424,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			SupportedThemesJSON   template.JS
 			PortalStateJS         template.JS
 			PortalScrollJS        template.JS
+			PortalDiffJS          template.JS
 			PortalStopSupported   bool
 		}{
 			RepoRoot:              repoRoot,
@@ -441,6 +442,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			SupportedThemesJSON:   portalSupportedThemesJSON,
 			PortalStateJS:         portalStateJS,
 			PortalScrollJS:        portalScrollJS,
+			PortalDiffJS:          portalDiffJS,
 			PortalStopSupported:   portalStopSupported(),
 		}
 		if err := portalPageTemplate.Execute(w, data); err != nil {
