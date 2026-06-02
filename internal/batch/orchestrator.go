@@ -602,8 +602,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					return
 				}
 				turnMu.Lock()
-				servingTurn++
-				turnCond.Broadcast()
+				if turn == servingTurn {
+					servingTurn++
+					turnCond.Broadcast()
+				}
 				turnMu.Unlock()
 			}
 			defer advanceTurn()
