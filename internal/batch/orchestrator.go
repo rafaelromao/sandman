@@ -487,8 +487,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		dependencies[num] = uniqueIssues(req.Dependencies[num])
 		order = append(order, num)
 	}
-	if _, err := topologicalIssues(dependencies, order); err != nil {
+	ordered, err := topologicalIssues(dependencies, order)
+	if err != nil {
 		return nil, err
+	}
+	inputIndex := make(map[int]int, len(req.Issues))
+	for idx, num := range req.Issues {
+		inputIndex[num] = idx
 	}
 
 	if !req.Continuation && req.PromptConfig.PromptFile == "" {
@@ -595,7 +600,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	servingTurn := 0
 	completedTurns := make(map[int]struct{})
 
-	for i, num := range req.Issues {
+	for turn, num := range ordered {
 		wg.Add(1)
 		go func(idx, issueNum int, blockers []int, turn int) {
 			defer wg.Done()
@@ -648,6 +653,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				for waiting {
 					if err := ctx.Err(); err != nil {
 						turnMu.Unlock()
+						mu.Lock()
+						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "failure", Branch: req.Branches[issueNum]}
+						statuses[issueNum] = "failure"
+						failureCount++
+						mu.Unlock()
 						return
 					}
 					if turn == servingTurn {
@@ -681,7 +691,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				failureCount++
 			}
 			mu.Unlock()
-		}(i, num, dependencies[num], i)
+		}(inputIndex[num], num, dependencies[num], turn)
 	}
 
 	wg.Wait()
