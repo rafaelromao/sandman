@@ -1111,6 +1111,18 @@
       padding: 6px 8px;
       border-radius: 6px;
     }
+    .command-row-detail .kv .output-pre {
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+      font-size: 12px;
+      word-break: break-word;
+      white-space: pre-wrap;
+      background: var(--surface-3);
+      padding: 6px 8px;
+      border-radius: 6px;
+      margin: 0;
+      max-height: 200px;
+      overflow-y: auto;
+    }
     .commands-panel-footer {
       display: flex;
       justify-content: space-between;
@@ -2188,6 +2200,8 @@
           + '<div class="kv"><span>Command</span><code>' + escapeHTML(command.command || '') + '</code></div>'
           + (command.args && command.args.length ? '<div class="kv"><span>Arguments</span><strong class="mono">' + escapeHTML(command.args.join(' ')) + '</strong></div>' : '')
           + (command.repoRoot ? '<div class="kv"><span>Repository root</span><strong class="mono">' + escapeHTML(command.repoRoot) + '</strong></div>' : '')
+          + (command.exitCode !== undefined ? '<div class="kv"><span>Exit code</span><code>' + command.exitCode + '</code></div>' : '')
+          + (command.output ? '<div class="kv"><span>Stdout</span><pre class="output-pre">' + escapeHTML(command.output) + '</pre></div>' : '')
           + '</div>'
         ) : ''
       ].join('');
