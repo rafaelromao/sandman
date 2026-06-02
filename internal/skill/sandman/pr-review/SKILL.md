@@ -47,18 +47,18 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
     **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
 4. **Wait for review** (timeout: 10 minutes)
-      Poll every 30–60s using all three commands below. Each API returns different data — merge all three before classifying feedback:
+      Poll every 30–60s. Run each command separately — do NOT chain with `&&`. Capture each output fully before processing.
 
     ```bash
     gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus
     gh api repos/<owner>/<repo>/pulls/<N>/reviews
-    gh api repos/<owner>/<repo>/pulls/<N>/comments
+    gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate
     ```
 
    What each command returns:
    - `gh pr view --json comments` — top-level PR conversation comments only (NOT inline diff comments)
    - `gh api .../reviews` — all reviews with their state, body, and commit. Use this for review content, NOT `latestReviews` which is a truncated preview with empty fields
-   - `gh api .../comments` — inline file-level review comments on the diff (these are separate from top-level comments)
+   - `gh api .../comments --paginate` — inline file-level review comments on the diff. Use `--paginate` to fetch all pages; inline comments can span many files and are often truncated without it
 
    Read every new PR Review Agent comment from all sources, including inline file comments.
    Do not overlook comments attached to a file diff instead of the top-level conversation.
@@ -94,14 +94,12 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
    **D. Still pending?**
    - `reviewDecision: "REVIEW_REQUIRED"` or absent, AND
    - No reviews with `state: "APPROVED"` or `state: "CHANGES_REQUESTED"`, AND
-   - Either:
-     - No review comments exist at all (first poll), OR
-     - All reviews are boilerplate-only (see below), AND
-     - No inline file comments exist
+   - No inline file comments exist (from `gh api .../comments`), AND
+   - All review bodies are boilerplate-only (see below)
    → **Still waiting** — continue polling, do not give up
 
    **E. Real feedback detected?**
-   Inline file comments exist (from `gh api .../pulls/<N>/comments`), OR review body contains concrete code feedback beyond boilerplate:
+   Inline file comments exist from `gh api .../comments`, OR review body contains concrete code feedback beyond boilerplate:
    - Boilerplate pattern: body starts with "### 💡" or "### Codex Review" and only contains "Here are some automated review suggestions" without mentioning specific files, functions, variable names, or line numbers
    - Real feedback: mentions specific file paths, function names, variable names, or requests concrete code changes
    → **Has blockers or suggestions** — treat as actionable feedback, apply fixes, commit, push, and re-request review
@@ -109,7 +107,7 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
    **F. Only nits, suggestions, or questions?**
    - Comments that are nits (minor stylistic), suggestions (optional improvements), or questions (not blocking)
    - No `CHANGES_REQUESTED` reviews
-   → **Suggestions** — fix if straightforward; skip if requires non-trivial redesign and re-request review after addressing what is straightforward
+    → **Suggestions** — fix if straightforward; skip if requires non-trivial redesign and re-request review after addressing what is straightforward
 
 6. **Apply fixes**
    - Read relevant source files
@@ -130,7 +128,7 @@ Stop polling and report to the user **only** when:
 Continue polling (do NOT stop) when:
 - Review is pending (`reviewDecision: "REVIEW_REQUIRED"` or no reviews yet)
 - Only boilerplate setup comments exist — the review has not yet produced real feedback
-- Only nits or suggestions remain (E above) — still should wait for formal or informal approval
+- Only nits or suggestions remain (F above) — still should wait for formal or informal approval
 - CI is still running
 - Any `CHANGES_REQUESTED` review exists but can be addressed
 
