@@ -2389,6 +2389,7 @@
     }
 
     function toggleRun(runKey) {
+      const prevExpandedRunKey = state.expandedRunKey;
       if (state.expandedRunKey === runKey) {
         state.expandedRunKey = null;
       } else {
@@ -2396,8 +2397,22 @@
       }
       persistPortalViewState();
       render();
-      const row = Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey);
-      if (row) row.focus({ preventScroll: true });
+      if (state.expandedRunKey !== null && state.expandedRunKey !== prevExpandedRunKey) {
+        const detailRow = Array.from(runsBody.children).find(
+          (child) => child.getAttribute('data-detail-for') === state.expandedRunKey
+        );
+        if (detailRow) {
+          detailRow.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+      }
+      if (prevExpandedRunKey !== null && prevExpandedRunKey !== state.expandedRunKey) {
+        const row = Array.from(runsBody.children).find(
+          (child) => child.getAttribute('data-run-key') === prevExpandedRunKey
+        );
+        if (row) {
+          row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
     }
 
     if (commandPicker) {
