@@ -590,7 +590,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 17, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "stale-sha"}}},
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 17, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"}}},
 		renderer:     renderer,
 		errorLog:     io.Discard,
 		sandboxFactory: &retrySandboxFactory{

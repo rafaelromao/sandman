@@ -1026,13 +1026,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 					attemptRenderCfg.ContinuePrompt = "Continue with sandman-pr-review until the PR is merged"
 					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
 					prFound = true
-				} else if prLookupErr == nil {
-					merged, err := checkPRMergedAtHead(o.githubClient, branch, headSHA)
-					if err != nil {
-						fmt.Fprintf(o.errorLog, "error: check PR merged status for issue %d: %v\n", num, err)
-						return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
-					}
-					prFound = merged
 				}
 				if !prFound {
 					if prLookupErr != nil {
@@ -1076,16 +1069,15 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		result.RetriesTotal = attempt + 1
 		if result.Status == "success" || parseLogForCompletion(logPath) {
 			result.Status = "success"
-			break
-		}
-		if headSHA == "" {
-			if head, err := currentBranchHeadFn(wt.WorkDir()); err == nil {
-				headSHA = head
+			pr, err := o.githubClient.FindPRByBranch(branch)
+			if err != nil {
+				result.Status = "failure"
+			} else if pr != nil && (pr.Merged || strings.EqualFold(pr.State, "merged")) {
+				if headSHA != "" && strings.TrimSpace(pr.HeadRefOid) != "" && !strings.EqualFold(pr.HeadRefOid, headSHA) {
+					result.Status = "failure"
+				}
 			}
-		}
-		if headSHA != "" {
-			if merged, err := checkPRMergedAtHead(o.githubClient, branch, headSHA); err == nil && merged {
-				result.Status = "success"
+			if result.Status == "success" {
 				break
 			}
 		}
