@@ -310,9 +310,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 				if !containerCapacitySet {
 					containerCapacity = 1
+					containerCapacitySet = true
 				}
 				if !maxContainersSet {
 					maxContainers = 1
+					maxContainersSet = true
 				}
 				if !retriesSet {
 					retries = 3

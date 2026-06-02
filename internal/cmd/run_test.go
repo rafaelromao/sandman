@@ -2303,6 +2303,12 @@ func TestRun_RalphFlagParallelOverride(t *testing.T) {
 	if spy.req.MaxContainers != 1 {
 		t.Errorf("expected max-containers=1 (ralph default), got %d", spy.req.MaxContainers)
 	}
+	if !spy.req.ContainerCapacitySet {
+		t.Error("expected ContainerCapacitySet=true when ralph defaults apply")
+	}
+	if !spy.req.MaxContainersSet {
+		t.Error("expected MaxContainersSet=true when ralph defaults apply")
+	}
 	if spy.req.Retries != 3 {
 		t.Errorf("expected retries=3 (ralph default), got %d", spy.req.Retries)
 	}
