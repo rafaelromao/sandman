@@ -482,6 +482,32 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetailLog_AppendRehighlightsTrailingToken(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'http://example/' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre1) throw new Error('expected log pre');
+const lastChildBefore = pre1.children[pre1.children.length - 1];
+const beforeText = lastChildBefore._textContent;
+if (beforeText !== 'http://example/') throw new Error('expected last span to hold the URL, got ' + JSON.stringify(beforeText));
+SandmanPortalDiff.resetCounters();
+const run2 = Object.assign({}, run1, { log: 'http://example/running' });
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (pre2 !== pre1) throw new Error('pre identity should be preserved');
+const lastChildAfter = pre2.children[pre2.children.length - 1];
+const afterText = lastChildAfter._textContent;
+if (afterText !== 'http://example/running') throw new Error('expected the trailing token to be re-highlighted with the suffix, got ' + JSON.stringify(afterText));
+if (pre2.textContent !== 'http://example/running') throw new Error('expected pre text to include the suffix, got ' + JSON.stringify(pre2.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailLog_RewriteReplacesNodes(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1' };

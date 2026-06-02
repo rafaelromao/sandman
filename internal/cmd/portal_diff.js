@@ -193,13 +193,37 @@
     for (const node of nodes) pre.appendChild(node);
   }
 
-  function appendTerminalPre(pre, text, helpers) {
-    const html = helpers.renderTerminalContent(text);
+  function appendTerminalPre(pre, oldLog, newSuffix, helpers) {
+    if (!newSuffix) return;
+    if (appendStartsAtBoundary(newSuffix)) {
+      const html = helpers.renderTerminalContent(newSuffix);
+      if (!html) return;
+      const scratch = global.document.createElement('div');
+      scratch.innerHTML = html;
+      const nodes = Array.from(scratch.childNodes);
+      for (const node of nodes) pre.appendChild(node);
+      return;
+    }
+    const lastNewline = oldLog.lastIndexOf('\n');
+    const partialLastLine = lastNewline >= 0 ? oldLog.slice(lastNewline + 1) : oldLog;
+    const combined = partialLastLine + newSuffix;
+    const html = helpers.renderTerminalContent(combined);
     if (!html) return;
     const scratch = global.document.createElement('div');
     scratch.innerHTML = html;
     const nodes = Array.from(scratch.childNodes);
+    if (pre.lastChild) {
+      pre.removeChild(pre.lastChild);
+    }
     for (const node of nodes) pre.appendChild(node);
+  }
+
+  function appendStartsAtBoundary(suffix) {
+    if (!suffix) return true;
+    const first = suffix.charAt(0);
+    if (first === '\n' || first === ' ' || first === '\t') return true;
+    if (/[.,;:!?()[\]{}"'`/\\]/.test(first)) return true;
+    return false;
   }
 
   function eventsFingerprint(run) {
@@ -388,7 +412,7 @@
           return;
         }
         if (oldLog && newLog.startsWith(oldLog)) {
-          appendTerminalPre(pre, newLog.slice(oldLog.length), opts.helpers);
+          appendTerminalPre(pre, oldLog, newLog.slice(oldLog.length), opts.helpers);
         } else {
           fillTerminalPre(pre, newLog, opts.helpers);
         }
