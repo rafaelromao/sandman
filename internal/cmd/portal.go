@@ -424,6 +424,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			SupportedThemesJSON   template.JS
 			PortalStateJS         template.JS
 			PortalScrollJS        template.JS
+			PortalDiffJS          template.JS
 			PortalStopSupported   bool
 		}{
 			RepoRoot:              repoRoot,
@@ -441,6 +442,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			SupportedThemesJSON:   portalSupportedThemesJSON,
 			PortalStateJS:         portalStateJS,
 			PortalScrollJS:        portalScrollJS,
+			PortalDiffJS:          portalDiffJS,
 			PortalStopSupported:   portalStopSupported(),
 		}
 		if err := portalPageTemplate.Execute(w, data); err != nil {
@@ -1130,13 +1132,9 @@ func readPortalSocketOutput(sockPath string) string {
 
 	var buf bytes.Buffer
 	tmp := make([]byte, 4096)
-	for buf.Len() < portalReadLimit {
+	for {
 		n, readErr := conn.Read(tmp)
 		if n > 0 {
-			remaining := portalReadLimit - buf.Len()
-			if n > remaining {
-				n = remaining
-			}
 			_, _ = buf.Write(tmp[:n])
 		}
 		if readErr != nil {
@@ -1145,6 +1143,10 @@ func readPortalSocketOutput(sockPath string) string {
 			}
 			break
 		}
+	}
+	if buf.Len() > portalReadLimit {
+		data := buf.Bytes()
+		buf = *bytes.NewBuffer(append([]byte(nil), data[len(data)-portalReadLimit:]...))
 	}
 	return cleanPortalText(buf.String())
 }

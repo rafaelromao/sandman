@@ -16,17 +16,18 @@ import (
 
 // AgentRun orchestrates the lifecycle of a single agent execution for an issue.
 type AgentRun struct {
-	issue         *github.Issue
-	branch        string
-	baseBranch    string
-	preset        string
-	model         string
-	modelProvider string
-	modelName     string
-	sandbox       sandbox.Sandbox
-	status        string
-	env           map[string]string
-	outputWriter  io.Writer
+	issue                      *github.Issue
+	branch                     string
+	baseBranch                 string
+	preset                     string
+	model                      string
+	modelProvider              string
+	modelName                  string
+	dangerouslySkipPermissions *bool
+	sandbox                    sandbox.Sandbox
+	status                     string
+	env                        map[string]string
+	outputWriter               io.Writer
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -113,10 +114,11 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 	}
 
 	renderedCmd, err := RenderCommand(command, CommandData{
-		PromptFile:    renderedPromptFile,
-		ModelFlag:     r.modelFlag(command),
-		ModelProvider: r.modelProvider,
-		ModelName:     r.modelName,
+		PromptFile:                 renderedPromptFile,
+		ModelFlag:                  r.modelFlag(command),
+		ModelProvider:              r.modelProvider,
+		ModelName:                  r.modelName,
+		DangerouslySkipPermissions: r.dangerouslySkipPermissions != nil && *r.dangerouslySkipPermissions,
 	})
 	if err != nil {
 		r.status = "failure"

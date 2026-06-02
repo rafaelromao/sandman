@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 )
 
@@ -12,6 +13,7 @@ type LinePrefixWriter struct {
 	w     io.Writer
 	label string
 	buf   []byte
+	mu    sync.Mutex
 }
 
 // NewLinePrefixWriter creates a writer that prefixes each line with a label and HH:MM:SS.
@@ -25,6 +27,8 @@ func (lp *LinePrefixWriter) prefix() string {
 
 // Write buffers input until a newline is found, then writes the prefixed line.
 func (lp *LinePrefixWriter) Write(p []byte) (int, error) {
+	lp.mu.Lock()
+	defer lp.mu.Unlock()
 	total := len(p)
 	for len(p) > 0 {
 		idx := bytes.IndexByte(p, '\n')
@@ -45,6 +49,8 @@ func (lp *LinePrefixWriter) Write(p []byte) (int, error) {
 
 // Flush writes any remaining buffered content with the prefix.
 func (lp *LinePrefixWriter) Flush() error {
+	lp.mu.Lock()
+	defer lp.mu.Unlock()
 	if len(lp.buf) > 0 {
 		if _, err := fmt.Fprintf(lp.w, "%s%s", lp.prefix(), string(lp.buf)); err != nil {
 			return err
