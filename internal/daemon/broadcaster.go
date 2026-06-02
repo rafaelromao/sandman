@@ -6,11 +6,14 @@ import (
 	"sync"
 )
 
+const MaxBufferSize = 256 * 1024
+
 type Broadcaster struct {
 	mu      sync.Mutex
 	buffer  bytes.Buffer
 	clients map[*broadcastClient]struct{}
 	closed  bool
+	dropped int64
 }
 
 type broadcastClient struct {
@@ -37,6 +40,11 @@ func (b *Broadcaster) Write(p []byte) (int, error) {
 	if err != nil {
 		b.mu.Unlock()
 		return n, err
+	}
+	if b.buffer.Len() > MaxBufferSize {
+		excess := b.buffer.Len() - MaxBufferSize
+		b.dropped += int64(excess)
+		b.buffer.Next(excess)
 	}
 
 	clients := make([]*broadcastClient, 0, len(b.clients))
