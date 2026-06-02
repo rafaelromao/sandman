@@ -195,7 +195,7 @@
 
   function appendTerminalPre(pre, oldLog, newSuffix, helpers) {
     if (!newSuffix) return;
-    if (appendStartsAtBoundary(newSuffix)) {
+    if (appendStartsAtBoundary(oldLog, newSuffix)) {
       const html = helpers.renderTerminalContent(newSuffix);
       if (!html) return;
       const scratch = global.document.createElement('div');
@@ -207,12 +207,16 @@
     fillTerminalPre(pre, oldLog + newSuffix, helpers);
   }
 
-  function appendStartsAtBoundary(suffix) {
+  function appendStartsAtBoundary(oldLog, suffix) {
     if (!suffix) return true;
-    const first = suffix.charAt(0);
-    if (first === '\n' || first === ' ' || first === '\t') return true;
-    if (/[.,;:!?()[\]{}"'`/\\]/.test(first)) return true;
+    if (isBoundary(suffix.charAt(0))) return true;
+    if (oldLog && isBoundary(oldLog.charAt(oldLog.length - 1))) return true;
     return false;
+  }
+
+  function isBoundary(ch) {
+    if (ch === '\n' || ch === ' ' || ch === '\t') return true;
+    return /[.,;:!?()[\]{}"'`/\\]/.test(ch);
   }
 
   function eventsFingerprint(run) {

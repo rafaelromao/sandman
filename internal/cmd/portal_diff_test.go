@@ -499,10 +499,35 @@ const run2 = Object.assign({}, run1, { log: 'http://example/running' });
 SandmanPortalDiff.diffRuns(body, [run2], opts);
 const pre2 = detailRow.querySelector('pre[data-scroll-key]');
 if (pre2 !== pre1) throw new Error('pre identity should be preserved');
-const lastChildAfter = pre2.children[pre2.children.length - 1];
-const afterText = lastChildAfter._textContent;
-if (afterText !== 'http://example/running') throw new Error('expected the trailing token to be re-highlighted with the suffix, got ' + JSON.stringify(afterText));
 if (pre2.textContent !== 'http://example/running') throw new Error('expected pre text to include the suffix, got ' + JSON.stringify(pre2.textContent));
+const lastBefore = pre2.children[pre2.children.length - 2];
+if (!lastBefore || lastBefore._textContent !== 'http://example/') throw new Error('expected the original URL span to be preserved, got ' + JSON.stringify(lastBefore && lastBefore._textContent));
+const lastAfter = pre2.children[pre2.children.length - 1];
+if (!lastAfter || lastAfter._textContent !== 'running') throw new Error('expected the suffix to be appended as a new node, got ' + JSON.stringify(lastAfter && lastAfter._textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailLog_AppendAfterNewlineIsTreatedAsBoundary(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\n' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre1) throw new Error('expected log pre');
+const firstChildren = pre1.children.slice();
+SandmanPortalDiff.resetCounters();
+const run2 = Object.assign({}, run1, { log: 'line 1\nline 2\n' });
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (pre2 !== pre1) throw new Error('pre identity must be preserved');
+if (pre2.textContent !== 'line 1\nline 2\n') throw new Error('expected pre to include the new line, got ' + JSON.stringify(pre2.textContent));
+for (let i = 0; i < firstChildren.length; i += 1) {
+  if (pre2.children[i] !== firstChildren[i]) throw new Error('original child node ' + i + ' was replaced during append');
+}
 console.log('PASS');
 `
 	runNodeScript(t, js)
