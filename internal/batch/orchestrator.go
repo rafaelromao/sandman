@@ -446,6 +446,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 	defer policy.Close()
 
+	isContainer := sandboxMode == "docker" || sandboxMode == "podman"
+
 	parallel := req.Parallel
 	if parallel < 0 {
 		return nil, fmt.Errorf("parallel must be 0 or greater")
@@ -458,14 +460,40 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		startDelay = req.StartDelay
 	}
 
+	containerCapacity := 0
+	maxContainers := 0
+	if isContainer {
+		containerCapacity = cfg.ContainerCapacity
+		if req.ContainerCapacitySet {
+			containerCapacity = req.ContainerCapacity
+		}
+		maxContainers = cfg.MaxContainers
+		if req.MaxContainersSet {
+			maxContainers = req.MaxContainers
+		}
+	}
+
+	effectiveParallel := parallel
+	if isContainer && maxContainers > 0 && containerCapacity > 0 {
+		totalSlots := containerCapacity * maxContainers
+		if effectiveParallel == 0 || totalSlots < effectiveParallel {
+			effectiveParallel = totalSlots
+		}
+	}
+
 	dependencies := make(map[int][]int, len(req.Issues))
 	order := make([]int, 0, len(req.Issues))
 	for _, num := range req.Issues {
 		dependencies[num] = uniqueIssues(req.Dependencies[num])
 		order = append(order, num)
 	}
-	if _, err := topologicalIssues(dependencies, order); err != nil {
+	ordered, err := topologicalIssues(dependencies, order)
+	if err != nil {
 		return nil, err
+	}
+	inputIndex := make(map[int]int, len(req.Issues))
+	for idx, num := range req.Issues {
+		inputIndex[num] = idx
 	}
 
 	if !req.Continuation && req.PromptConfig.PromptFile == "" {
@@ -484,7 +512,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
-	isContainer := sandboxMode == "docker" || sandboxMode == "podman"
 	dangerouslySkipPermissions := req.DangerouslySkipPermissions
 	if dangerouslySkipPermissions == nil {
 		dangerouslySkipPermissions = &isContainer
@@ -536,6 +563,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		case <-shutdownDone:
 			return
 		}
+
 		timeout := o.killTimeout
 		if timeout == 0 {
 			timeout = 10 * time.Second
@@ -560,11 +588,41 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		activeMu.Unlock()
 	}()
 
-	for i, num := range req.Issues {
+	// Start-order lock: serializes ready goroutines in spawn order when
+	// effective start capacity is 1. Each goroutine receives a turn at spawn
+	// time and waits for its turn before proceeding, so issue N+1 cannot start
+	// before issue N has finished when only one AgentRun can run at a time.
+	// Skipped goroutines (e.g. blocked dependents) record their turn as
+	// completed on return; advanceTurn consumes consecutive completed turns so
+	// a later return never strands an earlier outstanding turn.
+	var turnMu sync.Mutex
+	var turnCond = sync.NewCond(&turnMu)
+	servingTurn := 0
+	completedTurns := make(map[int]struct{})
+
+	for turn, num := range ordered {
 		wg.Add(1)
-		go func(idx, issueNum int, blockers []int) {
+		go func(idx, issueNum int, blockers []int, turn int) {
 			defer wg.Done()
 			defer close(completed[issueNum])
+
+			advanceTurn := func() {
+				if effectiveParallel != 1 {
+					return
+				}
+				turnMu.Lock()
+				completedTurns[turn] = struct{}{}
+				for {
+					if _, ok := completedTurns[servingTurn]; !ok {
+						break
+					}
+					delete(completedTurns, servingTurn)
+					servingTurn++
+				}
+				turnCond.Broadcast()
+				turnMu.Unlock()
+			}
+			defer advanceTurn()
 
 			for _, blocker := range blockers {
 				<-completed[blocker]
@@ -589,6 +647,28 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
+			if effectiveParallel == 1 {
+				turnMu.Lock()
+				waiting := true
+				for waiting {
+					if err := ctx.Err(); err != nil {
+						turnMu.Unlock()
+						mu.Lock()
+						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "failure", Branch: req.Branches[issueNum]}
+						statuses[issueNum] = "failure"
+						failureCount++
+						mu.Unlock()
+						return
+					}
+					if turn == servingTurn {
+						waiting = false
+						continue
+					}
+					turnCond.Wait()
+				}
+				turnMu.Unlock()
+			}
+
 			if err := startGate.Acquire(ctx); err != nil {
 				mu.Lock()
 				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "failure", Branch: req.Branches[issueNum]}
@@ -611,7 +691,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				failureCount++
 			}
 			mu.Unlock()
-		}(i, num, dependencies[num])
+		}(inputIndex[num], num, dependencies[num], turn)
 	}
 
 	wg.Wait()
