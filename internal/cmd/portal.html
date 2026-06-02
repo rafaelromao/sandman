@@ -1258,6 +1258,23 @@
       .toolbar { padding: 12px; }
       .table-shell { border-radius: 16px; }
       .detail-panel { padding: 14px; }
+      .command-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+        padding: 12px;
+        min-height: 56px;
+      }
+      .command-row .col-status {
+        flex: 0 0 auto;
+        align-self: flex-start;
+      }
+      .command-row .col-command {
+        font-size: 13px;
+      }
+      .command-row .col-started {
+        font-size: 10px;
+      }
       .commands-panel,
       .settings-panel {
         width: 100vw;
