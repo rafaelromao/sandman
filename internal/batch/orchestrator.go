@@ -1072,14 +1072,14 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			pr, err := o.githubClient.FindPRByBranch(branch)
 			if err != nil {
 				result.Status = "failure"
-			} else if pr == nil {
-				result.Status = "failure"
-			} else if pr.Merged || strings.EqualFold(pr.State, "merged") {
-				if headSHA != "" && strings.TrimSpace(pr.HeadRefOid) != "" && !strings.EqualFold(pr.HeadRefOid, headSHA) {
+			} else if pr != nil {
+				if pr.Merged || strings.EqualFold(pr.State, "merged") {
+					if headSHA != "" && strings.TrimSpace(pr.HeadRefOid) != "" && !strings.EqualFold(pr.HeadRefOid, headSHA) {
+						result.Status = "failure"
+					}
+				} else {
 					result.Status = "failure"
 				}
-			} else {
-				result.Status = "failure"
 			}
 			if result.Status == "success" {
 				break
