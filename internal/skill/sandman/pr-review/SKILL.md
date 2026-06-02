@@ -13,13 +13,14 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
 ## Workflow
 
 ### Prerequisites
+
 - `gh` CLI authenticated with repo access
 - PR is already open, branch is pushed
 - Working directory at the repo root
 
 ### Iteration loop (max 10 passes)
 
-1. **Checkout PR**
+1. **Check CI status**
 
    ```bash
    gh pr checks <N> --repo <owner/repo>
@@ -27,53 +28,96 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
 
 2. **Wait for CI**
 
-     Poll until status is `pass`. If `fail`:
+      Poll until status is `pass`. If `fail`:
 
-     - If there are merge conflicts, load the `sandman-merge` skill and merge the base branch into the local branch.
-     - Read the failed job logs to identify the root cause.
-     - Fix the error in the codebase.
-     - Run local tests/formatting to verify the fix.
-     - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
-     - **Repeat Step 2** (wait for CI again).
+      - If there are merge conflicts, load the `sandman-merge` skill and merge the base branch into the local branch.
+      - Read the failed job logs to identify the root cause.
+      - Fix the error in the codebase.
+      - Run local tests/formatting to verify the fix.
+      - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
+      - **Repeat Step 2** (wait for CI again).
 
 3. **Delegate review to the PR Review Agent**
 
-   Request a review with this exact command. Do not change the body of the request.
+    Request a review with this exact command. Do not change the body of the request.
 
-   ```bash
-   gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
-   ```
-   **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
+    ```bash
+    gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
+    ```
+    **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
 4. **Wait for review** (timeout: 10 minutes)
-     Poll every 30–60s using all 4 commands below. Different PR Review Agents may leave feedback in different GitHub surfaces, so always read every source before classifying feedback:
+      Poll every 30–60s using these commands. Merge all sources before classifying feedback:
 
-   ```bash
-   gh pr view <N> --repo <owner/repo> --comments
-   gh pr view <N> --repo <owner/repo> --json latestReviews,reviews,comments,reviewDecision,mergeStateStatus
-   gh api repos/<owner>/<repo>/pulls/<N>/comments
-  gh api repos/<owner>/<repo>/pulls/<N>/reviews
-  ```
-  Merge all sources before classifying feedback.
-  Read every new PR Review Agent comment from all sources, including inline file comments.
-  Do not overlook comments attached to a file diff instead of the top-level conversation.
-  Treat any requested change in an inline file comment as actionable feedback.
-  If no response arrives within 10 minutes, stop and report to the user.
+    ```bash
+    gh pr view <N> --repo <owner/repo> --json latestReviews,reviews,comments,reviewDecision,mergeStateStatus
+    gh api repos/<owner>/<repo>/pulls/<N>/reviews
+    ```
 
-4. **Read and classify feedback**
-   - **Approve** → done, report to user
-   - **Blockers** → must fix before continuing
-   - **Suggestions** → fix if straightforward; ask user if requires major redesign
-   - **Nits** → fix if trivial; skip if purely stylistic disagreement
+   The `--json comments` field in `gh pr view` includes both top-level PR comments and inline review comments in a unified timeline — no need for a separate comments API call.
 
-5. **Apply fixes**
+   Read every new PR Review Agent comment from all sources, including inline file comments.
+   Do not overlook comments attached to a file diff instead of the top-level conversation.
+   Treat any requested change in an inline file comment as actionable feedback.
+   If no response arrives within 10 minutes, stop and report to the user.
+
+5. **Read and classify feedback**
+
+   Merge data from both sources above, then apply this decision tree:
+
+   **A. Formal approval detected?**
+   - `reviewDecision: APPROVED` in the JSON, OR
+   - Any review entry with `state: "APPROVED"`
+   → **Approve** — done, report to user
+
+   **B. Formal changes requested?**
+   - `reviewDecision: CHANGES_REQUESTED`, OR
+   - Any review entry with `state: "CHANGES_REQUESTED"`
+   → **Blockers** — must fix before continuing
+
+   **C. Informal approval (implicit approval without formal review)?**
+   - No pending `CHANGES_REQUESTED` reviews, AND
+   - At least one of these conditions:
+     - A review with `state: "COMMENTED"` whose body contains approval keywords (see list below), OR
+     - A PR comment (not attached to a diff line) from a known reviewer whose body contains approval keywords
+   → **Approve** — report as informal approval
+
+   Approval keywords to search for (case-insensitive, partial match):
+   `lgtm`, `looks good`, `looks good to me`, `looks great`, `looks nice`,
+   `nice work`, `good work`, `great work`, `approved`, `ship it`, `+1`,
+   `thumbs up`, `all good`, `all set`, `good to go`, `go ahead`
+
+   **D. Still pending?**
+   - `reviewDecision: "REVIEW_REQUIRED"` or absent, AND
+   - No reviews with `state: "APPROVED"` or `state: "CHANGES_REQUESTED"`
+   → **Still waiting** — continue polling, do not give up
+
+   **E. Only nits, suggestions, or questions?**
+   - Comments that are nits (minor stylistic), suggestions (optional improvements), or questions (not blocking)
+   - No `CHANGES_REQUESTED` reviews
+    → **Suggestions** — fix if straightforward; skip if requires non-trivial redesign and re-request review after addressing what is straightforward
+
+6. **Apply fixes**
    - Read relevant source files
    - Make minimal changes to address feedback
    - Run project tests and formatting (e.g., `go test ./...`, `gofmt -w .`)
    - Commit: `git add -A && git commit -m "refactor: address review feedback on ..."`
    - Push: `git push`
 
-6. **Repeat** from step 2. After the final pass, request one last review and report the outcome.
+7. **Repeat** from step 2. After the final pass, request one last review and report the outcome.
+
+## Never give up conditions
+
+Stop polling and report to the user **only** when:
+- Formal approval is detected (A or C above)
+- User explicitly asks to stop
+- Max 10 passes reached with unresolved blockers
+
+Continue polling (do NOT stop) when:
+- Review is pending (`reviewDecision: "REVIEW_REQUIRED"` or no reviews yet)
+- Only nits or suggestions remain (E above) — still should wait for formal or informal approval
+- CI is still running
+- Any `CHANGES_REQUESTED` review exists but can be addressed
 
 ## Tips
 
@@ -82,3 +126,4 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
 - If the reviewer asks a question rather than giving actionable feedback, answer in a PR comment and re-request review.
 - Never force-push or amend commits.
 - Always delegate the review request to the PR Review Agent via `{{REVIEW_COMMAND}}` — you are strictly forbidden from reviewing your own PR in the same session.
+- Review agents may post feedback as: top-level PR comments, inline diff comments, or formal reviews with `COMMENT` event. Always check all three sources.
