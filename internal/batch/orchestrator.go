@@ -606,6 +606,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				turnCond.Broadcast()
 				turnMu.Unlock()
 			}
+			defer advanceTurn()
 
 			for _, blocker := range blockers {
 				<-completed[blocker]
@@ -648,7 +649,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 
 			if err := startGate.Acquire(ctx); err != nil {
-				advanceTurn()
 				mu.Lock()
 				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "failure", Branch: req.Branches[issueNum]}
 				statuses[issueNum] = "failure"
@@ -658,7 +658,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 
 			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunID, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, baseBranch, blockers, req.Blocked[issueNum], retries, *dangerouslySkipPermissions)
-			defer advanceTurn()
 			if started {
 				defer startGate.Release()
 			} else {

@@ -3947,6 +3947,64 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *test
 	}
 }
 
+func TestRunBatch_PreservesStartOrderWhenSkippedDependency(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Root", State: "closed"},
+			100: {Number: 100, Title: "Dependent"},
+			200: {Number: 200, Title: "Lone"},
+		},
+	}
+	starter := &fakeContainerStarter{}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	releaseRoot := make(chan struct{})
+	releaseLone := make(chan struct{})
+	startedRoot := make(chan struct{})
+	startedLone := make(chan struct{})
+	runnables := &trackingRunnableFactory{runnables: map[int]Runnable{
+		100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "blocked"}, started: make(chan struct{}), release: make(chan struct{})},
+		200: &controlledRunnable{result: AgentRunResult{IssueNumber: 200, Status: "success"}, started: startedLone, release: releaseLone},
+	}}
+	runnables.runnables[42] = &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "failure"}, started: startedRoot, release: releaseRoot}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = factory
+	o.runnableFactory = runnables
+	o.sandboxFactory = &trackingSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{
+			Issues:               []int{42, 100, 200},
+			Dependencies:         map[int][]int{100: {42}},
+			Sandbox:              "docker",
+			Parallel:             4,
+			ContainerCapacity:    1,
+			ContainerCapacitySet: true,
+			MaxContainers:        1,
+			MaxContainersSet:     true,
+		})
+		errCh <- err
+	}()
+
+	waitForSignal(t, startedRoot, "expected issue 42 to start")
+	close(releaseRoot)
+	waitForSignal(t, startedLone, "expected issue 200 to start after issue 100 was skipped due to dependency failure")
+	close(releaseLone)
+
+	if err := <-errCh; err == nil {
+		t.Fatal("expected batch to surface the failure from issue 42")
+	}
+}
+
 func TestRunBatch_MaxContainersLimitRestrictsSharedContainerConcurrency(t *testing.T) {
 	dir := t.TempDir()
 	dockerPath := filepath.Join(dir, "docker")
