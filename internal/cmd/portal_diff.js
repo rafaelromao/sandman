@@ -21,6 +21,7 @@
 
   function snapshotCellState(run, opts) {
     const h = opts.helpers;
+    const stopSupported = opts.stopSupported !== false;
     return {
       kind: run.kind || '',
       nameText: run.issueLabel || run.key,
@@ -31,7 +32,7 @@
       durationText: h.formatDuration(run.duration),
       branchText: h.formatBranch(run),
       sourceText: h.formatSource(run),
-      canStop: h.isRunStoppable(run, opts.stopGroups),
+      canStop: stopSupported && h.isRunStoppable(run, opts.stopGroups),
       ariaExpanded: String(opts.expandedKey === run.key),
     };
   }
@@ -105,6 +106,7 @@
 
   function reserveStopButton(run, opts) {
     if (!run || !opts || !opts.stopGroups) return false;
+    if (opts.stopSupported === false) return false;
     if (!opts.helpers.isRunStoppable(run, opts.stopGroups)) return false;
     if (opts.stopGroups.has(run.socketPath)) return false;
     opts.stopGroups.add(run.socketPath);
@@ -178,16 +180,17 @@
     pre.classList.add('terminal-text');
     pre.setAttribute('data-scroll-key', run.key);
     fillTerminalPre(pre, log, helpers);
+    pre.setAttribute('data-rendered-log', log);
     return pre;
   }
 
   function fillTerminalPre(pre, text, helpers) {
-    while (pre.children.length) pre.removeChild(pre.children[0]);
     const html = helpers.renderTerminalContent(text);
     const scratch = global.document.createElement('div');
     scratch.innerHTML = html;
-    const children = scratch.children.slice();
-    for (const child of children) pre.appendChild(child);
+    const nodes = Array.from(scratch.childNodes);
+    while (pre.firstChild) pre.removeChild(pre.firstChild);
+    for (const node of nodes) pre.appendChild(node);
   }
 
   function buildLogContent(content, run, helpers) {
@@ -342,8 +345,11 @@
       const pre = content.querySelector('pre[data-scroll-key]');
       const newLog = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       if (pre) {
-        fillTerminalPre(pre, newLog, opts.helpers);
-        mutationCount += 1;
+        if (pre.getAttribute('data-rendered-log') !== newLog) {
+          fillTerminalPre(pre, newLog, opts.helpers);
+          pre.setAttribute('data-rendered-log', newLog);
+          mutationCount += 1;
+        }
         return;
       }
       while (content.firstChild) content.removeChild(content.firstChild);

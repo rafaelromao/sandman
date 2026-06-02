@@ -378,6 +378,23 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffDiffRuns_StopButtonsHiddenWhenPlatformUnsupported(t *testing.T) {
+	js := `const body = makeMockBody();
+const runs = [
+  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', socketPath: '/tmp/sock' },
+];
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, stopSupported: false, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+const aRow = body.children[0];
+const aBtn = aRow.querySelector('button[data-action="stop-batch"]');
+if (aBtn) throw new Error('a should NOT have stop button when stopSupported is false');
+if (stopGroups.size !== 0) throw new Error('stopGroups should not be touched when stopSupported is false, got size ' + stopGroups.size);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailLog_LogPreUpdatedInPlace(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
@@ -396,6 +413,45 @@ SandmanPortalDiff.diffRuns(body, [run2], opts);
 const pre2 = detailRow.querySelector('pre[data-scroll-key]');
 if (pre2 !== pre1) throw new Error('log pre should be the same DOM node across polls (selection preservation)');
 if (pre2.textContent !== 'line 1\nline 2\nline 3') throw new Error('expected updated log text, got ' + pre2.textContent);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailLog_UnchangedLogSkipsRefill(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre1) throw new Error('expected log pre');
+const childrenBefore = pre1.children.length;
+if (!childrenBefore) throw new Error('expected span children initially');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations !== 0) throw new Error('unchanged log should not mutate the pre, got mutations=' + counters.mutations);
+const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (pre2 !== pre1) throw new Error('pre identity must be preserved when log is unchanged');
+if (pre2.children.length !== childrenBefore) throw new Error('pre children should not be replaced when log is unchanged');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffFillTerminalPre_PreservesTextNodes(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'first\nsecond' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+if (pre.textContent !== 'first\nsecond') throw new Error('expected log text with newline preserved, got ' + JSON.stringify(pre.textContent));
+if (pre.getAttribute('data-rendered-log') !== 'first\nsecond') throw new Error('pre should be tagged with the rendered log');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -661,6 +717,15 @@ func sharedMockBody() string {
       this.children = [];
     },
   });
+  Object.defineProperty(body, 'childNodes', {
+    get() { return this.children; },
+  });
+  Object.defineProperty(body, 'firstChild', {
+    get() { return this.children.length ? this.children[0] : null; },
+  });
+  Object.defineProperty(body, 'lastChild', {
+    get() { return this.children.length ? this.children[this.children.length - 1] : null; },
+  });
   return body;
 }
 function makeMockRow() {
@@ -740,8 +805,8 @@ function makeMockRow() {
         if (!n) return;
         if (n.nodeType === 3) { parts.push(n._textContent != null ? n._textContent : (n.textContent || '')); return; }
         if (n._textContent != null) { parts.push(n._textContent); return; }
-        if (n.children) for (const c of n.children) walk(c);
-        if (n.childNodes) for (const c of n.childNodes) walk(c);
+        const list = n.childNodes || n.children;
+        if (list) for (const c of list) walk(c);
       }
       walk(this);
       return parts.join('');
@@ -757,6 +822,15 @@ function makeMockRow() {
       this.children = [];
       parseHtmlInto(this, String(v || ''), log);
     },
+  });
+  Object.defineProperty(row, 'childNodes', {
+    get() { return this.children; },
+  });
+  Object.defineProperty(row, 'firstChild', {
+    get() { return this.children.length ? this.children[0] : null; },
+  });
+  Object.defineProperty(row, 'lastChild', {
+    get() { return this.children.length ? this.children[this.children.length - 1] : null; },
   });
   return row;
 }
