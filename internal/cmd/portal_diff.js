@@ -452,7 +452,7 @@
         if (oldLog === newLog) {
           return;
         }
-        if (oldLog && newLog.startsWith(oldLog)) {
+        if (oldLog && newLog.length >= oldLog.length && newLog.startsWith(oldLog)) {
           appendTerminalPre(pre, oldLog, newLog.slice(oldLog.length), opts.helpers);
         } else {
           fillTerminalPre(pre, newLog, opts.helpers);
@@ -735,6 +735,23 @@
     };
   }
 
+  function updateDetailPanelLog(body, runKey, newLog, helpers) {
+    const detailRow = body.querySelector('tr.detail-row[data-detail-for="' + runKey + '"]');
+    if (!detailRow) return;
+    const pre = detailRow.querySelector('.terminal-text');
+    if (!pre) return;
+    const oldLog = pre.getAttribute('data-rendered-log') || '';
+    if (oldLog === newLog) return;
+    const renderedLog = newLog && String(newLog).trim() ? newLog : 'No log file yet.';
+    if (oldLog && renderedLog.length >= oldLog.length && renderedLog.startsWith(oldLog)) {
+      appendTerminalPre(pre, oldLog, renderedLog.slice(oldLog.length), helpers);
+    } else {
+      fillTerminalPre(pre, renderedLog, helpers);
+    }
+    pre.setAttribute('data-rendered-log', renderedLog);
+    mutationCount += 1;
+  }
+
   global.SandmanPortalDiff = {
     diffRuns,
     insertRunRow,
@@ -745,5 +762,6 @@
     getDetailData,
     resetCounters,
     getCounters,
+    updateDetailPanelLog,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

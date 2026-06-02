@@ -604,6 +604,93 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetailPanelLog_AppendExtendsLog(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+if (pre.getAttribute('data-rendered-log') !== 'line 1\nline 2') throw new Error('expected initial log');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'line 1\nline 2\nline 3', helpers);
+if (pre.getAttribute('data-rendered-log') !== 'line 1\nline 2\nline 3') throw new Error('expected updated log attr, got ' + pre.getAttribute('data-rendered-log'));
+if (pre.textContent !== 'line 1\nline 2\nline 3') throw new Error('expected appended text in pre, got ' + JSON.stringify(pre.textContent));
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('expected mutations on append');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailPanelLog_TruncationFallsBackToReload(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2\nline 3' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+const firstChildren = pre.children.slice();
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'line 1', helpers);
+if (pre.getAttribute('data-rendered-log') !== 'line 1') throw new Error('expected truncated log attr');
+if (pre.textContent !== 'line 1') throw new Error('expected truncated text in pre, got ' + JSON.stringify(pre.textContent));
+let reused = 0;
+for (const c of firstChildren) {
+  if (pre.children.indexOf(c) !== -1) reused += 1;
+}
+if (reused > 0) throw new Error('truncation should fall back to full reload, not append');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailPanelLog_NoOpWhenDetailNotOpen(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'line 1\nline 2\nline 3', helpers);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations !== 0) throw new Error('no mutations expected when detail row not open, got ' + counters.mutations);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailPanelLog_PreservesScrollPosition(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+pre.scrollTop = 50;
+pre.scrollHeight = 200;
+pre.clientHeight = 100;
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'line 1\nline 2', helpers);
+if (pre.scrollTop !== 50) throw new Error('scroll position not preserved, got ' + pre.scrollTop);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailPanelLog_ExportedFunction(t *testing.T) {
+	js := `if (typeof SandmanPortalDiff.updateDetailPanelLog !== 'function') throw new Error('updateDetailPanelLog not exported');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailEvents_SkipsRebuildWhenUnchanged(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'log text', events: [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }] };
