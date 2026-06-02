@@ -172,22 +172,36 @@
     return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(d);
   }
 
-  function buildLogContent(content, run) {
+  function buildLogPre(run, helpers) {
     const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
+    const pre = global.document.createElement('pre');
+    pre.classList.add('terminal-text');
+    pre.setAttribute('data-scroll-key', run.key);
+    fillTerminalPre(pre, log, helpers);
+    return pre;
+  }
+
+  function fillTerminalPre(pre, text, helpers) {
+    while (pre.children.length) pre.removeChild(pre.children[0]);
+    const html = helpers.renderTerminalContent(text);
+    const scratch = global.document.createElement('div');
+    scratch.innerHTML = html;
+    const children = scratch.children.slice();
+    for (const child of children) pre.appendChild(child);
+  }
+
+  function buildLogContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
     const h3 = global.document.createElement('h3');
     h3.textContent = 'Log';
     section.appendChild(h3);
-    const pre = global.document.createElement('pre');
-    pre.classList.add('terminal-text');
-    pre.setAttribute('data-scroll-key', run.key);
-    pre.textContent = log;
+    const pre = buildLogPre(run, helpers);
     section.appendChild(pre);
     content.appendChild(section);
   }
 
-  function buildEventsContent(content, run) {
+  function buildEventsContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
     const h3 = global.document.createElement('h3');
@@ -219,7 +233,7 @@
         if (event.payload && Object.keys(event.payload).length) {
           const pre = global.document.createElement('pre');
           pre.classList.add('event-payload', 'terminal-text');
-          pre.textContent = JSON.stringify(event.payload, null, 2);
+          fillTerminalPre(pre, JSON.stringify(event.payload, null, 2), helpers);
           row.appendChild(pre);
         }
         list.appendChild(row);
@@ -285,8 +299,8 @@
     const content = global.document.createElement('div');
     content.classList.add('detail-content');
     panel.appendChild(content);
-    if (tabName === 'log') buildLogContent(content, run);
-    else if (tabName === 'events') buildEventsContent(content, run);
+    if (tabName === 'log') buildLogContent(content, run, helpers);
+    else if (tabName === 'events') buildEventsContent(content, run, helpers);
     else buildDetailsContent(content, run, helpers);
   }
 
@@ -328,19 +342,18 @@
       const pre = content.querySelector('pre[data-scroll-key]');
       const newLog = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       if (pre) {
-        if (pre.textContent !== newLog) {
-          setText(pre, newLog);
-        }
+        fillTerminalPre(pre, newLog, opts.helpers);
+        mutationCount += 1;
         return;
       }
       while (content.firstChild) content.removeChild(content.firstChild);
-      buildLogContent(content, run);
+      buildLogContent(content, run, opts.helpers);
       mutationCount += 1;
       return;
     }
     while (content.firstChild) content.removeChild(content.firstChild);
     if (tabName === 'events') {
-      buildEventsContent(content, run);
+      buildEventsContent(content, run, opts.helpers);
     } else {
       buildDetailsContent(content, run, opts.helpers);
     }

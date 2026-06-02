@@ -387,7 +387,9 @@ SandmanPortalDiff.diffRuns(body, [run1], opts);
 const detailRow = body.children[1];
 const pre1 = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre1) throw new Error('expected log pre');
-if (pre1.textContent !== 'line 1\nline 2') throw new Error('expected initial log text, got ' + pre1.textContent);
+if (pre1.textContent !== 'line 1\nline 2') throw new Error('expected initial log text, got ' + JSON.stringify(pre1.textContent));
+const hasSpans = pre1.children.length > 0;
+if (!hasSpans) throw new Error('expected log pre to contain highlighted span children');
 SandmanPortalDiff.resetCounters();
 const run2 = Object.assign({}, run1, { log: 'line 1\nline 2\nline 3' });
 SandmanPortalDiff.diffRuns(body, [run2], opts);
@@ -561,6 +563,11 @@ const renderRunMeta = (run) => {
   if (run.issueLabel) parts.push(run.issueLabel);
   return parts.length ? parts.join(' · ') : 'Run';
 };
+const renderTerminalContent = (text) => {
+  const value = String(text || '');
+  if (!value) return '';
+  return value.split('\n').map((line) => '<span>' + escapeHTML(line) + '</span>').join('\n');
+};
 const isRunStoppable = (run, stopGroups) => {
   if (!run || run.kind !== 'active') return false;
   if (run.status !== 'active' && run.status !== 'queued') return false;
@@ -570,7 +577,7 @@ const isRunStoppable = (run, stopGroups) => {
 };
 const helpers = {
   escapeHTML, formatTime, formatDuration, formatBranch, formatSource,
-  statusClass, renderStatusBadge, renderRunMeta, isRunStoppable,
+  statusClass, renderStatusBadge, renderRunMeta, renderTerminalContent, isRunStoppable,
 };
 `
 }
@@ -726,10 +733,72 @@ function makeMockRow() {
     },
   };
   Object.defineProperty(row, 'textContent', {
-    get() { return this._textContent || ''; },
+    get() {
+      if (this._textContent != null) return this._textContent;
+      const parts = [];
+      function walk(n) {
+        if (!n) return;
+        if (n.nodeType === 3) { parts.push(n._textContent != null ? n._textContent : (n.textContent || '')); return; }
+        if (n._textContent != null) { parts.push(n._textContent); return; }
+        if (n.children) for (const c of n.children) walk(c);
+        if (n.childNodes) for (const c of n.childNodes) walk(c);
+      }
+      walk(this);
+      return parts.join('');
+    },
     set(v) { this._textContent = v; log.push(['textContent=', '<set>']); },
   });
+  Object.defineProperty(row, 'innerHTML', {
+    get() { return this._innerHTML || ''; },
+    set(v) {
+      this._innerHTML = v;
+      log.push(['innerHTML=', '<set>']);
+      for (const c of this.children.slice()) c.parentNode = null;
+      this.children = [];
+      parseHtmlInto(this, String(v || ''), log);
+    },
+  });
   return row;
+}
+function parseHtmlInto(parent, html, log) {
+  let pos = 0;
+  let guard = 0;
+  while (pos < html.length) {
+    if (++guard > html.length * 4 + 10) break;
+    if (html.charCodeAt(pos) === 10) {
+      const tn = { nodeType: 3, textContent: '\n', parentNode: null, _log: [] };
+      parent.appendChild(tn);
+      pos += 1;
+      continue;
+    }
+    if (html.startsWith('<span', pos)) {
+      const openEnd = html.indexOf('>', pos);
+      if (openEnd < 0) { pos = html.length; break; }
+      const closeStart = html.indexOf('</span>', openEnd);
+      if (closeStart < 0) { pos = html.length; break; }
+      const text = html.slice(openEnd + 1, closeStart);
+      const span = makeMockRow();
+      span.tagName = 'SPAN';
+      span._textContent = text;
+      parent.appendChild(span);
+      pos = closeStart + 7;
+      continue;
+    }
+    if (html.charCodeAt(pos) === 60) {
+      const closeAngle = html.indexOf('>', pos);
+      if (closeAngle < 0) { pos = html.length; break; }
+      pos = closeAngle + 1;
+      continue;
+    }
+    const next = html.indexOf('<', pos + 1);
+    const end = next < 0 ? html.length : next;
+    const text = html.slice(pos, end);
+    if (text) {
+      const tn = { nodeType: 3, textContent: text, parentNode: null, _log: [] };
+      parent.appendChild(tn);
+    }
+    pos = end;
+  }
 }
 function matchSelector(node, sel) {
   const cls = sel.match(/^([a-zA-Z]+)?\.([a-zA-Z-]+)$/);

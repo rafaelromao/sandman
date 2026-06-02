@@ -2298,6 +2298,29 @@
       return parts.length ? parts.join(' · ') : 'Run';
     }
 
+    function highlightTerminalText(text) {
+      const escaped = escapeHTML(text || '');
+      if (!escaped) return '';
+      return escaped.split('\n').map((line) => {
+        let styled = line;
+        if (styled.startsWith('&gt; ')) {
+          styled = '<span class="term-prompt">&gt;</span> ' + styled.slice(5);
+        }
+        styled = styled
+          .replace(/(https?:\/\/[^\s<]+)/g, '<span class="term-url">$1</span>')
+          .replace(/\b([0-9]+(?:\.[0-9]+)?)\b/g, '<span class="term-number">$1</span>')
+          .replace(/(&quot;[^&]*?&quot;|'[^']*?')/g, '<span class="term-string">$1</span>')
+          .replace(/\b(build|success|failure|error|warning|active|completed|waiting|running)\b/gi, '<span class="term-keyword">$1</span>');
+        return styled;
+      }).join('\n');
+    }
+
+    function renderTerminalContent(text) {
+      const value = String(text || '');
+      if (!value) return '';
+      return highlightTerminalText(value);
+    }
+
     function isRunStoppable(run, stopGroups) {
       if (!run || run.kind !== 'active') return false;
       if (run.status !== 'active' && run.status !== 'queued') return false;
@@ -2322,6 +2345,7 @@
           formatSource: formatSource,
           statusClass: statusClass,
           renderRunMeta: renderRunMeta,
+          renderTerminalContent: renderTerminalContent,
           isRunStoppable: isRunStoppable,
         },
         stopGroups: stopGroups,
