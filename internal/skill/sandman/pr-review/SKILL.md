@@ -29,7 +29,7 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
 
      Poll until status is `pass`. If `fail`:
 
-      - If there are merge conflicts, load the `sandman-merge` skill and merge the base branch into the local branch.
+     - If there are merge conflicts, load the `sandman-merge` skill and merge the base branch into the local branch.
      - Read the failed job logs to identify the root cause.
      - Fix the error in the codebase.
      - Run local tests/formatting to verify the fix.
