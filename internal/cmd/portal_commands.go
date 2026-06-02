@@ -124,30 +124,39 @@ func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
 		return portalCommandRecord{}, err
 	}
 	result := portalStartCommand(context.Background(), l.repoRoot, args)
+	var completed portalCommandRecord
 	if result.Err != nil {
 		l.mu.Lock()
-		defer l.mu.Unlock()
 		for i := range l.records {
 			if l.records[i].ID == rec.ID {
 				l.records[i].Status = "failed"
+				l.records[i].ExitCode = &result.ExitCode
+				l.records[i].Output = result.Output
+				completed = l.records[i]
 				break
 			}
 		}
-		_ = l.store.Write(l.records)
-		return rec, result.Err
+		l.mu.Unlock()
+		if err := l.store.Write(l.records); err != nil {
+			return completed, fmt.Errorf("persist failed command status: %w", err)
+		}
+		return completed, result.Err
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	for i := range l.records {
 		if l.records[i].ID == rec.ID {
 			l.records[i].Status = "completed"
 			l.records[i].ExitCode = &result.ExitCode
 			l.records[i].Output = result.Output
+			completed = l.records[i]
 			break
 		}
 	}
-	_ = l.store.Write(l.records)
-	return l.records[0], nil
+	l.mu.Unlock()
+	if err := l.store.Write(l.records); err != nil {
+		return completed, fmt.Errorf("persist completed command status: %w", err)
+	}
+	return completed, nil
 }
 
 func (l *portalLauncher) record(args []string) (portalCommandRecord, error) {
