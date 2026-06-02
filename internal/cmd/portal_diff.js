@@ -193,6 +193,39 @@
     for (const node of nodes) pre.appendChild(node);
   }
 
+  function appendTerminalPre(pre, text, helpers) {
+    const html = helpers.renderTerminalContent(text);
+    if (!html) return;
+    const scratch = global.document.createElement('div');
+    scratch.innerHTML = html;
+    const nodes = Array.from(scratch.childNodes);
+    for (const node of nodes) pre.appendChild(node);
+  }
+
+  function eventsFingerprint(run) {
+    const events = Array.isArray(run.events) ? run.events : [];
+    if (!events.length) return '';
+    const parts = new Array(events.length);
+    for (let i = 0; i < events.length; i += 1) {
+      const e = events[i] || {};
+      parts[i] = String(e.type || 'event') + '|' + String(e.timestamp || '') + '|' + JSON.stringify(e.payload || {});
+    }
+    return parts.join('\n');
+  }
+
+  function detailsFingerprint(run, helpers) {
+    return [
+      run.runId || '',
+      run.status || '',
+      helpers.formatTime(run.startedAt),
+      helpers.formatTime(run.finishedAt),
+      helpers.formatDuration(run.duration),
+      helpers.formatBranch(run),
+      helpers.formatSource(run),
+      run.logUrl || '',
+    ].join('\n');
+  }
+
   function buildLogContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
@@ -303,8 +336,13 @@
     content.classList.add('detail-content');
     panel.appendChild(content);
     if (tabName === 'log') buildLogContent(content, run, helpers);
-    else if (tabName === 'events') buildEventsContent(content, run, helpers);
-    else buildDetailsContent(content, run, helpers);
+    else if (tabName === 'events') {
+      buildEventsContent(content, run, helpers);
+      content.setAttribute('data-rendered-fingerprint', eventsFingerprint(run));
+    } else {
+      buildDetailsContent(content, run, helpers);
+      content.setAttribute('data-rendered-fingerprint', detailsFingerprint(run, helpers));
+    }
   }
 
   function tabNameFor(run, opts) {
@@ -345,16 +383,31 @@
       const pre = content.querySelector('pre[data-scroll-key]');
       const newLog = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       if (pre) {
-        if (pre.getAttribute('data-rendered-log') !== newLog) {
-          fillTerminalPre(pre, newLog, opts.helpers);
-          pre.setAttribute('data-rendered-log', newLog);
-          mutationCount += 1;
+        const oldLog = pre.getAttribute('data-rendered-log') || '';
+        if (oldLog === newLog) {
+          return;
         }
+        if (oldLog && newLog.startsWith(oldLog)) {
+          appendTerminalPre(pre, newLog.slice(oldLog.length), opts.helpers);
+        } else {
+          fillTerminalPre(pre, newLog, opts.helpers);
+        }
+        pre.setAttribute('data-rendered-log', newLog);
+        mutationCount += 1;
         return;
       }
       while (content.firstChild) content.removeChild(content.firstChild);
       buildLogContent(content, run, opts.helpers);
       mutationCount += 1;
+      return;
+    }
+    let fingerprint = '';
+    if (tabName === 'events') {
+      fingerprint = eventsFingerprint(run);
+    } else {
+      fingerprint = detailsFingerprint(run, opts.helpers);
+    }
+    if (content.getAttribute('data-rendered-fingerprint') === fingerprint) {
       return;
     }
     while (content.firstChild) content.removeChild(content.firstChild);
@@ -363,6 +416,7 @@
     } else {
       buildDetailsContent(content, run, opts.helpers);
     }
+    content.setAttribute('data-rendered-fingerprint', fingerprint);
     mutationCount += 1;
   }
 

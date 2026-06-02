@@ -457,6 +457,135 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetailLog_AppendPreservesExistingNodes(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre1) throw new Error('expected log pre');
+const firstChildren = pre1.children.slice();
+SandmanPortalDiff.resetCounters();
+const run2 = Object.assign({}, run1, { log: 'line 1\nline 2' });
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (pre2 !== pre1) throw new Error('pre identity must be preserved on append');
+if (pre2.children.length <= firstChildren.length) throw new Error('append should grow the children list, got ' + pre2.children.length + ' vs ' + firstChildren.length);
+for (let i = 0; i < firstChildren.length; i += 1) {
+  if (pre2.children[i] !== firstChildren[i]) throw new Error('original child node ' + i + ' was replaced during append');
+}
+if (pre2.textContent !== 'line 1\nline 2') throw new Error('appended text should appear in pre, got ' + JSON.stringify(pre2.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailLog_RewriteReplacesNodes(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre1) throw new Error('expected log pre');
+const firstChildren = pre1.children.slice();
+SandmanPortalDiff.resetCounters();
+const run2 = Object.assign({}, run1, { log: 'replacement' });
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (pre2 !== pre1) throw new Error('pre identity must be preserved on rewrite');
+let reused = 0;
+for (const c of firstChildren) {
+  if (pre2.children.indexOf(c) !== -1) reused += 1;
+}
+if (reused !== 0) throw new Error('rewrite should not reuse old child nodes, got ' + reused + ' reused');
+if (pre2.textContent !== 'replacement') throw new Error('replacement log should appear in pre, got ' + JSON.stringify(pre2.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailEvents_SkipsRebuildWhenUnchanged(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'log text', events: [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const content1 = detailRow.querySelector('.detail-content');
+if (!content1) throw new Error('expected detail-content');
+const firstChildren = content1.children.slice();
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations !== 0) throw new Error('unchanged events tab should not mutate, got ' + counters.mutations);
+const content2 = detailRow.querySelector('.detail-content');
+if (content2 !== content1) throw new Error('content identity should be preserved');
+if (content2.children.length !== firstChildren.length) throw new Error('events children should not be replaced, got ' + content2.children.length + ' vs ' + firstChildren.length);
+for (let i = 0; i < firstChildren.length; i += 1) {
+  if (content2.children[i] !== firstChildren[i]) throw new Error('events child node ' + i + ' was replaced');
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailDetails_SkipsRebuildWhenUnchanged(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logUrl: '/log' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const content1 = detailRow.querySelector('.detail-content');
+if (!content1) throw new Error('expected detail-content');
+const firstChildren = content1.children.slice();
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations !== 0) throw new Error('unchanged details tab should not mutate, got ' + counters.mutations);
+const content2 = detailRow.querySelector('.detail-content');
+if (content2 !== content1) throw new Error('content identity should be preserved');
+if (content2.children.length !== firstChildren.length) throw new Error('details children should not be replaced');
+for (let i = 0; i < firstChildren.length; i += 1) {
+  if (content2.children[i] !== firstChildren[i]) throw new Error('details child node ' + i + ' was replaced');
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailEvents_RebuildsWhenEventsChange(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', events: [{ type: 'start', timestamp: 1, payload: { ok: true } }] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const content1 = detailRow.querySelector('.detail-content');
+SandmanPortalDiff.resetCounters();
+const run2 = Object.assign({}, run1, { events: [{ type: 'start', timestamp: 1, payload: { ok: true } }, { type: 'progress', timestamp: 2, payload: { ok: true } }] });
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('changed events should mutate, got 0');
+const content2 = detailRow.querySelector('.detail-content');
+if (content2 !== content1) throw new Error('content identity should be preserved across rebuilds');
+let rows = 0;
+function countEventRows(n) {
+  if (!n) return;
+  if (n.classList && n.classList.contains && n.classList.contains('event-row')) rows += 1;
+  if (n.children) for (const c of n.children) countEventRows(c);
+}
+countEventRows(content2);
+if (rows !== 2) throw new Error('expected 2 event rows after rebuild, got ' + rows);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetail_TabChangeRebuildsContent(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'log text' };
