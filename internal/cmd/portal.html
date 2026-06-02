@@ -2405,7 +2405,7 @@
           detailRow.scrollIntoView({ behavior: 'smooth', block: 'end' });
         }
       }
-      if (prevExpandedRunKey !== null && prevExpandedRunKey !== state.expandedRunKey) {
+      if (prevExpandedRunKey !== null && state.expandedRunKey === null) {
         const row = Array.from(runsBody.children).find(
           (child) => child.getAttribute('data-run-key') === prevExpandedRunKey
         );
