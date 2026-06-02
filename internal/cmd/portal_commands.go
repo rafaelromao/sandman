@@ -125,6 +125,7 @@ func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
 	}
 	result := portalStartCommand(context.Background(), l.repoRoot, args)
 	var completed portalCommandRecord
+	var recordsSnapshot []portalCommandRecord
 	if result.Err != nil {
 		l.mu.Lock()
 		for i := range l.records {
@@ -136,8 +137,9 @@ func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
 				break
 			}
 		}
+		recordsSnapshot = l.copyRecords()
 		l.mu.Unlock()
-		if err := l.store.Write(l.records); err != nil {
+		if err := l.store.Write(recordsSnapshot); err != nil {
 			return completed, fmt.Errorf("persist failed command status: %w", err)
 		}
 		return completed, result.Err
@@ -152,11 +154,16 @@ func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
 			break
 		}
 	}
+	recordsSnapshot = l.copyRecords()
 	l.mu.Unlock()
-	if err := l.store.Write(l.records); err != nil {
+	if err := l.store.Write(recordsSnapshot); err != nil {
 		return completed, fmt.Errorf("persist completed command status: %w", err)
 	}
 	return completed, nil
+}
+
+func (l *portalLauncher) copyRecords() []portalCommandRecord {
+	return append([]portalCommandRecord(nil), l.records...)
 }
 
 func (l *portalLauncher) record(args []string) (portalCommandRecord, error) {
