@@ -738,11 +738,11 @@
   function updateDetailPanelLog(body, runKey, newLog, helpers) {
     const detailRow = body.querySelector('tr.detail-row[data-detail-for="' + runKey + '"]');
     if (!detailRow) return;
-    const pre = detailRow.querySelector('.terminal-text');
+    const pre = detailRow.querySelector('pre[data-scroll-key]');
     if (!pre) return;
-    const oldLog = pre.getAttribute('data-rendered-log') || '';
-    if (oldLog === newLog) return;
     const renderedLog = newLog && String(newLog).trim() ? newLog : 'No log file yet.';
+    const oldLog = pre.getAttribute('data-rendered-log') || '';
+    if (oldLog === renderedLog) return;
     if (oldLog && renderedLog.length >= oldLog.length && renderedLog.startsWith(oldLog)) {
       appendTerminalPre(pre, oldLog, renderedLog.slice(oldLog.length), helpers);
     } else {

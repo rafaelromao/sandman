@@ -656,9 +656,28 @@ const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
 SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'line 1\nline 2\nline 3', helpers);
+SandmanPortalDiff.updateDetailPanelLog(body, 'a', '', helpers);
 const counters = SandmanPortalDiff.getCounters();
-if (counters.mutations !== 0) throw new Error('no mutations expected when detail row not open, got ' + counters.mutations);
+if (counters.mutations !== 0) throw new Error('no mutations expected when log is empty and no detail row, got ' + counters.mutations);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailPanelLog_PlaceholderFollowedByRealLog(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: '' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+if (pre.getAttribute('data-rendered-log') !== 'No log file yet.') throw new Error('expected placeholder');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'real log line', helpers);
+if (pre.getAttribute('data-rendered-log') !== 'real log line') throw new Error('expected real log attr');
+if (pre.textContent !== 'real log line') throw new Error('expected real log text, got ' + JSON.stringify(pre.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
