@@ -89,7 +89,9 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
    Approval keywords to search for (case-insensitive, partial match):
    `lgtm`, `looks good`, `looks good to me`, `looks great`, `looks nice`,
    `nice work`, `good work`, `great work`, `approved`, `ship it`, `+1`,
-   `thumbs up`, `all good`, `all set`, `good to go`, `go ahead`
+   `thumbs up`, `all good`, `all set`, `good to go`, `go ahead`,
+   `didn't find any major issues`, `no major issues`, `minor issues only`,
+   `only minor`, `no major concerns`
 
    **D. Still pending?**
    - `reviewDecision: "REVIEW_REQUIRED"` or absent, AND
@@ -110,13 +112,29 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
     → **Suggestions** — fix if straightforward; skip if requires non-trivial redesign and re-request review after addressing what is straightforward
 
 6. **Apply fixes**
+   - Read `.<N>.addressed_comments` to get the set of already-addressed inline comment IDs
+   - When reading inline comments from `gh api .../comments`, filter out any whose `id` field appears in the addressed_comments file — treat those as already resolved
+   - Track which inline comment IDs you acted on during this pass
    - Read relevant source files
    - Make minimal changes to address feedback
    - Run project tests and formatting (e.g., `go test ./...`, `gofmt -w .`)
    - Commit: `git add -A && git commit -m "refactor: address review feedback on ..."`
    - Push: `git push`
+   - Append the acted-on inline comment IDs to `.<N>.addressed_comments` so they do not re-trigger in future passes
 
 7. **Repeat** from step 2. After the final pass, request one last review and report the outcome.
+
+### State files
+
+- `.<N>.addressed_comments` — one inline comment ID per line, tracking which inline comments have already been acted on and should not trigger the fix loop again
+- Initialized empty on first pass; appended to after each fix+push cycle
+- If only already-addressed inline comment IDs remain (no new IDs), re-request review instead of declaring done
+
+### Same comment ID 3+ passes without resolution
+
+If an inline comment ID appears in 3+ consecutive passes without resolution (i.e., it keeps appearing in the inline comments after each fix+push cycle), treat it as unresolvable without a larger redesign. In this case:
+- Do not keep looping on the same comment ID
+- Re-request review instead, noting the comment ID in the PR comment
 
 ## Never give up conditions
 
@@ -131,6 +149,7 @@ Continue polling (do NOT stop) when:
 - Only nits or suggestions remain (F above) — still should wait for formal or informal approval
 - CI is still running
 - Any `CHANGES_REQUESTED` review exists but can be addressed
+- Only already-addressed inline comment IDs remain and no new feedback has arrived — re-request review instead of concluding done
 
 Note: Some review agents (e.g., Codex) post an initial boilerplate comment ("Here are some automated review suggestions / ℹ️ About Codex...") that is not real feedback. Continue polling after seeing this — wait for actual inline comments or non-boilerplate review body.
 
@@ -142,3 +161,6 @@ Note: Some review agents (e.g., Codex) post an initial boilerplate comment ("Her
 - Never force-push or amend commits.
 - Always delegate the review request to the PR Review Agent via `{{REVIEW_COMMAND}}` — you are strictly forbidden from reviewing your own PR in the same session.
 - Review agents may post feedback as: top-level PR comments, inline diff comments, or formal reviews with `COMMENT` event. Always check all three sources.
+- When an inline comment's ID appears in `.<N>.addressed_comments`, skip it — it has already been addressed and should not re-trigger the fix loop.
+- If only already-addressed IDs remain (no new inline comments), re-request review rather than declaring done.
+- If the same inline comment ID appears across 3+ consecutive passes, treat it as unresolvable without a larger redesign — re-request review instead of continuing to loop.
