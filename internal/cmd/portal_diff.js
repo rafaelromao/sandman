@@ -513,7 +513,15 @@
       newRuns.set(run.key, run);
     }
 
-    const existingDataRows = body.children.filter((c) => c.getAttribute && c.getAttribute('data-run-key'));
+    const childList = Array.from(body.children);
+    for (const child of childList) {
+      if (!child.getAttribute) continue;
+      if (child.getAttribute('data-run-key')) continue;
+      if (child.getAttribute('data-detail-for')) continue;
+      body.removeChild(child);
+    }
+
+    const existingDataRows = childList.filter((c) => c.parentNode === body && c.getAttribute && c.getAttribute('data-run-key'));
     const seen = new Set();
     let inserted = 0;
     let removed = 0;
@@ -561,21 +569,22 @@
       inserted += 1;
     }
 
+    let pos = 0;
     for (let i = 0; i < runs.length; i += 1) {
       const run = runs[i];
       if (!run || !run.key) continue;
       const dataRow = dataRowOf(body, run.key);
       if (!dataRow) continue;
-      const wantIdx = i;
-      if (body.children[wantIdx] !== dataRow) {
-        body.insertBefore(dataRow, body.children[wantIdx] || null);
+      if (body.children[pos] !== dataRow) {
+        body.insertBefore(dataRow, body.children[pos] || null);
       }
+      pos += 1;
       const detail = detailRowOf(body, run.key);
       if (detail) {
-        const wantDetailIdx = wantIdx + 1;
-        if (body.children[wantDetailIdx] !== detail) {
-          body.insertBefore(detail, body.children[wantDetailIdx] || null);
+        if (body.children[pos] !== detail) {
+          body.insertBefore(detail, body.children[pos] || null);
         }
+        pos += 1;
       }
     }
 

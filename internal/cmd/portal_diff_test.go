@@ -440,6 +440,48 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffDiffRuns_RemovesStalePlaceholder(t *testing.T) {
+	js := `const body = makeMockBody();
+const placeholder = makeMockRow();
+placeholder.tagName = 'TR';
+placeholder.setAttribute('data-empty', 'true');
+body.appendChild(placeholder);
+const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const result = SandmanPortalDiff.diffRuns(body, [run], opts);
+if (body.children.length !== 1) throw new Error('expected 1 child after diff (placeholder removed), got ' + body.children.length);
+if (body.children[0].getAttribute('data-run-key') !== 'a') throw new Error('expected run a to be the only child');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffDiffRuns_ReorderAccountsForDetailRows(t *testing.T) {
+	js := `const body = makeMockBody();
+const runs = [
+  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1' },
+  { key: 'b', kind: 'active', status: 'active', issueLabel: 'B', runId: 'r2' },
+];
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a' };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+if (body.children.length !== 3) throw new Error('expected 3 children (a, detail, b), got ' + body.children.length);
+if (body.children[0].getAttribute('data-run-key') !== 'a') throw new Error('a should be first');
+if (body.children[1].getAttribute('data-detail-for') !== 'a') throw new Error('a-detail should be second');
+if (body.children[2].getAttribute('data-run-key') !== 'b') throw new Error('b should be third');
+const reordered = [runs[1], runs[0]];
+const opts2 = { helpers, stopGroups, expandedKey: 'a' };
+SandmanPortalDiff.diffRuns(body, reordered, opts2);
+if (body.children.length !== 3) throw new Error('expected 3 children after reorder');
+if (body.children[0].getAttribute('data-run-key') !== 'b') throw new Error('b should be first after reorder');
+if (body.children[1].getAttribute('data-run-key') !== 'a') throw new Error('a should be second after reorder');
+if (body.children[2].getAttribute('data-detail-for') !== 'a') throw new Error('a-detail should be third after reorder');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalHTMLRenderPath_NoRunsBodyInnerHTML(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
