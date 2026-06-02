@@ -75,7 +75,7 @@ type AgentPreset struct {
 var BuiltInAgentPresets = map[string]AgentPreset{
 	"opencode": {
 		DisplayName: "OpenCode",
-		Command:     `opencode run{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		Command:     `opencode run --dangerously-skip-permissions{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 		ConfigDirs: []string{
 			"~/.config/opencode",
 			"~/.local/share/opencode",
