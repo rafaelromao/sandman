@@ -19,6 +19,8 @@ type portalCommandRecord struct {
 	Command   string    `json:"command"`
 	Args      []string  `json:"args,omitempty"`
 	Status    string    `json:"status"`
+	ExitCode  *int      `json:"exitCode,omitempty"`
+	Output    string    `json:"output,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
 	RepoRoot  string    `json:"repoRoot"`
 }
@@ -81,6 +83,12 @@ type portalLauncher struct {
 
 var portalStartCommand = startPortalCommand
 
+type portalCommandResult struct {
+	Err      error
+	ExitCode int
+	Output   string
+}
+
 func newPortalLauncher(repoRoot string) (*portalLauncher, error) {
 	launcher := &portalLauncher{
 		repoRoot: repoRoot,
@@ -110,10 +118,35 @@ func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
 	if len(args) == 0 {
 		return portalCommandRecord{}, fmt.Errorf("missing command args")
 	}
-	if err := portalStartCommand(context.Background(), l.repoRoot, args); err != nil {
+	rec, err := l.record(args)
+	if err != nil {
 		return portalCommandRecord{}, err
 	}
-	return l.record(args)
+	result := portalStartCommand(context.Background(), l.repoRoot, args)
+	if result.Err != nil {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		for i := range l.records {
+			if l.records[i].ID == rec.ID {
+				l.records[i].Status = "failed"
+				break
+			}
+		}
+		_ = l.store.Write(l.records)
+		return rec, result.Err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := range l.records {
+		if l.records[i].ID == rec.ID {
+			l.records[i].Status = "completed"
+			l.records[i].ExitCode = &result.ExitCode
+			l.records[i].Output = result.Output
+			break
+		}
+	}
+	_ = l.store.Write(l.records)
+	return l.records[0], nil
 }
 
 func (l *portalLauncher) record(args []string) (portalCommandRecord, error) {
@@ -137,17 +170,28 @@ func (l *portalLauncher) record(args []string) (portalCommandRecord, error) {
 	return record, nil
 }
 
-func startPortalCommand(ctx context.Context, repoRoot string, args []string) error {
+func startPortalCommand(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
 	exe, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("resolve sandman executable: %w", err)
+		return &portalCommandResult{Err: fmt.Errorf("resolve sandman executable: %w", err)}
 	}
 	cmd := exec.CommandContext(ctx, exe, args...)
 	cmd.Dir = repoRoot
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start sandman command: %w", err)
+		return &portalCommandResult{Err: fmt.Errorf("start sandman command: %w", err)}
 	}
-	return cmd.Wait()
+	waitErr := cmd.Wait()
+	exitCode := 0
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = -1
+		}
+	}
+	return &portalCommandResult{ExitCode: exitCode, Err: waitErr}
 }
 
 func nextPortalCommandID() string {
