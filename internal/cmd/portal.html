@@ -2136,7 +2136,7 @@
 
     function updateCommandFormBodyHeight() {
       if (!commandFormBody) return;
-      commandFormBody.style.maxHeight = commandFormExpanded ? commandFormBody.scrollHeight + 'px' : '0px';
+      commandFormBody.style.maxHeight = commandFormExpanded ? '' : '0px';
     }
 
     function setCommandFormExpanded(expanded) {
