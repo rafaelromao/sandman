@@ -1291,18 +1291,18 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			agent:    "opencode",
 			cfgModel: "config-model",
 			reqModel: "request-model",
-			wantCmd:  `opencode run -m request-model "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd:  `opencode run --dangerously-skip-permissions -m request-model "$(cat .sandman/rendered-prompt.md)"`,
 		},
 		{
 			name:     "config model is used",
 			agent:    "opencode",
 			cfgModel: "config-model",
-			wantCmd:  `opencode run -m config-model "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd:  `opencode run --dangerously-skip-permissions -m config-model "$(cat .sandman/rendered-prompt.md)"`,
 		},
 		{
 			name:    "default behavior leaves model out",
 			agent:   "opencode",
-			wantCmd: `opencode run "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd: `opencode run --dangerously-skip-permissions "$(cat .sandman/rendered-prompt.md)"`,
 		},
 		{
 			name:     "pi splits provider and model",
