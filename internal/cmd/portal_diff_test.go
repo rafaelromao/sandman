@@ -556,6 +556,28 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetailLog_InlineAppendPreservesEarlierLines(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nfoo running' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre1) throw new Error('expected log pre');
+const firstChild = pre1.children[0];
+SandmanPortalDiff.resetCounters();
+const run2 = Object.assign({}, run1, { log: 'line 1\nfoo runningx' });
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (pre2 !== pre1) throw new Error('pre identity should be preserved');
+if (pre2.textContent !== 'line 1\nfoo runningx') throw new Error('expected pre to contain the combined text, got ' + JSON.stringify(pre2.textContent));
+if (pre2.children[0] !== firstChild) throw new Error('earlier-line span should be preserved across an inline append');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailLog_RewriteReplacesNodes(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1' };

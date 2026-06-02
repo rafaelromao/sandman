@@ -204,7 +204,55 @@
       for (const node of nodes) pre.appendChild(node);
       return;
     }
-    fillTerminalPre(pre, oldLog + newSuffix, helpers);
+    const lastNewline = oldLog.lastIndexOf('\n');
+    const partialLastLine = lastNewline >= 0 ? oldLog.slice(lastNewline + 1) : oldLog;
+    if (!partialLastLine) {
+      fillTerminalPre(pre, oldLog + newSuffix, helpers);
+      return;
+    }
+    const combined = partialLastLine + newSuffix;
+    const html = helpers.renderTerminalContent(combined);
+    if (!html) return;
+    const scratch = global.document.createElement('div');
+    scratch.innerHTML = html;
+    const newNodes = Array.from(scratch.childNodes);
+    const startIdx = findPartialLineStart(pre, partialLastLine);
+    if (startIdx < 0) {
+      fillTerminalPre(pre, oldLog + newSuffix, helpers);
+      return;
+    }
+    while (pre.childNodes.length > startIdx) {
+      pre.removeChild(pre.lastChild);
+    }
+    for (const node of newNodes) pre.appendChild(node);
+  }
+
+  function findPartialLineStart(pre, partialLastLine) {
+    if (!partialLastLine) return -1;
+    const nodes = Array.from(pre.childNodes);
+    let acc = '';
+    for (let i = nodes.length - 1; i >= 0; i -= 1) {
+      acc = nodeText(nodes[i]) + acc;
+      if (acc.length >= partialLastLine.length) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function nodeText(node) {
+    if (!node) return '';
+    if (node.nodeType === 3) {
+      return node._textContent != null ? String(node._textContent) : String(node.textContent || '');
+    }
+    if (node._textContent != null) return String(node._textContent);
+    let text = '';
+    if (node.childNodes) {
+      for (const c of node.childNodes) text += nodeText(c);
+    } else if (node.children) {
+      for (const c of node.children) text += nodeText(c);
+    }
+    return text;
   }
 
   function appendStartsAtBoundary(oldLog, suffix) {
