@@ -2402,7 +2402,7 @@
           (child) => child.getAttribute('data-detail-for') === state.expandedRunKey
         );
         if (detailRow) {
-          detailRow.scrollIntoView({ behavior: 'smooth', block: 'end' });
+          detailRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       }
       if (prevExpandedRunKey !== null && state.expandedRunKey === null) {
