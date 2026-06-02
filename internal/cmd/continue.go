@@ -105,6 +105,14 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 
 			model := resolveModel(cmdFlag(cmd, "model"), cfg.DefaultModel, agentCfg.Preset)
 
+			dangerouslySkipPermFlag := cmd.Flags().Lookup("dangerously-skip-permissions")
+			dangerouslySkipPermSet := dangerouslySkipPermFlag != nil && dangerouslySkipPermFlag.Changed
+			var dangerouslySkipPerm *bool
+			if dangerouslySkipPermSet {
+				val, _ := cmd.Flags().GetBool("dangerously-skip-permissions")
+				dangerouslySkipPerm = &val
+			}
+
 			continuePrompt := promptText
 			contextPath := filepath.Join(worktreePath, ".sandman", "continuation-context.md")
 			if content, err := os.ReadFile(contextPath); err != nil {
@@ -120,13 +128,14 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 			}
 
 			req := batch.Request{
-				Issues:        []int{issueNum},
-				Branches:      map[int]string{issueNum: branch},
-				Agent:         agentName,
-				Model:         model,
-				BaseBranch:    strings.TrimSpace(baseBranch),
-				Continuation:  true,
-				PreviousRunID: lastRun.RunID,
+				Issues:                     []int{issueNum},
+				Branches:                   map[int]string{issueNum: branch},
+				Agent:                      agentName,
+				Model:                      model,
+				BaseBranch:                 strings.TrimSpace(baseBranch),
+				Continuation:               true,
+				PreviousRunID:              lastRun.RunID,
+				DangerouslySkipPermissions: dangerouslySkipPerm,
 				PromptConfig: prompt.RenderConfig{
 					ContinuePrompt:   continuePrompt,
 					ReviewCommand:    reviewCommand,
@@ -139,6 +148,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+			defer signal.Stop(sigCh)
 			go func() {
 				select {
 				case <-sigCh:
@@ -176,6 +186,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode or pi)")
+	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
 	return cmd
 }

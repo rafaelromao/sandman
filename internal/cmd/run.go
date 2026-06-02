@@ -300,6 +300,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				retries = -1
 			}
 
+			dangerouslySkipPermFlag := cmd.Flags().Lookup("dangerously-skip-permissions")
+			dangerouslySkipPermSet := dangerouslySkipPermFlag != nil && dangerouslySkipPermFlag.Changed
+			var dangerouslySkipPerm *bool
+			if dangerouslySkipPermSet {
+				val, _ := cmd.Flags().GetBool("dangerously-skip-permissions")
+				dangerouslySkipPerm = &val
+			}
+
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
@@ -327,22 +335,23 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
-				Issues:               resolvedBatch.Issues,
-				Dependencies:         resolvedBatch.Deps,
-				Blocked:              resolvedBatch.Blocked,
-				Agent:                agentName,
-				Model:                resolveModel(modelFlag, cfg.DefaultModel, agentCfg.Preset),
-				BaseBranch:           baseBranch,
-				Retries:              retries,
-				Parallel:             parallel,
-				StartDelay:           time.Duration(startDelay) * time.Second,
-				StartDelaySet:        startDelaySet,
-				Sandbox:              sandboxMode,
-				ContainerCapacity:    containerCapacity,
-				ContainerCapacitySet: containerCapacitySet,
-				MaxContainers:        maxContainers,
-				MaxContainersSet:     maxContainersSet,
-				OutputWriter:         broadcaster,
+				Issues:                     resolvedBatch.Issues,
+				Dependencies:               resolvedBatch.Deps,
+				Blocked:                    resolvedBatch.Blocked,
+				Agent:                      agentName,
+				Model:                      resolveModel(modelFlag, cfg.DefaultModel, agentCfg.Preset),
+				BaseBranch:                 baseBranch,
+				Retries:                    retries,
+				Parallel:                   parallel,
+				StartDelay:                 time.Duration(startDelay) * time.Second,
+				StartDelaySet:              startDelaySet,
+				Sandbox:                    sandboxMode,
+				ContainerCapacity:          containerCapacity,
+				ContainerCapacitySet:       containerCapacitySet,
+				MaxContainers:              maxContainers,
+				MaxContainersSet:           maxContainersSet,
+				DangerouslySkipPermissions: dangerouslySkipPerm,
+				OutputWriter:               broadcaster,
 				PromptConfig: prompt.RenderConfig{
 					PromptFlag:       promptFlag,
 					TemplateFlag:     templateFlag,
@@ -386,6 +395,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	if pf := cmd.Flags().Lookup("ralph"); pf != nil {
 		pf.NoOptDefVal = "1"
 	}
+
+	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
 	return cmd
 }
