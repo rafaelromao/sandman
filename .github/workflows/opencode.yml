@@ -31,6 +31,8 @@ jobs:
         env:
           FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
         with:
-          alternate_model: fireworks-ai/accounts/fireworks/models/kimi-k2p6
-          model: opencode-go/kimi-k2.6
+          fireworks_model: fireworks-ai/accounts/fireworks/models/kimi-k2p6
+          opencodego_model: opencode-go/kimi-k2.6
+          model: minimax/MiniMax-M2.7
