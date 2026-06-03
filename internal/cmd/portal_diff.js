@@ -500,27 +500,24 @@
           return;
         }
         if (pre.getAttribute('data-fetched-log') === run.key) {
-          const renderedLog = pre.getAttribute('data-rendered-log') || '';
-          if (renderedLog === 'No log file yet.') {
-            pre.setAttribute('data-loading-log', run.key);
-            if (typeof globalThis.fetch === 'function') {
-              const logUrl = '/api/runs/' + encodeURIComponent(run.key) + '/log';
-              fetch(logUrl, { cache: 'no-store' })
-                .then(function(res) { return res.ok ? res.text() : null; })
-                .then(function(text) {
-                  if (!text) {
-                    pre.setAttribute('data-rendered-log', 'No log file yet.');
-                    fillTerminalPre(pre, 'No log file yet.', opts.helpers);
-                    pre.removeAttribute('data-loading-log');
-                    return;
-                  }
-                  run.log = text;
-                  fillTerminalPre(pre, text, opts.helpers);
-                  pre.setAttribute('data-rendered-log', text);
+          pre.setAttribute('data-loading-log', run.key);
+          if (typeof globalThis.fetch === 'function') {
+            const logUrl = '/api/runs/' + encodeURIComponent(run.key) + '/log';
+            fetch(logUrl, { cache: 'no-store' })
+              .then(function(res) { return res.ok ? res.text() : null; })
+              .then(function(text) {
+                if (!text) {
+                  pre.setAttribute('data-rendered-log', 'No log file yet.');
+                  fillTerminalPre(pre, 'No log file yet.', opts.helpers);
                   pre.removeAttribute('data-loading-log');
-                  pre.setAttribute('data-fetched-log', run.key);
-                });
-            }
+                  return;
+                }
+                run.log = text;
+                fillTerminalPre(pre, text, opts.helpers);
+                pre.setAttribute('data-rendered-log', text);
+                pre.removeAttribute('data-loading-log');
+                pre.setAttribute('data-fetched-log', run.key);
+              });
           }
           return;
         }
