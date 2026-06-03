@@ -24,8 +24,165 @@ When the server starts, it prints the URL to open in your browser.
 
 The portal rescans the repository on each poll, so new `sandman run` processes appear without restarting it. It also provides a typed preset launcher for common repo-scoped Sandman commands.
 
+## Stop
+
+Use the **Stop** button in the portal UI to halt a running batch. The portal calls:
+
+```
+POST /api/runs/stop
+{"runKey": "<run-key>"}
+```
+
+The endpoint signals the batch control socket and waits for the run to stop, returning:
+
+```json
+{"runKey": "...", "status": "stopped", "scope": "batch"}
+```
+
+Because a batch uses a single control socket, stopping terminates the entire batch — not a single agent run. Stop is available on Linux; other platforms return `501 Not Implemented`. macOS support is planned.
+
+## Log streaming
+
+```
+GET /api/runs/<key>/log
+```
+
+Returns live output as `text/plain; charset=utf-8`. The handler reads from the control socket first, falling back to the log file if the socket is empty or unavailable.
+
+Special states return fixed messages:
+
+| Status | Message |
+|--------|---------|
+| `blocked` | `Blocked. Waiting on unresolved blockers.` (or listed blocker issue numbers) |
+| `queued` | `Queued. Waiting to start.` |
+
+## Log download
+
+```
+GET /api/logs?path=<relative-path>
+```
+
+Serves log files from `.sandman/logs/`. The path must be relative and cannot escape the logs directory — absolute paths, `..` segments, or any path outside `.sandman/logs/` is rejected with `400 Bad Request`.
+
+Returns the file as an attachment with the log filename in `Content-Disposition`.
+
+## Launch presets
+
+The portal's **Launcher** section provides quick commands for common `sandman` operations. Send a POST to `/api/commands` with a `command` field set to one of:
+
+### `continue`
+
+Runs `sandman continue <issue1> <issue2> ... <prompt>`. Requires issue numbers and a prompt argument:
+
+```json
+{"command": "continue", "issues": [123, 124], "prompt": "review the auth module"}
+```
+
+### `clean`
+
+Runs `sandman clean --all|--success|--failed`. Requires `confirmed: true`:
+
+```json
+{"command": "clean", "cleanMode": "success", "confirmed": true}
+```
+
+Default scope is `success`. Available scopes: `all`, `success`, `failed`.
+
+### `status`
+
+Runs `sandman status`:
+
+```json
+{"command": "status"}
+```
+
+### `history`
+
+Runs `sandman history`:
+
+```json
+{"command": "history"}
+```
+
+### `config`
+
+Runs `sandman config get <key>` or `sandman config set <key> <value>`. Default mode is `get`:
+
+```json
+{"command": "config", "configMode": "get", "configKey": "default-agent"}
+```
+
+```json
+{"command": "config", "configMode": "set", "configKey": "default-agent", "configValue": "opencode"}
+```
+
+## Launch form
+
+The portal's run form has two modes and several selection options.
+
+### Launch mode
+
+| Mode | Description |
+|------|-------------|
+| `issue-driven` | Sandman selects issues using one of the selection modes below |
+| `prompt-only` | Sandman runs against a provided prompt with no issue selection |
+
+### Selection mode
+
+Selection fields are only shown in `issue-driven` mode.
+
+| Mode | Description |
+|------|-------------|
+| `issues` | Pass issue numbers directly |
+| `label` | Select issues with a GitHub label |
+| `query` | Select issues using a GitHub query |
+| `ralph` | Run Ralph Loop — an integer count for iterative processing, optionally filtered by label and/or query |
+
+### Form fields
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `agent` | Agent provider name | Config's `default-agent` or `agent`, else `opencode` |
+| `model` | Model identifier | Config's `default-model` or resolved from agent |
+| `baseBranch` | Base branch for worktrees | Config's `git.base-branch` or `main` |
+| `parallel` | Number of parallel worktrees | Config's `default-parallel` or `4` |
+| `startDelay` | Seconds to wait before starting | Config's `start-delay` or `0` |
+| `containerCapacity` | Container pool size | Config's `container-capacity` or `1` |
+| `maxContainers` | Maximum containers | Config's `max-containers` or `0` |
+| `sandbox` | Sandbox mode | Config's `sandbox` or `podman` |
+
+Additional fields:
+
+| Field | Description |
+|-------|-------------|
+| `includeDependencies` | Include dependency issues (issue-driven mode only) |
+| `template` | Path to a prompt template file |
+| `promptArgs` | Multi-line; each line becomes a `--prompt-arg` |
+
 ## Notes
 
 - Run it from inside the repository you want to inspect.
 - The portal observes runs and also launches new Sandman commands from the repo-scoped launcher shell.
 - Use `Ctrl+C` to stop the server.
+
+## Themes
+
+The portal UI includes a theme switcher. Theme preference is stored locally per repository.
+
+The following themes are available:
+
+- Catppuccin Frappe
+- Catppuccin Latte
+- Catppuccin Macchiato
+- Catppuccin Mocha
+- Dracula
+- Everforest
+- Everforest Light
+- GitHub Light
+- Gruvbox
+- Nord
+- Nord Light
+- Rose Pine
+- Solarized Light
+- Tokyo Night
+- Tokyo Night Day
