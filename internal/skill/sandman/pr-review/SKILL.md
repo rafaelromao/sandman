@@ -84,9 +84,7 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
    - At least one of these conditions:
      - A review with `state: "COMMENTED"` whose body contains approval keywords (see list below), OR
      - A PR comment (not attached to a diff line) from a known reviewer whose body contains approval keywords
-   → **Approve — DONE. Report to user. Stop the loop. An informal approval is sufficient — do not wait for a formal APPROVE review.**
-
-   An informal approval (Case C) is just as valid as a formal approval for the purpose of merging. When this case is reached, the PR is ready. Do NOT continue polling or re-request review.
+   → **Approve** — report as informal approval
 
    Approval keywords to search for (case-insensitive, partial match):
    `lgtm`, `looks good`, `looks good to me`, `looks great`, `looks nice`,
@@ -148,7 +146,7 @@ Stop polling and report to the user **only** when:
 Continue polling (do NOT stop) when:
 - Review is pending (`reviewDecision: "REVIEW_REQUIRED"` or no reviews yet)
 - Only boilerplate setup comments exist — the review has not yet produced real feedback
-- Only nits or suggestions remain (F above) that have not yet been addressed
+- Only nits or suggestions remain (F above) — still should wait for formal or informal approval
 - CI is still running
 - Any `CHANGES_REQUESTED` review exists but can be addressed
 - Only already-addressed inline comment IDs remain and no new feedback has arrived — re-request review instead of concluding done
