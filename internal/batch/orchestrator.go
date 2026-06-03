@@ -91,6 +91,7 @@ type pooledContainer struct {
 	ready     bool
 	startErr  error
 	dead      bool
+	starting  bool
 }
 
 type containerAliveChecker interface {
@@ -208,11 +209,8 @@ func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, 
 }
 
 func (p *containerPool) Acquire() (*containerLease, error) {
-	return p.acquireShared()
-}
-
-func (p *containerPool) acquireShared() (*containerLease, error) {
 	p.mu.Lock()
+
 	for {
 		if p.pruneDeadLocked() {
 			continue
@@ -242,20 +240,23 @@ func (p *containerPool) acquireShared() (*containerLease, error) {
 		}
 		if pending != nil {
 			pending.active++
-			for !pending.ready && pending.startErr == nil {
-				p.cond.Wait()
-			}
-			if pending.startErr != nil {
-				err := pending.startErr
+			p.mu.Unlock()
+
+			container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
+
+			p.mu.Lock()
+			if err != nil {
+				pending.startErr = err
 				pending.active--
 				if pending.active == 0 {
 					p.removeShared(pending)
-					p.cond.Broadcast()
 				}
 				p.mu.Unlock()
 				return nil, err
 			}
-			container := pending.container
+			pending.container = container
+			pending.ready = true
+			p.cond.Broadcast()
 			p.mu.Unlock()
 			return &containerLease{container: container, release: func() { p.releaseShared(pending) }}, nil
 		}
@@ -270,7 +271,6 @@ func (p *containerPool) acquireShared() (*containerLease, error) {
 			p.mu.Lock()
 			if err != nil {
 				entry.startErr = err
-				p.cond.Broadcast()
 				entry.active--
 				if entry.active == 0 {
 					p.removeShared(entry)
@@ -293,6 +293,7 @@ func (p *containerPool) acquireShared() (*containerLease, error) {
 
 func (p *containerPool) releaseShared(entry *pooledContainer) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	entry.active--
 	if entry.dead && entry.active == 0 {
 		if entry.container != nil {
@@ -301,7 +302,6 @@ func (p *containerPool) releaseShared(entry *pooledContainer) {
 		p.removeShared(entry)
 	}
 	p.cond.Broadcast()
-	p.mu.Unlock()
 }
 
 func (p *containerPool) pruneDeadLocked() bool {
@@ -475,13 +475,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	effectiveParallel := parallel
-	if isContainer && containerCapacity > 0 {
-		var totalSlots int
-		if maxContainers == 0 {
-			totalSlots = containerCapacity
-		} else {
-			totalSlots = containerCapacity * maxContainers
-		}
+	if isContainer && containerCapacity > 0 && maxContainers > 0 {
+		totalSlots := containerCapacity * maxContainers
 		if effectiveParallel == 0 || totalSlots < effectiveParallel {
 			effectiveParallel = totalSlots
 		}

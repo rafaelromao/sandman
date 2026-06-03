@@ -4392,8 +4392,8 @@ func TestEffectiveParallel_AutoContainerMode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if factory.max > 2 {
-		t.Errorf("expected max concurrent runs <= 2 (containerCapacity cap in auto mode), got %d", factory.max)
+	if factory.max > 4 {
+		t.Errorf("expected max concurrent runs <= 4 (parallel=4 in auto mode, container pool manages capacity), got %d", factory.max)
 	}
 }
 
