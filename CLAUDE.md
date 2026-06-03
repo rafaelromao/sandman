@@ -16,7 +16,7 @@ Five canonical triage roles using default label strings. See `docs/agents/triage
 
 Single-context repo. Read `CONTEXT.md` at the repo root and `docs/adr/` for architectural decisions. See `docs/agents/domain.md`.
 
-## Pre-commit checklist
+Never perform force push on git. Never push directly to main.
 
 Before committing any Go code changes, always run `gofmt` to ensure the code is properly formatted. The CI pipeline enforces this check and will fail the build if any files need formatting.
 

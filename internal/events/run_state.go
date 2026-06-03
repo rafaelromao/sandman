@@ -40,6 +40,11 @@ func ProjectRunStates(events []Event) []RunState {
 			state.Started = event
 			finished := event
 			state.Finished = &finished
+		case "run.queued":
+			state := getOrCreate(event.RunID)
+			state.Started = event
+			finished := event
+			state.Finished = &finished
 		case "run.finished", "run.cancelled":
 			state := getOrCreate(event.RunID)
 			finished := event
@@ -99,6 +104,9 @@ func (r RunState) Status() string {
 	}
 	if r.Finished.Type == "run.cancelled" {
 		return "failure"
+	}
+	if r.Finished.Type == "run.queued" {
+		return "queued"
 	}
 	status, _ := r.Finished.Payload["status"].(string)
 	if status == "" && r.Finished.Type == "run.cancelled" {
