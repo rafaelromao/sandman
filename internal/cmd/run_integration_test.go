@@ -1178,7 +1178,7 @@ sleep 1
 	}
 
 	if got := len(hostnames); got != 2 {
-		t.Fatalf("expected exactly 2 container hostnames, got %d: %v", got, hostnames)
+		t.Fatalf("expected exactly 2 container hostnames (capacity=2 each, 4 issues spread across 2 containers), got %d: %v", got, hostnames)
 	}
 }
 
