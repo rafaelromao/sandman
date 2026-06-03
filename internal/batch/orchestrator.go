@@ -475,8 +475,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	effectiveParallel := parallel
-	if isContainer && maxContainers > 0 && containerCapacity > 0 {
-		totalSlots := containerCapacity * maxContainers
+	if isContainer && containerCapacity > 0 {
+		var totalSlots int
+		if maxContainers == 0 {
+			totalSlots = containerCapacity
+		} else {
+			totalSlots = containerCapacity * maxContainers
+		}
 		if effectiveParallel == 0 || totalSlots < effectiveParallel {
 			effectiveParallel = totalSlots
 		}
