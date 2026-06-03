@@ -208,87 +208,78 @@ func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, 
 }
 
 func (p *containerPool) Acquire() (*containerLease, error) {
-	return p.acquireShared()
-}
-
-func (p *containerPool) acquireShared() (*containerLease, error) {
 	p.mu.Lock()
+
 	for {
 		if p.pruneDeadLocked() {
 			continue
 		}
 
-		var best *pooledContainer
-		var pending *pooledContainer
-		for _, entry := range p.shared {
-			if entry.dead || entry.startErr != nil || (p.capacity > 0 && entry.active >= p.capacity) {
-				continue
-			}
-			if !entry.ready {
-				if pending == nil || entry.active < pending.active {
-					pending = entry
-				}
-				continue
-			}
-			if best == nil || entry.active < best.active {
-				best = entry
-			}
-		}
-		if best != nil {
+		if best := p.pickReadyLocked(); best != nil {
 			best.active++
 			container := best.container
 			p.mu.Unlock()
 			return &containerLease{container: container, release: func() { p.releaseShared(best) }}, nil
 		}
-		if pending != nil {
-			pending.active++
-			for !pending.ready && pending.startErr == nil {
-				p.cond.Wait()
-			}
-			if pending.startErr != nil {
-				err := pending.startErr
-				pending.active--
-				if pending.active == 0 {
-					p.removeShared(pending)
-					p.cond.Broadcast()
-				}
-				p.mu.Unlock()
-				return nil, err
-			}
-			container := pending.container
-			p.mu.Unlock()
-			return &containerLease{container: container, release: func() { p.releaseShared(pending) }}, nil
+
+		if p.hasPendingLocked() {
+			p.cond.Wait()
+			continue
 		}
 
-		if p.maxContainers == 0 || len(p.shared) < p.maxContainers {
-			entry := &pooledContainer{active: 1}
-			p.shared = append(p.shared, entry)
-			p.mu.Unlock()
+		if p.maxContainers > 0 && len(p.shared) >= p.maxContainers {
+			p.cond.Wait()
+			continue
+		}
 
-			container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
+		entry := &pooledContainer{active: 1}
+		p.shared = append(p.shared, entry)
+		p.mu.Unlock()
 
-			p.mu.Lock()
-			if err != nil {
-				entry.startErr = err
-				p.cond.Broadcast()
-				entry.active--
-				if entry.active == 0 {
-					p.removeShared(entry)
-				}
-				p.mu.Unlock()
-				return nil, err
+		container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
+
+		p.mu.Lock()
+		if err != nil {
+			entry.startErr = err
+			entry.active--
+			if entry.active == 0 {
+				p.removeShared(entry)
 			}
-
-			entry.container = container
-			entry.ready = true
 			p.cond.Broadcast()
 			p.mu.Unlock()
-
-			return &containerLease{container: container, release: func() { p.releaseShared(entry) }}, nil
+			return nil, err
 		}
-
-		p.cond.Wait()
+		entry.container = container
+		entry.ready = true
+		p.cond.Broadcast()
+		p.mu.Unlock()
+		return &containerLease{container: container, release: func() { p.releaseShared(entry) }}, nil
 	}
+}
+
+func (p *containerPool) pickReadyLocked() *pooledContainer {
+	var best *pooledContainer
+	for _, entry := range p.shared {
+		if !entry.ready || entry.dead || entry.startErr != nil {
+			continue
+		}
+		if p.capacity > 0 && entry.active >= p.capacity {
+			continue
+		}
+		if best == nil || entry.active < best.active {
+			best = entry
+		}
+	}
+	return best
+}
+
+func (p *containerPool) hasPendingLocked() bool {
+	for _, entry := range p.shared {
+		if !entry.ready && !entry.dead && entry.startErr == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *containerPool) releaseShared(entry *pooledContainer) {
@@ -475,13 +466,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	effectiveParallel := parallel
-	if isContainer && containerCapacity > 0 {
-		var totalSlots int
-		if maxContainers == 0 {
-			totalSlots = containerCapacity
-		} else {
-			totalSlots = containerCapacity * maxContainers
-		}
+	if isContainer && containerCapacity > 0 && maxContainers > 0 {
+		totalSlots := containerCapacity * maxContainers
 		if effectiveParallel == 0 || totalSlots < effectiveParallel {
 			effectiveParallel = totalSlots
 		}

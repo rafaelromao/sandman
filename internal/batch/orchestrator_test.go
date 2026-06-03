@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -4012,8 +4013,95 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *test
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 1 {
-		t.Fatalf("expected 1 container to start (effectiveParallel=1, containerCapacity=1), got %d", starter.startCount)
+	if starter.startCount != 2 {
+		t.Fatalf("expected 2 containers to start (containerCapacity=1, parallel=2), got %d", starter.startCount)
+	}
+}
+
+func TestContainerPool_RespectsCapacityAndMaxUnderContention(t *testing.T) {
+	starter := &fakeContainerStarter{startDelay: 5 * time.Millisecond}
+	pool := newContainerPool(starter, "img", ".", sandbox.StartOptions{}, 3, 2)
+
+	const (
+		capacity     = 3
+		maxContainer = 2
+		acquirers    = 100
+		holdFor      = 2 * time.Millisecond
+	)
+
+	var (
+		observedMaxContainers atomic.Int32
+		observedMaxActive     atomic.Int32
+		violation             atomic.Value
+	)
+	violation.Store(false)
+
+	stopSampler := make(chan struct{})
+	samplerDone := make(chan struct{})
+	go func() {
+		defer close(samplerDone)
+		for {
+			select {
+			case <-stopSampler:
+				return
+			default:
+			}
+			pool.mu.Lock()
+			n := int32(len(pool.shared))
+			if n > observedMaxContainers.Load() {
+				observedMaxContainers.Store(n)
+			}
+			if n > int32(maxContainer) {
+				violation.Store(true)
+				t.Errorf("maxContainers=%d violated: pool has %d containers", maxContainer, n)
+			}
+			for _, entry := range pool.shared {
+				if entry.active > int(capacity) {
+					violation.Store(true)
+					t.Errorf("capacity=%d violated: entry has active=%d", capacity, entry.active)
+				}
+				if entry.active > int(observedMaxActive.Load()) {
+					observedMaxActive.Store(int32(entry.active))
+				}
+			}
+			pool.mu.Unlock()
+			runtime.Gosched()
+		}
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(acquirers)
+	for i := 0; i < acquirers; i++ {
+		go func() {
+			defer wg.Done()
+			lease, err := pool.Acquire()
+			if err != nil {
+				t.Errorf("acquire failed: %v", err)
+				return
+			}
+			time.Sleep(holdFor)
+			lease.Release()
+		}()
+	}
+	wg.Wait()
+
+	close(stopSampler)
+	<-samplerDone
+
+	if violation.Load().(bool) {
+		t.FailNow()
+	}
+	if got := observedMaxContainers.Load(); got > int32(maxContainer) {
+		t.Fatalf("maxContainers=%d violated: sampler observed %d containers", maxContainer, got)
+	}
+	if got := observedMaxActive.Load(); got > int32(capacity) {
+		t.Fatalf("capacity=%d violated: sampler observed active=%d", capacity, got)
+	}
+	if starter.startCount == 0 {
+		t.Fatal("expected the pool to start at least one container")
+	}
+	if starter.startCount > maxContainer {
+		t.Fatalf("pool started %d containers, expected at most %d", starter.startCount, maxContainer)
 	}
 }
 
@@ -4311,8 +4399,8 @@ func TestRunBatch_MaxContainersAutoStartsMinimumContainers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 1 {
-		t.Fatalf("expected 1 container to start (effectiveParallel=2, containerCapacity=2 satisfies all runs), got %d", starter.startCount)
+	if starter.startCount != 2 {
+		t.Fatalf("expected 2 containers to start (4 runs at capacity=2), got %d", starter.startCount)
 	}
 }
 
@@ -4348,8 +4436,8 @@ func TestRunBatch_UsesConfigContainerSettingsWhenRequestUnset(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 1 {
-		t.Fatalf("expected config container_capacity=1 to start 1 container (effectiveParallel=1), got %d", starter.startCount)
+	if starter.startCount != 2 {
+		t.Fatalf("expected config container_capacity=1 to start 2 containers (parallel=2, capacity=1), got %d", starter.startCount)
 	}
 }
 
@@ -4392,8 +4480,8 @@ func TestEffectiveParallel_AutoContainerMode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if factory.max > 2 {
-		t.Errorf("expected max concurrent runs <= 2 (containerCapacity cap in auto mode), got %d", factory.max)
+	if factory.max > 4 {
+		t.Errorf("expected max concurrent runs <= 4 (parallel=4 in auto mode, container pool manages capacity), got %d", factory.max)
 	}
 }
 
