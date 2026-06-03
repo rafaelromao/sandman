@@ -492,6 +492,61 @@ func TestBuiltInPresets_AreOnlySupportedAgents(t *testing.T) {
 	}
 }
 
+func TestLoad_AgentsMapDoesNotPopulateAgentProviders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `default_agent: opencode
+agents:
+  custom-agent:
+    name: custom-agent
+    command: custom-command
+  another-custom:
+    name: another-custom
+    preset: pi
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := cfg.AgentProviders["opencode"]; !ok {
+		t.Fatal("expected opencode built-in in AgentProviders")
+	}
+	if _, ok := cfg.AgentProviders["pi"]; !ok {
+		t.Fatal("expected pi built-in in AgentProviders")
+	}
+	if _, ok := cfg.AgentProviders["custom-agent"]; ok {
+		t.Error("custom-agent should not be in AgentProviders")
+	}
+	if _, ok := cfg.AgentProviders["another-custom"]; ok {
+		t.Error("another-custom should not be in AgentProviders")
+	}
+}
+
+func TestConfig_ResolveAgentProvider_NonBuiltIn_ReturnsNotFound(t *testing.T) {
+	cfg := &Config{}
+
+	_, err := cfg.ResolveAgentProvider("custom-agent")
+	if err == nil {
+		t.Fatal("expected error for unknown agent")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected 'not found' error, got: %v", err)
+	}
+
+	_, err = cfg.ResolveAgentProvider("another-custom")
+	if err == nil {
+		t.Fatal("expected error for unknown agent")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected 'not found' error, got: %v", err)
+	}
+}
+
 func sorted(values []string) []string {
 	out := append([]string(nil), values...)
 	sort.Strings(out)
