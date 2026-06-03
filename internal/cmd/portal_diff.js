@@ -510,6 +510,7 @@
                   pre.setAttribute('data-rendered-log', 'No log file yet.');
                   fillTerminalPre(pre, 'No log file yet.', opts.helpers);
                   pre.removeAttribute('data-loading-log');
+                  pre.removeAttribute('data-fetched-log');
                   return;
                 }
                 run.log = text;
