@@ -94,6 +94,12 @@ When `max_containers=0` and `container_capacity=4` with 6 active runs, Sandman c
 
 See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 
+## Retries
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `retries` | `0` | Number of times to retry a failed run. `--ralph` sets this to `3` silently |
+
 ## Batch pacing
 
 | Key | Default | Description |
@@ -101,6 +107,12 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 | `start_delay` | `0` | Wait this many seconds after any `AgentRun` finishes before starting the next one. `0` disables batch pacing |
 
 `start_delay` is batch-local pacing behavior. It applies across sandbox modes, starts only after the first run completes, and does not change container capacity or max container scheduling.
+
+## Renamed keys
+
+| Old key | New key | Error on old key |
+|--------|---------|------------------|
+| `git.default_branch` | `git.base_branch` | "git.default_branch was renamed to git.base_branch" |
 
 ## CLI config commands
 

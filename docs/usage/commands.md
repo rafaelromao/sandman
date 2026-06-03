@@ -187,7 +187,8 @@ sandman config set <key> <value>
 | `max_containers` | int | `0` |
 | `worktree_dir` | string | `.sandman/worktrees` |
 | `sandbox` | string | `podman` |
-| `git.base_branch` | string | `main` |
+| `git.base_branch` | string | `main` (previously `git.default_branch`) |
+| `retries` | int | `0` (default); `--ralph` sets this to `3` silently |
 
 `sandman config set review_command ...` also re-syncs the shared `sandman` skill tree. If local edits are detected under `~/.agents/skills/sandman/`, Sandman prompts before overwriting in a TTY and fails in non-interactive mode.
 
