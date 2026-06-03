@@ -92,7 +92,7 @@ func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
 			return pr, nil
 		}
 	}
-	return nil, nil
+	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch, HeadRefOid: "abc123"}, nil
 }
 
 func newRunDeps(runner batch.Runner) Dependencies {
