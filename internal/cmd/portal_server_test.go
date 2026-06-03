@@ -223,6 +223,42 @@ func TestPortal_LoadPortalRunsTreatsCancelledAsTerminalFailure(t *testing.T) {
 	}
 }
 
+func TestPortal_LoadPortalRuns_ShowsQueuedIssuesFromEvents(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: batchStartedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-2", Issue: 2, Payload: map[string]any{"blocked_by": []int{1}}},
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-3", Issue: 3, Payload: map[string]any{}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 runs, got %d: %#v", len(runs), runs)
+	}
+	byIssue := map[int]portalRun{}
+	for _, run := range runs {
+		byIssue[run.IssueNumber] = run
+	}
+	if run := byIssue[1]; run.Kind != "completed" || run.Status != "success" {
+		t.Fatalf("expected completed success run for issue 1, got kind=%q status=%q", run.Kind, run.Status)
+	}
+	if run := byIssue[2]; run.Kind != "completed" || run.Status != "queued" {
+		t.Fatalf("expected completed queued run for issue 2, got kind=%q status=%q", run.Kind, run.Status)
+	}
+	if run := byIssue[3]; run.Kind != "completed" || run.Status != "queued" {
+		t.Fatalf("expected completed queued run for issue 3, got kind=%q status=%q", run.Kind, run.Status)
+	}
+}
+
 func TestPortal_StopRunEndpointStopsActiveRunAndRefreshesStatus(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
 	if err != nil {
