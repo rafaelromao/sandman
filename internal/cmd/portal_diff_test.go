@@ -457,6 +457,21 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffFillTerminalPre_ApostropheNotMishandled(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: "don't worry\nI'll fix it" };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+if (pre.textContent !== "don't worry\nI'll fix it" && pre.textContent !== "don&#39;t worry\nI&#39;ll fix it") throw new Error('expected apostrophes preserved in log text, got ' + JSON.stringify(pre.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailLog_AppendPreservesExistingNodes(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1' };
