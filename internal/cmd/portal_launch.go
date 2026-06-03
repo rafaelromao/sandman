@@ -42,24 +42,24 @@ type portalLaunchFormData struct {
 }
 
 type portalLaunchRequest struct {
-	LaunchMode          string `json:"launchMode"`
-	SelectionMode       string `json:"selectionMode"`
-	Issues              string `json:"issues"`
-	Label               string `json:"label"`
-	Query               string `json:"query"`
-	Ralph               *int   `json:"ralph"`
-	IncludeDependencies bool   `json:"includeDependencies"`
-	Prompt              string `json:"prompt"`
-	Template            string `json:"template"`
-	PromptArgs          string `json:"promptArgs"`
-	Agent               string `json:"agent"`
-	Model               string `json:"model"`
-	BaseBranch          string `json:"baseBranch"`
-	Parallel            *int   `json:"parallel"`
-	StartDelay          *int   `json:"startDelay"`
-	ContainerCapacity   *int   `json:"containerCapacity"`
-	MaxContainers       *int   `json:"maxContainers"`
-	Sandbox             string `json:"sandbox"`
+	LaunchMode          string          `json:"launchMode"`
+	SelectionMode       string          `json:"selectionMode"`
+	Issues              json.RawMessage `json:"issues,omitempty"`
+	Label               string          `json:"label"`
+	Query               string          `json:"query"`
+	Ralph               *int            `json:"ralph"`
+	IncludeDependencies bool            `json:"includeDependencies"`
+	Prompt              string          `json:"prompt"`
+	Template            string          `json:"template"`
+	PromptArgs          string          `json:"promptArgs"`
+	Agent               string          `json:"agent"`
+	Model               string          `json:"model"`
+	BaseBranch          string          `json:"baseBranch"`
+	Parallel            *int            `json:"parallel"`
+	StartDelay          *int            `json:"startDelay"`
+	ContainerCapacity   *int            `json:"containerCapacity"`
+	MaxContainers       *int            `json:"maxContainers"`
+	Sandbox             string          `json:"sandbox"`
 }
 
 type portalLaunchResponse struct {
@@ -68,31 +68,31 @@ type portalLaunchResponse struct {
 }
 
 type portalUnifiedLaunchRequest struct {
-	Command             string `json:"command"`
-	LaunchMode          string `json:"launchMode"`
-	SelectionMode       string `json:"selectionMode"`
-	Issues              string `json:"issues"`
-	Issue               int    `json:"issue,omitempty"`
-	Label               string `json:"label"`
-	Query               string `json:"query"`
-	Ralph               *int   `json:"ralph"`
-	IncludeDependencies bool   `json:"includeDependencies"`
-	Prompt              string `json:"prompt"`
-	Template            string `json:"template"`
-	PromptArgs          string `json:"promptArgs"`
-	Agent               string `json:"agent"`
-	Model               string `json:"model"`
-	BaseBranch          string `json:"baseBranch"`
-	Parallel            *int   `json:"parallel"`
-	StartDelay          *int   `json:"startDelay"`
-	ContainerCapacity   *int   `json:"containerCapacity"`
-	MaxContainers       *int   `json:"maxContainers"`
-	Sandbox             string `json:"sandbox"`
-	CleanMode           string `json:"cleanMode,omitempty"`
-	Confirmed           bool   `json:"confirmed,omitempty"`
-	ConfigMode          string `json:"configMode,omitempty"`
-	ConfigKey           string `json:"configKey,omitempty"`
-	ConfigValue         string `json:"configValue,omitempty"`
+	Command             string          `json:"command"`
+	LaunchMode          string          `json:"launchMode"`
+	SelectionMode       string          `json:"selectionMode"`
+	Issues              json.RawMessage `json:"issues,omitempty"`
+	Issue               int             `json:"issue,omitempty"`
+	Label               string          `json:"label"`
+	Query               string          `json:"query"`
+	Ralph               *int            `json:"ralph"`
+	IncludeDependencies bool            `json:"includeDependencies"`
+	Prompt              string          `json:"prompt"`
+	Template            string          `json:"template"`
+	PromptArgs          string          `json:"promptArgs"`
+	Agent               string          `json:"agent"`
+	Model               string          `json:"model"`
+	BaseBranch          string          `json:"baseBranch"`
+	Parallel            *int            `json:"parallel"`
+	StartDelay          *int            `json:"startDelay"`
+	ContainerCapacity   *int            `json:"containerCapacity"`
+	MaxContainers       *int            `json:"maxContainers"`
+	Sandbox             string          `json:"sandbox"`
+	CleanMode           string          `json:"cleanMode,omitempty"`
+	Confirmed           bool            `json:"confirmed,omitempty"`
+	ConfigMode          string          `json:"configMode,omitempty"`
+	ConfigKey           string          `json:"configKey,omitempty"`
+	ConfigValue         string          `json:"configValue,omitempty"`
 }
 
 type portalOption struct {
@@ -288,9 +288,8 @@ func (req portalUnifiedLaunchRequest) runRequest() portalLaunchRequest {
 }
 
 func (req portalUnifiedLaunchRequest) commandRequest() portalCommandLaunchRequest {
-	return portalCommandLaunchRequest{
+	launchReq := portalCommandLaunchRequest{
 		Preset:      req.Command,
-		Issue:       req.Issue,
 		Prompt:      req.Prompt,
 		CleanMode:   req.CleanMode,
 		Confirmed:   req.Confirmed,
@@ -298,6 +297,20 @@ func (req portalUnifiedLaunchRequest) commandRequest() portalCommandLaunchReques
 		ConfigKey:   req.ConfigKey,
 		ConfigValue: req.ConfigValue,
 	}
+	var issues []int
+	if req.Issues != nil {
+		if err := json.Unmarshal(req.Issues, &issues); err != nil {
+			raw := strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(string(req.Issues)), `"`, ""), "'", "")
+			parts := strings.Split(raw, ",")
+			for _, p := range parts {
+				if n, err := strconv.Atoi(strings.TrimSpace(p)); err == nil {
+					issues = append(issues, n)
+				}
+			}
+		}
+	}
+	launchReq.Issues = issues
+	return launchReq
 }
 
 func portalSelectedAttr(selected bool) string {
@@ -470,7 +483,13 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 		}
 		switch selectionMode {
 		case "issues":
-			issues := parsePortalIssueNumbers(req.Issues)
+			var issues []int
+			if req.Issues != nil {
+				if err := json.Unmarshal(req.Issues, &issues); err != nil {
+					raw := strings.Trim(string(req.Issues), `"`)
+					issues = parsePortalIssueNumbers(raw)
+				}
+			}
 			if len(issues) == 0 {
 				return nil, fmt.Errorf("no issues selected")
 			}
