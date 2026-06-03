@@ -42,6 +42,57 @@ func TestDependencyResolverResolve_SortsIssuesTopologically(t *testing.T) {
 	}
 }
 
+func TestDependencyResolverResolve_StableTopologicalOrderForMixedDependencyLevels(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Independent A"},
+			2: {Number: 2, Title: "Independent B"},
+			3: {Number: 3, Title: "Dependent on 1", BlockedBy: []int{1}},
+			4: {Number: 4, Title: "Dependent on 2", BlockedBy: []int{2}},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{3, 4, 1, 2}, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	depLevel := map[int]int{}
+	for _, issue := range resolved.Issues {
+		if issue == 1 || issue == 2 {
+			depLevel[issue] = 0
+		} else if issue == 3 || issue == 4 {
+			depLevel[issue] = 1
+		}
+	}
+	if depLevel[1] != 0 || depLevel[2] != 0 || depLevel[3] != 1 || depLevel[4] != 1 {
+		t.Fatalf("expected dependency levels {1:0, 2:0, 3:1, 4:1}, got %v", depLevel)
+	}
+
+	idx1 := -1
+	idx2 := -1
+	idx3 := -1
+	idx4 := -1
+	for i, issue := range resolved.Issues {
+		switch issue {
+		case 1:
+			idx1 = i
+		case 2:
+			idx2 = i
+		case 3:
+			idx3 = i
+		case 4:
+			idx4 = i
+		}
+	}
+	if idx1 > idx3 || idx2 > idx4 {
+		t.Fatalf("expected dependents after blockers, got %v", resolved.Issues)
+	}
+}
+
 func TestDependencyResolverResolve_PreservesRequestedOrderForIndependentIssues(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -61,6 +112,57 @@ func TestDependencyResolverResolve_PreservesRequestedOrderForIndependentIssues(t
 
 	if !reflect.DeepEqual(resolved.Issues, []int{3, 1, 2}) {
 		t.Fatalf("expected requested order [3 1 2], got %v", resolved.Issues)
+	}
+}
+
+func TestDependencyResolverResolve_OpenExternalBlockerMarkedAsBlocked(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			100: {Number: 100, Title: "Feature", BlockedBy: []int{7}},
+			7:   {Number: 7, Title: "External open blocker"},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{100}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Issues, []int{100}) {
+		t.Fatalf("expected issues [100], got %v", resolved.Issues)
+	}
+
+	if !reflect.DeepEqual(resolved.Blocked[100], []int{7}) {
+		t.Fatalf("expected 100 blocked by [7], got %v", resolved.Blocked[100])
+	}
+}
+
+func TestDependencyResolverResolve_ClosedBlockerNotInDeps(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			100: {Number: 100, Title: "Feature", BlockedBy: []int{42, 7}},
+			42:  {Number: 42, Title: "Implemented blocker", State: "closed"},
+			7:   {Number: 7, Title: "Open blocker"},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{100}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Issues, []int{100}) {
+		t.Fatalf("expected issues [100], got %v", resolved.Issues)
+	}
+
+	if !reflect.DeepEqual(resolved.Blocked[100], []int{7}) {
+		t.Fatalf("expected 100 blocked by [7] only (42 is closed), got %v", resolved.Blocked[100])
 	}
 }
 
