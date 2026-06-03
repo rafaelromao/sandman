@@ -1003,6 +1003,49 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	}
 }
 
+func TestBatchStartGate_HonoursEffectiveParallel(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Issue 1"},
+			2: {Number: 2, Title: "Issue 2"},
+			3: {Number: 3, Title: "Issue 3"},
+			4: {Number: 4, Title: "Issue 4"},
+		},
+	}
+	factory := &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	runnables := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "success"},
+			{IssueNumber: 3, Status: "success"},
+			{IssueNumber: 4, Status: "success"},
+		},
+		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:          "test-agent",
+		Sandbox:        "container",
+		WorktreeDir:    ".sandman/worktrees",
+		MaxContainers:  2,
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, nil)
+	o.sandboxFactory = factory
+	o.runnableFactory = runnables
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Issues:            []int{1, 2, 3, 4},
+		ContainerCapacity: 2,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if runnables.max != 4 {
+		t.Fatalf("expected max 4 concurrent runs, got %d", runnables.max)
+	}
+}
+
 func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
