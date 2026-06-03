@@ -2142,6 +2142,7 @@
       document.body.classList.toggle('commands-open', open);
       if (open && settingsPanelOpen) setSettingsPanelOpen(false);
       if (open) {
+        setCommandFormExpanded(!persistedPortalState.commandFormCollapsed);
         renderCommandPanelBody(commandPanelType);
         refreshCommands();
         window.requestAnimationFrame(() => {
