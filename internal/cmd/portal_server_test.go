@@ -1450,3 +1450,127 @@ func TestLoadPortalRuns_DedupsActiveBatchAndQueuedEvent(t *testing.T) {
 		t.Fatalf("expected issue 7, got %d", runs[0].IssueNumber)
 	}
 }
+
+func TestPortal_BatchWithBlockedIssue_ShowsOneRow(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: batchStartedAt}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_, _ = conn.Write([]byte("[issue-42] 12:00:00 Blocked by #99.\n"))
+		_ = conn.Close()
+	}()
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-run", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.blocked", Timestamp: batchStartedAt.Add(2 * time.Minute), RunID: "blocked-run", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+	})
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run after dedup, got %d: %#v", len(runs), runs)
+	}
+	if runs[0].Status != "blocked" {
+		t.Fatalf("expected status 'blocked', got %q", runs[0].Status)
+	}
+	if runs[0].IssueNumber != 42 {
+		t.Fatalf("expected issue 42, got %d", runs[0].IssueNumber)
+	}
+}
+
+func TestPortal_BatchWithMixedBlockedAndQueued_ShowsBlockedAndQueuedSeparately(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+
+	blockedRunDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+	blockedSock := filepath.Join(blockedRunDir, "run.sock")
+	if err := os.MkdirAll(blockedRunDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(blockedRunDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: batchStartedAt}); err != nil {
+		t.Fatal(err)
+	}
+	blockedLn, err := net.Listen("unix", blockedSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = blockedLn.Close() })
+	go func() {
+		conn, err := blockedLn.Accept()
+		if err != nil {
+			return
+		}
+		_, _ = conn.Write([]byte("[issue-42] 12:00:00 Blocked by #99.\n"))
+		_ = conn.Close()
+	}()
+
+	queuedRunDir := filepath.Join(repoRoot, ".sandman", "runs", "run-7-1")
+	queuedSock := filepath.Join(queuedRunDir, "run.sock")
+	if err := os.MkdirAll(queuedRunDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(queuedRunDir, daemon.BatchManifest{Issues: []int{7}, CreatedAt: batchStartedAt}); err != nil {
+		t.Fatal(err)
+	}
+	queuedLn, err := net.Listen("unix", queuedSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = queuedLn.Close() })
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.blocked", Timestamp: batchStartedAt.Add(2 * time.Minute), RunID: "blocked-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(3 * time.Minute), RunID: "queued-run-7", Issue: 7, Payload: map[string]any{}},
+	})
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 distinct runs, got %d: %#v", len(runs), runs)
+	}
+	byIssue := map[int]portalRun{}
+	for _, run := range runs {
+		byIssue[run.IssueNumber] = run
+	}
+	if run, ok := byIssue[42]; !ok {
+		t.Fatalf("missing run for issue 42")
+	} else if run.Status != "blocked" {
+		t.Fatalf("expected issue 42 status 'blocked', got %q", run.Status)
+	}
+	if run, ok := byIssue[7]; !ok {
+		t.Fatalf("missing run for issue 7")
+	} else if run.Status != "queued" {
+		t.Fatalf("expected issue 7 status 'queued', got %q", run.Status)
+	}
+}
