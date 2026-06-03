@@ -164,6 +164,67 @@ func TestBroadcaster_SlowClientDoesNotBlockFastClient(t *testing.T) {
 	}
 }
 
+func TestBroadcaster_TrimsBufferOnOverflow(t *testing.T) {
+	b := NewBroadcaster()
+
+	blob := make([]byte, 128)
+	for i := range blob {
+		blob[i] = byte(i % 256)
+	}
+	excess := 4 * 1024
+	for i := 0; i < excess; i++ {
+		b.Write(blob)
+	}
+
+	if b.buffer.Len() > MaxBufferSize {
+		t.Fatalf("buffer.Len() = %d, want <= MaxBufferSize (%d)", b.buffer.Len(), MaxBufferSize)
+	}
+	if b.dropped == 0 {
+		t.Fatalf("b.dropped = 0, want > 0 after exceeding cap")
+	}
+	if b.buffer.Cap() > 2*MaxBufferSize {
+		t.Fatalf("buffer.Cap() = %d, want <= 2*MaxBufferSize (%d) to avoid oversized allocation", b.buffer.Cap(), 2*MaxBufferSize)
+	}
+}
+
+func TestBroadcaster_NewClientGetsTrimmedReplay(t *testing.T) {
+	dir := t.TempDir()
+	b := NewBroadcaster()
+	sock := NewControlSocket(dir, b)
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	defer sock.Stop()
+
+	blob := make([]byte, 128)
+	for i := range blob {
+		blob[i] = byte(i % 256)
+	}
+	excess := 4 * 1024
+	for i := 0; i < excess; i++ {
+		b.Write(blob)
+	}
+
+	conn, err := net.Dial("unix", filepath.Join(dir, "run.sock"))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer conn.Close()
+
+	replay := make([]byte, MaxBufferSize+1024)
+	n, err := conn.Read(replay)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	if n > MaxBufferSize {
+		t.Fatalf("replay len = %d, want <= MaxBufferSize (%d)", n, MaxBufferSize)
+	}
+	if n == excess*len(blob) {
+		t.Fatalf("replay len = %d, want trimmed tail (not full history)", n)
+	}
+}
+
 func TestBroadcaster_CloseClosesAllClients(t *testing.T) {
 	dir := t.TempDir()
 	b := NewBroadcaster()
