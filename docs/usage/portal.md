@@ -29,3 +29,25 @@ The portal rescans the repository on each poll, so new `sandman run` processes a
 - Run it from inside the repository you want to inspect.
 - The portal observes runs and also launches new Sandman commands from the repo-scoped launcher shell.
 - Use `Ctrl+C` to stop the server.
+
+## Themes
+
+The portal UI includes a theme switcher. Theme preference is stored locally per repository.
+
+The following themes are available:
+
+- Catppuccin Frappe
+- Catppuccin Latte
+- Catppuccin Macchiato
+- Catppuccin Mocha
+- Dracula
+- Everforest
+- Everforest Light
+- GitHub Light
+- Gruvbox
+- Nord
+- Nord Light
+- Rose Pine
+- Solarized Light
+- Tokyo Night
+- Tokyo Night Day
