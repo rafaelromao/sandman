@@ -1369,6 +1369,9 @@
       .settings-overlay {
         backdrop-filter: none;
       }
+      .command-form-body {
+        transition: none;
+      }
     }
   </style>
 </head>
@@ -1871,7 +1874,8 @@
         if (s.baseBranch && s.baseBranch !== bb) cmd += ' --base-branch ' + s.baseBranch;
         if (s.sandbox && s.sandbox !== sa) cmd += ' --sandbox ' + s.sandbox;
       } else if (type === 'continue') {
-        cmd += 'continue ' + (s.issue || '?') + ' "' + ((s.prompt || '').replace(/["\n\r]/g, (c) => c === '"' ? '\\"' : c === '\n' ? '\\n' : '\\r') || '...') + '"';
+        const issues = (s.issues || '').replace(/,/g, ' ').trim();
+        cmd += 'continue ' + (issues || '?') + ' "' + ((s.prompt || '').replace(/["\n\r]/g, (c) => c === '"' ? '\\"' : c === '\n' ? '\\n' : '\\r') || '...') + '"';
       } else if (type === 'status') {
         cmd += 'status';
       } else if (type === 'history') {
@@ -1909,9 +1913,9 @@
     function renderContinueCommandBody(state) {
       return [
         commandSection('Continue', [
-          commandNote('Resume a repo-scoped task by issue number and optional prompt.'),
+          commandNote('Resume one or more repo-scoped tasks by issue number and optional prompt.'),
           '<div class="command-grid">',
-          commandField('Issue number', '<input name="issue" type="number" min="1" step="1" inputmode="numeric" placeholder="42" value="' + escapeHTML(state.issue || '') + '">'),
+          commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || '') + '">'),
           commandField('Prompt', '<textarea name="prompt" placeholder="finish the tests">' + escapeHTML(state.prompt || '') + '</textarea>'),
           '</div>',
         ].join('')),
@@ -2027,7 +2031,7 @@
         setValue('containerCapacity', state.containerCapacity || '');
         setValue('maxContainers', state.maxContainers || '');
       } else if (type === 'continue') {
-        setValue('issue', state.issue || '');
+        setValue('issues', state.issues || '');
         setValue('prompt', state.prompt || '');
       } else if (type === 'clean') {
         setValue('cleanMode', state.cleanMode || 'success');
@@ -2166,6 +2170,7 @@
       commandFormBody.toggleAttribute('inert', !expanded);
       commandFormBody.setAttribute('aria-hidden', String(!expanded));
       updateCommandFormBodyHeight();
+      if (!expanded) commandFormToggle.focus();
     }
 
     function buildCommandPayload(type) {
@@ -2209,10 +2214,12 @@
         return payload;
       }
       if (type === 'continue') {
-        const issue = maybeInt(state.issue);
-        if (issue == null) throw new Error('continue requires an issue number');
+        const issuesStr = (state.issues || '').trim();
+        if (!issuesStr) throw new Error('continue requires issue numbers');
+        const issues = issuesStr.split(',').map((s) => maybeInt(s)).filter((n) => n != null);
+        if (issues.length === 0) throw new Error('continue requires valid issue numbers');
         if (!String(state.prompt || '').trim()) throw new Error('continue requires a prompt');
-        return { command: 'continue', issue, prompt: state.prompt || '' };
+        return { command: 'continue', issues, prompt: state.prompt || '' };
       }
       if (type === 'status' || type === 'history') {
         return { command: type };
@@ -2613,8 +2620,13 @@
 
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || !commandPanelOpen) return;
+      if (commandFormExpanded) {
+        setCommandFormExpanded(false);
+        event.preventDefault();
+        return;
+      }
       setCommandPanelOpen(false);
-      return;
+      event.preventDefault();
     });
 
     document.addEventListener('keydown', (event) => {
