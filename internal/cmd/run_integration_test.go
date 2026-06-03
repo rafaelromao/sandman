@@ -155,6 +155,21 @@ func (l *recordingEventLog) Read() ([]events.Event, error) {
 	return append([]events.Event(nil), l.events...), nil
 }
 
+func (l *recordingEventLog) RemoveEventsByIssue(issueNumber int) error {
+	var kept []events.Event
+	for _, e := range l.events {
+		if e.Issue == issueNumber {
+			continue
+		}
+		if e.IssueRef != nil && *e.IssueRef == issueNumber {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	l.events = kept
+	return nil
+}
+
 func writeSandmanDockerfile(t *testing.T, dir string) {
 	t.Helper()
 	dockerfileDir := filepath.Join(dir, ".sandman")
@@ -581,6 +596,53 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 	if _, err := os.Stat(worktreePath); err != nil {
 		t.Fatalf("expected worktree to remain, got: %v", err)
 	}
+}
+
+func TestRun_WorktreeSandboxForceFlagClearsArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
+
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+	}}
+	deps := newRunIntegrationDeps(`printf '%s\n' "agent stdout"`, gh)
+
+	// First run creates artifacts
+	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "42")
+	if err != nil {
+		t.Fatalf("first run unexpected error: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		t.Fatalf("first run expected success, got:\n%s", out)
+	}
+
+	verifyPath := func(path string, shouldExist bool) {
+		t.Helper()
+		_, statErr := os.Stat(path)
+		if shouldExist && statErr != nil {
+			t.Fatalf("expected %s to exist, got: %v", path, statErr)
+		}
+		if !shouldExist && !os.IsNotExist(statErr) {
+			t.Fatalf("expected %s to not exist, got stat err: %v", path, statErr)
+		}
+	}
+
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	verifyPath(worktreePath, true)
+	verifyPath(logPath, true)
+
+	// Second run with --force clears old artifacts and creates new ones
+	out, err = executeRunCommand(t, deps, "--sandbox", "worktree", "--force", "42")
+	if err != nil {
+		t.Fatalf("force run unexpected error: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
+		t.Fatalf("force run expected success, got:\n%s", out)
+	}
+	verifyPath(worktreePath, true)
+	verifyPath(logPath, true)
 }
 
 func TestRun_DefaultSandboxSingleIssue_MissingDockerfileFailsBeforeAgentRunBegins(t *testing.T) {

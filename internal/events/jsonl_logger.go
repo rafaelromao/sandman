@@ -57,5 +57,49 @@ func (l *JSONLLogger) Read() ([]Event, error) {
 	return events, nil
 }
 
+// RemoveEventsByIssue removes all events matching the given issue number.
+func (l *JSONLLogger) RemoveEventsByIssue(issueNumber int) error {
+	events, err := l.Read()
+	if err != nil {
+		return err
+	}
+
+	var kept []Event
+	for _, e := range events {
+		if e.Issue == issueNumber {
+			continue
+		}
+		if e.IssueRef != nil && *e.IssueRef == issueNumber {
+			continue
+		}
+		kept = append(kept, e)
+	}
+
+	if len(kept) == 0 {
+		if err := os.Remove(l.Path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+
+	f, err := os.OpenFile(l.Path, os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open event log for rewrite: %w", err)
+	}
+	defer f.Close()
+
+	for _, e := range kept {
+		data, err := json.Marshal(e)
+		if err != nil {
+			return fmt.Errorf("marshal event: %w", err)
+		}
+		data = append(data, '\n')
+		if _, err := f.Write(data); err != nil {
+			return fmt.Errorf("write event: %w", err)
+		}
+	}
+	return nil
+}
+
 // Ensure JSONLLogger implements EventLog.
 var _ EventLog = (*JSONLLogger)(nil)

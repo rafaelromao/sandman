@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -512,6 +513,20 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
+	if req.Force {
+		for _, num := range req.Issues {
+			issue, err := o.githubClient.FetchIssue(num)
+			if err != nil {
+				fmt.Fprintf(o.errorLog, "error: fetch issue %d for force-clean: %v\n", num, err)
+				continue
+			}
+			branches := collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog)
+			for _, branch := range branches {
+				ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog)
+			}
+		}
+	}
+
 	dangerouslySkipPermissions := req.DangerouslySkipPermissions
 	if dangerouslySkipPermissions == nil {
 		dangerouslySkipPermissions = &isContainer
@@ -883,7 +898,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	branch := branches[num]
 	if branch == "" {
-		branch = fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
+		branch = BranchName(issue.Number, issue.Title)
 	}
 	if !continuation {
 		if err := o.syncBaseBranch(".", baseBranch); err != nil {
@@ -1335,7 +1350,7 @@ func promptOnlyBranch(cfg prompt.RenderConfig) string {
 			source = filepath.Base(cfg.TemplateFlag)
 		}
 	}
-	slug := slugify(source)
+	slug := Slugify(source)
 	if slug == "" {
 		slug = "prompt-only"
 	}
@@ -1370,7 +1385,7 @@ func (o *Orchestrator) syncBaseBranch(repoPath, baseBranch string) error {
 	return syncFn(repoPath, baseBranch)
 }
 
-func slugify(title string) string {
+func Slugify(title string) string {
 	var result []rune
 	for _, r := range strings.ToLower(title) {
 		if unicode.IsLetter(r) || unicode.IsNumber(r) {
@@ -1385,6 +1400,87 @@ func slugify(title string) string {
 		result = result[:len(result)-1]
 	}
 	return string(result)
+}
+
+// BranchName returns the standard git branch name for an issue.
+func BranchName(issueNumber int, title string) string {
+	return fmt.Sprintf("sandman/%d-%s", issueNumber, Slugify(title))
+}
+
+// collectIssueBranches returns all unique branch names that should be cleaned
+// for an issue. It reads the event log for previously recorded branches and
+// combines them with the current title-derived branch.
+func collectIssueBranches(issueNumber int, title string, recordedBranch string, eventLog events.EventLog) []string {
+	seen := map[string]bool{}
+	var branches []string
+	add := func(b string) {
+		if b != "" && !seen[b] {
+			seen[b] = true
+			branches = append(branches, b)
+		}
+	}
+
+	// Read old branches from event log
+	if eventLog != nil {
+		events, err := eventLog.Read()
+		if err == nil {
+			for _, e := range events {
+				if e.Issue == issueNumber {
+					if b, ok := e.Payload["branch"].(string); ok {
+						add(b)
+					}
+				}
+			}
+		}
+	}
+
+	add(recordedBranch)
+	add(BranchName(issueNumber, title))
+	return branches
+}
+
+// isMissingWorktreeError returns true when the git worktree remove error is
+// caused by the worktree not existing — not a real failure.
+func isMissingWorktreeError(err error, out []byte) bool {
+	return err != nil && (bytes.Contains(out, []byte("is not a working tree")) ||
+		bytes.Contains(out, []byte("could not open worktree")))
+}
+
+// isMissingBranchError returns true when the git branch -D error is caused
+// by the branch not existing — not a real failure.
+func isMissingBranchError(err error, out []byte) bool {
+	return err != nil && bytes.Contains(out, []byte("not found"))
+}
+
+// ClearIssueArtifacts removes worktree, branch, logs, and event log entries
+// for a given issue. It is idempotent — missing artifacts do not cause errors.
+func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog, logWriter io.Writer) {
+	wtPath := filepath.Join(worktreeDir, branch)
+
+	// Remove worktree (may fail if already removed — idempotent)
+	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil && !isMissingWorktreeError(err, out) {
+		fmt.Fprintf(logWriter, "error: remove worktree %s for issue %d: %v: %s\n", wtPath, issueNumber, err, out)
+	}
+	if out, err := exec.Command("git", "worktree", "prune").CombinedOutput(); err != nil {
+		fmt.Fprintf(logWriter, "error: prune worktrees for issue %d: %v: %s\n", issueNumber, err, out)
+	}
+
+	// Delete branch (may fail if already deleted — idempotent)
+	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchError(err, out) {
+		fmt.Fprintf(logWriter, "error: delete branch %s for issue %d: %v: %s\n", branch, issueNumber, err, out)
+	}
+
+	// Remove log file
+	if err := os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))); err != nil {
+		fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
+	}
+
+	// Remove events for this issue
+	if eventLog != nil {
+		if err := eventLog.RemoveEventsByIssue(issueNumber); err != nil {
+			fmt.Fprintf(logWriter, "error: remove events for issue %d: %v\n", issueNumber, err)
+		}
+	}
 }
 
 // Ensure Orchestrator implements Runner.
