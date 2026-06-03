@@ -35,4 +35,4 @@ jobs:
         with:
           fireworks_model: fireworks-ai/accounts/fireworks/models/kimi-k2p6
           opencodego_model: opencode-go/kimi-k2.6
-          model: minimax/MiniMax-M2.7
+          model: minimax/MiniMax-M3
