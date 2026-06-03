@@ -1177,8 +1177,8 @@ sleep 1
 		}
 	}
 
-	if got := len(hostnames); got != 2 {
-		t.Fatalf("expected exactly 2 container hostnames, got %d: %v", got, hostnames)
+	if got := len(hostnames); got != 1 {
+		t.Fatalf("expected exactly 1 container hostname (effectiveParallel=2, single container holds all 4 issues), got %d: %v", got, hostnames)
 	}
 }
 
