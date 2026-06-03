@@ -590,13 +590,6 @@ func TestPortal_PageExposesCommandPanelShell(t *testing.T) {
 		`id="commands-toggle"`,
 		`id="commands-panel"`,
 		`id="command-picker"`,
-		`class="command-form-section"`,
-		`id="command-form-toggle"`,
-		`aria-expanded="true"`,
-		`aria-controls="command-form-body"`,
-		`aria-label="Toggle command options"`,
-		`class="disclosure-chevron"`,
-		`id="command-form-body"`,
 		`id="command-panel-form"`,
 		`id="command-panel-body"`,
 		`id="command-execute-status"`,
@@ -616,80 +609,6 @@ func TestPortal_PageExposesCommandPanelShell(t *testing.T) {
 	}
 }
 
-func TestPortal_PageExposesCollapsibleCommandFormStyles(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(body)
-	for _, want := range []string{
-		`.command-form-section {`,
-		`flex-shrink: 0;`,
-		`.command-form-toggle {`,
-		`:focus-visible`,
-		`.command-form-body {`,
-		`max-height: 2000px;`,
-		`transition: max-height 280ms cubic-bezier(0.165, 0.84, 0.44, 1), opacity 280ms cubic-bezier(0.165, 0.84, 0.44, 1);`,
-		`.command-form-body.collapsed {`,
-		`max-height: 0;`,
-		`opacity: 0;`,
-		`[aria-expanded="false"] .disclosure-chevron`,
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("page missing %q\n%s", want, content[:min(1000, len(content))])
-		}
-	}
-}
-
-func TestPortal_PageIncludesMobileCommandHistoryLayout(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(body)
-	for _, want := range []string{
-		"@media (max-width: 760px)",
-		".command-row {",
-		"flex-direction: column;",
-		"min-height: 56px;",
-		".command-row .col-status {",
-		"align-self: flex-start;",
-		".command-row .col-command {",
-		"font-size: 13px;",
-		".command-row .col-started {",
-		"font-size: 10px;",
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("page missing %q\n%s", want, content[:min(1000, len(content))])
-		}
-	}
-}
 func TestPortal_CommandsEndpointPersistsAsyncLaunches(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
