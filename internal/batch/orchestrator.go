@@ -536,7 +536,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, func() (gitIdentity, error) { return resolveGitIdentity(".") }, policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, *dangerouslySkipPermissions)
 	}
 
-	startGate := newBatchStartGate(parallel, startDelay)
+	startGate := newBatchStartGate(effectiveParallel, startDelay)
 	var wg sync.WaitGroup
 	results := make([]AgentRunResult, len(req.Issues))
 	var mu sync.Mutex
