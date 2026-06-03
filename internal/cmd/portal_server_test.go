@@ -1387,3 +1387,66 @@ func TestPortal_RunLogEndpointReturnsFullLog(t *testing.T) {
 		t.Fatalf("expected full log content (%d bytes), got %d bytes", len(logContent), len(body))
 	}
 }
+
+func TestLoadPortalRuns_DedupsBlockedAndQueuedRows(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-run", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.blocked", Timestamp: batchStartedAt.Add(2 * time.Minute), RunID: "blocked-run", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run after dedup, got %d: %#v", len(runs), runs)
+	}
+	if runs[0].Status != "blocked" {
+		t.Fatalf("expected status 'blocked', got %q", runs[0].Status)
+	}
+	if runs[0].IssueNumber != 42 {
+		t.Fatalf("expected issue 42, got %d", runs[0].IssueNumber)
+	}
+}
+
+func TestLoadPortalRuns_DedupsActiveBatchAndQueuedEvent(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "active-1")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{7}, CreatedAt: batchStartedAt}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(30 * time.Second), RunID: "queued-run-7", Issue: 7, Payload: map[string]any{}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run after dedup, got %d: %#v", len(runs), runs)
+	}
+	if runs[0].IssueNumber != 7 {
+		t.Fatalf("expected issue 7, got %d", runs[0].IssueNumber)
+	}
+}
