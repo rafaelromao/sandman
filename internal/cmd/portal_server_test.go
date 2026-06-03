@@ -751,7 +751,7 @@ func TestPortal_CommandsEndpointPersistsAsyncLaunches(t *testing.T) {
 	t.Run("continue", func(t *testing.T) {
 		gotRunArgs = nil
 		gotStartArgs = nil
-		body := strings.NewReader(`{"command":"continue","issue":42,"prompt":"finish the tests"}`)
+		body := strings.NewReader(`{"command":"continue","issues":[1,42],"prompt":"finish the tests"}`)
 		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", body)
 		if err != nil {
 			t.Fatal(err)

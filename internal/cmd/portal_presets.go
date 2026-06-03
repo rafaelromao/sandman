@@ -9,6 +9,7 @@ import (
 type portalCommandLaunchRequest struct {
 	Preset      string `json:"preset"`
 	Issue       int    `json:"issue,omitempty"`
+	Issues      []int  `json:"issues,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
 	CleanMode   string `json:"cleanMode,omitempty"`
 	Confirmed   bool   `json:"confirmed,omitempty"`
@@ -20,13 +21,18 @@ type portalCommandLaunchRequest struct {
 func buildPortalCommandArgs(req portalCommandLaunchRequest) ([]string, error) {
 	switch strings.TrimSpace(req.Preset) {
 	case "continue":
-		if req.Issue <= 0 {
-			return nil, fmt.Errorf("continue preset requires an issue number")
+		if len(req.Issues) == 0 {
+			return nil, fmt.Errorf("continue preset requires issue numbers")
 		}
 		if strings.TrimSpace(req.Prompt) == "" {
 			return nil, fmt.Errorf("continue preset requires a prompt")
 		}
-		return []string{"continue", strconv.Itoa(req.Issue), strings.TrimSpace(req.Prompt)}, nil
+		args := []string{"continue"}
+		for _, issue := range req.Issues {
+			args = append(args, strconv.Itoa(issue))
+		}
+		args = append(args, strings.TrimSpace(req.Prompt))
+		return args, nil
 	case "status":
 		return []string{"status"}, nil
 	case "history":
