@@ -1439,13 +1439,26 @@ func collectIssueBranches(issueNumber int, title string, recordedBranch string, 
 	return branches
 }
 
+// isMissingWorktreeError returns true when the git worktree remove error is
+// caused by the worktree not existing — not a real failure.
+func isMissingWorktreeError(err error, out []byte) bool {
+	return err != nil && (bytes.Contains(out, []byte("is not a working tree")) ||
+		bytes.Contains(out, []byte("could not open worktree")))
+}
+
+// isMissingBranchError returns true when the git branch -D error is caused
+// by the branch not existing — not a real failure.
+func isMissingBranchError(err error, out []byte) bool {
+	return err != nil && bytes.Contains(out, []byte("not found"))
+}
+
 // ClearIssueArtifacts removes worktree, branch, logs, and event log entries
 // for a given issue. It is idempotent — missing artifacts do not cause errors.
 func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog, logWriter io.Writer) {
 	wtPath := filepath.Join(worktreeDir, branch)
 
 	// Remove worktree (may fail if already removed — idempotent)
-	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil && !isMissingWorktreeError(err, out) {
 		fmt.Fprintf(logWriter, "error: remove worktree %s for issue %d: %v: %s\n", wtPath, issueNumber, err, out)
 	}
 	if out, err := exec.Command("git", "worktree", "prune").CombinedOutput(); err != nil {
@@ -1453,7 +1466,7 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, log
 	}
 
 	// Delete branch (may fail if already deleted — idempotent)
-	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchError(err, out) {
 		fmt.Fprintf(logWriter, "error: delete branch %s for issue %d: %v: %s\n", branch, issueNumber, err, out)
 	}
 
