@@ -1005,11 +1005,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	logPath := filepath.Join(".", ".sandman", "logs", fmt.Sprintf("%d.log", num))
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptRenderCfg := renderCfg
-		headSHA := ""
 		if attempt > 0 {
-			if head, err := currentBranchHeadFn(wt.WorkDir()); err == nil {
-				headSHA = head
-			}
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
 			contCtxPath := filepath.Join(wt.WorkDir(), ".sandman", "continuation-context.md")
 			if content, err := os.ReadFile(contCtxPath); err == nil {
@@ -1075,9 +1071,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			} else if pr == nil {
 				result.Status = "failure"
 			} else if pr.Merged || strings.EqualFold(pr.State, "merged") {
-				if headSHA != "" && strings.TrimSpace(pr.HeadRefOid) != "" && !strings.EqualFold(pr.HeadRefOid, headSHA) {
-					result.Status = "failure"
-				}
 			} else {
 				result.Status = "failure"
 			}
