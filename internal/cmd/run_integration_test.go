@@ -1740,3 +1740,72 @@ git add test-file.txt
 		t.Fatalf("expected commit author 'Test <test@test.com>' (repo default) in log, got:\n%s", logContent)
 	}
 }
+
+func TestRun_DependencyAwareBatch_MixedRunnableAndBlockedIssues(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	_ = initRunIntegrationRepoWithRemote(t, dir)
+
+	release7Fetch := make(chan struct{})
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Runnable"},
+			100: {Number: 100, Title: "Blocked by external", BlockedBy: []int{7}},
+			7:   {Number: 7, Title: "External blocker", State: "open"},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-runnable": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-runnable", HeadRefOid: ""},
+		},
+		fetchRelease: map[int]<-chan struct{}{
+			7: release7Fetch,
+		},
+		fetchReleaseAfter: map[int]int{
+			7: 2,
+		},
+	}
+	deps := newRunIntegrationDeps(issueAwareAgentCommand(`
+state_dir="$repo_root/.sandman/mixed"
+mkdir -p "$state_dir"
+touch "$state_dir/start-$issue"
+`), client)
+
+	resultCh := make(chan struct {
+		out string
+		err error
+	}, 1)
+	go func() {
+		out, err := executeRunCommand(t, deps, "42", "100")
+		resultCh <- struct {
+			out string
+			err error
+		}{out: out, err: err}
+	}()
+
+	waitForPath(t, filepath.Join(dir, ".sandman", "mixed", "start-42"))
+
+	result := <-resultCh
+	out, err := result.out, result.err
+	if err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed, 1 blocked") {
+		t.Fatalf("expected mixed results summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#42  success") {
+		t.Fatalf("expected runnable issue success, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#100  blocked") {
+		t.Fatalf("expected blocked issue status, got:\n%s", out)
+	}
+
+	for _, marker := range []string{"start-42"} {
+		if _, statErr := os.Stat(filepath.Join(dir, ".sandman", "mixed", marker)); statErr != nil {
+			t.Fatalf("expected marker %s, got %v", marker, statErr)
+		}
+	}
+
+	if _, statErr := os.Stat(filepath.Join(dir, ".sandman", "mixed", "start-100")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected blocked issue not to start, got %v", statErr)
+	}
+}
