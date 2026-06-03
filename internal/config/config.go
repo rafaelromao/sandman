@@ -218,9 +218,6 @@ func Load(path string) (*Config, error) {
 		}
 		cfg.AgentProviders[name] = agent
 	}
-	for name, agent := range cfg.Agents {
-		cfg.AgentProviders[name] = agent
-	}
 	agentCfg, err := cfg.ResolveAgentProvider(cfg.DefaultAgent)
 	if err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
