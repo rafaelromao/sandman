@@ -520,11 +520,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				fmt.Fprintf(o.errorLog, "error: fetch issue %d for force-clean: %v\n", num, err)
 				continue
 			}
-			branch := req.Branches[num]
-			if branch == "" {
-				branch = BranchName(issue.Number, issue.Title)
+			branches := collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog)
+			for _, branch := range branches {
+				ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog)
 			}
-			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog)
 		}
 	}
 
@@ -1406,6 +1405,38 @@ func Slugify(title string) string {
 // BranchName returns the standard git branch name for an issue.
 func BranchName(issueNumber int, title string) string {
 	return fmt.Sprintf("sandman/%d-%s", issueNumber, Slugify(title))
+}
+
+// collectIssueBranches returns all unique branch names that should be cleaned
+// for an issue. It reads the event log for previously recorded branches and
+// combines them with the current title-derived branch.
+func collectIssueBranches(issueNumber int, title string, recordedBranch string, eventLog events.EventLog) []string {
+	seen := map[string]bool{}
+	var branches []string
+	add := func(b string) {
+		if b != "" && !seen[b] {
+			seen[b] = true
+			branches = append(branches, b)
+		}
+	}
+
+	// Read old branches from event log
+	if eventLog != nil {
+		events, err := eventLog.Read()
+		if err == nil {
+			for _, e := range events {
+				if e.Issue == issueNumber {
+					if b, ok := e.Payload["branch"].(string); ok {
+						add(b)
+					}
+				}
+			}
+		}
+	}
+
+	add(recordedBranch)
+	add(BranchName(issueNumber, title))
+	return branches
 }
 
 // ClearIssueArtifacts removes worktree, branch, logs, and event log entries
