@@ -1558,7 +1558,7 @@
     }
     const portalScroll = window.SandmanPortalScroll;
     const portalDiff = window.SandmanPortalDiff;
-    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {} };
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false };
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -1697,6 +1697,7 @@
       portalState.save({
         expandedRunKey: state.expandedRunKey,
         tabs: state.tabs,
+        commandFormCollapsed: !commandFormExpanded,
       });
     }
 
@@ -2141,6 +2142,7 @@
       document.body.classList.toggle('commands-open', open);
       if (open && settingsPanelOpen) setSettingsPanelOpen(false);
       if (open) {
+        setCommandFormExpanded(!persistedPortalState.commandFormCollapsed);
         renderCommandPanelBody(commandPanelType);
         refreshCommands();
         window.requestAnimationFrame(() => {
@@ -2532,7 +2534,10 @@
     }
 
     if (commandFormToggle) {
-      commandFormToggle.addEventListener('click', () => setCommandFormExpanded(!commandFormExpanded));
+      commandFormToggle.addEventListener('click', () => {
+        setCommandFormExpanded(!commandFormExpanded);
+        persistPortalViewState();
+      });
     }
 
     if (commandsToggle) {
@@ -2600,7 +2605,7 @@
       });
     }
 
-    setCommandFormExpanded(true);
+    setCommandFormExpanded(!persistedPortalState.commandFormCollapsed);
 
     window.addEventListener('resize', () => {
       if (commandFormExpanded) updateCommandFormBodyHeight();

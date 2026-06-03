@@ -7,6 +7,88 @@ import (
 	"testing"
 )
 
+func TestPortalStatePersistsCommandFormCollapsed(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for portal state helper test")
+	}
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	portalStatePath := filepath.Join(filepath.Dir(currentFile), "portal_state.js")
+
+	script := `const fs = require('fs');
+const vm = require('vm');
+const helperPath = process.argv[1];
+const source = fs.readFileSync(helperPath, 'utf8');
+const storage = new Map();
+const sandbox = {
+  window: {},
+  globalThis: {},
+  sessionStorage: {
+    getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+    setItem(key, value) { storage.set(key, String(value)); },
+    removeItem(key) { storage.delete(key); },
+  },
+  Set, Map, JSON, console,
+};
+sandbox.window = sandbox;
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox, { filename: helperPath });
+const api = sandbox.SandmanPortalState;
+
+// Test 1: defaultState includes commandFormCollapsed: false
+const defaults = api.load();
+if (defaults.commandFormCollapsed !== false) {
+  throw new Error('expected default commandFormCollapsed to be false, got ' + JSON.stringify(defaults.commandFormCollapsed));
+}
+
+// Test 2: save and load commandFormCollapsed: true
+storage.set(api.storageKey, JSON.stringify({
+  expandedRunKey: null,
+  tabs: {},
+  commandFormCollapsed: true,
+}));
+const loadedTrue = api.load();
+if (loadedTrue.commandFormCollapsed !== true) {
+  throw new Error('expected commandFormCollapsed true to survive load, got ' + JSON.stringify(loadedTrue.commandFormCollapsed));
+}
+
+// Test 3: save and load commandFormCollapsed: false
+storage.set(api.storageKey, JSON.stringify({
+  expandedRunKey: null,
+  tabs: {},
+  commandFormCollapsed: false,
+}));
+const loadedFalse = api.load();
+if (loadedFalse.commandFormCollapsed !== false) {
+  throw new Error('expected commandFormCollapsed false to survive load, got ' + JSON.stringify(loadedFalse.commandFormCollapsed));
+}
+
+// Test 4: missing field defaults to false (migration from old state)
+storage.set(api.storageKey, JSON.stringify({
+  expandedRunKey: null,
+  tabs: {},
+}));
+const loadedMissing = api.load();
+if (loadedMissing.commandFormCollapsed !== false) {
+  throw new Error('expected missing commandFormCollapsed to default to false, got ' + JSON.stringify(loadedMissing.commandFormCollapsed));
+}
+
+// Test 5: save includes commandFormCollapsed
+api.save({ expandedRunKey: null, tabs: {}, commandFormCollapsed: true });
+const persisted = JSON.parse(storage.get(api.storageKey));
+if (persisted.commandFormCollapsed !== true) {
+  throw new Error('expected saved state to include commandFormCollapsed, got ' + JSON.stringify(persisted));
+}
+`
+	cmd := exec.Command("node", "-e", script, portalStatePath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("portal state helper failed: %v\n%s", err, out)
+	}
+}
+
 func TestPortalStateNormalizesMissingRunAndTab(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required for portal state helper test")
