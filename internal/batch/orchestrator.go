@@ -639,6 +639,17 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			defer advanceTurn()
 
+			if o.eventLog != nil && (len(blockers) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
+				_ = o.eventLog.Log(events.Event{
+					Type:      "run.queued",
+					Timestamp: time.Now(),
+					RunID:     generateRunID(issueNum),
+					Issue:     issueNum,
+					IssueRef:  issueRef(issueNum),
+					Payload:   map[string]any{"blocked_by": blockers},
+				})
+			}
+
 			for _, blocker := range blockers {
 				<-completed[blocker]
 			}
