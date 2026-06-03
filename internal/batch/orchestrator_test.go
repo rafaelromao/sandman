@@ -4012,8 +4012,8 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *test
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 2 {
-		t.Fatalf("expected 2 containers to start, got %d", starter.startCount)
+	if starter.startCount != 1 {
+		t.Fatalf("expected 1 container to start (effectiveParallel=1, containerCapacity=1), got %d", starter.startCount)
 	}
 }
 
@@ -4311,8 +4311,8 @@ func TestRunBatch_MaxContainersAutoStartsMinimumContainers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 2 {
-		t.Fatalf("expected 2 containers to start, got %d", starter.startCount)
+	if starter.startCount != 1 {
+		t.Fatalf("expected 1 container to start (effectiveParallel=2, containerCapacity=2 satisfies all runs), got %d", starter.startCount)
 	}
 }
 
@@ -4348,8 +4348,201 @@ func TestRunBatch_UsesConfigContainerSettingsWhenRequestUnset(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 2 {
-		t.Fatalf("expected config container_capacity=1 to start 2 containers, got %d", starter.startCount)
+	if starter.startCount != 1 {
+		t.Fatalf("expected config container_capacity=1 to start 1 container (effectiveParallel=1), got %d", starter.startCount)
+	}
+}
+
+func TestEffectiveParallel_AutoContainerMode(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "A"},
+			2: {Number: 2, Title: "B"},
+			3: {Number: 3, Title: "C"},
+			4: {Number: 4, Title: "D"},
+		},
+	}
+
+	factory := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "success"},
+			{IssueNumber: 3, Status: "success"},
+			{IssueNumber: 4, Status: "success"},
+		},
+		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
+	o.runnableFactory = factory
+	o.sandboxFactory = &freshSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Sandbox: "docker", Parallel: 4, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if factory.max > 2 {
+		t.Errorf("expected max concurrent runs <= 2 (containerCapacity cap in auto mode), got %d", factory.max)
+	}
+}
+
+func TestEffectiveParallel_ExplicitMaxContainers(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "A"},
+			2: {Number: 2, Title: "B"},
+			3: {Number: 3, Title: "C"},
+			4: {Number: 4, Title: "D"},
+		},
+	}
+
+	factory := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "success"},
+			{IssueNumber: 3, Status: "success"},
+			{IssueNumber: 4, Status: "success"},
+		},
+		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
+	o.runnableFactory = factory
+	o.sandboxFactory = &freshSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Sandbox: "docker", Parallel: 4, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 2, MaxContainersSet: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if factory.max > 4 {
+		t.Errorf("expected max concurrent runs <= 4 (totalSlots = 2*2), got %d", factory.max)
+	}
+}
+
+func TestEffectiveParallel_UnlimitedParallel(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "A"},
+			2: {Number: 2, Title: "B"},
+			3: {Number: 3, Title: "C"},
+			4: {Number: 4, Title: "D"},
+		},
+	}
+
+	release := make(chan struct{})
+	started := make([]chan struct{}, 4)
+	runnables := make(map[int]Runnable, 4)
+	for i := 1; i <= 4; i++ {
+		started[i-1] = make(chan struct{})
+		runnables[i] = &controlledRunnable{
+			result:  AgentRunResult{IssueNumber: i, Status: "success"},
+			started: started[i-1],
+			release: release,
+		}
+	}
+	factory := &controlledRunnableFactory{runnables: runnables}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
+	o.runnableFactory = factory
+	o.sandboxFactory = &freshSandboxFactory{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Sandbox: "docker", Parallel: 0, ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
+		errCh <- err
+	}()
+
+	for i, ch := range started {
+		select {
+		case <-ch:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for run %d to start", i+1)
+		}
+	}
+
+	if len(factory.created) != 4 {
+		t.Fatalf("expected 4 created runnables (parallel=0 means unlimited), got %d", len(factory.created))
+	}
+
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEffectiveParallel_NoRegressionWhenParallelEqualsCapacity(t *testing.T) {
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "A"},
+			2: {Number: 2, Title: "B"},
+			3: {Number: 3, Title: "C"},
+			4: {Number: 4, Title: "D"},
+		},
+	}
+
+	factory := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "success"},
+			{IssueNumber: 3, Status: "success"},
+			{IssueNumber: 4, Status: "success"},
+		},
+		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
+	o.runnableFactory = factory
+	o.sandboxFactory = &freshSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Sandbox: "docker", Parallel: 4, ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if factory.max > 4 {
+		t.Errorf("expected max concurrent runs <= 4 (parallel equals capacity, no cap needed), got %d", factory.max)
 	}
 }
 

@@ -32,13 +32,53 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 
 | Field | Description |
 |-------|-------------|
-| `type` | Event type (e.g. `run.started`, `run.finished`, `run.blocked`, `run.warning`) |
+| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.warning`, `run.finished`, `run.cancelled`) |
 | `timestamp` | ISO 8601 timestamp |
 | `run_id` | Unique run identifier |
 | `issue` | GitHub issue number, or `null` for prompt-only runs |
-| `payload` | Event-specific data (status, branch, error message, etc.) |
+| `payload` | Event-specific data (see below) |
 
-Because `sandman continue` replays branch, base branch, agent, and review command data, `run.started` payloads include `agent` and may include `model` and `review_command`. `run.continued` events also include `previous_run_id` and the stored `base_branch` from the original run.
+### Event payloads
+
+#### `run.started` / `run.continued`
+Emitted when an agent run begins. `run.continued` replays stored `agent`, `model`, and `review_command` from the original run context (no `previous_run_id` field).
+
+#### `run.queued`
+Emitted when an issue enters the wait queue due to unresolved blockers or parallel capacity constraints.
+
+| Field | Description |
+|-------|-------------|
+| `blocked_by` | List of issue numbers blocking this run |
+
+#### `run.blocked`
+Emitted when one or more `BlockedBy` issues failed in the same batch.
+
+| Field | Description |
+|-------|-------------|
+| `blocked_by` | List of issue numbers that caused the block |
+
+#### `run.warning`
+Emitted for non-fatal issues during sandbox cleanup.
+
+| Field | Description |
+|-------|-------------|
+| `branch` | Branch name |
+| `message` | Warning message |
+
+#### `run.finished`
+Emitted when an agent run completes or is cancelled.
+
+| Field | Description |
+|-------|-------------|
+| `status` | Terminal status (`success`, `failure`) |
+| `branch` | Branch name |
+| `base_branch` | Base branch name |
+| `worktree_state` | Always `preserved` |
+| `retries_total` | Total retry attempts configured |
+| `retries_done` | Actual retries performed |
+
+#### `run.cancelled`
+Emitted when a run is cancelled via context cancellation (SIGINT/SIGTERM). Payload same as `run.finished` with `status: failure`.
 
 ## Run logs
 

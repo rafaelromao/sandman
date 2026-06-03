@@ -688,6 +688,7 @@
       min-height: 0;
       display: flex;
       flex-direction: column;
+      overflow: auto;
     }
     .tab-pane {
       min-height: 0;
@@ -1321,13 +1322,13 @@
       }
       .command-grid.two { grid-template-columns: 1fr; }
       .settings-wrap { justify-items: start; }
-      .detail-panel { min-height: 0; max-height: none; }
+      .detail-panel { min-height: 0; max-height: calc(100vh - 220px); overflow: auto; }
     }
     @media (max-width: 760px) {
       main { padding-inline: 12px; }
       h1 { font-size: 24px; }
       .toolbar { padding: 12px; }
-      .table-shell { border-radius: 16px; }
+      .table-shell { border-radius: 16px; height: 56px; overflow: auto; flex: 0 0 auto; }
       .detail-panel { padding: 14px; }
       .command-row {
         flex-direction: column;
