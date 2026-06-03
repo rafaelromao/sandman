@@ -652,6 +652,62 @@ func TestPortal_PageExposesCollapsibleCommandFormStyles(t *testing.T) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(1000, len(content))])
 		}
 	}
+	if !strings.Contains(content, `@media (prefers-reduced-motion: reduce)`) {
+		t.Fatalf("page missing prefers-reduced-motion media query\n%s", content[:min(1000, len(content))])
+	}
+	if !strings.Contains(content, `      .command-form-body {
+        transition: none;
+      }`) {
+		t.Fatalf("page missing command-form-body transition:none in reduced-motion block\n%s", content[:min(1000, len(content))])
+	}
+}
+
+func TestPortal_PageClosesCommandFormOnEscapeFirst(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	if !strings.Contains(content, `setCommandFormExpanded(false)`) {
+		t.Fatalf("page missing setCommandFormExpanded(false) in Escape handler\n%s", content[:min(1000, len(content))])
+	}
+}
+
+func TestPortal_PageIncludesCommandFormFocusManagement(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	if !strings.Contains(content, `commandFormToggle.focus()`) {
+		t.Fatalf("page missing commandFormToggle.focus() in setCommandFormExpanded\n%s", content[:min(1000, len(content))])
+	}
 }
 
 func TestPortal_PageIncludesMobileCommandHistoryLayout(t *testing.T) {

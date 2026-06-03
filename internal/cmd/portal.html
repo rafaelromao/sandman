@@ -1369,6 +1369,9 @@
       .settings-overlay {
         backdrop-filter: none;
       }
+      .command-form-body {
+        transition: none;
+      }
     }
   </style>
 </head>
@@ -2166,6 +2169,7 @@
       commandFormBody.toggleAttribute('inert', !expanded);
       commandFormBody.setAttribute('aria-hidden', String(!expanded));
       updateCommandFormBodyHeight();
+      if (!expanded) commandFormToggle.focus();
     }
 
     function buildCommandPayload(type) {
@@ -2613,8 +2617,13 @@
 
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || !commandPanelOpen) return;
+      if (commandFormExpanded) {
+        setCommandFormExpanded(false);
+        event.preventDefault();
+        return;
+      }
       setCommandPanelOpen(false);
-      return;
+      event.preventDefault();
     });
 
     document.addEventListener('keydown', (event) => {
