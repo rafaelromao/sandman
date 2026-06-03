@@ -2308,7 +2308,7 @@
         }
         styled = styled
           .replace(/(https?:\/\/[^\s<]+)/g, '<span class="term-url">$1</span>')
-          .replace(/(&[a-z]+|&#x[0-9a-f]+|&#[0-9]+);?/gi, '<span class="term-protected">$1$2</span>')
+          .replace(/(&[a-z]+|&#x[0-9a-f]+|&#[0-9]+);?/gi, '<span class="term-protected">$1;</span>')
           .replace(/\b([0-9]+(?:\.[0-9]+)?)\b/g, '<span class="term-number">$1</span>')
           .replace(/(&quot;[^&]*?&quot;|'[^'&]*?')/g, '<span class="term-string">$1</span>')
           .replace(/<span class="term-protected">(&[a-z]+|&#x[0-9a-f]+|&#[0-9]+);?<\/span>/gi, '$1;')
