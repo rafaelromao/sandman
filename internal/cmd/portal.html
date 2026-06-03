@@ -902,67 +902,9 @@
       flex: 1 1 auto;
       align-items: stretch;
     }
-    .command-form-section {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      flex-shrink: 0;
-      min-width: 0;
-    }
-    .command-form-section-head {
-      display: flex;
-      align-items: end;
-      gap: 10px;
-      min-width: 0;
-    }
     .command-picker-field {
       display: grid;
       gap: 6px;
-      flex: 1 1 auto;
-      min-width: 0;
-    }
-    .command-form-toggle {
-      width: 28px;
-      height: 28px;
-      padding: 0;
-      flex: 0 0 auto;
-      align-self: end;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: var(--surface-3);
-      color: var(--text);
-      transition: background-color 180ms ease-out, border-color 180ms ease-out, color 180ms ease-out;
-    }
-    .command-form-toggle:hover {
-      background: var(--surface-2);
-    }
-    .command-form-toggle:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-    }
-    .command-form-toggle .disclosure-chevron {
-      width: 16px;
-      height: 16px;
-      transition: transform 280ms cubic-bezier(0.165, 0.84, 0.44, 1);
-      transform: rotate(0deg);
-      transform-origin: center;
-    }
-    .command-form-toggle[aria-expanded="false"] .disclosure-chevron {
-      transform: rotate(-90deg);
-    }
-    .command-form-body {
-      max-height: 2000px;
-      opacity: 1;
-      overflow: hidden;
-      transition: max-height 280ms cubic-bezier(0.165, 0.84, 0.44, 1), opacity 280ms cubic-bezier(0.165, 0.84, 0.44, 1);
-    }
-    .command-form-body.collapsed {
-      max-height: 0;
-      opacity: 0;
-      overflow: hidden;
     }
     .command-pane-tabs {
       display: flex;
@@ -1329,23 +1271,6 @@
       .toolbar { padding: 12px; }
       .table-shell { border-radius: 16px; }
       .detail-panel { padding: 14px; }
-      .command-row {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 6px;
-        padding: 12px;
-        min-height: 56px;
-      }
-      .command-row .col-status {
-        flex: 0 0 auto;
-        align-self: flex-start;
-      }
-      .command-row .col-command {
-        font-size: 13px;
-      }
-      .command-row .col-started {
-        font-size: 10px;
-      }
       .commands-panel,
       .settings-panel {
         width: 100vw;
@@ -1409,27 +1334,18 @@
 
         <form id="command-panel-form" class="commands-panel-form">
           <div class="commands-panel-body">
-            <div class="command-form-section">
-              <div class="command-form-section-head">
-                <label class="command-picker-field" for="command-picker">
-                  <span>Command</span>
-                  <select id="command-picker" name="command">
-                    <option value="run" selected>Run</option>
-                    <option value="continue">Continue</option>
-                    <option value="status">Status</option>
-                    <option value="history">History</option>
-                    <option value="clean">Clean</option>
-                    <option value="config">Config</option>
-                  </select>
-                </label>
-                <button id="command-form-toggle" class="command-form-toggle" type="button" aria-expanded="true" aria-controls="command-form-body" aria-label="Toggle command options">
-                  <svg class="disclosure-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-                </button>
-              </div>
-              <div id="command-form-body" class="command-form-body">
-                <div id="command-panel-body"></div>
-              </div>
-            </div>
+            <label class="command-picker-field" for="command-picker">
+              <span>Command</span>
+              <select id="command-picker" name="command">
+                <option value="run" selected>Run</option>
+                <option value="continue">Continue</option>
+                <option value="status">Status</option>
+                <option value="history">History</option>
+                <option value="clean">Clean</option>
+                <option value="config">Config</option>
+              </select>
+            </label>
+            <div id="command-panel-body"></div>
             <section class="command-history" aria-label="Command history">
               <div class="command-history-head">
                 <h3>Recent commands</h3>
@@ -1541,8 +1457,6 @@
     const commandsClose = document.getElementById('commands-close');
     const commandPanelForm = document.getElementById('command-panel-form');
     const commandPicker = document.getElementById('command-picker');
-    const commandFormToggle = document.getElementById('command-form-toggle');
-    const commandFormBody = document.getElementById('command-form-body');
     const commandPanelBody = document.getElementById('command-panel-body');
     const commandsList = document.getElementById('commands-list');
     const commandExecuteStatus = document.getElementById('command-execute-status');
@@ -1589,7 +1503,6 @@
     };
     let commandPanelType = commandPicker ? commandPicker.value || 'run' : 'run';
     let commandPanelOpen = false;
-    let commandFormExpanded = true;
     let settingsPanelOpen = false;
 
     function systemTheme() {
@@ -1966,7 +1879,6 @@
       }
       applyCommandFieldState(type, state);
       updateExecuteSummary();
-      updateCommandFormBodyHeight();
     }
 
     function focusActiveRunPaneTab() {
@@ -2108,7 +2020,7 @@
 
     function commandPanelFocusables() {
       if (!commandsPanel) return [];
-      return Array.from(commandsPanel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter((element) => !element.hasAttribute('disabled') && !element.hidden && !element.closest('[inert]'));
+      return Array.from(commandsPanel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter((element) => !element.hasAttribute('disabled') && !element.hidden);
     }
 
     function trapCommandPanelFocus(event) {
@@ -2149,21 +2061,6 @@
       } else {
         commandsToggle.focus();
       }
-    }
-
-    function updateCommandFormBodyHeight() {
-      if (!commandFormBody) return;
-      commandFormBody.style.maxHeight = commandFormExpanded ? '' : '0px';
-    }
-
-    function setCommandFormExpanded(expanded) {
-      if (!commandFormToggle || !commandFormBody) return;
-      commandFormExpanded = expanded;
-      commandFormToggle.setAttribute('aria-expanded', String(expanded));
-      commandFormBody.classList.toggle('collapsed', !expanded);
-      commandFormBody.toggleAttribute('inert', !expanded);
-      commandFormBody.setAttribute('aria-hidden', String(!expanded));
-      updateCommandFormBodyHeight();
     }
 
     function buildCommandPayload(type) {
@@ -2528,10 +2425,6 @@
       });
     }
 
-    if (commandFormToggle) {
-      commandFormToggle.addEventListener('click', () => setCommandFormExpanded(!commandFormExpanded));
-    }
-
     if (commandsToggle) {
       commandsToggle.addEventListener('click', () => setCommandPanelOpen(!commandPanelOpen));
     }
@@ -2596,12 +2489,6 @@
         setRunPane(nextPane);
       });
     }
-
-    setCommandFormExpanded(true);
-
-    window.addEventListener('resize', () => {
-      if (commandFormExpanded) updateCommandFormBodyHeight();
-    });
 
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || !commandPanelOpen) return;
