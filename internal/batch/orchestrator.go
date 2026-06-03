@@ -639,7 +639,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			defer advanceTurn()
 
-			if len(blockers) > 0 && o.eventLog != nil {
+			if o.eventLog != nil && (len(blockers) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 				_ = o.eventLog.Log(events.Event{
 					Type:      "run.queued",
 					Timestamp: time.Now(),
