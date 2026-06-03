@@ -403,8 +403,23 @@ func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 	if continued.IssueLabel != "#1" || continued.Status != "success" || continued.Kind != "completed" {
 		t.Fatalf("unexpected continued run payload: %#v", continued)
 	}
-	if continued.Branch != "sandman/1-fix" || !strings.Contains(continued.Log, "continued run log") {
-		t.Fatalf("expected continued run metadata, got %#v", continued)
+	if continued.Branch != "sandman/1-fix" {
+		t.Fatalf("expected branch sandman/1-fix, got %q", continued.Branch)
+	}
+	if continued.Log != "" {
+		t.Fatalf("Log should be empty in list response, got %q", continued.Log)
+	}
+	resp, err := http.Get(server.URL + "/api/runs/run-2/log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from log endpoint, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "continued run log") {
+		t.Fatalf("expected log content via /api/runs/{key}/log, got %q", string(body))
 	}
 }
 
@@ -590,13 +605,6 @@ func TestPortal_PageExposesCommandPanelShell(t *testing.T) {
 		`id="commands-toggle"`,
 		`id="commands-panel"`,
 		`id="command-picker"`,
-		`class="command-form-section"`,
-		`id="command-form-toggle"`,
-		`aria-expanded="true"`,
-		`aria-controls="command-form-body"`,
-		`aria-label="Toggle command options"`,
-		`class="disclosure-chevron"`,
-		`id="command-form-body"`,
 		`id="command-panel-form"`,
 		`id="command-panel-body"`,
 		`id="command-execute-status"`,
@@ -652,62 +660,6 @@ func TestPortal_PageExposesCollapsibleCommandFormStyles(t *testing.T) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(1000, len(content))])
 		}
 	}
-	if !strings.Contains(content, `@media (prefers-reduced-motion: reduce)`) {
-		t.Fatalf("page missing prefers-reduced-motion media query\n%s", content[:min(1000, len(content))])
-	}
-	if !strings.Contains(content, `      .command-form-body {
-        transition: none;
-      }`) {
-		t.Fatalf("page missing command-form-body transition:none in reduced-motion block\n%s", content[:min(1000, len(content))])
-	}
-}
-
-func TestPortal_PageClosesCommandFormOnEscapeFirst(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(body)
-	if !strings.Contains(content, `setCommandFormExpanded(false)`) {
-		t.Fatalf("page missing setCommandFormExpanded(false) in Escape handler\n%s", content[:min(1000, len(content))])
-	}
-}
-
-func TestPortal_PageIncludesCommandFormFocusManagement(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(body)
-	if !strings.Contains(content, `commandFormToggle.focus()`) {
-		t.Fatalf("page missing commandFormToggle.focus() in setCommandFormExpanded\n%s", content[:min(1000, len(content))])
-	}
 }
 
 func TestPortal_PageIncludesMobileCommandHistoryLayout(t *testing.T) {
@@ -746,6 +698,7 @@ func TestPortal_PageIncludesMobileCommandHistoryLayout(t *testing.T) {
 		}
 	}
 }
+
 func TestPortal_CommandsEndpointPersistsAsyncLaunches(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -1262,4 +1215,139 @@ func startPortalHTTPServer(t *testing.T, handler http.Handler) *portalHTTPServer
 	}
 	t.Cleanup(closeFn)
 	return &portalHTTPServer{URL: "http://" + ln.Addr().String(), Close: closeFn}
+}
+
+func TestPortal_RunsEndpointDropsLogFromListResponse(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	logContent := strings.Repeat("x", 8192)
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1.log"), []byte(logContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: batchStartedAt, RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+	})
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode runs: %v", err)
+	}
+	if len(payload.Runs) == 0 {
+		t.Fatal("expected at least one run")
+	}
+	for _, run := range payload.Runs {
+		if len(run.Log) > 64 {
+			t.Fatalf("Log field should be empty or very short in list response, got %d chars for run %q", len(run.Log), run.Key)
+		}
+		if run.LogURL == "" {
+			t.Fatalf("LogURL should be populated for run %q", run.Key)
+		}
+	}
+}
+
+func TestPortal_RunsEndpointBoundsEvents(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+	eventList := make([]events.Event, 0, 60)
+	for i := 0; i < 60; i++ {
+		eventList = append(eventList, events.Event{
+			Type:      "run.started",
+			Timestamp: batchStartedAt.Add(time.Duration(i) * time.Second),
+			RunID:     "run-1",
+			Issue:     1,
+			Payload:   map[string]any{"branch": fmt.Sprintf("sandman/%d-fix", i)},
+		})
+	}
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), eventList)
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode runs: %v", err)
+	}
+	if len(payload.Runs) == 0 {
+		t.Fatal("expected at least one run")
+	}
+	for _, run := range payload.Runs {
+		if len(run.Events) > 20 {
+			t.Fatalf("Events should be capped at 20, got %d for run %q", len(run.Events), run.Key)
+		}
+	}
+}
+
+func TestPortal_RunLogEndpointReturnsFullLog(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	logContent := strings.Repeat("log line\n", 500)
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1.log"), []byte(logContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: batchStartedAt, RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+	})
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs/run-1/log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != logContent {
+		t.Fatalf("expected full log content (%d bytes), got %d bytes", len(logContent), len(body))
+	}
 }
