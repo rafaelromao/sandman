@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -512,6 +513,21 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
+	if req.Force {
+		for _, num := range req.Issues {
+			issue, err := o.githubClient.FetchIssue(num)
+			if err != nil {
+				fmt.Fprintf(o.errorLog, "error: fetch issue %d for force-clean: %v\n", num, err)
+				continue
+			}
+			branch := req.Branches[num]
+			if branch == "" {
+				branch = BranchName(issue.Number, issue.Title)
+			}
+			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog)
+		}
+	}
+
 	dangerouslySkipPermissions := req.DangerouslySkipPermissions
 	if dangerouslySkipPermissions == nil {
 		dangerouslySkipPermissions = &isContainer
@@ -883,7 +899,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	branch := branches[num]
 	if branch == "" {
-		branch = fmt.Sprintf("sandman/%d-%s", issue.Number, slugify(issue.Title))
+		branch = BranchName(issue.Number, issue.Title)
 	}
 	if !continuation {
 		if err := o.syncBaseBranch(".", baseBranch); err != nil {
@@ -1335,7 +1351,7 @@ func promptOnlyBranch(cfg prompt.RenderConfig) string {
 			source = filepath.Base(cfg.TemplateFlag)
 		}
 	}
-	slug := slugify(source)
+	slug := Slugify(source)
 	if slug == "" {
 		slug = "prompt-only"
 	}
@@ -1370,7 +1386,7 @@ func (o *Orchestrator) syncBaseBranch(repoPath, baseBranch string) error {
 	return syncFn(repoPath, baseBranch)
 }
 
-func slugify(title string) string {
+func Slugify(title string) string {
 	var result []rune
 	for _, r := range strings.ToLower(title) {
 		if unicode.IsLetter(r) || unicode.IsNumber(r) {
@@ -1385,6 +1401,32 @@ func slugify(title string) string {
 		result = result[:len(result)-1]
 	}
 	return string(result)
+}
+
+// BranchName returns the standard git branch name for an issue.
+func BranchName(issueNumber int, title string) string {
+	return fmt.Sprintf("sandman/%d-%s", issueNumber, Slugify(title))
+}
+
+// ClearIssueArtifacts removes worktree, branch, logs, and event log entries
+// for a given issue. It is idempotent — missing artifacts do not cause errors.
+func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog) {
+	wtPath := filepath.Join(worktreeDir, branch)
+
+	// Remove worktree (may fail if already removed — idempotent)
+	_ = exec.Command("git", "worktree", "remove", "--force", wtPath).Run()
+	_ = exec.Command("git", "worktree", "prune").Run()
+
+	// Delete branch (may fail if already deleted — idempotent)
+	_ = exec.Command("git", "branch", "-D", branch).Run()
+
+	// Remove log file
+	_ = os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber)))
+
+	// Remove events for this issue
+	if eventLog != nil {
+		_ = eventLog.RemoveEventsByIssue(issueNumber)
+	}
 }
 
 // Ensure Orchestrator implements Runner.

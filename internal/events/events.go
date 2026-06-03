@@ -74,4 +74,5 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 type EventLog interface {
 	Log(event Event) error
 	Read() ([]Event, error)
+	RemoveEventsByIssue(issueNumber int) error
 }

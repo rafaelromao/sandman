@@ -32,6 +32,7 @@ type Request struct {
 	ContainerCapacitySet       bool
 	MaxContainers              int
 	MaxContainersSet           bool
+	Force                      bool
 	DangerouslySkipPermissions *bool
 	PromptConfig               prompt.RenderConfig
 	OutputWriter               io.Writer

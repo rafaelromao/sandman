@@ -306,7 +306,9 @@ func (f *freshSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceB
 }
 
 type spyEventLog struct {
-	events []events.Event
+	events                   []events.Event
+	removedIssueNumber       int
+	removeEventsByIssueCalls int
 }
 
 func (s *spyEventLog) Log(e events.Event) error {
@@ -316,6 +318,23 @@ func (s *spyEventLog) Log(e events.Event) error {
 
 func (s *spyEventLog) Read() ([]events.Event, error) {
 	return s.events, nil
+}
+
+func (s *spyEventLog) RemoveEventsByIssue(issueNumber int) error {
+	s.removeEventsByIssueCalls++
+	s.removedIssueNumber = issueNumber
+	var kept []events.Event
+	for _, e := range s.events {
+		if e.Issue == issueNumber {
+			continue
+		}
+		if e.IssueRef != nil && *e.IssueRef == issueNumber {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	s.events = kept
+	return nil
 }
 
 type blockingRunnable struct {
@@ -4847,5 +4866,168 @@ func TestRunBatch_ContainerCapacityOneReturnsErrorWhenDockerUnavailable(t *testi
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker", ContainerCapacity: 1, ContainerCapacitySet: true})
 	if err == nil {
 		t.Fatal("expected error when docker is unavailable")
+	}
+}
+
+func TestSlugify(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Fix bug", "fix-bug"},
+		{"Hello World 123", "hello-world-123"},
+		{"  Special!@#Chars  ", "specialchars"},
+		{"Already-slugified", "already-slugified"},
+		{"UPPERCASE", "uppercase"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := Slugify(tt.input)
+		if got != tt.want {
+			t.Errorf("Slugify(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestBranchName(t *testing.T) {
+	tests := []struct {
+		number int
+		title  string
+		want   string
+	}{
+		{42, "Fix bug", "sandman/42-fix-bug"},
+		{1, "Hello World", "sandman/1-hello-world"},
+		{100, "UPPERCASE title", "sandman/100-uppercase-title"},
+	}
+	for _, tt := range tests {
+		got := BranchName(tt.number, tt.title)
+		if got != tt.want {
+			t.Errorf("BranchName(%d, %q) = %q, want %q", tt.number, tt.title, got, tt.want)
+		}
+	}
+}
+
+func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := "sandman/42-fix-bug"
+	worktreeDir := filepath.Join(".sandman", "worktrees")
+
+	cmd := exec.Command("git", "worktree", "add", "-b", branch, filepath.Join(worktreeDir, branch), "main")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create worktree: %v: %s", err, out)
+	}
+
+	wtPath := filepath.Join(worktreeDir, branch)
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("worktree should exist: %v", err)
+	}
+
+	logDir := filepath.Join(".sandman", "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		t.Fatalf("mkdir logs: %v", err)
+	}
+	logPath := filepath.Join(logDir, "42.log")
+	if err := os.WriteFile(logPath, []byte("test log"), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	// Create events
+	el := &spyEventLog{
+		events: []events.Event{
+			{Type: "run.started", RunID: "run-42-1", Issue: 42, IssueRef: issueRef(42)},
+			{Type: "run.finished", RunID: "run-42-1", Issue: 42, IssueRef: issueRef(42)},
+		},
+	}
+
+	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el)
+
+	// Worktree removed
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("expected worktree to be removed, got %v", err)
+	}
+
+	// Log removed
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Errorf("expected log to be removed, got %v", err)
+	}
+
+	// Branch removed
+	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
+	if out, err := revCmd.CombinedOutput(); err == nil {
+		t.Errorf("expected branch to be removed, rev-parse succeeded: %s", out)
+	}
+
+	// Events removed
+	events, err := el.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	for _, e := range events {
+		if e.Issue == 42 || (e.IssueRef != nil && *e.IssueRef == 42) {
+			t.Errorf("expected no events for issue 42, found: %+v", e)
+		}
+	}
+}
+
+func TestClearIssueArtifacts_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	el := &spyEventLog{}
+	ClearIssueArtifacts(42, "sandman/42-nonexistent", ".sandman/worktrees", ".sandman/logs", el)
+}
+
+func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	// Create two branches and worktrees
+	for _, n := range []int{42, 99} {
+		branch := fmt.Sprintf("sandman/%d-fix-bug", n)
+		worktreeDir := filepath.Join(".sandman", "worktrees")
+		cmd := exec.Command("git", "worktree", "add", "-b", branch, filepath.Join(worktreeDir, branch), "main")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("create worktree %d: %v: %s", n, err, out)
+		}
+	}
+
+	el := &spyEventLog{
+		events: []events.Event{
+			{Type: "run.started", RunID: "run-42-1", Issue: 42, IssueRef: issueRef(42)},
+			{Type: "run.finished", RunID: "run-42-1", Issue: 42, IssueRef: issueRef(42)},
+			{Type: "run.started", RunID: "run-99-1", Issue: 99, IssueRef: issueRef(99)},
+			{Type: "run.finished", RunID: "run-99-1", Issue: 99, IssueRef: issueRef(99)},
+		},
+	}
+
+	ClearIssueArtifacts(42, "sandman/42-fix-bug", ".sandman/worktrees", ".sandman/logs", el)
+
+	// Issue 99 branch should still exist
+	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/sandman/99-fix-bug")
+	if out, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("expected issue 99 branch to remain, err: %v: %s", err, out)
+	}
+
+	// Issue 99 events should still exist
+	events, err := el.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var found99 bool
+	for _, e := range events {
+		if e.Issue == 99 || (e.IssueRef != nil && *e.IssueRef == 99) {
+			found99 = true
+		}
+		if e.Issue == 42 || (e.IssueRef != nil && *e.IssueRef == 42) {
+			t.Errorf("expected no events for issue 42, found: %+v", e)
+		}
+	}
+	if !found99 {
+		t.Error("expected events for issue 99 to remain")
 	}
 }
