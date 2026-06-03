@@ -4942,7 +4942,7 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el)
+	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, io.Discard)
 
 	// Worktree removed
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
@@ -4978,7 +4978,7 @@ func TestClearIssueArtifacts_Idempotent(t *testing.T) {
 	initGitRepo(t, dir)
 
 	el := &spyEventLog{}
-	ClearIssueArtifacts(42, "sandman/42-nonexistent", ".sandman/worktrees", ".sandman/logs", el)
+	ClearIssueArtifacts(42, "sandman/42-nonexistent", ".sandman/worktrees", ".sandman/logs", el, io.Discard)
 }
 
 func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
@@ -5005,7 +5005,7 @@ func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, "sandman/42-fix-bug", ".sandman/worktrees", ".sandman/logs", el)
+	ClearIssueArtifacts(42, "sandman/42-fix-bug", ".sandman/worktrees", ".sandman/logs", el, io.Discard)
 
 	// Issue 99 branch should still exist
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/sandman/99-fix-bug")

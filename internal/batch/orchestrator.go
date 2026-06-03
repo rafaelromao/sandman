@@ -524,7 +524,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if branch == "" {
 				branch = BranchName(issue.Number, issue.Title)
 			}
-			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog)
+			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog)
 		}
 	}
 
@@ -1410,22 +1410,32 @@ func BranchName(issueNumber int, title string) string {
 
 // ClearIssueArtifacts removes worktree, branch, logs, and event log entries
 // for a given issue. It is idempotent — missing artifacts do not cause errors.
-func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog) {
+func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog, logWriter io.Writer) {
 	wtPath := filepath.Join(worktreeDir, branch)
 
 	// Remove worktree (may fail if already removed — idempotent)
-	_ = exec.Command("git", "worktree", "remove", "--force", wtPath).Run()
-	_ = exec.Command("git", "worktree", "prune").Run()
+	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil {
+		fmt.Fprintf(logWriter, "error: remove worktree %s for issue %d: %v: %s\n", wtPath, issueNumber, err, out)
+	}
+	if out, err := exec.Command("git", "worktree", "prune").CombinedOutput(); err != nil {
+		fmt.Fprintf(logWriter, "error: prune worktrees for issue %d: %v: %s\n", issueNumber, err, out)
+	}
 
 	// Delete branch (may fail if already deleted — idempotent)
-	_ = exec.Command("git", "branch", "-D", branch).Run()
+	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil {
+		fmt.Fprintf(logWriter, "error: delete branch %s for issue %d: %v: %s\n", branch, issueNumber, err, out)
+	}
 
 	// Remove log file
-	_ = os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber)))
+	if err := os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))); err != nil {
+		fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
+	}
 
 	// Remove events for this issue
 	if eventLog != nil {
-		_ = eventLog.RemoveEventsByIssue(issueNumber)
+		if err := eventLog.RemoveEventsByIssue(issueNumber); err != nil {
+			fmt.Fprintf(logWriter, "error: remove events for issue %d: %v\n", issueNumber, err)
+		}
 	}
 }
 
