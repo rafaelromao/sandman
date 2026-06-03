@@ -142,14 +142,12 @@ func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
 		if pr, ok := f.prs[branch]; ok {
 			return pr, nil
 		}
+		return nil, nil
 	}
 	if f.err != nil {
 		return nil, f.err
 	}
-	if headSHA, err := currentBranchHeadFn(branch); err == nil {
-		return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch, HeadRefOid: headSHA}, nil
-	}
-	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch, HeadRefOid: "current-sha"}, nil
+	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}, nil
 }
 
 func mergedPR(branch, sha string) *github.PR {
@@ -1334,7 +1332,7 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 				issues: map[int]*github.Issue{
 					42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 				},
-				prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "abc123")},
+				prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
 			}
 			sb := &fakeSandbox{}
 			o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{

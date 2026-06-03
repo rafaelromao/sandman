@@ -1063,18 +1063,22 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			result.IssueNumber = num
 		}
 		result.RetriesTotal = attempt + 1
+		currentHead := ""
+		if head, err := currentBranchHeadFn(wt.WorkDir()); err == nil {
+			currentHead = head
+		}
 		if result.Status == "success" || parseLogForCompletion(logPath) {
 			result.Status = "success"
-			pr, err := o.githubClient.FindPRByBranch(branch)
-			if err != nil {
+			merged, err := checkPRMergedAtHead(o.githubClient, branch, currentHead)
+			if err != nil || !merged {
 				result.Status = "failure"
-			} else if pr == nil {
-				result.Status = "failure"
-			} else if pr.Merged || strings.EqualFold(pr.State, "merged") {
 			} else {
-				result.Status = "failure"
+				break
 			}
-			if result.Status == "success" {
+		}
+		if result.Status != "failure" && currentHead != "" {
+			if merged, err := checkPRMergedAtHead(o.githubClient, branch, currentHead); err == nil && merged {
+				result.Status = "success"
 				break
 			}
 		}

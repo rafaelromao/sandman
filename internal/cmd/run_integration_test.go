@@ -232,11 +232,11 @@ func TestRun_ExplicitZeroParallelRunsThroughOrchestratorEndToEnd(t *testing.T) {
 			5: {Number: 5, Title: "E"},
 		},
 		prs: map[string]*github.PR{
-			"sandman/1-a": {Number: 1, State: "closed", Merged: true, HeadRefName: "sandman/1-a", HeadRefOid: "current-sha"},
-			"sandman/2-b": {Number: 2, State: "closed", Merged: true, HeadRefName: "sandman/2-b", HeadRefOid: "current-sha"},
-			"sandman/3-c": {Number: 3, State: "closed", Merged: true, HeadRefName: "sandman/3-c", HeadRefOid: "current-sha"},
-			"sandman/4-d": {Number: 4, State: "closed", Merged: true, HeadRefName: "sandman/4-d", HeadRefOid: "current-sha"},
-			"sandman/5-e": {Number: 5, State: "closed", Merged: true, HeadRefName: "sandman/5-e", HeadRefOid: "current-sha"},
+			"sandman/1-a": {Number: 1, State: "closed", Merged: true, HeadRefName: "sandman/1-a", HeadRefOid: ""},
+			"sandman/2-b": {Number: 2, State: "closed", Merged: true, HeadRefName: "sandman/2-b", HeadRefOid: ""},
+			"sandman/3-c": {Number: 3, State: "closed", Merged: true, HeadRefName: "sandman/3-c", HeadRefOid: ""},
+			"sandman/4-d": {Number: 4, State: "closed", Merged: true, HeadRefName: "sandman/4-d", HeadRefOid: ""},
+			"sandman/5-e": {Number: 5, State: "closed", Merged: true, HeadRefName: "sandman/5-e", HeadRefOid: ""},
 		},
 	}
 
@@ -323,9 +323,9 @@ func TestRun_DependencyAwareBatch_IncludeDependenciesExecutesTransitiveChain(t *
 			7:   {Number: 7, Title: "Groundwork", State: "open"},
 		},
 		prs: map[string]*github.PR{
-			"sandman/100-feature":  {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-feature", HeadRefOid: "current-sha"},
-			"sandman/42-refactor":  {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-refactor", HeadRefOid: "current-sha"},
-			"sandman/7-groundwork": {Number: 7, State: "closed", Merged: true, HeadRefName: "sandman/7-groundwork", HeadRefOid: "current-sha"},
+			"sandman/100-feature":  {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-feature", HeadRefOid: ""},
+			"sandman/42-refactor":  {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-refactor", HeadRefOid: ""},
+			"sandman/7-groundwork": {Number: 7, State: "closed", Merged: true, HeadRefName: "sandman/7-groundwork", HeadRefOid: ""},
 		},
 		fetchRelease: map[int]<-chan struct{}{
 			7:  release7Fetch,
@@ -547,9 +547,9 @@ touch "$state_dir/finish-$issue"
 			12: {Number: 12, Title: "Three"},
 		},
 		prs: map[string]*github.PR{
-			"sandman/10-one":   {Number: 10, State: "closed", Merged: true, HeadRefName: "sandman/10-one", HeadRefOid: "current-sha"},
-			"sandman/11-two":   {Number: 11, State: "closed", Merged: true, HeadRefName: "sandman/11-two", HeadRefOid: "current-sha"},
-			"sandman/12-three": {Number: 12, State: "closed", Merged: true, HeadRefName: "sandman/12-three", HeadRefOid: "current-sha"},
+			"sandman/10-one":   {Number: 10, State: "closed", Merged: true, HeadRefName: "sandman/10-one", HeadRefOid: ""},
+			"sandman/11-two":   {Number: 11, State: "closed", Merged: true, HeadRefName: "sandman/11-two", HeadRefOid: ""},
+			"sandman/12-three": {Number: 12, State: "closed", Merged: true, HeadRefName: "sandman/12-three", HeadRefOid: ""},
 		},
 	})
 
@@ -578,7 +578,7 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"},
+			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
 		},
 	})
 
@@ -691,7 +691,7 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"},
+			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
 		},
 	}
 	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: "pwd"}, "", gh)
@@ -763,8 +763,8 @@ func TestRun_DefaultSandboxTwoIssuesReuseContainerAndSeparateWorktrees(t *testin
 			100: {Number: 100, Title: "Add feature", Body: "Two runs should share one container."},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-fix-bug":      {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"},
-			"sandman/100-add-feature": {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-add-feature", HeadRefOid: "current-sha"},
+			"sandman/42-fix-bug":      {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
+			"sandman/100-add-feature": {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-add-feature", HeadRefOid: ""},
 		},
 	}
 	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: `
@@ -863,8 +863,8 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 			100: {Number: 100, Title: "Add feature", Body: "The second run should wait."},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-fix-bug":      {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"},
-			"sandman/100-add-feature": {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-add-feature", HeadRefOid: "current-sha"},
+			"sandman/42-fix-bug":      {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
+			"sandman/100-add-feature": {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-add-feature", HeadRefOid: ""},
 		},
 	}
 	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: issueAwareAgentCommand(`
@@ -1047,10 +1047,10 @@ func TestRun_DefaultSandboxFourIssuesAutoModeStartsMinimumContainersAndKeepsWork
 			14: {Number: 14, Title: "Delta Task", Body: "Fourth concurrent run."},
 		},
 		prs: map[string]*github.PR{
-			"sandman/11-alpha-task": {Number: 11, State: "closed", Merged: true, HeadRefName: "sandman/11-alpha-task", HeadRefOid: "current-sha"},
-			"sandman/12-beta-task":  {Number: 12, State: "closed", Merged: true, HeadRefName: "sandman/12-beta-task", HeadRefOid: "current-sha"},
-			"sandman/13-gamma-task": {Number: 13, State: "closed", Merged: true, HeadRefName: "sandman/13-gamma-task", HeadRefOid: "current-sha"},
-			"sandman/14-delta-task": {Number: 14, State: "closed", Merged: true, HeadRefName: "sandman/14-delta-task", HeadRefOid: "current-sha"},
+			"sandman/11-alpha-task": {Number: 11, State: "closed", Merged: true, HeadRefName: "sandman/11-alpha-task", HeadRefOid: ""},
+			"sandman/12-beta-task":  {Number: 12, State: "closed", Merged: true, HeadRefName: "sandman/12-beta-task", HeadRefOid: ""},
+			"sandman/13-gamma-task": {Number: 13, State: "closed", Merged: true, HeadRefName: "sandman/13-gamma-task", HeadRefOid: ""},
+			"sandman/14-delta-task": {Number: 14, State: "closed", Merged: true, HeadRefName: "sandman/14-delta-task", HeadRefOid: ""},
 		},
 	}
 	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: `
@@ -1136,7 +1136,7 @@ func TestRun_WorktreeSandboxSingleIssuePropagatesAgentEnvToLog(t *testing.T) {
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"},
+			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
 		},
 	})
 
@@ -1203,7 +1203,7 @@ touch agent-ran.txt
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"},
+			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
 		},
 	})
 
@@ -1271,10 +1271,10 @@ func TestRun_DependencyAwareBatch_TwoLevelDAGPreservesParallelismWithinLevels(t 
 			200: {Number: 200, Title: "Dependent B", BlockedBy: []int{43}},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-blocker-a":    {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-blocker-a", HeadRefOid: "current-sha"},
-			"sandman/43-blocker-b":    {Number: 43, State: "closed", Merged: true, HeadRefName: "sandman/43-blocker-b", HeadRefOid: "current-sha"},
-			"sandman/100-dependent-a": {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-dependent-a", HeadRefOid: "current-sha"},
-			"sandman/200-dependent-b": {Number: 200, State: "closed", Merged: true, HeadRefName: "sandman/200-dependent-b", HeadRefOid: "current-sha"},
+			"sandman/42-blocker-a":    {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-blocker-a"},
+			"sandman/43-blocker-b":    {Number: 43, State: "closed", Merged: true, HeadRefName: "sandman/43-blocker-b"},
+			"sandman/100-dependent-a": {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-dependent-a"},
+			"sandman/200-dependent-b": {Number: 200, State: "closed", Merged: true, HeadRefName: "sandman/200-dependent-b"},
 		},
 		fetchRelease: map[int]<-chan struct{}{
 			42: release42Fetch,
