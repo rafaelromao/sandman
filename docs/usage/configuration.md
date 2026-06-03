@@ -22,7 +22,7 @@ review_command: /oc review
 default_parallel: 4
 
 # Maximum concurrent agent runs per ContainerSandbox.
-# 0 means auto/default mode: use the default container capacity behavior.
+# 0 means unlimited (no per-container cap; any number of runs may execute concurrently inside one container).
 container_capacity: 4
 
 # Batch pacing delay in seconds after any AgentRun finishes.
@@ -87,10 +87,10 @@ See [Sandman Skills](skills.md) for the shared workflow details.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `container_capacity` | `4` | Max concurrent agent runs per `ContainerSandbox`. `0` = auto/default mode, `1` means one agent per container |
-| `max_containers` | `0` | Max `ContainerSandbox` instances. `0` = auto mode: create the minimum needed for active runs given `container_capacity`. An explicit positive value caps total container-backed concurrency |
+| `container_capacity` | `4` | Max concurrent agent runs per `ContainerSandbox`. `0` = unlimited (no per-container cap), `1` = one agent per container |
+| `max_containers` | `0` | Max `ContainerSandbox` instances. `0` = no cap (unbounded pool growth). An explicit positive value caps total container-backed concurrency |
 
-When `max_containers=0` and `container_capacity=4` with 6 active runs, Sandman creates 2 containers (4 + 2). When the `max_containers` limit is reached and all containers are at capacity, additional runs queue until capacity frees up.
+When `max_containers=0` (unbounded pool growth) and `container_capacity=4` with 6 active runs, Sandman creates 2 containers (4 + 2). When a positive `max_containers` limit is reached and all containers are at capacity, additional runs queue until capacity frees up.
 
 See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 

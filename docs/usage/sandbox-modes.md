@@ -32,8 +32,8 @@ In container mode, each `AgentRun` executes inside a Docker or Podman container.
 Container scheduling is governed by two config fields:
 
 - **`container_capacity`** — maximum concurrent `AgentRun`s inside one `ContainerSandbox`
-- **`max_containers`** — maximum number of `ContainerSandbox` instances
-- `container_capacity: 0` means auto/default mode: Sandman uses the default container capacity behavior instead of an explicit per-container limit
+- **`max_containers`** — maximum number of `ContainerSandbox` instances; `0` = no cap (unbounded pool growth)
+- `container_capacity: 0` means unlimited (no per-container cap; any number of runs may execute concurrently inside one container)
 
 #### How it works
 
@@ -43,19 +43,19 @@ Container scheduling is governed by two config fields:
 4. When a container becomes idle (all its runs finish), it may be reused by later eligible runs in the same batch
 5. All containers are stopped automatically when the batch completes
 
-#### Auto mode (`max_containers: 0`)
+#### No cap mode (`max_containers: 0`)
 
 ```yaml
 container_capacity: 4
 max_containers: 0
 ```
 
-Sandman creates the minimum number of containers needed for the currently active `AgentRun`s. For example, with 6 active runs and `container_capacity=4`:
+Sandman grows the container pool without bound to accommodate active `AgentRun`s. For example, with 6 active runs and `container_capacity=4`:
 
 - Container 1 hosts runs 1-4
 - Container 2 hosts runs 5-6
 
-No containers sit idle. Additional containers are created as needed. Idle containers persist for reuse within the batch and are stopped when the batch completes.
+Additional containers are created as needed. Idle containers persist for reuse within the batch and are stopped when the batch completes.
 
 #### Fixed pool (`max_containers: N`)
 
@@ -74,9 +74,9 @@ container_capacity: 1
 
 Each container hosts exactly one `AgentRun`. This is the most constrained per-container capacity, at the cost of higher overhead.
 
-#### Auto/default capacity (`container_capacity: 0`)
+#### Unlimited capacity (`container_capacity: 0`)
 
-`container_capacity: 0` does not disable container scheduling. It resolves to the default container capacity behavior, so users can opt out of an explicit per-container limit while still using container-backed batching.
+`container_capacity: 0` means unlimited: any number of `AgentRun`s may execute concurrently inside one `ContainerSandbox`. The orchestrator can place all runs in a single container if desired.
 
 ### Setup requirements
 

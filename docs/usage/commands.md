@@ -51,7 +51,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
 | `--base-branch` | config `git.base_branch` (`main`) | Base branch to fetch from origin before each `AgentRun` starts |
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = unlimited, `1` = one agent per container |
-| `--max-containers` | config default (0) | Max containers; `0` = auto mode |
+| `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | `0` | Number of times to retry a failed run; `--ralph` sets this to `3` silently |
 | `--force` | `false` | Clear artifacts before running (deletes prior worktree and logs for the issue) |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
@@ -78,7 +78,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--base-branch` controls which branch Sandman fetches from origin before each `AgentRun` starts and which branch new worktrees are cut from
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
 - `--container-capacity` accepts `0` as unlimited mode (no per-container cap)
-- `--max-containers` caps the number of `ContainerSandbox` instances; `0` means auto-scale
+- `--max-containers` caps the number of `ContainerSandbox` instances; `0` means no cap (unbounded pool growth)
 - `--model` only applies to built-in presets; if omitted, Sandman uses `default_model` from config, falling back to the agent provider's configured model
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `default_agent` from config
 - Pi splits `provider/model` into separate provider and model flags, and errors if `/` is missing
