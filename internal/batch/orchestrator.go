@@ -1020,11 +1020,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	logPath := filepath.Join(".", ".sandman", "logs", fmt.Sprintf("%d.log", num))
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptRenderCfg := renderCfg
-		headSHA := ""
 		if attempt > 0 {
-			if head, err := currentBranchHeadFn(wt.WorkDir()); err == nil {
-				headSHA = head
-			}
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
 			contCtxPath := filepath.Join(wt.WorkDir(), ".sandman", "continuation-context.md")
 			if content, err := os.ReadFile(contCtxPath); err == nil {
@@ -1041,13 +1037,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 					attemptRenderCfg.ContinuePrompt = "Continue with sandman-pr-review until the PR is merged"
 					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
 					prFound = true
-				} else if prLookupErr == nil {
-					merged, err := checkPRMergedAtHead(o.githubClient, branch, headSHA)
-					if err != nil {
-						fmt.Fprintf(o.errorLog, "error: check PR merged status for issue %d: %v\n", num, err)
-						return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
-					}
-					prFound = merged
 				}
 				if !prFound {
 					if prLookupErr != nil {
@@ -1089,17 +1078,21 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			result.IssueNumber = num
 		}
 		result.RetriesTotal = attempt + 1
+		currentHead := ""
+		if head, err := currentBranchHeadFn(wt.WorkDir()); err == nil {
+			currentHead = head
+		}
 		if result.Status == "success" || parseLogForCompletion(logPath) {
 			result.Status = "success"
-			break
-		}
-		if headSHA == "" {
-			if head, err := currentBranchHeadFn(wt.WorkDir()); err == nil {
-				headSHA = head
+			merged, err := checkPRMergedAtHead(o.githubClient, branch, currentHead)
+			if err != nil || !merged {
+				result.Status = "failure"
+			} else {
+				break
 			}
 		}
-		if headSHA != "" {
-			if merged, err := checkPRMergedAtHead(o.githubClient, branch, headSHA); err == nil && merged {
+		if result.Status != "failure" && currentHead != "" {
+			if merged, err := checkPRMergedAtHead(o.githubClient, branch, currentHead); err == nil && merged {
 				result.Status = "success"
 				break
 			}

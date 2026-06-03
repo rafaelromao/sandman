@@ -138,13 +138,20 @@ func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
 	if f.findPRErr != nil {
 		return nil, f.findPRErr
 	}
-	if f.prs == nil {
+	if f.prs != nil {
+		if pr, ok := f.prs[branch]; ok {
+			return pr, nil
+		}
 		return nil, nil
 	}
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.prs[branch], nil
+	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}, nil
+}
+
+func mergedPR(branch, sha string) *github.PR {
+	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch, HeadRefOid: sha}
 }
 
 type fakeRunnable struct {
@@ -567,7 +574,7 @@ func TestParseLogForCompletion_AcceptsGFMCheckboxSyntax(t *testing.T) {
 func TestCheckPRMergedAtHead(t *testing.T) {
 	client := &fakeGitHubClient{prs: map[string]*github.PR{
 		"open":     {Number: 1, State: "open", Merged: false, HeadRefName: "open", HeadRefOid: "open-sha"},
-		"merged":   {Number: 2, State: "closed", Merged: true, HeadRefName: "merged", HeadRefOid: "merged-sha"},
+		"merged":   {Number: 2, State: "open", Merged: true, HeadRefName: "merged", HeadRefOid: "merged-sha"},
 		"closed":   {Number: 3, State: "closed", Merged: false, HeadRefName: "closed", HeadRefOid: "closed-sha"},
 		"explicit": {Number: 4, State: "merged", Merged: false, HeadRefName: "explicit", HeadRefOid: "explicit-sha"},
 	}}
@@ -609,7 +616,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 17, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "stale-sha"}}},
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 17, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"}}},
 		renderer:     renderer,
 		errorLog:     io.Discard,
 		sandboxFactory: &retrySandboxFactory{
@@ -677,7 +684,7 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 17, State: "closed", Merged: false, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"}}},
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 17, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: "current-sha"}}},
 		renderer:     renderer,
 		errorLog:     io.Discard,
 		sandboxFactory: &retrySandboxFactory{
@@ -842,7 +849,7 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: true, HeadRefName: branch, HeadRefOid: "current-sha"}},
 		},
 		renderer: renderer,
 		errorLog: io.Discard,
@@ -910,7 +917,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Number: 17, State: "closed", Merged: false, HeadRefName: branch}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "closed", Merged: true, HeadRefName: branch, HeadRefOid: "current-sha"}},
 		},
 		renderer: renderer,
 		errorLog: io.Discard,
@@ -1344,6 +1351,7 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 				issues: map[int]*github.Issue{
 					42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 				},
+				prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
 			}
 			sb := &fakeSandbox{}
 			o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{

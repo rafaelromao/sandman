@@ -238,13 +238,22 @@ func TestRun_ExplicitZeroParallelRunsThroughOrchestratorEndToEnd(t *testing.T) {
 	releaseFile := filepath.Join(sharedDir, "release")
 	agentCommand := fmt.Sprintf(`echo start >> %q; while [ ! -f %q ]; do sleep 0.05; done`, startFile, releaseFile)
 
-	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
-		1: {Number: 1, Title: "A"},
-		2: {Number: 2, Title: "B"},
-		3: {Number: 3, Title: "C"},
-		4: {Number: 4, Title: "D"},
-		5: {Number: 5, Title: "E"},
-	}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "A"},
+			2: {Number: 2, Title: "B"},
+			3: {Number: 3, Title: "C"},
+			4: {Number: 4, Title: "D"},
+			5: {Number: 5, Title: "E"},
+		},
+		prs: map[string]*github.PR{
+			"sandman/1-a": {Number: 1, State: "closed", Merged: true, HeadRefName: "sandman/1-a", HeadRefOid: ""},
+			"sandman/2-b": {Number: 2, State: "closed", Merged: true, HeadRefName: "sandman/2-b", HeadRefOid: ""},
+			"sandman/3-c": {Number: 3, State: "closed", Merged: true, HeadRefName: "sandman/3-c", HeadRefOid: ""},
+			"sandman/4-d": {Number: 4, State: "closed", Merged: true, HeadRefName: "sandman/4-d", HeadRefOid: ""},
+			"sandman/5-e": {Number: 5, State: "closed", Merged: true, HeadRefName: "sandman/5-e", HeadRefOid: ""},
+		},
+	}
 
 	deps := newRunIntegrationDeps(agentCommand, gh)
 	store := &fakeStore{config: &config.Config{
@@ -327,6 +336,11 @@ func TestRun_DependencyAwareBatch_IncludeDependenciesExecutesTransitiveChain(t *
 			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
 			42:  {Number: 42, Title: "Refactor", BlockedBy: []int{7}, State: "open"},
 			7:   {Number: 7, Title: "Groundwork", State: "open"},
+		},
+		prs: map[string]*github.PR{
+			"sandman/100-feature":  {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-feature", HeadRefOid: ""},
+			"sandman/42-refactor":  {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-refactor", HeadRefOid: ""},
+			"sandman/7-groundwork": {Number: 7, State: "closed", Merged: true, HeadRefName: "sandman/7-groundwork", HeadRefOid: ""},
 		},
 		fetchRelease: map[int]<-chan struct{}{
 			7:  release7Fetch,
@@ -541,11 +555,18 @@ if [ "$count" -lt 3 ]; then
 fi
 
 touch "$state_dir/finish-$issue"
-`), &fakeGitHubClient{issues: map[int]*github.Issue{
-		10: {Number: 10, Title: "One"},
-		11: {Number: 11, Title: "Two"},
-		12: {Number: 12, Title: "Three"},
-	}})
+`), &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			10: {Number: 10, Title: "One"},
+			11: {Number: 11, Title: "Two"},
+			12: {Number: 12, Title: "Three"},
+		},
+		prs: map[string]*github.PR{
+			"sandman/10-one":   {Number: 10, State: "closed", Merged: true, HeadRefName: "sandman/10-one", HeadRefOid: ""},
+			"sandman/11-two":   {Number: 11, State: "closed", Merged: true, HeadRefName: "sandman/11-two", HeadRefOid: ""},
+			"sandman/12-three": {Number: 12, State: "closed", Merged: true, HeadRefName: "sandman/12-three", HeadRefOid: ""},
+		},
+	})
 
 	out, err := executeRunCommand(t, deps, "--parallel", "3", "10", "11", "12")
 	if err != nil {
@@ -567,9 +588,14 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 	t.Chdir(dir)
 	_ = initRunIntegrationRepoWithRemote(t, dir)
 
-	deps := newRunIntegrationDeps(`printf '%s\n' "agent stdout"`, &fakeGitHubClient{issues: map[int]*github.Issue{
-		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-	}})
+	deps := newRunIntegrationDeps(`printf '%s\n' "agent stdout"`, &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
+		},
+	})
 
 	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "42")
 	if err != nil {
@@ -722,9 +748,14 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 		t.Fatalf("warm podman image for test home: %v: %s", err, out)
 	}
 
-	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
-		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-	}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
+		},
+	}
 	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: "pwd"}, "", gh)
 
 	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
@@ -788,10 +819,16 @@ func TestRun_DefaultSandboxTwoIssuesReuseContainerAndSeparateWorktrees(t *testin
 		t.Fatalf("warm podman image for test home: %v: %s", err, out)
 	}
 
-	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
-		42:  {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-		100: {Number: 100, Title: "Add feature", Body: "Two runs should share one container."},
-	}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+			100: {Number: 100, Title: "Add feature", Body: "Two runs should share one container."},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-fix-bug":      {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
+			"sandman/100-add-feature": {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-add-feature", HeadRefOid: ""},
+		},
+	}
 	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: `
 set -eu
 printf 'container-identity=%s\n' "$(hostname)"
@@ -882,10 +919,16 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 		t.Fatalf("warm podman image for test home: %v: %s", err, out)
 	}
 
-	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
-		42:  {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-		100: {Number: 100, Title: "Add feature", Body: "The second run should wait."},
-	}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+			100: {Number: 100, Title: "Add feature", Body: "The second run should wait."},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-fix-bug":      {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
+			"sandman/100-add-feature": {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-add-feature", HeadRefOid: ""},
+		},
+	}
 	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: issueAwareAgentCommand(`
 	set -eu
 	printf 'container-identity=%s\n' "$(hostname)"
@@ -1058,12 +1101,20 @@ func TestRun_DefaultSandboxFourIssuesAutoModeStartsMinimumContainersAndKeepsWork
 		t.Fatalf("warm podman image for test home: %v: %s", err, out)
 	}
 
-	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
-		11: {Number: 11, Title: "Alpha Task", Body: "First concurrent run."},
-		12: {Number: 12, Title: "Beta Task", Body: "Second concurrent run."},
-		13: {Number: 13, Title: "Gamma Task", Body: "Third concurrent run."},
-		14: {Number: 14, Title: "Delta Task", Body: "Fourth concurrent run."},
-	}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			11: {Number: 11, Title: "Alpha Task", Body: "First concurrent run."},
+			12: {Number: 12, Title: "Beta Task", Body: "Second concurrent run."},
+			13: {Number: 13, Title: "Gamma Task", Body: "Third concurrent run."},
+			14: {Number: 14, Title: "Delta Task", Body: "Fourth concurrent run."},
+		},
+		prs: map[string]*github.PR{
+			"sandman/11-alpha-task": {Number: 11, State: "closed", Merged: true, HeadRefName: "sandman/11-alpha-task", HeadRefOid: ""},
+			"sandman/12-beta-task":  {Number: 12, State: "closed", Merged: true, HeadRefName: "sandman/12-beta-task", HeadRefOid: ""},
+			"sandman/13-gamma-task": {Number: 13, State: "closed", Merged: true, HeadRefName: "sandman/13-gamma-task", HeadRefOid: ""},
+			"sandman/14-delta-task": {Number: 14, State: "closed", Merged: true, HeadRefName: "sandman/14-delta-task", HeadRefOid: ""},
+		},
+	}
 	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: `
 set -eu
 printf 'container-identity=%s\n' "$(hostname)"
@@ -1142,9 +1193,14 @@ func TestRun_WorktreeSandboxSingleIssuePropagatesAgentEnvToLog(t *testing.T) {
 		Env: map[string]string{
 			"AGENT_TOKEN": "token with spaces",
 		},
-	}, &fakeGitHubClient{issues: map[int]*github.Issue{
-		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-	}})
+	}, &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
+		},
+	})
 
 	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "42")
 	if err != nil {
@@ -1204,9 +1260,14 @@ grep -Fq "Issue #42: Fix bug" "$prompt_path"
 grep -Fq "Users cannot log in." "$prompt_path"
 grep -Fq "Priority: urgent" "$prompt_path"
 touch agent-ran.txt
-`, &fakeGitHubClient{issues: map[int]*github.Issue{
-		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-	}})
+`, &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug", HeadRefOid: ""},
+		},
+	})
 
 	promptTemplate := `# Task
 
@@ -1270,6 +1331,12 @@ func TestRun_DependencyAwareBatch_TwoLevelDAGPreservesParallelismWithinLevels(t 
 			43:  {Number: 43, Title: "Blocker B", State: "open"},
 			100: {Number: 100, Title: "Dependent A", BlockedBy: []int{42}},
 			200: {Number: 200, Title: "Dependent B", BlockedBy: []int{43}},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-blocker-a":    {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-blocker-a"},
+			"sandman/43-blocker-b":    {Number: 43, State: "closed", Merged: true, HeadRefName: "sandman/43-blocker-b"},
+			"sandman/100-dependent-a": {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-dependent-a"},
+			"sandman/200-dependent-b": {Number: 200, State: "closed", Merged: true, HeadRefName: "sandman/200-dependent-b"},
 		},
 		fetchRelease: map[int]<-chan struct{}{
 			42: release42Fetch,
