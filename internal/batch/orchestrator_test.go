@@ -1003,6 +1003,49 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	}
 }
 
+func TestBatchStartGate_HonoursEffectiveParallel(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Issue 1"},
+			2: {Number: 2, Title: "Issue 2"},
+			3: {Number: 3, Title: "Issue 3"},
+			4: {Number: 4, Title: "Issue 4"},
+		},
+	}
+	factory := &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	runnables := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "success"},
+			{IssueNumber: 3, Status: "success"},
+			{IssueNumber: 4, Status: "success"},
+		},
+		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:          "test-agent",
+		Sandbox:        "container",
+		WorktreeDir:    ".sandman/worktrees",
+		MaxContainers:  2,
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, nil)
+	o.sandboxFactory = factory
+	o.runnableFactory = runnables
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Issues:            []int{1, 2, 3, 4},
+		ContainerCapacity: 2,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if runnables.max != 4 {
+		t.Fatalf("expected max 4 concurrent runs, got %d", runnables.max)
+	}
+}
+
 func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -5231,4 +5274,144 @@ func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 	if !found99 {
 		t.Error("expected events for issue 99 to remain")
 	}
+}
+
+func TestOrchestrator_EmitsRunQueuedEventWhenBlocked(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+		},
+	}
+
+	blockerStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+
+	spyLog := &spyEventLog{}
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 42, Status: "success"},
+				started: blockerStarted,
+				release: releaseBlocker,
+			},
+			100: &controlledRunnable{
+				result: AgentRunResult{IssueNumber: 100, Status: "success"},
+			},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{
+			Issues:       []int{42, 100},
+			Dependencies: map[int][]int{100: {42}},
+			Parallel:     2,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+
+	var queuedEvent *events.Event
+	for i := range spyLog.events {
+		if spyLog.events[i].Type == "run.queued" && spyLog.events[i].Issue == 100 {
+			queuedEvent = &spyLog.events[i]
+			break
+		}
+	}
+	if queuedEvent == nil {
+		t.Fatal("expected run.queued event for blocked issue 100")
+	}
+
+	var startedEvent bool
+	for i := range spyLog.events {
+		if spyLog.events[i].Type == "run.started" && spyLog.events[i].Issue == 100 {
+			startedEvent = true
+			break
+		}
+	}
+	if startedEvent {
+		t.Fatal("did not expect run.started for issue 100 (it should remain queued)")
+	}
+
+	close(releaseBlocker)
+	waitForSignal(t, done, "expected batch to complete")
+}
+
+func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:   {Number: 1, Title: "Unblocked"},
+			42:  {Number: 42, Title: "Blocker"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+		},
+	}
+
+	blockerStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+
+	spyLog := &spyEventLog{}
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 42, Status: "success"},
+				started: blockerStarted,
+				release: releaseBlocker,
+			},
+			1:   &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}},
+			100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "success"}},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{
+			Issues:       []int{1, 42, 100},
+			Dependencies: map[int][]int{100: {42}},
+			Parallel:     3,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+
+	var queuedEvent *events.Event
+	for i := range spyLog.events {
+		if spyLog.events[i].Type == "run.queued" && spyLog.events[i].Issue == 100 {
+			queuedEvent = &spyLog.events[i]
+			break
+		}
+	}
+	if queuedEvent == nil {
+		t.Fatal("expected run.queued event for blocked issue 100")
+	}
+
+	var unblockedQueued bool
+	for i := range spyLog.events {
+		if spyLog.events[i].Type == "run.queued" && spyLog.events[i].Issue == 1 {
+			unblockedQueued = true
+			break
+		}
+	}
+	if unblockedQueued {
+		t.Fatal("did not expect run.queued for unblocked issue 1")
+	}
+
+	close(releaseBlocker)
+	waitForSignal(t, done, "expected batch to complete")
 }
