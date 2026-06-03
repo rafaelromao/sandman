@@ -62,7 +62,7 @@ Special states return fixed messages:
 GET /api/logs?path=<relative-path>
 ```
 
-Serves log files from `.sandman/logs/`. The path must be relative and cannot escape the logs directory — any `..` segments or absolute paths are rejected with `400 Bad Request`.
+Serves log files from `.sandman/logs/`. The path must be relative and cannot escape the logs directory — absolute paths, `..` segments, or any path outside `.sandman/logs/` is rejected with `400 Bad Request`.
 
 Returns the file as an attachment with the log filename in `Content-Disposition`.
 
