@@ -46,12 +46,15 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--parallel` | `default_parallel` from config (4) | Maximum concurrent agent runs |
+| `--parallel` | `default_parallel` from config (4) | Maximum concurrent agent runs; `0` falls back to `default_parallel` |
 | `--start-delay` | config `start_delay` (0) | Wait this many seconds after any `AgentRun` finishes before starting the next one; `0` disables pacing |
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
 | `--base-branch` | config `git.base_branch` (`main`) | Base branch to fetch from origin before each `AgentRun` starts |
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = unlimited, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = auto mode |
+| `--retries` | `0` | Number of times to retry a failed run; `--ralph` sets this to `3` silently |
+| `--force` | `false` | Clear artifacts before running (deletes prior worktree and logs for the issue) |
+| `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
 | `--query` | — | Select issues by GitHub search query |
@@ -65,6 +68,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 ### Flag interactions
 
 - `--ralph` is mutually exclusive with issue arguments, `--label`, and `--query`
+- `--ralph N` silently sets `--retries=3`; the run summary shows "(3 retries)" on failure
 - Positional arguments (numbers and ranges) can be combined with `--label` or `--query` — finite selections are resolved locally; open-ended ranges and unsupported queries still use GitHub search
 - If `--prompt` or `--template` is used with no issue arguments, `--label`, `--query`, or `--ralph`, and the final selected prompt omits `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`, Sandman enters prompt-only mode and skips GitHub issue lookup
 - If any issue selection is provided, Sandman stays in issue-driven mode even when `--prompt` or `--template` is set
@@ -110,6 +114,12 @@ sandman continue <issue-number> <prompt-text>
 
 Reuses the previously created branch and recorded agent and review command from the prior run, though `--agent` can override and `--model` falls back to `default_model` from config when omitted. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. Then it prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
 
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model` | `default_model` from config | Override the model for the continued run |
+| `--agent` | prior run's agent | Override the agent preset for the continued run |
+| `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
+
 ## `sandman clean`
 
 Clean up sandbox resources and stale worktrees.
@@ -122,7 +132,7 @@ sandman clean [flags]
 |------|-------------|
 | `--all` | Remove all worktrees and logs |
 | `--success` | Remove worktrees and logs for successful runs only |
-| `--failed` | Remove worktrees and logs for failed runs only |
+| `--failed` | Remove worktrees and logs for failed and cancelled runs (runs with `status: failure`) |
 
 Exactly one flag is required.
 
