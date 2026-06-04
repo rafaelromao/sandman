@@ -279,6 +279,41 @@ func TestScaffold_InstallsBothBuiltInAgents(t *testing.T) {
 	}
 }
 
+func TestScaffold_PinsNodeVersionForPiWhenPiInstalled(t *testing.T) {
+	// pi-coding-agent uses the regex `v` flag which requires Node 20+. The pi CLI
+	// shebang resolves `env node` to the first `node` on PATH; if only apt's
+	// `nodejs` is installed (Debian Bookworm ships Node 18), the agent crashes
+	// on import. The scaffolder must pin a Node via mise whenever pi is in
+	// installed-agents, regardless of the chosen default agent. See #541.
+	for _, tc := range []struct {
+		buildTools string
+		toolVer    string
+	}{
+		{buildTools: "generic", toolVer: "latest"},
+		{buildTools: "go", toolVer: "1.24"},
+		{buildTools: "node", toolVer: "lts"},
+		{buildTools: "python", toolVer: "latest"},
+		{buildTools: "dotnet", toolVer: "lts"},
+	} {
+		t.Run(tc.buildTools, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+			if err := s.Scaffold(dir, Options{BuildTools: tc.buildTools, DefaultAgent: "opencode", ToolVersion: tc.toolVer}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			wantPin := "RUN mise use -g --pin node@" + piNodeVersion
+			if !strings.Contains(content, wantPin) {
+				t.Fatalf("Dockerfile missing %q for pi node pin, got:\n%s", wantPin, content)
+			}
+		})
+	}
+}
+
 func TestScaffold_ResolvesNodeVersionSelectors(t *testing.T) {
 	tests := []struct {
 		name     string

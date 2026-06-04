@@ -1003,9 +1003,12 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
 	}
-	if defaultAgent == "pi" {
-		out.WriteString(renderNodeInstallCommand(piNodeVersion))
-	}
+	// pi is always installed (see renderAgentInstallCommand("pi", ...) below) and
+	// its CLI uses the `v` regex flag which requires Node 20+. Pin a Node version via
+	// mise so the mise shim takes precedence over the apt `nodejs` on PATH; otherwise
+	// pi shebang `#!/usr/bin/env node` resolves to Debian Bookworm's Node 18 and the
+	// agent crashes on import (see #541).
+	out.WriteString(renderNodeInstallCommand(piNodeVersion))
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
 	out.WriteString(renderAgentInstallCommand("pi", DefaultBuiltInAgentVersion("pi")))
 	out.WriteString(renderRTKInstallCommand())

@@ -5948,3 +5948,75 @@ func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
 	close(releaseBlocker)
 	waitForSignal(t, done, "expected batch to complete")
 }
+
+func TestSyncBaseBranchSerializesAcrossParallelCalls(t *testing.T) {
+	var inFlight atomic.Int32
+	var maxInFlight atomic.Int32
+	o := NewOrchestrator(nil, nil, nil, nil)
+	o.baseBranchSync = func(repoPath, sourceBranch string) error {
+		cur := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		for {
+			mx := maxInFlight.Load()
+			if cur <= mx {
+				break
+			}
+			if maxInFlight.CompareAndSwap(mx, cur) {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+		return nil
+	}
+
+	const callers = 32
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := o.syncBaseBranch(".", "main"); err != nil {
+				t.Errorf("sync failed: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := maxInFlight.Load(); got > 1 {
+		t.Fatalf("expected serialized syncBaseBranch, observed max in-flight=%d", got)
+	}
+	if got := inFlight.Load(); got != 0 {
+		t.Fatalf("expected in-flight count to drain to 0, got %d", got)
+	}
+}
+
+func TestSyncBaseBranchSerializesAgainstRealGitFetch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	for i := 0; i < 5; i++ {
+		runGit(t, dir, "commit", "--allow-empty", "-m", fmt.Sprintf("seed-%d", i))
+		runGit(t, dir, "push", "origin", "main")
+	}
+
+	o := NewOrchestrator(nil, nil, nil, nil)
+	o.baseBranchSync = nil
+
+	const callers = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := o.syncBaseBranch(".", "main"); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("parallel syncBaseBranch failed: %v", err)
+	}
+}
