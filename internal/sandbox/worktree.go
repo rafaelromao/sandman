@@ -35,8 +35,20 @@ func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *Wo
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
-	if _, err := os.Stat(s.workDir); err == nil {
+	if s.workDirIsValidWorktree() {
 		return s.configureGitIdentity()
+	}
+	if s.workDirExists() {
+		// Directory exists on disk but is not a registered git worktree.
+		// This can happen when a previous run crashed after the directory
+		// was created but before `git worktree add` finished registering
+		// it. `git rev-parse --git-dir` from such a dir walks up to the
+		// parent repo's `.git`, so we cannot use that to detect the orphan
+		// state — instead we check for the `.git` file that a real worktree
+		// has. See #545.
+		if err := os.RemoveAll(s.workDir); err != nil {
+			return fmt.Errorf("clean orphan worktree dir: %w", err)
+		}
 	}
 
 	if err := os.MkdirAll(s.worktreeBase, 0755); err != nil {
@@ -53,6 +65,33 @@ func (s *WorktreeSandbox) Start() error {
 		return fmt.Errorf("git worktree add: %w\n%s", err, out)
 	}
 	return s.configureGitIdentity()
+}
+
+// workDirIsValidWorktree reports whether s.workDir is a registered git worktree.
+// A worktree has a `.git` file (not directory) at its root pointing to the
+// real git dir. A regular subdir of the parent repo has no `.git` at all.
+func (s *WorktreeSandbox) workDirIsValidWorktree() bool {
+	info, err := os.Stat(s.workDir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	gitPath := filepath.Join(s.workDir, ".git")
+	info, err = os.Stat(gitPath)
+	if err != nil {
+		return false
+	}
+	// Real worktrees have a `.git` file (a gitlink). A nested git repo would
+	// have a `.git` directory; that's still a valid git worktree from the
+	// parent's perspective (it just won't be registered as a worktree of the
+	// parent), but the subsequent `git worktree add` would fail anyway, so
+	// treat both the same and let the caller re-add.
+	return !info.IsDir()
+}
+
+// workDirExists reports whether s.workDir is an existing directory.
+func (s *WorktreeSandbox) workDirExists() bool {
+	info, err := os.Stat(s.workDir)
+	return err == nil && info.IsDir()
 }
 
 // SetGitIdentity configures the identity Sandman should write to worktree-local git config.

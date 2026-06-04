@@ -1556,6 +1556,13 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, log
 		fmt.Fprintf(logWriter, "error: delete branch %s for issue %d: %v: %s\n", branch, issueNumber, err, out)
 	}
 
+	// Belt-and-suspenders: if the worktree directory still exists on disk
+	// (e.g. a previous run crashed mid-`git worktree add` and left an orphan
+	// dir that git never registered), remove it directly. Idempotent.
+	if err := os.RemoveAll(wtPath); err != nil {
+		fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, err)
+	}
+
 	// Remove log file
 	if err := os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))); err != nil {
 		fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
