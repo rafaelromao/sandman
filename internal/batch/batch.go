@@ -16,11 +16,12 @@ type Request struct {
 	// Dependencies maps each issue to its resolved BlockedBy set.
 	Dependencies map[int][]int
 	// Blocked marks issues that should be skipped before submission.
-	Blocked                    map[int][]int
-	Agent                      string
-	Model                      string
-	BaseBranch                 string
-	Continuation               bool
+	Blocked      map[int][]int
+	Agent        string
+	Model        string
+	BaseBranch   string
+	Continuation bool
+	// PreviousRunIDs maps each issue number to the run id being continued.
 	PreviousRunIDs             map[int]string
 	Retries                    int
 	Parallel                   int
