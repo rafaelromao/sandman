@@ -680,7 +680,7 @@ func loadPortalRuns(repoRoot string) ([]portalRun, error) {
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
 	for _, active := range activeInstances {
-		if !active.StartedAt.IsZero() && (activeBatchStart.IsZero() || active.StartedAt.Before(activeBatchStart)) {
+		if activeBatchStart.IsZero() && !active.StartedAt.IsZero() {
 			activeBatchStart = active.StartedAt
 		}
 		if len(active.IssueNumbers) == 0 {
