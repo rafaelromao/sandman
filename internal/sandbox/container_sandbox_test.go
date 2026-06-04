@@ -173,23 +173,26 @@ func TestContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	if captured[1] != "exec" {
 		t.Errorf("expected subcommand exec, got %q", captured[1])
 	}
-	if captured[2] != "-w" {
-		t.Errorf("expected flag -w, got %q", captured[2])
+	if captured[2] != "-it" {
+		t.Errorf("expected flag -it, got %q", captured[2])
 	}
-	if captured[3] != "/workspace/.sandman/worktrees/branch" {
-		t.Errorf("expected workdir /workspace/.sandman/worktrees/branch, got %q", captured[3])
+	if captured[3] != "-w" {
+		t.Errorf("expected flag -w, got %q", captured[3])
 	}
-	if captured[4] != "abc123" {
-		t.Errorf("expected container id abc123, got %q", captured[4])
+	if captured[4] != "/workspace/.sandman/worktrees/branch" {
+		t.Errorf("expected workdir /workspace/.sandman/worktrees/branch, got %q", captured[4])
 	}
-	if captured[5] != "sh" {
-		t.Errorf("expected shell sh, got %q", captured[5])
+	if captured[5] != "abc123" {
+		t.Errorf("expected container id abc123, got %q", captured[5])
 	}
-	if captured[6] != "-c" {
-		t.Errorf("expected flag -c, got %q", captured[6])
+	if captured[6] != "sh" {
+		t.Errorf("expected shell sh, got %q", captured[6])
 	}
-	if captured[7] != "echo hello" {
-		t.Errorf("expected command echo hello, got %q", captured[7])
+	if captured[7] != "-c" {
+		t.Errorf("expected flag -c, got %q", captured[7])
+	}
+	if captured[8] != "echo hello" {
+		t.Errorf("expected command echo hello, got %q", captured[8])
 	}
 }
 
@@ -326,10 +329,16 @@ func TestSharedContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	if len(captured) == 0 {
 		t.Fatal("expected exec command to be built")
 	}
-	if captured[3] != "/workspace/.sandman/worktrees/branch" {
-		t.Errorf("expected workdir /workspace/.sandman/worktrees/branch, got %q", captured[3])
+	if captured[2] != "-it" {
+		t.Errorf("expected flag -it, got %q", captured[2])
 	}
-	if captured[4] != "shared123" {
-		t.Errorf("expected container id shared123, got %q", captured[4])
+	if captured[3] != "-w" {
+		t.Errorf("expected flag -w, got %q", captured[3])
+	}
+	if captured[4] != "/workspace/.sandman/worktrees/branch" {
+		t.Errorf("expected workdir /workspace/.sandman/worktrees/branch, got %q", captured[4])
+	}
+	if captured[5] != "shared123" {
+		t.Errorf("expected container id shared123, got %q", captured[5])
 	}
 }
