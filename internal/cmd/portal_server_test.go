@@ -1451,6 +1451,64 @@ func TestLoadPortalRuns_DedupsActiveBatchAndQueuedEvent(t *testing.T) {
 	}
 }
 
+func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "active-1")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: batchStartedAt}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(11 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{}},
+		{Type: "run.blocked", Timestamp: batchStartedAt.Add(-3 * time.Minute), RunID: "blocked-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	var issueRuns []portalRun
+	for _, run := range runs {
+		if run.IssueNumber == 42 {
+			issueRuns = append(issueRuns, run)
+		}
+	}
+	if len(issueRuns) != 2 {
+		t.Fatalf("expected 2 rows for issue 42, got %d: %#v", len(issueRuns), issueRuns)
+	}
+	var sawActiveQueued, sawHistoricalBlocked bool
+	for _, run := range issueRuns {
+		switch {
+		case run.Kind == "active" && run.Status == "queued":
+			sawActiveQueued = true
+		case run.Kind == "completed" && run.Status == "blocked":
+			sawHistoricalBlocked = true
+		default:
+			t.Fatalf("unexpected row for issue 42: %#v", run)
+		}
+	}
+	if !sawActiveQueued {
+		t.Fatal("expected active queued row for issue 42")
+	}
+	if !sawHistoricalBlocked {
+		t.Fatal("expected historical blocked row for issue 42")
+	}
+}
+
 func TestPortal_BatchWithBlockedIssue_ShowsOneRow(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

@@ -669,6 +669,7 @@ func loadPortalRuns(repoRoot string) ([]portalRun, error) {
 	runStates := events.ProjectRunStates(eventList)
 	eventsByRun := groupPortalEventsByRun(eventList)
 	activeStates := make([]events.RunState, 0, len(runStates))
+	activeBatchStart := time.Time{}
 	for _, run := range runStates {
 		if run.IsActive() {
 			activeStates = append(activeStates, run)
@@ -679,6 +680,9 @@ func loadPortalRuns(repoRoot string) ([]portalRun, error) {
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
 	for _, active := range activeInstances {
+		if !active.StartedAt.IsZero() && (activeBatchStart.IsZero() || active.StartedAt.Before(activeBatchStart)) {
+			activeBatchStart = active.StartedAt
+		}
 		if len(active.IssueNumbers) == 0 {
 			promptActive = append(promptActive, active)
 			continue
@@ -702,10 +706,13 @@ func loadPortalRuns(repoRoot string) ([]portalRun, error) {
 		if _, ok := consumedRunIDs[runState.RunID]; ok {
 			continue
 		}
+		if !activeBatchStart.IsZero() && portalEventBelongsToBatch(runState.Started.Timestamp, activeBatchStart) {
+			continue
+		}
 		runs = append(runs, portalRunFromState(repoRoot, runState, nil, eventsByRun))
 	}
 
-	runs = dedupPortalRuns(runs)
+	runs = dedupPortalRuns(runs, activeBatchStart)
 	sort.SliceStable(runs, func(i, j int) bool {
 		if runs[i].Kind != runs[j].Kind {
 			return runs[i].Kind == "active"
@@ -725,7 +732,7 @@ func loadPortalRuns(repoRoot string) ([]portalRun, error) {
 	return runs, nil
 }
 
-func dedupPortalRuns(runs []portalRun) []portalRun {
+func dedupPortalRuns(runs []portalRun, activeBatchStart time.Time) []portalRun {
 	byIssue := make(map[int][]portalRun)
 	for _, run := range runs {
 		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
@@ -736,31 +743,47 @@ func dedupPortalRuns(runs []portalRun) []portalRun {
 			result = append(result, runs[0])
 			continue
 		}
-		hasBlocked := false
-		hasActive := false
+		inBatch := make([]portalRun, 0, len(runs))
+		outOfBatch := make([]portalRun, 0, len(runs))
 		for _, run := range runs {
-			if run.Status == "blocked" {
-				hasBlocked = true
-			} else if run.Kind == "active" {
-				hasActive = true
+			if portalEventBelongsToBatch(run.StartedAt, activeBatchStart) {
+				inBatch = append(inBatch, run)
+			} else {
+				outOfBatch = append(outOfBatch, run)
 			}
 		}
-		if !hasBlocked && !hasActive {
-			result = append(result, runs...)
-			continue
-		}
-		best := runs[0]
-		for i := 1; i < len(runs); i++ {
-			run := runs[i]
-			if run.Status == "blocked" || (run.Status == "active" && best.Status != "blocked" && best.Status != "active") {
-				best = run
-			} else if run.Status == best.Status && run.StartedAt.After(best.StartedAt) {
-				best = run
-			}
-		}
-		result = append(result, best)
+		result = append(result, dedupPortalRunGroup(inBatch)...)
+		result = append(result, outOfBatch...)
 	}
 	return result
+}
+
+func dedupPortalRunGroup(runs []portalRun) []portalRun {
+	if len(runs) <= 1 {
+		return runs
+	}
+	hasBlocked := false
+	hasActive := false
+	for _, run := range runs {
+		if run.Status == "blocked" {
+			hasBlocked = true
+		} else if run.Kind == "active" {
+			hasActive = true
+		}
+	}
+	if !hasBlocked && !hasActive {
+		return runs
+	}
+	best := runs[0]
+	for i := 1; i < len(runs); i++ {
+		run := runs[i]
+		if run.Status == "blocked" || (run.Status == "active" && best.Status != "blocked" && best.Status != "active") {
+			best = run
+		} else if run.Status == best.Status && run.StartedAt.After(best.StartedAt) {
+			best = run
+		}
+	}
+	return []portalRun{best}
 }
 
 func discoverPortalActiveRuns(repoRoot string) ([]portalActiveRun, error) {
@@ -812,6 +835,9 @@ func portalRunsFromActiveBatch(repoRoot string, active portalActiveRun, runState
 	usedRunIDs := make(map[string]struct{})
 	for _, issueNumber := range active.IssueNumbers {
 		state := latestPortalRunStateForIssue(runStates, issueNumber, batchStart)
+		if state != nil && state.Status() == "queued" {
+			state = nil
+		}
 		blocked := latestPortalBlockedEventForIssue(eventList, issueNumber, batchStart)
 		runs = append(runs, portalRunFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, liveOutput, eventsByRun))
 		if state != nil && state.RunID != "" {
