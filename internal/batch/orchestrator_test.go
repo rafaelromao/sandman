@@ -26,6 +26,7 @@ import (
 
 func TestMain(m *testing.M) {
 	branchExists = func(string, string) bool { return false }
+	branchValidationEnabled = false
 	os.Exit(m.Run())
 }
 
@@ -1618,8 +1619,13 @@ func TestRunBatch_AbortsUpfrontWhenAnyBranchExists(t *testing.T) {
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.runnableFactory = factory
 	oldBranchExists := branchExists
+	oldBranchValidationEnabled := branchValidationEnabled
 	branchExists = sandbox.BranchExists
-	t.Cleanup(func() { branchExists = oldBranchExists })
+	branchValidationEnabled = true
+	t.Cleanup(func() {
+		branchExists = oldBranchExists
+		branchValidationEnabled = oldBranchValidationEnabled
+	})
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
@@ -1680,8 +1686,13 @@ func TestRunBatch_AllowsBatchWhenNoBranchExists(t *testing.T) {
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.runnableFactory = factory
 	oldBranchExists := branchExists
+	oldBranchValidationEnabled := branchValidationEnabled
 	branchExists = sandbox.BranchExists
-	t.Cleanup(func() { branchExists = oldBranchExists })
+	branchValidationEnabled = true
+	t.Cleanup(func() {
+		branchExists = oldBranchExists
+		branchValidationEnabled = oldBranchValidationEnabled
+	})
 
 	done := make(chan struct {
 		result *Result
@@ -1739,8 +1750,13 @@ func TestRunBatch_ForceClearsExistingBranchesAndProceeds(t *testing.T) {
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.runnableFactory = factory
 	oldBranchExists := branchExists
+	oldBranchValidationEnabled := branchValidationEnabled
 	branchExists = sandbox.BranchExists
-	t.Cleanup(func() { branchExists = oldBranchExists })
+	branchValidationEnabled = true
+	t.Cleanup(func() {
+		branchExists = oldBranchExists
+		branchValidationEnabled = oldBranchValidationEnabled
+	})
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })

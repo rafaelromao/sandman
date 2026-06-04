@@ -33,6 +33,7 @@ func issueRef(num int) *int {
 }
 
 var branchExists = sandbox.BranchExists
+var branchValidationEnabled = true
 
 func resolveRetries(req Request, cfg *config.Config) int {
 	if req.Retries >= 0 {
@@ -44,12 +45,28 @@ func resolveRetries(req Request, cfg *config.Config) int {
 	return 0
 }
 
+func gitTopLevel(repoPath string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func (o *Orchestrator) validateBatchBranches(req Request) error {
-	if req.Continuation || len(req.Issues) == 0 {
+	if !branchValidationEnabled || req.Continuation || len(req.Issues) == 0 {
 		return nil
 	}
 
+	repoRoot, err := gitTopLevel(".")
+	if err != nil {
+		return fmt.Errorf("resolve repo root for branch validation: %w", err)
+	}
+
 	var conflicts []string
+	seenConflict := make(map[string]struct{}, len(req.Issues))
 	for _, num := range req.Issues {
 		issue, err := o.githubClient.FetchIssue(num)
 		if err != nil {
@@ -59,12 +76,16 @@ func (o *Orchestrator) validateBatchBranches(req Request) error {
 			return fmt.Errorf("fetch issue %d for branch validation: %w", num, err)
 		}
 
-		branch := req.Branches[num]
-		if branch == "" {
-			branch = BranchName(issue.Number, issue.Title)
-		}
-		if branchExists(".", branch) {
-			conflicts = append(conflicts, fmt.Sprintf("#%d (%s)", num, branch))
+		for _, branch := range collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog) {
+			if !branchExists(repoRoot, branch) {
+				continue
+			}
+			key := fmt.Sprintf("#%d (%s)", num, branch)
+			if _, ok := seenConflict[key]; ok {
+				continue
+			}
+			seenConflict[key] = struct{}{}
+			conflicts = append(conflicts, key)
 		}
 	}
 
