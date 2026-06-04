@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -70,10 +71,13 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	}
 
 	spy := &spyContinueBatchRunner{result: &batch.Result{}}
-	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "model": "gpt-4.1", "agent": "opencode", "review_command": "/custom review"}},
-		{Type: "run.continued", RunID: "run-42-2", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "model": "gpt-4.2", "agent": "pi", "review_command": "/custom review 2"}},
-	}}
+	log := &events.JSONLLogger{Path: filepath.Join(dir, "events.jsonl")}
+	if err := log.Log(events.Event{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "model": "gpt-4.1", "agent": "opencode", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}}); err != nil {
+		t.Fatalf("write run.started event: %v", err)
+	}
+	if err := log.Log(events.Event{Type: "run.continued", RunID: "run-42-2", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "model": "gpt-4.2", "agent": "pi", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true}}); err != nil {
+		t.Fatalf("write run.continued event: %v", err)
+	}
 	deps := Dependencies{
 		BatchRunner: spy,
 		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", DefaultModel: "openai/gpt-4.1", WorktreeDir: dir, ReviewCommand: "/current review", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
@@ -124,6 +128,33 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if spy.req.Agent != "pi" {
 		t.Fatalf("expected agent replay, got %q", spy.req.Agent)
 	}
+	if spy.req.Parallel != 7 {
+		t.Fatalf("expected parallel replay, got %d", spy.req.Parallel)
+	}
+	if spy.req.StartDelay != 11*time.Second {
+		t.Fatalf("expected start delay replay, got %s", spy.req.StartDelay)
+	}
+	if !spy.req.StartDelaySet {
+		t.Fatal("expected start delay flag to be preserved")
+	}
+	if spy.req.Retries != 4 {
+		t.Fatalf("expected retries replay, got %d", spy.req.Retries)
+	}
+	if spy.req.Sandbox != "docker" {
+		t.Fatalf("expected sandbox replay, got %q", spy.req.Sandbox)
+	}
+	if spy.req.ContainerCapacity != 3 {
+		t.Fatalf("expected container capacity replay, got %d", spy.req.ContainerCapacity)
+	}
+	if !spy.req.ContainerCapacitySet {
+		t.Fatal("expected container capacity flag to be preserved")
+	}
+	if spy.req.MaxContainers != 5 {
+		t.Fatalf("expected max containers replay, got %d", spy.req.MaxContainers)
+	}
+	if !spy.req.MaxContainersSet {
+		t.Fatal("expected max containers flag to be preserved")
+	}
 	if !strings.Contains(spy.req.ContinuePrompts[42], "## Prior Context") {
 		t.Fatalf("expected prior context section, got %q", spy.req.ContinuePrompts[42])
 	}
@@ -165,7 +196,7 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--model", "gpt-override", "--agent", "pi", "42", "finish the tests"})
+	cmd.SetArgs([]string{"--model", "gpt-override", "--agent", "pi", "--parallel", "9", "--start-delay", "12", "--retries", "5", "--sandbox", "worktree", "--container-capacity", "8", "--max-containers", "6", "42", "finish the tests"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -177,6 +208,33 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	}
 	if spy.req.Agent != "pi" {
 		t.Fatalf("expected agent override, got %q", spy.req.Agent)
+	}
+	if spy.req.Parallel != 9 {
+		t.Fatalf("expected parallel override, got %d", spy.req.Parallel)
+	}
+	if spy.req.StartDelay != 12*time.Second {
+		t.Fatalf("expected start delay override, got %s", spy.req.StartDelay)
+	}
+	if !spy.req.StartDelaySet {
+		t.Fatal("expected start delay override to set flag")
+	}
+	if spy.req.Retries != 5 {
+		t.Fatalf("expected retries override, got %d", spy.req.Retries)
+	}
+	if spy.req.Sandbox != "worktree" {
+		t.Fatalf("expected sandbox override, got %q", spy.req.Sandbox)
+	}
+	if spy.req.ContainerCapacity != 8 {
+		t.Fatalf("expected container capacity override, got %d", spy.req.ContainerCapacity)
+	}
+	if !spy.req.ContainerCapacitySet {
+		t.Fatal("expected container capacity override to set flag")
+	}
+	if spy.req.MaxContainers != 6 {
+		t.Fatalf("expected max containers override, got %d", spy.req.MaxContainers)
+	}
+	if !spy.req.MaxContainersSet {
+		t.Fatal("expected max containers override to set flag")
 	}
 }
 

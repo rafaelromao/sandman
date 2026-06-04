@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -101,6 +102,46 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				reviewCommand = storedReviewCommand
 			}
 
+			parallel := 0
+			if v, ok := payloadInt(firstLastRun.Payload, "parallel"); ok {
+				parallel = v
+			}
+
+			startDelay := time.Duration(0)
+			startDelaySet := false
+			if v, ok := payloadInt(firstLastRun.Payload, "start_delay"); ok {
+				startDelay = time.Duration(v) * time.Second
+				startDelaySet = true
+			}
+
+			retries := -1
+			if v, ok := payloadInt(firstLastRun.Payload, "retries"); ok {
+				retries = v
+			}
+
+			sandboxMode := ""
+			if v, ok := payloadString(firstLastRun.Payload, "sandbox"); ok {
+				sandboxMode = strings.TrimSpace(v)
+			}
+
+			containerCapacity := 0
+			containerCapacitySet := false
+			if v, ok := payloadInt(firstLastRun.Payload, "container_capacity"); ok {
+				containerCapacity = v
+			}
+			if v, ok := payloadBool(firstLastRun.Payload, "container_capacity_set"); ok {
+				containerCapacitySet = v
+			}
+
+			maxContainers := 0
+			maxContainersSet := false
+			if v, ok := payloadInt(firstLastRun.Payload, "max_containers"); ok {
+				maxContainers = v
+			}
+			if v, ok := payloadBool(firstLastRun.Payload, "max_containers_set"); ok {
+				maxContainersSet = v
+			}
+
 			agentName := strings.TrimSpace(cmdFlag(cmd, "agent"))
 			if agentName == "" {
 				if storedAgent, ok := payloadString(firstLastRun.Payload, "agent"); ok {
@@ -112,6 +153,28 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 			}
 			if agentName == "" {
 				agentName = strings.TrimSpace(cfg.Agent)
+			}
+			if sandboxFlag := cmd.Flags().Lookup("sandbox"); sandboxFlag != nil && sandboxFlag.Changed {
+				sandboxMode, _ = cmd.Flags().GetString("sandbox")
+			}
+			if parallelFlag := cmd.Flags().Lookup("parallel"); parallelFlag != nil && parallelFlag.Changed {
+				parallel, _ = cmd.Flags().GetInt("parallel")
+			}
+			if startDelayFlag := cmd.Flags().Lookup("start-delay"); startDelayFlag != nil && startDelayFlag.Changed {
+				startDelaySecs, _ := cmd.Flags().GetInt("start-delay")
+				startDelay = time.Duration(startDelaySecs) * time.Second
+				startDelaySet = true
+			}
+			if retriesFlag := cmd.Flags().Lookup("retries"); retriesFlag != nil && retriesFlag.Changed {
+				retries, _ = cmd.Flags().GetInt("retries")
+			}
+			if containerCapacityFlag := cmd.Flags().Lookup("container-capacity"); containerCapacityFlag != nil && containerCapacityFlag.Changed {
+				containerCapacity, _ = cmd.Flags().GetInt("container-capacity")
+				containerCapacitySet = true
+			}
+			if maxContainersFlag := cmd.Flags().Lookup("max-containers"); maxContainersFlag != nil && maxContainersFlag.Changed {
+				maxContainers, _ = cmd.Flags().GetInt("max-containers")
+				maxContainersSet = true
 			}
 			agentCfg, err := cfg.ResolveAgentProvider(agentName)
 			if err != nil {
@@ -134,6 +197,15 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				Agent:                      agentName,
 				Model:                      model,
 				BaseBranch:                 baseBranches[firstIssue],
+				Parallel:                   parallel,
+				Retries:                    retries,
+				StartDelay:                 startDelay,
+				StartDelaySet:              startDelaySet,
+				Sandbox:                    sandboxMode,
+				ContainerCapacity:          containerCapacity,
+				ContainerCapacitySet:       containerCapacitySet,
+				MaxContainers:              maxContainers,
+				MaxContainersSet:           maxContainersSet,
 				Continuation:               true,
 				PreviousRunIDs:             previousRunIDs,
 				BaseBranches:               baseBranches,
@@ -189,6 +261,12 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode or pi)")
+	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
+	cmd.Flags().Int("start-delay", 0, "Wait N seconds after any AgentRun finishes before starting the next one; 0 disables the delay")
+	cmd.Flags().Int("retries", 0, "Retry failed AgentRuns up to N times")
+	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
+	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
+	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
 	return cmd
@@ -233,6 +311,68 @@ func payloadString(payload map[string]any, key string) (string, bool) {
 	}
 	str, ok := v.(string)
 	return str, ok
+}
+
+func payloadInt(payload map[string]any, key string) (int, bool) {
+	if payload == nil {
+		return 0, false
+	}
+	v, ok := payload[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int8:
+		return int(n), true
+	case int16:
+		return int(n), true
+	case int32:
+		return int(n), true
+	case int64:
+		return int(n), true
+	case uint:
+		return int(n), true
+	case uint8:
+		return int(n), true
+	case uint16:
+		return int(n), true
+	case uint32:
+		return int(n), true
+	case uint64:
+		return int(n), true
+	case float32:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(n))
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func payloadBool(payload map[string]any, key string) (bool, bool) {
+	if payload == nil {
+		return false, false
+	}
+	v, ok := payload[key]
+	if !ok {
+		return false, false
+	}
+	switch b := v.(type) {
+	case bool:
+		return b, true
+	case string:
+		parsed, err := strconv.ParseBool(strings.TrimSpace(b))
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return false, false
 }
 
 func stripContinuationContextHeader(content string) string {

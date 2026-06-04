@@ -701,7 +701,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 3, false)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 0, 0, 3, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -769,7 +769,7 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -814,7 +814,7 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, _ := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if result.Status != "failure" {
 		t.Fatalf("status = %q, want failure on lookup error", result.Status)
 	}
@@ -866,7 +866,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -935,7 +935,7 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1003,7 +1003,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1053,7 +1053,7 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -2950,7 +2950,7 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, PromptConfig: prompt.RenderConfig{PromptFlag: "inline", PromptArgs: map[string]string{"FOO": "bar"}, ReviewCommand: "/custom review", ReviewCommandSet: true}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 3, Retries: 4, StartDelay: 7 * time.Second, StartDelaySet: true, Sandbox: "worktree", ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 5, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{PromptFlag: "inline", PromptArgs: map[string]string{"FOO": "bar"}, ReviewCommand: "/custom review", ReviewCommandSet: true}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2970,6 +2970,30 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 	}
 	if started.Payload["base_branch"] != "main" {
 		t.Fatalf("expected base branch main, got %#v", started.Payload["base_branch"])
+	}
+	if started.Payload["parallel"] != 3 {
+		t.Fatalf("expected parallel replay, got %#v", started.Payload["parallel"])
+	}
+	if started.Payload["start_delay"] != 7 {
+		t.Fatalf("expected start delay replay, got %#v", started.Payload["start_delay"])
+	}
+	if started.Payload["retries"] != 4 {
+		t.Fatalf("expected retries replay, got %#v", started.Payload["retries"])
+	}
+	if started.Payload["sandbox"] != "worktree" {
+		t.Fatalf("expected sandbox replay, got %#v", started.Payload["sandbox"])
+	}
+	if started.Payload["container_capacity"] != 2 {
+		t.Fatalf("expected container capacity replay, got %#v", started.Payload["container_capacity"])
+	}
+	if started.Payload["container_capacity_set"] != true {
+		t.Fatalf("expected container capacity set replay, got %#v", started.Payload["container_capacity_set"])
+	}
+	if started.Payload["max_containers"] != 5 {
+		t.Fatalf("expected max containers replay, got %#v", started.Payload["max_containers"])
+	}
+	if started.Payload["max_containers_set"] != true {
+		t.Fatalf("expected max containers set replay, got %#v", started.Payload["max_containers_set"])
 	}
 	args, ok := started.Payload["prompt_args"].(map[string]string)
 	if !ok || args["FOO"] != "bar" {
@@ -3121,7 +3145,7 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunIDs: map[int]string{42: "run-42-1"}, BaseBranch: "main", PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunIDs: map[int]string{42: "run-42-1"}, BaseBranch: "main", Parallel: 2, Retries: 1, StartDelay: 5 * time.Second, StartDelaySet: true, Sandbox: "worktree", ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 6, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3141,6 +3165,30 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	}
 	if continued.Payload["base_branch"] != "main" {
 		t.Fatalf("expected base branch replay, got %#v", continued.Payload["base_branch"])
+	}
+	if continued.Payload["parallel"] != 2 {
+		t.Fatalf("expected parallel replay, got %#v", continued.Payload["parallel"])
+	}
+	if continued.Payload["start_delay"] != 5 {
+		t.Fatalf("expected start delay replay, got %#v", continued.Payload["start_delay"])
+	}
+	if continued.Payload["retries"] != 1 {
+		t.Fatalf("expected retries replay, got %#v", continued.Payload["retries"])
+	}
+	if continued.Payload["sandbox"] != "worktree" {
+		t.Fatalf("expected sandbox replay, got %#v", continued.Payload["sandbox"])
+	}
+	if continued.Payload["container_capacity"] != 4 {
+		t.Fatalf("expected container capacity replay, got %#v", continued.Payload["container_capacity"])
+	}
+	if continued.Payload["container_capacity_set"] != true {
+		t.Fatalf("expected container capacity set replay, got %#v", continued.Payload["container_capacity_set"])
+	}
+	if continued.Payload["max_containers"] != 6 {
+		t.Fatalf("expected max containers replay, got %#v", continued.Payload["max_containers"])
+	}
+	if continued.Payload["max_containers_set"] != true {
+		t.Fatalf("expected max containers set replay, got %#v", continued.Payload["max_containers_set"])
 	}
 }
 
