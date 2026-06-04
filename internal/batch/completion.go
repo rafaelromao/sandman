@@ -64,6 +64,10 @@ func checkPRMerged(client github.Client, branch string) bool {
 	return err == nil && merged
 }
 
+func CheckPRMergedAtHead(client github.Client, branch, headSHA string) (bool, error) {
+	return checkPRMergedAtHead(client, branch, headSHA)
+}
+
 func checkPRMergedAtHead(client github.Client, branch, headSHA string) (bool, error) {
 	if client == nil || strings.TrimSpace(branch) == "" {
 		return false, nil

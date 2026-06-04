@@ -65,6 +65,13 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				if !ok || strings.TrimSpace(baseBranch) == "" {
 					return fmt.Errorf("missing base branch in previous run for issue #%d", num)
 				}
+				merged, err := batch.CheckPRMergedAtHead(deps.GitHubClient, branch, "")
+				if err != nil {
+					return fmt.Errorf("check merged status for issue #%d: %w", num, err)
+				}
+				if merged {
+					return fmt.Errorf("cannot continue issue #%d: PR already merged (branch %q)", num, branch)
+				}
 				worktreePath := filepath.Join(worktreeBase, branch)
 				if info, err := os.Stat(worktreePath); err != nil {
 					if os.IsNotExist(err) {
