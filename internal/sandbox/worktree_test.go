@@ -354,6 +354,21 @@ func TestWorktreeSandbox_StartFailsWhenBranchAlreadyExists(t *testing.T) {
 	t.Cleanup(func() { removeBranch(t, dir, "sandman/42-fix-bug") })
 }
 
+func TestBranchExists(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
+
+	if BranchExists(dir, "sandman/42-fix-bug") {
+		t.Fatal("expected missing branch to return false")
+	}
+
+	runGit(t, dir, "checkout", "-b", "sandman/42-fix-bug")
+	if !BranchExists(dir, "sandman/42-fix-bug") {
+		t.Fatal("expected existing branch to return true")
+	}
+}
+
 func TestWorktreeSandbox_ExecInteractive_RunsCommand(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)

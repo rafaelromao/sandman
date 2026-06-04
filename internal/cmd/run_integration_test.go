@@ -329,8 +329,6 @@ func TestRun_DependencyAwareBatch_IncludeDependenciesExecutesTransitiveChain(t *
 	t.Chdir(dir)
 	_ = initRunIntegrationRepoWithRemote(t, dir)
 
-	release7Fetch := make(chan struct{})
-	release42Fetch := make(chan struct{})
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
@@ -341,14 +339,6 @@ func TestRun_DependencyAwareBatch_IncludeDependenciesExecutesTransitiveChain(t *
 			"sandman/100-feature":  {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-feature", HeadRefOid: ""},
 			"sandman/42-refactor":  {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-refactor", HeadRefOid: ""},
 			"sandman/7-groundwork": {Number: 7, State: "closed", Merged: true, HeadRefName: "sandman/7-groundwork", HeadRefOid: ""},
-		},
-		fetchRelease: map[int]<-chan struct{}{
-			7:  release7Fetch,
-			42: release42Fetch,
-		},
-		fetchReleaseAfter: map[int]int{
-			7:  2,
-			42: 2,
 		},
 	}
 	deps := newRunIntegrationDeps(issueAwareAgentCommand(`
@@ -386,10 +376,8 @@ touch "$state_dir/$issue.done"
 
 	waitForPath(t, filepath.Join(dir, ".sandman", "chain", "7.done"))
 	client.issues[7].State = "closed"
-	close(release7Fetch)
 	waitForPath(t, filepath.Join(dir, ".sandman", "chain", "42.done"))
 	client.issues[42].State = "closed"
-	close(release42Fetch)
 
 	result := <-resultCh
 	out, err := result.out, result.err
@@ -1323,8 +1311,6 @@ func TestRun_DependencyAwareBatch_TwoLevelDAGPreservesParallelismWithinLevels(t 
 	// ADR-0003 only requires each AgentRun to wait for its own BlockedBy set.
 	// This test still proves both blockers start before dependents and that
 	// same-level AgentRuns preserve concurrency in both phases.
-	release42Fetch := make(chan struct{})
-	release43Fetch := make(chan struct{})
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42:  {Number: 42, Title: "Blocker A", State: "open"},
@@ -1337,14 +1323,6 @@ func TestRun_DependencyAwareBatch_TwoLevelDAGPreservesParallelismWithinLevels(t 
 			"sandman/43-blocker-b":    {Number: 43, State: "closed", Merged: true, HeadRefName: "sandman/43-blocker-b"},
 			"sandman/100-dependent-a": {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-dependent-a"},
 			"sandman/200-dependent-b": {Number: 200, State: "closed", Merged: true, HeadRefName: "sandman/200-dependent-b"},
-		},
-		fetchRelease: map[int]<-chan struct{}{
-			42: release42Fetch,
-			43: release43Fetch,
-		},
-		fetchReleaseAfter: map[int]int{
-			42: 2,
-			43: 2,
 		},
 	}
 	deps := newRunIntegrationDeps(issueAwareAgentCommand(`
@@ -1421,12 +1399,10 @@ esac
 	go func() {
 		waitForPath(t, filepath.Join(dir, ".sandman", "dag", "blocker-finish-42"))
 		client.issues[42].State = "closed"
-		close(release42Fetch)
 	}()
 	go func() {
 		waitForPath(t, filepath.Join(dir, ".sandman", "dag", "blocker-finish-43"))
 		client.issues[43].State = "closed"
-		close(release43Fetch)
 	}()
 
 	resultCh := make(chan struct {
@@ -1746,7 +1722,6 @@ func TestRun_DependencyAwareBatch_MixedRunnableAndBlockedIssues(t *testing.T) {
 	t.Chdir(dir)
 	_ = initRunIntegrationRepoWithRemote(t, dir)
 
-	release7Fetch := make(chan struct{})
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42:  {Number: 42, Title: "Runnable"},
@@ -1755,12 +1730,6 @@ func TestRun_DependencyAwareBatch_MixedRunnableAndBlockedIssues(t *testing.T) {
 		},
 		prs: map[string]*github.PR{
 			"sandman/42-runnable": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-runnable", HeadRefOid: ""},
-		},
-		fetchRelease: map[int]<-chan struct{}{
-			7: release7Fetch,
-		},
-		fetchReleaseAfter: map[int]int{
-			7: 2,
 		},
 	}
 	deps := newRunIntegrationDeps(issueAwareAgentCommand(`

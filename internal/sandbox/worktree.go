@@ -43,7 +43,7 @@ func (s *WorktreeSandbox) Start() error {
 		return fmt.Errorf("create worktree base: %w", err)
 	}
 
-	if _, err := gitRevParse(s.repoPath, "--verify", "refs/heads/"+s.branch); err == nil {
+	if BranchExists(s.repoPath, s.branch) {
 		return fmt.Errorf(`branch %q already exists — delete it with "git branch -D %s" and re-run`, s.branch, s.branch)
 	}
 
@@ -119,6 +119,12 @@ func gitRevParse(dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("%w\n%s", err, out)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// BranchExists reports whether the given branch already exists in refs/heads of the repo at repoPath.
+func BranchExists(repoPath, branch string) bool {
+	_, err := gitRevParse(repoPath, "--verify", "refs/heads/"+branch)
+	return err == nil
 }
 
 // Exec runs a command in the worktree, writing stdout and stderr to the given writers.

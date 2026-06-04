@@ -32,6 +32,9 @@ func issueRef(num int) *int {
 	return &n
 }
 
+var branchExists = sandbox.BranchExists
+var branchValidationEnabled = true
+
 func resolveRetries(req Request, cfg *config.Config) int {
 	if req.Retries >= 0 {
 		return req.Retries
@@ -40,6 +43,57 @@ func resolveRetries(req Request, cfg *config.Config) int {
 		return cfg.Retries
 	}
 	return 0
+}
+
+func gitTopLevel(repoPath string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func (o *Orchestrator) validateBatchBranches(req Request) error {
+	if !branchValidationEnabled || req.Continuation || len(req.Issues) == 0 {
+		return nil
+	}
+
+	repoRoot, err := gitTopLevel(".")
+	if err != nil {
+		return fmt.Errorf("resolve repo root for branch validation: %w", err)
+	}
+
+	var conflicts []string
+	seenConflict := make(map[string]struct{}, len(req.Issues))
+	for _, num := range req.Issues {
+		issue, err := o.githubClient.FetchIssue(num)
+		if err != nil {
+			if o.errorLog != nil {
+				fmt.Fprintf(o.errorLog, "error: fetch issue %d for branch validation: %v\n", num, err)
+			}
+			return fmt.Errorf("fetch issue %d for branch validation: %w", num, err)
+		}
+
+		for _, branch := range collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog) {
+			if !branchExists(repoRoot, branch) {
+				continue
+			}
+			key := fmt.Sprintf("#%d (%s)", num, branch)
+			if _, ok := seenConflict[key]; ok {
+				continue
+			}
+			seenConflict[key] = struct{}{}
+			conflicts = append(conflicts, key)
+		}
+	}
+
+	if len(conflicts) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("refusing to start batch: branches already exist from previous runs: %s. Delete them with git branch -D <branch> or re-run with --force", strings.Join(conflicts, ", "))
 }
 
 // Orchestrator coordinates parallel AgentRun execution.
@@ -516,6 +570,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog)
 			}
 		}
+	}
+
+	if err := o.validateBatchBranches(req); err != nil {
+		return nil, err
 	}
 
 	dangerouslySkipPermissions := req.DangerouslySkipPermissions
