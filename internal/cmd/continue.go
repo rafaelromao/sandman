@@ -70,7 +70,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 					return fmt.Errorf("check merged status for issue #%d: %w", num, err)
 				}
 				if merged {
-					return fmt.Errorf("cannot continue issue #%d: PR already merged (branch %q); use 'sandman pr-review'", num, branch)
+					return fmt.Errorf("cannot continue issue #%d: PR already merged (branch %q)", num, branch)
 				}
 				worktreePath := filepath.Join(worktreeBase, branch)
 				if info, err := os.Stat(worktreePath); err != nil {
