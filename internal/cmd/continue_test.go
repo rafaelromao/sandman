@@ -339,7 +339,7 @@ func TestContinue_FailsWhenPRMerged(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when PR is already merged")
 	}
-	want := "cannot continue issue #42: PR already merged (branch \"sandman/42-fix-bug\"); use 'sandman pr-review' to finalize"
+	want := "cannot continue issue #42: PR already merged (branch \"sandman/42-fix-bug\"); use 'sandman pr-review'"
 	if err.Error() != want {
 		t.Fatalf("expected %q, got %q", want, err.Error())
 	}
