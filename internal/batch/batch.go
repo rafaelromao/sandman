@@ -21,7 +21,7 @@ type Request struct {
 	Model                      string
 	BaseBranch                 string
 	Continuation               bool
-	PreviousRunID              string
+	PreviousRunIDs             map[int]string
 	Retries                    int
 	Parallel                   int
 	StartDelay                 time.Duration

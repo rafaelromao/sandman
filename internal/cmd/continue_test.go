@@ -100,8 +100,8 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if !spy.req.Continuation {
 		t.Fatal("expected continuation request")
 	}
-	if spy.req.PreviousRunID != "run-42-2" {
-		t.Fatalf("expected previous run ID run-42-2, got %q", spy.req.PreviousRunID)
+	if spy.req.PreviousRunIDs[42] != "run-42-2" {
+		t.Fatalf("expected previous run ID run-42-2, got %q", spy.req.PreviousRunIDs[42])
 	}
 	if spy.req.Branches[42] != branch {
 		t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])
@@ -284,7 +284,7 @@ func (r *continuationFlowBatchRunner) RunBatch(ctx context.Context, req batch.Re
 	payload := map[string]any{"branch": branch, "base_branch": req.BaseBranch, "agent": req.Agent}
 	if req.Continuation {
 		eventType = "run.continued"
-		payload = map[string]any{"branch": branch, "base_branch": req.BaseBranch, "previous_run_id": req.PreviousRunID}
+		payload = map[string]any{"branch": branch, "base_branch": req.BaseBranch, "previous_run_id": req.PreviousRunIDs[issue]}
 		r.state.prompts = append(r.state.prompts, req.PromptConfig.ContinuePrompt)
 	}
 	r.log.events = append(r.log.events, events.Event{Type: eventType, RunID: runID, Issue: issue, Payload: payload})

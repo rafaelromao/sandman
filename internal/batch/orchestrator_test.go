@@ -631,7 +631,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
 	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 3, false)
 	if !started {
@@ -699,7 +699,7 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
 	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if !started {
@@ -744,7 +744,7 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, _ := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
+	result, _ := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
 	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if result.Status != "failure" {
@@ -796,7 +796,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, "", func() (gitIdentity, error) {
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
 	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if !started {
@@ -865,7 +865,7 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, "", func() (gitIdentity, error) {
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
 	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if !started {
@@ -933,7 +933,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, "", func() (gitIdentity, error) {
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
 	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if !started {
@@ -983,7 +983,7 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, "", func() (gitIdentity, error) {
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
 	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 1, false)
 	if !started {
@@ -2861,7 +2861,7 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunID: "run-42-1", BaseBranch: "main", PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunIDs: map[int]string{42: "run-42-1"}, BaseBranch: "main", PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2881,6 +2881,49 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	}
 	if continued.Payload["base_branch"] != "main" {
 		t.Fatalf("expected base branch replay, got %#v", continued.Payload["base_branch"])
+	}
+}
+
+func TestRunBatch_PerIssuePreviousRunIDLookup(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+			43: {Number: 43, Title: "Add tests"},
+		},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{
+		42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
+		43: &controlledRunnable{result: AgentRunResult{IssueNumber: 43, Status: "success"}},
+	}}
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Issues:         []int{42, 43},
+		Continuation:   true,
+		PreviousRunIDs: map[int]string{42: "run-42-prev", 43: "run-43-prev"},
+		BaseBranch:     "main",
+		PromptConfig:   prompt.RenderConfig{ContinuePrompt: "finish the work"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	continuedByIssue := map[int]events.Event{}
+	for _, evt := range spyLog.events {
+		if evt.Type == "run.continued" {
+			continuedByIssue[evt.Issue] = evt
+		}
+	}
+	if len(continuedByIssue) != 2 {
+		t.Fatalf("expected run.continued events for issues 42 and 43, got %#v", continuedByIssue)
+	}
+	if continuedByIssue[42].Payload["previous_run_id"] != "run-42-prev" {
+		t.Fatalf("expected issue 42 previous run id run-42-prev, got %#v", continuedByIssue[42].Payload["previous_run_id"])
+	}
+	if continuedByIssue[43].Payload["previous_run_id"] != "run-43-prev" {
+		t.Fatalf("expected issue 43 previous run id run-43-prev, got %#v", continuedByIssue[43].Payload["previous_run_id"])
 	}
 }
 
@@ -2906,7 +2949,7 @@ func TestRunBatch_ContinuationSkipsBaseBranchSync(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunID: "run-42-1", PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunIDs: map[int]string{42: "run-42-1"}, PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2953,7 +2996,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected initial context to be written, got %q", string(initialContext))
 	}
 
-	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunID: log.events[0].RunID, PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[0].RunID}, PromptConfig: prompt.RenderConfig{ContinuePrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
@@ -2965,7 +3008,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected first continue context to be written, got %q", string(firstContinueContext))
 	}
 
-	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunID: log.events[2].RunID, PromptConfig: prompt.RenderConfig{ContinuePrompt: "push the PR"}})
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[2].RunID}, PromptConfig: prompt.RenderConfig{ContinuePrompt: "push the PR"}})
 	if err != nil {
 		t.Fatalf("second continue failed: %v", err)
 	}
