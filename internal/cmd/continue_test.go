@@ -101,7 +101,7 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 		t.Fatal("expected continuation request")
 	}
 	if spy.req.PreviousRunIDs[42] != "run-42-2" {
-		t.Fatalf("expected previous run ID run-42-2, got %q", spy.req.PreviousRunIDs[42])
+		t.Fatalf("expected previous run ID run-42-2 for issue 42, got %q", spy.req.PreviousRunIDs[42])
 	}
 	if spy.req.Branches[42] != branch {
 		t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])
@@ -401,5 +401,141 @@ func TestContinue_FailsWhenWorktreeMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "sandman run") {
 		t.Fatalf("expected run hint, got %v", err)
+	}
+}
+
+func TestContinue_MultipleIssuesBuildsBranchesAndPreviousRunIDsMaps(t *testing.T) {
+	dir := t.TempDir()
+	branchA := "sandman/1-fix-a"
+	branchB := "sandman/2-fix-b"
+	for _, b := range []string{branchA, branchB} {
+		if err := os.MkdirAll(filepath.Join(dir, b), 0755); err != nil {
+			t.Fatalf("mkdir worktree %s: %v", b, err)
+		}
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-1-a", Issue: 1, Payload: map[string]any{"branch": branchA, "base_branch": "main", "agent": "opencode"}},
+		{Type: "run.continued", RunID: "run-1-b", Issue: 1, Payload: map[string]any{"branch": branchA, "base_branch": "main", "agent": "opencode"}},
+		{Type: "run.started", RunID: "run-2-a", Issue: 2, Payload: map[string]any{"branch": branchB, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1", "2", "fix tests"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if len(spy.req.Issues) != 2 || spy.req.Issues[0] != 1 || spy.req.Issues[1] != 2 {
+		t.Fatalf("expected issues=[1 2], got %v", spy.req.Issues)
+	}
+	if spy.req.Branches[1] != branchA {
+		t.Fatalf("expected Branches[1]=%q, got %q", branchA, spy.req.Branches[1])
+	}
+	if spy.req.Branches[2] != branchB {
+		t.Fatalf("expected Branches[2]=%q, got %q", branchB, spy.req.Branches[2])
+	}
+	if spy.req.PreviousRunIDs[1] != "run-1-b" {
+		t.Fatalf("expected PreviousRunIDs[1]=run-1-b (latest for issue 1), got %q", spy.req.PreviousRunIDs[1])
+	}
+	if spy.req.PreviousRunIDs[2] != "run-2-a" {
+		t.Fatalf("expected PreviousRunIDs[2]=run-2-a, got %q", spy.req.PreviousRunIDs[2])
+	}
+	if !spy.req.Continuation {
+		t.Fatal("expected continuation request")
+	}
+}
+
+func TestContinue_FailsFastWhenAnyWorktreeMissingForMultipleIssues(t *testing.T) {
+	dir := t.TempDir()
+	branchA := "sandman/1-fix-a"
+	branchB := "sandman/2-fix-b"
+	if err := os.MkdirAll(filepath.Join(dir, branchA), 0755); err != nil {
+		t.Fatalf("mkdir worktree A: %v", err)
+	}
+	// Intentionally do NOT create branchB's worktree.
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-1-a", Issue: 1, Payload: map[string]any{"branch": branchA, "base_branch": "main", "agent": "opencode"}},
+		{Type: "run.started", RunID: "run-2-a", Issue: 2, Payload: map[string]any{"branch": branchB, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1", "2", "fix tests"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when one worktree is missing")
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called when worktree missing (fail fast)")
+	}
+	if !strings.Contains(err.Error(), branchB) {
+		t.Fatalf("expected error to mention missing worktree %q, got %v", branchB, err)
+	}
+}
+
+func TestContinue_FailsWhenAnyIssueHasNoPreviousRun(t *testing.T) {
+	dir := t.TempDir()
+	branchA := "sandman/1-fix-a"
+	if err := os.MkdirAll(filepath.Join(dir, branchA), 0755); err != nil {
+		t.Fatalf("mkdir worktree A: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-1-a", Issue: 1, Payload: map[string]any{"branch": branchA, "base_branch": "main", "agent": "opencode"}},
+		// No events for issue 2.
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1", "2", "fix tests"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when issue has no previous run")
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called when validation fails")
+	}
+	if !strings.Contains(err.Error(), "#2") {
+		t.Fatalf("expected error to mention issue #2, got %v", err)
+	}
+}
+
+func TestContinue_UsesVariadicSyntaxInUseString(t *testing.T) {
+	cmd := NewContinueCmd(newTestDeps())
+	if !strings.Contains(cmd.Use, "[issue-number...]") {
+		t.Fatalf("expected Use to indicate variadic issue numbers, got %q", cmd.Use)
 	}
 }
