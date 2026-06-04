@@ -32,6 +32,8 @@ func issueRef(num int) *int {
 	return &n
 }
 
+var branchExists = sandbox.BranchExists
+
 func resolveRetries(req Request, cfg *config.Config) int {
 	if req.Retries >= 0 {
 		return req.Retries
@@ -40,6 +42,37 @@ func resolveRetries(req Request, cfg *config.Config) int {
 		return cfg.Retries
 	}
 	return 0
+}
+
+func (o *Orchestrator) validateBatchBranches(req Request) error {
+	if req.Continuation || len(req.Issues) == 0 {
+		return nil
+	}
+
+	var conflicts []string
+	for _, num := range req.Issues {
+		issue, err := o.githubClient.FetchIssue(num)
+		if err != nil {
+			if o.errorLog != nil {
+				fmt.Fprintf(o.errorLog, "error: fetch issue %d for branch validation: %v\n", num, err)
+			}
+			return fmt.Errorf("fetch issue %d for branch validation: %w", num, err)
+		}
+
+		branch := req.Branches[num]
+		if branch == "" {
+			branch = BranchName(issue.Number, issue.Title)
+		}
+		if branchExists(".", branch) {
+			conflicts = append(conflicts, fmt.Sprintf("#%d (%s)", num, branch))
+		}
+	}
+
+	if len(conflicts) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("refusing to start batch: branches already exist from previous runs: %s. Delete them with git branch -D <branch> or re-run with --force", strings.Join(conflicts, ", "))
 }
 
 // Orchestrator coordinates parallel AgentRun execution.
@@ -516,6 +549,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog)
 			}
 		}
+	}
+
+	if err := o.validateBatchBranches(req); err != nil {
+		return nil, err
 	}
 
 	dangerouslySkipPermissions := req.DangerouslySkipPermissions

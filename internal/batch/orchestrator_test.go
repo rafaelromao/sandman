@@ -24,6 +24,11 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
+func TestMain(m *testing.M) {
+	branchExists = func(string, string) bool { return false }
+	os.Exit(m.Run())
+}
+
 func initGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	remoteDir := t.TempDir()
@@ -56,6 +61,17 @@ func initGitRepo(t *testing.T, dir string) {
 	if out, err := push.CombinedOutput(); err != nil {
 		t.Fatalf("push main: %v: %s", err, out)
 	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
 }
 
 type fakeConfigStore struct {
@@ -1567,6 +1583,183 @@ func TestRunBatch_FetchesMultipleIssues(t *testing.T) {
 
 	if len(result.Runs) != 2 {
 		t.Fatalf("expected 2 runs, got %d", len(result.Runs))
+	}
+}
+
+func TestRunBatch_AbortsUpfrontWhenAnyBranchExists(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := BranchName(450, "Middle issue")
+	runGit(t, dir, "checkout", "-b", branch)
+	runGit(t, dir, "checkout", "main")
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			441: {Number: 441, Title: "First issue"},
+			450: {Number: 450, Title: "Middle issue"},
+			452: {Number: 452, Title: "Third issue"},
+		},
+		prs: map[string]*github.PR{
+			BranchName(441, "First issue"):  mergedPR(BranchName(441, "First issue"), "current-sha"),
+			BranchName(450, "Middle issue"): mergedPR(BranchName(450, "Middle issue"), "current-sha"),
+			BranchName(452, "Third issue"):  mergedPR(BranchName(452, "Third issue"), "current-sha"),
+		},
+	}
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			441: &controlledRunnable{result: AgentRunResult{IssueNumber: 441, Status: "success"}, started: make(chan struct{}), release: make(chan struct{})},
+			450: &controlledRunnable{result: AgentRunResult{IssueNumber: 450, Status: "success"}, started: make(chan struct{}), release: make(chan struct{})},
+			452: &controlledRunnable{result: AgentRunResult{IssueNumber: 452, Status: "success"}, started: make(chan struct{}), release: make(chan struct{})},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = factory
+	oldBranchExists := branchExists
+	branchExists = sandbox.BranchExists
+	t.Cleanup(func() { branchExists = oldBranchExists })
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{441, 450, 452}})
+	if err == nil {
+		t.Fatal("expected branch conflict error")
+	}
+	want := fmt.Sprintf("#450 (%s)", branch)
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("expected error to contain %q, got %q", want, err.Error())
+	}
+	if !strings.Contains(err.Error(), `git branch -D <branch>`) {
+		t.Fatalf("expected delete hint in error, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), `--force`) {
+		t.Fatalf("expected force hint in error, got %q", err.Error())
+	}
+	if len(factory.created) != 0 {
+		t.Fatalf("expected no runnables created, got %d", len(factory.created))
+	}
+	for issue, runnable := range factory.runnables {
+		cr := runnable.(*controlledRunnable)
+		assertNoSignal(t, cr.started, fmt.Sprintf("expected runnable %d to stay idle", issue))
+	}
+}
+
+func TestRunBatch_AllowsBatchWhenNoBranchExists(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			441: {Number: 441, Title: "First issue"},
+			450: {Number: 450, Title: "Middle issue"},
+			452: {Number: 452, Title: "Third issue"},
+		},
+	}
+	started := map[int]chan struct{}{
+		441: make(chan struct{}),
+		450: make(chan struct{}),
+		452: make(chan struct{}),
+	}
+	release := map[int]chan struct{}{
+		441: make(chan struct{}),
+		450: make(chan struct{}),
+		452: make(chan struct{}),
+	}
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			441: &controlledRunnable{result: AgentRunResult{IssueNumber: 441, Status: "success"}, started: started[441], release: release[441]},
+			450: &controlledRunnable{result: AgentRunResult{IssueNumber: 450, Status: "success"}, started: started[450], release: release[450]},
+			452: &controlledRunnable{result: AgentRunResult{IssueNumber: 452, Status: "success"}, started: started[452], release: release[452]},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = factory
+	oldBranchExists := branchExists
+	branchExists = sandbox.BranchExists
+	t.Cleanup(func() { branchExists = oldBranchExists })
+
+	done := make(chan struct {
+		result *Result
+		err    error
+	}, 1)
+	go func() {
+		result, err := o.RunBatch(context.Background(), Request{Issues: []int{441, 450, 452}})
+		done <- struct {
+			result *Result
+			err    error
+		}{result: result, err: err}
+	}()
+
+	for _, issue := range []int{441, 450, 452} {
+		waitForSignal(t, started[issue], fmt.Sprintf("expected runnable %d to start", issue))
+	}
+	for _, issue := range []int{441, 450, 452} {
+		close(release[issue])
+	}
+
+	res := <-done
+	if res.err != nil {
+		t.Fatalf("unexpected error: %v", res.err)
+	}
+	if len(factory.created) != 3 {
+		t.Fatalf("expected 3 runnables created, got %d", len(factory.created))
+	}
+	if len(res.result.Runs) != 3 {
+		t.Fatalf("expected 3 runs, got %d", len(res.result.Runs))
+	}
+}
+
+func TestRunBatch_ForceClearsExistingBranchesAndProceeds(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := BranchName(450, "Middle issue")
+	runGit(t, dir, "checkout", "-b", branch)
+	runGit(t, dir, "checkout", "main")
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			441: {Number: 441, Title: "First issue"},
+			450: {Number: 450, Title: "Middle issue"},
+			452: {Number: 452, Title: "Third issue"},
+		},
+		prs: map[string]*github.PR{
+			BranchName(441, "First issue"):  mergedPR(BranchName(441, "First issue"), "current-sha"),
+			BranchName(450, "Middle issue"): mergedPR(BranchName(450, "Middle issue"), "current-sha"),
+			BranchName(452, "Third issue"):  mergedPR(BranchName(452, "Third issue"), "current-sha"),
+		},
+	}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 441, Status: "success"}, {IssueNumber: 450, Status: "success"}, {IssueNumber: 452, Status: "success"}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+	oldBranchExists := branchExists
+	branchExists = sandbox.BranchExists
+	t.Cleanup(func() { branchExists = oldBranchExists })
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{441, 450, 452}, Force: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Runs) != 3 {
+		t.Fatalf("expected 3 runs, got %d", len(result.Runs))
+	}
+	if len(factory.created) != 3 {
+		t.Fatalf("expected 3 runnables created, got %d", len(factory.created))
+	}
+	if branchOut := strings.TrimSpace(runGit(t, dir, "branch", "--list", branch)); branchOut == "" {
+		t.Fatalf("expected branch %s to be recreated", branch)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "worktrees", branch)); err != nil {
+		t.Fatalf("expected worktree for %s to be recreated: %v", branch, err)
 	}
 }
 
@@ -3861,10 +4054,7 @@ func TestRunBatch_PrefersLeastLoadedContainerWhenReusingIdleCapacity(t *testing.
 			3: {Number: 3, Title: "Three", State: "closed"},
 			4: {Number: 4, Title: "Four"},
 		},
-		fetchRelease: map[int]<-chan struct{}{},
 	}
-	releaseIssue3Fetch := make(chan struct{})
-	client.fetchRelease[3] = releaseIssue3Fetch
 	starter := &fakeContainerStarter{containers: []sandbox.Container{
 		&fakeContainerForOrchestrator{id: "container-1"},
 		&fakeContainerForOrchestrator{id: "container-2"},
@@ -3910,7 +4100,6 @@ func TestRunBatch_PrefersLeastLoadedContainerWhenReusingIdleCapacity(t *testing.
 
 	waitForSignal(t, started1, "expected issue 1 to start")
 	waitForSignal(t, started2, "expected issue 2 to start")
-	close(releaseIssue3Fetch)
 	waitForSignal(t, started3, "expected issue 3 to start")
 	assertNoSignal(t, started4, "issue 4 should wait for issue 3 to finish")
 
