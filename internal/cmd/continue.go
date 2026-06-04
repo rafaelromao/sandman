@@ -134,7 +134,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				Model:                      model,
 				BaseBranch:                 strings.TrimSpace(baseBranch),
 				Continuation:               true,
-				PreviousRunID:              lastRun.RunID,
+				PreviousRunIDs:             map[int]string{issueNum: lastRun.RunID},
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				PromptConfig: prompt.RenderConfig{
 					ContinuePrompt:   continuePrompt,
