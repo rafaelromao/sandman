@@ -123,7 +123,7 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
 func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	cmd := s.execFn(s.binary, "exec", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
+	cmd := s.execFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
