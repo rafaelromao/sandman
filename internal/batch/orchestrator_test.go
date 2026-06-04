@@ -345,6 +345,51 @@ func (s *spyEventLog) RemoveEventsByIssue(issueNumber int) error {
 	return nil
 }
 
+type threadSafeSpyEventLog struct {
+	mu     sync.Mutex
+	events []events.Event
+}
+
+func (s *threadSafeSpyEventLog) Log(e events.Event) error {
+	s.mu.Lock()
+	s.events = append(s.events, e)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *threadSafeSpyEventLog) Read() ([]events.Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]events.Event, len(s.events))
+	copy(out, s.events)
+	return out, nil
+}
+
+func (s *threadSafeSpyEventLog) RemoveEventsByIssue(issueNumber int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var kept []events.Event
+	for _, e := range s.events {
+		if e.Issue == issueNumber {
+			continue
+		}
+		if e.IssueRef != nil && *e.IssueRef == issueNumber {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	s.events = kept
+	return nil
+}
+
+func (s *threadSafeSpyEventLog) Snapshot() []events.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]events.Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
+
 type blockingRunnable struct {
 	delayAfterCancel time.Duration
 }
@@ -2891,7 +2936,7 @@ func TestRunBatch_PerIssuePreviousRunIDLookup(t *testing.T) {
 			43: {Number: 43, Title: "Add tests"},
 		},
 	}
-	spyLog := &spyEventLog{}
+	spyLog := &threadSafeSpyEventLog{}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{
@@ -2904,6 +2949,7 @@ func TestRunBatch_PerIssuePreviousRunIDLookup(t *testing.T) {
 		Continuation:   true,
 		PreviousRunIDs: map[int]string{42: "run-42-prev", 43: "run-43-prev"},
 		BaseBranch:     "main",
+		Parallel:       1,
 		PromptConfig:   prompt.RenderConfig{ContinuePrompt: "finish the work"},
 	})
 	if err != nil {
@@ -2911,7 +2957,7 @@ func TestRunBatch_PerIssuePreviousRunIDLookup(t *testing.T) {
 	}
 
 	continuedByIssue := map[int]events.Event{}
-	for _, evt := range spyLog.events {
+	for _, evt := range spyLog.Snapshot() {
 		if evt.Type == "run.continued" {
 			continuedByIssue[evt.Issue] = evt
 		}
@@ -2924,6 +2970,49 @@ func TestRunBatch_PerIssuePreviousRunIDLookup(t *testing.T) {
 	}
 	if continuedByIssue[43].Payload["previous_run_id"] != "run-43-prev" {
 		t.Fatalf("expected issue 43 previous run id run-43-prev, got %#v", continuedByIssue[43].Payload["previous_run_id"])
+	}
+}
+
+func TestRunBatch_MultiIssueContinuationLogsPerIssuePreviousRunID(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug A"},
+			99: {Number: 99, Title: "Fix bug B"},
+		},
+	}
+	spyLog := &threadSafeSpyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{
+		42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
+		99: &controlledRunnable{result: AgentRunResult{IssueNumber: 99, Status: "success"}},
+	}}
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Issues:         []int{42, 99},
+		Continuation:   true,
+		PreviousRunIDs: map[int]string{42: "run-42-7", 99: "run-99-3"},
+		BaseBranch:     "main",
+		Parallel:       1,
+		PromptConfig:   prompt.RenderConfig{ContinuePrompt: "finish them"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	prevByIssue := map[int]string{}
+	for _, evt := range spyLog.Snapshot() {
+		if evt.Type != "run.continued" {
+			continue
+		}
+		got, _ := evt.Payload["previous_run_id"].(string)
+		prevByIssue[evt.Issue] = got
+	}
+	if prevByIssue[42] != "run-42-7" {
+		t.Fatalf("expected issue 42 previous_run_id=run-42-7, got %q", prevByIssue[42])
+	}
+	if prevByIssue[99] != "run-99-3" {
+		t.Fatalf("expected issue 99 previous_run_id=run-99-3, got %q", prevByIssue[99])
 	}
 }
 
