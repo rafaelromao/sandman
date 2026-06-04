@@ -13,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/github"
 )
 
 type spyContinueBatchRunner struct {
@@ -307,6 +308,86 @@ func TestContinue_WarnsAndUsesBarePromptWhenContinuationContextMissing(t *testin
 	}
 	if !strings.Contains(buf.String(), "missing continuation context") {
 		t.Fatalf("expected warning about missing context, got %q", buf.String())
+	}
+}
+
+func TestContinue_FailsWhenPRMerged(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+		GitHubClient: &fakeGitHubClient{prs: map[string]*github.PR{
+			branch: {Number: 42, State: "closed", Merged: true, HeadRefName: branch},
+		}},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when PR is already merged")
+	}
+	want := "cannot continue issue #42: PR already merged (branch \"sandman/42-fix-bug\"); use 'sandman pr-review' to finalize"
+	if err.Error() != want {
+		t.Fatalf("expected %q, got %q", want, err.Error())
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called when PR is merged")
+	}
+}
+
+func TestContinue_DoesNotBlockWhenPRNotMerged(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pr   *github.PR
+	}{
+		{name: "open", pr: &github.PR{Number: 42, State: "open", HeadRefName: "sandman/42-fix-bug"}},
+		{name: "closed-unmerged", pr: &github.PR{Number: 42, State: "closed", HeadRefName: "sandman/42-fix-bug"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			branch := "sandman/42-fix-bug"
+			if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+				t.Fatalf("mkdir worktree: %v", err)
+			}
+
+			spy := &spyContinueBatchRunner{result: &batch.Result{}}
+			log := &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
+			deps := Dependencies{
+				BatchRunner: spy,
+				ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+				EventLog:    log,
+				GitHubClient: &fakeGitHubClient{prs: map[string]*github.PR{
+					branch: tc.pr,
+				}},
+			}
+
+			var buf bytes.Buffer
+			cmd := NewContinueCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SetArgs([]string{"42", "finish the tests"})
+
+			err := cmd.Execute()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !spy.called {
+				t.Fatal("expected batch runner to be called when PR is not merged")
+			}
+		})
 	}
 }
 
