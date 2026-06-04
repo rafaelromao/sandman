@@ -5758,6 +5758,54 @@ func TestClearIssueArtifacts_Idempotent(t *testing.T) {
 	ClearIssueArtifacts(42, "sandman/42-nonexistent", ".sandman/worktrees", ".sandman/logs", el, io.Discard)
 }
 
+func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
+	// Simulate a previous run that crashed inside `git worktree add` after the
+	// directory was created but before git registered it. The dir exists with
+	// throwaway content; git never knew about the worktree, so
+	// `git worktree remove --force` / `git worktree prune` / `git branch -D`
+	// all no-op. ClearIssueArtifacts must still clean up the orphan dir.
+	// See #545.
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := "sandman/42-fix-bug"
+	worktreeDir := filepath.Join(".sandman", "worktrees")
+	wtPath := filepath.Join(worktreeDir, branch)
+	if err := os.MkdirAll(wtPath, 0755); err != nil {
+		t.Fatalf("mkdir orphan: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "orphan.txt"), []byte("from a crashed run\n"), 0644); err != nil {
+		t.Fatalf("write orphan file: %v", err)
+	}
+
+	listCmd := exec.Command("git", "worktree", "list")
+	listCmd.Dir = dir
+	if out, err := listCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git worktree list: %v: %s", err, out)
+	} else if strings.Contains(string(out), wtPath) {
+		t.Fatalf("git should not know about the orphan dir, got:\n%s", out)
+	}
+
+	logDir := filepath.Join(".sandman", "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		t.Fatalf("mkdir logs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "42.log"), []byte("stale log"), 0644); err != nil {
+		t.Fatalf("write stale log: %v", err)
+	}
+
+	el := &spyEventLog{}
+	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, io.Discard)
+
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("expected orphan worktree dir to be removed, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(logDir, "42.log")); !os.IsNotExist(err) {
+		t.Errorf("expected log to be removed, got err=%v", err)
+	}
+}
+
 func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

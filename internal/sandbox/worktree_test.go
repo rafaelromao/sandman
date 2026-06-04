@@ -392,3 +392,56 @@ func TestWorktreeSandbox_ExecInteractive_RunsCommand(t *testing.T) {
 		t.Errorf("expected interactive marker file to exist: %v", err)
 	}
 }
+
+func TestWorktreeSandbox_Start_RecreatesOrphanWorktreeDirectory(t *testing.T) {
+	// Simulate a previous run that crashed inside `git worktree add` after the
+	// directory was created but before git registered it. The directory exists
+	// on disk with throwaway content; git has no record of it. Start() must
+	// detect this and re-create a real worktree. See #545.
+	dir := t.TempDir()
+	initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	branch := "sandman/42-fix-bug"
+	orphanPath := filepath.Join(worktreeBase, branch)
+	if err := os.MkdirAll(orphanPath, 0755); err != nil {
+		t.Fatalf("create orphan dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(orphanPath, "stale.txt"), []byte("left over from a previous run\n"), 0644); err != nil {
+		t.Fatalf("write stale file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(orphanPath, "README.md"), []byte("# orphan\n"), 0644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+
+	listCmd := exec.Command("git", "worktree", "list")
+	listCmd.Dir = dir
+	if out, err := listCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git worktree list: %v: %s", err, out)
+	} else if strings.Contains(string(out), orphanPath) {
+		t.Fatalf("git should not know about the orphan dir, got:\n%s", out)
+	}
+
+	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start() failed on orphan dir: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("expected stale orphan content to be gone, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "tracked.txt")); err != nil {
+		t.Errorf("expected tracked.txt from source branch, got err=%v", err)
+	}
+	revParse := exec.Command("git", "rev-parse", "--git-dir")
+	revParse.Dir = s.WorkDir()
+	if out, err := revParse.CombinedOutput(); err != nil {
+		t.Fatalf("worktree dir is not a real git worktree: %v: %s", err, out)
+	}
+}
