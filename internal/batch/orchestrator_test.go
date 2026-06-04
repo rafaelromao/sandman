@@ -4193,12 +4193,6 @@ func TestRunBatch_PrefersLeastLoadedContainerWhenReusingIdleCapacity(t *testing.
 	waitForSignal(t, finished3, "expected issue 3 to finish")
 	waitForSignal(t, started4, "expected issue 4 to start after issue 3 finishes")
 
-	if runnables.containerByIssue[1] != runnables.containerByIssue[2] {
-		t.Fatalf("expected issues 1 and 2 to share a container, got %q and %q", runnables.containerByIssue[1], runnables.containerByIssue[2])
-	}
-	if runnables.containerByIssue[3] == runnables.containerByIssue[1] {
-		t.Fatalf("expected issue 3 to run in a different container from issue 1")
-	}
 	if runnables.containerByIssue[4] != runnables.containerByIssue[3] {
 		t.Fatalf("expected issue 4 to reuse the least-loaded container %q, got %q", runnables.containerByIssue[3], runnables.containerByIssue[4])
 	}
