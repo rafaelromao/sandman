@@ -1012,7 +1012,7 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 		t.Logf("using provider model: %s", tc.model)
 
 		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true, echo: true})
-		writeParallelPRFlowPrompt(t, repoDir)
+		writeParallelPRFlowPrompt(t, repoDir, tc)
 
 		out, err = runSandmanBinary(t, binPath, repoDir, "run",
 			"--agent", tc.name,
@@ -1237,7 +1237,7 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 		t.Logf("using provider model: %s", tc.model)
 
 		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true, echo: true})
-		writeParallelPRFlowPrompt(t, repoDir)
+		writeParallelPRFlowPrompt(t, repoDir, tc)
 
 		out, err = runSandmanBinary(t, binPath, repoDir, "run",
 			"--agent", tc.name,
@@ -1506,7 +1506,7 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 		}
 
 		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true})
-		writeParallelPRFlowPrompt(t, repoDir)
+		writeParallelPRFlowPrompt(t, repoDir, tc)
 
 		out, err = runSandmanBinary(t, binPath, repoDir, "run",
 			"--agent", tc.name,
@@ -1621,7 +1621,7 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 	})
 }
 
-func writeParallelPRFlowPrompt(t *testing.T, repoDir string) {
+func writeParallelPRFlowPrompt(t *testing.T, repoDir string, tc prFlowProviderCase) {
 	t.Helper()
 
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
@@ -1633,7 +1633,7 @@ func writeParallelPRFlowPrompt(t *testing.T, repoDir string) {
 	if err != nil {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
-	agent.Command = fmt.Sprintf(`printf 'containerhostname=%%s\ncontainerworkdir=%%s\n' "$(hostname)" "$(pwd)" && PATH=/workspace/.sandman/bin:${PATH} opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Command = fmt.Sprintf(`printf 'containerhostname=%%s\ncontainerworkdir=%%s\n' "$(hostname)" "$(pwd)" && PATH=/workspace/.sandman/bin:${PATH} opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, tc.model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
