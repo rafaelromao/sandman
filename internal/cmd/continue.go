@@ -50,7 +50,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 			branches := make(map[int]string, len(issues))
 			baseBranches := make(map[int]string, len(issues))
 			previousRunIDs := make(map[int]string, len(issues))
-			worktreePaths := make(map[int]string, len(issues))
+			continuePrompts := make(map[int]string, len(issues))
 			for _, num := range issues {
 				lastRun := lastRuns[num]
 				if lastRun.RunID == "" {
@@ -76,7 +76,19 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				branches[num] = branch
 				baseBranches[num] = strings.TrimSpace(baseBranch)
 				previousRunIDs[num] = lastRun.RunID
-				worktreePaths[num] = worktreePath
+
+				continuePrompt := promptText
+				contextPath := filepath.Join(worktreePath, ".sandman", "continuation-context.md")
+				if content, err := os.ReadFile(contextPath); err != nil {
+					if !os.IsNotExist(err) {
+						return fmt.Errorf("read continuation context %q: %w", contextPath, err)
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: missing continuation context %q; continuing with bare prompt\n", contextPath)
+				} else {
+					priorContext := strings.TrimSpace(stripContinuationContextHeader(string(content)))
+					continuePrompt = buildContinuationPrompt(promptText, priorContext)
+				}
+				continuePrompts[num] = continuePrompt
 			}
 
 			// Replay agent/model/review settings from the first issue's last run.
@@ -116,22 +128,6 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				dangerouslySkipPerm = &val
 			}
 
-			// Continuation prompt is currently built from the first issue's
-			// context. Per-issue prompt rendering is tracked by #443.
-			continuePrompt := promptText
-			firstContextPath := filepath.Join(worktreePaths[firstIssue], ".sandman", "continuation-context.md")
-			if content, err := os.ReadFile(firstContextPath); err != nil {
-				if !os.IsNotExist(err) {
-					return fmt.Errorf("read continuation context %q: %w", firstContextPath, err)
-				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: missing continuation context %q; continuing with bare prompt\n", firstContextPath)
-			} else {
-				priorContext := strings.TrimSpace(stripContinuationContextHeader(string(content)))
-				if priorContext != "" {
-					continuePrompt = buildContinuationPrompt(promptText, priorContext)
-				}
-			}
-
 			req := batch.Request{
 				Issues:                     issues,
 				Branches:                   branches,
@@ -140,9 +136,11 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				BaseBranch:                 baseBranches[firstIssue],
 				Continuation:               true,
 				PreviousRunIDs:             previousRunIDs,
+				BaseBranches:               baseBranches,
+				ContinuePrompts:            continuePrompts,
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				PromptConfig: prompt.RenderConfig{
-					ContinuePrompt:   continuePrompt,
+					ContinuePrompt:   promptText,
 					ReviewCommand:    reviewCommand,
 					ReviewCommandSet: true,
 				},

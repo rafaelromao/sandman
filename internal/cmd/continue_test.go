@@ -97,6 +97,15 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
 		t.Fatalf("expected issue 42, got %v", spy.req.Issues)
 	}
+	if len(spy.req.ContinuePrompts) != 1 {
+		t.Fatalf("expected 1 continue prompt, got %v", spy.req.ContinuePrompts)
+	}
+	if spy.req.BaseBranches[42] != "main" {
+		t.Fatalf("expected base branch main, got %q", spy.req.BaseBranches[42])
+	}
+	if spy.req.PromptConfig.ContinuePrompt != "finish the tests" {
+		t.Fatalf("expected shared bare prompt, got %q", spy.req.PromptConfig.ContinuePrompt)
+	}
 	if !spy.req.Continuation {
 		t.Fatal("expected continuation request")
 	}
@@ -115,17 +124,17 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if spy.req.Agent != "pi" {
 		t.Fatalf("expected agent replay, got %q", spy.req.Agent)
 	}
-	if !strings.Contains(spy.req.PromptConfig.ContinuePrompt, "## Prior Context") {
-		t.Fatalf("expected prior context section, got %q", spy.req.PromptConfig.ContinuePrompt)
+	if !strings.Contains(spy.req.ContinuePrompts[42], "## Prior Context") {
+		t.Fatalf("expected prior context section, got %q", spy.req.ContinuePrompts[42])
 	}
-	if strings.Contains(spy.req.PromptConfig.ContinuePrompt, "# Continuation Context") {
-		t.Fatalf("expected header stripped, got %q", spy.req.PromptConfig.ContinuePrompt)
+	if strings.Contains(spy.req.ContinuePrompts[42], "# Continuation Context") {
+		t.Fatalf("expected header stripped, got %q", spy.req.ContinuePrompts[42])
 	}
-	if !strings.Contains(spy.req.PromptConfig.ContinuePrompt, "finish the tests") {
-		t.Fatalf("expected new instruction, got %q", spy.req.PromptConfig.ContinuePrompt)
+	if !strings.Contains(spy.req.ContinuePrompts[42], "finish the tests") {
+		t.Fatalf("expected new instruction, got %q", spy.req.ContinuePrompts[42])
 	}
-	if !strings.Contains(spy.req.PromptConfig.ContinuePrompt, ".sandman/continuation-context.md") {
-		t.Fatalf("expected update instruction, got %q", spy.req.PromptConfig.ContinuePrompt)
+	if !strings.Contains(spy.req.ContinuePrompts[42], ".sandman/continuation-context.md") {
+		t.Fatalf("expected update instruction, got %q", spy.req.ContinuePrompts[42])
 	}
 	if spy.req.PromptConfig.ReviewCommand != "/custom review 2" {
 		t.Fatalf("expected review command replay, got %q", spy.req.PromptConfig.ReviewCommand)
@@ -285,7 +294,11 @@ func (r *continuationFlowBatchRunner) RunBatch(ctx context.Context, req batch.Re
 	if req.Continuation {
 		eventType = "run.continued"
 		payload = map[string]any{"branch": branch, "base_branch": req.BaseBranch, "previous_run_id": req.PreviousRunIDs[issue]}
-		r.state.prompts = append(r.state.prompts, req.PromptConfig.ContinuePrompt)
+		promptText := req.PromptConfig.ContinuePrompt
+		if perIssuePrompt, ok := req.ContinuePrompts[issue]; ok {
+			promptText = perIssuePrompt
+		}
+		r.state.prompts = append(r.state.prompts, promptText)
 	}
 	r.log.events = append(r.log.events, events.Event{Type: eventType, RunID: runID, Issue: issue, Payload: payload})
 	return &batch.Result{Runs: []batch.AgentRunResult{{IssueNumber: issue, Status: "success", Branch: branch, WorktreePath: worktreePath}}}, nil
@@ -413,6 +426,15 @@ func TestContinue_MultipleIssuesBuildsBranchesAndPreviousRunIDsMaps(t *testing.T
 			t.Fatalf("mkdir worktree %s: %v", b, err)
 		}
 	}
+	for branch, context := range map[string]string{branchA: "## Completed\nFirst issue.\n", branchB: "## Completed\nSecond issue.\n"} {
+		contextPath := filepath.Join(dir, branch, ".sandman", "continuation-context.md")
+		if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err != nil {
+			t.Fatalf("mkdir continuation dir %s: %v", branch, err)
+		}
+		if err := os.WriteFile(contextPath, []byte(context), 0644); err != nil {
+			t.Fatalf("write continuation context %s: %v", branch, err)
+		}
+	}
 
 	spy := &spyContinueBatchRunner{result: &batch.Result{}}
 	log := &fakeEventLog{events: []events.Event{
@@ -441,6 +463,21 @@ func TestContinue_MultipleIssuesBuildsBranchesAndPreviousRunIDsMaps(t *testing.T
 	}
 	if len(spy.req.Issues) != 2 || spy.req.Issues[0] != 1 || spy.req.Issues[1] != 2 {
 		t.Fatalf("expected issues=[1 2], got %v", spy.req.Issues)
+	}
+	if len(spy.req.ContinuePrompts) != 2 {
+		t.Fatalf("expected 2 continue prompts, got %v", spy.req.ContinuePrompts)
+	}
+	if spy.req.BaseBranches[1] != "main" || spy.req.BaseBranches[2] != "main" {
+		t.Fatalf("expected base branches to replay main, got %#v", spy.req.BaseBranches)
+	}
+	if !strings.Contains(spy.req.ContinuePrompts[1], "First issue.") {
+		t.Fatalf("expected issue 1 prompt to include its own context, got %q", spy.req.ContinuePrompts[1])
+	}
+	if !strings.Contains(spy.req.ContinuePrompts[2], "Second issue.") {
+		t.Fatalf("expected issue 2 prompt to include its own context, got %q", spy.req.ContinuePrompts[2])
+	}
+	if spy.req.ContinuePrompts[1] == spy.req.ContinuePrompts[2] {
+		t.Fatal("expected different prompts per issue")
 	}
 	if spy.req.Branches[1] != branchA {
 		t.Fatalf("expected Branches[1]=%q, got %q", branchA, spy.req.Branches[1])
