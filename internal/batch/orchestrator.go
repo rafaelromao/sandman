@@ -105,6 +105,7 @@ type Orchestrator struct {
 	runnableFactory         RunnableFactory
 	sandboxFactory          SandboxFactory
 	baseBranchSync          func(repoPath, sourceBranch string) error
+	baseBranchSyncMu        sync.Mutex
 	containerRuntimeFactory ContainerRuntimeFactory
 	retryReset              func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
 	killTimeout             time.Duration
@@ -1428,6 +1429,8 @@ func (o *Orchestrator) syncBaseBranch(repoPath, baseBranch string) error {
 	if baseBranch == "" {
 		return nil
 	}
+	o.baseBranchSyncMu.Lock()
+	defer o.baseBranchSyncMu.Unlock()
 	syncFn := o.baseBranchSync
 	if syncFn == nil {
 		if o.sandboxFactory != nil {
