@@ -22,7 +22,11 @@ type Request struct {
 	BaseBranch   string
 	Continuation bool
 	// PreviousRunIDs maps each issue number to the run id being continued.
-	PreviousRunIDs             map[int]string
+	PreviousRunIDs map[int]string
+	// BaseBranches maps each issue number to its base branch.
+	BaseBranches map[int]string
+	// ContinuePrompts maps each issue number to its rendered continuation prompt.
+	ContinuePrompts            map[int]string
 	Retries                    int
 	Parallel                   int
 	StartDelay                 time.Duration

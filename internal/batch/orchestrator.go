@@ -753,7 +753,20 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
-			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, baseBranch, blockers, req.Blocked[issueNum], retries, *dangerouslySkipPermissions)
+			renderCfg := req.PromptConfig
+			if req.Continuation {
+				if continuationPrompt, ok := req.ContinuePrompts[issueNum]; ok {
+					renderCfg.ContinuePrompt = continuationPrompt
+				}
+			}
+			issueBaseBranch := baseBranch
+			if req.Continuation {
+				if perIssueBaseBranch, ok := req.BaseBranches[issueNum]; ok && strings.TrimSpace(perIssueBaseBranch) != "" {
+					issueBaseBranch = perIssueBaseBranch
+				}
+			}
+
+			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, resolveBatchGitIdentity, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, issueBaseBranch, blockers, req.Blocked[issueNum], retries, *dangerouslySkipPermissions)
 			if started {
 				defer startGate.Release()
 			} else {

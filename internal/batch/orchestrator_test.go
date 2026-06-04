@@ -233,6 +233,12 @@ func (f *fakeSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBr
 	return f.sandbox
 }
 
+type sandboxFactoryFunc func(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox
+
+func (f sandboxFactoryFunc) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+	return f(repoPath, worktreeBase, branch, sourceBranch, container)
+}
+
 type retrySandbox struct {
 	startCalled      bool
 	writePromptCount int
@@ -3135,6 +3141,66 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	}
 	if continued.Payload["base_branch"] != "main" {
 		t.Fatalf("expected base branch replay, got %#v", continued.Payload["base_branch"])
+	}
+}
+
+func TestRunBatch_ContinuationUsesPerIssuePrompts(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+		},
+	}
+	spyLog := &spyEventLog{}
+	workDir := t.TempDir()
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: workDir, Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+
+	type promptSandboxFactory struct {
+		mu        sync.Mutex
+		sandboxes map[string]*fakeSandbox
+	}
+
+	factory := &promptSandboxFactory{sandboxes: make(map[string]*fakeSandbox)}
+	factoryNew := func(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+		sb := &fakeSandbox{workDir: filepath.Join(worktreeBase, branch)}
+		factory.mu.Lock()
+		factory.sandboxes[branch] = sb
+		factory.mu.Unlock()
+		return sb
+	}
+	o.sandboxFactory = sandboxFactoryFunc(factoryNew)
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Issues:          []int{1, 2},
+		Branches:        map[int]string{1: "sandman/1-one", 2: "sandman/2-two"},
+		Continuation:    true,
+		PreviousRunIDs:  map[int]string{1: "run-1-prev", 2: "run-2-prev"},
+		ContinuePrompts: map[int]string{1: "prompt-one", 2: "prompt-two"},
+		BaseBranch:      "main",
+		PromptConfig:    prompt.RenderConfig{ContinuePrompt: "shared-prompt"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for branch, want := range map[string]string{"sandman/1-one": "prompt-one", "sandman/2-two": "prompt-two"} {
+		factory.mu.Lock()
+		sb := factory.sandboxes[branch]
+		factory.mu.Unlock()
+		if sb == nil {
+			t.Fatalf("missing sandbox for %s", branch)
+		}
+		promptPath := filepath.Join(sb.workDir, ".sandman", "continue-prompt.md")
+		data, err := os.ReadFile(promptPath)
+		if err != nil {
+			t.Fatalf("read prompt for %s: %v", branch, err)
+		}
+		if string(data) != want {
+			t.Fatalf("unexpected prompt for %s: %q", branch, string(data))
+		}
+	}
+	if len(spyLog.events) == 0 {
+		t.Fatal("expected run events")
 	}
 }
 
