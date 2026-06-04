@@ -28,11 +28,10 @@ import (
 )
 
 const (
-	portalPollInterval    = 2 * time.Second
-	portalReadLimit       = 64 * 1024
-	portalReadTimeout     = 250 * time.Millisecond
-	portalStopTimeout     = 20 * time.Second
-	portalMaxEventsPerRun = 20
+	portalPollInterval = 2 * time.Second
+	portalReadLimit    = 64 * 1024
+	portalReadTimeout  = 250 * time.Millisecond
+	portalStopTimeout  = 20 * time.Second
 )
 
 var portalANSISequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -295,10 +294,6 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			return
 		}
 
-		for i := range runs {
-			runs[i].Log = ""
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -342,55 +337,6 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(map[string]any{"runKey": req.RunKey, "status": "stopped", "scope": "batch"})
-	})
-	mux.HandleFunc("/api/runs/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if !strings.HasSuffix(r.URL.Path, "/log") {
-			http.NotFound(w, r)
-			return
-		}
-		runKey := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/runs/"), "/log")
-		if runKey == "" {
-			http.Error(w, "missing run key", http.StatusBadRequest)
-			return
-		}
-		runs, err := loadPortalRuns(repoRoot)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		var run *portalRun
-		for i := range runs {
-			if runs[i].Key == runKey {
-				run = &runs[i]
-				break
-			}
-		}
-		if run == nil {
-			http.Error(w, "run not found", http.StatusNotFound)
-			return
-		}
-		var logContent string
-		if run.Status == "blocked" {
-			logContent = "Blocked. Waiting on unresolved blockers."
-		} else if run.Status == "queued" {
-			logContent = "Queued. Waiting to start."
-		} else if run.Log != "" {
-			logContent = run.Log
-		} else if run.SocketPath != "" {
-			logContent = readPortalSocketOutput(run.SocketPath)
-			if logContent == "" && run.LogPath != "" {
-				logContent = readPortalTextFile(run.LogPath)
-			}
-		} else if run.LogPath != "" {
-			logContent = readPortalTextFile(run.LogPath)
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write([]byte(logContent))
 	})
 	mux.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -1171,9 +1117,6 @@ func groupPortalEventsByRun(eventsList []events.Event) map[string][]portalEvent 
 		sort.SliceStable(grouped[runID], func(i, j int) bool {
 			return grouped[runID][i].Timestamp.Before(grouped[runID][j].Timestamp)
 		})
-		if len(grouped[runID]) > portalMaxEventsPerRun {
-			grouped[runID] = grouped[runID][len(grouped[runID])-portalMaxEventsPerRun:]
-		}
 	}
 	return grouped
 }
@@ -1254,13 +1197,9 @@ func readPortalSocketOutput(sockPath string) string {
 
 	var buf bytes.Buffer
 	tmp := make([]byte, 4096)
-	for buf.Len() < portalReadLimit {
+	for {
 		n, readErr := conn.Read(tmp)
 		if n > 0 {
-			remaining := portalReadLimit - buf.Len()
-			if n > remaining {
-				n = remaining
-			}
 			_, _ = buf.Write(tmp[:n])
 		}
 		if readErr != nil {
@@ -1269,6 +1208,10 @@ func readPortalSocketOutput(sockPath string) string {
 			}
 			break
 		}
+	}
+	if buf.Len() > portalReadLimit {
+		data := buf.Bytes()
+		buf = *bytes.NewBuffer(append([]byte(nil), data[len(data)-portalReadLimit:]...))
 	}
 	return cleanPortalText(buf.String())
 }

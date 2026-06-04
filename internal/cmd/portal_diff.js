@@ -179,9 +179,6 @@
     const pre = global.document.createElement('pre');
     pre.classList.add('terminal-text');
     pre.setAttribute('data-scroll-key', run.key);
-    if (log === 'No log file yet.') {
-      pre.setAttribute('data-loading-log', run.key);
-    }
     fillTerminalPre(pre, log, helpers);
     pre.setAttribute('data-rendered-log', log);
     return pre;
@@ -449,115 +446,25 @@
     if (!content) return;
     if (tabName === 'log') {
       const pre = content.querySelector('pre[data-scroll-key]');
-      if (run.log && String(run.log).trim()) {
-        const newLog = run.log;
-        if (pre) {
-          const oldLog = pre.getAttribute('data-rendered-log') || '';
-          if (oldLog === newLog) {
-            return;
-          }
-          if (oldLog && newLog.length >= oldLog.length && newLog.startsWith(oldLog)) {
-            appendTerminalPre(pre, oldLog, newLog.slice(oldLog.length), opts.helpers);
-          } else {
-            fillTerminalPre(pre, newLog, opts.helpers);
-          }
-          pre.setAttribute('data-rendered-log', newLog);
-          mutationCount += 1;
-          return;
-        }
-        while (content.firstChild) content.removeChild(content.firstChild);
-        content.removeAttribute('data-rendered-fingerprint');
-        buildLogContent(content, run, opts.helpers);
-        mutationCount += 1;
-        return;
-      }
-      if (pre && (pre.getAttribute('data-loading-log') || pre.getAttribute('data-fetched-log') === run.key)) {
-        if (pre.getAttribute('data-loading-log')) {
-          pre.setAttribute('data-rendered-log', 'Loading...');
-          fillTerminalPre(pre, 'Loading...', opts.helpers);
-          mutationCount += 1;
-          if (typeof globalThis.fetch === 'function') {
-            const logUrl = '/api/runs/' + encodeURIComponent(run.key) + '/log';
-            fetch(logUrl, { cache: 'no-store' })
-              .then(function(res) { return res.ok ? res.text() : null; })
-              .then(function(text) {
-                if (!text) {
-                  pre.setAttribute('data-rendered-log', 'No log file yet.');
-                  fillTerminalPre(pre, 'No log file yet.', opts.helpers);
-                  pre.removeAttribute('data-loading-log');
-                  return;
-                }
-                run.log = text;
-                const loadedPre = content.querySelector('pre[data-loading-log="' + run.key + '"]');
-                if (loadedPre) {
-                  fillTerminalPre(loadedPre, text, opts.helpers);
-                  loadedPre.setAttribute('data-rendered-log', text);
-                  loadedPre.removeAttribute('data-loading-log');
-                  loadedPre.setAttribute('data-fetched-log', run.key);
-                }
-              });
-          }
-          return;
-        }
-        if (pre.getAttribute('data-fetched-log') === run.key) {
-          pre.setAttribute('data-loading-log', run.key);
-          if (typeof globalThis.fetch === 'function') {
-            const logUrl = '/api/runs/' + encodeURIComponent(run.key) + '/log';
-            fetch(logUrl, { cache: 'no-store' })
-              .then(function(res) { return res.ok ? res.text() : null; })
-              .then(function(text) {
-                if (!text) {
-                  pre.setAttribute('data-rendered-log', 'No log file yet.');
-                  fillTerminalPre(pre, 'No log file yet.', opts.helpers);
-                  pre.removeAttribute('data-loading-log');
-                  pre.removeAttribute('data-fetched-log');
-                  return;
-                }
-                run.log = text;
-                fillTerminalPre(pre, text, opts.helpers);
-                pre.setAttribute('data-rendered-log', text);
-                pre.removeAttribute('data-loading-log');
-                pre.setAttribute('data-fetched-log', run.key);
-              });
-          }
-          return;
-        }
-      }
+      const newLog = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       if (pre) {
-        pre.setAttribute('data-rendered-log', 'Loading...');
-        fillTerminalPre(pre, 'Loading...', opts.helpers);
+        const oldLog = pre.getAttribute('data-rendered-log') || '';
+        if (oldLog === newLog) {
+          return;
+        }
+        if (oldLog && newLog.length >= oldLog.length && newLog.startsWith(oldLog)) {
+          appendTerminalPre(pre, oldLog, newLog.slice(oldLog.length), opts.helpers);
+        } else {
+          fillTerminalPre(pre, newLog, opts.helpers);
+        }
+        pre.setAttribute('data-rendered-log', newLog);
         mutationCount += 1;
         return;
       }
       while (content.firstChild) content.removeChild(content.firstChild);
       content.removeAttribute('data-rendered-fingerprint');
-      const loadingPre = global.document.createElement('pre');
-      loadingPre.classList.add('terminal-text');
-      loadingPre.setAttribute('data-scroll-key', run.key);
-      loadingPre.setAttribute('data-loading-log', run.key);
-      fillTerminalPre(loadingPre, 'Loading...', opts.helpers);
-      const section = global.document.createElement('section');
-      section.classList.add('detail-box', 'tab-pane', 'fill');
-      const h3 = global.document.createElement('h3');
-      h3.textContent = 'Log';
-      section.appendChild(h3);
-      section.appendChild(loadingPre);
-      content.appendChild(section);
+      buildLogContent(content, run, opts.helpers);
       mutationCount += 1;
-      const logUrl = '/api/runs/' + encodeURIComponent(run.key) + '/log';
-      fetch(logUrl, { cache: 'no-store' })
-        .then(function(res) { return res.ok ? res.text() : null; })
-        .then(function(text) {
-          if (!text) return;
-          run.log = text;
-          const loadedPre = content.querySelector('pre[data-loading-log="' + run.key + '"]');
-          if (loadedPre) {
-            fillTerminalPre(loadedPre, text, opts.helpers);
-            loadedPre.setAttribute('data-rendered-log', text);
-            loadedPre.removeAttribute('data-loading-log');
-            loadedPre.setAttribute('data-fetched-log', run.key);
-          }
-        });
       return;
     }
     let fingerprint = tabName;
