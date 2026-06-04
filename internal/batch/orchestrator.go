@@ -695,7 +695,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
-			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunID, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, baseBranch, blockers, req.Blocked[issueNum], retries, *dangerouslySkipPermissions)
+			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, resolveBatchGitIdentity, req.Branches, req.PromptConfig, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, baseBranch, blockers, req.Blocked[issueNum], retries, *dangerouslySkipPermissions)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -891,7 +891,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunID string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, baseBranch string, blockers []int, externalBlockers []int, retries int, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, baseBranch string, blockers []int, externalBlockers []int, retries int, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
@@ -979,7 +979,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			"prompt_source_type": promptSourceType,
 		}
 		if continuation {
-			payload = map[string]any{"branch": branch, "base_branch": baseBranch, "previous_run_id": previousRunID}
+			payload = map[string]any{"branch": branch, "base_branch": baseBranch, "previous_run_id": previousRunIDs[num]}
 		}
 		if promptSourceValue != "" && !continuation {
 			payload["prompt_source_value"] = promptSourceValue
