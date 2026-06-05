@@ -651,10 +651,19 @@ case "$1" in
   issue)
     if [ "${2:-}" = "view" ]; then
       case "${3:-}" in
-        1|2)
+        1)
           issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(2) return 4."
           cat <<JSON
-{"number":$issue_number,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4."}
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+JSON
+          exit 0
+          ;;
+        2)
+          issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(3) return 6."
+          cat <<JSON
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
 JSON
           exit 0
           ;;
@@ -842,10 +851,19 @@ case "$1" in
   issue)
     if [ "${2:-}" = "view" ]; then
       case "${3:-}" in
-        1|2)
+        1)
           issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(2) return 4."
           cat <<JSON
-{"number":$issue_number,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4."}
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+JSON
+          exit 0
+          ;;
+        2)
+          issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(3) return 6."
+          cat <<JSON
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
 JSON
           exit 0
           ;;
