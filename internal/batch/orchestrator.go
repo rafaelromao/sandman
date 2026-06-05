@@ -110,6 +110,9 @@ type Orchestrator struct {
 	retryReset              func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
 	killTimeout             time.Duration
 	errorLog                io.Writer
+
+	issueCancelsMu sync.Mutex
+	issueCancels   map[int]context.CancelFunc
 }
 
 type containerLease struct {
@@ -428,7 +431,35 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.Renderer, confi
 		configStore:  configStore,
 		eventLog:     eventLog,
 		errorLog:     os.Stderr,
+		issueCancels: make(map[int]context.CancelFunc),
 	}
+}
+
+// AbortIssue cancels the context of a single in-flight AgentRun, leaving
+// siblings untouched. If the issue is not currently tracked (already finished
+// or never started), it returns ErrNoSuchIssue. AbortIssue is safe to call
+// concurrently with RunBatch.
+func (o *Orchestrator) AbortIssue(issueNumber int) error {
+	o.issueCancelsMu.Lock()
+	cancel, ok := o.issueCancels[issueNumber]
+	o.issueCancelsMu.Unlock()
+	if !ok {
+		return ErrNoSuchIssue
+	}
+	cancel()
+	return nil
+}
+
+func (o *Orchestrator) registerIssueCancel(issueNumber int, cancel context.CancelFunc) {
+	o.issueCancelsMu.Lock()
+	o.issueCancels[issueNumber] = cancel
+	o.issueCancelsMu.Unlock()
+}
+
+func (o *Orchestrator) unregisterIssueCancel(issueNumber int) {
+	o.issueCancelsMu.Lock()
+	delete(o.issueCancels, issueNumber)
+	o.issueCancelsMu.Unlock()
 }
 
 // RunBatch executes the requested AgentRuns in parallel.
@@ -681,6 +712,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			defer wg.Done()
 			defer close(completed[issueNum])
 
+			issueCtx, issueCancel := context.WithCancel(ctx)
+			o.registerIssueCancel(issueNum, issueCancel)
+			defer o.unregisterIssueCancel(issueNum)
+			defer issueCancel()
+
 			advanceTurn := func() {
 				if effectiveParallel != 1 {
 					return
@@ -712,15 +748,22 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				})
 			}
 
-			for _, blocker := range blockers {
-				<-completed[blocker]
-			}
-
 			abortedBy := make([]int, 0, len(blockers))
 			stillBlockedBy := make([]int, 0, len(blockers))
-			mu.Lock()
 			for _, blocker := range blockers {
-				switch statuses[blocker] {
+				if err := issueCtx.Err(); err != nil {
+					<-completed[blocker]
+				} else {
+					select {
+					case <-completed[blocker]:
+					case <-issueCtx.Done():
+						<-completed[blocker]
+					}
+				}
+				mu.Lock()
+				status := statuses[blocker]
+				mu.Unlock()
+				switch status {
 				case "aborted":
 					abortedBy = append(abortedBy, blocker)
 				case "success":
@@ -728,7 +771,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					stillBlockedBy = append(stillBlockedBy, blocker)
 				}
 			}
-			mu.Unlock()
 			if len(abortedBy) > 0 {
 				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 				o.logAborted(issueNum, runID, abortedBy)
@@ -750,12 +792,21 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				mu.Unlock()
 				return
 			}
+			if err := issueCtx.Err(); err != nil {
+				o.logAborted(issueNum, runID, nil)
+				mu.Lock()
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+				statuses[issueNum] = "aborted"
+				abortedCount++
+				mu.Unlock()
+				return
+			}
 
 			if effectiveParallel == 1 {
 				turnMu.Lock()
 				waiting := true
 				for waiting {
-					if err := ctx.Err(); err != nil {
+					if err := issueCtx.Err(); err != nil {
 						turnMu.Unlock()
 						o.logAborted(issueNum, runID, nil)
 						mu.Lock()
@@ -774,7 +825,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				turnMu.Unlock()
 			}
 
-			if err := startGate.Acquire(ctx); err != nil {
+			if err := startGate.Acquire(issueCtx); err != nil {
 				o.logAborted(issueNum, runID, nil)
 				mu.Lock()
 				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
@@ -797,7 +848,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 
-			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, resolveBatchGitIdentity, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, req.Force, issueBaseBranch, blockers, req.Blocked[issueNum], parallel, startDelay, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
+			res, started := o.runSingle(issueCtx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, resolveBatchGitIdentity, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, req.Force, issueBaseBranch, blockers, req.Blocked[issueNum], parallel, startDelay, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -1337,6 +1388,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	return &Result{Runs: []AgentRunResult{result}}, nil
 }
 
+// runPromptOnlySingle executes a single prompt-only AgentRun.
 func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
 	if err := o.syncBaseBranch(".", baseBranch); err != nil {
 		fmt.Fprintf(o.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
