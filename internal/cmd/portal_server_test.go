@@ -198,7 +198,32 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	}
 }
 
-func TestPortal_LoadPortalRunsTreatsCancelledAsTerminalFailure(t *testing.T) {
+func TestPortal_LoadPortalRunsTreatsAbortedAsTerminalAborted(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.aborted", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %#v", runs)
+	}
+	run := runs[0]
+	if run.Kind != "completed" || run.Status != "aborted" {
+		t.Fatalf("expected aborted run to project as completed aborted, got %#v", run)
+	}
+}
+
+func TestPortal_LoadPortalRunsTreatsLegacyCancelledAsAborted(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -218,8 +243,8 @@ func TestPortal_LoadPortalRunsTreatsCancelledAsTerminalFailure(t *testing.T) {
 		t.Fatalf("expected 1 run, got %#v", runs)
 	}
 	run := runs[0]
-	if run.Kind != "completed" || run.Status != "failure" {
-		t.Fatalf("expected cancelled run to project as completed failure, got %#v", run)
+	if run.Kind != "completed" || run.Status != "aborted" {
+		t.Fatalf("expected legacy cancelled run to project as completed aborted, got %#v", run)
 	}
 }
 
@@ -298,7 +323,7 @@ func TestPortal_StopRunEndpointStopsActiveRunAndRefreshesStatus(t *testing.T) {
 			t.Fatalf("expected run key run-42-1, got %q", runKey)
 		}
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-			{Type: "run.cancelled", Timestamp: time.Now(), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
+			{Type: "run.aborted", Timestamp: time.Now(), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-fix"}},
 		})
 		return os.RemoveAll(runDir)
 	}
@@ -326,8 +351,8 @@ func TestPortal_StopRunEndpointStopsActiveRunAndRefreshesStatus(t *testing.T) {
 		t.Fatalf("expected 1 projected run after stop, got %#v", runs)
 	}
 	run := runs[0]
-	if run.Kind != "completed" || run.Status != "failure" || run.IssueNumber != 42 {
-		t.Fatalf("expected stopped run to project as completed failure, got %#v", run)
+	if run.Kind != "completed" || run.Status != "aborted" || run.IssueNumber != 42 {
+		t.Fatalf("expected stopped run to project as completed aborted, got %#v", run)
 	}
 }
 
@@ -380,7 +405,7 @@ func TestStopPortalRunSignalsPeerAndWaitsForTerminalState(t *testing.T) {
 			t.Fatalf("expected SIGTERM, got %v", sig)
 		}
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-			{Type: "run.cancelled", Timestamp: time.Now(), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
+			{Type: "run.aborted", Timestamp: time.Now(), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-fix"}},
 		})
 		return os.RemoveAll(runDir)
 	}
@@ -397,8 +422,8 @@ func TestStopPortalRunSignalsPeerAndWaitsForTerminalState(t *testing.T) {
 		t.Fatalf("expected 1 projected run after stop, got %#v", runs)
 	}
 	run := runs[0]
-	if run.Kind != "completed" || run.Status != "failure" || run.IssueNumber != 42 {
-		t.Fatalf("expected stopped run to project as completed failure, got %#v", run)
+	if run.Kind != "completed" || run.Status != "aborted" || run.IssueNumber != 42 {
+		t.Fatalf("expected stopped run to project as completed aborted, got %#v", run)
 	}
 }
 

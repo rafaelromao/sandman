@@ -73,8 +73,12 @@ The maximum number of ContainerSandboxes Sandman may create for one Batch. `max_
 _Avoid_: isolated container toggle, fixed pool size.
 
 **Event**:
-A single structured log entry in the append-only JSONL event log (`.sandman/events.jsonl`). Examples: `run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.warning`, `run.finished`, `run.cancelled`. A `run.queued` event is emitted when an issue enters the wait queue due to having unresolved blockers or due to parallel capacity constraints (i.e., when effective parallelism is less than the total number of issues in the batch).
+A single structured log entry in the append-only JSONL event log (`.sandman/events.jsonl`). Examples: `run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.warning`, `run.finished`, `run.aborted`. A `run.queued` event is emitted when an issue enters the wait queue due to having unresolved blockers or due to parallel capacity constraints (i.e., when effective parallelism is less than the total number of issues in the batch).
 _Avoid_: Log line, record.
+
+**Aborted**:
+A first-class terminal AgentRun status indicating the run was interrupted by context cancellation (e.g. SIGINT/SIGTERM) before it could finish on its own merits. Emitted as a `run.aborted` event with `status: aborted`. `RunState.Status()` returns `"aborted"` for any `run.aborted` event and, for backwards compatibility, for legacy `run.cancelled` events in older `events.jsonl` files.
+_Avoid_: cancelled, killed, terminated.
 
 **Issue**:
 A GitHub issue fetched via `gh` CLI. The unit of work delegated to an agent.

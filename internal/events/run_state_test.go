@@ -94,12 +94,12 @@ func TestProjectRunStates_TreatsBlockedRunAsTerminal(t *testing.T) {
 	}
 }
 
-func TestProjectRunStates_TreatsCancelledRunAsTerminalFailure(t *testing.T) {
-	cancelledAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+func TestProjectRunStates_TreatsAbortedRunAsTerminalAborted(t *testing.T) {
+	abortedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: cancelledAt.Add(-1 * time.Minute), RunID: "run-cancelled", Issue: 408},
-		{Type: "run.cancelled", Timestamp: cancelledAt, RunID: "run-cancelled", Issue: 408, Payload: map[string]any{"status": "failure"}},
+		{Type: "run.started", Timestamp: abortedAt.Add(-1 * time.Minute), RunID: "run-aborted", Issue: 408},
+		{Type: "run.aborted", Timestamp: abortedAt, RunID: "run-aborted", Issue: 408, Payload: map[string]any{"status": "aborted"}},
 	})
 
 	if len(runs) != 1 {
@@ -108,10 +108,34 @@ func TestProjectRunStates_TreatsCancelledRunAsTerminalFailure(t *testing.T) {
 
 	run := runs[0]
 	if run.IsActive() {
-		t.Fatal("expected cancelled run to be terminal")
+		t.Fatal("expected aborted run to be terminal")
 	}
-	if got := run.Status(); got != "failure" {
-		t.Fatalf("expected failure status, got %q", got)
+	if got := run.Status(); got != "aborted" {
+		t.Fatalf("expected aborted status, got %q", got)
+	}
+	if got := run.IssueLabel(); got != "#408" {
+		t.Fatalf("expected issue label #408, got %q", got)
+	}
+}
+
+func TestProjectRunStates_LegacyCancelledEventStillProjectsAsAborted(t *testing.T) {
+	legacyAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: legacyAt.Add(-1 * time.Minute), RunID: "run-cancelled", Issue: 408},
+		{Type: "run.cancelled", Timestamp: legacyAt, RunID: "run-cancelled", Issue: 408, Payload: map[string]any{"status": "failure"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if run.IsActive() {
+		t.Fatal("expected legacy cancelled run to be terminal")
+	}
+	if got := run.Status(); got != "aborted" {
+		t.Fatalf("expected aborted status, got %q", got)
 	}
 	if got := run.IssueLabel(); got != "#408" {
 		t.Fatalf("expected issue label #408, got %q", got)

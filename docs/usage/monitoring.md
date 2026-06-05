@@ -32,7 +32,7 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 
 | Field | Description |
 |-------|-------------|
-| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.warning`, `run.finished`, `run.cancelled`) |
+| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.warning`, `run.finished`, `run.aborted`) |
 | `timestamp` | ISO 8601 timestamp |
 | `run_id` | Unique run identifier |
 | `issue` | GitHub issue number, or `null` for prompt-only runs |
@@ -66,7 +66,7 @@ Emitted for non-fatal issues during sandbox cleanup.
 | `message` | Warning message |
 
 #### `run.finished`
-Emitted when an agent run completes or is cancelled.
+Emitted when an agent run completes.
 
 | Field | Description |
 |-------|-------------|
@@ -77,8 +77,8 @@ Emitted when an agent run completes or is cancelled.
 | `retries_total` | Total retry attempts configured |
 | `retries_done` | Actual retries performed |
 
-#### `run.cancelled`
-Emitted when a run is cancelled via context cancellation (SIGINT/SIGTERM). Payload same as `run.finished` with `status: failure`.
+#### `run.aborted`
+Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Payload same as `run.finished` with `status: aborted`. Legacy `run.cancelled` events in older `events.jsonl` files project to the same `aborted` status.
 
 ## Run logs
 
