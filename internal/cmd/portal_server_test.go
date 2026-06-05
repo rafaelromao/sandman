@@ -782,6 +782,31 @@ func TestPortal_PageIncludesMobileCommandHistoryLayout(t *testing.T) {
 		}
 	}
 }
+func TestPortal_MobileTableShellIsNotFixedHeightTrap(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+
+	if strings.Contains(content, ".table-shell { border-radius: 16px; height: 56px; overflow: auto; flex: 0 0 auto; }") {
+		t.Fatalf("page traps .table-shell in a 56px scroller at the 760px breakpoint; remove the fixed-height shell so the runs table flows naturally on mobile")
+	}
+}
+
 func TestPortal_CommandsEndpointPersistsAsyncLaunches(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
