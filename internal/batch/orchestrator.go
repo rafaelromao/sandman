@@ -846,12 +846,14 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(cfg *config.Config, agentCf
 		return &sandboxExecutionPolicy{mode: sandboxMode, sandboxFactory: sbFactory}, nil
 	}
 
-	dockerfilePath := filepath.Join(".", ".sandman", "Dockerfile")
-	if _, err := os.Stat(dockerfilePath); err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf(".sandman/Dockerfile not found at %s; container mode requires a Dockerfile in the .sandman directory", dockerfilePath)
+	if req.RequireDockerfile {
+		dockerfilePath := filepath.Join(".", ".sandman", "Dockerfile")
+		if _, err := os.Stat(dockerfilePath); err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf(".sandman/Dockerfile not found at %s; container mode requires a Dockerfile in the .sandman directory", dockerfilePath)
+			}
+			return nil, fmt.Errorf("check .sandman/Dockerfile: %w", err)
 		}
-		return nil, fmt.Errorf("check .sandman/Dockerfile: %w", err)
 	}
 
 	defaultAgent := strings.TrimSpace(cfg.DefaultAgent)

@@ -3964,6 +3964,7 @@ func TestOrchestrator_MetadataFreeDockerfileSkipsDriftValidation(t *testing.T) {
 	}
 	dir := t.TempDir()
 	t.Chdir(dir)
+	t.Setenv("HOME", t.TempDir())
 
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
 		t.Fatalf("create .sandman: %v", err)
