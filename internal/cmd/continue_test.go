@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -713,5 +714,106 @@ func TestContinue_UsesVariadicSyntaxInUseString(t *testing.T) {
 	cmd := NewContinueCmd(newTestDeps())
 	if !strings.Contains(cmd.Use, "[issue-number...]") {
 		t.Fatalf("expected Use to indicate variadic issue numbers, got %q", cmd.Use)
+	}
+}
+
+func TestContinue_ExitsWithCode130OnAbort(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{
+		result: &batch.Result{
+			Runs: []batch.AgentRunResult{
+				{IssueNumber: 42, Status: "aborted", Branch: branch},
+			},
+		},
+		err: batch.ErrAborted,
+	}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error from aborted batch")
+	}
+
+	if !errors.Is(err, batch.ErrAborted) {
+		t.Errorf("expected error to wrap batch.ErrAborted, got %v", err)
+	}
+
+	var coded *ExitCodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("expected *ExitCodedError, got %T: %v", err, err)
+	}
+	if coded.Code != 130 {
+		t.Errorf("expected exit code 130, got %d", coded.Code)
+	}
+	if !strings.Contains(stderr.String(), "batch aborted by operator") {
+		t.Errorf("expected 'batch aborted by operator' on stderr, got:\n%s", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Summary: 1 aborted") {
+		t.Errorf("expected aborted summary on stdout, got:\n%s", stdout.String())
+	}
+}
+
+func TestContinue_PreservesRunBatchErrorMessage(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{
+		result: &batch.Result{
+			Runs: []batch.AgentRunResult{
+				{IssueNumber: 42, Status: "failure", Branch: branch},
+			},
+		},
+		err: errors.New("1 of 1 runs failed"),
+	}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error from failed batch")
+	}
+
+	if !strings.Contains(err.Error(), "run batch: 1 of 1 runs failed") {
+		t.Errorf("expected wrapped 'run batch' message, got %v", err)
+	}
+
+	var coded *ExitCodedError
+	if errors.As(err, &coded) {
+		t.Errorf("expected plain error (not *ExitCodedError) for non-abort failure, got %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -40,6 +41,10 @@ func main() {
 
 	rootCmd := cmd.NewRootCmd(deps)
 	if err := rootCmd.Execute(); err != nil {
+		var coded *cmd.ExitCodedError
+		if errors.As(err, &coded) {
+			os.Exit(coded.Code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

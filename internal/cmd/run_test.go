@@ -16,6 +16,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/spf13/cobra"
 )
 
 // spyBatchRunner records the Request it receives.
@@ -622,7 +623,7 @@ func TestRun_PrintsSummaryOnSuccess(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "Summary: 2 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 2 succeeded") {
 		t.Errorf("expected success summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
@@ -734,11 +735,190 @@ func TestRun_PrintsSummaryWithBlockedRunsAndNoFailures(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed, 2 blocked") {
+	if !strings.Contains(out, "Summary: 1 succeeded, 2 blocked") {
 		t.Errorf("expected blocked summary without failures, got:\n%s", out)
 	}
 	if !strings.Contains(out, "#101  blocked  sandman/101-another-dependent") {
 		t.Errorf("expected issue 101 blocked in summary, got:\n%s", out)
+	}
+}
+
+func TestRun_PrintsSummaryWithAbortedRuns(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{
+		Runs: []batch.AgentRunResult{
+			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
+			{IssueNumber: 43, Status: "aborted", Branch: "sandman/43-stalled"},
+		},
+	}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "43"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "Summary: 1 succeeded, 1 aborted") {
+		t.Errorf("expected aborted summary, got:\n%s", out)
+	}
+	if strings.Contains(out, "0 failed") {
+		t.Errorf("expected zero-failed bucket to be omitted, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#43  aborted  sandman/43-stalled") {
+		t.Errorf("expected issue 43 aborted in summary, got:\n%s", out)
+	}
+}
+
+func TestPrintSummary_ReportsAbortedCount(t *testing.T) {
+	result := &batch.Result{
+		Runs: []batch.AgentRunResult{
+			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
+			{IssueNumber: 43, Status: "failure", Branch: "sandman/43-broken"},
+			{IssueNumber: 44, Status: "aborted", Branch: "sandman/44-stalled"},
+			{IssueNumber: 100, Status: "blocked", Branch: "sandman/100-dependent"},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	printSummary(cmd, result)
+
+	out := buf.String()
+	want := "Summary: 1 succeeded, 1 failed, 1 aborted, 1 blocked"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected %q in summary, got:\n%s", want, out)
+	}
+}
+
+func TestPrintSummary_OmitsAbortedWhenZero(t *testing.T) {
+	result := &batch.Result{
+		Runs: []batch.AgentRunResult{
+			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
+			{IssueNumber: 43, Status: "failure", Branch: "sandman/43-broken"},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	printSummary(cmd, result)
+
+	out := buf.String()
+	if strings.Contains(out, "aborted") {
+		t.Errorf("expected no aborted bucket when zero, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Summary: 1 succeeded, 1 failed") {
+		t.Errorf("expected base summary, got:\n%s", out)
+	}
+}
+
+func TestPrintSummary_OmitsSucceededWhenZero(t *testing.T) {
+	result := &batch.Result{
+		Runs: []batch.AgentRunResult{
+			{IssueNumber: 43, Status: "aborted", Branch: "sandman/43-stalled"},
+			{IssueNumber: 44, Status: "aborted", Branch: "sandman/44-stalled"},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	printSummary(cmd, result)
+
+	out := buf.String()
+	if strings.Contains(out, "succeeded") {
+		t.Errorf("expected no succeeded bucket when zero, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Summary: 2 aborted") {
+		t.Errorf("expected only aborted bucket, got:\n%s", out)
+	}
+}
+
+func TestRun_ExitsWithCode130OnAbort(t *testing.T) {
+	spy := &spyBatchRunner{
+		result: &batch.Result{
+			Runs: []batch.AgentRunResult{
+				{IssueNumber: 42, Status: "aborted", Branch: "sandman/42-fix-bug"},
+			},
+		},
+		err: batch.ErrAborted,
+	}
+	deps := newRunDeps(spy)
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error from aborted batch")
+	}
+
+	if !errors.Is(err, batch.ErrAborted) {
+		t.Errorf("expected error to wrap batch.ErrAborted, got %v", err)
+	}
+
+	var coded *ExitCodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("expected *ExitCodedError, got %T: %v", err, err)
+	}
+	if coded.Code != 130 {
+		t.Errorf("expected exit code 130, got %d", coded.Code)
+	}
+	if !strings.Contains(stderr.String(), "batch aborted by operator") {
+		t.Errorf("expected 'batch aborted by operator' on stderr, got:\n%s", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Summary: 1 aborted") {
+		t.Errorf("expected aborted summary on stdout, got:\n%s", stdout.String())
+	}
+}
+
+func TestRun_PreservesRunBatchErrorMessage(t *testing.T) {
+	spy := &spyBatchRunner{
+		result: &batch.Result{
+			Runs: []batch.AgentRunResult{
+				{IssueNumber: 42, Status: "failure", Branch: "sandman/42-broken"},
+			},
+		},
+		err: errors.New("1 of 1 runs failed"),
+	}
+	deps := newRunDeps(spy)
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error from failed batch")
+	}
+
+	if !strings.Contains(err.Error(), "run batch: 1 of 1 runs failed") {
+		t.Errorf("expected wrapped 'run batch' message, got %v", err)
+	}
+
+	var coded *ExitCodedError
+	if errors.As(err, &coded) {
+		t.Errorf("expected plain error (not *ExitCodedError) for non-abort failure, got %v", err)
 	}
 }
 
