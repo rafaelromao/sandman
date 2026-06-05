@@ -699,11 +699,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			defer advanceTurn()
 
+			runID := generateRunID(issueNum)
+
 			if o.eventLog != nil && (len(blockers) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 				_ = o.eventLog.Log(events.Event{
 					Type:      "run.queued",
 					Timestamp: time.Now(),
-					RunID:     generateRunID(issueNum),
+					RunID:     runID,
 					Issue:     issueNum,
 					IssueRef:  issueRef(issueNum),
 					Payload:   map[string]any{"blocked_by": blockers},
@@ -714,17 +716,33 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				<-completed[blocker]
 			}
 
-			blockedBy := make([]int, 0, len(blockers))
+			abortedBy := make([]int, 0, len(blockers))
+			nonAbortedBlockers := make([]int, 0, len(blockers))
 			mu.Lock()
 			for _, blocker := range blockers {
-				if statuses[blocker] != "success" {
-					blockedBy = append(blockedBy, blocker)
+				switch statuses[blocker] {
+				case "aborted":
+					abortedBy = append(abortedBy, blocker)
+				case "success":
+				default:
+					nonAbortedBlockers = append(nonAbortedBlockers, blocker)
 				}
 			}
 			mu.Unlock()
-			if len(blockedBy) > 0 {
+			if len(abortedBy) > 0 {
+				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+				o.logAborted(issueNum, runID, abortedBy)
+
+				mu.Lock()
+				results[idx] = res
+				statuses[issueNum] = res.Status
+				abortedCount++
+				mu.Unlock()
+				return
+			}
+			if len(nonAbortedBlockers) > 0 {
 				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "blocked", Branch: req.Branches[issueNum]}
-				o.logBlocked(issueNum, blockedBy)
+				o.logBlocked(issueNum, nonAbortedBlockers, runID)
 
 				mu.Lock()
 				results[idx] = res
@@ -739,6 +757,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				for waiting {
 					if err := ctx.Err(); err != nil {
 						turnMu.Unlock()
+						o.logAborted(issueNum, runID, nil)
 						mu.Lock()
 						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 						statuses[issueNum] = "aborted"
@@ -756,6 +775,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 
 			if err := startGate.Acquire(ctx); err != nil {
+				o.logAborted(issueNum, runID, nil)
 				mu.Lock()
 				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 				statuses[issueNum] = "aborted"
@@ -907,17 +927,35 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(cfg *config.Config, agentCf
 	}, nil
 }
 
-func (o *Orchestrator) logBlocked(issueNum int, blockers []int) {
+func (o *Orchestrator) logBlocked(issueNum int, blockers []int, runID string) {
 	if o.eventLog == nil {
 		return
 	}
 	_ = o.eventLog.Log(events.Event{
 		Type:      "run.blocked",
 		Timestamp: time.Now(),
-		RunID:     generateRunID(issueNum),
+		RunID:     runID,
 		Issue:     issueNum,
 		IssueRef:  issueRef(issueNum),
 		Payload:   map[string]any{"blocked_by": blockers},
+	})
+}
+
+func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
+	if o.eventLog == nil {
+		return
+	}
+	payload := map[string]any{"status": "aborted"}
+	if len(abortedBy) > 0 {
+		payload["aborted_by"] = abortedBy
+	}
+	_ = o.eventLog.Log(events.Event{
+		Type:      "run.aborted",
+		Timestamp: time.Now(),
+		RunID:     runID,
+		Issue:     issueNum,
+		IssueRef:  issueRef(issueNum),
+		Payload:   payload,
 	})
 }
 
@@ -1030,9 +1068,10 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		_ = wt.Stop()
 		return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
 	}
+	runID := generateRunID(num)
 	if len(blockedBy) > 0 {
 		res := AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "blocked", Branch: branch}
-		o.logBlocked(num, blockedBy)
+		o.logBlocked(num, blockedBy, runID)
 		_ = wt.Stop()
 		return res, false
 	}
@@ -1051,7 +1090,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		factory = defaultRunnableFactory{}
 	}
 
-	runID := generateRunID(num)
 	if o.eventLog != nil {
 		promptSourceType := "current"
 		promptSourceValue := ""

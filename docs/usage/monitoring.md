@@ -78,7 +78,7 @@ Emitted when an agent run completes.
 | `retries_done` | Actual retries performed |
 
 #### `run.aborted`
-Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Payload same as `run.finished` with `status: aborted`. Legacy `run.cancelled` events in older `events.jsonl` files project to the same `aborted` status.
+Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Also emitted for runs that were still queued (waiting on the turn gate or the start gate) when the batch was cancelled, and cascaded to dependents whose in-batch blocker finished with status `aborted` (instead of `run.blocked`). For queued/cascaded runs, the `RunID` matches the prior `run.queued` event so projection collapses to a single `RunState`. For cancellation the payload is the same as `run.finished` with `status: aborted`; for cascaded aborts the payload adds `aborted_by` listing the upstream blocker(s). Legacy `run.cancelled` events in older `events.jsonl` files project to the same `aborted` status.
 
 ## Run logs
 
@@ -108,7 +108,7 @@ When Sandman receives SIGINT or SIGTERM (e.g., Ctrl+C):
 
 ### Blocked runs
 
-A run is marked as `blocked` when one or more of its `BlockedBy` issues failed in the same batch. Blocked runs do not execute — they are reported in the batch summary:
+A run is marked as `blocked` when one or more of its `BlockedBy` issues failed in the same batch with a non-aborted status. Blocked runs do not execute — they are reported in the batch summary:
 
 ```
 Summary: 3 succeeded, 0 failed, 1 blocked
@@ -116,7 +116,7 @@ Summary: 3 succeeded, 0 failed, 1 blocked
   #43  blocked
 ```
 
-The event log records a `run.blocked` event for each blocked run, including which blockers caused it.
+The event log records a `run.blocked` event for each blocked run, including which blockers caused it. If a blocker finished with status `aborted` instead, the dependent is itself emitted as `run.aborted` (with `aborted_by` listing the upstream blocker) and counted in the aborted total rather than the blocked total.
 
 ### Queued runs
 
