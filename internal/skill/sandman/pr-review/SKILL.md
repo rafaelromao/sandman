@@ -39,7 +39,7 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
 
 3. **Delegate review to the PR Review Agent**
 
-    Request a review with this exact command. Do not change the body of the request.
+    Request a review with this exact command. Do not change the body of the request for the initial review request.
 
     ```bash
     gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
@@ -62,12 +62,12 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
 
    Read every new PR Review Agent comment from all sources, including inline file comments.
    Do not overlook comments attached to a file diff instead of the top-level conversation.
-   Treat any requested change in an inline file comment as actionable feedback.
+    Treat any requested concrete change in an inline file comment as actionable feedback.
    If no response arrives within 10 minutes, stop and report to the user.
 
 5. **Read and classify feedback**
 
-   Merge data from all three sources above, then apply this decision tree:
+    Merge data from all three sources above, then apply this decision tree. When multiple cases match, `APPROVED` and `CHANGES_REQUESTED` win first, then actionable feedback, then ambiguity, then pending/boilerplate:
 
    **A. Formal approval detected?**
    - `reviewDecision: APPROVED` in the JSON, OR
@@ -95,23 +95,30 @@ Your only job is to delegate the review to the PR Review Agent by posting `{{REV
    `didn't find any major issues`, `no major issues`, `minor issues only`,
    `only minor`, `no major concerns`
 
-   **D. Still pending?**
-   - `reviewDecision: "REVIEW_REQUIRED"` or absent, AND
-   - No reviews with `state: "APPROVED"` or `state: "CHANGES_REQUESTED"`, AND
-   - No inline file comments exist (from `gh api .../comments`), AND
-   - All review bodies are boilerplate-only (see below)
-   → **Still waiting** — continue polling, do not give up
+    **D. Still pending?**
+    - `reviewDecision: "REVIEW_REQUIRED"` or absent, AND
+    - No reviews with `state: "APPROVED"` or `state: "CHANGES_REQUESTED"`, AND
+    - No inline file comments with a concrete requested change exist (from `gh api .../comments`), AND
+    - All review bodies are boilerplate-only (see below)
+    → **Still waiting** — continue polling, do not give up
 
-   **E. Real feedback detected?**
-   Inline file comments exist from `gh api .../comments`, OR review body contains concrete code feedback beyond boilerplate:
-   - Boilerplate pattern: body starts with "### 💡" or "### Codex Review" and only contains "Here are some automated review suggestions" without mentioning specific files, functions, variable names, or line numbers
-   - Real feedback: mentions specific file paths, function names, variable names, or requests concrete code changes
-   → **Has blockers or suggestions** — treat as actionable feedback, apply fixes, commit, push, and re-request review
+    **E. Real feedback detected?**
+    Inline file comments exist from `gh api .../comments` with a concrete requested code change, OR review body contains concrete code feedback beyond boilerplate:
+    - Boilerplate pattern: body starts with "### 💡" or "### Codex Review" and only contains "Here are some automated review suggestions" without mentioning specific files, functions, variable names, or line numbers
+    - Real feedback: mentions specific file paths, function names, variable names, or requests concrete code changes
+    → **Has blockers or suggestions** — treat as actionable feedback, apply fixes, commit, push, and re-request review
 
-   **F. Only nits, suggestions, or questions?**
-   - Comments that are nits (minor stylistic), suggestions (optional improvements), or questions (not blocking)
-   - No `CHANGES_REQUESTED` reviews
-    → **Suggestions** — fix if straightforward; skip if requires non-trivial redesign and re-request review after addressing what is straightforward
+    **F. Ambiguous feedback with unclear actionable intent only?**
+    - Inline file comments or review bodies exist, but they do not specify a concrete code change
+    - The reviewer's intended action cannot be reduced to a concrete code change
+    - The feedback is not concrete enough to classify as a specific fix, blocker, or suggestion
+    - No `APPROVED` or `CHANGES_REQUESTED` review is present
+    → **Clarification** — do not guess, do not change code. Post a new PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling.
+
+    **G. Only nits or suggestions?**
+    - Comments that are nits (minor stylistic) or suggestions (optional improvements)
+    - No `CHANGES_REQUESTED` reviews
+     → **Suggestions** — fix if straightforward; skip if requires non-trivial redesign and re-request review after addressing what is straightforward
 
 6. **Apply fixes**
    - Read `.<N>.addressed_comments` to get the set of already-addressed inline comment IDs
@@ -159,7 +166,7 @@ Note: Some review agents (e.g., Codex) post an initial boilerplate comment ("Her
 
 - Use `gh pr view <N> --repo <owner/repo> --json state,mergeStateStatus` to check merge readiness after approval.
 - Keep commits focused: one commit per review round is fine.
-- If the reviewer asks a question rather than giving actionable feedback, answer in a PR comment and re-request review.
+    - If feedback is ambiguous because actionable intent is unclear, use the ambiguity branch: ask for clarification in a PR comment with `{{REVIEW_COMMAND}}`, then keep polling without changing code.
 - Never force-push or amend commits.
 - Always delegate the review request to the PR Review Agent via `{{REVIEW_COMMAND}}` — you are strictly forbidden from reviewing your own PR in the same session.
 - Review agents may post feedback as: top-level PR comments, inline diff comments, or formal reviews with `COMMENT` event. Always check all three sources.
