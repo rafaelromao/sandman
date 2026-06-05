@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -9,6 +10,9 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
+
+// ErrAborted is returned (wrapped) by RunBatch when context cancellation interrupted an in-flight AgentRun.
+var ErrAborted = errors.New("batch aborted by context cancellation")
 
 // Request describes a batch of AgentRuns to execute.
 type Request struct {

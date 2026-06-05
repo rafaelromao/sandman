@@ -1264,6 +1264,9 @@ func TestRunBatch_ReturnsAbortedStatusOnCancel(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected interrupted batch to return error")
 	}
+	if !errors.Is(err, ErrAborted) {
+		t.Fatalf("expected error to wrap batch.ErrAborted, got %v", err)
+	}
 	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "aborted" {
 		t.Fatalf("expected aborted batch result to report aborted, got %#v", result)
 	}
@@ -1294,6 +1297,9 @@ func TestRunBatch_PreservesSuccessfulRunWhenContextCancelsLate(t *testing.T) {
 	result, err := o.RunBatch(ctx, Request{Issues: []int{42}})
 	if err != nil {
 		t.Fatalf("expected successful batch result, got error: %v", err)
+	}
+	if errors.Is(err, ErrAborted) {
+		t.Fatalf("expected successful batch to not wrap batch.ErrAborted, got %v", err)
 	}
 	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "success" {
 		t.Fatalf("expected successful run to stay success, got %#v", result)
@@ -1365,6 +1371,9 @@ func TestRunBatch_ReturnsAbortedStatusOnPromptOnlyCancel(t *testing.T) {
 	result, err := o.RunBatch(ctx, Request{PromptConfig: prompt.RenderConfig{PromptFlag: "return only ok"}})
 	if err == nil {
 		t.Fatal("expected interrupted prompt-only batch to return error")
+	}
+	if !errors.Is(err, ErrAborted) {
+		t.Fatalf("expected error to wrap batch.ErrAborted, got %v", err)
 	}
 	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "aborted" {
 		t.Fatalf("expected aborted prompt-only batch result to report aborted, got %#v", result)
