@@ -14,6 +14,10 @@ import (
 // ErrAborted is returned (wrapped) by RunBatch when context cancellation interrupted an in-flight AgentRun.
 var ErrAborted = errors.New("batch aborted by context cancellation")
 
+// ErrNoSuchIssue is returned by Orchestrator.AbortIssue when the named issue is
+// not currently tracked (already finished, never started, or unknown to this batch).
+var ErrNoSuchIssue = errors.New("batch: no such issue")
+
 // Request describes a batch of AgentRuns to execute.
 type Request struct {
 	Issues []int

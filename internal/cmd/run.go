@@ -358,6 +358,15 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return err
 			}
 
+			var cmdServer *daemon.CommandServer
+			if commander, ok := deps.BatchRunner.(daemon.IssueCommander); ok {
+				cmdServer = daemon.NewCommandServer(runDir, commander)
+				if err := cmdServer.Start(); err != nil {
+					return err
+				}
+				defer cmdServer.Stop()
+			}
+
 			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
 				Force:                      forceFlag,
 				Issues:                     resolvedBatch.Issues,

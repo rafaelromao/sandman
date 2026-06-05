@@ -415,9 +415,14 @@ func (s *threadSafeSpyEventLog) Snapshot() []events.Event {
 
 type blockingRunnable struct {
 	delayAfterCancel time.Duration
+	running          chan struct{}
+	once             sync.Once
 }
 
 func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	if b.running != nil {
+		b.once.Do(func() { close(b.running) })
+	}
 	<-ctx.Done()
 	time.Sleep(b.delayAfterCancel)
 	return AgentRunResult{IssueNumber: 42, Status: "failure"}
@@ -6149,7 +6154,7 @@ func TestRunBatch_LogsAbortedForQueuedRunOnCancel(t *testing.T) {
 		proc := &fakeProcess{}
 		sb := &fakeSandbox{process: proc}
 		factory := &fakeSandboxFactory{sandbox: sb}
-		blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+		blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond, running: make(chan struct{})}
 		spyLog := &spyEventLog{}
 
 		o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
@@ -6241,7 +6246,7 @@ func TestRunBatch_CascadesAbortFromBlockerToDependents(t *testing.T) {
 	proc := &fakeProcess{}
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
-	blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond}
+	blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond, running: make(chan struct{})}
 	spyLog := &spyEventLog{}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
@@ -6352,4 +6357,211 @@ func findQueuedAndAborted(t *testing.T, recorded []events.Event, issueNum int) (
 		t.Fatalf("expected run.aborted event for issue %d", issueNum)
 	}
 	return queuedEvent, abortedEvent
+}
+
+func TestOrchestrator_AbortIssue_AlreadyFinishedReturnsErrNoSuchIssue(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+
+	if _, err := o.RunBatch(context.Background(), Request{Issues: []int{42}}); err != nil {
+		t.Fatalf("RunBatch returned error: %v", err)
+	}
+
+	if err := o.AbortIssue(42); !errors.Is(err, ErrNoSuchIssue) {
+		t.Fatalf("expected ErrNoSuchIssue, got %v", err)
+	}
+}
+
+func TestOrchestrator_AbortIssue_ActiveRun(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+
+	proc := &fakeProcess{}
+	sb := &fakeSandbox{process: proc}
+	factory := &fakeSandboxFactory{sandbox: sb}
+	blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond, running: make(chan struct{})}
+	spyLog := &spyEventLog{}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = factory
+	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+
+	abortReturned := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	}()
+
+	// Wait for the runnable to be actively running, then abort it.
+	select {
+	case <-blockRunnable.running:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected active runnable to be running")
+	}
+	abortReturned <- o.AbortIssue(42)
+	waitForSignal(t, done, "expected batch to complete after AbortIssue")
+
+	select {
+	case err := <-abortReturned:
+		if err != nil {
+			t.Fatalf("AbortIssue returned error: %v", err)
+		}
+	default:
+	}
+
+	var abortedEvent *events.Event
+	for i := range spyLog.events {
+		e := &spyLog.events[i]
+		if e.Issue == 42 && e.Type == "run.aborted" {
+			abortedEvent = e
+			break
+		}
+	}
+	if abortedEvent == nil {
+		t.Fatalf("expected run.aborted event for issue 42, got %v", spyLog.events)
+	}
+	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
+		t.Fatalf("expected aborted terminal status, got %q", status)
+	}
+	if proc.sigTermCalled {
+		t.Fatal("per-issue abort should not cascade SIGTERM (sibling Ctrl+C path)")
+	}
+}
+
+func TestOrchestrator_AbortIssue_QueuedRun(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "First"},
+			43: {Number: 43, Title: "Second"},
+		},
+	}
+
+	started42 := make(chan struct{})
+	release42 := make(chan struct{})
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 42, Status: "success"},
+				started: started42,
+				release: release42,
+			},
+			43: &controlledRunnable{result: AgentRunResult{IssueNumber: 43, Status: "success"}},
+		},
+	}
+	spyLog := &spyEventLog{}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{
+			Issues:   []int{42, 43},
+			Parallel: 1,
+		})
+	}()
+
+	waitForSignal(t, started42, "expected 42 to start")
+	if err := o.AbortIssue(43); err != nil {
+		t.Fatalf("AbortIssue(43) returned error: %v", err)
+	}
+	close(release42)
+	waitForSignal(t, done, "expected batch to complete after AbortIssue")
+
+	assertQueuedThenAbortedWithSameRunID(t, spyLog.events, 43)
+}
+
+func TestOrchestrator_AbortIssue_BlockedRun(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+		},
+	}
+
+	started42 := make(chan struct{})
+	release42 := make(chan struct{})
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 42, Status: "success"},
+				started: started42,
+				release: release42,
+			},
+			100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "success"}},
+		},
+	}
+	spyLog := &spyEventLog{}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{
+			Issues:       []int{42, 100},
+			Dependencies: map[int][]int{100: {42}},
+			Parallel:     2,
+		})
+	}()
+
+	waitForSignal(t, started42, "expected 42 to start")
+	if err := o.AbortIssue(100); err != nil {
+		t.Fatalf("AbortIssue(100) returned error: %v", err)
+	}
+	close(release42)
+	waitForSignal(t, done, "expected batch to complete after AbortIssue")
+
+	for i := range spyLog.events {
+		e := &spyLog.events[i]
+		if e.Issue == 100 && e.Type == "run.blocked" {
+			t.Fatal("did not expect run.blocked for 100 (per-issue abort should override)")
+		}
+	}
+	var abortedEvent *events.Event
+	for i := range spyLog.events {
+		e := &spyLog.events[i]
+		if e.Issue == 100 && e.Type == "run.aborted" {
+			abortedEvent = e
+			break
+		}
+	}
+	if abortedEvent == nil {
+		t.Fatalf("expected run.aborted event for 100, got %v", spyLog.events)
+	}
+	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
+		t.Fatalf("expected aborted terminal status, got %q", status)
+	}
 }
