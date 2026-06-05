@@ -391,6 +391,22 @@
       downloadKv.appendChild(empty);
     }
     meta.appendChild(downloadKv);
+    const status = String(run.status || '').toLowerCase();
+    if (status === 'cancelled' || status === 'failure' || status === 'blocked') {
+      const continueKv = global.document.createElement('div');
+      continueKv.classList.add('kv');
+      const continueLabel = global.document.createElement('span');
+      continueLabel.textContent = 'Continue';
+      continueKv.appendChild(continueLabel);
+      const button = global.document.createElement('button');
+      button.classList.add('action-btn');
+      button.setAttribute('type', 'button');
+      button.setAttribute('data-action', 'launch-continue');
+      button.setAttribute('data-run-key', run.key);
+      button.textContent = 'Continue';
+      continueKv.appendChild(button);
+      meta.appendChild(continueKv);
+    }
     section.appendChild(meta);
     content.appendChild(section);
   }

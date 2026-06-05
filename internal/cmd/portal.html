@@ -1585,7 +1585,7 @@
         containerCapacity: '',
         maxContainers: '',
       },
-      continue: { issue: '', prompt: '' },
+      continue: { issue: '', issues: '', prompt: '' },
       clean: { cleanMode: 'success', confirmed: false },
       config: { configMode: 'get', configKey: '', configValue: '' },
       status: {},
@@ -1916,7 +1916,7 @@
         commandSection('Continue', [
           commandNote('Resume one or more repo-scoped tasks by issue number and optional prompt.'),
           '<div class="command-grid">',
-          commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || '') + '">'),
+          commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || state.issue || '') + '">'),
           commandField('Prompt', '<textarea name="prompt" placeholder="finish the tests">' + escapeHTML(state.prompt || '') + '</textarea>'),
           '</div>',
         ].join('')),
@@ -2032,7 +2032,7 @@
         setValue('containerCapacity', state.containerCapacity || '');
         setValue('maxContainers', state.maxContainers || '');
       } else if (type === 'continue') {
-        setValue('issues', state.issues || '');
+        setValue('issues', state.issues || state.issue || '');
         setValue('prompt', state.prompt || '');
       } else if (type === 'clean') {
         setValue('cleanMode', state.cleanMode || 'success');
@@ -2082,8 +2082,10 @@
         };
       }
       if (type === 'continue') {
+        const issues = getVal('issues', '');
         return {
-          issue: getVal('issue', ''),
+          issue: issues,
+          issues: issues,
           prompt: getVal('prompt', ''),
         };
       }
@@ -2174,6 +2176,39 @@
       if (!expanded) commandFormToggle.focus();
     }
 
+    function findRunByKey(runKey) {
+      if (!runKey || !Array.isArray(state.runs)) return null;
+      return state.runs.find((run) => run && run.key === runKey) || null;
+    }
+
+    function continueIssueValue(command) {
+      if (!command) return '';
+      if (Number.isInteger(command.issueNumber) && command.issueNumber > 0) return String(command.issueNumber);
+      const issueLabel = String(command.issueLabel || '');
+      const match = issueLabel.match(/#?(\d+)/);
+      if (match) return match[1];
+      return '';
+    }
+
+    function launchContinueFromRun(command) {
+      const issue = continueIssueValue(command);
+      syncCommandPanelState(commandPanelType);
+      commandState.continue = {
+        issue: issue,
+        issues: issue,
+        prompt: '',
+      };
+      commandPanelType = 'continue';
+      if (commandPicker) commandPicker.value = 'continue';
+      setCommandPanelOpen(true);
+      setCommandFormExpanded(true);
+      renderCommandPanelBody('continue');
+      window.requestAnimationFrame(() => {
+        const promptField = commandPanelBody ? commandPanelBody.querySelector('textarea[name="prompt"]') : null;
+        if (promptField) promptField.focus({ preventScroll: true });
+      });
+    }
+
     function buildCommandPayload(type) {
       const state = commandState[type] || {};
       if (type === 'run') {
@@ -2215,7 +2250,7 @@
         return payload;
       }
       if (type === 'continue') {
-        const issuesStr = (state.issues || '').trim();
+        const issuesStr = (state.issues || state.issue || '').trim();
         if (!issuesStr) throw new Error('continue requires issue numbers');
         const issues = issuesStr.split(',').map((s) => maybeInt(s)).filter((n) => n != null);
         if (issues.length === 0) throw new Error('continue requires valid issue numbers');
@@ -2640,6 +2675,11 @@
         const runKey = button.getAttribute('data-run-key');
         if (!runKey) return;
         const action = button.getAttribute('data-action');
+        if (action === 'launch-continue') {
+          event.preventDefault();
+          launchContinueFromRun(findRunByKey(runKey));
+          return;
+        }
         if (action === 'stop-batch') {
           event.preventDefault();
           stopBatch(runKey);
