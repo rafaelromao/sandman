@@ -127,6 +127,8 @@ func LogRetryMarker(logPath string, attempt, maxRetries int) {
 	_ = logRetryMarker(logPath, attempt, maxRetries)
 }
 
+var logRetryMarkerFn = logRetryMarker
+
 func logRetryMarker(logPath string, attempt, maxRetries int) error {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)
@@ -167,3 +169,5 @@ func logRunMarker(logPath string, attempt, maxRetries int) error {
 	}
 	return nil
 }
+
+var logRunMarkerFn = logRunMarker

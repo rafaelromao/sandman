@@ -1072,6 +1072,61 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	}
 }
 
+func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	currentHead := "current-sha"
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree"), execStdout: "hello from agent\n"}
+	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
+	oldMarkerFn := logRunMarkerFn
+	logRunMarkerFn = func(string, int, int) error { return errors.New("marker write failed") }
+	t.Cleanup(func() { logRunMarkerFn = oldMarkerFn })
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return currentHead, nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{
+				branch: mergedPR(branch, currentHead),
+			},
+		},
+		renderer: &spyPromptRenderer{result: "rendered prompt"},
+		errorLog: io.Discard,
+		sandboxFactory: &fakeSandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &fakeSandboxFactory{sandbox: rtSandbox}, nil, "main", nil, nil, 0, 0, 0, "", 0, false, 0, false, false)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), "hello from agent") {
+		t.Fatalf("expected agent output in log, got:\n%s", data)
+	}
+}
+
 func TestBatchStartGate_HonoursEffectiveParallel(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
