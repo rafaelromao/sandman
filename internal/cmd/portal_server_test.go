@@ -1747,3 +1747,34 @@ func TestDedupPortalRunGroup_AbortedWinsOverActiveBlockedQueued(t *testing.T) {
 		t.Fatalf("expected aborted status, got %q", result[0].Status)
 	}
 }
+
+func TestDedupPortalRunGroup_TieBrokenByLatestStartedAt(t *testing.T) {
+	base := time.Now().Add(-10 * time.Minute)
+	group := []portalRun{
+		{Key: "aborted-earlier", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base},
+		{Key: "aborted-later", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base.Add(5 * time.Minute)},
+	}
+
+	result := dedupPortalRunGroup(group)
+
+	if len(result) != 1 {
+		t.Fatalf("expected single row, got %d: %#v", len(result), result)
+	}
+	if result[0].Key != "aborted-later" {
+		t.Fatalf("expected tie-break to pick latest StartedAt (aborted-later), got %q", result[0].Key)
+	}
+}
+
+func TestDedupPortalRunGroup_AllZeroPriorityRowsAreUntouched(t *testing.T) {
+	base := time.Now().Add(-10 * time.Minute)
+	group := []portalRun{
+		{Key: "success-row", Kind: "completed", Status: "success", IssueNumber: 42, StartedAt: base},
+		{Key: "failure-row", Kind: "completed", Status: "failure", IssueNumber: 42, StartedAt: base.Add(1 * time.Minute)},
+	}
+
+	result := dedupPortalRunGroup(group)
+
+	if len(result) != 2 {
+		t.Fatalf("expected succeeded and failure rows to be untouched (2 rows), got %d: %#v", len(result), result)
+	}
+}
