@@ -425,6 +425,7 @@ func TestWorktreeSandbox_Start_RecreatesOrphanWorktreeDirectory(t *testing.T) {
 	}
 
 	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s.SetForce(true)
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start() failed on orphan dir: %v", err)
 	}
@@ -443,5 +444,35 @@ func TestWorktreeSandbox_Start_RecreatesOrphanWorktreeDirectory(t *testing.T) {
 	revParse.Dir = s.WorkDir()
 	if out, err := revParse.CombinedOutput(); err != nil {
 		t.Fatalf("worktree dir is not a real git worktree: %v: %s", err, out)
+	}
+}
+
+func TestWorktreeSandbox_Start_LeavesExistingWorktreeDirectoryWithoutForce(t *testing.T) {
+	// Without --force, Sandman should reuse an existing worktree directory.
+	// This mirrors the valid-worktree fast path in Start().
+	dir := t.TempDir()
+	initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(worktreeBase, branch)
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatalf("create worktree dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".git"), []byte("gitdir: /tmp/fake-worktree\n"), 0644); err != nil {
+		t.Fatalf("write .git file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, "stale.txt"), []byte("left over from a previous run\n"), 0644); err != nil {
+		t.Fatalf("write stale file: %v", err)
+	}
+
+	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("expected Start() to succeed without force: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(worktreePath, "stale.txt")); err != nil {
+		t.Fatalf("expected existing worktree content to remain without force: %v", err)
 	}
 }

@@ -776,7 +776,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 
-			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, resolveBatchGitIdentity, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, issueBaseBranch, blockers, req.Blocked[issueNum], parallel, startDelay, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
+			res, started := o.runSingle(ctx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, resolveBatchGitIdentity, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, req.Force, issueBaseBranch, blockers, req.Blocked[issueNum], parallel, startDelay, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -972,7 +972,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, baseBranch string, blockers []int, externalBlockers []int, parallel int, startDelay time.Duration, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, blockers []int, externalBlockers []int, parallel int, startDelay time.Duration, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
 	issue, err := o.githubClient.FetchIssue(num)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
@@ -1001,6 +1001,9 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 	}
 
 	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, baseBranch, container)
+	if setter, ok := wt.(interface{ SetForce(bool) }); ok {
+		setter.SetForce(force)
+	}
 	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
 		identity, err := resolveGitIdentity()
 		if err != nil {
@@ -1276,7 +1279,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	_ = startDelay
 	_ = parallel
 	branch := promptOnlyBranch(req.PromptConfig)
-	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, resolveGitIdentity, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions)
+	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, resolveGitIdentity, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Force, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -1286,7 +1289,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	return &Result{Runs: []AgentRunResult{result}}, nil
 }
 
-func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
+func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
 	if err := o.syncBaseBranch(".", baseBranch); err != nil {
 		fmt.Fprintf(o.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
 		return AgentRunResult{Status: "failure", Branch: branch}, false
@@ -1303,6 +1306,9 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 	}
 
 	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, baseBranch, container)
+	if setter, ok := wt.(interface{ SetForce(bool) }); ok {
+		setter.SetForce(force)
+	}
 	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
 		identity, err := resolveGitIdentity()
 		if err != nil {
