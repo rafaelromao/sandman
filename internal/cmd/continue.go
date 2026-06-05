@@ -73,6 +73,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				if merged {
 					return fmt.Errorf("cannot continue issue #%d: PR already merged (branch %q)", num, branch)
 				}
+
 				worktreePath := filepath.Join(worktreeBase, branch)
 				if info, err := os.Stat(worktreePath); err != nil {
 					if os.IsNotExist(err) {
