@@ -683,6 +683,49 @@ func TestPortal_PageExposesMobileExpandedRunPanelStyles(t *testing.T) {
 	}
 }
 
+func TestPortal_PageExposesMobileRunDetailFactsLayout(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	start := strings.Index(content, `@media (max-width: 760px)`)
+	if start < 0 {
+		t.Fatalf("page missing mobile media query\n%s", content[:min(1000, len(content))])
+	}
+	block := content[start:]
+	if end := strings.Index(block, `@media (prefers-reduced-motion: reduce)`); end >= 0 {
+		block = block[:end]
+	}
+	for _, want := range []string{
+		`.detail-meta {`,
+		`grid-template-columns: repeat(2, minmax(0, 1fr));`,
+		`gap: 8px 12px;`,
+		`.detail-box h3 {`,
+		`padding-left: 14px;`,
+		`padding-right: 14px;`,
+		`.kv span {`,
+		`font-size: 10px;`,
+	} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("mobile detail facts layout missing %q\n%s", want, block[:min(1000, len(block))])
+		}
+	}
+}
+
 func TestPortal_PageExposesContinueFromRunShortcut(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
