@@ -78,7 +78,14 @@ Emitted when an agent run completes.
 | `retries_done` | Actual retries performed |
 
 #### `run.aborted`
-Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Also emitted for runs that were still queued (waiting on the turn gate or the start gate) when the batch was cancelled, and cascaded to dependents whose in-batch blocker finished with status `aborted` (instead of `run.blocked`). For queued/cascaded runs, the `RunID` matches the prior `run.queued` event so projection collapses to a single `RunState`. For cancellation the payload is the same as `run.finished` with `status: aborted`; for cascaded aborts the payload adds `aborted_by` listing the upstream blocker(s). Legacy `run.cancelled` events in older `events.jsonl` files project to the same `aborted` status.
+Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Also emitted for runs that were still queued (waiting on the turn gate or the start gate) when the batch was cancelled, and cascaded to dependents whose in-batch blocker finished with status `aborted` (instead of `run.blocked`). For queued/cascaded runs, the `RunID` matches the prior `run.queued` event so projection collapses to a single `RunState`.
+
+Payload shape depends on the abort path:
+
+- **Active run cancelled** (same as `run.finished`): `status`, `branch`, `base_branch`, `worktree_state`, `retries_total`, `retries_done` with `status: aborted`.
+- **Queued/blocked run cancelled or cascaded**: minimal payload — `status: aborted`, plus optional `aborted_by` listing the upstream blocker(s) for the cascade case.
+
+Legacy `run.cancelled` events in older `events.jsonl` files project to the same `aborted` status.
 
 ## Run logs
 

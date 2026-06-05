@@ -717,7 +717,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 
 			abortedBy := make([]int, 0, len(blockers))
-			nonAbortedBlockers := make([]int, 0, len(blockers))
+			stillBlockedBy := make([]int, 0, len(blockers))
 			mu.Lock()
 			for _, blocker := range blockers {
 				switch statuses[blocker] {
@@ -725,7 +725,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					abortedBy = append(abortedBy, blocker)
 				case "success":
 				default:
-					nonAbortedBlockers = append(nonAbortedBlockers, blocker)
+					stillBlockedBy = append(stillBlockedBy, blocker)
 				}
 			}
 			mu.Unlock()
@@ -740,9 +740,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				mu.Unlock()
 				return
 			}
-			if len(nonAbortedBlockers) > 0 {
+			if len(stillBlockedBy) > 0 {
 				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "blocked", Branch: req.Branches[issueNum]}
-				o.logBlocked(issueNum, nonAbortedBlockers, runID)
+				o.logBlocked(issueNum, stillBlockedBy, runID)
 
 				mu.Lock()
 				results[idx] = res
