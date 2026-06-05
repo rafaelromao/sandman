@@ -49,7 +49,7 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if err != nil {
 		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected run success summary, got:\n%s", out)
 	}
 
@@ -88,7 +88,7 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if err != nil {
 		t.Fatalf("first continue failed: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected first continue success summary, got:\n%s", out)
 	}
 
@@ -124,7 +124,7 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if err != nil {
 		t.Fatalf("second continue failed: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected second continue success summary, got:\n%s", out)
 	}
 
@@ -222,7 +222,7 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sandman run %s failed: %v\noutput:\n%s", issue, err, out)
 		}
-		if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		if !strings.Contains(out, "Summary: 1 succeeded") {
 			t.Fatalf("expected run success summary for issue %s, got:\n%s", issue, out)
 		}
 	}
@@ -250,7 +250,7 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("multi-issue continue failed: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 2 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 2 succeeded") {
 		t.Fatalf("expected multi-issue continue success summary, got:\n%s", out)
 	}
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -259,6 +260,9 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				printSummary(cmd, result)
 			}
 			if err != nil {
+				if errors.Is(err, batch.ErrAborted) {
+					return &ExitCodedError{Code: 130, Msg: "batch aborted by operator", Err: err}
+				}
 				return fmt.Errorf("run batch: %w", err)
 			}
 

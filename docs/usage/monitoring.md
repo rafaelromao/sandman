@@ -110,6 +110,7 @@ When Sandman receives SIGINT or SIGTERM (e.g., Ctrl+C):
 3. If agents are still running after the timeout, Sandman sends SIGKILL
 4. The control socket (`.sandman/runs/<run-id>/run.sock`) is closed — any connected `sandman attach` clients see EOF and exit
 5. Partial results and events are preserved in the event log
+6. `sandman run` (or `sandman continue`) prints `batch aborted by operator` to stderr, prints the final summary (with the aborted bucket), and exits with code 130 (the standard Unix code for SIGINT). A real run failure still prints the existing `run batch: ...` message and exits non-zero.
 
 ## Understanding run status
 
@@ -138,6 +139,14 @@ Summary: 2 succeeded, 1 failed
   #42  success  sandman/42-fix-login
   #43  failure  sandman/43-add-tests
   #44  success  sandman/44-update-docs
+```
+
+Buckets with a zero count are omitted. A batch interrupted by SIGINT/SIGTERM prints the aborted runs in their own bucket and exits with code 130:
+
+```
+Summary: 1 succeeded, 1 aborted
+  #42  success  sandman/42-fix-login
+  #43  aborted  sandman/43-add-tests
 ```
 
 Prompt-only runs show the same summary with `prompt-only` in the issue column.

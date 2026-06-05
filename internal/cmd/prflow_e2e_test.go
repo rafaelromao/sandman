@@ -380,7 +380,7 @@ func TestPRFlow_WorktreeSandboxCommitsAndPushes(t *testing.T) {
 			t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 		}
 
-		if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+		if !strings.Contains(out, "Summary: 1 succeeded") {
 			t.Fatalf("expected success summary, got:\n%s", out)
 		}
 		if !strings.Contains(out, prFlowBranch) {

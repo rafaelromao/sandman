@@ -376,7 +376,7 @@ touch "$state_dir/$issue.done"
 	if err != nil {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 3 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 3 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
@@ -552,7 +552,7 @@ touch "$state_dir/finish-$issue"
 	if err != nil {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 3 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 3 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
@@ -582,7 +582,7 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
@@ -619,7 +619,7 @@ func TestRun_WorktreeSandboxForceFlagClearsArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first run unexpected error: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("first run expected success, got:\n%s", out)
 	}
 
@@ -748,7 +748,7 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
@@ -820,7 +820,7 @@ printf 'container-workdir=%s\n' "$PWD"
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "Summary: 2 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 2 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
@@ -956,7 +956,7 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 2 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 2 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
@@ -1113,7 +1113,7 @@ sleep 1
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "Summary: 4 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 4 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
@@ -1268,7 +1268,7 @@ Priority: {{PRIORITY}}
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
@@ -1414,7 +1414,7 @@ esac
 	if err != nil {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 4 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 4 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
@@ -1504,7 +1504,7 @@ func TestRun_PodmanSandboxUsesDotGitconfigIdentityWithoutMutatingWorktreeConfig(
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
@@ -1552,7 +1552,7 @@ func TestRun_PodmanSandboxUsesXDGGitIdentityWithoutMutatingWorktreeConfig(t *tes
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "worktree: .sandman/worktrees/sandman/42-fix-bug") {
@@ -1625,7 +1625,7 @@ func TestRun_WorktreeSandboxUsesHostGitIdentityWithoutMutatingWorktreeConfig(t *
 	if err != nil {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "worktree: .sandman/worktrees/sandman/42-fix-bug") {
@@ -1693,7 +1693,7 @@ git add test-file.txt
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
@@ -1750,7 +1750,7 @@ touch "$state_dir/start-$issue"
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed, 1 blocked") {
+	if !strings.Contains(out, "Summary: 1 succeeded, 1 blocked") {
 		t.Fatalf("expected mixed results summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "#42  success") {

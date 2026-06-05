@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -393,6 +394,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 			if err != nil {
+				if errors.Is(err, batch.ErrAborted) {
+					return &ExitCodedError{Code: 130, Msg: "batch aborted by operator", Err: err}
+				}
 				return fmt.Errorf("run batch: %w", err)
 			}
 
@@ -706,22 +710,31 @@ func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) (
 }
 
 func printSummary(cmd *cobra.Command, result *batch.Result) {
-	var successCount, failureCount, blockedCount int
+	var successCount, failureCount, abortedCount, blockedCount int
 	for _, run := range result.Runs {
-		if run.Status == "success" {
+		switch run.Status {
+		case "success":
 			successCount++
-		} else if run.Status == "blocked" {
+		case "blocked":
 			blockedCount++
-		} else {
+		case "aborted":
+			abortedCount++
+		default:
 			failureCount++
 		}
 	}
 
-	if blockedCount > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "Summary: %d succeeded, %d failed, %d blocked\n", successCount, failureCount, blockedCount)
-	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "Summary: %d succeeded, %d failed\n", successCount, failureCount)
+	parts := []string{fmt.Sprintf("%d succeeded", successCount)}
+	if failureCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", failureCount))
 	}
+	if abortedCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d aborted", abortedCount))
+	}
+	if blockedCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d blocked", blockedCount))
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Summary: %s\n", strings.Join(parts, ", "))
 	for _, run := range result.Runs {
 		status := run.Status
 		if run.RetriesTotal > 1 {

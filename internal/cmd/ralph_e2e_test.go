@@ -208,7 +208,7 @@ func TestRun_RalphFlow_SelectsIssueViaAgentAndRunsBatchInWorktree(t *testing.T) 
 	if err != nil {
 		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "#1  success") {
@@ -255,7 +255,7 @@ func TestRun_RalphSelectionFlow_AgentSelectsSubsetOfCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "#5  success") {
@@ -298,7 +298,7 @@ func TestRun_RalphSelectionFlow_AgentSelectsMultipleIssues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Summary: 2 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 2 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "#1  success") {

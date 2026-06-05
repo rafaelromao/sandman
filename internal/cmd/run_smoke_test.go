@@ -267,7 +267,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 		}
 	}
 
-	if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, tc.wantBranch) {
