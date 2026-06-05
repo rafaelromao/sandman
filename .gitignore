@@ -45,6 +45,9 @@ token-optimizer/
 # OpenCode sessions
 .opencode/
 
+# Review state files
+*.addressed_comments
+
 # OS
 .DS_Store
 Thumbs.db
