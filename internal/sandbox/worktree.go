@@ -16,6 +16,7 @@ type WorktreeSandbox struct {
 	worktreeBase string
 	branch       string
 	sourceBranch string
+	force        bool
 	workDir      string
 	gitName      string
 	gitEmail     string
@@ -32,9 +33,19 @@ func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *Wo
 	}
 }
 
+// SetForce enables force-clean behavior for orphan worktree recovery.
+func (s *WorktreeSandbox) SetForce(force bool) {
+	s.force = force
+}
+
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
+	if s.force && s.workDirExists() {
+		if err := os.RemoveAll(s.workDir); err != nil {
+			return fmt.Errorf("clean forced worktree dir: %w", err)
+		}
+	}
 	if s.workDirIsValidWorktree() {
 		return s.configureGitIdentity()
 	}

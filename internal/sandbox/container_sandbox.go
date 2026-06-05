@@ -55,6 +55,13 @@ func (s *ContainerSandbox) SetGitIdentity(name, email string) {
 	}
 }
 
+// SetForce forwards force-clean behavior to the underlying worktree.
+func (s *ContainerSandbox) SetForce(force bool) {
+	if setter, ok := s.worktree.(interface{ SetForce(bool) }); ok {
+		setter.SetForce(force)
+	}
+}
+
 func (s *ContainerSandbox) containerWorkDir() string {
 	wd := s.worktree.WorkDir()
 	rel, err := filepath.Rel(s.repoPath, wd)
