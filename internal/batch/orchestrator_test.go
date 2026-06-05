@@ -1199,7 +1199,7 @@ func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {
 	}
 }
 
-func TestRunBatch_LogsCancelledEventOnCancel(t *testing.T) {
+func TestRunBatch_LogsAbortedEventOnCancel(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},
@@ -1227,18 +1227,18 @@ func TestRunBatch_LogsCancelledEventOnCancel(t *testing.T) {
 	if len(spyLog.events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
 	}
-	if spyLog.events[1].Type != "run.cancelled" {
-		t.Fatalf("expected cancelled terminal event, got %q", spyLog.events[1].Type)
+	if spyLog.events[1].Type != "run.aborted" {
+		t.Fatalf("expected aborted terminal event, got %q", spyLog.events[1].Type)
 	}
-	if status, _ := spyLog.events[1].Payload["status"].(string); status != "failure" {
-		t.Fatalf("expected cancelled run to report failure, got %q", status)
+	if status, _ := spyLog.events[1].Payload["status"].(string); status != "aborted" {
+		t.Fatalf("expected aborted run to report aborted, got %q", status)
 	}
 	if run := events.ProjectRunStates(spyLog.events); len(run) != 1 || run[0].IsActive() {
-		t.Fatalf("expected cancelled run to project as terminal, got %#v", run)
+		t.Fatalf("expected aborted run to project as terminal, got %#v", run)
 	}
 }
 
-func TestRunBatch_ReturnsCancelledStatusOnCancel(t *testing.T) {
+func TestRunBatch_ReturnsAbortedStatusOnCancel(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug"},
@@ -1264,8 +1264,8 @@ func TestRunBatch_ReturnsCancelledStatusOnCancel(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected interrupted batch to return error")
 	}
-	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "failure" {
-		t.Fatalf("expected cancelled batch result to report failure, got %#v", result)
+	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "aborted" {
+		t.Fatalf("expected aborted batch result to report aborted, got %#v", result)
 	}
 }
 
@@ -1301,7 +1301,7 @@ func TestRunBatch_PreservesSuccessfulRunWhenContextCancelsLate(t *testing.T) {
 	_ = fastSuccess
 }
 
-func TestRunBatch_LogsCancelledEventOnPromptOnlyCancel(t *testing.T) {
+func TestRunBatch_LogsAbortedEventOnPromptOnlyCancel(t *testing.T) {
 	client := &fakeGitHubClient{}
 
 	proc := &fakeProcess{}
@@ -1325,15 +1325,15 @@ func TestRunBatch_LogsCancelledEventOnPromptOnlyCancel(t *testing.T) {
 	if len(spyLog.events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
 	}
-	if spyLog.events[1].Type != "run.cancelled" {
-		t.Fatalf("expected cancelled terminal event, got %q", spyLog.events[1].Type)
+	if spyLog.events[1].Type != "run.aborted" {
+		t.Fatalf("expected aborted terminal event, got %q", spyLog.events[1].Type)
 	}
-	if status, _ := spyLog.events[1].Payload["status"].(string); status != "failure" {
-		t.Fatalf("expected cancelled run to report failure, got %q", status)
+	if status, _ := spyLog.events[1].Payload["status"].(string); status != "aborted" {
+		t.Fatalf("expected aborted run to report aborted, got %q", status)
 	}
 }
 
-func TestRunBatch_ReturnsCancelledStatusOnPromptOnlyCancel(t *testing.T) {
+func TestRunBatch_ReturnsAbortedStatusOnPromptOnlyCancel(t *testing.T) {
 	client := &fakeGitHubClient{}
 
 	proc := &fakeProcess{}
@@ -1366,8 +1366,8 @@ func TestRunBatch_ReturnsCancelledStatusOnPromptOnlyCancel(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected interrupted prompt-only batch to return error")
 	}
-	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "failure" {
-		t.Fatalf("expected cancelled prompt-only batch result to report failure, got %#v", result)
+	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "aborted" {
+		t.Fatalf("expected aborted prompt-only batch result to report aborted, got %#v", result)
 	}
 }
 

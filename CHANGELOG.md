@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Aborted` as a first-class terminal AgentRun status in the events vocabulary. A new `run.aborted` event is emitted when an agent run is interrupted by context cancellation (SIGINT/SIGTERM), and `RunState.Status()` returns `"aborted"` for it. `sandman clean --failed` now treats aborted runs as failures.
+
+### Changed
+
+- Renamed the `run.cancelled` event type to `run.aborted` in the events vocabulary. New runs emit `run.aborted` with `status: aborted`. Legacy `run.cancelled` events in existing `events.jsonl` files continue to project as `"aborted"` so the cut-over is lossless for the abort semantic.
+
+### Added
+
 - Standard open-source project files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CHANGELOG.md`
 - `Makefile` with common development tasks
 - GitHub issue templates for bug reports, feature requests, and agent improvements

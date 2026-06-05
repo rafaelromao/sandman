@@ -169,6 +169,53 @@ func TestClean_FailedRemovesOnlyFailedRuns(t *testing.T) {
 	}
 }
 
+func TestClean_FailedIncludesAbortedRuns(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	logDir := filepath.Join(dir, ".sandman", "logs")
+	if err := os.MkdirAll(filepath.Join(worktreeDir, "sandman", "42-abort"), 0755); err != nil {
+		t.Fatalf("create worktree 42: %v", err)
+	}
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		t.Fatalf("create log dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "42.log"), []byte("log"), 0644); err != nil {
+		t.Fatalf("create log 42: %v", err)
+	}
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-abort"}},
+		{Type: "run.aborted", RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-abort"}},
+	}}
+	deps := Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: worktreeDir}},
+		EventLog:    log,
+		GitRunner:   &fakeGitRunner{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--failed"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(worktreeDir, "sandman", "42-abort")); !os.IsNotExist(err) {
+		t.Errorf("expected aborted worktree 42 to be removed under --failed")
+	}
+	if _, err := os.Stat(filepath.Join(logDir, "42.log")); !os.IsNotExist(err) {
+		t.Errorf("expected aborted log 42 to be removed under --failed")
+	}
+	if !strings.Contains(buf.String(), "Cleaned 1 runs") {
+		t.Errorf("expected output to confirm 1 run cleaned, got: %s", buf.String())
+	}
+}
+
 func TestClean_Success_CallsGitRemoveWorktree(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

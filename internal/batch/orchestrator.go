@@ -785,7 +785,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			mu.Lock()
 			results[idx] = res
 			statuses[issueNum] = res.Status
-			if res.Status == "failure" {
+			if res.Status == "failure" || res.Status == "aborted" {
 				failureCount++
 			}
 			mu.Unlock()
@@ -1452,8 +1452,8 @@ func terminalRunEvent(ctx context.Context, status string) (string, string) {
 		terminalStatus = "failure"
 	}
 	if ctx.Err() != nil && terminalStatus != "success" {
-		eventType = "run.cancelled"
-		terminalStatus = "failure"
+		eventType = "run.aborted"
+		terminalStatus = "aborted"
 	}
 	return eventType, terminalStatus
 }

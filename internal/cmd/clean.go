@@ -149,7 +149,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				if success && status != "success" {
 					continue
 				}
-				if failed && status != "failure" {
+				if failed && status != "failure" && status != "aborted" {
 					continue
 				}
 
