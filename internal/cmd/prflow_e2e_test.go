@@ -653,7 +653,7 @@ case "$1" in
       case "${3:-}" in
         1|2)
           issue_number="${3:-}"
-          cat <<JSON
+          cat <<'JSON'
 {"number":$issue_number,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4."}
 JSON
           exit 0
@@ -753,7 +753,7 @@ JSON
         ;;
       repos/example/sandbox/issues/2)
         cat <<'JSON'
-{"number":2,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4.","labels":[{"name":"ready-for-agent"}]}
+{"number":2,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(3) return 6.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -844,7 +844,7 @@ case "$1" in
       case "${3:-}" in
         1|2)
           issue_number="${3:-}"
-          cat <<JSON
+          cat <<'JSON'
 {"number":$issue_number,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4."}
 JSON
           exit 0
@@ -944,7 +944,7 @@ JSON
         ;;
       repos/example/sandbox/issues/2)
         cat <<'JSON'
-{"number":2,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4.","labels":[{"name":"ready-for-agent"}]}
+{"number":2,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(3) return 6.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;

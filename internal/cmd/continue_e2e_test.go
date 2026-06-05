@@ -361,8 +361,8 @@ func installFakeOpenCodeForContainer(t *testing.T, repoDir string) {
 set -eu
 
 branch="$(git branch --show-current)"
-branch_key="$(printf '%s' "$branch" | tr '/ ' '__')"
-step_file=".sandman/fake-opencode-step-${branch_key}"
+	branch_key="$(printf '%s' "$branch" | sha256sum | cut -c1-16)"
+	step_file=".sandman/fake-opencode-step-${branch_key}"
 step=0
 if [ -f "$step_file" ]; then
   step=$(cat "$step_file")
