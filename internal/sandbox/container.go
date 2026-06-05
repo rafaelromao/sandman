@@ -142,10 +142,9 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 }
 
 // BuildImage builds a container image from .sandman/Dockerfile.
-// The tag is scoped to the repo path to prevent collisions when sandman
-// manages multiple repositories concurrently. Layer caching by the
-// container engine may speed up subsequent builds; no explicit cache
-// invalidation is performed.
+// The tag is scoped to the repo path and Dockerfile contents to prevent
+// collisions when sandman manages multiple repositories concurrently while
+// still rebuilding when the scaffold changes.
 func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
 	dockerfile := filepath.Join(repoPath, ".sandman", "Dockerfile")
 	if _, err := os.Stat(dockerfile); err != nil {
@@ -159,8 +158,12 @@ func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve repo path: %w", err)
 	}
+	dockerfileData, err := os.ReadFile(dockerfile)
+	if err != nil {
+		return "", fmt.Errorf("read .sandman/Dockerfile: %w", err)
+	}
 
-	h := sha256.Sum256([]byte(absPath))
+	h := sha256.Sum256(append([]byte(absPath), dockerfileData...))
 	tag := fmt.Sprintf("sandman-custom-%x:latest", h[:8])
 
 	args := []string{"build", "-t", tag, "-f", dockerfile, repoPath}

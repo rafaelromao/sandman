@@ -680,7 +680,38 @@ JSON
     ;;
   pr)
     if [ "${2:-}" = "list" ]; then
-      printf '[]\n'
+      head=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --head)
+            shift
+            head="${1:-}"
+            ;;
+        esac
+        shift
+      done
+      state_file="$shim_dir/pr-state"
+      state="open"
+      if [ -f "$state_file" ]; then
+        state=$(cat "$state_file")
+      fi
+      case "$state" in
+        merged)
+          next_state="open"
+          merged_at="2026-06-05T00:00:00Z"
+          pr_state="merged"
+          ;;
+        *)
+          next_state="merged"
+          merged_at=""
+          pr_state="open"
+          ;;
+      esac
+      printf '%s\n' "$next_state" > "$state_file"
+      head_ref_oid="$(git rev-parse HEAD)"
+      cat <<JSON
+[{"number":1,"state":"$pr_state","mergedAt":"$merged_at","headRefName":"$head","headRefOid":"$head_ref_oid"}]
+JSON
       exit 0
     fi
     if [ "${2:-}" = "create" ]; then
@@ -880,7 +911,38 @@ JSON
     ;;
   pr)
     if [ "${2:-}" = "list" ]; then
-      printf '[]\n'
+      head=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --head)
+            shift
+            head="${1:-}"
+            ;;
+        esac
+        shift
+      done
+      state_file="$shim_dir/pr-state"
+      state="open"
+      if [ -f "$state_file" ]; then
+        state=$(cat "$state_file")
+      fi
+      case "$state" in
+        merged)
+          next_state="open"
+          merged_at="2026-06-05T00:00:00Z"
+          pr_state="merged"
+          ;;
+        *)
+          next_state="merged"
+          merged_at=""
+          pr_state="open"
+          ;;
+      esac
+      printf '%s\n' "$next_state" > "$state_file"
+      head_ref_oid="$(git rev-parse HEAD)"
+      cat <<JSON
+[{"number":1,"state":"$pr_state","mergedAt":"$merged_at","headRefName":"$head","headRefOid":"$head_ref_oid"}]
+JSON
       exit 0
     fi
     if [ "${2:-}" = "create" ]; then

@@ -846,6 +846,14 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(cfg *config.Config, agentCf
 		return &sandboxExecutionPolicy{mode: sandboxMode, sandboxFactory: sbFactory}, nil
 	}
 
+	dockerfilePath := filepath.Join(".", ".sandman", "Dockerfile")
+	if _, err := os.Stat(dockerfilePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf(".sandman/Dockerfile not found at %s; container mode requires a Dockerfile in the .sandman directory", dockerfilePath)
+		}
+		return nil, fmt.Errorf("check .sandman/Dockerfile: %w", err)
+	}
+
 	defaultAgent := strings.TrimSpace(cfg.DefaultAgent)
 	if defaultAgent == "" {
 		defaultAgent = strings.TrimSpace(cfg.Agent)
@@ -1174,24 +1182,9 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			result.IssueNumber = num
 		}
 		result.RetriesTotal = attempt + 1
-		currentHead := ""
-		if head, err := currentBranchHeadFn(wt.WorkDir()); err == nil {
-			currentHead = head
-		}
 		if result.Status == "success" || parseLogForCompletion(logPath) {
 			result.Status = "success"
-			merged, err := checkPRMergedAtHead(o.githubClient, branch, currentHead)
-			if err != nil || !merged {
-				result.Status = "failure"
-			} else {
-				break
-			}
-		}
-		if result.Status != "failure" && currentHead != "" {
-			if merged, err := checkPRMergedAtHead(o.githubClient, branch, currentHead); err == nil && merged {
-				result.Status = "success"
-				break
-			}
+			break
 		}
 	}
 
