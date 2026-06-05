@@ -724,7 +724,10 @@ func printSummary(cmd *cobra.Command, result *batch.Result) {
 		}
 	}
 
-	parts := []string{fmt.Sprintf("%d succeeded", successCount)}
+	parts := []string{}
+	if successCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d succeeded", successCount))
+	}
 	if failureCount > 0 {
 		parts = append(parts, fmt.Sprintf("%d failed", failureCount))
 	}

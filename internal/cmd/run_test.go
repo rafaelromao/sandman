@@ -823,6 +823,30 @@ func TestPrintSummary_OmitsAbortedWhenZero(t *testing.T) {
 	}
 }
 
+func TestPrintSummary_OmitsSucceededWhenZero(t *testing.T) {
+	result := &batch.Result{
+		Runs: []batch.AgentRunResult{
+			{IssueNumber: 43, Status: "aborted", Branch: "sandman/43-stalled"},
+			{IssueNumber: 44, Status: "aborted", Branch: "sandman/44-stalled"},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	printSummary(cmd, result)
+
+	out := buf.String()
+	if strings.Contains(out, "succeeded") {
+		t.Errorf("expected no succeeded bucket when zero, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Summary: 2 aborted") {
+		t.Errorf("expected only aborted bucket, got:\n%s", out)
+	}
+}
+
 func TestRun_ExitsWithCode130OnAbort(t *testing.T) {
 	spy := &spyBatchRunner{
 		result: &batch.Result{
@@ -860,7 +884,7 @@ func TestRun_ExitsWithCode130OnAbort(t *testing.T) {
 	if !strings.Contains(stderr.String(), "batch aborted by operator") {
 		t.Errorf("expected 'batch aborted by operator' on stderr, got:\n%s", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Summary: 0 succeeded, 1 aborted") {
+	if !strings.Contains(stdout.String(), "Summary: 1 aborted") {
 		t.Errorf("expected aborted summary on stdout, got:\n%s", stdout.String())
 	}
 }

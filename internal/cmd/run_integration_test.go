@@ -486,7 +486,7 @@ touch "$state_dir/ran-$issue"
 	if !strings.Contains(err.Error(), "1 of 2 runs failed") {
 		t.Fatalf("expected partial failure error, got %v", err)
 	}
-	if !strings.Contains(out, "Summary: 0 succeeded, 1 failed, 1 blocked") {
+	if !strings.Contains(out, "Summary: 1 failed, 1 blocked") {
 		t.Fatalf("expected blocked summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "#42  failure") {
@@ -1214,7 +1214,7 @@ func TestRun_WorktreeSandboxSingleIssuePreservesWorktreeOnFailure(t *testing.T) 
 		t.Fatalf("expected batch failure, got: %v", err)
 	}
 
-	if !strings.Contains(out, "Summary: 0 succeeded, 1 failed") {
+	if !strings.Contains(out, "Summary: 1 failed") {
 		t.Fatalf("expected failure summary, got:\n%s", out)
 	}
 	if !strings.Contains(out, "worktree: .sandman/worktrees/sandman/42-fix-bug") {

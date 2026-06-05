@@ -767,7 +767,7 @@ func TestContinue_ExitsWithCode130OnAbort(t *testing.T) {
 	if !strings.Contains(stderr.String(), "batch aborted by operator") {
 		t.Errorf("expected 'batch aborted by operator' on stderr, got:\n%s", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Summary: 0 succeeded, 1 aborted") {
+	if !strings.Contains(stdout.String(), "Summary: 1 aborted") {
 		t.Errorf("expected aborted summary on stdout, got:\n%s", stdout.String())
 	}
 }
