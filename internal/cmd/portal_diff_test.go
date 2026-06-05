@@ -26,7 +26,7 @@ clearLog(startedCell); clearLog(durationCell); clearLog(branchCell); clearLog(so
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true');
-if (result.cells !== 2) throw new Error('expected 2 cell mutations on status change, got ' + JSON.stringify(result));
+if (result.cells !== 3) throw new Error('expected 3 cell mutations on status change (remove old class, add new class, update label), got ' + JSON.stringify(result));
 if (countLog(startedCell) !== 0) throw new Error('started cell was touched');
 if (countLog(durationCell) !== 0) throw new Error('duration cell was touched');
 if (countLog(branchCell) !== 0) throw new Error('branch cell was touched');
@@ -362,7 +362,7 @@ func TestPortalDiffDiffRuns_StopGroupsDedupeAcrossCall(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
   { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', socketPath: '/tmp/sock' },
-  { key: 'b', kind: 'active', status: 'active', issueLabel: 'B', runId: 'r2', socketPath: '/tmp/sock' },
+  { key: 'b', kind: 'completed', status: 'aborted', issueLabel: 'B', runId: 'r2', socketPath: '/tmp/sock' },
 ];
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -371,8 +371,36 @@ const aRow = body.children[0];
 const bRow = body.children[1];
 const aBtn = aRow.querySelector('button[data-action="stop-batch"]');
 const bBtn = bRow.querySelector('button[data-action="stop-batch"]');
-if (!aBtn) throw new Error('a should have stop button');
-if (bBtn) throw new Error('b should NOT have stop button (deduped)');
+if (!aBtn) throw new Error('a (active) should have stop button');
+if (bBtn) throw new Error('b (aborted) should NOT have stop button (aborted dedups stop-button competition)');
+const bBadge = bRow.querySelector('[data-cell="badge"]').children[0];
+if (!bBadge.classList.contains('aborted')) throw new Error('b (aborted) should have aborted badge class');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffStatusClass_AbortedReturnsAborted(t *testing.T) {
+	js := `const result = helpers.statusClass({ status: 'aborted' });
+if (result !== 'aborted') throw new Error('expected statusClass to return aborted, got ' + result);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildBadgeCell_AbortedHasBadgeAbortedClasses(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'aborted', issueLabel: 'A', runId: 'r1' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const badgeCell = row.querySelector('[data-cell="badge"]');
+if (!badgeCell) throw new Error('expected badge cell');
+const badge = badgeCell.children[0];
+if (!badge) throw new Error('expected badge span');
+if (!badge.classList.contains('badge')) throw new Error('expected badge class');
+if (!badge.classList.contains('aborted')) throw new Error('expected aborted class');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1053,6 +1081,7 @@ const statusClass = (run) => {
   if (s === 'success') return 'success';
   if (s === 'failure' || s === 'failed' || s === 'error') return 'failure';
   if (s === 'warning' || s === 'stale' || s === 'blocked') return 'warning';
+  if (s === 'aborted') return 'aborted';
   return s || 'default';
 };
 const renderStatusBadge = (run) => {
@@ -1182,7 +1211,7 @@ function makeMockRow() {
     tagName: 'TR',
     children: [],
     dataset: {},
-    classList: { _set: new Set(), add(c) { this._set.add(c); log.push(['class+', c]); }, remove(c) { this._set.delete(c); log.push(['class-', c]); }, contains(c) { return this._set.has(c); }, toggle(c, force) { if (force === true) this._set.add(c); else if (force === false) this._set.delete(c); else if (this._set.has(c)) this._set.delete(c); else this._set.add(c); log.push(['class^', c]); } },
+    classList: { _set: new Set(), add(...cs) { for (const c of cs) { this._set.add(c); log.push(['class+', c]); } }, remove(...cs) { for (const c of cs) { this._set.delete(c); log.push(['class-', c]); } }, contains(c) { return this._set.has(c); }, toggle(c, force) { if (force === true) this._set.add(c); else if (force === false) this._set.delete(c); else if (this._set.has(c)) this._set.delete(c); else this._set.add(c); log.push(['class^', c]); } },
     parentNode: null,
     __id: 'r' + Math.random().toString(36).slice(2, 8),
     _log: log,

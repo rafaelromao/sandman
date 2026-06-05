@@ -708,28 +708,42 @@ func dedupPortalRunGroup(runs []portalRun) []portalRun {
 	if len(runs) <= 1 {
 		return runs
 	}
-	hasBlocked := false
-	hasActive := false
-	for _, run := range runs {
-		if run.Status == "blocked" {
-			hasBlocked = true
-		} else if run.Kind == "active" {
-			hasActive = true
+	bestIdx := 0
+	bestPriority := portalRunPriority(runs[0])
+	for i := 1; i < len(runs); i++ {
+		priority := portalRunPriority(runs[i])
+		if priority > bestPriority {
+			bestIdx = i
+			bestPriority = priority
+			continue
+		}
+		if priority == bestPriority && runs[i].StartedAt.After(runs[bestIdx].StartedAt) {
+			bestIdx = i
 		}
 	}
-	if !hasBlocked && !hasActive {
+	if bestPriority == 0 {
 		return runs
 	}
-	best := runs[0]
-	for i := 1; i < len(runs); i++ {
-		run := runs[i]
-		if run.Status == "blocked" || (run.Status == "active" && best.Status != "blocked" && best.Status != "active") {
-			best = run
-		} else if run.Status == best.Status && run.StartedAt.After(best.StartedAt) {
-			best = run
-		}
+	return []portalRun{runs[bestIdx]}
+}
+
+// portalRunPriority encodes the per-issue dedup priority order:
+// aborted > active > blocked > queued > other.
+func portalRunPriority(run portalRun) int {
+	if run.Status == "aborted" {
+		return 4
 	}
-	return []portalRun{best}
+	if run.Kind == "active" {
+		return 3
+	}
+	switch run.Status {
+	case "blocked":
+		return 2
+	case "queued":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func discoverPortalActiveRuns(repoRoot string) ([]portalActiveRun, error) {
@@ -863,9 +877,12 @@ func portalRunFromActiveBatchIssue(repoRoot string, active portalActiveRun, issu
 		if state.Finished != nil {
 			finishedAt := state.Finished.Timestamp
 			run.FinishedAt = &finishedAt
-			if state.Status() == "blocked" {
+			switch state.Status() {
+			case "blocked":
 				run.Log = portalBlockedMessage(state.Finished.Payload)
-			} else {
+			case "aborted":
+				run.Log = "Aborted by operator."
+			default:
 				run.Log = readPortalTextFile(run.LogPath)
 				if strings.TrimSpace(run.Log) == "" {
 					run.Log = "No log file yet."

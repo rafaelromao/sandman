@@ -637,6 +637,8 @@
     .badge.failure .dot, .badge.error .dot { background: var(--danger); }
     .badge.warning { background: color-mix(in oklch, var(--warning) 12%, var(--surface)); border-color: color-mix(in oklch, var(--warning) 24%, var(--border)); }
     .badge.warning .dot { background: var(--warning); }
+    .badge.aborted { background: color-mix(in oklch, var(--muted) 12%, var(--surface)); border-color: color-mix(in oklch, var(--muted) 24%, var(--border)); }
+    .badge.aborted .dot { background: var(--muted); }
     .action-btn, .tab-btn {
       display: inline-flex;
       align-items: center;
@@ -2451,6 +2453,7 @@
       if (status === 'success') return 'success';
       if (status === 'failure' || status === 'failed' || status === 'error') return 'failure';
       if (status === 'warning' || status === 'stale' || status === 'blocked') return 'warning';
+      if (status === 'aborted') return 'aborted';
       return status || 'default';
     }
 
