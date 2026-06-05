@@ -278,17 +278,29 @@
     return parts.join('\n');
   }
 
+  function detailsData(run, helpers) {
+    return {
+      key: run.key || '',
+      issueLabel: run.issueLabel || '',
+      issueNumber: run.issueNumber || null,
+      kind: run.kind || '',
+      runId: run.runId || '',
+      status: run.status || '',
+      startedAt: run.startedAt || null,
+      finishedAt: run.finishedAt || null,
+      duration: run.duration || '',
+      branch: run.branch || '',
+      source: helpers.formatSource(run),
+      logUrl: run.logUrl || '',
+    };
+  }
+
+  function detailsJSON(run, helpers) {
+    return JSON.stringify(detailsData(run, helpers), null, 2);
+  }
+
   function detailsFingerprint(run, helpers) {
-    return [
-      run.runId || '',
-      run.status || '',
-      helpers.formatTime(run.startedAt),
-      helpers.formatTime(run.finishedAt),
-      helpers.formatDuration(run.duration),
-      helpers.formatBranch(run),
-      helpers.formatSource(run),
-      run.logUrl || '',
-    ].join('\n');
+    return detailsJSON(run, helpers);
   }
 
   function buildLogContent(content, run, helpers) {
@@ -350,64 +362,12 @@
     const h3 = global.document.createElement('h3');
     h3.textContent = 'Run details';
     section.appendChild(h3);
-    const meta = global.document.createElement('div');
-    meta.classList.add('detail-meta');
-    const fields = [
-      ['Run ID', run.runId],
-      ['Status', run.status],
-      ['Started', helpers.formatTime(run.startedAt)],
-      ['Finished', helpers.formatTime(run.finishedAt)],
-      ['Duration', helpers.formatDuration(run.duration)],
-      ['Branch', helpers.formatBranch(run)],
-      ['Source', helpers.formatSource(run)],
-    ];
-    for (const [label, value] of fields) {
-      const kv = global.document.createElement('div');
-      kv.classList.add('kv');
-      const labelEl = global.document.createElement('span');
-      labelEl.textContent = label;
-      const valueEl = global.document.createElement('strong');
-      valueEl.textContent = value && String(value).trim() ? value : '—';
-      kv.appendChild(labelEl);
-      kv.appendChild(valueEl);
-      meta.appendChild(kv);
-    }
-    const downloadKv = global.document.createElement('div');
-    downloadKv.classList.add('kv');
-    const downloadLabel = global.document.createElement('span');
-    downloadLabel.textContent = 'Log file';
-    downloadKv.appendChild(downloadLabel);
-    if (run.logUrl) {
-      const link = global.document.createElement('a');
-      link.classList.add('action-btn');
-      link.setAttribute('href', run.logUrl);
-      link.setAttribute('download', '');
-      link.textContent = 'Download log';
-      downloadKv.appendChild(link);
-    } else {
-      const empty = global.document.createElement('strong');
-      empty.classList.add('muted');
-      empty.textContent = 'No log file available.';
-      downloadKv.appendChild(empty);
-    }
-    meta.appendChild(downloadKv);
-    const status = String(run.status || '').toLowerCase();
-    if (status === 'cancelled' || status === 'failure' || status === 'blocked') {
-      const continueKv = global.document.createElement('div');
-      continueKv.classList.add('kv');
-      const continueLabel = global.document.createElement('span');
-      continueLabel.textContent = 'Continue';
-      continueKv.appendChild(continueLabel);
-      const button = global.document.createElement('button');
-      button.classList.add('action-btn');
-      button.setAttribute('type', 'button');
-      button.setAttribute('data-action', 'launch-continue');
-      button.setAttribute('data-run-key', run.key);
-      button.textContent = 'Continue';
-      continueKv.appendChild(button);
-      meta.appendChild(continueKv);
-    }
-    section.appendChild(meta);
+    const pre = global.document.createElement('pre');
+    pre.classList.add('terminal-text');
+    const json = detailsJSON(run, helpers);
+    pre.textContent = json;
+    pre.setAttribute('data-rendered-json', json);
+    section.appendChild(pre);
     content.appendChild(section);
   }
 

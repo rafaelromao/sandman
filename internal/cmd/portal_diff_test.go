@@ -750,26 +750,67 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffUpdateDetailDetails_SkipsRebuildWhenUnchanged(t *testing.T) {
+func TestPortalDiffUpdateDetailDetails_RendersPrettyJSON(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logUrl: '/log' };
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log', logUrl: '/log' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
 const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected details pre');
+if (!pre.textContent.includes('"runId": "r1"')) throw new Error('expected runId in json, got ' + pre.textContent);
+if (!pre.textContent.includes('"source": "/tmp/run.log"')) throw new Error('expected source in json, got ' + pre.textContent);
+if (detailRow.querySelector('.detail-meta')) throw new Error('old detail-meta layout should be gone');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailDetails_SkipsRebuildWhenUnchanged(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log', logUrl: '/log' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
 const content1 = detailRow.querySelector('.detail-content');
 if (!content1) throw new Error('expected detail-content');
-const firstChildren = content1.children.slice();
+const pre1 = detailRow.querySelector('pre[data-rendered-json]');
+const run2 = Object.assign({}, run1);
 SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.diffRuns(body, [run], opts);
+SandmanPortalDiff.diffRuns(body, [run2], opts);
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations !== 0) throw new Error('unchanged details tab should not mutate, got ' + counters.mutations);
 const content2 = detailRow.querySelector('.detail-content');
 if (content2 !== content1) throw new Error('content identity should be preserved');
-if (content2.children.length !== firstChildren.length) throw new Error('details children should not be replaced');
-for (let i = 0; i < firstChildren.length; i += 1) {
-  if (content2.children[i] !== firstChildren[i]) throw new Error('details child node ' + i + ' was replaced');
+const pre2 = detailRow.querySelector('pre[data-rendered-json]');
+if (pre2 !== pre1) throw new Error('details pre should not be replaced');
+if (!pre2.textContent.includes('"source": "/tmp/run.log"')) throw new Error('expected source to remain in json');
+console.log('PASS');
+`
+	runNodeScript(t, js)
 }
+
+func TestPortalDiffUpdateDetailDetails_RebuildsWhenChanged(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log', logUrl: '/log' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const content1 = detailRow.querySelector('.detail-content');
+const pre1 = detailRow.querySelector('pre[data-rendered-json]');
+SandmanPortalDiff.resetCounters();
+const run2 = Object.assign({}, run1, { logUrl: '/log-2' });
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('changed details should mutate, got 0');
+const content2 = detailRow.querySelector('.detail-content');
+if (content2 !== content1) throw new Error('content identity should be preserved across rebuilds');
+const pre2 = detailRow.querySelector('pre[data-rendered-json]');
+if (pre2.textContent === pre1.textContent) throw new Error('details json should change when data changes');
+if (!pre2.textContent.includes('"logUrl": "/log-2"')) throw new Error('expected updated logUrl in json, got ' + pre2.textContent);
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -837,24 +878,50 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetail_RebuildsAfterTabRoundTrip_Details(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log', logUrl: '/log' };
+const stopGroups = new Set();
+const optsDetails = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+const optsLog = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run], optsDetails);
+const detailRow = body.children[1];
+let pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre || !pre.textContent.includes('"source": "/tmp/run.log"')) throw new Error('expected details json initially');
+SandmanPortalDiff.diffRuns(body, [run], optsLog);
+pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre after switch to log');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [run], optsDetails);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('returning to details tab should rebuild the pane, got 0 mutations');
+pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre || !pre.textContent.includes('"source": "/tmp/run.log"')) throw new Error('expected details json after returning to details');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetail_TabChangeRebuildsContent(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'log text' };
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: 'log text', logPath: '/tmp/run.log' };
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run], opts1);
 const detailRow = body.children[1];
 const logBtn1 = detailRow.querySelector('button[data-tab="log"]');
-const eventsBtn1 = detailRow.querySelector('button[data-tab="events"]');
+const detailsBtn1 = detailRow.querySelector('button[data-tab="details"]');
 if (logBtn1.getAttribute('aria-pressed') !== 'true') throw new Error('log button should be pressed initially');
-if (eventsBtn1.getAttribute('aria-pressed') !== 'false') throw new Error('events button should not be pressed initially');
-const opts2 = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+if (detailsBtn1.getAttribute('aria-pressed') !== 'false') throw new Error('details button should not be pressed initially');
+const opts2 = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [run], opts2);
 const logBtn2 = detailRow.querySelector('button[data-tab="log"]');
-const eventsBtn2 = detailRow.querySelector('button[data-tab="events"]');
+const detailsBtn2 = detailRow.querySelector('button[data-tab="details"]');
 if (logBtn2.getAttribute('aria-pressed') !== 'false') throw new Error('log button should not be pressed after switch');
-if (eventsBtn2.getAttribute('aria-pressed') !== 'true') throw new Error('events button should be pressed after switch');
+if (detailsBtn2.getAttribute('aria-pressed') !== 'true') throw new Error('details button should be pressed after switch');
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre || !pre.textContent.includes('"source": "/tmp/run.log"')) throw new Error('expected details json after tab switch');
 console.log('PASS');
 `
 	runNodeScript(t, js)
