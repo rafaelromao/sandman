@@ -182,6 +182,159 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	}
 }
 
+func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
+	if os.Getenv("SANDMAN_ENABLE_MULTI_ISSUE_CONTINUE_E2E") == "" {
+		t.Skip("TODO: enable multi-issue continue podman e2e once podman startup is stable")
+	}
+	if !podmanAvailable(t) {
+		return
+	}
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	_ = initRunIntegrationRepoWithRemote(t, repoDir)
+
+	isolatedHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(isolatedHome, ".ssh"), 0755); err != nil {
+		t.Fatalf("create isolated ssh dir: %v", err)
+	}
+	t.Setenv("HOME", isolatedHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(isolatedHome, ".config"))
+
+	ghShimDir := t.TempDir()
+	writeFakeGHShim(t, ghShimDir)
+	prependPath(t, ghShimDir)
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init")
+	if err != nil {
+		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
+	}
+
+	forcePodmanSandbox(t, repoDir)
+	writeFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
+	installFakeOpenCodeForContainer(t, repoDir)
+
+	for _, issue := range []string{"1", "2"} {
+		t.Logf("running issue %s", issue)
+		out, err = runSandmanBinary(t, binPath, repoDir, "run", "--sandbox", "podman", issue)
+		if err != nil {
+			t.Fatalf("sandman run %s failed: %v\noutput:\n%s", issue, err, out)
+		}
+		if !strings.Contains(out, "Summary: 1 succeeded, 0 failed") {
+			t.Fatalf("expected run success summary for issue %s, got:\n%s", issue, out)
+		}
+	}
+
+	issueOneWorktree := filepath.Join(repoDir, ".sandman", "worktrees", "sandman/1-fix-failing-test")
+	issueTwoWorktree := filepath.Join(repoDir, ".sandman", "worktrees", "sandman/2-fix-failing-test")
+
+	initialPrompt1, err := os.ReadFile(filepath.Join(issueOneWorktree, ".sandman", "rendered-prompt.md"))
+	if err != nil {
+		t.Fatalf("read issue 1 rendered prompt: %v", err)
+	}
+	if !strings.Contains(string(initialPrompt1), ".sandman/continuation-context.md") {
+		t.Fatalf("expected issue 1 rendered prompt to mention continuation context, got:\n%s", initialPrompt1)
+	}
+
+	initialPrompt2, err := os.ReadFile(filepath.Join(issueTwoWorktree, ".sandman", "rendered-prompt.md"))
+	if err != nil {
+		t.Fatalf("read issue 2 rendered prompt: %v", err)
+	}
+	if !strings.Contains(string(initialPrompt2), ".sandman/continuation-context.md") {
+		t.Fatalf("expected issue 2 rendered prompt to mention continuation context, got:\n%s", initialPrompt2)
+	}
+
+	out, err = runSandmanBinary(t, binPath, repoDir, "continue", "1", "2", "finish both")
+	if err != nil {
+		t.Fatalf("multi-issue continue failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Summary: 2 succeeded, 0 failed") {
+		t.Fatalf("expected multi-issue continue success summary, got:\n%s", out)
+	}
+
+	continuePrompt1, err := os.ReadFile(filepath.Join(issueOneWorktree, ".sandman", "continue-prompt.md"))
+	if err != nil {
+		t.Fatalf("read issue 1 continue prompt: %v", err)
+	}
+	if !strings.Contains(string(continuePrompt1), "Initial run for sandman/1-fix-failing-test.") {
+		t.Fatalf("expected issue 1 prompt to use its own prior context, got:\n%s", continuePrompt1)
+	}
+	if !strings.Contains(string(continuePrompt1), "finish both") {
+		t.Fatalf("expected issue 1 prompt to include new instruction, got:\n%s", continuePrompt1)
+	}
+	if !strings.Contains(string(continuePrompt1), "overwrite `.sandman/continuation-context.md`") {
+		t.Fatalf("expected issue 1 prompt to include continuation update instruction, got:\n%s", continuePrompt1)
+	}
+
+	continuePrompt2, err := os.ReadFile(filepath.Join(issueTwoWorktree, ".sandman", "continue-prompt.md"))
+	if err != nil {
+		t.Fatalf("read issue 2 continue prompt: %v", err)
+	}
+	if !strings.Contains(string(continuePrompt2), "Initial run for sandman/2-fix-failing-test.") {
+		t.Fatalf("expected issue 2 prompt to use its own prior context, got:\n%s", continuePrompt2)
+	}
+	if !strings.Contains(string(continuePrompt2), "finish both") {
+		t.Fatalf("expected issue 2 prompt to include new instruction, got:\n%s", continuePrompt2)
+	}
+	if !strings.Contains(string(continuePrompt2), "overwrite `.sandman/continuation-context.md`") {
+		t.Fatalf("expected issue 2 prompt to include continuation update instruction, got:\n%s", continuePrompt2)
+	}
+
+	continueContext1, err := os.ReadFile(filepath.Join(issueOneWorktree, ".sandman", "continuation-context.md"))
+	if err != nil {
+		t.Fatalf("read issue 1 continuation context: %v", err)
+	}
+	if !strings.Contains(string(continueContext1), "First continue for sandman/1-fix-failing-test.") {
+		t.Fatalf("expected issue 1 context to advance independently, got:\n%s", continueContext1)
+	}
+
+	continueContext2, err := os.ReadFile(filepath.Join(issueTwoWorktree, ".sandman", "continuation-context.md"))
+	if err != nil {
+		t.Fatalf("read issue 2 continuation context: %v", err)
+	}
+	if !strings.Contains(string(continueContext2), "First continue for sandman/2-fix-failing-test.") {
+		t.Fatalf("expected issue 2 context to advance independently, got:\n%s", continueContext2)
+	}
+
+	log := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
+	loggedEvents, err := log.Read()
+	if err != nil {
+		t.Fatalf("read event log: %v", err)
+	}
+
+	initialRunIDs := make(map[int]string)
+	continued := make(map[int]string)
+	for _, event := range loggedEvents {
+		if event.Type == "run.started" && (event.Issue == 1 || event.Issue == 2) {
+			if _, ok := initialRunIDs[event.Issue]; !ok {
+				initialRunIDs[event.Issue] = event.RunID
+			}
+		}
+		if event.Type != "run.continued" {
+			continue
+		}
+		if event.Issue != 1 && event.Issue != 2 {
+			continue
+		}
+		previousRunID, ok := payloadString(event.Payload, "previous_run_id")
+		if !ok {
+			t.Fatalf("missing previous_run_id for issue %d: %#v", event.Issue, event.Payload)
+		}
+		continued[event.Issue] = previousRunID
+	}
+	if len(continued) != 2 {
+		t.Fatalf("expected 2 continued issues, got %#v", continued)
+	}
+	if continued[1] != initialRunIDs[1] {
+		t.Fatalf("expected issue 1 to continue its own prior run %q, got %q", initialRunIDs[1], continued[1])
+	}
+	if continued[2] != initialRunIDs[2] {
+		t.Fatalf("expected issue 2 to continue its own prior run %q, got %q", initialRunIDs[2], continued[2])
+	}
+}
+
 func forcePodmanSandbox(t *testing.T, repoDir string) {
 	t.Helper()
 
@@ -207,7 +360,9 @@ func installFakeOpenCodeForContainer(t *testing.T, repoDir string) {
 	script := `#!/bin/sh
 set -eu
 
-step_file=".sandman/fake-opencode-step"
+branch="$(git branch --show-current)"
+	branch_key="$(printf '%s' "$branch" | sha256sum | cut -c1-16)"
+	step_file=".sandman/fake-opencode-step-${branch_key}"
 step=0
 if [ -f "$step_file" ]; then
   step=$(cat "$step_file")
@@ -233,28 +388,28 @@ none
 fake opencode for continuation e2e
 
 ## Next Step
-continue the flow
+continue the flow for $branch
 EOF
 }
 
 case "$step" in
   0)
-    write_context "Initial run."
+    write_context "Initial run for $branch."
     ;;
   1)
-    write_context "First continue."
+    write_context "First continue for $branch."
     ;;
   2)
-    write_context "Second continue."
+    write_context "Second continue for $branch."
     ;;
   *)
-    printf 'unexpected fake opencode step %s\n' "$step" >&2
+    printf 'unexpected fake opencode step %s for %s\n' "$step" "$branch" >&2
     exit 1
     ;;
 esac
 
 printf '%s\n' $((step + 1)) > "$step_file"
-printf 'fake opencode step %s\n' "$step"
+printf 'fake opencode step %s for %s\n' "$step" "$branch"
 `
 
 	if err := os.WriteFile(filepath.Join(binDir, "opencode"), []byte(script), 0755); err != nil {

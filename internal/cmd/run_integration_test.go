@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -122,8 +121,6 @@ func waitForPath(t *testing.T, path string) {
 	t.Fatalf("timed out waiting for %s", path)
 }
 
-var podmanWarmupOnce sync.Once
-
 func podmanAvailable(t *testing.T) bool {
 	t.Helper()
 	cmd := exec.Command("podman", "version")
@@ -134,11 +131,6 @@ func podmanAvailable(t *testing.T) bool {
 		t.Skip("podman not available")
 		return false
 	}
-	podmanWarmupOnce.Do(func() {
-		if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
-			t.Logf("podman warmup failed: %v: %s", err, out)
-		}
-	})
 	return true
 }
 

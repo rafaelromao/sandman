@@ -650,10 +650,24 @@ shim_dir="__SHIM_DIR__"
 case "$1" in
   issue)
     if [ "${2:-}" = "view" ]; then
-      cat <<'JSON'
-{"number":1,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4."}
+      case "${3:-}" in
+        1)
+          issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(2) return 4."
+          cat <<JSON
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
 JSON
-      exit 0
+          exit 0
+          ;;
+        2)
+          issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(3) return 6."
+          cat <<JSON
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+JSON
+          exit 0
+          ;;
+      esac
     fi
     ;;
   repo)
@@ -665,6 +679,10 @@ JSON
     fi
     ;;
   pr)
+    if [ "${2:-}" = "list" ]; then
+      printf '[]\n'
+      exit 0
+    fi
     if [ "${2:-}" = "create" ]; then
       shift 2
       count_file="$shim_dir/pr-create.count"
@@ -742,7 +760,17 @@ JSON
 JSON
         exit 0
         ;;
+      repos/example/sandbox/issues/2)
+        cat <<'JSON'
+{"number":2,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(3) return 6.","labels":[{"name":"ready-for-agent"}]}
+JSON
+        exit 0
+        ;;
       repos/example/sandbox/issues/1/events)
+        printf '[]\n'
+        exit 0
+        ;;
+      repos/example/sandbox/issues/2/events)
         printf '[]\n'
         exit 0
         ;;
@@ -822,10 +850,24 @@ shim_dir="__SHIM_DIR__"
 case "$1" in
   issue)
     if [ "${2:-}" = "view" ]; then
-      cat <<'JSON'
-{"number":1,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4."}
+      case "${3:-}" in
+        1)
+          issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(2) return 4."
+          cat <<JSON
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
 JSON
-      exit 0
+          exit 0
+          ;;
+        2)
+          issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(3) return 6."
+          cat <<JSON
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+JSON
+          exit 0
+          ;;
+      esac
     fi
     ;;
   repo)
@@ -837,6 +879,10 @@ JSON
     fi
     ;;
   pr)
+    if [ "${2:-}" = "list" ]; then
+      printf '[]\n'
+      exit 0
+    fi
     if [ "${2:-}" = "create" ]; then
       shift 2
       count_file="$shim_dir/pr-create.count"
@@ -914,7 +960,17 @@ JSON
 JSON
         exit 0
         ;;
+      repos/example/sandbox/issues/2)
+        cat <<'JSON'
+{"number":2,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(3) return 6.","labels":[{"name":"ready-for-agent"}]}
+JSON
+        exit 0
+        ;;
       repos/example/sandbox/issues/1/events)
+        printf '[]\n'
+        exit 0
+        ;;
+      repos/example/sandbox/issues/2/events)
         printf '[]\n'
         exit 0
         ;;
