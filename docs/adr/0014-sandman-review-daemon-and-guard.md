@@ -1,0 +1,81 @@
+# ADR-0014: Sandman Review - Daemon-Monitored PR Reviews
+
+## Status
+
+proposed
+
+## Context
+
+Sandman needs a PR review workflow: when someone posts `/sandman review [focus]` on a GitHub PR, a review agent should read the diff and post findings as a comment. This introduces a new command and a coordination problem.
+
+### Three design questions
+
+1. **One-shot vs daemon**: Should `sandman review` scan PRs once and exit, or run as a background daemon that polls for new commands?
+2. **Who posts the review**: Should the sandman daemon run the agent and post its output, or should the agent itself post the comment?
+3. **How to ensure the daemon is running**: The default `review_command` config value drives the pr-review skill's PR comment. When it contains `/sandman`, the agent posts a comment that the daemon must intercept. If the daemon isn't running, that comment hangs. How do we prevent this?
+
+## Decision
+
+### Two modes: daemon (default) and one-shot
+
+`sandman review` defaults to **daemon mode** - it polls the repo every 60 seconds for new PRs with `/sandman review` comments. A `--pr <N>` flag runs in **one-shot mode** for manual or CI-driven review invocation.
+
+Rationale: the daemon enables the full automated workflow (AFK agent finishes work, posts `/sandman review`, daemon picks it up). The one-shot mode covers ad-hoc cases without running a background process.
+
+### Agent posts the review comment
+
+The review agent is responsible for posting its findings as a PR comment via `gh pr comment <N>`. The daemon only launches the agent - it does not parse or relay output.
+
+Rationale: keeps the daemon simple and lets the prompt control the posting format. The daemon does not need to understand agent output.
+
+### Control-socket guard
+
+When the configured `review_command` contains `/sandman`, the `sandman run`, `sandman continue`, and `--ralph` selection commands check for a control socket at `.sandman/review.sock` **before** executing. If the socket is missing, the command fails with a clear message.
+
+This prevents the following failure mode:
+1. User runs `sandman run` with default config
+2. Agent finishes, posts `/sandman review` on the PR per the pr-review skill
+3. Nobody is watching - review never happens
+
+The socket check adds a forward dependency (review daemon must be running before you can run batches with the default review command), but it is a **fail-fast** dependency: the user sees the error immediately, not after a batch completes.
+
+### Why a socket over alternatives
+
+- **PID file**: Stale PID files survive crashes, leading to false positives (run thinks daemon is alive when it's dead).
+- **Event log**: Requires reading and parsing the JSONL log, which is slower and less reliable than a single `os.Stat`.
+- **Port check**: Requires binding a TCP port - overkill for a local workflow tool.
+
+The socket (`net.Listen("unix", ...)`) is already an established pattern in the codebase (see `daemon.ControlSocket` and `attach`) and gives us a natural attach endpoint for future `sandman review --attach` functionality.
+
+## Consequences
+
+### Positive
+
+- Fail-fast guard prevents the "orphaned review comment" failure mode.
+- Two modes cover both automated and ad-hoc workflows.
+- One-shot mode shares all prompt and agent infrastructure with daemon mode - no duplication.
+- Socket-based guard reuses existing, tested infrastructure.
+- Users can opt out of the guard entirely by setting `review_command` to something that does not contain `/sandman` (e.g. `/oc review` for backward compat).
+
+### Negative
+
+- Forward dependency: `sandman run` fails if `review_command` contains `/sandman` and no daemon is running. Users must either override `review_command` or start the daemon.
+- Daemon consumes a terminal or must be started as a background job.
+- The socket check adds a filesystem operation to the startup path of `run`/`continue`.
+
+### Neutral
+
+- The default `review_command` changes from `/oc review` to `/sandman review`.
+- The one-shot mode is a thin wrapper around `BatchRunner.RunBatch` - no new execution infrastructure.
+
+## Blocked by
+
+None - can start immediately
+
+## Runtime Context
+
+- You are running inside a Sandman-created worktree.
+- Current branch: `sandman/380-adr-0013-sandman-review-daemon-and-guard`
+- Source branch: `sandman/380-adr-0013-sandman-review-daemon-and-guard`
+- Base branch: `main`
+- Review command: `/oc review`
