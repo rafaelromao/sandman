@@ -311,7 +311,7 @@ func TestContinue_WarnsAndUsesBarePromptWhenContinuationContextMissing(t *testin
 	}
 }
 
-func TestContinue_AllowsMergedPR(t *testing.T) {
+func TestContinue_FailsWhenPRMerged(t *testing.T) {
 	dir := t.TempDir()
 	branch := "sandman/42-fix-bug"
 	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
@@ -336,11 +336,15 @@ func TestContinue_AllowsMergedPR(t *testing.T) {
 	cmd.SetArgs([]string{"42", "finish the tests"})
 
 	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error for merged PR: %v", err)
+	if err == nil {
+		t.Fatal("expected error when PR is already merged")
 	}
-	if !spy.called {
-		t.Fatal("expected batch runner to be called for merged PR")
+	want := "cannot continue issue #42: PR already merged (branch \"sandman/42-fix-bug\")"
+	if err.Error() != want {
+		t.Fatalf("expected %q, got %q", want, err.Error())
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called when PR is merged")
 	}
 }
 
