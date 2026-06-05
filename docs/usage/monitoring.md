@@ -78,7 +78,7 @@ Emitted when an agent run completes.
 | `retries_done` | Actual retries performed |
 
 #### `run.aborted`
-Emitted when a run is aborted via context cancellation (SIGINT/SIGTERM). Payload same as `run.finished` with `status: aborted`. Legacy `run.cancelled` events in older `events.jsonl` files project to the same `aborted` status.
+Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Payload same as `run.finished` with `status: aborted`. Legacy `run.cancelled` events in older `events.jsonl` files project to the same `aborted` status.
 
 ## Run logs
 

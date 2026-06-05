@@ -77,7 +77,7 @@ A single structured log entry in the append-only JSONL event log (`.sandman/even
 _Avoid_: Log line, record.
 
 **Aborted**:
-A first-class terminal AgentRun status indicating the run was interrupted by context cancellation (SIGINT/SIGTERM) before it could finish on its own merits. Emitted as a `run.aborted` event with `status: aborted`. `RunState.Status()` returns `"aborted"` for any `run.aborted` event and, for backwards compatibility, for legacy `run.cancelled` events in older `events.jsonl` files.
+A first-class terminal AgentRun status indicating the run was interrupted by context cancellation (e.g. SIGINT/SIGTERM) before it could finish on its own merits. Emitted as a `run.aborted` event with `status: aborted`. `RunState.Status()` returns `"aborted"` for any `run.aborted` event and, for backwards compatibility, for legacy `run.cancelled` events in older `events.jsonl` files.
 _Avoid_: cancelled, killed, terminated.
 
 **Issue**:

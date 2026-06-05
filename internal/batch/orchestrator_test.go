@@ -1231,7 +1231,7 @@ func TestRunBatch_LogsAbortedEventOnCancel(t *testing.T) {
 		t.Fatalf("expected aborted terminal event, got %q", spyLog.events[1].Type)
 	}
 	if status, _ := spyLog.events[1].Payload["status"].(string); status != "aborted" {
-		t.Fatalf("expected aborted run to report aborted, got %q", status)
+		t.Fatalf("expected aborted terminal status, got %q", status)
 	}
 	if run := events.ProjectRunStates(spyLog.events); len(run) != 1 || run[0].IsActive() {
 		t.Fatalf("expected aborted run to project as terminal, got %#v", run)
@@ -1329,7 +1329,7 @@ func TestRunBatch_LogsAbortedEventOnPromptOnlyCancel(t *testing.T) {
 		t.Fatalf("expected aborted terminal event, got %q", spyLog.events[1].Type)
 	}
 	if status, _ := spyLog.events[1].Payload["status"].(string); status != "aborted" {
-		t.Fatalf("expected aborted run to report aborted, got %q", status)
+		t.Fatalf("expected aborted terminal status, got %q", status)
 	}
 }
 

@@ -119,11 +119,11 @@ func TestProjectRunStates_TreatsAbortedRunAsTerminalAborted(t *testing.T) {
 }
 
 func TestProjectRunStates_LegacyCancelledEventStillProjectsAsAborted(t *testing.T) {
-	cancelledAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	legacyAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: cancelledAt.Add(-1 * time.Minute), RunID: "run-cancelled", Issue: 408},
-		{Type: "run.cancelled", Timestamp: cancelledAt, RunID: "run-cancelled", Issue: 408, Payload: map[string]any{"status": "failure"}},
+		{Type: "run.started", Timestamp: legacyAt.Add(-1 * time.Minute), RunID: "run-cancelled", Issue: 408},
+		{Type: "run.cancelled", Timestamp: legacyAt, RunID: "run-cancelled", Issue: 408, Payload: map[string]any{"status": "failure"}},
 	})
 
 	if len(runs) != 1 {
@@ -132,7 +132,7 @@ func TestProjectRunStates_LegacyCancelledEventStillProjectsAsAborted(t *testing.
 
 	run := runs[0]
 	if run.IsActive() {
-		t.Fatal("expected cancelled run to be terminal")
+		t.Fatal("expected legacy cancelled run to be terminal")
 	}
 	if got := run.Status(); got != "aborted" {
 		t.Fatalf("expected aborted status, got %q", got)
