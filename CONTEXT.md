@@ -134,6 +134,14 @@ _Avoid_: Background job, server.
 A Unix domain socket at `.sandman/runs/<run-id>/run.sock` that accepts attach client connections. Created when a daemon starts, removed when it stops.
 _Avoid_: IPC socket, management socket.
 
+**Command Server**:
+A Unix domain socket at `.sandman/runs/<run-id>/cmd.sock` that accepts one-shot JSON command requests from outside the daemon process. First supported command is `{"action":"abort","issue":<n>}`, dispatched to the orchestrator's per-issue cancel API. Created when a daemon starts, removed when it stops. Distinct from the **Control Socket**, which streams daemon output to **Attach** clients.
+_Avoid_: management socket, IPC socket.
+
+**Issue Commander**:
+The seam the command server uses to cancel a single in-flight AgentRun without affecting siblings. The Orchestrator implements this interface so an external caller can address one issue at a time even when the batch is still running.
+_Avoid_: per-issue abort handle (that's the operation, not the seam).
+
 **Attach**:
 Connect a terminal to a running daemon via the control socket to stream its output. Invoked via `sandman attach`.
 _Avoid_: Tail, follow.
@@ -154,7 +162,9 @@ _Avoid_: Replay mode.
 
 - A **Daemon Process** is created by `sandman run`, which starts a **Control Socket**
 - A **Control Socket** at `.sandman/runs/<run-id>/run.sock` accepts **Attach** connections for the duration of the **Batch**
-- A **Daemon Process** stops the **Control Socket** when its **Batch** completes
+- A **Daemon Process** also starts a **Command Server** at `.sandman/runs/<run-id>/cmd.sock` for surgical per-issue control requests
+- An **Issue Commander** is the orchestrator seam the **Command Server** dispatches to; it maps an external cancel to a single **AgentRun**
+- A **Daemon Process** stops the **Control Socket** and **Command Server** when its **Batch** completes
 - An **Attach** client connects to the **Control Socket** and reads the daemon's output until EOF
 - A **Portal** is repo-scoped and can show multiple **Daemon Process** instances from the same repository at once
 - A **Portal** rescans the current repository's `.sandman/runs/` tree on each poll so newly started **Daemon Process** instances appear without restarting the portal

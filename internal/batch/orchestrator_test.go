@@ -6412,7 +6412,6 @@ func TestOrchestrator_AbortIssue_ActiveRun(t *testing.T) {
 		_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	}()
 
-	// Wait for the runnable to be actively running, then abort it.
 	select {
 	case <-blockRunnable.running:
 	case <-time.After(2 * time.Second):

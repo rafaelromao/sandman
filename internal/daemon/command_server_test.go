@@ -10,13 +10,13 @@ import (
 	"time"
 )
 
-type stubCommander struct {
+type fakeCommander struct {
 	abortCalls []int
 	abortErr   error
 	mu         sync.Mutex
 }
 
-func (s *stubCommander) AbortIssue(issueNumber int) error {
+func (s *fakeCommander) AbortIssue(issueNumber int) error {
 	s.mu.Lock()
 	s.abortCalls = append(s.abortCalls, issueNumber)
 	err := s.abortErr
@@ -24,7 +24,7 @@ func (s *stubCommander) AbortIssue(issueNumber int) error {
 	return err
 }
 
-func (s *stubCommander) calls() []int {
+func (s *fakeCommander) calls() []int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]int, len(s.abortCalls))
@@ -34,7 +34,7 @@ func (s *stubCommander) calls() []int {
 
 func TestCommandServer_DispatchesAbortAndWritesResponse(t *testing.T) {
 	dir := t.TempDir()
-	stub := &stubCommander{}
+	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -67,7 +67,7 @@ func TestCommandServer_DispatchesAbortAndWritesResponse(t *testing.T) {
 
 func TestCommandServer_TranslatesAbortError(t *testing.T) {
 	dir := t.TempDir()
-	stub := &stubCommander{abortErr: errors.New("batch: no such issue")}
+	stub := &fakeCommander{abortErr: errors.New("batch: no such issue")}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -99,7 +99,7 @@ func TestCommandServer_TranslatesAbortError(t *testing.T) {
 
 func TestCommandServer_UnknownAction(t *testing.T) {
 	dir := t.TempDir()
-	stub := &stubCommander{}
+	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -131,7 +131,7 @@ func TestCommandServer_UnknownAction(t *testing.T) {
 
 func TestCommandServer_StopRemovesSocket(t *testing.T) {
 	dir := t.TempDir()
-	server := NewCommandServer(dir, &stubCommander{})
+	server := NewCommandServer(dir, &fakeCommander{})
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -152,13 +152,13 @@ func TestCommandServer_StopRemovesSocket(t *testing.T) {
 
 func TestCommandServer_StartRemovesStaleSocket(t *testing.T) {
 	dir := t.TempDir()
-	first := NewCommandServer(dir, &stubCommander{})
+	first := NewCommandServer(dir, &fakeCommander{})
 	if err := first.Start(); err != nil {
 		t.Fatalf("first Start failed: %v", err)
 	}
 	first.Stop()
 
-	second := NewCommandServer(dir, &stubCommander{})
+	second := NewCommandServer(dir, &fakeCommander{})
 	if err := second.Start(); err != nil {
 		t.Fatalf("second Start with stale socket should succeed: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestCommandServer_StartRemovesStaleSocket(t *testing.T) {
 
 func TestCommandServer_HandlesConcurrentConnections(t *testing.T) {
 	dir := t.TempDir()
-	stub := &stubCommander{}
+	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)

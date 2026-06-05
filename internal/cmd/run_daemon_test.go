@@ -115,8 +115,6 @@ func TestRun_RemovesRunDirOnCompletion(t *testing.T) {
 }
 
 // commanderBatchRunner is a batch.Runner that also satisfies daemon.IssueCommander.
-// It blocks RunBatch until released, like blockedBatchRunner, and records
-// AbortIssue calls so tests can assert the command socket dispatched them.
 type commanderBatchRunner struct {
 	started    chan struct{}
 	release    chan struct{}

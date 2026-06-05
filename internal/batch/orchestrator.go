@@ -1389,9 +1389,6 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 }
 
 // runPromptOnlySingle executes a single prompt-only AgentRun.
-// Per-issue cancel is intentionally not wired here: prompt-only runs have
-// no issue number to abort surgically, so the batch-level ctx still drives
-// this path.
 func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
 	if err := o.syncBaseBranch(".", baseBranch); err != nil {
 		fmt.Fprintf(o.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
