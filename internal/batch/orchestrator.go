@@ -1140,13 +1140,15 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 					}
 				}
 			}
-			if err := logRetryMarker(logPath, attempt, retries); err != nil {
-				fmt.Fprintf(o.errorLog, "error: write retry marker for issue %d: %v\n", num, err)
-				return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+			if err := logRetryMarkerFn(logPath, attempt, retries); err != nil {
+				if o.errorLog != nil {
+					fmt.Fprintf(o.errorLog, "warning: write retry marker for issue %d: %v\n", num, err)
+				}
 			}
-		} else if err := logRunMarker(logPath, attempt, retries); err != nil {
-			fmt.Fprintf(o.errorLog, "error: write run marker for issue %d: %v\n", num, err)
-			return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+		} else if err := logRunMarkerFn(logPath, attempt, retries); err != nil {
+			if o.errorLog != nil {
+				fmt.Fprintf(o.errorLog, "warning: write run marker for issue %d: %v\n", num, err)
+			}
 		}
 
 		runnable := factory.NewRunnable(issue, branch, wt)
@@ -1382,14 +1384,16 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
 			if err := o.writeRetryMarker(0, branch, attempt, retries); err != nil {
-				fmt.Fprintf(o.errorLog, "error: write retry marker for prompt-only run: %v\n", err)
-				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+				if o.errorLog != nil {
+					fmt.Fprintf(o.errorLog, "warning: write retry marker for prompt-only run: %v\n", err)
+				}
 			}
 		} else {
 			logPath := filepath.Join(".", ".sandman", "logs", fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
-			if err := logRunMarker(logPath, attempt, retries); err != nil {
-				fmt.Fprintf(o.errorLog, "error: write run marker for prompt-only run: %v\n", err)
-				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+			if err := logRunMarkerFn(logPath, attempt, retries); err != nil {
+				if o.errorLog != nil {
+					fmt.Fprintf(o.errorLog, "warning: write run marker for prompt-only run: %v\n", err)
+				}
 			}
 		}
 
