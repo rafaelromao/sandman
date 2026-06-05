@@ -223,7 +223,7 @@ func TestPortal_LoadPortalRunsTreatsAbortedAsTerminalAborted(t *testing.T) {
 	}
 }
 
-func TestPortal_LoadPortalRunsTreatsLegacyCancelledAsAborted(t *testing.T) {
+func TestPortal_LoadPortalRunsTreatsAbortedEventAsAbortedRegardlessOfPayloadStatus(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -232,7 +232,7 @@ func TestPortal_LoadPortalRunsTreatsLegacyCancelledAsAborted(t *testing.T) {
 	startedAt := time.Now().Add(-10 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.cancelled", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
+		{Type: "run.aborted", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
 	})
 
 	runs, err := loadPortalRuns(repoRoot)
@@ -244,7 +244,7 @@ func TestPortal_LoadPortalRunsTreatsLegacyCancelledAsAborted(t *testing.T) {
 	}
 	run := runs[0]
 	if run.Kind != "completed" || run.Status != "aborted" {
-		t.Fatalf("expected legacy cancelled run to project as completed aborted, got %#v", run)
+		t.Fatalf("expected aborted run to project as completed aborted, got %#v", run)
 	}
 }
 
@@ -1686,5 +1686,95 @@ func TestPortal_BatchWithMixedBlockedAndQueued_ShowsBlockedAndQueuedSeparately(t
 	}
 	if queued.Status != "queued" {
 		t.Fatalf("expected issue 43 status 'queued', got %q", queued.Status)
+	}
+}
+
+func TestPortalRunFromActiveBatchIssue_AbortedRunHasAbortedByOperatorLog(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-5 * time.Minute)
+	finishedAt := startedAt.Add(1 * time.Minute)
+	active := portalActiveRun{
+		Key:         "run-active",
+		SocketPath:  filepath.Join(repoRoot, ".sandman", "runs", "active-1", "run.sock"),
+		IssueNumber: 42,
+		StartedAt:   startedAt,
+		ModTime:     startedAt,
+	}
+	state := &events.RunState{
+		RunID:   "run-42",
+		Started: events.Event{Type: "run.started", Timestamp: startedAt, RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		Finished: &events.Event{
+			Type:      "run.aborted",
+			Timestamp: finishedAt,
+			RunID:     "run-42",
+			Issue:     42,
+			Payload:   map[string]any{"status": "aborted", "branch": "sandman/42-fix"},
+		},
+	}
+
+	run := portalRunFromActiveBatchIssue(repoRoot, active, 42, state, nil, "", nil)
+
+	if run.Status != "aborted" {
+		t.Fatalf("expected status 'aborted', got %q", run.Status)
+	}
+	if run.Log != "Aborted by operator." {
+		t.Fatalf("expected log 'Aborted by operator.', got %q", run.Log)
+	}
+}
+
+func TestDedupPortalRunGroup_AbortedWinsOverActiveBlockedQueued(t *testing.T) {
+	base := time.Now().Add(-10 * time.Minute)
+	group := []portalRun{
+		{Key: "active-row", Kind: "active", Status: "active", IssueNumber: 42, StartedAt: base.Add(1 * time.Minute)},
+		{Key: "blocked-row", Kind: "completed", Status: "blocked", IssueNumber: 42, StartedAt: base.Add(2 * time.Minute)},
+		{Key: "queued-row", Kind: "completed", Status: "queued", IssueNumber: 42, StartedAt: base.Add(3 * time.Minute)},
+		{Key: "aborted-row", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base},
+	}
+
+	result := dedupPortalRunGroup(group)
+
+	if len(result) != 1 {
+		t.Fatalf("expected aborted to win and return 1 row, got %d: %#v", len(result), result)
+	}
+	if result[0].Key != "aborted-row" {
+		t.Fatalf("expected aborted-row to win, got key=%q status=%q", result[0].Key, result[0].Status)
+	}
+	if result[0].Status != "aborted" {
+		t.Fatalf("expected aborted status, got %q", result[0].Status)
+	}
+}
+
+func TestDedupPortalRunGroup_TieBrokenByLatestStartedAt(t *testing.T) {
+	base := time.Now().Add(-10 * time.Minute)
+	group := []portalRun{
+		{Key: "aborted-earlier", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base},
+		{Key: "aborted-later", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base.Add(5 * time.Minute)},
+	}
+
+	result := dedupPortalRunGroup(group)
+
+	if len(result) != 1 {
+		t.Fatalf("expected single row, got %d: %#v", len(result), result)
+	}
+	if result[0].Key != "aborted-later" {
+		t.Fatalf("expected tie-break to pick latest StartedAt (aborted-later), got %q", result[0].Key)
+	}
+}
+
+func TestDedupPortalRunGroup_AllZeroPriorityRowsAreUntouched(t *testing.T) {
+	base := time.Now().Add(-10 * time.Minute)
+	group := []portalRun{
+		{Key: "success-row", Kind: "completed", Status: "success", IssueNumber: 42, StartedAt: base},
+		{Key: "failure-row", Kind: "completed", Status: "failure", IssueNumber: 42, StartedAt: base.Add(1 * time.Minute)},
+	}
+
+	result := dedupPortalRunGroup(group)
+
+	if len(result) != 2 {
+		t.Fatalf("expected succeeded and failure rows to be untouched (2 rows), got %d: %#v", len(result), result)
 	}
 }
