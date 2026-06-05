@@ -6132,3 +6132,224 @@ func TestSyncBaseBranchSerializesAgainstRealGitFetch(t *testing.T) {
 		t.Errorf("parallel syncBaseBranch failed: %v", err)
 	}
 }
+
+func TestRunBatch_LogsAbortedForQueuedRunOnCancel(t *testing.T) {
+	t.Run("turn-wait", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Chdir(dir)
+		initGitRepo(t, dir)
+
+		client := &fakeGitHubClient{
+			issues: map[int]*github.Issue{
+				42: {Number: 42, Title: "First"},
+				43: {Number: 43, Title: "Second"},
+			},
+		}
+
+		proc := &fakeProcess{}
+		sb := &fakeSandbox{process: proc}
+		factory := &fakeSandboxFactory{sandbox: sb}
+		blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+		spyLog := &spyEventLog{}
+
+		o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+		o.sandboxFactory = factory
+		o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = o.RunBatch(ctx, Request{Issues: []int{42, 43}, Parallel: 1})
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+		waitForSignal(t, done, "expected batch to complete")
+
+		assertQueuedThenAbortedWithSameRunID(t, spyLog.events, 43)
+	})
+
+	t.Run("startGate", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Chdir(dir)
+		initGitRepo(t, dir)
+
+		client := &fakeGitHubClient{
+			issues: map[int]*github.Issue{
+				42: {Number: 42, Title: "First"},
+				43: {Number: 43, Title: "Second"},
+			},
+		}
+
+		started1 := make(chan struct{})
+		release1 := make(chan struct{})
+		started2 := make(chan struct{})
+		factory := &controlledRunnableFactory{
+			runnables: map[int]Runnable{
+				42: &controlledRunnable{
+					result:  AgentRunResult{IssueNumber: 42, Status: "success"},
+					started: started1,
+					release: release1,
+				},
+				43: &controlledRunnable{
+					result:  AgentRunResult{IssueNumber: 43, Status: "success"},
+					started: started2,
+				},
+			},
+		}
+		spyLog := &spyEventLog{}
+
+		o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+		o.runnableFactory = factory
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = o.RunBatch(ctx, Request{
+				Issues:        []int{42, 43},
+				Parallel:      1,
+				StartDelay:    500 * time.Millisecond,
+				StartDelaySet: true,
+			})
+		}()
+
+		waitForSignal(t, started1, "expected first issue to start")
+		close(release1)
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+		assertNoSignal(t, started2, "second issue should not have started")
+		waitForSignal(t, done, "expected batch to complete")
+
+		assertQueuedThenAbortedWithSameRunID(t, spyLog.events, 43)
+	})
+}
+
+func TestRunBatch_CascadesAbortFromBlockerToDependents(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+		},
+	}
+
+	proc := &fakeProcess{}
+	sb := &fakeSandbox{process: proc}
+	factory := &fakeSandboxFactory{sandbox: sb}
+	blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond}
+	spyLog := &spyEventLog{}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = factory
+	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(ctx, Request{
+			Issues:       []int{42, 100},
+			Dependencies: map[int][]int{100: {42}},
+			Parallel:     2,
+		})
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	waitForSignal(t, done, "expected batch to complete")
+
+	queuedEvent, abortedEvent := findQueuedAndAborted(t, spyLog.events, 100)
+	if queuedEvent.RunID != abortedEvent.RunID {
+		t.Fatalf("expected same runID for queued and aborted events, got %q vs %q", queuedEvent.RunID, abortedEvent.RunID)
+	}
+	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
+		t.Fatalf("expected aborted terminal status, got %q", status)
+	}
+	if abortedBy, _ := abortedEvent.Payload["aborted_by"].([]int); !reflect.DeepEqual(abortedBy, []int{42}) {
+		t.Fatalf("expected aborted_by [42], got %#v", abortedEvent.Payload["aborted_by"])
+	}
+
+	for i := range spyLog.events {
+		e := spyLog.events[i]
+		if e.Issue == 100 && e.Type == "run.blocked" {
+			t.Fatal("did not expect run.blocked event for dependent (should be run.aborted)")
+		}
+	}
+
+	runs := events.ProjectRunStates(spyLog.events)
+	var depRun *events.RunState
+	for i := range runs {
+		if runs[i].IssueNumber() == 100 {
+			depRun = &runs[i]
+			break
+		}
+	}
+	if depRun == nil {
+		t.Fatal("expected projected run for dependent issue 100")
+	}
+	if depRun.IsActive() {
+		t.Fatal("expected dependent run to be terminal")
+	}
+	if depRun.Status() != "aborted" {
+		t.Fatalf("expected dependent status aborted, got %q", depRun.Status())
+	}
+}
+
+func assertQueuedThenAbortedWithSameRunID(t *testing.T, recorded []events.Event, issueNum int) {
+	t.Helper()
+	queuedEvent, abortedEvent := findQueuedAndAborted(t, recorded, issueNum)
+	if queuedEvent.RunID != abortedEvent.RunID {
+		t.Fatalf("expected same runID for queued and aborted events, got %q vs %q", queuedEvent.RunID, abortedEvent.RunID)
+	}
+	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
+		t.Fatalf("expected aborted terminal status, got %q", status)
+	}
+	for i := range recorded {
+		e := recorded[i]
+		if e.Issue == issueNum && e.Type == "run.blocked" {
+			t.Fatalf("did not expect run.blocked event for issue %d (should be run.aborted)", issueNum)
+		}
+	}
+	runs := events.ProjectRunStates(recorded)
+	for i := range runs {
+		if runs[i].IssueNumber() == issueNum {
+			if runs[i].IsActive() {
+				t.Fatalf("expected issue %d run to be terminal, got active", issueNum)
+			}
+			if runs[i].Status() != "aborted" {
+				t.Fatalf("expected issue %d status aborted, got %q", issueNum, runs[i].Status())
+			}
+			return
+		}
+	}
+	t.Fatalf("expected projected run for issue %d", issueNum)
+}
+
+func findQueuedAndAborted(t *testing.T, recorded []events.Event, issueNum int) (*events.Event, *events.Event) {
+	t.Helper()
+	var queuedEvent, abortedEvent *events.Event
+	for i := range recorded {
+		e := &recorded[i]
+		if e.Issue != issueNum {
+			continue
+		}
+		switch e.Type {
+		case "run.queued":
+			queuedEvent = e
+		case "run.aborted":
+			abortedEvent = e
+		}
+	}
+	if queuedEvent == nil {
+		t.Fatalf("expected run.queued event for issue %d", issueNum)
+	}
+	if abortedEvent == nil {
+		t.Fatalf("expected run.aborted event for issue %d", issueNum)
+	}
+	return queuedEvent, abortedEvent
+}
