@@ -34,13 +34,15 @@ type Request struct {
 	// BaseBranches maps each issue number to its base branch.
 	BaseBranches map[int]string
 	// ContinuePrompts maps each issue number to its rendered continuation prompt.
-	ContinuePrompts            map[int]string
-	Retries                    int
-	Parallel                   int
-	StartDelay                 time.Duration
-	StartDelaySet              bool
-	Branches                   map[int]string
-	Sandbox                    string
+	ContinuePrompts map[int]string
+	Retries         int
+	Parallel        int
+	StartDelay      time.Duration
+	StartDelaySet   bool
+	Branches        map[int]string
+	Sandbox         string
+	// RequireDockerfile enforces a .sandman/Dockerfile preflight for container runs.
+	RequireDockerfile          bool
 	ContainerCapacity          int
 	ContainerCapacitySet       bool
 	MaxContainers              int

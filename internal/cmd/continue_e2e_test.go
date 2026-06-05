@@ -33,7 +33,7 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(isolatedHome, ".config"))
 
 	ghShimDir := t.TempDir()
-	writeFakeGHShim(t, ghShimDir)
+	writeMergedFakeGHShim(t, ghShimDir)
 	prependPath(t, ghShimDir)
 
 	out, err := runSandmanBinary(t, binPath, repoDir, "init")
@@ -42,12 +42,13 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	}
 
 	forcePodmanSandbox(t, repoDir)
-	writeFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
+	writeMergedFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 	installFakeOpenCodeForContainer(t, repoDir)
 
 	out, err = runSandmanBinary(t, binPath, repoDir, "run", "--sandbox", "podman", "1")
 	if err != nil {
-		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
+		ghLog, _ := os.ReadFile(filepath.Join(ghShimDir, "gh-calls.log"))
+		t.Fatalf("sandman run failed: %v\noutput:\n%s\ngh log:\n%s", err, out, ghLog)
 	}
 	if !strings.Contains(out, "Summary: 1 succeeded") {
 		t.Fatalf("expected run success summary, got:\n%s", out)
@@ -82,6 +83,9 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	cfg.Git.BaseBranch = "trunk"
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".sandman", "bin", "pr-state"), []byte("open\n"), 0644); err != nil {
+		t.Fatalf("reset gh pr state: %v", err)
 	}
 
 	out, err = runSandmanBinary(t, binPath, repoDir, "continue", "1", "finish the tests")
@@ -204,7 +208,7 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(isolatedHome, ".config"))
 
 	ghShimDir := t.TempDir()
-	writeFakeGHShim(t, ghShimDir)
+	writeMergedFakeGHShim(t, ghShimDir)
 	prependPath(t, ghShimDir)
 
 	out, err := runSandmanBinary(t, binPath, repoDir, "init")
@@ -394,13 +398,19 @@ EOF
 
 case "$step" in
   0)
-    write_context "Initial run for $branch."
+    if [ -f double.go ]; then
+      perl -0pi -e 's/return 0/return 4/' double.go
+    fi
+    mkdir -p /workspace/.sandman/bin
+    printf '%s\n' open > /workspace/.sandman/bin/pr-state
+    printf '%s\n' 0 > /workspace/.sandman/bin/pr-state-count
+    write_context "Initial run."
     ;;
   1)
-    write_context "First continue for $branch."
+    write_context "First continue."
     ;;
   2)
-    write_context "Second continue for $branch."
+    write_context "Second continue."
     ;;
   *)
     printf 'unexpected fake opencode step %s for %s\n' "$step" "$branch" >&2
@@ -410,6 +420,7 @@ esac
 
 printf '%s\n' $((step + 1)) > "$step_file"
 printf 'fake opencode step %s for %s\n' "$step" "$branch"
+printf '%s\n' '# Todos' "- [x] fake opencode step ${step} complete"
 `
 
 	if err := os.WriteFile(filepath.Join(binDir, "opencode"), []byte(script), 0755); err != nil {
@@ -421,8 +432,316 @@ printf 'fake opencode step %s for %s\n' "$step" "$branch"
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
-	dockerfile = append(dockerfile, []byte("\nCOPY .sandman/bin/opencode /usr/local/bin/opencode\nRUN chmod +x /usr/local/bin/opencode\n")...)
+	dockerfile = append(dockerfile, []byte("\nCOPY .sandman/bin/opencode /usr/local/bin/opencode\nRUN chmod +x /usr/local/bin/opencode\nENV PATH=\"/usr/local/bin:$PATH\"\n")...)
 	if err := os.WriteFile(dockerfilePath, dockerfile, 0644); err != nil {
 		t.Fatalf("append fake opencode to Dockerfile: %v", err)
+	}
+}
+
+func writeMergedFakeGHShim(t *testing.T, dir string) {
+	t.Helper()
+
+	script := `#!/bin/sh
+set -eu
+
+printf '%s\n' "$*" >> "__LOG_FILE__"
+
+case "$1" in
+  issue)
+    if [ "${2:-}" = "view" ]; then
+      case "${3:-}" in
+        1)
+          issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(2) return 4."
+          cat <<JSON
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+JSON
+          exit 0
+          ;;
+        2)
+          issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(3) return 6."
+          cat <<JSON
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+JSON
+          exit 0
+          ;;
+      esac
+    fi
+    ;;
+  repo)
+    if [ "${2:-}" = "view" ]; then
+      cat <<'JSON'
+{"name":"sandbox","owner":{"login":"example"}}
+JSON
+      exit 0
+    fi
+    ;;
+  pr)
+    if [ "${2:-}" = "list" ]; then
+      head=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --head)
+            shift
+            head="${1:-}"
+            ;;
+        esac
+        shift
+      done
+      state_file="$shim_dir/pr-state"
+      count_file="$shim_dir/pr-state-count"
+      state="open"
+      if [ -f "$state_file" ]; then
+        state=$(cat "$state_file")
+      fi
+      cat <<JSON
+[{"number":1,"state":"open","mergedAt":"","headRefName":"$head","headRefOid":""}]
+JSON
+      exit 0
+    fi
+    if [ "${2:-}" = "create" ]; then
+      printf 'https://example.test/example/sandbox/pull/1\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "checks" ]; then
+      printf 'all checks passed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "comment" ]; then
+      printf 'commented\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "view" ]; then
+      printf 'https://example.test/example/sandbox/pull/1\n'
+      exit 0
+    fi
+    ;;
+  api)
+    path=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -H)
+          shift 2
+          ;;
+        --repo)
+          shift 2
+          ;;
+        repos/*)
+          path="$1"
+          shift
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    case "$path" in
+      repos/example/sandbox/issues/1)
+        cat <<'JSON'
+{"number":1,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4.","labels":[{"name":"ready-for-agent"}]}
+JSON
+        exit 0
+        ;;
+      repos/example/sandbox/issues/2)
+        cat <<'JSON'
+{"number":2,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(3) return 6.","labels":[{"name":"ready-for-agent"}]}
+JSON
+        exit 0
+        ;;
+      repos/example/sandbox/issues/1/events)
+        printf '[]\n'
+        exit 0
+        ;;
+      repos/example/sandbox/issues/2/events)
+        printf '[]\n'
+        exit 0
+        ;;
+    esac
+    printf 'unexpected gh api path: %s\n' "$path" >&2
+    exit 1
+    ;;
+  auth)
+    if [ "${2:-}" = "status" ]; then
+      cat <<'JSON'
+github.com
+  ✓ Logged in to github.com as test-user (keyring)
+  ✓ Git operations for github.com configured to use https protocol.
+  ✓ Token: ghp_xxxxxxxxxxxxxxxxxxxx
+JSON
+      exit 0
+    fi
+    if [ "${2:-}" = "setup-git" ]; then
+      exit 0
+    fi
+    ;;
+esac
+
+		printf 'unexpected gh command: %s\n' "$*" >&2
+	exit 1
+	`
+	script = strings.ReplaceAll(script, "__LOG_FILE__", filepath.Join(dir, "gh-calls.log"))
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("create gh shim dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0755); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+}
+
+func writeMergedFakeGHShimForContainer(t *testing.T, hostDir string) {
+	t.Helper()
+
+	containerShimDir := "/workspace/.sandman/bin"
+	script := strings.ReplaceAll(`#!/bin/sh
+set -eu
+
+shim_dir="__SHIM_DIR__"
+
+case "$1" in
+  issue)
+    if [ "${2:-}" = "view" ]; then
+      case "${3:-}" in
+        1)
+          issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(2) return 4."
+          cat <<JSON
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+JSON
+          exit 0
+          ;;
+        2)
+          issue_number="${3:-}"
+          body="The repo has a tiny failing Go test. Make Double(3) return 6."
+          cat <<JSON
+{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+JSON
+          exit 0
+          ;;
+      esac
+    fi
+    ;;
+  repo)
+    if [ "${2:-}" = "view" ]; then
+      cat <<'JSON'
+{"name":"sandbox","owner":{"login":"example"}}
+JSON
+      exit 0
+    fi
+    ;;
+  pr)
+    if [ "${2:-}" = "list" ]; then
+      head=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --head)
+            shift
+            head="${1:-}"
+            ;;
+        esac
+        shift
+      done
+      cat <<JSON
+[{"number":1,"state":"open","mergedAt":"","headRefName":"$head","headRefOid":""}]
+JSON
+      exit 0
+    fi
+    if [ "${2:-}" = "create" ]; then
+      printf 'https://example.test/example/sandbox/pull/1\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "checks" ]; then
+      printf 'all checks passed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "comment" ]; then
+      printf 'commented\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "view" ]; then
+      printf 'https://example.test/example/sandbox/pull/1\n'
+      exit 0
+    fi
+    ;;
+  api)
+    path=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -H)
+          shift 2
+          ;;
+        --repo)
+          shift 2
+          ;;
+        repos/*)
+          path="$1"
+          shift
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    case "$path" in
+      repos/example/sandbox/issues/1)
+        cat <<'JSON'
+{"number":1,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4.","labels":[{"name":"ready-for-agent"}]}
+JSON
+        exit 0
+        ;;
+      repos/example/sandbox/issues/2)
+        cat <<'JSON'
+{"number":2,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(3) return 6.","labels":[{"name":"ready-for-agent"}]}
+JSON
+        exit 0
+        ;;
+      repos/example/sandbox/issues/1/events)
+        printf '[]\n'
+        exit 0
+        ;;
+      repos/example/sandbox/issues/2/events)
+        printf '[]\n'
+        exit 0
+        ;;
+    esac
+    printf 'unexpected gh api path: %s\n' "$path" >&2
+    exit 1
+    ;;
+  auth)
+    if [ "${2:-}" = "status" ]; then
+      cat <<'JSON'
+github.com
+  ✓ Logged in to github.com as test-user (keyring)
+  ✓ Git operations for github.com configured to use https protocol.
+  ✓ Token: ghp_xxxxxxxxxxxxxxxxxxxx
+JSON
+      exit 0
+    fi
+    if [ "${2:-}" = "setup-git" ]; then
+      exit 0
+    fi
+    ;;
+esac
+
+printf 'unexpected gh command: %s\n' "$*" >&2
+exit 1
+`, "__SHIM_DIR__", containerShimDir)
+	if err := os.MkdirAll(hostDir, 0755); err != nil {
+		t.Fatalf("create gh shim dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hostDir, "gh"), []byte(script), 0755); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	repoDir := filepath.Dir(filepath.Dir(hostDir))
+	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
+	dockerfile, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile = append(dockerfile, []byte("\nCOPY .sandman/bin/gh /usr/local/bin/gh\nRUN chmod +x /usr/local/bin/gh\n")...)
+	if err := os.WriteFile(dockerfilePath, dockerfile, 0644); err != nil {
+		t.Fatalf("append gh shim to Dockerfile: %v", err)
 	}
 }

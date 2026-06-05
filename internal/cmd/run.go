@@ -380,6 +380,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				StartDelay:                 time.Duration(startDelay) * time.Second,
 				StartDelaySet:              startDelaySet,
 				Sandbox:                    sandboxMode,
+				RequireDockerfile:          true,
 				ContainerCapacity:          containerCapacity,
 				ContainerCapacitySet:       containerCapacitySet,
 				MaxContainers:              maxContainers,

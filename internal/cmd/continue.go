@@ -210,6 +210,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				StartDelay:                 startDelay,
 				StartDelaySet:              startDelaySet,
 				Sandbox:                    sandboxMode,
+				RequireDockerfile:          true,
 				ContainerCapacity:          containerCapacity,
 				ContainerCapacitySet:       containerCapacitySet,
 				MaxContainers:              maxContainers,
