@@ -1590,6 +1590,57 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 	}
 }
 
+func TestPortal_KeepsCompletedRunsThatStartAfterAnOlderActiveBatch(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	activeStartedAt := time.Now().Add(-30 * time.Minute)
+	completedStartedAt := time.Now().Add(-5 * time.Minute)
+	completedFinishedAt := completedStartedAt.Add(2 * time.Minute)
+
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-380-1")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{380}, CreatedAt: activeStartedAt}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: completedStartedAt, RunID: "run-558-1", Issue: 558, Payload: map[string]any{"branch": "sandman/558-fix"}},
+		{Type: "run.finished", Timestamp: completedFinishedAt, RunID: "run-558-1", Issue: 558, Payload: map[string]any{"status": "failure", "branch": "sandman/558-fix"}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	byIssue := map[int]portalRun{}
+	for _, run := range runs {
+		byIssue[run.IssueNumber] = run
+	}
+
+	if _, ok := byIssue[558]; !ok {
+		t.Fatalf("expected completed issue 558 to remain visible, got %#v", runs)
+	}
+	if run := byIssue[558]; run.Kind != "completed" || run.Status != "failure" {
+		t.Fatalf("expected issue 558 to project as completed failure, got %#v", run)
+	}
+}
+
 func TestPortal_BatchWithBlockedIssue_ShowsOneRow(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

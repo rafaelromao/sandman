@@ -652,7 +652,7 @@ func loadPortalRuns(repoRoot string) ([]portalRun, error) {
 		if _, ok := consumedRunIDs[runState.RunID]; ok {
 			continue
 		}
-		if !activeBatchStart.IsZero() && portalEventBelongsToBatch(runState.Started.Timestamp, activeBatchStart) {
+		if runState.Status() == "queued" && !activeBatchStart.IsZero() && portalEventBelongsToBatch(runState.Started.Timestamp, activeBatchStart) {
 			continue
 		}
 		runs = append(runs, portalRunFromState(repoRoot, runState, nil, eventsByRun))
