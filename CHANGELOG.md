@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `Aborted` as a first-class terminal AgentRun status in the events vocabulary. A new `run.aborted` event is emitted when an agent run is interrupted by context cancellation, and `RunState.Status()` returns `"aborted"` for it.
+- `batch.ErrAborted` sentinel error. `RunBatch` now returns an error wrapping `ErrAborted` (matchable with `errors.Is`) when context cancellation interrupted one or more in-flight AgentRuns, so the CLI layer can distinguish operator-initiated abort from a genuine run failure.
 - Standard open-source project files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CHANGELOG.md`
 - `Makefile` with common development tasks
 - GitHub issue templates for bug reports, feature requests, and agent improvements

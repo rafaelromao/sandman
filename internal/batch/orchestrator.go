@@ -600,6 +600,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	results := make([]AgentRunResult, len(req.Issues))
 	var mu sync.Mutex
 	failureCount := 0
+	abortedCount := 0
 	statuses := make(map[int]string, len(req.Issues))
 	completed := make(map[int]chan struct{}, len(req.Issues))
 	for _, num := range req.Issues {
@@ -739,9 +740,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					if err := ctx.Err(); err != nil {
 						turnMu.Unlock()
 						mu.Lock()
-						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "failure", Branch: req.Branches[issueNum]}
-						statuses[issueNum] = "failure"
-						failureCount++
+						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+						statuses[issueNum] = "aborted"
+						abortedCount++
 						mu.Unlock()
 						return
 					}
@@ -756,9 +757,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 			if err := startGate.Acquire(ctx); err != nil {
 				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "failure", Branch: req.Branches[issueNum]}
-				statuses[issueNum] = "failure"
-				failureCount++
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+				statuses[issueNum] = "aborted"
+				abortedCount++
 				mu.Unlock()
 				return
 			}
@@ -785,8 +786,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			mu.Lock()
 			results[idx] = res
 			statuses[issueNum] = res.Status
-			if res.Status == "failure" || res.Status == "aborted" {
+			if res.Status == "failure" {
 				failureCount++
+			}
+			if res.Status == "aborted" {
+				abortedCount++
 			}
 			mu.Unlock()
 		}(inputIndex[num], num, dependencies[num], turn)
@@ -815,6 +819,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
+	if abortedCount > 0 {
+		return &Result{Runs: results}, fmt.Errorf("%d of %d runs aborted: %w", abortedCount, len(req.Issues), ErrAborted)
+	}
 	if failureCount > 0 {
 		return &Result{Runs: results}, fmt.Errorf("%d of %d runs failed", failureCount, len(req.Issues))
 	}
@@ -1282,6 +1289,9 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, resolveGitIdentity, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Force, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
+	}
+	if result.Status == "aborted" {
+		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run aborted: %w", ErrAborted)
 	}
 	if result.Status != "success" {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
