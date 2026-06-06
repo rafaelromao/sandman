@@ -2704,7 +2704,7 @@ func TestRunBatch_SkipsIssuesBlockedByOpenExternalBlockers(t *testing.T) {
 	}
 }
 
-func TestRunBatch_RechecksInBatchBlockerStateBeforeDependentStart(t *testing.T) {
+func TestRunBatch_InBatchBlockerSuccessUnblocksDependentDespiteOpenIssue(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -2712,7 +2712,7 @@ func TestRunBatch_RechecksInBatchBlockerStateBeforeDependentStart(t *testing.T) 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42:  {Number: 42, Title: "Blocker", State: "open"},
-			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}, State: "open"},
 		},
 		prs: map[string]*github.PR{
 			"sandman/42-blocker":    mergedPR("sandman/42-blocker", ""),
@@ -2750,7 +2750,7 @@ func TestRunBatch_RechecksInBatchBlockerStateBeforeDependentStart(t *testing.T) 
 	assertNoSignal(t, dependentStarted, "dependent should wait for blocker to finish")
 	close(releaseBlocker)
 
-	assertNoSignal(t, dependentStarted, "dependent should stay blocked because blocker issue is still open")
+	waitForSignal(t, dependentStarted, "expected dependent to start once in-batch blocker succeeded, even though blocker's GitHub issue is still open")
 	waitForSignal(t, done, "expected batch to finish")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2767,23 +2767,14 @@ func TestRunBatch_RechecksInBatchBlockerStateBeforeDependentStart(t *testing.T) 
 	if statuses[42] != "success" {
 		t.Fatalf("expected blocker success, got %q", statuses[42])
 	}
-	if statuses[100] != "blocked" {
-		t.Fatalf("expected dependent blocked, got %q", statuses[100])
+	if statuses[100] != "success" {
+		t.Fatalf("expected dependent success because in-batch blocker succeeded, got %q", statuses[100])
 	}
 
-	var blockedEvent *events.Event
-	for i := range spyLog.events {
-		e := spyLog.events[i]
+	for _, e := range spyLog.events {
 		if e.Type == "run.blocked" && e.Issue == 100 {
-			blockedEvent = &e
+			t.Fatalf("did not expect run.blocked event for dependent when in-batch blocker succeeded, got %#v", e.Payload)
 		}
-	}
-	if blockedEvent == nil {
-		t.Fatal("expected run.blocked event for dependent")
-	}
-	blockedBy, ok := blockedEvent.Payload["blocked_by"].([]int)
-	if !ok || !reflect.DeepEqual(blockedBy, []int{42}) {
-		t.Fatalf("expected blocked_by [42], got %#v", blockedEvent.Payload["blocked_by"])
 	}
 }
 

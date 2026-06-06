@@ -1174,7 +1174,8 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
 	}
 
-	blockedBy, err := o.recheckBlockedBy(ctx, append(blockers, externalBlockers...))
+	_ = blockers
+	blockedBy, err := o.recheckBlockedBy(ctx, externalBlockers)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: recheck blockers for issue %d: %v\n", num, err)
 		_ = wt.Stop()

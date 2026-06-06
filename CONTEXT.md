@@ -5,7 +5,7 @@ Domain vocabulary for Sandman, a terminal-native CLI tool that orchestrates AFK 
 ## Language
 
 **BlockedBy**:
-The set of issue numbers that must complete successfully before an AgentRun for this issue can start, and must still be closed on GitHub immediately before start time. Derived from the union of body references and GitHub native dependency fields.
+The set of issue numbers that must complete successfully before an AgentRun for this issue can start. Derived from the union of body references and GitHub native dependency fields. An external blocker (not in the current batch) must still be closed on GitHub immediately before start time. An in-batch blocker only needs to reach status `success` within the batch — its GitHub issue may still be open at that instant.
 _Avoid_: dependencies, prerequisites.
 
 **Agent**:
@@ -182,7 +182,7 @@ _Avoid_: Replay mode.
 - An **Issue** may have **BlockedBy** relationships to other **Issues**
 - A **DependencyResolver** produces a **ResolvedBatch** from a set of **Issues**
 - An **Orchestrator** executes a **ResolvedBatch**, respecting **BlockedBy** ordering
-- An **AgentRun** may be **blocked** if any of its **BlockedBy** issues failed or is still open when the run is about to start
+- An **AgentRun** may be **blocked** if any of its in-batch **BlockedBy** issues did not finish with status `success`, or if any of its external **BlockedBy** issues is still open on GitHub when the run is about to start
 - A **Sandbox** provides isolation for one or more **AgentRuns**
 - In `sandbox: worktree`, each **AgentRun** gets its own **Sandbox** (a **WorktreeSandbox**)
 - In a container-backed sandbox strategy, each **ContainerSandbox** may host up to **ContainerCapacity** **AgentRuns** at once
