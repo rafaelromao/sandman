@@ -2071,14 +2071,15 @@ func TestPortal_QueuedThenSuccessShowsSuccessAfterBatchEnds(t *testing.T) {
 	}
 }
 
-// TestPortal_QueuedAndBlockedSameLifecycleDedupsToBlocked locks in criterion 5:
-// when a lifecycle emits run.queued (runID_A, from the orchestrator main goroutine)
-// and run.blocked (runID_B, from runSingle's external blocker recheck) for the
-// same issue, the portal must render exactly one row with the terminal blocked
-// status, even when an unrelated active batch is running concurrently for a
-// different issue. Before BatchKey, the historical rows for issue 42 were
-// kept as-is in dedup because the active batch belonged to a different issue.
-func TestPortal_QueuedAndBlockedSameLifecycleDedupsToBlocked(t *testing.T) {
+// TestPortal_QueuedAndBlockedAgentRunDedupsToBlocked locks in criterion 5:
+// when an AgentRun emits run.queued (runID_A, from the orchestrator main
+// goroutine) and run.blocked (runID_B, from runSingle's external blocker
+// recheck) for the same issue, the portal must render exactly one row with
+// the terminal blocked status, even when an unrelated active batch is running
+// concurrently for a different issue. Before BatchKey, the historical rows
+// for issue 42 were kept as-is in dedup because the active batch belonged to
+// a different issue.
+func TestPortal_QueuedAndBlockedAgentRunDedupsToBlocked(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
 	if err != nil {
 		t.Fatal(err)

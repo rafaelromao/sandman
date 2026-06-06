@@ -722,16 +722,20 @@ func dedupPortalRuns(runs []portalRun) []portalRun {
 	return result
 }
 
+// dedupPortalRunGroup collapses duplicate rows for one issue within one batch.
+// It first strips queued rows when any non-queued row exists in the group, then
+// applies portalRunPriority (aborted > active > blocked > queued > other) and
+// breaks ties by latest StartedAt.
 func dedupPortalRunGroup(runs []portalRun) []portalRun {
 	if len(runs) <= 1 {
 		return runs
 	}
-	// A queued row only describes the wait-state of a lifecycle and is
-	// superseded by any later non-queued row for the same lifecycle. When the
+	// A queued row only describes the wait state of an AgentRun and is
+	// superseded by any later non-queued row for the same AgentRun. When the
 	// group mixes queued with non-queued rows (e.g. a queued event followed by
-	// a separate run.started/run.finished pair generated inside runSingle),
-	// strip the queued rows so the terminal status wins regardless of the
-	// other priorities.
+	// run.started + run.finished events that the same AgentRun emits with a
+	// different RunID once it leaves the wait state), strip the queued rows
+	// so the terminal status wins regardless of the other priorities.
 	nonQueued := make([]portalRun, 0, len(runs))
 	queuedOnly := make([]portalRun, 0, len(runs))
 	for _, run := range runs {
