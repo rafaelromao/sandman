@@ -227,6 +227,9 @@ func TestRunBatch_IdleTimeoutRetriesAndSucceeds(t *testing.T) {
 	if countEventsByType(spyLog.events, "run.aborted") != 0 {
 		t.Errorf("expected no run.aborted event (terminal event is emitted once after the loop with the final result), got %d", countEventsByType(spyLog.events, "run.aborted"))
 	}
+	if !proc.killCalled {
+		t.Error("expected process.Kill to have been called by heartbeat on first attempt")
+	}
 }
 
 func TestRunBatch_IdleTimeoutZeroDisables(t *testing.T) {
