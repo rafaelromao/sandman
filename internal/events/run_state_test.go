@@ -141,3 +141,37 @@ func TestProjectRunStates_LegacyCancelledEventStillProjectsAsAborted(t *testing.
 		t.Fatalf("expected issue label #408, got %q", got)
 	}
 }
+
+func TestProjectRunStates_IdleTimeoutEventDoesNotBreakProjection(t *testing.T) {
+	idleTimeoutAt := time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC)
+	abortedAt := time.Date(2025, 1, 1, 12, 6, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-idle", Issue: 42},
+		{Type: "run.idle_timeout", Timestamp: idleTimeoutAt, RunID: "run-idle", Issue: 42, Payload: map[string]any{
+			"issue":                42,
+			"idle_seconds":         300.0,
+			"idle_timeout_seconds": 1800,
+			"attempt":              1,
+		}},
+		{Type: "run.aborted", Timestamp: abortedAt, RunID: "run-idle", Issue: 42, Payload: map[string]any{"status": "aborted"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if run.IsActive() {
+		t.Fatal("expected run to be terminal after run.aborted")
+	}
+	if got := run.Status(); got != "aborted" {
+		t.Fatalf("expected aborted status, got %q", got)
+	}
+	if got := run.IssueLabel(); got != "#42" {
+		t.Fatalf("expected issue label #42, got %q", got)
+	}
+	if got := run.Duration(); got != 6*time.Minute {
+		t.Fatalf("expected 6m duration, got %s", got)
+	}
+}
