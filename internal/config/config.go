@@ -125,7 +125,9 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		// Mutable runtime state under ~/.pi/agent/ is too large or too
 		// session-specific to snapshot. npm is a package cache that can
 		// grow large; sessions holds mutable per-run state that should
-		// remain inspectable on the host after the container run.
+		// remain inspectable on the host after the container run. The
+		// exclude list is a subset of LiveMounts; PrepareContainerConfigMounts
+		// unions them, so the redundancy is intentional.
 		SnapshotExcludes: []string{
 			"~/.pi/agent/npm",
 			"~/.pi/agent/sessions",
