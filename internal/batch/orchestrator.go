@@ -730,7 +730,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	for turn, num := range ordered {
 		wg.Add(1)
-		go func(idx, issueNum int, blockers []int, turn int) {
+		runID := generateRunID(num)
+		if o.eventLog != nil && (len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
+			_ = o.eventLog.Log(events.Event{
+				Type:      "run.queued",
+				Timestamp: time.Now(),
+				RunID:     runID,
+				Issue:     num,
+				IssueRef:  issueRef(num),
+				Payload:   map[string]any{"blocked_by": dependencies[num]},
+			})
+		}
+		go func(idx, issueNum int, blockers []int, turn int, runID string) {
 			defer wg.Done()
 			defer close(completed[issueNum])
 
@@ -756,19 +767,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				turnMu.Unlock()
 			}
 			defer advanceTurn()
-
-			runID := generateRunID(issueNum)
-
-			if o.eventLog != nil && (len(blockers) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
-				_ = o.eventLog.Log(events.Event{
-					Type:      "run.queued",
-					Timestamp: time.Now(),
-					RunID:     runID,
-					Issue:     issueNum,
-					IssueRef:  issueRef(issueNum),
-					Payload:   map[string]any{"blocked_by": blockers},
-				})
-			}
 
 			abortedBy := make([]int, 0, len(blockers))
 			stillBlockedBy := make([]int, 0, len(blockers))
@@ -886,7 +884,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				abortedCount++
 			}
 			mu.Unlock()
-		}(inputIndex[num], num, dependencies[num], turn)
+		}(inputIndex[num], num, dependencies[num], turn, runID)
 	}
 
 	wg.Wait()
