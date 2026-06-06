@@ -3,7 +3,9 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/events"
 )
 
 func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
@@ -64,6 +67,295 @@ func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
 	if len(runKeys) != 2 {
 		t.Fatalf("expected 2 distinct run keys, got %v", runKeys)
 	}
+}
+
+func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("skip e2e in CI")
+	}
+	if !portalAbortSupported() {
+		t.Skip("skip abort e2e on unsupported platform")
+	}
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := shortTempDir(t)
+	t.Chdir(repoDir)
+	initRunIntegrationRepoWithRemote(t, repoDir)
+	writeAbortE2EConfig(t, repoDir)
+
+	ghShimDir := shortTempDir(t)
+	writeFakeGHShim(t, ghShimDir)
+	writeBlockingOpencodeShim(t, ghShimDir)
+	prependPath(t, ghShimDir)
+
+	portalURL := startPortalBinary(t, binPath, repoDir, ghShimDir)
+	waitForPortalReady(t, portalURL)
+
+	_ = startSandmanRun(t, binPath, repoDir, ghShimDir, "run", "1", "2")
+
+	waitForPortalRunCountAndStatus(t, portalURL, 2, "active")
+
+	abortRun := waitForActivePortalRunReady(t, portalURL, 1)
+	abortBodyCode, abortBody := writeAbortRequest(t, portalURL, abortRun.Key, 1)
+	if abortBodyCode != http.StatusOK {
+		t.Fatalf("expected 200 abort response, got %d: %s", abortBodyCode, abortBody)
+	}
+	if len(abortBody) == 0 {
+		t.Fatal("expected non-empty abort response body")
+	}
+
+	waitForPortalRun(t, portalURL, 1, func(run portalRun) bool {
+		return run.Kind == "completed" && run.Status == "aborted"
+	})
+
+	issue2Run := waitForPortalRun(t, portalURL, 2, func(run portalRun) bool {
+		return run.Kind == "active" || (run.Kind == "completed" && run.Status == "success")
+	})
+	if issue2Run.Kind == "completed" && issue2Run.Status != "success" {
+		t.Fatalf("expected issue 2 to stay active or finish successfully, got %#v", issue2Run)
+	}
+
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
+	eventsWritten, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var aborted []events.Event
+	for _, event := range eventsWritten {
+		if event.Type == "run.aborted" {
+			aborted = append(aborted, event)
+		}
+	}
+	if len(aborted) != 1 {
+		t.Fatalf("expected exactly one run.aborted event, got %v", aborted)
+	}
+	if aborted[0].Issue != 1 {
+		t.Fatalf("expected run.aborted for issue 1, got %#v", aborted[0])
+	}
+}
+
+func TestPortal_E2E_AbortReturns404ForUnknownRun(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("skip e2e in CI")
+	}
+	if !portalAbortSupported() {
+		t.Skip("skip abort e2e on unsupported platform")
+	}
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := shortTempDir(t)
+	t.Chdir(repoDir)
+	initRunIntegrationRepoWithRemote(t, repoDir)
+	writeAbortE2EConfig(t, repoDir)
+
+	ghShimDir := shortTempDir(t)
+	writeFakeGHShim(t, ghShimDir)
+	prependPath(t, ghShimDir)
+
+	portalURL := startPortalBinary(t, binPath, repoDir, ghShimDir)
+	waitForPortalReady(t, portalURL)
+
+	statusCode, body := writeAbortRequest(t, portalURL, "run-does-not-exist", 42)
+	if statusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", statusCode, body)
+	}
+	if len(body) == 0 {
+		t.Fatal("expected non-empty 404 response body")
+	}
+}
+
+func writeAbortE2EConfig(t *testing.T, repoDir string) {
+	t.Helper()
+
+	configPath := filepath.Join(repoDir, ".sandman", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	configYAML := []byte("default_agent: opencode\nsandbox: worktree\ngit:\n  base_branch: main\n")
+	if err := os.WriteFile(configPath, configYAML, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+}
+
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("/tmp", "sm-")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+func writeBlockingOpencodeShim(t *testing.T, dir string) {
+	t.Helper()
+
+	script := `#!/bin/sh
+set -eu
+
+case "$*" in
+  *"Implement GitHub issue #1"*)
+    mkdir -p .sandman/logs
+    cat > ".sandman/logs/1.log" <<'EOF'
+--- run 0 ---
+# Todos
+- [ ] fake opencode issue 1 still running
+EOF
+    exec sleep 600
+    ;;
+  *"Implement GitHub issue #2"*)
+    mkdir -p .sandman/logs
+    cat > ".sandman/logs/2.log" <<'EOF'
+--- run 0 ---
+# Todos
+- [x] fake opencode issue 2 done
+EOF
+    sleep 5
+    exit 0
+    ;;
+  *)
+    exec sleep 600
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "opencode"), []byte(script), 0755); err != nil {
+		t.Fatalf("write blocking opencode shim: %v", err)
+	}
+}
+
+func startSandmanRun(t *testing.T, binPath, repoDir, shimDir string, args ...string) *exec.Cmd {
+	t.Helper()
+
+	cmd := exec.Command(binPath, args...)
+	cmd.Dir = repoDir
+	cmd.Env = append(os.Environ(),
+		"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GH_TOKEN=fake",
+		"GITHUB_TOKEN=fake",
+	)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sandman run: %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+		t.Logf("sandman run stdout:\n%s", stdout.String())
+		t.Logf("sandman run stderr:\n%s", stderr.String())
+	})
+	return cmd
+}
+
+func waitForPortalRunCountAndStatus(t *testing.T, baseURL string, want int, wantKind string) []portalRun {
+	t.Helper()
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		runs := fetchPortalRuns(t, baseURL)
+		if len(runs) >= want {
+			allMatch := true
+			for _, run := range runs {
+				if run.Kind != wantKind {
+					allMatch = false
+					break
+				}
+			}
+			if allMatch {
+				return runs
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	runs := fetchPortalRuns(t, baseURL)
+	t.Fatalf("expected %d runs with kind %q, got %#v", want, wantKind, runs)
+	return nil
+}
+
+func waitForPortalRun(t *testing.T, baseURL string, issue int, match func(portalRun) bool) portalRun {
+	t.Helper()
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, run := range fetchPortalRuns(t, baseURL) {
+			if run.IssueNumber == issue && match(run) {
+				return run
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	runs := fetchPortalRuns(t, baseURL)
+	t.Fatalf("timed out waiting for issue %d to match; runs=%#v", issue, runs)
+	return portalRun{}
+}
+
+func waitForActivePortalRunReady(t *testing.T, baseURL string, issue int) portalRun {
+	t.Helper()
+
+	deadline := time.Now().Add(20 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		for _, run := range fetchPortalRuns(t, baseURL) {
+			if run.IssueNumber != issue || run.Kind != "active" || run.SocketPath == "" {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(run.SocketPath), "cmd.sock")); err != nil {
+				lastErr = err
+				continue
+			}
+			if pid, err := portalPeerPID(run.SocketPath); err == nil && pid > 0 {
+				return run
+			} else if err != nil {
+				lastErr = err
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	runs := fetchPortalRuns(t, baseURL)
+	t.Fatalf("timed out waiting for active issue %d to become abort-ready; lastErr=%v; runs=%#v", issue, lastErr, runs)
+	return portalRun{}
+}
+
+func portalRunsByIssue(runs []portalRun) map[int]portalRun {
+	byIssue := make(map[int]portalRun, len(runs))
+	for _, run := range runs {
+		byIssue[run.IssueNumber] = run
+	}
+	return byIssue
+}
+
+func writeAbortRequest(t *testing.T, baseURL, runKey string, issue int) (int, []byte) {
+	t.Helper()
+
+	payload, err := json.Marshal(map[string]any{
+		"runKey": runKey,
+		"issue":  issue,
+	})
+	if err != nil {
+		t.Fatalf("marshal abort request: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/runs/abort", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("create abort request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("send abort request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read abort response: %v", err)
+	}
+	return resp.StatusCode, body
 }
 
 func createPromptOnlyRunSocket(t *testing.T, repoDir, runName string, issueNumber int) string {
