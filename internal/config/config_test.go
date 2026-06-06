@@ -215,6 +215,40 @@ func TestBuiltInAgentPresets_OpencodeLiveMountsDatabase(t *testing.T) {
 	}
 }
 
+func TestBuiltInAgentPresets_PiExcludesMutableState(t *testing.T) {
+	preset, ok := BuiltInAgentPresets["pi"]
+	if !ok {
+		t.Fatal("expected pi preset to exist")
+	}
+
+	wantExcluded := []string{
+		"~/.pi/agent/npm",
+		"~/.pi/agent/sessions",
+	}
+	for _, want := range wantExcluded {
+		if !slices.Contains(preset.SnapshotExcludes, want) {
+			t.Errorf("expected SnapshotExcludes to contain %q, got %v", want, preset.SnapshotExcludes)
+		}
+	}
+}
+
+func TestBuiltInAgentPresets_PiLiveMountsRuntimeState(t *testing.T) {
+	preset, ok := BuiltInAgentPresets["pi"]
+	if !ok {
+		t.Fatal("expected pi preset to exist")
+	}
+
+	wantLive := []string{
+		"~/.pi/agent/npm",
+		"~/.pi/agent/sessions",
+	}
+	for _, want := range wantLive {
+		if !slices.Contains(preset.LiveMounts, want) {
+			t.Errorf("expected LiveMounts to contain %q, got %v", want, preset.LiveMounts)
+		}
+	}
+}
+
 func TestConfig_ResolveAgentProvider_Pi(t *testing.T) {
 	cfg := &Config{}
 

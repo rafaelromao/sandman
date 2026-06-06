@@ -122,6 +122,24 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.claude",
 			"~/.agents",
 		},
+		// Mutable runtime state under ~/.pi/agent/ is too large or too
+		// session-specific to snapshot. npm is a package cache that can
+		// grow large; sessions holds mutable per-run state that should
+		// remain inspectable on the host after the container run. The
+		// exclude list is a subset of LiveMounts; PrepareContainerConfigMounts
+		// unions them, so the redundancy is intentional.
+		SnapshotExcludes: []string{
+			"~/.pi/agent/npm",
+			"~/.pi/agent/sessions",
+		},
+		// Concurrent agents sharing one container share the same host
+		// npm cache and session dir; last-write-wins applies (Pi does
+		// not run a concurrency layer the way opencode.db does under
+		// SQLite WAL mode).
+		LiveMounts: []string{
+			"~/.pi/agent/npm",
+			"~/.pi/agent/sessions",
+		},
 	},
 }
 
