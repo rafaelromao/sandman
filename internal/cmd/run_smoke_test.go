@@ -583,7 +583,7 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 			homePath(homeDir, "~/.cache/opencode/bin"),
 		)
 	}
-	cleanup, err := batch.PrepareContainerConfigMounts(repoDir, &startOpts)
+	cleanup, err := batch.PrepareContainerConfigMounts(repoDir, "", &startOpts)
 	if err != nil {
 		t.Skipf("skip %s smoke: prepare config mounts unavailable: %v", provider, err)
 	}

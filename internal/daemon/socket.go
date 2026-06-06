@@ -9,6 +9,61 @@ import (
 	"time"
 )
 
+// IsRunActive reports whether a run directory is currently owned by a live
+// daemon process. A run is considered active when its `run.sock` is
+// connectable. Run dirs that survived a crash (no live socket) are stale and
+// safe to clean up.
+func IsRunActive(runPath string) bool {
+	sockPath := filepath.Join(runPath, "run.sock")
+	conn, err := net.DialTimeout("unix", sockPath, 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// CleanupStaleRunSnapshots removes `<baseDir>/runs/<id>/config/` subtrees
+// for run dirs that are not currently active (no live `run.sock`). Returns
+// the number of snapshot directories removed. The run dir itself and its
+// manifest are left in place so operators can inspect them; the snapshot
+// subtree, which can contain secrets copied from the host, is the part
+// that must not accumulate after crashes.
+func CleanupStaleRunSnapshots(baseDir string) (int, error) {
+	runsDir := filepath.Join(baseDir, "runs")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("read runs dir: %w", err)
+	}
+
+	var removed int
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		runPath := filepath.Join(runsDir, entry.Name())
+		if IsRunActive(runPath) {
+			continue
+		}
+		snapshotPath := filepath.Join(runPath, "config")
+		info, err := os.Stat(snapshotPath)
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() {
+			continue
+		}
+		if err := os.RemoveAll(snapshotPath); err != nil {
+			continue
+		}
+		removed++
+	}
+	return removed, nil
+}
+
 type BatchManifest struct {
 	Issues    []int     `json:"issues"`
 	CreatedAt time.Time `json:"createdAt"`
