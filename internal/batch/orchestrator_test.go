@@ -4624,8 +4624,10 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *test
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 2 {
-		t.Fatalf("expected 2 containers to start (containerCapacity=1, parallel=2), got %d", starter.startCount)
+	// effectiveParallelCap(2, 1, 0) = 1, so the start gate serialises the
+	// two issues and the pool reuses a single container. See issue #501.
+	if starter.startCount != 1 {
+		t.Fatalf("expected 1 container to start (effectiveParallel=1 cap applied in auto mode), got %d", starter.startCount)
 	}
 }
 
@@ -5010,8 +5012,11 @@ func TestRunBatch_MaxContainersAutoStartsMinimumContainers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 2 {
-		t.Fatalf("expected 2 containers to start (4 runs at capacity=2), got %d", starter.startCount)
+	// effectiveParallelCap(4, 2, 0) = 2, so the start gate lets 2 issues
+	// through at a time and they share a single container (capacity=2). The
+	// pool reuses that container for the second batch. See issue #501.
+	if starter.startCount != 1 {
+		t.Fatalf("expected 1 container to start (effectiveParallel=2 cap applied, capacity=2 reuses one container), got %d", starter.startCount)
 	}
 }
 
@@ -5047,8 +5052,8 @@ func TestRunBatch_UsesConfigContainerSettingsWhenRequestUnset(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 2 {
-		t.Fatalf("expected config container_capacity=1 to start 2 containers (parallel=2, capacity=1), got %d", starter.startCount)
+	if starter.startCount != 1 {
+		t.Fatalf("expected config container_capacity=1 to start 1 container (effectiveParallel=1 cap applied, container reused), got %d", starter.startCount)
 	}
 }
 

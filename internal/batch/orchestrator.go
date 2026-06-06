@@ -180,6 +180,31 @@ func newBatchStartGate(parallel int, delay time.Duration) *batchStartGate {
 	return &batchStartGate{parallel: parallel, delay: delay}
 }
 
+// effectiveParallelCap returns the effective parallel concurrency after applying
+// the container pool capacity cap. In auto mode (maxContainers == 0) the cap
+// equals containerCapacity, since one auto-scaled container can run at most
+// containerCapacity AgentRuns concurrently. The parallel == 0 (unlimited)
+// semantics are preserved: an unlimited parallel request is never capped down
+// to a finite number.
+func effectiveParallelCap(parallel, containerCapacity, maxContainers int) int {
+	if parallel == 0 {
+		return 0
+	}
+	if containerCapacity <= 0 {
+		return parallel
+	}
+	var totalSlots int
+	if maxContainers == 0 {
+		totalSlots = containerCapacity
+	} else {
+		totalSlots = containerCapacity * maxContainers
+	}
+	if totalSlots < parallel {
+		return totalSlots
+	}
+	return parallel
+}
+
 func (g *batchStartGate) Acquire(ctx context.Context) error {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -561,11 +586,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	effectiveParallel := parallel
-	if isContainer && containerCapacity > 0 && maxContainers > 0 {
-		totalSlots := containerCapacity * maxContainers
-		if effectiveParallel == 0 || totalSlots < effectiveParallel {
-			effectiveParallel = totalSlots
-		}
+	if isContainer {
+		effectiveParallel = effectiveParallelCap(parallel, containerCapacity, maxContainers)
 	}
 
 	dependencies := make(map[int][]int, len(req.Issues))
