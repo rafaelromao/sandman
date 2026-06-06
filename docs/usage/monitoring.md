@@ -32,7 +32,7 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 
 | Field | Description |
 |-------|-------------|
-| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.warning`, `run.finished`, `run.aborted`) |
+| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.idle_timeout`, `run.warning`, `run.finished`, `run.aborted`) |
 | `timestamp` | ISO 8601 timestamp |
 | `run_id` | Unique run identifier |
 | `issue` | GitHub issue number, or `null` for prompt-only runs |
@@ -56,6 +56,16 @@ Emitted when one or more `BlockedBy` issues failed in the same batch.
 | Field | Description |
 |-------|-------------|
 | `blocked_by` | List of issue numbers that caused the block |
+
+#### `run.idle_timeout`
+Emitted when the heartbeat watchdog detects that the agent has produced no log output for the configured `run_idle_timeout` duration. The watchdog then kills the agent process and the run terminates as `aborted`. This event is diagnostic; the terminal status is set by the subsequent `run.aborted` event.
+
+| Field | Description |
+|-------|-------------|
+| `issue` | GitHub issue number |
+| `idle_seconds` | How long the agent was idle before the watchdog fired |
+| `idle_timeout_seconds` | The configured idle timeout threshold |
+| `attempt` | Which retry attempt this was (1-indexed) |
 
 #### `run.warning`
 Emitted for non-fatal issues during sandbox cleanup.
@@ -111,6 +121,26 @@ When Sandman receives SIGINT or SIGTERM (e.g., Ctrl+C):
 4. The control socket (`.sandman/runs/<run-id>/run.sock`) is closed — any connected `sandman attach` clients see EOF and exit
 5. Partial results and events are preserved in the event log
 6. `sandman run` (or `sandman continue`) prints `batch aborted by operator` to stderr, prints the final summary (with the aborted bucket), and exits with code 130 (the standard Unix code for SIGINT). A real run failure still prints the existing `run batch: ...` message and exits non-zero.
+
+## Idle timeout
+
+The heartbeat watchdog monitors agent log output. If no new output appears for `run_idle_timeout` seconds (default: 1800, i.e., 30 minutes), the watchdog aborts the run.
+
+**What triggers it:**
+- Agent blocked on an interactive stdin prompt with no output
+- Agent in an infinite loop with no logging
+- Agent deadlocked with no progress
+- Any situation where the agent process is alive but not producing output
+
+**What the user sees:**
+1. A `run.idle_timeout` event is written to `.sandman/events.jsonl` with diagnostic payload (`idle_seconds`, `idle_timeout_seconds`, `attempt`)
+2. The agent process is killed
+3. The run is emitted as `run.aborted` with status `aborted`
+4. The batch summary shows the run in the `aborted` bucket
+5. If retries are configured and retries remain, the run is retried
+
+**Disabling:**
+Set `run_idle_timeout: 0` in `.sandman/config.yaml` or pass `--run-idle-timeout 0` to disable the watchdog. Use this when running agents that are legitimately silent for long periods (e.g., waiting for external webhooks).
 
 ## Understanding run status
 

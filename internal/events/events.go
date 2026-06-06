@@ -6,6 +6,19 @@ import (
 )
 
 // Event is a single structured entry in the append-only JSONL event log.
+//
+// Known event types:
+//
+//	run.started       — agent run began
+//	run.continued     — agent run resumed from stored context
+//	run.queued        — issue waiting on blockers or capacity
+//	run.blocked       — one or more BlockedBy issues failed in batch
+//	run.idle_timeout  — heartbeat watchdog detected inactivity (fire-and-forget; terminal status is set on run.aborted)
+//	run.warning       — non-fatal issue during sandbox cleanup
+//	run.finished      — agent run completed successfully
+//	run.aborted       — run interrupted by context cancellation
+//
+// Payload shapes are documented in docs/usage/monitoring.md.
 type Event struct {
 	Type      string         `json:"type"`
 	Timestamp time.Time      `json:"timestamp"`

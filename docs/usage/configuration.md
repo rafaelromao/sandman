@@ -21,6 +21,12 @@ review_command: /oc review
 # Maximum number of concurrent agent runs.
 default_parallel: 4
 
+# Idle timeout in seconds for agent runs. When the agent produces no new log
+# output for this duration, the heartbeat watchdog aborts the run.
+# 0 disables the watchdog (runs never abort due to inactivity).
+# Default: 1800 (30 minutes).
+run_idle_timeout: 1800
+
 # Maximum concurrent agent runs per ContainerSandbox.
 # 0 means unlimited (no per-container cap; any number of runs may execute concurrently inside one container).
 container_capacity: 4
@@ -104,6 +110,14 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 
 `start_delay` is batch-local pacing behavior. It applies across sandbox modes, starts only after the first run completes, and does not change container capacity or max container scheduling.
 
+## Idle timeout
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `run_idle_timeout` | `1800` | Seconds of inactivity before the heartbeat watchdog aborts the run. `0` disables the watchdog (runs never abort due to inactivity) |
+
+`run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
+
 ## CLI config commands
 
 Use `sandman config get` and `sandman config set` to read and write individual fields:
@@ -112,6 +126,7 @@ Use `sandman config get` and `sandman config set` to read and write individual f
 sandman config get default_parallel
 sandman config set container_capacity 2
 sandman config set start_delay 5
+sandman config set run_idle_timeout 3600
 sandman config set default_model opencode/deepseek-v4-flash-free
 sandman config set git.base_branch main
 ```
