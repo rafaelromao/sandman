@@ -21,7 +21,6 @@
 
   function snapshotCellState(run, opts) {
     const h = opts.helpers;
-    const stopSupported = opts.stopSupported !== false;
     return {
       kind: run.kind || '',
       nameText: run.issueLabel || run.key,
@@ -32,7 +31,7 @@
       durationText: h.formatDuration(run.duration),
       branchText: h.formatBranch(run),
       sourceText: h.formatSource(run),
-      canAbort: stopSupported && h.isRunAbortable(run, opts.abortReservations),
+      canAbort: opts.abortSupported !== false && h.isRunAbortable(run, opts.abortReservations),
       ariaExpanded: String(opts.expandedKey === run.key),
     };
   }
@@ -106,9 +105,9 @@
   }
 
   function reserveAbortButton(run, opts) {
-    const reservations = opts && (opts.abortReservations || opts.stopGroups);
+    const reservations = opts && opts.abortReservations;
     if (!run || !opts || !reservations) return false;
-    if (opts.stopSupported === false) return false;
+    if (opts.abortSupported === false) return false;
     if (!opts.helpers.isRunAbortable(run, reservations)) return false;
     const reservationKey = String(run.key || '') + ':' + String(run.issueNumber != null ? run.issueNumber : '');
     if (reservations.has(reservationKey)) return false;

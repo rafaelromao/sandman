@@ -412,12 +412,12 @@ const runs = [
   { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', socketPath: '/tmp/sock' },
 ];
 const abortReservations = new Set();
-const opts = { helpers, abortReservations, stopSupported: false, expandedKey: null };
+const opts = { helpers, abortReservations, abortSupported: false, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, runs, opts);
 const aRow = body.children[0];
 const aBtn = aRow.querySelector('button[data-action="abort-run"]');
-if (aBtn) throw new Error('a should NOT have abort button when stopSupported is false');
-if (abortReservations.size !== 0) throw new Error('abortReservations should not be touched when stopSupported is false, got size ' + abortReservations.size);
+if (aBtn) throw new Error('a should NOT have abort button when abortSupported is false');
+if (abortReservations.size !== 0) throw new Error('abortReservations should not be touched when abortSupported is false, got size ' + abortReservations.size);
 console.log('PASS');
 `
 	runNodeScript(t, js)

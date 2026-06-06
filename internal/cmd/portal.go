@@ -491,7 +491,7 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 
 	pid, err := portalPeerPID(run.SocketPath)
 	if err != nil {
-		return fmt.Errorf("resolve active run process: %w", err)
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("resolve active run process: %v", err)}
 	}
 	if pid <= 0 {
 		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("daemon for run %q not responding", runKey)}
