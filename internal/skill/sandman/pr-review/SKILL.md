@@ -85,7 +85,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
    - An inline file comment
 
    **Self-check (run after every poll, before classifying state):**
-   If `top > 0` AND `reviews == 0` AND `inline == 0`, do NOT classify the state as "still pending" (case D). Post a follow-up PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform note explicitly asking the reviewer to re-post the review as a formal review (`gh pr review`) or as inline file comments, then continue polling. This guarantees that a reviewer who only posts a top-level conversation comment is never silently dropped.
+   If `top > 0` AND `reviews == 0` AND `inline == 0`, do NOT classify the state as "still pending" (case D). Post a follow-up PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. This guarantees that a reviewer who only posts a top-level conversation comment is never silently dropped.
 
    Read every new PR Review Agent comment from all three sources, including inline file comments. Do not overlook comments attached to a file diff instead of the top-level conversation. Treat any requested concrete change in an inline file comment as actionable feedback. If no reviewer response arrives within 10 minutes, stop and report to the user.
 
