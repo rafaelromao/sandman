@@ -730,7 +730,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	for turn, num := range ordered {
 		wg.Add(1)
-		go func(idx, issueNum int, blockers []int, turn int) {
+		runID := generateRunID(num)
+		if o.eventLog != nil && (len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
+			_ = o.eventLog.Log(events.Event{
+				Type:      "run.queued",
+				Timestamp: time.Now(),
+				RunID:     runID,
+				Issue:     num,
+				IssueRef:  issueRef(num),
+				Payload:   map[string]any{"blocked_by": dependencies[num]},
+			})
+		}
+		go func(idx, issueNum int, blockers []int, turn int, runID string) {
 			defer wg.Done()
 			defer close(completed[issueNum])
 
@@ -756,19 +767,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				turnMu.Unlock()
 			}
 			defer advanceTurn()
-
-			runID := generateRunID(issueNum)
-
-			if o.eventLog != nil && (len(blockers) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
-				_ = o.eventLog.Log(events.Event{
-					Type:      "run.queued",
-					Timestamp: time.Now(),
-					RunID:     runID,
-					Issue:     issueNum,
-					IssueRef:  issueRef(issueNum),
-					Payload:   map[string]any{"blocked_by": blockers},
-				})
-			}
 
 			abortedBy := make([]int, 0, len(blockers))
 			stillBlockedBy := make([]int, 0, len(blockers))
@@ -886,7 +884,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				abortedCount++
 			}
 			mu.Unlock()
-		}(inputIndex[num], num, dependencies[num], turn)
+		}(inputIndex[num], num, dependencies[num], turn, runID)
 	}
 
 	wg.Wait()
@@ -1239,7 +1237,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 
 	attempts := retries + 1
 	var result AgentRunResult
-	logPath := filepath.Join(".", ".sandman", "logs", fmt.Sprintf("%d.log", num))
+	logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%d.log", num))
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptRenderCfg := renderCfg
 		if attempt > 0 {
@@ -1379,8 +1377,8 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 	return nil
 }
 
-func (o *Orchestrator) writeRetryMarker(issueNum int, branch string, attempt, retries int) error {
-	logDir := filepath.Join(".", ".sandman", "logs")
+func (o *Orchestrator) writeRetryMarker(workDir string, issueNum int, branch string, attempt, retries int) error {
+	logDir := filepath.Join(workDir, ".sandman", "logs")
 	logName := fmt.Sprintf("%d.log", issueNum)
 	if issueNum == 0 {
 		name := strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)
@@ -1510,13 +1508,13 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 				fmt.Fprintf(o.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
 				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
-			if err := o.writeRetryMarker(0, branch, attempt, retries); err != nil {
+			if err := o.writeRetryMarker(wt.WorkDir(), 0, branch, attempt, retries); err != nil {
 				if o.errorLog != nil {
 					fmt.Fprintf(o.errorLog, "warning: write retry marker for prompt-only run: %v\n", err)
 				}
 			}
 		} else {
-			logPath := filepath.Join(".", ".sandman", "logs", fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
+			logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
 			if err := logRunMarkerFn(logPath, attempt, retries); err != nil {
 				if o.errorLog != nil {
 					fmt.Fprintf(o.errorLog, "warning: write run marker for prompt-only run: %v\n", err)

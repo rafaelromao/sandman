@@ -50,6 +50,8 @@ git:
 
 Sandman supports two built-in presets: `opencode` and `pi`. Both are installed into scaffolded Dockerfiles. `opencode` is the default `default_agent`.
 
+When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
+
 Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill folder.
 
 `sandman run --agent` selects one of those built-ins per invocation. `sandman config set default_agent` changes the project default.
