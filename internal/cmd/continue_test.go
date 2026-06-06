@@ -240,6 +240,113 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	}
 }
 
+func TestContinue_RunIdleTimeoutFlagPassedToBatchRunner(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-idle-timeout", "600", "42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.req.RunIdleTimeoutSet {
+		t.Fatal("expected run idle timeout override to be marked as set")
+	}
+	if spy.req.RunIdleTimeout != 600 {
+		t.Errorf("expected run idle timeout=600, got %d", spy.req.RunIdleTimeout)
+	}
+}
+
+func TestContinue_RunIdleTimeoutZeroAccepted(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-idle-timeout=0", "42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.req.RunIdleTimeoutSet {
+		t.Fatal("expected run idle timeout override to be marked as set when explicitly zero")
+	}
+	if spy.req.RunIdleTimeout != 0 {
+		t.Errorf("expected run idle timeout=0, got %d", spy.req.RunIdleTimeout)
+	}
+}
+
+func TestContinue_RunIdleTimeoutNegativeValueRejected(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-idle-timeout", "-1", "42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for negative run idle timeout")
+	}
+	if !strings.Contains(err.Error(), "run_idle_timeout must be 0 or greater") {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+}
+
 func TestContinue_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
 	dir := t.TempDir()
 	branch := "sandman/42-fix-bug"

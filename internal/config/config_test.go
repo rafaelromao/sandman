@@ -332,6 +332,68 @@ func TestLoad_MissingContainerSettings_AppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoad_MissingRunIdleTimeout_AppliesDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `default_agent: opencode
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.RunIdleTimeout != DefaultRunIdleTimeout {
+		t.Errorf("run_idle_timeout: got %d, want %d", cfg.RunIdleTimeout, DefaultRunIdleTimeout)
+	}
+	if DefaultRunIdleTimeout != 1800 {
+		t.Errorf("DefaultRunIdleTimeout: got %d, want 1800", DefaultRunIdleTimeout)
+	}
+}
+
+func TestLoad_RunIdleTimeoutZeroIsAccepted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `default_agent: opencode
+run_idle_timeout: 0
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.RunIdleTimeout != 0 {
+		t.Errorf("run_idle_timeout: got %d, want 0", cfg.RunIdleTimeout)
+	}
+}
+
+func TestLoad_RunIdleTimeoutPositive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `default_agent: opencode
+run_idle_timeout: 600
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.RunIdleTimeout != 600 {
+		t.Errorf("run_idle_timeout: got %d, want 600", cfg.RunIdleTimeout)
+	}
+}
+
 func TestLoad_InvalidContainerSettings_ReturnValidationError(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -358,6 +420,13 @@ max_containers: -1
 start_delay: -1
 `,
 			wantErr: "start_delay must be 0 or greater",
+		},
+		{
+			name: "negative run idle timeout",
+			content: `default_agent: opencode
+run_idle_timeout: -1
+`,
+			wantErr: "run_idle_timeout must be 0 or greater",
 		},
 	}
 
@@ -567,6 +636,8 @@ func TestConfig_SetValue(t *testing.T) {
 		{"default_parallel", "4", false},
 		{"start_delay", "0", false},
 		{"start_delay", "5", false},
+		{"run_idle_timeout", "0", false},
+		{"run_idle_timeout", "1800", false},
 		{"retries", "0", false},
 		{"retries", "3", false},
 		{"container_capacity", "4", false},
@@ -581,6 +652,8 @@ func TestConfig_SetValue(t *testing.T) {
 		{"default_parallel", "-1", true},
 		{"start_delay", "not-a-number", true},
 		{"start_delay", "-1", true},
+		{"run_idle_timeout", "not-a-number", true},
+		{"run_idle_timeout", "-1", true},
 		{"retries", "-1", true},
 		{"container_capacity", "not-a-number", true},
 		{"max_containers", "-1", true},

@@ -123,6 +123,9 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				startDelaySet = true
 			}
 
+			runIdleTimeout := 0
+			runIdleTimeoutSet := false
+
 			retries := -1
 			if v, ok := payloadInt(firstLastRun.Payload, "retries"); ok {
 				retries = v
@@ -174,6 +177,14 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				startDelay = time.Duration(startDelaySecs) * time.Second
 				startDelaySet = true
 			}
+			if runIdleTimeoutFlag := cmd.Flags().Lookup("run-idle-timeout"); runIdleTimeoutFlag != nil && runIdleTimeoutFlag.Changed {
+				runIdleTimeoutSecs, _ := cmd.Flags().GetInt("run-idle-timeout")
+				if runIdleTimeoutSecs < 0 {
+					return fmt.Errorf("run_idle_timeout must be 0 or greater")
+				}
+				runIdleTimeout = runIdleTimeoutSecs
+				runIdleTimeoutSet = true
+			}
 			if retriesFlag := cmd.Flags().Lookup("retries"); retriesFlag != nil && retriesFlag.Changed {
 				retries, _ = cmd.Flags().GetInt("retries")
 			}
@@ -210,6 +221,8 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				Retries:                    retries,
 				StartDelay:                 startDelay,
 				StartDelaySet:              startDelaySet,
+				RunIdleTimeout:             runIdleTimeout,
+				RunIdleTimeoutSet:          runIdleTimeoutSet,
 				Sandbox:                    sandboxMode,
 				RequireDockerfile:          true,
 				ContainerCapacity:          containerCapacity,
@@ -283,6 +296,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode or pi)")
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
 	cmd.Flags().Int("start-delay", 0, "Wait N seconds after any AgentRun finishes before starting the next one; 0 disables the delay")
+	cmd.Flags().Int("run-idle-timeout", 0, "Treat an AgentRun as stuck if it produces no output for N seconds; 0 disables the timeout")
 	cmd.Flags().Int("retries", 0, "Retry failed AgentRuns up to N times")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")

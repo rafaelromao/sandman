@@ -17,6 +17,7 @@ const (
 	DefaultReviewCommand     = "/oc review"
 	DefaultParallel          = 4
 	DefaultStartDelay        = 0
+	DefaultRunIdleTimeout    = 1800
 	DefaultContainerCapacity = 4
 	DefaultMaxContainers     = 0
 	DefaultWorktreeDir       = ".sandman/worktrees"
@@ -31,6 +32,7 @@ type Config struct {
 	ReviewCommand     string           `yaml:"review_command"`
 	DefaultParallel   int              `yaml:"default_parallel"`
 	StartDelay        int              `yaml:"start_delay"`
+	RunIdleTimeout    int              `yaml:"run_idle_timeout"`
 	Retries           int              `yaml:"retries"`
 	ContainerCapacity int              `yaml:"container_capacity"`
 	MaxContainers     int              `yaml:"max_containers"`
@@ -109,6 +111,7 @@ func SupportedKeys() []string {
 		"review_command",
 		"default_parallel",
 		"start_delay",
+		"run_idle_timeout",
 		"retries",
 		"container_capacity",
 		"max_containers",
@@ -132,6 +135,7 @@ func Load(path string) (*Config, error) {
 		ReviewCommand     string           `yaml:"review_command"`
 		DefaultParallel   int              `yaml:"default_parallel"`
 		StartDelay        int              `yaml:"start_delay"`
+		RunIdleTimeout    *int             `yaml:"run_idle_timeout"`
 		Retries           int              `yaml:"retries"`
 		ContainerCapacity *int             `yaml:"container_capacity"`
 		MaxContainers     *int             `yaml:"max_containers"`
@@ -172,6 +176,13 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.StartDelay < 0 {
 		return nil, fmt.Errorf("validate config: start_delay must be 0 or greater")
+	}
+	if raw.RunIdleTimeout == nil {
+		cfg.RunIdleTimeout = DefaultRunIdleTimeout
+	} else if *raw.RunIdleTimeout < 0 {
+		return nil, fmt.Errorf("validate config: run_idle_timeout must be 0 or greater")
+	} else {
+		cfg.RunIdleTimeout = *raw.RunIdleTimeout
 	}
 	if cfg.Retries < 0 {
 		return nil, fmt.Errorf("validate config: retries must be 0 or greater")
@@ -347,6 +358,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return fmt.Sprintf("%d", c.DefaultParallel), nil
 	case "start_delay":
 		return fmt.Sprintf("%d", c.StartDelay), nil
+	case "run_idle_timeout":
+		return fmt.Sprintf("%d", c.RunIdleTimeout), nil
 	case "retries":
 		return fmt.Sprintf("%d", c.Retries), nil
 	case "container_capacity":
@@ -399,6 +412,15 @@ func (c *Config) SetValue(key, value string) error {
 			return fmt.Errorf("start_delay must be 0 or greater")
 		}
 		c.StartDelay = n
+	case "run_idle_timeout":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for run_idle_timeout: %w", err)
+		}
+		if n < 0 {
+			return fmt.Errorf("run_idle_timeout must be 0 or greater")
+		}
+		c.RunIdleTimeout = n
 	case "retries":
 		n, err := strconv.Atoi(value)
 		if err != nil {
