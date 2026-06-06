@@ -53,6 +53,8 @@ Before writing any code:
 - [ ] List the behaviors to test (not implementation steps)
 - [ ] Ask a subagent to review the plan, then proceed automatically after reaching consensus
 
+**Subagent liveness cap.** The plan-review subagent is unattended and can hang. Track wall-time from the moment the review subagent is spawned; hard-reject any plan-review result older than **20 minutes**. Re-spawn the review subagent up to **2 times** — that is **3 total attempts** (1 original + 2 re-spawns) before falling through. If the 20-minute cap is still exceeded after the third attempt, halt and surface a **subagent stuck** blocker to the parent workflow instead of looping silently.
+
 **You can't test everything.** The subagent review ensures focus on critical paths and complex logic, not every possible edge case.
 
 ### 2. Tracer Bullet
