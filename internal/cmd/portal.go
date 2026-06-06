@@ -31,7 +31,7 @@ const (
 	portalPollInterval = 2 * time.Second
 	portalReadLimit    = 64 * 1024
 	portalReadTimeout  = 250 * time.Millisecond
-	portalStopTimeout  = 20 * time.Second
+	portalAbortTimeout = 5 * time.Second
 )
 
 var portalANSISequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -335,7 +335,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 				writeJSONError(w, abortErr.Error(), abortErr.status)
 				return
 			}
-			writeJSONError(w, err.Error(), http.StatusInternalServerError)
+			writeJSONError(w, "abort failed", http.StatusInternalServerError)
 			return
 		}
 
@@ -486,26 +486,29 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 		if os.IsNotExist(err) {
 			return &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
 		}
-		return fmt.Errorf("check command socket: %w", err)
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not inspect abort command socket for run %q", runKey)}
 	}
 
 	pid, err := portalPeerPID(run.SocketPath)
 	if err != nil {
-		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("resolve active run process: %v", err)}
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not resolve the active run process for run %q", runKey)}
 	}
 	if pid <= 0 {
 		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("daemon for run %q not responding", runKey)}
 	}
 
+	dialCtx, cancel := context.WithTimeout(ctx, portalAbortTimeout)
+	defer cancel()
+
 	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "unix", cmdSock)
+	conn, err := dialer.DialContext(dialCtx, "unix", cmdSock)
 	if err != nil {
-		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("connect command socket for run %q: %v", runKey, err)}
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not connect to the agent daemon for run %q", runKey)}
 	}
 	defer conn.Close()
 
 	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("set command timeout for run %q: %v", runKey, err)}
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not prepare abort command for run %q", runKey)}
 	}
 
 	req := struct {
@@ -513,12 +516,12 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 		Issue  int    `json:"issue"`
 	}{Action: "abort", Issue: issueNumber}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("write abort request for run %q: %v", runKey, err)}
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not send abort request for run %q", runKey)}
 	}
 
 	var resp daemon.CommandResponse
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("read abort response for run %q: %v", runKey, err)}
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not read abort response for run %q", runKey)}
 	}
 	if resp.Status == "error" {
 		return &portalAbortError{status: http.StatusConflict, message: resp.Message}

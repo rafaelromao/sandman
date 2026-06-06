@@ -2328,7 +2328,12 @@
       }
     }
 
-    async function abortRun(runKey, issue) {
+    async function abortRun(button, runKey, issue) {
+      const previousLabel = button ? button.textContent : '';
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Aborting...';
+      }
       try {
         const res = await fetch(abortPath, {
           method: 'POST',
@@ -2349,6 +2354,11 @@
       } catch (err) {
         errorBanner.textContent = 'Abort failed: ' + err.message;
         errorBanner.style.display = 'block';
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = previousLabel || 'Abort';
+        }
       }
     }
 
@@ -2702,7 +2712,9 @@
         if (action === 'abort-run') {
           event.preventDefault();
           const issue = Number(button.getAttribute('data-issue') || findRunByKey(runKey)?.issueNumber || 0);
-          abortRun(runKey, issue);
+          const label = findRunByKey(runKey)?.issueLabel || 'this run';
+          if (typeof window.confirm === 'function' && !window.confirm('Abort ' + label + '?')) return;
+          abortRun(button, runKey, issue);
           return;
         }
         if (action === 'set-tab') {

@@ -458,6 +458,57 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 		}
 	})
 
+	t.Run("dial failure is sanitized", func(t *testing.T) {
+		repoRoot, err := os.MkdirTemp("/tmp", "sm-abort-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		activeSock := filepath.Join(runDir, "run.sock")
+		cmdSock := filepath.Join(runDir, "cmd.sock")
+		if err := os.WriteFile(cmdSock, []byte("offline"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		ln, err := net.Listen("unix", activeSock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+
+		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+			{Type: "run.started", Timestamp: time.Now(), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		})
+
+		prevPeerPID := portalPeerPID
+		t.Cleanup(func() { portalPeerPID = prevPeerPID })
+		portalPeerPID = func(sockPath string) (int, error) {
+			if sockPath != activeSock {
+				t.Fatalf("expected socket %q, got %q", activeSock, sockPath)
+			}
+			return 12345, nil
+		}
+
+		err = abortPortalRun(context.Background(), repoRoot, "run-42-1", 42)
+		var abortErr *portalAbortError
+		if !errors.As(err, &abortErr) {
+			t.Fatalf("expected portalAbortError, got %v", err)
+		}
+		if abortErr.status != http.StatusBadGateway {
+			t.Fatalf("expected 502, got %d", abortErr.status)
+		}
+		if strings.Contains(abortErr.message, "cmd.sock") {
+			t.Fatalf("expected sanitized error, got %q", abortErr.message)
+		}
+	})
+
 	t.Run("inactive issue", func(t *testing.T) {
 		repoRoot := t.TempDir()
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
