@@ -1423,7 +1423,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		if heartbeatDone != nil {
 			<-heartbeatDone
 		}
-		if abortedByHeartbeat {
+		if abortedByHeartbeat && result.Status != "success" {
 			result.Status = "aborted"
 		}
 		if result.Status == "success" || parseLogForCompletion(logPath) {
