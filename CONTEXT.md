@@ -8,6 +8,14 @@ Domain vocabulary for Sandman, a terminal-native CLI tool that orchestrates AFK 
 The set of issue numbers that must complete successfully before an AgentRun for this issue can start. Derived from the union of body references and GitHub native dependency fields. An external blocker (not in the current batch) must still be closed on GitHub immediately before start time. An in-batch blocker only needs to reach status `success` within the batch — its GitHub issue may still be open at that instant.
 _Avoid_: dependencies, prerequisites.
 
+**In-batch blocker**:
+A blocker that is itself a member of the current Batch. Its terminal batch status (`success`, `failure`, `aborted`, or `blocked`) is the single source of truth for whether the dependent may start; the corresponding GitHub issue's `state` is not consulted.
+_Avoid_: local blocker, sibling blocker.
+
+**External blocker**:
+A blocker named in an AgentRun's BlockedBy that is not a member of the current Batch. The dependent may only start once GitHub reports the external blocker's issue as `closed` at the instant just before start time.
+_Avoid_: outside blocker, third-party blocker.
+
 **Agent**:
 An external AI coding tool (OpenCode or Pi) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
 _Avoid_: AI model, LLM, copilot.

@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted
+proposed
 
 ## Context
 
@@ -39,7 +39,7 @@ blockedBy, err := o.recheckBlockedBy(ctx, append(blockers, externalBlockers...))
 blockedBy, err := o.recheckBlockedBy(ctx, externalBlockers)
 ```
 
-The signature of `runSingle` is unchanged; the in-batch `blockers` parameter remains for documentation (and to keep the existing call site untouched). `CONTEXT.md` is updated so the **BlockedBy** definition reflects the two-population rule. ADR-0003 is not edited per the immutability convention; this ADR supersedes the "and the corresponding GitHub issue is closed immediately before start time" clause in ADR-0003's success-dependency rule, but only for the in-batch population. External-blocker gating is unchanged.
+The now-unused `blockers` parameter is dropped from `runSingle` and its single caller, so the dead-code smell does not survive the fix. `CONTEXT.md` adds **In-batch blocker** and **External blocker** as glossary terms and updates the **BlockedBy** definition to reflect the two-population rule. ADR-0003 is not edited per the immutability convention; this ADR supersedes the "and the corresponding GitHub issue is closed immediately before start time" clause in ADR-0003's success-dependency rule, but only for the in-batch population. External-blocker gating is unchanged.
 
 ## Consequences
 
