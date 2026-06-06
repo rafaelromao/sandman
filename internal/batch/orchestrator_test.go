@@ -5740,6 +5740,51 @@ func TestBuildStartOptions_PopulatesOpencodeSnapshotExcludesAndLiveMounts(t *tes
 	}
 }
 
+func TestBuildStartOptions_PopulatesPiSnapshotExcludesAndLiveMounts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	agentCfg := config.BuiltInAgentPresets["pi"].Agent("pi")
+	opts, err := buildStartOptions(agentCfg)
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+
+	wantExcluded := []string{
+		filepath.Join(home, ".pi", "agent", "npm"),
+		filepath.Join(home, ".pi", "agent", "sessions"),
+	}
+	for _, want := range wantExcluded {
+		found := false
+		for _, e := range opts.AgentConfigExcludes {
+			if e == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected AgentConfigExcludes to contain %q, got %v", want, opts.AgentConfigExcludes)
+		}
+	}
+
+	wantLive := []string{
+		filepath.Join(home, ".pi", "agent", "npm"),
+		filepath.Join(home, ".pi", "agent", "sessions"),
+	}
+	for _, want := range wantLive {
+		found := false
+		for _, l := range opts.LiveMounts {
+			if l == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected LiveMounts to contain %q, got %v", want, opts.LiveMounts)
+		}
+	}
+}
+
 func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -5811,6 +5856,101 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(snapshotSource, "opencode.db")); !os.IsNotExist(err) {
 		t.Errorf("expected opencode.db to be excluded from snapshot (live mount instead), got: %v", err)
+	}
+}
+
+func TestPrepareContainerConfigMounts_PiPresetEndToEnd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	piDir := filepath.Join(home, ".pi")
+	if err := os.MkdirAll(piDir, 0755); err != nil {
+		t.Fatalf("mkdir pi dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(piDir, "settings.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	piAgentDir := filepath.Join(piDir, "agent")
+	if err := os.MkdirAll(piAgentDir, 0755); err != nil {
+		t.Fatalf("mkdir pi agent dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(piAgentDir, "models.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write models: %v", err)
+	}
+
+	npmDir := filepath.Join(piAgentDir, "npm")
+	if err := os.MkdirAll(npmDir, 0755); err != nil {
+		t.Fatalf("mkdir npm dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(npmDir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write npm package: %v", err)
+	}
+
+	sessionsDir := filepath.Join(piAgentDir, "sessions")
+	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
+		t.Fatalf("mkdir sessions dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionsDir, "session.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	agentCfg := config.BuiltInAgentPresets["pi"].Agent("pi")
+	startOpts, err := buildStartOptions(agentCfg)
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &startOpts)
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	var snapshotSource string
+	npmMount := &sandbox.ConfigMount{}
+	sessionsMount := &sandbox.ConfigMount{}
+	var sawNpm, sawSessions bool
+	for i := range startOpts.ConfigMounts {
+		mount := &startOpts.ConfigMounts[i]
+		switch mount.Target {
+		case "/.pi":
+			snapshotSource = mount.Source
+		case "/.pi/agent/npm":
+			*npmMount = *mount
+			sawNpm = true
+		case "/.pi/agent/sessions":
+			*sessionsMount = *mount
+			sawSessions = true
+		}
+	}
+	if snapshotSource == "" {
+		t.Fatalf("expected snapshot mount for /.pi, got %v", startOpts.ConfigMounts)
+	}
+	if !sawNpm {
+		t.Errorf("expected live mount for ~/.pi/agent/npm, got %v", startOpts.ConfigMounts)
+	}
+	if !sawSessions {
+		t.Errorf("expected live mount for ~/.pi/agent/sessions, got %v", startOpts.ConfigMounts)
+	}
+	if npmMount.Source != npmDir {
+		t.Errorf("expected npm live mount source %q, got %q", npmDir, npmMount.Source)
+	}
+	if sessionsMount.Source != sessionsDir {
+		t.Errorf("expected sessions live mount source %q, got %q", sessionsDir, sessionsMount.Source)
+	}
+
+	if _, err := os.Stat(filepath.Join(snapshotSource, "settings.json")); err != nil {
+		t.Errorf("expected settings.json in snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "agent", "models.json")); err != nil {
+		t.Errorf("expected agent/models.json in snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "agent", "npm")); !os.IsNotExist(err) {
+		t.Errorf("expected agent/npm to be excluded from snapshot, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "agent", "sessions")); !os.IsNotExist(err) {
+		t.Errorf("expected agent/sessions to be excluded from snapshot, got: %v", err)
 	}
 }
 

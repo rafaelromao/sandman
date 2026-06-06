@@ -55,3 +55,6 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0012 | Ralph Loop — Agent-Driven Issue Selection | proposed |
 | 0013 | Rename delegate-review to pr-review | accepted |
 | 0014 | Sandman Review - Daemon-Monitored PR Reviews | proposed |
+| 0015 | Store container config snapshots under the run dir | accepted |
+| 0016 | Split OpenCode config snapshot from mutable state | accepted |
+| 0017 | Split Pi config snapshot from mutable state | accepted |

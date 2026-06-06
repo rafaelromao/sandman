@@ -122,6 +122,18 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.claude",
 			"~/.agents",
 		},
+		// Mutable runtime state under ~/.pi/agent/ is too large or too
+		// session-specific to snapshot. npm is a package cache that can
+		// grow large; sessions holds mutable per-run state that should
+		// remain inspectable on the host after the container run.
+		SnapshotExcludes: []string{
+			"~/.pi/agent/npm",
+			"~/.pi/agent/sessions",
+		},
+		LiveMounts: []string{
+			"~/.pi/agent/npm",
+			"~/.pi/agent/sessions",
+		},
 	},
 }
 
