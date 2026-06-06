@@ -56,6 +56,14 @@ _Avoid_: mounted config directories.
 Individual files resolved into a container sandbox via a temporary copy for agent configuration. Before mounting, Sandman creates a batch-scoped copy of each file with symlinks resolved (following ADR-0008). Paths starting with `~` are expanded to the user's home directory. Missing files are silently skipped.
 _Avoid_: config paths, settings files.
 
+**SnapshotExcludes**:
+Paths (typically subtrees of a `ConfigDir`) skipped during the copy-resolve snapshot step (ADR-0008/ADR-0015). Used to keep large mutable runtime state out of the run-owned snapshot (ADR-0016). Paths starting with `~` are expanded.
+_Avoid_: snapshot blocklist, copy excludes.
+
+**LiveMount**:
+A path bind-mounted directly from the host into a ContainerSandbox at its corresponding HOME=/ container path, instead of being copied into the snapshot. Used when host-side state must remain inspectable after the container run completes — e.g. OpenCode's `opencode.db` session database. A LiveMount is implicitly a `SnapshotExclude` of the same path.
+_Avoid_: bind mount (too generic), shared mount.
+
 **ContainerSandbox**:
 A Docker or Podman container providing filesystem and process isolation for one or more AgentRuns. A Batch may scale a pool of ContainerSandboxes up or down within configured limits.
 _Avoid_: Docker container, sandbox container.

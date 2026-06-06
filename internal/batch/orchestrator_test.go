@@ -5705,6 +5705,115 @@ func TestBuildStartOptions_IncludesSharedSkillsDir(t *testing.T) {
 	t.Fatalf("expected shared skills dir %q in agent config dirs, got %v", want, opts.AgentConfigDirs)
 }
 
+func TestBuildStartOptions_PopulatesOpencodeSnapshotExcludesAndLiveMounts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	agentCfg := config.BuiltInAgentPresets["opencode"].Agent("opencode")
+	opts, err := buildStartOptions(agentCfg)
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+
+	wantExcluded := filepath.Join(home, ".local", "share", "opencode", "token-optimizer")
+	found := false
+	for _, e := range opts.AgentConfigExcludes {
+		if e == wantExcluded {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected AgentConfigExcludes to contain %q, got %v", wantExcluded, opts.AgentConfigExcludes)
+	}
+
+	wantLive := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+	found = false
+	for _, l := range opts.LiveMounts {
+		if l == wantLive {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected LiveMounts to contain %q, got %v", wantLive, opts.LiveMounts)
+	}
+}
+
+func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	opencodeDir := filepath.Join(home, ".local", "share", "opencode")
+	if err := os.MkdirAll(opencodeDir, 0755); err != nil {
+		t.Fatalf("mkdir opencode dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(opencodeDir, "auth.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+	tokenOptimizerDir := filepath.Join(opencodeDir, "token-optimizer")
+	if err := os.MkdirAll(tokenOptimizerDir, 0755); err != nil {
+		t.Fatalf("mkdir token-optimizer: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tokenOptimizerDir, "huge.bin"), []byte("X"), 0644); err != nil {
+		t.Fatalf("write huge: %v", err)
+	}
+	dbPath := filepath.Join(opencodeDir, "opencode.db")
+	if err := os.WriteFile(dbPath, []byte("DB"), 0644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+	configOpencodeDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(configOpencodeDir, 0755); err != nil {
+		t.Fatalf("mkdir config/opencode: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configOpencodeDir, "opencode.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write opencode.json: %v", err)
+	}
+
+	agentCfg := config.BuiltInAgentPresets["opencode"].Agent("opencode")
+	startOpts, err := buildStartOptions(agentCfg)
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &startOpts)
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	var snapshotSource string
+	var dbMount *sandbox.ConfigMount
+	for i := range startOpts.ConfigMounts {
+		mount := &startOpts.ConfigMounts[i]
+		switch mount.Target {
+		case "/.local/share/opencode":
+			snapshotSource = mount.Source
+		case "/.local/share/opencode/opencode.db":
+			dbMount = mount
+		}
+	}
+	if snapshotSource == "" {
+		t.Fatalf("expected snapshot mount for /.local/share/opencode, got %v", startOpts.ConfigMounts)
+	}
+	if dbMount == nil {
+		t.Fatalf("expected live mount for opencode.db, got %v", startOpts.ConfigMounts)
+	}
+	if dbMount.Source != dbPath {
+		t.Errorf("expected live mount source to be host db path %q, got %q", dbPath, dbMount.Source)
+	}
+
+	if _, err := os.Stat(filepath.Join(snapshotSource, "auth.json")); err != nil {
+		t.Errorf("expected auth.json in snapshot copy: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "token-optimizer")); !os.IsNotExist(err) {
+		t.Errorf("expected token-optimizer to be excluded from snapshot, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "opencode.db")); !os.IsNotExist(err) {
+		t.Errorf("expected opencode.db to be excluded from snapshot (live mount instead), got: %v", err)
+	}
+}
+
 func TestRunBatch_UsesDotGitconfigIdentityOverRepoLocalConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

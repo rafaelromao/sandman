@@ -32,13 +32,15 @@ type ConfigMount struct {
 
 // StartOptions configures container startup.
 type StartOptions struct {
-	GitConfigPath    string
-	AgentConfigDirs  []string
-	AgentConfigFiles []string
-	ConfigMounts     []ConfigMount
-	UserID           string
-	SSH              bool
-	RemoteScheme     string
+	GitConfigPath       string
+	AgentConfigDirs     []string
+	AgentConfigFiles    []string
+	AgentConfigExcludes []string
+	LiveMounts          []string
+	ConfigMounts        []ConfigMount
+	UserID              string
+	SSH                 bool
+	RemoteScheme        string
 }
 
 // ContainerRuntime starts and manages containers.
@@ -245,6 +247,15 @@ func toContainerPath(hostPath string) string {
 	return hostPath
 }
 
+// NewLiveConfigMount returns a ConfigMount that bind-mounts the given host
+// path directly into the container at its corresponding HOME=/ path, instead
+// of copying it into the snapshot. Use this when the file or directory is
+// mutable runtime state that should remain inspectable on the host after the
+// container run completes (for example, a SQLite session database).
+func NewLiveConfigMount(hostPath string) ConfigMount {
+	return ConfigMount{Source: hostPath, Target: toContainerPath(hostPath)}
+}
+
 // ValidateAgentConfig rejects agents that rely on OS keychain auth.
 func ValidateAgentConfig(name string, agent config.Agent) error {
 	if agent.KeychainAuth {
@@ -283,11 +294,13 @@ func ResolveRuntime(preferred string) (string, error) {
 const maxCopyDepth = 50
 
 // ResolveConfigMounts creates a `config` subdirectory under parentDir and copies each
-// dir/file from the given lists into it, resolving symlinks. Returns the mount pairs
-// and a cleanup function that removes the `config` subdirectory. The caller owns
-// parentDir; passing a run-owned parent path keeps the snapshot lifecycle tied to
-// that run.
-func ResolveConfigMounts(parentDir string, dirs, files []string) ([]ConfigMount, func(), error) {
+// dir/file from the given lists into it, resolving symlinks. Any source path that
+// matches an entry in excludes (after filepath.Clean) is skipped during the copy,
+// so callers can opt large mutable subtrees out of the snapshot. Returns the mount
+// pairs and a cleanup function that removes the `config` subdirectory. The caller
+// owns parentDir; passing a run-owned parent path keeps the snapshot lifecycle
+// tied to that run.
+func ResolveConfigMounts(parentDir string, dirs, files, excludes []string) ([]ConfigMount, func(), error) {
 	if parentDir == "" {
 		return nil, nil, fmt.Errorf("parent dir is required for config snapshot")
 	}
@@ -305,6 +318,8 @@ func ResolveConfigMounts(parentDir string, dirs, files []string) ([]ConfigMount,
 	}
 	cleanup := func() { _ = os.RemoveAll(publishedDir) }
 
+	excludeSet := buildExcludeSet(excludes)
+
 	var mounts []ConfigMount
 	usedTargets := make(map[string]bool)
 
@@ -320,13 +335,16 @@ func ResolveConfigMounts(parentDir string, dirs, files []string) ([]ConfigMount,
 		if !info.IsDir() {
 			continue
 		}
+		if excludeSet[filepath.Clean(dir)] {
+			continue
+		}
 		target := toContainerPath(dir)
 		if usedTargets[target] {
 			continue
 		}
 		usedTargets[target] = true
 		dst := filepath.Join(publishedDir, strings.TrimPrefix(target, "/"))
-		if err := copyResolved(dir, dst, 0); err != nil {
+		if err := copyResolved(dir, dst, 0, excludeSet); err != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("copy config dir %q: %w", dir, err)
 		}
@@ -345,13 +363,16 @@ func ResolveConfigMounts(parentDir string, dirs, files []string) ([]ConfigMount,
 		if info.IsDir() {
 			continue
 		}
+		if excludeSet[filepath.Clean(file)] {
+			continue
+		}
 		target := toContainerPath(file)
 		if usedTargets[target] {
 			continue
 		}
 		usedTargets[target] = true
 		dst := filepath.Join(publishedDir, strings.TrimPrefix(target, "/"))
-		if err := copyResolved(file, dst, 0); err != nil {
+		if err := copyResolved(file, dst, 0, excludeSet); err != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("copy config file %q: %w", file, err)
 		}
@@ -361,11 +382,25 @@ func ResolveConfigMounts(parentDir string, dirs, files []string) ([]ConfigMount,
 	return mounts, cleanup, nil
 }
 
+func buildExcludeSet(excludes []string) map[string]bool {
+	if len(excludes) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(excludes))
+	for _, e := range excludes {
+		if e == "" {
+			continue
+		}
+		set[filepath.Clean(e)] = true
+	}
+	return set
+}
+
 // copyResolved copies src to dst, resolving symlinks. If src is a
 // directory, it is copied recursively. Broken symlinks are logged and
 // skipped. Depth is bounded by maxCopyDepth to guard against circular
-// symlinks.
-func copyResolved(src, dst string, depth int) error {
+// symlinks. Any source path in excludeSet is skipped.
+func copyResolved(src, dst string, depth int, excludeSet map[string]bool) error {
 	if depth >= maxCopyDepth {
 		return fmt.Errorf("max copy depth %d reached", maxCopyDepth)
 	}
@@ -382,13 +417,13 @@ func copyResolved(src, dst string, depth int) error {
 	}
 
 	if srcInfo.IsDir() {
-		return copyResolvedDir(src, dst, depth)
+		return copyResolvedDir(src, dst, depth, excludeSet)
 	}
 
 	return copyResolvedFile(src, dst)
 }
 
-func copyResolvedDir(src, dst string, depth int) error {
+func copyResolvedDir(src, dst string, depth int, excludeSet map[string]bool) error {
 	if err := os.MkdirAll(dst, 0755); err != nil {
 		return err
 	}
@@ -400,8 +435,11 @@ func copyResolvedDir(src, dst string, depth int) error {
 
 	for _, entry := range entries {
 		srcPath := filepath.Join(src, entry.Name())
+		if excludeSet[filepath.Clean(srcPath)] {
+			continue
+		}
 		dstPath := filepath.Join(dst, entry.Name())
-		if err := copyResolved(srcPath, dstPath, depth+1); err != nil {
+		if err := copyResolved(srcPath, dstPath, depth+1, excludeSet); err != nil {
 			return err
 		}
 	}

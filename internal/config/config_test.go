@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -168,6 +169,49 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 	}
 	if agent.KeychainAuth {
 		t.Error("keychain_auth: expected false")
+	}
+}
+
+func TestBuiltInAgentPresets_OpencodeExcludesMutableState(t *testing.T) {
+	preset, ok := BuiltInAgentPresets["opencode"]
+	if !ok {
+		t.Fatal("expected opencode preset to exist")
+	}
+
+	wantExcluded := []string{
+		"~/.local/share/opencode/token-optimizer",
+		"~/.local/share/opencode/storage",
+		"~/.local/share/opencode/snapshot",
+		"~/.local/share/opencode/tool-output",
+		"~/.local/share/opencode/repos",
+		"~/.local/share/opencode/log",
+		"~/.local/share/opencode/node_modules",
+		"~/.local/share/opencode/opencode.db",
+		"~/.local/share/opencode/opencode.db-shm",
+		"~/.local/share/opencode/opencode.db-wal",
+	}
+	for _, want := range wantExcluded {
+		if !slices.Contains(preset.SnapshotExcludes, want) {
+			t.Errorf("expected SnapshotExcludes to contain %q, got %v", want, preset.SnapshotExcludes)
+		}
+	}
+}
+
+func TestBuiltInAgentPresets_OpencodeLiveMountsDatabase(t *testing.T) {
+	preset, ok := BuiltInAgentPresets["opencode"]
+	if !ok {
+		t.Fatal("expected opencode preset to exist")
+	}
+
+	wantLive := []string{
+		"~/.local/share/opencode/opencode.db",
+		"~/.local/share/opencode/opencode.db-shm",
+		"~/.local/share/opencode/opencode.db-wal",
+	}
+	for _, want := range wantLive {
+		if !slices.Contains(preset.LiveMounts, want) {
+			t.Errorf("expected LiveMounts to contain %q, got %v", want, preset.LiveMounts)
+		}
 	}
 }
 
