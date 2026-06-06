@@ -8,6 +8,26 @@
 - An AI coding agent: [OpenCode](https://opencode.ai/) or [Pi](https://pi.dev)
 - (Optional but recommended) [Podman](https://podman.io/) or [Docker](https://docker.com/) for container-backed sandboxing
 
+If you plan to use Sandman with the `opencode` preset, install OpenCode's `opencode-shell-strategy` plugin first. Sandman runs OpenCode headlessly, so OpenCode must be taught to avoid interactive shell commands that would hang without a TTY/PTY. This applies to OpenCode subagents too, because they inherit the same instructions.
+
+### OpenCode setup
+
+```bash
+git clone https://github.com/JRedeker/opencode-shell-strategy.git ~/.config/opencode/plugin/shell-strategy
+```
+
+Add `~/.config/opencode/plugin/shell-strategy/shell_strategy.md` to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "instructions": [
+    "~/.config/opencode/plugin/shell-strategy/shell_strategy.md"
+  ]
+}
+```
+
+Restart OpenCode after installing the plugin so the instruction file is loaded for the next session.
+
 ## Installation
 
 ### Quick install

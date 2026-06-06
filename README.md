@@ -5,7 +5,7 @@ A terminal-native CLI tool for orchestrating AFK coding agents in isolated sandb
 ## Quick Start
 
 ```bash
-# Prerequisites: Go 1.24+, Git, gh CLI, and an AI agent (opencode or pi)
+# Prerequisites: Go 1.24+, Git, gh CLI, and an AI agent (OpenCode or Pi)
 # 1. Install
 go install github.com/rafaelromao/sandman/cmd/sandman@latest
 
@@ -24,6 +24,8 @@ sandman history
 # 5. Open the browser portal for current repo runs
 sandman portal
 ```
+
+OpenCode needs the `opencode-shell-strategy` plugin before Sandman can use the `opencode` preset.
 
 ## Overview
 

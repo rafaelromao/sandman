@@ -9,6 +9,38 @@ Sandman includes built-in presets for two AI coding agents: `opencode` and `pi`.
 | `opencode` | OpenCode | `opencode run "$(cat {{.PromptFile}})"` |
 | `pi` | Pi | `pi --print --provider <provider> --model <model> "$(cat {{.PromptFile}})"` |
 
+## OpenCode shell strategy
+
+Sandman uses OpenCode in a headless environment, so `opencode` must have the `opencode-shell-strategy` plugin installed before it is used with Sandman. The plugin teaches OpenCode to avoid interactive shell commands that would hang without a TTY/PTY. OpenCode subagents inherit the same instructions.
+
+### Install
+
+```bash
+git clone https://github.com/JRedeker/opencode-shell-strategy.git ~/.config/opencode/plugin/shell-strategy
+```
+
+Add the instruction file to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "instructions": [
+    "~/.config/opencode/plugin/shell-strategy/shell_strategy.md"
+  ]
+}
+```
+
+Restart OpenCode after installing it.
+
+### What it prevents
+
+| Command type | Hangs in Sandman | Safer alternative |
+|-------------|------------------|--------------------|
+| Package manager prompts | `npm init` | `npm init -y` |
+| Git commit prompts | `git commit` | `git commit -m "msg"` |
+| Merge prompts | `git merge branch` | `git merge --no-edit branch` |
+| Interactive editors | `vim`, `nano`, `vi` | Use OpenCode file tools |
+| Pagers / REPLs | `less`, `more`, `man`, `python` | Non-interactive flags or direct file tools |
+
 ## Model selection
 
 Sandman wires `AgentModel` only for built-in presets. `sandman run --model` overrides the configured default. Pi expects `provider/model` and Sandman splits it into separate provider and model flags.
