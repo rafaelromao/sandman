@@ -1166,6 +1166,31 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		activeMu.Unlock()
 	}()
 
+	issueShutdownDone := make(chan struct{})
+	defer close(issueShutdownDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-issueShutdownDone:
+			return
+		}
+
+		timeout := o.killTimeout
+		if timeout == 0 {
+			timeout = 10 * time.Second
+		}
+
+		if p := wt.Process(); p != nil {
+			p.Signal(syscall.SIGINT)
+		}
+
+		time.Sleep(timeout)
+
+		if p := wt.Process(); p != nil {
+			p.Kill()
+		}
+	}()
+
 	factory := o.runnableFactory
 	if factory == nil {
 		factory = defaultRunnableFactory{}

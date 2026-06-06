@@ -96,7 +96,12 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 
 	waitForPortalRunCountAndStatus(t, portalURL, 2, "active")
 
-	abortRun := waitForActivePortalRunReady(t, portalURL, 1)
+	runs := fetchPortalRuns(t, portalURL)
+	runByIssue := portalRunsByIssue(runs)
+	abortRun, ok := runByIssue[1]
+	if !ok {
+		t.Fatalf("expected issue 1 run in %v", runs)
+	}
 	abortBodyCode, abortBody := writeAbortRequest(t, portalURL, abortRun.Key, 1)
 	if abortBodyCode != http.StatusOK {
 		t.Fatalf("expected 200 abort response, got %d: %s", abortBodyCode, abortBody)
@@ -196,25 +201,24 @@ func writeBlockingOpencodeShim(t *testing.T, dir string) {
 	script := `#!/bin/sh
 set -eu
 
+repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")")
+
 case "$*" in
   *"Implement GitHub issue #1"*)
-    mkdir -p .sandman/logs
-    cat > ".sandman/logs/1.log" <<'EOF'
+    child=0
+    trap 'kill "$child" >/dev/null 2>&1 || true; exit 0' INT
+    mkdir -p "$repo_root/.sandman/logs"
+    cat > "$repo_root/.sandman/logs/1.log" <<'EOF'
 --- run 0 ---
 # Todos
 - [ ] fake opencode issue 1 still running
 EOF
-    exec sleep 600
+    sleep 600 &
+    child=$!
+    wait "$child"
     ;;
   *"Implement GitHub issue #2"*)
-    mkdir -p .sandman/logs
-    cat > ".sandman/logs/2.log" <<'EOF'
---- run 0 ---
-# Todos
-- [x] fake opencode issue 2 done
-EOF
-    sleep 5
-    exit 0
+    exec sleep 600
     ;;
   *)
     exec sleep 600
@@ -293,33 +297,6 @@ func waitForPortalRun(t *testing.T, baseURL string, issue int, match func(portal
 	}
 	runs := fetchPortalRuns(t, baseURL)
 	t.Fatalf("timed out waiting for issue %d to match; runs=%#v", issue, runs)
-	return portalRun{}
-}
-
-func waitForActivePortalRunReady(t *testing.T, baseURL string, issue int) portalRun {
-	t.Helper()
-
-	deadline := time.Now().Add(20 * time.Second)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		for _, run := range fetchPortalRuns(t, baseURL) {
-			if run.IssueNumber != issue || run.Kind != "active" || run.SocketPath == "" {
-				continue
-			}
-			if _, err := os.Stat(filepath.Join(filepath.Dir(run.SocketPath), "cmd.sock")); err != nil {
-				lastErr = err
-				continue
-			}
-			if pid, err := portalPeerPID(run.SocketPath); err == nil && pid > 0 {
-				return run
-			} else if err != nil {
-				lastErr = err
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	runs := fetchPortalRuns(t, baseURL)
-	t.Fatalf("timed out waiting for active issue %d to become abort-ready; lastErr=%v; runs=%#v", issue, lastErr, runs)
 	return portalRun{}
 }
 

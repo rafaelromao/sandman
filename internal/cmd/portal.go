@@ -870,6 +870,7 @@ func portalRunFromActiveBatchIssue(repoRoot string, active portalActiveRun, issu
 	if state != nil {
 		run.Key = state.RunID
 		run.RunID = state.RunID
+		run.Kind = kindForRun(*state)
 		run.Status = statusOrDefault(state.Status(), state.IsActive())
 		run.Branch = state.Branch()
 		run.StartedAt = state.Started.Timestamp
