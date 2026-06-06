@@ -53,11 +53,17 @@ func prepareSnapshotParent(runDir string) (string, func(), error) {
 // Paths in opts.AgentConfigExcludes are skipped during the snapshot copy.
 // Paths in opts.LiveMounts are bind-mounted directly into the container so
 // host-side state remains accessible after the container run completes;
-// LiveMounts are also implicitly excluded from the snapshot.
+// LiveMounts are also implicitly excluded from the snapshot — without that
+// union, the snapshot copy of a live-mounted file would shadow the live
+// bind mount and the host file would be neither read nor written.
 func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOptions) (func(), error) {
 	dirs := append([]string(nil), opts.AgentConfigDirs...)
 	files := append([]string(nil), opts.AgentConfigFiles...)
 	excludes := append([]string(nil), opts.AgentConfigExcludes...)
+	// A LiveMount is by definition not in the snapshot: union it into the
+	// exclude set so the dir walker skips the file before it ever lands in
+	// the snapshot tree. This makes the LiveMount the single source of truth
+	// for the container's view of that path.
 	excludes = append(excludes, opts.LiveMounts...)
 
 	convertedGitConfig := false
