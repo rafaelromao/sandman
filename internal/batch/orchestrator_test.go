@@ -711,7 +711,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 3, "", 0, false, 0, false, false)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 2, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -736,12 +736,18 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if resetCalls[0].branch != "sandman/42-fix-bug" || resetCalls[0].baseBranch != "main" {
 		t.Fatalf("unexpected reset args: %#v", resetCalls[0])
 	}
-	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
+	if resetCalls[0].worktreePath != rtSandbox.WorkDir() {
+		t.Fatalf("reset worktree path = %q, want %q", resetCalls[0].worktreePath, rtSandbox.WorkDir())
+	}
+	logPath := filepath.Join(rtSandbox.WorkDir(), ".sandman", "logs", "42.log")
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if !strings.Contains(string(data), "--- retry 2/4 ---") {
+	if !strings.Contains(string(data), "--- run 1/3 ---") {
+		t.Fatalf("expected run marker in log, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "--- retry 2/3 ---") {
 		t.Fatalf("expected retry marker in log, got:\n%s", data)
 	}
 }
@@ -1096,9 +1102,12 @@ func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
 	branch := "sandman/42-fix-bug"
 	currentHead := "current-sha"
 	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree"), execStdout: "hello from agent\n"}
-	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
+	var markerPath string
 	oldMarkerFn := logRunMarkerFn
-	logRunMarkerFn = func(string, int, int) error { return errors.New("marker write failed") }
+	logRunMarkerFn = func(path string, attempt, maxRetries int) error {
+		markerPath = path
+		return errors.New("marker write failed")
+	}
 	t.Cleanup(func() { logRunMarkerFn = oldMarkerFn })
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return currentHead, nil }
@@ -1128,12 +1137,54 @@ func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success", result.Status)
 	}
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log: %v", err)
+	wantLogPath := filepath.Join(rtSandbox.WorkDir(), ".sandman", "logs", "42.log")
+	if markerPath != wantLogPath {
+		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
 	}
-	if !strings.Contains(string(data), "hello from agent") {
-		t.Fatalf("expected agent output in log, got:\n%s", data)
+}
+
+func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree")}
+	var markerPath string
+	oldMarkerFn := logRunMarkerFn
+	logRunMarkerFn = func(path string, attempt, maxRetries int) error {
+		markerPath = path
+		return nil
+	}
+	t.Cleanup(func() { logRunMarkerFn = oldMarkerFn })
+
+	o := &Orchestrator{
+		renderer:       &noopRenderer{},
+		errorLog:       io.Discard,
+		sandboxFactory: &fakeSandboxFactory{sandbox: rtSandbox},
+		runnableFactory: &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: rtSandbox.WorkDir()}
+		}},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", 0, 0, 0, "", 0, false, 0, false, false)
+	if !started {
+		t.Fatal("expected prompt-only run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	wantLogPath := filepath.Join(rtSandbox.WorkDir(), ".sandman", "logs", "prompt-only.log")
+	if markerPath != wantLogPath {
+		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
 	}
 }
 
