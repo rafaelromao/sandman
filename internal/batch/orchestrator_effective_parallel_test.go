@@ -110,6 +110,71 @@ func TestBatchStartGate_HonoursEffectiveParallelCap(t *testing.T) {
 	}
 }
 
+// TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel is a direct
+// regression guard for issue #500: the start gate must be constructed with
+// the capped effectiveParallel, not the raw parallel value. We exercise the
+// auto-mode cap (parallel=4, capacity=2, max_containers=0) and assert that
+// the batch never sees more than 2 concurrent starts despite the raw
+// parallel being 4.
+func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "One"},
+			2: {Number: 2, Title: "Two"},
+			3: {Number: 3, Title: "Three"},
+			4: {Number: 4, Title: "Four"},
+		},
+	}
+
+	// If the gate used the raw parallel=4, the fakeRunnableFactory would
+	// record 4 concurrent runs. The cap from effectiveParallelCap(4,2,0)=2
+	// must throttle this to 2.
+	factory := &fakeRunnableFactory{
+		results: []AgentRunResult{
+			{IssueNumber: 1, Status: "success"},
+			{IssueNumber: 2, Status: "success"},
+			{IssueNumber: 3, Status: "success"},
+			{IssueNumber: 4, Status: "success"},
+		},
+		delays: []time.Duration{100 * time.Millisecond, 100 * time.Millisecond, 100 * time.Millisecond, 100 * time.Millisecond},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:             "test-agent",
+		Sandbox:           "docker",
+		WorktreeDir:       ".sandman/worktrees",
+		ContainerCapacity: 2,
+		MaxContainers:     0,
+		Git:               config.GitConfig{BaseBranch: "main"},
+		AgentProviders:    map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, nil)
+	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
+	o.runnableFactory = factory
+	o.sandboxFactory = &freshSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Issues:               []int{1, 2, 3, 4},
+		Sandbox:              "docker",
+		Parallel:             4,
+		ContainerCapacity:    2,
+		ContainerCapacitySet: true,
+		MaxContainers:        0,
+		MaxContainersSet:     true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// effectiveParallel=2 caps the gate; the factory records peak active
+	// runs. If the gate were built with raw parallel=4, peak would be 4.
+	if got := factory.max; got > 2 {
+		t.Fatalf("start gate used raw parallel (peak=%d), expected effectiveParallel cap of 2", got)
+	}
+}
+
 // TestBatchStartGate_IsUnboundedWhenZero verifies the gate permits arbitrary
 // concurrency when effectiveParallel == 0.
 func TestBatchStartGate_IsUnboundedWhenZero(t *testing.T) {
