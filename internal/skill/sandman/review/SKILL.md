@@ -66,9 +66,9 @@ The Standards and Spec sub-agents run unattended and can hang. Treat the wall-cl
 
 For each sub-agent **independently** (the cap is per sub-agent, not shared across axes):
 
-- If a sub-agent returns a result after more than **20 minutes** of wall-time, treat that result as failed.
-- Re-spawn the failed sub-agent up to **2 times** — that is **3 total attempts** (1 original + 2 re-spawns) before falling through.
-- If all 3 attempts still exceed 20 minutes, surface a **sub-agent stuck** finding under that axis's heading in the aggregate report. Do not re-spawn past 2 re-spawns, and do not loop silently — the stuck finding is the final outcome for that axis.
+- Track a wall-clock timer that starts when the sub-agent is dispatched and hard-rejects the sub-agent at the **20 minutes** mark, whether or not a result has been returned. A hung `Agent` call that never returns is treated the same as one that returns late.
+- Re-spawn the rejected sub-agent up to **2 times** — that is **3 total attempts** (1 original + 2 re-spawns) before falling through.
+- If all 3 attempts still hit the 20-minute cap, surface a **sub-agent stuck** finding under that axis's heading in the aggregate report. Do not re-spawn past 2 re-spawns, and do not loop silently — the stuck finding is the final outcome for that axis.
 - The other axis's report is aggregated normally even when one sub-agent is stuck; one slow reviewer does not sink the whole review.
 
 ### 5. Aggregate
