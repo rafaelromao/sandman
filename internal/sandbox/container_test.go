@@ -896,7 +896,7 @@ func TestResolveConfigMounts_StoresSnapshotUnderParentDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts(parentDir, []string{configDir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(parentDir, []string{configDir}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -935,7 +935,7 @@ func TestResolveConfigMounts_ResolvesFileSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), nil, []string{symFile})
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), nil, []string{symFile}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -967,7 +967,7 @@ func TestResolveConfigMounts_SkipsSpecialFiles(t *testing.T) {
 	}
 	defer ln.Close()
 
-	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{dir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{dir}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -997,7 +997,7 @@ func TestResolveConfigMounts_InternalSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{realDir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{realDir}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1034,7 +1034,7 @@ func TestResolveConfigMounts_BrokenSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{dir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{dir}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1066,7 +1066,7 @@ func TestResolveConfigMounts_CircularSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{dir}, nil)
+	_, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{dir}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1080,7 +1080,7 @@ func TestResolveConfigMounts_CleanedUp(t *testing.T) {
 	}
 
 	parentDir := t.TempDir()
-	mounts, cleanup, err := ResolveConfigMounts(parentDir, []string{dir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(parentDir, []string{dir}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1105,7 +1105,7 @@ func TestResolveConfigMounts_CleanedUp(t *testing.T) {
 }
 
 func TestResolveConfigMounts_MissingDir(t *testing.T) {
-	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{"/nonexistent/test-dir"}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{"/nonexistent/test-dir"}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1129,7 +1129,7 @@ func TestResolveConfigMounts_PreservesContainerTargets(t *testing.T) {
 		t.Fatalf("write config file: %v", err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{configDir}, []string{configFile})
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{configDir}, []string{configFile}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1152,7 +1152,7 @@ func TestContainerRuntime_Start_UsesConfigMounts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{mountsDir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{mountsDir}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1205,7 +1205,7 @@ func TestResolveConfigMounts_ResolvesDirSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{symDir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{symDir}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1232,5 +1232,71 @@ func TestResolveConfigMounts_ResolvesDirSymlink(t *testing.T) {
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		t.Error("expected resolved source to not be a symlink")
+	}
+}
+
+func TestResolveConfigMounts_SkipsExcludedSubdir(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "keep.txt"), []byte("ok"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	excludeDir := filepath.Join(src, "skip")
+	if err := os.MkdirAll(excludeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(excludeDir, "huge.bin"), []byte("xxx"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	keptSibling := filepath.Join(src, "siblingdir")
+	if err := os.MkdirAll(keptSibling, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keptSibling, "value.txt"), []byte("kept"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{src}, nil, []string{excludeDir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+	source := mounts[0].Source
+	if _, err := os.Stat(filepath.Join(source, "keep.txt")); err != nil {
+		t.Errorf("expected keep.txt in snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(source, "siblingdir", "value.txt")); err != nil {
+		t.Errorf("expected siblingdir/value.txt in snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(source, "skip")); !os.IsNotExist(err) {
+		t.Errorf("expected excluded subdir to be absent from snapshot, got: %v", err)
+	}
+}
+
+func TestResolveConfigMounts_SkipsExcludedFile(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "keep.txt"), []byte("ok"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	excludeFile := filepath.Join(src, "huge.db")
+	if err := os.WriteFile(excludeFile, []byte("xxx"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{src}, nil, []string{excludeFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	source := mounts[0].Source
+	if _, err := os.Stat(filepath.Join(source, "keep.txt")); err != nil {
+		t.Errorf("expected keep.txt in snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(source, "huge.db")); !os.IsNotExist(err) {
+		t.Errorf("expected excluded file to be absent from snapshot, got: %v", err)
 	}
 }

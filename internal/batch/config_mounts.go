@@ -49,9 +49,16 @@ func prepareSnapshotParent(runDir string) (string, func(), error) {
 // bind host paths directly and can safely follow symlinked config trees.
 // When runDir is empty (callers without a run-owned parent), a temp dir is
 // created and the snapshot is removed by the returned cleanup.
+//
+// Paths in opts.AgentConfigExcludes are skipped during the snapshot copy.
+// Paths in opts.LiveMounts are bind-mounted directly into the container so
+// host-side state remains accessible after the container run completes;
+// LiveMounts are also implicitly excluded from the snapshot.
 func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOptions) (func(), error) {
 	dirs := append([]string(nil), opts.AgentConfigDirs...)
 	files := append([]string(nil), opts.AgentConfigFiles...)
+	excludes := append([]string(nil), opts.AgentConfigExcludes...)
+	excludes = append(excludes, opts.LiveMounts...)
 
 	convertedGitConfig := false
 	if opts.GitConfigPath != "" {
@@ -83,7 +90,7 @@ func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOp
 		return nil, err
 	}
 
-	mounts, releaseMounts, err := sandbox.ResolveConfigMounts(snapshotParent, dirs, files)
+	mounts, releaseMounts, err := sandbox.ResolveConfigMounts(snapshotParent, dirs, files, excludes)
 	if err != nil {
 		snapshotCleanup()
 		return nil, fmt.Errorf("resolve config mounts: %w", err)
@@ -113,8 +120,29 @@ func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOp
 		return nil, err
 	}
 
+	mounts = appendLiveMounts(mounts, opts.LiveMounts)
+	opts.LiveMounts = nil
+
 	opts.ConfigMounts = mounts
 	return cleanup, nil
+}
+
+// appendLiveMounts adds a ConfigMount for each existing live-mount path so
+// that the host path is bind-mounted directly into the container, shadowing
+// the surrounding snapshot mount. Missing paths are silently skipped so an
+// agent run does not fail when an optional file (for example the SQLite WAL
+// sibling files) is absent.
+func appendLiveMounts(mounts []sandbox.ConfigMount, liveMounts []string) []sandbox.ConfigMount {
+	for _, path := range liveMounts {
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		mounts = append(mounts, sandbox.NewLiveConfigMount(path))
+	}
+	return mounts
 }
 
 func addSSHMountAliases(mounts []sandbox.ConfigMount) []sandbox.ConfigMount {

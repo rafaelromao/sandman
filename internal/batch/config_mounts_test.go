@@ -186,3 +186,114 @@ func TestPrepareContainerConfigMounts_ErrorsWhenGHTokenMissingFromCopiedConfig(t
 		t.Fatalf("expected gh token error, got: %v", err)
 	}
 }
+
+func TestPrepareContainerConfigMounts_HonorsAgentConfigExcludes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	opencodeDir := filepath.Join(home, ".local", "share", "opencode")
+	if err := os.MkdirAll(opencodeDir, 0755); err != nil {
+		t.Fatalf("mkdir opencode dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(opencodeDir, "auth.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+	tokenOptimizer := filepath.Join(opencodeDir, "token-optimizer")
+	if err := os.MkdirAll(tokenOptimizer, 0755); err != nil {
+		t.Fatalf("mkdir token-optimizer: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tokenOptimizer, "blob.bin"), []byte("LARGE"), 0644); err != nil {
+		t.Fatalf("write blob: %v", err)
+	}
+
+	opts := sandbox.StartOptions{
+		AgentConfigDirs:     []string{opencodeDir},
+		AgentConfigExcludes: []string{tokenOptimizer},
+	}
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts)
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	if len(opts.ConfigMounts) == 0 {
+		t.Fatal("expected ConfigMounts to be populated")
+	}
+	var snapshotSource string
+	for _, mount := range opts.ConfigMounts {
+		if mount.Target == "/.local/share/opencode" {
+			snapshotSource = mount.Source
+			break
+		}
+	}
+	if snapshotSource == "" {
+		t.Fatalf("expected mount for /.local/share/opencode, got %v", opts.ConfigMounts)
+	}
+
+	if _, err := os.Stat(filepath.Join(snapshotSource, "auth.json")); err != nil {
+		t.Errorf("expected auth.json in snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "token-optimizer")); !os.IsNotExist(err) {
+		t.Errorf("expected token-optimizer to be excluded from snapshot, got: %v", err)
+	}
+}
+
+func TestPrepareContainerConfigMounts_AppendsLiveMountsForExistingPaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	opencodeDir := filepath.Join(home, ".local", "share", "opencode")
+	if err := os.MkdirAll(opencodeDir, 0755); err != nil {
+		t.Fatalf("mkdir opencode dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(opencodeDir, "auth.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+	dbPath := filepath.Join(opencodeDir, "opencode.db")
+	if err := os.WriteFile(dbPath, []byte("DB"), 0644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+	missingShm := filepath.Join(opencodeDir, "opencode.db-shm")
+
+	opts := sandbox.StartOptions{
+		AgentConfigDirs: []string{opencodeDir},
+		LiveMounts:      []string{dbPath, missingShm},
+	}
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts)
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	var dbMount *sandbox.ConfigMount
+	var snapshotIdx, liveIdx int
+	for i := range opts.ConfigMounts {
+		mount := &opts.ConfigMounts[i]
+		if mount.Target == "/.local/share/opencode/opencode.db" {
+			dbMount = mount
+			liveIdx = i
+		}
+		if mount.Target == "/.local/share/opencode" {
+			snapshotIdx = i
+		}
+	}
+	if dbMount == nil {
+		t.Fatalf("expected live mount for /.local/share/opencode/opencode.db, got %v", opts.ConfigMounts)
+	}
+	if dbMount.Source != dbPath {
+		t.Errorf("expected live mount source %q, got %q", dbPath, dbMount.Source)
+	}
+	if liveIdx <= snapshotIdx {
+		t.Errorf("expected live mount (idx %d) to be appended after snapshot mount (idx %d) so Docker layers it on top", liveIdx, snapshotIdx)
+	}
+	for _, mount := range opts.ConfigMounts {
+		if mount.Target == "/.local/share/opencode/opencode.db-shm" {
+			t.Errorf("expected missing live mount path to be silently skipped, got mount %v", mount)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(dbMount.Source, "..")); err != nil {
+		// the live mount source must remain the original host file
+		t.Errorf("expected live mount source to exist: %v", err)
+	}
+}

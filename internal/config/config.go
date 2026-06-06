@@ -63,12 +63,14 @@ type Agent struct {
 
 // AgentPreset defines the built-in defaults for a provider preset.
 type AgentPreset struct {
-	DisplayName  string
-	Command      string
-	Env          map[string]string
-	ConfigDirs   []string
-	ConfigFiles  []string
-	KeychainAuth bool
+	DisplayName      string
+	Command          string
+	Env              map[string]string
+	ConfigDirs       []string
+	ConfigFiles      []string
+	SnapshotExcludes []string
+	LiveMounts       []string
+	KeychainAuth     bool
 }
 
 // BuiltInAgentPresets lists the provider presets Sandman knows about without repo-specific config.
@@ -81,6 +83,33 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.local/share/opencode",
 			"~/.claude",
 			"~/.agents",
+		},
+		// Mutable runtime state under ~/.local/share/opencode/ is too large to
+		// snapshot (hundreds of MB) and not needed for agent invocation.
+		// opencode.db* are also listed here so the snapshot copy skips them;
+		// the live database files are exposed to the container via LiveMounts
+		// instead, so host-side OpenCode sessions can inspect them after the
+		// container run.
+		SnapshotExcludes: []string{
+			"~/.local/share/opencode/token-optimizer",
+			"~/.local/share/opencode/storage",
+			"~/.local/share/opencode/snapshot",
+			"~/.local/share/opencode/tool-output",
+			"~/.local/share/opencode/repos",
+			"~/.local/share/opencode/log",
+			"~/.local/share/opencode/node_modules",
+			"~/.local/share/opencode/opencode.db",
+			"~/.local/share/opencode/opencode.db-shm",
+			"~/.local/share/opencode/opencode.db-wal",
+		},
+		// Bind-mount the SQLite database (and its WAL/SHM siblings, when
+		// present) directly so writes from the container are visible to host-
+		// side OpenCode after the run completes. Concurrent agents sharing one
+		// container share the same host DB; SQLite WAL mode serialises writes.
+		LiveMounts: []string{
+			"~/.local/share/opencode/opencode.db",
+			"~/.local/share/opencode/opencode.db-shm",
+			"~/.local/share/opencode/opencode.db-wal",
 		},
 	},
 	"pi": {

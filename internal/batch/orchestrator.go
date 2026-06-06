@@ -1086,6 +1086,27 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 		}
 	}
 
+	if preset, ok := config.BuiltInAgentPresets[agentCfg.Preset]; ok {
+		for _, p := range preset.SnapshotExcludes {
+			expanded, err := expandPath(p)
+			if err != nil {
+				return sandbox.StartOptions{}, fmt.Errorf("expand snapshot exclude %q: %w", p, err)
+			}
+			if expanded != "" {
+				opts.AgentConfigExcludes = append(opts.AgentConfigExcludes, expanded)
+			}
+		}
+		for _, p := range preset.LiveMounts {
+			expanded, err := expandPath(p)
+			if err != nil {
+				return sandbox.StartOptions{}, fmt.Errorf("expand live mount %q: %w", p, err)
+			}
+			if expanded != "" {
+				opts.LiveMounts = append(opts.LiveMounts, expanded)
+			}
+		}
+	}
+
 	return opts, nil
 }
 
