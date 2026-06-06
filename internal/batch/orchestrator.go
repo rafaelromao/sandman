@@ -471,6 +471,7 @@ func (o *Orchestrator) AbortIssue(issueNumber int) error {
 	if !ok {
 		return ErrNoSuchIssue
 	}
+	// The issue may unregister between lookup and cancel; cancel is still safe.
 	cancel()
 	return nil
 }
@@ -1195,6 +1196,31 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		activeMu.Lock()
 		delete(activeRuns, num)
 		activeMu.Unlock()
+	}()
+
+	issueShutdownDone := make(chan struct{})
+	defer close(issueShutdownDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-issueShutdownDone:
+			return
+		}
+
+		timeout := o.killTimeout
+		if timeout == 0 {
+			timeout = 10 * time.Second
+		}
+
+		if p := wt.Process(); p != nil {
+			p.Signal(syscall.SIGINT)
+		}
+
+		time.Sleep(timeout)
+
+		if p := wt.Process(); p != nil {
+			p.Kill()
+		}
 	}()
 
 	factory := o.runnableFactory
