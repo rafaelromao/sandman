@@ -871,6 +871,9 @@ func portalRunFromActiveBatchIssue(repoRoot string, active portalActiveRun, issu
 		run.Key = state.RunID
 		run.RunID = state.RunID
 		run.Status = statusOrDefault(state.Status(), state.IsActive())
+		if run.Status == "aborted" {
+			run.Kind = "completed"
+		}
 		run.Branch = state.Branch()
 		run.StartedAt = state.Started.Timestamp
 		run.Duration = durationForRun(*state)
@@ -1056,6 +1059,9 @@ func portalRunFromState(repoRoot string, runState events.RunState, active *porta
 	}
 	if status == "blocked" {
 		portalRun.Log = portalBlockedMessage(runState.Finished.Payload)
+	}
+	if status == "aborted" {
+		portalRun.Kind = "completed"
 	}
 	if active != nil {
 		portalRun.SocketPath = active.SocketPath
