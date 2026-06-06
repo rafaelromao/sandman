@@ -32,7 +32,7 @@
       durationText: h.formatDuration(run.duration),
       branchText: h.formatBranch(run),
       sourceText: h.formatSource(run),
-      canStop: stopSupported && h.isRunStoppable(run, opts.stopGroups),
+      canAbort: stopSupported && h.isRunAbortable(run, opts.abortReservations),
       ariaExpanded: String(opts.expandedKey === run.key),
     };
   }
@@ -93,23 +93,26 @@
 
   function buildActionsCell(td, run, opts) {
     td.classList.add('run-actions');
-    if (reserveStopButton(run, opts)) {
+    if (reserveAbortButton(run, opts)) {
       const btn = global.document.createElement('button');
       btn.setAttribute('type', 'button');
       btn.classList.add('action-btn', 'danger');
-      btn.setAttribute('data-action', 'stop-batch');
+      btn.setAttribute('data-action', 'abort-run');
       btn.setAttribute('data-run-key', run.key);
-      btn.textContent = 'Stop batch';
+      if (run.issueNumber != null) btn.setAttribute('data-issue', String(run.issueNumber));
+      btn.textContent = 'Abort';
       td.appendChild(btn);
     }
   }
 
-  function reserveStopButton(run, opts) {
-    if (!run || !opts || !opts.stopGroups) return false;
+  function reserveAbortButton(run, opts) {
+    const reservations = opts && (opts.abortReservations || opts.stopGroups);
+    if (!run || !opts || !reservations) return false;
     if (opts.stopSupported === false) return false;
-    if (!opts.helpers.isRunStoppable(run, opts.stopGroups)) return false;
-    if (opts.stopGroups.has(run.socketPath)) return false;
-    opts.stopGroups.add(run.socketPath);
+    if (!opts.helpers.isRunAbortable(run, reservations)) return false;
+    const reservationKey = String(run.key || '') + ':' + String(run.issueNumber != null ? run.issueNumber : '');
+    if (reservations.has(reservationKey)) return false;
+    reservations.add(reservationKey);
     return true;
   }
 
@@ -533,20 +536,20 @@
   }
 
   function updateActionsCell(cell, run, opts) {
-    const wantStop = reserveStopButton(run, opts);
-    const hasStop = !!cell.querySelector('button[data-action="stop-batch"]');
-    if (wantStop === hasStop) {
-      if (wantStop) opts.stopGroups.add(run.socketPath);
+    const wantAbort = reserveAbortButton(run, opts);
+    const hasAbort = !!cell.querySelector('button[data-action="abort-run"]');
+    if (wantAbort === hasAbort) {
       return;
     }
     while (cell.firstChild) cell.removeChild(cell.firstChild);
-    if (wantStop) {
+    if (wantAbort) {
       const btn = global.document.createElement('button');
       btn.setAttribute('type', 'button');
       btn.classList.add('action-btn', 'danger');
-      btn.setAttribute('data-action', 'stop-batch');
+      btn.setAttribute('data-action', 'abort-run');
       btn.setAttribute('data-run-key', run.key);
-      btn.textContent = 'Stop batch';
+      if (run.issueNumber != null) btn.setAttribute('data-issue', String(run.issueNumber));
+      btn.textContent = 'Abort';
       cell.appendChild(btn);
     }
     mutationCount += 1;

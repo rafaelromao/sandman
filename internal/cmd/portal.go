@@ -36,7 +36,7 @@ const (
 
 var portalANSISequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
-var portalRunStopper = stopPortalRun
+var portalRunAborter = abortPortalRun
 var portalPeerPID = resolvePortalPeerPID
 var portalSignalProcess = signalPortalProcess
 
@@ -301,18 +301,19 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			"runs":     runs,
 		})
 	})
-	mux.HandleFunc("/api/runs/stop", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/runs/abort", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if !portalStopSupported() {
-			writeJSONError(w, "stop batch is unsupported on this platform", http.StatusNotImplemented)
+		if !portalAbortSupported() {
+			writeJSONError(w, "abort issue is unsupported on this platform", http.StatusNotImplemented)
 			return
 		}
 
 		var req struct {
 			RunKey string `json:"runKey"`
+			Issue  int    `json:"issue"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONError(w, "invalid run payload", http.StatusBadRequest)
@@ -323,11 +324,15 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			writeJSONError(w, "missing runKey", http.StatusBadRequest)
 			return
 		}
+		if req.Issue <= 0 {
+			writeJSONError(w, "missing issue", http.StatusBadRequest)
+			return
+		}
 
-		if err := portalRunStopper(r.Context(), repoRoot, req.RunKey); err != nil {
-			var stopErr *portalStopError
-			if errors.As(err, &stopErr) {
-				writeJSONError(w, stopErr.Error(), stopErr.status)
+		if err := portalRunAborter(r.Context(), repoRoot, req.RunKey, req.Issue); err != nil {
+			var abortErr *portalAbortError
+			if errors.As(err, &abortErr) {
+				writeJSONError(w, abortErr.Error(), abortErr.status)
 				return
 			}
 			writeJSONError(w, err.Error(), http.StatusInternalServerError)
@@ -336,7 +341,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]any{"runKey": req.RunKey, "status": "stopped", "scope": "batch"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"runKey": req.RunKey, "issue": req.Issue, "status": "aborted", "scope": "issue"})
 	})
 	mux.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -425,7 +430,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			PortalStateJS         template.JS
 			PortalScrollJS        template.JS
 			PortalDiffJS          template.JS
-			PortalStopSupported   bool
+			PortalAbortSupported  bool
 		}{
 			RepoRoot:              repoRoot,
 			PollInterval:          int(portalPollInterval / time.Millisecond),
@@ -443,7 +448,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			PortalStateJS:         portalStateJS,
 			PortalScrollJS:        portalScrollJS,
 			PortalDiffJS:          portalDiffJS,
-			PortalStopSupported:   portalStopSupported(),
+			PortalAbortSupported:  portalAbortSupported(),
 		}
 		if err := portalPageTemplate.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -458,36 +463,68 @@ func writeJSONError(w http.ResponseWriter, msg string, status int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-type portalStopError struct {
+type portalAbortError struct {
 	status  int
 	message string
 }
 
-func (e *portalStopError) Error() string { return e.message }
+func (e *portalAbortError) Error() string { return e.message }
 
-// stopPortalRun signals the batch control socket peer and waits for the run to stop.
-// Because a batch uses a single socket, this stops the entire batch, not just one issue row.
-func stopPortalRun(ctx context.Context, repoRoot, runKey string) error {
+// abortPortalRun sends an abort command to the run's cmd.sock for a single issue row.
+func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber int) error {
 	run, err := portalRunForKey(repoRoot, runKey)
 	if err != nil {
 		return err
 	}
 	if run.SocketPath == "" {
-		return &portalStopError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
+		return &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
+	}
+
+	runDir := filepath.Dir(run.SocketPath)
+	cmdSock := filepath.Join(runDir, "cmd.sock")
+	if _, err := os.Stat(cmdSock); err != nil {
+		if os.IsNotExist(err) {
+			return &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
+		}
+		return fmt.Errorf("check command socket: %w", err)
 	}
 
 	pid, err := portalPeerPID(run.SocketPath)
 	if err != nil {
 		return fmt.Errorf("resolve active run process: %w", err)
 	}
-	if err := portalSignalProcess(pid, syscall.SIGTERM); err != nil {
-		return fmt.Errorf("signal active run process: %w", err)
+	if pid <= 0 {
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("daemon for run %q not responding", runKey)}
 	}
 
-	waitCtx, cancel := context.WithTimeout(ctx, portalStopTimeout)
-	defer cancel()
-	if err := waitForPortalRunToStop(waitCtx, repoRoot, runKey); err != nil {
-		return fmt.Errorf("wait for active run to stop: %w", err)
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "unix", cmdSock)
+	if err != nil {
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("connect command socket for run %q: %v", runKey, err)}
+	}
+	defer conn.Close()
+
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("set command timeout for run %q: %v", runKey, err)}
+	}
+
+	req := struct {
+		Action string `json:"action"`
+		Issue  int    `json:"issue"`
+	}{Action: "abort", Issue: issueNumber}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("write abort request for run %q: %v", runKey, err)}
+	}
+
+	var resp daemon.CommandResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("read abort response for run %q: %v", runKey, err)}
+	}
+	if resp.Status == "error" {
+		return &portalAbortError{status: http.StatusConflict, message: resp.Message}
+	}
+	if resp.Status != "ok" {
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("unexpected abort response for run %q", runKey)}
 	}
 
 	return nil
@@ -503,44 +540,7 @@ func portalRunForKey(repoRoot, runKey string) (portalRun, error) {
 			return run, nil
 		}
 	}
-	return portalRun{}, &portalStopError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
-}
-
-func waitForPortalRunToStop(ctx context.Context, repoRoot, runKey string) error {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	check := func() (bool, error) {
-		runs, err := loadPortalRuns(repoRoot)
-		if err != nil {
-			return false, err
-		}
-		for _, run := range runs {
-			if run.Key == runKey && run.Kind == "active" {
-				return false, nil
-			}
-		}
-		return true, nil
-	}
-
-	if done, err := check(); done || err != nil {
-		return err
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			done, err := check()
-			if err != nil {
-				return err
-			}
-			if done {
-				return nil
-			}
-		}
-	}
+	return portalRun{}, &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
 }
 
 func signalPortalProcess(pid int, sig syscall.Signal) error {

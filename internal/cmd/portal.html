@@ -1543,7 +1543,7 @@
   <script>
     const apiPath = "{{.RefreshPath}}";
     const commandsPath = "{{.CommandsPath}}";
-    const stopPath = "/api/runs/stop";
+    const abortPath = "/api/runs/abort";
     let pollInterval = {{.PollInterval}};
     const settingsToggle = document.getElementById('settings-toggle');
     const settingsOverlay = document.getElementById('settings-overlay');
@@ -1571,7 +1571,7 @@
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
     const lastUpdated = document.getElementById('last-updated');
-    const stopSupported = {{.PortalStopSupported}};
+    const abortSupported = {{.PortalAbortSupported}};
     const launchDefaults = {{.LaunchDataJSON}};
     const portalState = window.SandmanPortalState;
     if (portalState && portalState.configure) {
@@ -2328,12 +2328,12 @@
       }
     }
 
-    async function stopBatch(runKey) {
+    async function abortRun(runKey, issue) {
       try {
-        const res = await fetch(stopPath, {
+        const res = await fetch(abortPath, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ runKey }),
+          body: JSON.stringify({ runKey, issue }),
         });
         const text = await res.text();
         let body;
@@ -2342,12 +2342,12 @@
         } catch {
           body = {};
         }
-        if (!res.ok) throw new Error(body.error || body.message || text.trim() || 'stop failed');
+        if (!res.ok) throw new Error(body.error || body.message || text.trim() || 'abort failed');
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';
         await refresh();
       } catch (err) {
-        errorBanner.textContent = 'Stop failed: ' + err.message;
+        errorBanner.textContent = 'Abort failed: ' + err.message;
         errorBanner.style.display = 'block';
       }
     }
@@ -2490,11 +2490,12 @@
       return highlightTerminalText(value);
     }
 
-    function isRunStoppable(run, stopGroups) {
+    function isRunAbortable(run, abortReservations) {
       if (!run || run.kind !== 'active') return false;
-      if (run.status !== 'active' && run.status !== 'queued') return false;
+      if (run.status !== 'active' && run.status !== 'queued' && run.status !== 'blocked') return false;
       if (!run.socketPath) return false;
-      if (stopGroups && stopGroups.has && stopGroups.has(run.socketPath)) return false;
+      const reservationKey = run.key + ':' + String(run.issueNumber != null ? run.issueNumber : '');
+      if (abortReservations && abortReservations.has && abortReservations.has(reservationKey)) return false;
       return true;
     }
 
@@ -2504,7 +2505,7 @@
       const filtered = state.runs.filter(shouldShowRun);
       summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong> runs visible';
       const scrollStates = portalScroll ? portalScroll.capture(runsBody.querySelectorAll('[data-scroll-key]')) : {};
-      const stopGroups = new Set();
+      const abortReservations = new Set();
       const diffOpts = {
         helpers: {
           escapeHTML: escapeHTML,
@@ -2515,10 +2516,10 @@
           statusClass: statusClass,
           renderRunMeta: renderRunMeta,
           renderTerminalContent: renderTerminalContent,
-          isRunStoppable: isRunStoppable,
+          isRunAbortable: isRunAbortable,
         },
-        stopGroups: stopGroups,
-        stopSupported: stopSupported,
+        abortReservations: abortReservations,
+        stopSupported: abortSupported,
         expandedKey: state.expandedRunKey,
         tabs: state.tabs,
       };
@@ -2698,9 +2699,10 @@
           launchContinueFromRun(findRunByKey(runKey));
           return;
         }
-        if (action === 'stop-batch') {
+        if (action === 'abort-run') {
           event.preventDefault();
-          stopBatch(runKey);
+          const issue = Number(button.getAttribute('data-issue') || findRunByKey(runKey)?.issueNumber || 0);
+          abortRun(runKey, issue);
           return;
         }
         if (action === 'set-tab') {

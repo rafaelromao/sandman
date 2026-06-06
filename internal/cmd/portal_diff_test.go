@@ -358,23 +358,23 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffDiffRuns_StopGroupsDedupeAcrossCall(t *testing.T) {
+func TestPortalDiffDiffRuns_AbortButtonsAllowedOnSharedSocketRows(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
-  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', socketPath: '/tmp/sock' },
-  { key: 'b', kind: 'completed', status: 'aborted', issueLabel: 'B', runId: 'r2', socketPath: '/tmp/sock' },
+  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', issueNumber: 41, socketPath: '/tmp/sock' },
+  { key: 'b', kind: 'active', status: 'queued', issueLabel: 'B', runId: 'r2', issueNumber: 42, socketPath: '/tmp/sock' },
 ];
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: null };
+const abortReservations = new Set();
+const opts = { helpers, abortReservations, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, runs, opts);
 const aRow = body.children[0];
 const bRow = body.children[1];
-const aBtn = aRow.querySelector('button[data-action="stop-batch"]');
-const bBtn = bRow.querySelector('button[data-action="stop-batch"]');
-if (!aBtn) throw new Error('a (active) should have stop button');
-if (bBtn) throw new Error('b (aborted) should NOT have stop button (aborted dedups stop-button competition)');
+const aBtn = aRow.querySelector('button[data-action="abort-run"]');
+const bBtn = bRow.querySelector('button[data-action="abort-run"]');
+if (!aBtn) throw new Error('a (active) should have abort button');
+if (!bBtn) throw new Error('b (queued) should also have abort button even on same socket');
 const bBadge = bRow.querySelector('[data-cell="badge"]').children[0];
-if (!bBadge.classList.contains('aborted')) throw new Error('b (aborted) should have aborted badge class');
+if (!bBadge.classList.contains('queued')) throw new Error('b (queued) should have queued badge class');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -411,13 +411,13 @@ func TestPortalDiffDiffRuns_StopButtonsHiddenWhenPlatformUnsupported(t *testing.
 const runs = [
   { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', socketPath: '/tmp/sock' },
 ];
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, stopSupported: false, expandedKey: null };
+const abortReservations = new Set();
+const opts = { helpers, abortReservations, stopSupported: false, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, runs, opts);
 const aRow = body.children[0];
-const aBtn = aRow.querySelector('button[data-action="stop-batch"]');
-if (aBtn) throw new Error('a should NOT have stop button when stopSupported is false');
-if (stopGroups.size !== 0) throw new Error('stopGroups should not be touched when stopSupported is false, got size ' + stopGroups.size);
+const aBtn = aRow.querySelector('button[data-action="abort-run"]');
+if (aBtn) throw new Error('a should NOT have abort button when stopSupported is false');
+if (abortReservations.size !== 0) throw new Error('abortReservations should not be touched when stopSupported is false, got size ' + abortReservations.size);
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1100,16 +1100,17 @@ const renderTerminalContent = (text) => {
   if (!value) return '';
   return value.split('\n').map((line) => '<span>' + escapeHTML(line) + '</span>').join('\n');
 };
-const isRunStoppable = (run, stopGroups) => {
+const isRunAbortable = (run, abortReservations) => {
   if (!run || run.kind !== 'active') return false;
-  if (run.status !== 'active' && run.status !== 'queued') return false;
+  if (run.status !== 'active' && run.status !== 'queued' && run.status !== 'blocked') return false;
   if (!run.socketPath) return false;
-  if (stopGroups && stopGroups.has && stopGroups.has(run.socketPath)) return false;
+  const reservationKey = run.key + ':' + String(run.issueNumber != null ? run.issueNumber : '');
+  if (abortReservations && abortReservations.has && abortReservations.has(reservationKey)) return false;
   return true;
 };
 const helpers = {
   escapeHTML, formatTime, formatDuration, formatBranch, formatSource,
-  statusClass, renderStatusBadge, renderRunMeta, renderTerminalContent, isRunStoppable,
+  statusClass, renderStatusBadge, renderRunMeta, renderTerminalContent, isRunAbortable,
 };
 `
 }
