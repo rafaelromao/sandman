@@ -1157,8 +1157,8 @@ sleep 1
 		}
 	}
 
-	if got := len(hostnames); got != 2 {
-		t.Fatalf("expected exactly 2 container hostnames (capacity=2 each, 4 issues spread across 2 containers), got %d: %v", got, hostnames)
+	if got := len(hostnames); got != 1 {
+		t.Fatalf("expected exactly 1 container hostname (effectiveParallel=2 cap applied in auto mode, 4 issues share 1 container with capacity=2), got %d: %v", got, hostnames)
 	}
 }
 
