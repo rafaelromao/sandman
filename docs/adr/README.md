@@ -56,3 +56,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0013 | Rename delegate-review to pr-review | accepted |
 | 0014 | Sandman Review - Daemon-Monitored PR Reviews | proposed |
 | 0017 | Split Pi config snapshot from mutable state | accepted |
+| 0018 | Unblock dependents from same-batch success | proposed |

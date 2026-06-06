@@ -715,7 +715,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 2, "", 0, false, 0, false, false)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 2, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -789,7 +789,7 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -834,7 +834,7 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, _ := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if result.Status != "failure" {
 		t.Fatalf("status = %q, want failure on lookup error", result.Status)
 	}
@@ -886,7 +886,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -955,7 +955,7 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1015,7 +1015,7 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, sbFactory, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, sbFactory, nil, false, "main", nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1082,7 +1082,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1132,7 +1132,7 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1193,7 +1193,7 @@ func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 0, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 0, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -2704,7 +2704,7 @@ func TestRunBatch_SkipsIssuesBlockedByOpenExternalBlockers(t *testing.T) {
 	}
 }
 
-func TestRunBatch_RechecksInBatchBlockerStateBeforeDependentStart(t *testing.T) {
+func TestRunBatch_InBatchBlockerSuccessUnblocksDependentDespiteOpenIssue(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -2712,7 +2712,7 @@ func TestRunBatch_RechecksInBatchBlockerStateBeforeDependentStart(t *testing.T) 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42:  {Number: 42, Title: "Blocker", State: "open"},
-			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}, State: "open"},
 		},
 		prs: map[string]*github.PR{
 			"sandman/42-blocker":    mergedPR("sandman/42-blocker", ""),
@@ -2750,7 +2750,7 @@ func TestRunBatch_RechecksInBatchBlockerStateBeforeDependentStart(t *testing.T) 
 	assertNoSignal(t, dependentStarted, "dependent should wait for blocker to finish")
 	close(releaseBlocker)
 
-	assertNoSignal(t, dependentStarted, "dependent should stay blocked because blocker issue is still open")
+	waitForSignal(t, dependentStarted, "expected dependent to start once in-batch blocker succeeded, even though blocker's GitHub issue is still open")
 	waitForSignal(t, done, "expected batch to finish")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2767,23 +2767,14 @@ func TestRunBatch_RechecksInBatchBlockerStateBeforeDependentStart(t *testing.T) 
 	if statuses[42] != "success" {
 		t.Fatalf("expected blocker success, got %q", statuses[42])
 	}
-	if statuses[100] != "blocked" {
-		t.Fatalf("expected dependent blocked, got %q", statuses[100])
+	if statuses[100] != "success" {
+		t.Fatalf("expected dependent success because in-batch blocker succeeded, got %q", statuses[100])
 	}
 
-	var blockedEvent *events.Event
-	for i := range spyLog.events {
-		e := spyLog.events[i]
+	for _, e := range spyLog.events {
 		if e.Type == "run.blocked" && e.Issue == 100 {
-			blockedEvent = &e
+			t.Fatalf("did not expect run.blocked event for dependent when in-batch blocker succeeded, got %#v", e.Payload)
 		}
-	}
-	if blockedEvent == nil {
-		t.Fatal("expected run.blocked event for dependent")
-	}
-	blockedBy, ok := blockedEvent.Payload["blocked_by"].([]int)
-	if !ok || !reflect.DeepEqual(blockedBy, []int{42}) {
-		t.Fatalf("expected blocked_by [42], got %#v", blockedEvent.Payload["blocked_by"])
 	}
 }
 

@@ -5,8 +5,16 @@ Domain vocabulary for Sandman, a terminal-native CLI tool that orchestrates AFK 
 ## Language
 
 **BlockedBy**:
-The set of issue numbers that must complete successfully before an AgentRun for this issue can start, and must still be closed on GitHub immediately before start time. Derived from the union of body references and GitHub native dependency fields.
+The set of issue numbers that must complete successfully before an AgentRun for this issue can start. Derived from the union of body references and GitHub native dependency fields. An external blocker (not in the current batch) must still be closed on GitHub immediately before start time. An in-batch blocker only needs to reach status `success` within the batch — its GitHub issue may still be open at that instant.
 _Avoid_: dependencies, prerequisites.
+
+**In-batch blocker**:
+A blocker that is itself a member of the current Batch. Its terminal batch status (`success`, `failure`, `aborted`, or `blocked`) is the single source of truth for whether the dependent may start; the corresponding GitHub issue's `state` is not consulted.
+_Avoid_: local blocker, sibling blocker.
+
+**External blocker**:
+A blocker named in an AgentRun's BlockedBy that is not a member of the current Batch. The dependent may only start once GitHub reports the external blocker's issue as `closed` at the instant just before start time.
+_Avoid_: outside blocker, third-party blocker.
 
 **Agent**:
 An external AI coding tool (OpenCode or Pi) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
@@ -182,7 +190,7 @@ _Avoid_: Replay mode.
 - An **Issue** may have **BlockedBy** relationships to other **Issues**
 - A **DependencyResolver** produces a **ResolvedBatch** from a set of **Issues**
 - An **Orchestrator** executes a **ResolvedBatch**, respecting **BlockedBy** ordering
-- An **AgentRun** may be **blocked** if any of its **BlockedBy** issues failed or is still open when the run is about to start
+- An **AgentRun** may be **blocked** if any of its in-batch **BlockedBy** issues did not finish with status `success`, or if any of its external **BlockedBy** issues is still open on GitHub when the run is about to start
 - A **Sandbox** provides isolation for one or more **AgentRuns**
 - In `sandbox: worktree`, each **AgentRun** gets its own **Sandbox** (a **WorktreeSandbox**)
 - In a container-backed sandbox strategy, each **ContainerSandbox** may host up to **ContainerCapacity** **AgentRuns** at once
