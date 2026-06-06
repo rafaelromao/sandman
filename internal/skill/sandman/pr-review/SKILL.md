@@ -16,6 +16,8 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 4. **You must NOT exit the polling loop on a `0/0` count of (formal reviews, inline comments) when the top-level PR conversation has new comments from any non-agent author.** A reviewer who only posts a top-level PR conversation comment (no formal review event, no inline file comments) is still a real reviewer response. Re-classify the state, run the self-check (Step 4), and continue polling — do not give up.
 
+5. **You must ALWAYS request another review after any new commit that addresses review feedback.** As soon as you push a fix for reviewer feedback, the previous review state is stale; post `{{REVIEW_COMMAND}}` again and continue the loop until the new revision is reviewed.
+
 ## Workflow
 
 ### Prerequisites
@@ -83,7 +85,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
    - An inline file comment
 
    **Self-check (run after every poll, before classifying state):**
-   If `top > 0` AND `reviews == 0` AND `inline == 0`, do NOT classify the state as "still pending" (case D). Post a follow-up PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform note explicitly asking the reviewer to re-post the review as a formal review (`gh pr review`) or as inline file comments, then continue polling. This guarantees that a reviewer who only posts a top-level conversation comment is never silently dropped.
+   If `top > 0` AND `reviews == 0` AND `inline == 0`, do NOT classify the state as "still pending" (case D). Post a follow-up PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. This guarantees that a reviewer who only posts a top-level conversation comment is never silently dropped.
 
    Read every new PR Review Agent comment from all three sources, including inline file comments. Do not overlook comments attached to a file diff instead of the top-level conversation. Treat any requested concrete change in an inline file comment as actionable feedback. If no reviewer response arrives within 10 minutes, stop and report to the user.
 

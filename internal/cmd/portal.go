@@ -67,6 +67,12 @@ type portalRun struct {
 	LogURL      string        `json:"logUrl,omitempty"`
 	Log         string        `json:"log,omitempty"`
 	Events      []portalEvent `json:"events,omitempty"`
+	// BatchKey ties a row to the batch (active runDir) that produced it.
+	// Active-batch derived rows carry the active runDir's name; historical
+	// rows from the event log carry "". Dedup only collapses rows that share
+	// the same (IssueNumber, BatchKey) so a current active row is never hidden
+	// by a historical aborted row from another batch.
+	BatchKey string `json:"batchKey,omitempty"`
 }
 
 type portalActiveRun struct {
@@ -661,7 +667,7 @@ func loadPortalRuns(repoRoot string) ([]portalRun, error) {
 		runs = append(runs, portalRunFromState(repoRoot, runState, nil, eventsByRun))
 	}
 
-	runs = dedupPortalRuns(runs, activeBatchStart)
+	runs = dedupPortalRuns(runs)
 	sort.SliceStable(runs, func(i, j int) bool {
 		if runs[i].Kind != runs[j].Kind {
 			return runs[i].Kind == "active"
@@ -681,36 +687,77 @@ func loadPortalRuns(repoRoot string) ([]portalRun, error) {
 	return runs, nil
 }
 
-func dedupPortalRuns(runs []portalRun, activeBatchStart time.Time) []portalRun {
+// dedupPortalRuns collapses duplicate rows per issue per batch. Two rows for
+// the same issue only dedup when they share the same BatchKey, so a current
+// active row (BatchKey=active.Key) is never hidden by a historical row
+// (BatchKey="") from a different batch.
+func dedupPortalRuns(runs []portalRun) []portalRun {
 	byIssue := make(map[int][]portalRun)
+	issueOrder := make([]int, 0)
 	for _, run := range runs {
+		if _, ok := byIssue[run.IssueNumber]; !ok {
+			issueOrder = append(issueOrder, run.IssueNumber)
+		}
 		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
 	}
 	result := make([]portalRun, 0, len(byIssue))
-	for _, runs := range byIssue {
-		if len(runs) == 1 {
-			result = append(result, runs[0])
+	for _, issueNumber := range issueOrder {
+		issueRuns := byIssue[issueNumber]
+		if len(issueRuns) == 1 {
+			result = append(result, issueRuns[0])
 			continue
 		}
-		inBatch := make([]portalRun, 0, len(runs))
-		outOfBatch := make([]portalRun, 0, len(runs))
-		for _, run := range runs {
-			if portalEventBelongsToBatch(run.StartedAt, activeBatchStart) {
-				inBatch = append(inBatch, run)
-			} else {
-				outOfBatch = append(outOfBatch, run)
+		byBatch := make(map[string][]portalRun)
+		batchOrder := make([]string, 0)
+		for _, run := range issueRuns {
+			if _, ok := byBatch[run.BatchKey]; !ok {
+				batchOrder = append(batchOrder, run.BatchKey)
 			}
+			byBatch[run.BatchKey] = append(byBatch[run.BatchKey], run)
 		}
-		result = append(result, dedupPortalRunGroup(inBatch)...)
-		result = append(result, outOfBatch...)
+		for _, batchKey := range batchOrder {
+			result = append(result, dedupPortalRunGroup(byBatch[batchKey])...)
+		}
 	}
 	return result
 }
 
+// dedupPortalRunGroup collapses duplicate rows for one issue within one batch.
+// It first strips queued rows when any non-queued row exists in the group, then
+// applies portalRunPriority (aborted > active > blocked > queued > other) and
+// breaks ties by latest StartedAt.
 func dedupPortalRunGroup(runs []portalRun) []portalRun {
 	if len(runs) <= 1 {
 		return runs
 	}
+	// A queued row only describes the wait state of an AgentRun and is
+	// superseded by any later non-queued row for the same AgentRun. When the
+	// group mixes queued with non-queued rows (e.g. a queued event followed by
+	// run.started + run.finished events that the same AgentRun emits with a
+	// different RunID once it leaves the wait state), strip the queued rows
+	// so the terminal status wins regardless of the other priorities.
+	nonQueued := make([]portalRun, 0, len(runs))
+	queuedOnly := make([]portalRun, 0, len(runs))
+	for _, run := range runs {
+		if run.Status == "queued" {
+			queuedOnly = append(queuedOnly, run)
+		} else {
+			nonQueued = append(nonQueued, run)
+		}
+	}
+	if len(nonQueued) == 0 {
+		if len(queuedOnly) <= 1 {
+			return queuedOnly
+		}
+		bestIdx := 0
+		for i := 1; i < len(queuedOnly); i++ {
+			if queuedOnly[i].StartedAt.After(queuedOnly[bestIdx].StartedAt) {
+				bestIdx = i
+			}
+		}
+		return []portalRun{queuedOnly[bestIdx]}
+	}
+	runs = nonQueued
 	bestIdx := 0
 	bestPriority := portalRunPriority(runs[0])
 	for i := 1; i < len(runs); i++ {
@@ -732,6 +779,11 @@ func dedupPortalRunGroup(runs []portalRun) []portalRun {
 
 // portalRunPriority encodes the per-issue dedup priority order:
 // aborted > active > blocked > queued > other.
+//
+// Note: dedupPortalRunGroup strips queued rows when any non-queued row exists,
+// so the "queued" case here is unreachable for mixed groups. It is kept as a
+// guard for queued-only groups (e.g., genuinely-waiting runs with no terminal
+// event) and to make the priority order self-documenting.
 func portalRunPriority(run portalRun) int {
 	if run.Status == "aborted" {
 		return 4
@@ -817,7 +869,7 @@ func latestPortalRunStateForIssue(runStates []events.RunState, issueNumber int, 
 		if state.IssueNumber() != issueNumber {
 			continue
 		}
-		if !portalEventBelongsToBatch(state.Started.Timestamp, batchStart) {
+		if !portalStateStartsInBatch(state.Started.Timestamp, batchStart) {
 			continue
 		}
 		if latest == nil || state.Started.Timestamp.After(latest.Started.Timestamp) {
@@ -853,6 +905,18 @@ func portalEventBelongsToBatch(timestamp, batchStart time.Time) bool {
 	return !timestamp.Before(batchStart.Add(-time.Second))
 }
 
+// portalStateStartsInBatch reports whether a run state started during the
+// active batch. Unlike portalEventBelongsToBatch (which keeps a 1-second
+// tolerance for clock skew on isolated events), this check is strict so that
+// an older run whose Started.Timestamp sits inside the tolerance window does
+// not steal the active batch's row.
+func portalStateStartsInBatch(timestamp, batchStart time.Time) bool {
+	if batchStart.IsZero() {
+		return true
+	}
+	return !timestamp.Before(batchStart)
+}
+
 func portalRunFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, liveOutput string, eventsByRun map[string][]portalEvent) portalRun {
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
 	run := portalRun{
@@ -866,6 +930,7 @@ func portalRunFromActiveBatchIssue(repoRoot string, active portalActiveRun, issu
 		LogPath:     portalLogPath(repoRoot, issueNumber, ""),
 		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, ""),
 		Log:         "Queued. Waiting to start.",
+		BatchKey:    active.Key,
 	}
 	if state != nil {
 		run.Key = state.RunID
@@ -985,7 +1050,9 @@ func matchPortalRunState(instance portalActiveRun, states []events.RunState, use
 
 func portalRunFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun map[string][]portalEvent) portalRun {
 	if match.state != nil {
-		return portalRunFromState(repoRoot, *match.state, &match.instance, eventsByRun)
+		run := portalRunFromState(repoRoot, *match.state, &match.instance, eventsByRun)
+		run.BatchKey = match.instance.Key
+		return run
 	}
 
 	startedAt := match.instance.ModTime
@@ -1009,6 +1076,7 @@ func portalRunFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun
 		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, ""),
 		Log:         readPortalSocketOutput(match.instance.SocketPath),
 		Events:      eventsByRun[match.instance.Key],
+		BatchKey:    match.instance.Key,
 	}
 }
 

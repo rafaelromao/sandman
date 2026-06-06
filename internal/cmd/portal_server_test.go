@@ -1974,3 +1974,295 @@ func TestDedupPortalRunGroup_AllZeroPriorityRowsAreUntouched(t *testing.T) {
 		t.Fatalf("expected succeeded and failure rows to be untouched (2 rows), got %d: %#v", len(result), result)
 	}
 }
+
+// TestPortal_ActiveRowSurvivesOlderAbortedAtNearSameTime locks in that an
+// older aborted run whose Started.Timestamp falls inside the active batch's
+// 1-second tolerance window does not steal the active batch's row. The active
+// queued row must remain visible alongside the historical aborted row.
+func TestPortal_ActiveRowSurvivesOlderAbortedAtNearSameTime(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	newBatchStart := time.Now().Add(-5 * time.Minute)
+
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-new")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: newBatchStart}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	// Older run whose Started.Timestamp is within the 1-second tolerance
+	// window before newBatchStart. Without a fix, latestPortalRunStateForIssue
+	// matches it and the active batch row becomes the historical aborted row.
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: newBatchStart.Add(-500 * time.Millisecond), RunID: "older-run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-old"}},
+		{Type: "run.aborted", Timestamp: newBatchStart.Add(-300 * time.Millisecond), RunID: "older-run-42", Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-old"}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var activeRow, abortedRow *portalRun
+	for i := range runs {
+		if runs[i].IssueNumber != 42 {
+			continue
+		}
+		switch {
+		case runs[i].Kind == "active":
+			activeRow = &runs[i]
+		case runs[i].Status == "aborted":
+			abortedRow = &runs[i]
+		}
+	}
+	if activeRow == nil {
+		t.Fatalf("expected active row for issue 42 to remain visible, got runs: %#v", runs)
+	}
+	if abortedRow == nil {
+		t.Fatalf("expected historical aborted row for issue 42 to remain visible, got runs: %#v", runs)
+	}
+}
+
+// TestPortal_QueuedThenSuccessShowsSuccessAfterBatchEnds locks in that a run
+// that emits run.queued (from the orchestrator main goroutine) and then
+// run.started+run.finished (with a different RunID generated inside runSingle)
+// is rendered as its terminal status after the batch ends, instead of
+// lingering as queued.
+func TestPortal_QueuedThenSuccessShowsSuccessAfterBatchEnds(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.started", Timestamp: batchStartedAt.Add(3 * time.Minute), RunID: "started-run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: batchStartedAt.Add(8 * time.Minute), RunID: "started-run-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var issue42Runs []portalRun
+	for _, run := range runs {
+		if run.IssueNumber == 42 {
+			issue42Runs = append(issue42Runs, run)
+		}
+	}
+	if len(issue42Runs) != 1 {
+		t.Fatalf("expected 1 run for issue 42 after dedup, got %d: %#v", len(issue42Runs), issue42Runs)
+	}
+	if issue42Runs[0].Status != "success" {
+		t.Fatalf("expected status 'success' (queued event should not linger), got %q", issue42Runs[0].Status)
+	}
+}
+
+// TestPortal_QueuedAndBlockedAgentRunDedupsToBlocked locks in criterion 5:
+// when an AgentRun emits run.queued (runID_A, from the orchestrator main
+// goroutine) and run.blocked (runID_B, from runSingle's external blocker
+// recheck) for the same issue, the portal must render exactly one row with
+// the terminal blocked status, even when an unrelated active batch is running
+// concurrently for a different issue. Before BatchKey, the historical rows
+// for issue 42 were kept as-is in dedup because the active batch belonged to
+// a different issue.
+func TestPortal_QueuedAndBlockedAgentRunDedupsToBlocked(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	otherBatchStart := time.Now().Add(-1 * time.Minute)
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-99-other")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{99}, CreatedAt: otherBatchStart}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	historicalStart := time.Now().Add(-30 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.queued", Timestamp: historicalStart.Add(1 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{77}}},
+		{Type: "run.blocked", Timestamp: historicalStart.Add(2 * time.Minute), RunID: "blocked-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{77}}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var issue42Runs []portalRun
+	for _, run := range runs {
+		if run.IssueNumber == 42 {
+			issue42Runs = append(issue42Runs, run)
+		}
+	}
+	if len(issue42Runs) != 1 {
+		t.Fatalf("expected exactly 1 row for issue 42 after dedup, got %d: %#v", len(issue42Runs), issue42Runs)
+	}
+	if issue42Runs[0].Status != "blocked" {
+		t.Fatalf("expected status 'blocked' (terminal wins over queued), got %q", issue42Runs[0].Status)
+	}
+}
+
+// TestPortal_CurrentActiveSurvivesOlderAbortedFromAnotherBatch locks in criterion 6:
+// when a current active batch is running for issue 42 and a historical aborted
+// run for the same issue exists from a prior (long-finished) batch, the portal
+// must keep both rows visible. The active row must not be deduped away by the
+// older aborted row that lives in a different batch.
+func TestPortal_CurrentActiveSurvivesOlderAbortedFromAnotherBatch(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	olderBatchStart := time.Now().Add(-2 * time.Hour)
+	newBatchStart := time.Now().Add(-5 * time.Minute)
+
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-current")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: newBatchStart}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: olderBatchStart, RunID: "older-run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-old"}},
+		{Type: "run.aborted", Timestamp: olderBatchStart.Add(2 * time.Minute), RunID: "older-run-42", Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-old"}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var activeRow, abortedRow *portalRun
+	for i := range runs {
+		if runs[i].IssueNumber != 42 {
+			continue
+		}
+		switch {
+		case runs[i].Kind == "active":
+			activeRow = &runs[i]
+		case runs[i].Status == "aborted":
+			abortedRow = &runs[i]
+		}
+	}
+	if activeRow == nil {
+		t.Fatalf("expected current active row for issue 42 to remain visible, got runs: %#v", runs)
+	}
+	if abortedRow == nil {
+		t.Fatalf("expected older aborted row for issue 42 to remain visible alongside active, got runs: %#v", runs)
+	}
+	if activeRow.BatchKey == "" {
+		t.Fatalf("expected active row to carry BatchKey from active runDir, got %q", activeRow.BatchKey)
+	}
+	if abortedRow.BatchKey != "" {
+		t.Fatalf("expected historical aborted row to carry empty BatchKey, got %q", abortedRow.BatchKey)
+	}
+}
+
+// TestPortal_GenuinelyQueuedRunStaysQueued locks in criterion 7: a run that
+// is genuinely waiting to start (only run.queued, no terminal event yet)
+// must continue to render as queued even after the dedup-queued-when-non-queued
+// filter is in place.
+func TestPortal_GenuinelyQueuedRunStaysQueued(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-only-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var issue42Runs []portalRun
+	for _, run := range runs {
+		if run.IssueNumber == 42 {
+			issue42Runs = append(issue42Runs, run)
+		}
+	}
+	if len(issue42Runs) != 1 {
+		t.Fatalf("expected 1 row for issue 42, got %d: %#v", len(issue42Runs), issue42Runs)
+	}
+	if issue42Runs[0].Status != "queued" {
+		t.Fatalf("expected genuinely-queued run to stay queued, got %q", issue42Runs[0].Status)
+	}
+}
+
+// TestPortal_QueuedThenFailureShowsFailureAfterBatchEnds parallels
+// QueuedThenSuccess for the failure terminal status. Both success and failure
+// are priority-0 in portalRunPriority, so before the queued-filter both would
+// have lost to queued (priority 1).
+func TestPortal_QueuedThenFailureShowsFailureAfterBatchEnds(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.started", Timestamp: batchStartedAt.Add(3 * time.Minute), RunID: "started-run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: batchStartedAt.Add(8 * time.Minute), RunID: "started-run-42", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := loadPortalRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var issue42Runs []portalRun
+	for _, run := range runs {
+		if run.IssueNumber == 42 {
+			issue42Runs = append(issue42Runs, run)
+		}
+	}
+	if len(issue42Runs) != 1 {
+		t.Fatalf("expected 1 run for issue 42 after dedup, got %d: %#v", len(issue42Runs), issue42Runs)
+	}
+	if issue42Runs[0].Status != "failure" {
+		t.Fatalf("expected status 'failure' (queued event should not linger), got %q", issue42Runs[0].Status)
+	}
+}
