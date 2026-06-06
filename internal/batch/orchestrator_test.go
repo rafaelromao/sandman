@@ -715,7 +715,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 2, "", 0, false, 0, false, false)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 2, 0, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -789,7 +789,7 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, 0, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -834,7 +834,7 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, _ := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, 0, "", 0, false, 0, false, false)
 	if result.Status != "failure" {
 		t.Fatalf("status = %q, want failure on lookup error", result.Status)
 	}
@@ -886,7 +886,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, 0, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -955,7 +955,7 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, 0, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1015,7 +1015,7 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, sbFactory, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, sbFactory, nil, false, "main", nil, nil, 0, 0, 1, 0, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1082,7 +1082,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, 0, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1132,7 +1132,7 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 1, 0, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1193,7 +1193,7 @@ func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
 		return gitIdentity{}, nil
-	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 0, "", 0, false, 0, false, false)
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1308,7 +1308,7 @@ func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {
 		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
 	}
 
-	proc := &fakeProcess{}
+	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
@@ -1338,7 +1338,7 @@ func TestRunBatch_LogsAbortedEventOnCancel(t *testing.T) {
 		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
 	}
 
-	proc := &fakeProcess{}
+	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
@@ -1378,7 +1378,7 @@ func TestRunBatch_ReturnsAbortedStatusOnCancel(t *testing.T) {
 		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
 	}
 
-	proc := &fakeProcess{}
+	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
@@ -1413,7 +1413,7 @@ func TestRunBatch_PreservesSuccessfulRunWhenContextCancelsLate(t *testing.T) {
 		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
 	}
 
-	proc := &fakeProcess{}
+	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 	fastSuccess := &fakeRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}, delay: 100 * time.Millisecond}
@@ -1444,7 +1444,7 @@ func TestRunBatch_PreservesSuccessfulRunWhenContextCancelsLate(t *testing.T) {
 func TestRunBatch_LogsAbortedEventOnPromptOnlyCancel(t *testing.T) {
 	client := &fakeGitHubClient{}
 
-	proc := &fakeProcess{}
+	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
@@ -1476,7 +1476,7 @@ func TestRunBatch_LogsAbortedEventOnPromptOnlyCancel(t *testing.T) {
 func TestRunBatch_ReturnsAbortedStatusOnPromptOnlyCancel(t *testing.T) {
 	client := &fakeGitHubClient{}
 
-	proc := &fakeProcess{}
+	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 	started := make(chan struct{})
@@ -1522,7 +1522,7 @@ func TestRunBatch_PreservesWorktreeOnInterrupt(t *testing.T) {
 		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
 	}
 
-	proc := &fakeProcess{}
+	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
@@ -1723,7 +1723,7 @@ func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
 		},
 	}
 
-	proc := &fakeProcess{}
+	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 300 * time.Millisecond}
@@ -6618,7 +6618,7 @@ func TestRunBatch_LogsAbortedForQueuedRunOnCancel(t *testing.T) {
 			},
 		}
 
-		proc := &fakeProcess{}
+		proc := makeFakeProcess()
 		sb := &fakeSandbox{process: proc}
 		factory := &fakeSandboxFactory{sandbox: sb}
 		blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond, running: make(chan struct{})}
@@ -6710,7 +6710,7 @@ func TestRunBatch_CascadesAbortFromBlockerToDependents(t *testing.T) {
 		},
 	}
 
-	proc := &fakeProcess{}
+	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond, running: make(chan struct{})}
@@ -6862,7 +6862,7 @@ func TestOrchestrator_AbortIssue_ActiveRun(t *testing.T) {
 		},
 	}
 
-	proc := &fakeProcess{}
+	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond, running: make(chan struct{})}

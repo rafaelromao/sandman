@@ -20,6 +20,11 @@ import (
 type fakeProcess struct {
 	sigTermCalled bool
 	killCalled    bool
+	killed        chan struct{}
+}
+
+func makeFakeProcess() *fakeProcess {
+	return &fakeProcess{killed: make(chan struct{})}
 }
 
 func (p *fakeProcess) Signal(sig os.Signal) error {
@@ -31,6 +36,13 @@ func (p *fakeProcess) Signal(sig os.Signal) error {
 
 func (p *fakeProcess) Kill() error {
 	p.killCalled = true
+	if p.killed != nil {
+		select {
+		case <-p.killed:
+		default:
+			close(p.killed)
+		}
+	}
 	return nil
 }
 
@@ -83,6 +95,9 @@ func (f *fakeSandbox) WritePrompt(content string) error {
 	return f.writePromptError
 }
 func (f *fakeSandbox) Process() sandbox.Process {
+	if f.process == nil {
+		return makeFakeProcess()
+	}
 	return f.process
 }
 
