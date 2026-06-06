@@ -174,9 +174,6 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 			}
 			if startDelayFlag := cmd.Flags().Lookup("start-delay"); startDelayFlag != nil && startDelayFlag.Changed {
 				startDelaySecs, _ := cmd.Flags().GetInt("start-delay")
-				if startDelaySecs < 0 {
-					return fmt.Errorf("start_delay must be 0 or greater")
-				}
 				startDelay = time.Duration(startDelaySecs) * time.Second
 				startDelaySet = true
 			}

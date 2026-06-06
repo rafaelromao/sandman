@@ -199,6 +199,7 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--model", "gpt-override", "--agent", "pi", "--parallel", "9", "--start-delay", "12", "--retries", "5", "--sandbox", "worktree", "--container-capacity", "8", "--max-containers", "6", "42", "finish the tests"})
+
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
