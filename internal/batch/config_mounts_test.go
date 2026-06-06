@@ -285,7 +285,261 @@ func TestPrepareContainerConfigMounts_AppendsLiveMountsForExistingPaths(t *testi
 	}
 
 	if _, err := os.Stat(filepath.Join(dbMount.Source, "..")); err != nil {
-		// the live mount source must remain the original host file
 		t.Errorf("expected live mount source to exist: %v", err)
+	}
+}
+
+func TestOpenCodePreset_ExcludesMutableStateAndLiveMountsDatabase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	opencodeDir := filepath.Join(home, ".local", "share", "opencode")
+	if err := os.MkdirAll(opencodeDir, 0755); err != nil {
+		t.Fatalf("mkdir opencode dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(opencodeDir, "auth.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+
+	tokenOptimizer := filepath.Join(opencodeDir, "token-optimizer")
+	if err := os.MkdirAll(tokenOptimizer, 0755); err != nil {
+		t.Fatalf("mkdir token-optimizer: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tokenOptimizer, "blob.bin"), []byte("LARGE"), 0644); err != nil {
+		t.Fatalf("write blob: %v", err)
+	}
+
+	for _, subdir := range []string{"storage", "snapshot", "tool-output", "repos", "log", "node_modules"} {
+		subdirPath := filepath.Join(opencodeDir, subdir)
+		if err := os.MkdirAll(subdirPath, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", subdir, err)
+		}
+		if err := os.WriteFile(filepath.Join(subdirPath, "cache.bin"), []byte("CACHE"), 0644); err != nil {
+			t.Fatalf("write cache: %v", err)
+		}
+	}
+
+	dbPath := filepath.Join(opencodeDir, "opencode.db")
+	if err := os.WriteFile(dbPath, []byte("DB"), 0644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+	dbShm := filepath.Join(opencodeDir, "opencode.db-shm")
+	if err := os.WriteFile(dbShm, []byte("SHM"), 0644); err != nil {
+		t.Fatalf("write shm: %v", err)
+	}
+	dbWal := filepath.Join(opencodeDir, "opencode.db-wal")
+	if err := os.WriteFile(dbWal, []byte("WAL"), 0644); err != nil {
+		t.Fatalf("write wal: %v", err)
+	}
+
+	opts := sandbox.StartOptions{
+		AgentConfigDirs: []string{opencodeDir},
+		AgentConfigExcludes: []string{
+			tokenOptimizer,
+			filepath.Join(opencodeDir, "storage"),
+			filepath.Join(opencodeDir, "snapshot"),
+			filepath.Join(opencodeDir, "tool-output"),
+			filepath.Join(opencodeDir, "repos"),
+			filepath.Join(opencodeDir, "log"),
+			filepath.Join(opencodeDir, "node_modules"),
+			dbPath,
+			dbShm,
+			dbWal,
+		},
+		LiveMounts: []string{dbPath, dbShm, dbWal},
+	}
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts)
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	var snapshotSource string
+	for _, mount := range opts.ConfigMounts {
+		if mount.Target == "/.local/share/opencode" {
+			snapshotSource = mount.Source
+			break
+		}
+	}
+	if snapshotSource == "" {
+		t.Fatalf("expected snapshot mount for /.local/share/opencode, got %v", opts.ConfigMounts)
+	}
+
+	if _, err := os.Stat(filepath.Join(snapshotSource, "auth.json")); err != nil {
+		t.Errorf("expected auth.json in snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "token-optimizer")); !os.IsNotExist(err) {
+		t.Errorf("expected token-optimizer to be excluded from snapshot, got: %v", err)
+	}
+	for _, subdir := range []string{"storage", "snapshot", "tool-output", "repos", "log", "node_modules"} {
+		if _, err := os.Stat(filepath.Join(snapshotSource, subdir)); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be excluded from snapshot, got: %v", subdir, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "opencode.db")); !os.IsNotExist(err) {
+		t.Errorf("expected opencode.db to be excluded from snapshot, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "opencode.db-shm")); !os.IsNotExist(err) {
+		t.Errorf("expected opencode.db-shm to be excluded from snapshot, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "opencode.db-wal")); !os.IsNotExist(err) {
+		t.Errorf("expected opencode.db-wal to be excluded from snapshot, got: %v", err)
+	}
+
+	var dbLiveMount, shmLiveMount, walLiveMount *sandbox.ConfigMount
+	for i := range opts.ConfigMounts {
+		mount := &opts.ConfigMounts[i]
+		switch mount.Target {
+		case "/.local/share/opencode/opencode.db":
+			dbLiveMount = mount
+		case "/.local/share/opencode/opencode.db-shm":
+			shmLiveMount = mount
+		case "/.local/share/opencode/opencode.db-wal":
+			walLiveMount = mount
+		}
+	}
+	if dbLiveMount == nil {
+		t.Errorf("expected live mount for opencode.db, got %v", opts.ConfigMounts)
+	}
+	if dbLiveMount != nil && dbLiveMount.Source != dbPath {
+		t.Errorf("expected live mount source %q, got %q", dbPath, dbLiveMount.Source)
+	}
+	if shmLiveMount == nil {
+		t.Errorf("expected live mount for opencode.db-shm, got %v", opts.ConfigMounts)
+	}
+	if shmLiveMount != nil && shmLiveMount.Source != dbShm {
+		t.Errorf("expected live mount source %q, got %q", dbShm, shmLiveMount.Source)
+	}
+	if walLiveMount == nil {
+		t.Errorf("expected live mount for opencode.db-wal, got %v", opts.ConfigMounts)
+	}
+	if walLiveMount != nil && walLiveMount.Source != dbWal {
+		t.Errorf("expected live mount source %q, got %q", dbWal, walLiveMount.Source)
+	}
+}
+
+func TestPiPreset_ExcludesNpmAndSessionsAndLiveMountsThem(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	piDir := filepath.Join(home, ".pi")
+	agentDir := filepath.Join(piDir, "agent")
+	if err := os.MkdirAll(agentDir, 0755); err != nil {
+		t.Fatalf("mkdir agent dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(piDir, "config.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	npmDir := filepath.Join(agentDir, "npm")
+	if err := os.MkdirAll(npmDir, 0755); err != nil {
+		t.Fatalf("mkdir npm: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(npmDir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write npm package: %v", err)
+	}
+
+	sessionsDir := filepath.Join(agentDir, "sessions")
+	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionsDir, "session.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	opts := sandbox.StartOptions{
+		AgentConfigDirs:     []string{piDir},
+		AgentConfigExcludes: []string{npmDir, sessionsDir},
+		LiveMounts:          []string{npmDir, sessionsDir},
+	}
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts)
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	var snapshotSource string
+	for _, mount := range opts.ConfigMounts {
+		if mount.Target == "/.pi" {
+			snapshotSource = mount.Source
+			break
+		}
+	}
+	if snapshotSource == "" {
+		t.Fatalf("expected snapshot mount for /.pi, got %v", opts.ConfigMounts)
+	}
+
+	if _, err := os.Stat(filepath.Join(snapshotSource, "config.json")); err != nil {
+		t.Errorf("expected config.json in snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "agent")); err != nil {
+		t.Fatalf("expected agent dir in snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "agent", "npm")); !os.IsNotExist(err) {
+		t.Errorf("expected npm to be excluded from snapshot, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "agent", "sessions")); !os.IsNotExist(err) {
+		t.Errorf("expected sessions to be excluded from snapshot, got: %v", err)
+	}
+
+	var npmLiveMount, sessionsLiveMount *sandbox.ConfigMount
+	for i := range opts.ConfigMounts {
+		mount := &opts.ConfigMounts[i]
+		switch mount.Target {
+		case "/.pi/agent/npm":
+			npmLiveMount = mount
+		case "/.pi/agent/sessions":
+			sessionsLiveMount = mount
+		}
+	}
+	if npmLiveMount == nil {
+		t.Errorf("expected live mount for npm, got %v", opts.ConfigMounts)
+	}
+	if npmLiveMount != nil && npmLiveMount.Source != npmDir {
+		t.Errorf("expected live mount source %q, got %q", npmDir, npmLiveMount.Source)
+	}
+	if sessionsLiveMount == nil {
+		t.Errorf("expected live mount for sessions, got %v", opts.ConfigMounts)
+	}
+	if sessionsLiveMount != nil && sessionsLiveMount.Source != sessionsDir {
+		t.Errorf("expected live mount source %q, got %q", sessionsDir, sessionsLiveMount.Source)
+	}
+}
+
+func TestPrepareContainerConfigMounts_RunOwnedSnapshotUnderRunDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	runDir := filepath.Join(t.TempDir(), "runs", "run-42-1")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+
+	configDir := filepath.Join(home, ".config", "test")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "cfg.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+
+	opts := sandbox.StartOptions{
+		AgentConfigDirs: []string{configDir},
+	}
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), runDir, &opts)
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	expectedRoot := filepath.Join(runDir, "config")
+	if info, err := os.Stat(expectedRoot); err != nil || !info.IsDir() {
+		t.Errorf("expected run-owned snapshot root %q to exist as directory: %v", expectedRoot, err)
+	}
+
+	for _, mount := range opts.ConfigMounts {
+		if !strings.HasPrefix(mount.Source, expectedRoot) {
+			t.Errorf("expected mount source %q to be under run-owned snapshot root %q", mount.Source, expectedRoot)
+		}
 	}
 }
