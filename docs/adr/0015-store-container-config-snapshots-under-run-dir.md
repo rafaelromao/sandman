@@ -15,7 +15,7 @@ Two problems fall out of that arrangement:
 
 ## Decision
 
-We move container config snapshots out of `/tmp` and into `.sandman/runs/<run-id>/config/`, so each AgentRun owns the directory tree its containers were launched with. Specifically:
+We move container config snapshots out of `/tmp` and into `.sandman/runs/<run-id>/config/`, so each Batch owns the directory tree its containers were launched with (a Batch's AgentRuns share one snapshot, and a Batch's run dir is removed on completion — see `CONTEXT.md` for the Batch/AgentRun distinction). Specifically:
 
 - `sandbox.ResolveConfigMounts(parentDir, dirs, files)` now creates `<parentDir>/config/` (after first clearing any pre-existing `<parentDir>/config/` from a prior crashed attempt) and copies the resolved dirs/files into it. The returned cleanup removes that `config/` subtree but leaves `parentDir` itself untouched. The caller owns the parent path.
 - `batch.PrepareContainerConfigMounts(repoPath, runDir, opts)` accepts the run-owned `runDir` and, when set, uses `<runDir>/config/` as the snapshot parent. When `runDir` is empty (callers without a run-owned parent, such as the existing container smoke test) the function falls back to a temp directory created with `os.MkdirTemp`.
