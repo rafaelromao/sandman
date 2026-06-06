@@ -268,6 +268,74 @@ func TestRun_StartDelayNegativeValueRejected(t *testing.T) {
 	}
 }
 
+func TestRun_RunIdleTimeoutFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-idle-timeout", "600", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.req.RunIdleTimeoutSet {
+		t.Fatal("expected run idle timeout override to be marked as set")
+	}
+	if spy.req.RunIdleTimeout != 600 {
+		t.Errorf("expected run idle timeout=600, got %d", spy.req.RunIdleTimeout)
+	}
+}
+
+func TestRun_RunIdleTimeoutZeroAccepted(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-idle-timeout=0", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.req.RunIdleTimeoutSet {
+		t.Fatal("expected run idle timeout override to be marked as set when explicitly zero")
+	}
+	if spy.req.RunIdleTimeout != 0 {
+		t.Errorf("expected run idle timeout=0, got %d", spy.req.RunIdleTimeout)
+	}
+}
+
+func TestRun_RunIdleTimeoutNegativeValueRejected(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-idle-timeout", "-1", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for negative run idle timeout")
+	}
+	if !strings.Contains(err.Error(), "run_idle_timeout must be 0 or greater") {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+}
+
 func TestRun_ModelFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)

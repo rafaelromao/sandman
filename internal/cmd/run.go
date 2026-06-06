@@ -283,6 +283,13 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("start_delay must be 0 or greater")
 			}
 
+			runIdleTimeoutFlag := cmd.Flags().Lookup("run-idle-timeout")
+			runIdleTimeoutSet := runIdleTimeoutFlag != nil && runIdleTimeoutFlag.Changed
+			runIdleTimeout, _ := cmd.Flags().GetInt("run-idle-timeout")
+			if runIdleTimeoutSet && runIdleTimeout < 0 {
+				return fmt.Errorf("run_idle_timeout must be 0 or greater")
+			}
+
 			sandboxMode, _ := cmd.Flags().GetString("sandbox")
 			containerCapacityFlag := cmd.Flags().Lookup("container-capacity")
 			containerCapacitySet := containerCapacityFlag != nil && containerCapacityFlag.Changed
@@ -385,6 +392,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				Parallel:                   parallel,
 				StartDelay:                 time.Duration(startDelay) * time.Second,
 				StartDelaySet:              startDelaySet,
+				RunIdleTimeout:             runIdleTimeout,
+				RunIdleTimeoutSet:          runIdleTimeoutSet,
 				Sandbox:                    sandboxMode,
 				RequireDockerfile:          true,
 				ContainerCapacity:          containerCapacity,
@@ -423,6 +432,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
 	cmd.Flags().Int("retries", 0, "Retry failed AgentRuns up to N times")
 	cmd.Flags().Int("start-delay", 0, "Wait N seconds after any AgentRun finishes before starting the next one; 0 disables the delay")
+	cmd.Flags().Int("run-idle-timeout", 0, "Treat an AgentRun as stuck if it produces no output for N seconds; 0 disables the timeout")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")
