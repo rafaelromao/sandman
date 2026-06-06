@@ -60,6 +60,17 @@ Send a single message with two `Agent` tool calls. Use the `general-purpose` sub
 
 If the spec is missing, skip the Spec sub-agent and note this in the final report.
 
+### 4a. Sub-agent liveness cap (20 minutes)
+
+The Standards and Spec sub-agents run unattended and can hang. Treat the wall-clock time from when the parallel `Agent` tool calls are dispatched as the liveness budget for this step.
+
+For each sub-agent **independently** (the cap is per sub-agent, not shared across axes):
+
+- Track a wall-clock timer that starts when the sub-agent is dispatched and hard-rejects the sub-agent at the **20 minutes** mark, whether or not a result has been returned. A hung `Agent` call that never returns is treated the same as one that returns late.
+- Re-spawn the rejected sub-agent up to **2 times** — that is **3 total attempts** (1 original + 2 re-spawns) before falling through.
+- If all 3 attempts still hit the 20-minute cap, surface a **sub-agent stuck** finding under that axis's heading in the aggregate report. Do not re-spawn past 2 re-spawns, and do not loop silently — the stuck finding is the final outcome for that axis.
+- The other axis's report is aggregated normally even when one sub-agent is stuck; one slow reviewer does not sink the whole review.
+
 ### 5. Aggregate
 
 Present the two reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings — the two axes are deliberately separate so the user can see them independently.
