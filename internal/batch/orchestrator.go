@@ -1334,6 +1334,10 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		}
 		result.RetriesTotal = attempt + 1
 		if result.Status == "success" || parseLogForCompletion(logPath) {
+			if !checkPRMerged(o.githubClient, branch) {
+				result.Status = "failure"
+				continue
+			}
 			result.Status = "success"
 			break
 		}

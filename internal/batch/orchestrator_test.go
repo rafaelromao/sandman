@@ -658,6 +658,10 @@ func TestCheckPRMergedAtHead(t *testing.T) {
 		"explicit": {Number: 4, State: "merged", Merged: false, HeadRefName: "explicit", HeadRefOid: "explicit-sha"},
 	}}
 
+	if merged := checkPRMerged(nil, ""); merged {
+		t.Fatal("expected nil client to report unmerged")
+	}
+
 	if merged, err := checkPRMergedAtHead(client, "open", "open-sha"); err != nil || merged {
 		t.Fatalf("expected open PR to be false, got merged=%v err=%v", merged, err)
 	}
@@ -968,6 +972,65 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 	}
 	if string(data) != "Continue with sandman-pr-review until the PR is merged" {
 		t.Fatalf("unexpected continue prompt content: %q", string(data))
+	}
+}
+
+func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, func() (gitIdentity, error) {
+		return gitIdentity{}, nil
+	}, map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, sbFactory, nil, false, "main", nil, nil, 0, 0, 1, "", 0, false, 0, false, false)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
+	}
+	if len(resultFactory.created) != 2 {
+		t.Fatalf("created runnables = %d, want 2", len(resultFactory.created))
+	}
+	events, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[1].Type != "run.finished" {
+		t.Fatalf("expected terminal event run.finished, got %q", events[1].Type)
+	}
+	if status, _ := events[1].Payload["status"].(string); status != "failure" {
+		t.Fatalf("expected terminal status failure, got %q", status)
 	}
 }
 
