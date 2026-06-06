@@ -43,4 +43,4 @@ func resolvePortalPeerPID(sockPath string) (int, error) {
 	return int(cred.Pid), nil
 }
 
-func portalStopSupported() bool { return true }
+func portalAbortSupported() bool { return true }
