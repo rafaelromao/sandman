@@ -130,6 +130,10 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.pi/agent/npm",
 			"~/.pi/agent/sessions",
 		},
+		// Concurrent agents sharing one container share the same host
+		// npm cache and session dir; last-write-wins applies (Pi does
+		// not run a concurrency layer the way opencode.db does under
+		// SQLite WAL mode).
 		LiveMounts: []string{
 			"~/.pi/agent/npm",
 			"~/.pi/agent/sessions",

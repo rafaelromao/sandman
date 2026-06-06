@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted
+proposed
 
 ## Context
 
@@ -24,6 +24,8 @@ A second concern: the existing snapshot is a frozen copy. Any session work the c
 ## Decision
 
 Apply the same shape of split ADR-0016 used for OpenCode to the Pi preset. No new mechanism, fields, or code paths are introduced — ADR-0016 already covered the general case. This ADR records the Pi-specific values and their rationale.
+
+The issue's "Copy and mount all `yes`/`maybe` Pi config" is interpreted in the project's triage-label vocabulary (see `docs/agents/triage-labels.md`): a `yes`/`maybe` config is anything that is host-side config or plugin state needed for normal agent operation, as opposed to mutable runtime state the agent produces during a run. The two paths called out by name (`~/.pi/agent/npm` and `~/.pi/agent/sessions`) are the only mutable-runtime subtrees inside `~/.pi/agent/`; every other entry under `~/.pi/` is treated as config and copied into the snapshot.
 
 Concretely:
 
