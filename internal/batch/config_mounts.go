@@ -24,10 +24,32 @@ var lookupGHToken = func() (string, error) {
 	return token, nil
 }
 
+// prepareSnapshotParent returns the parent directory under which the
+// container config snapshot should be stored, plus a cleanup that
+// removes the parent when no run owns it. When runDir is set, the
+// caller is expected to remove runDir at end of run, so this cleanup is
+// a no-op for the parent itself but still removes the `config/` subtree
+// (handled by sandbox.ResolveConfigMounts cleanup).
+func prepareSnapshotParent(runDir string) (string, func(), error) {
+	if runDir != "" {
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			return "", nil, fmt.Errorf("prepare run dir for config snapshot: %w", err)
+		}
+		return runDir, func() {}, nil
+	}
+	tmpDir, err := os.MkdirTemp("", "sandman-config-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create config temp dir: %w", err)
+	}
+	return tmpDir, func() { _ = os.RemoveAll(tmpDir) }, nil
+}
+
 // PrepareContainerConfigMounts resolves git, gh, ssh, and agent config paths
-// into temp-copied ConfigMounts so container runs do not bind host paths
-// directly and can safely follow symlinked config trees.
-func PrepareContainerConfigMounts(repoPath string, opts *sandbox.StartOptions) (func(), error) {
+// into ConfigMounts copied under `<runDir>/config/` so container runs do not
+// bind host paths directly and can safely follow symlinked config trees.
+// When runDir is empty (callers without a run-owned parent), a temp dir is
+// created and the snapshot is removed by the returned cleanup.
+func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOptions) (func(), error) {
 	dirs := append([]string(nil), opts.AgentConfigDirs...)
 	files := append([]string(nil), opts.AgentConfigFiles...)
 
@@ -56,11 +78,23 @@ func PrepareContainerConfigMounts(repoPath string, opts *sandbox.StartOptions) (
 		return func() {}, nil
 	}
 
-	mounts, cleanup, err := sandbox.ResolveConfigMounts(dirs, files)
+	snapshotParent, snapshotCleanup, err := prepareSnapshotParent(runDir)
 	if err != nil {
+		return nil, err
+	}
+
+	mounts, releaseMounts, err := sandbox.ResolveConfigMounts(snapshotParent, dirs, files)
+	if err != nil {
+		snapshotCleanup()
 		return nil, fmt.Errorf("resolve config mounts: %w", err)
 	}
+	releaseSnapshot := snapshotCleanup
 	mounts = addSSHMountAliases(mounts)
+
+	cleanup := func() {
+		releaseMounts()
+		releaseSnapshot()
+	}
 
 	if convertedGitConfig {
 		if err := rewriteGitConfigMount(repoPath, mounts); err != nil {

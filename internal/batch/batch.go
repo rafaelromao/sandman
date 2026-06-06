@@ -51,6 +51,10 @@ type Request struct {
 	DangerouslySkipPermissions *bool
 	PromptConfig               prompt.RenderConfig
 	OutputWriter               io.Writer
+	// RunDir is the per-batch run directory (typically `.sandman/runs/<run-id>`)
+	// under which container config snapshots are stored for the lifetime of
+	// the batch. When empty, snapshots fall back to a temp directory.
+	RunDir string
 }
 
 // Result describes the outcome of a batch.

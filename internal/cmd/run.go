@@ -349,6 +349,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			broadcaster := daemon.NewBroadcaster()
 			ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
 
+			if staleRemoved, err := daemon.CleanupStaleRunSnapshots(".sandman"); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", err)
+			} else if staleRemoved > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale run-owned config snapshots from previous runs\n", staleRemoved)
+			}
+
 			if err := ctlSocket.Start(); err != nil {
 				return err
 			}
@@ -387,6 +393,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				MaxContainersSet:           maxContainersSet,
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				OutputWriter:               broadcaster,
+				RunDir:                     runDir,
 				PromptConfig: prompt.RenderConfig{
 					PromptFlag:       promptFlag,
 					TemplateFlag:     templateFlag,

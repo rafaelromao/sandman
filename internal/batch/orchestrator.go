@@ -983,7 +983,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(cfg *config.Config, agentCf
 		return nil, fmt.Errorf("max_containers must be 0 or greater")
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(".", &startOpts)
+	cleanup, err := PrepareContainerConfigMounts(".", req.RunDir, &startOpts)
 	if err != nil {
 		return nil, fmt.Errorf("prepare container config mounts: %w", err)
 	}

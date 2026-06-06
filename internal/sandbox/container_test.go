@@ -883,6 +883,47 @@ func TestToContainerPath_ReturnsHostPathWhenNotUnderHome(t *testing.T) {
 	}
 }
 
+func TestResolveConfigMounts_StoresSnapshotUnderParentDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	parentDir := t.TempDir()
+	configDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "auth.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts, cleanup, err := ResolveConfigMounts(parentDir, []string{configDir}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+
+	expectedSnapshotRoot := filepath.Join(parentDir, "config")
+	if !strings.HasPrefix(mounts[0].Source, expectedSnapshotRoot) {
+		t.Errorf("expected mount source %q to be under snapshot root %q", mounts[0].Source, expectedSnapshotRoot)
+	}
+
+	if _, err := os.Stat(mounts[0].Source); err != nil {
+		t.Errorf("expected snapshot to exist before cleanup: %v", err)
+	}
+
+	cleanup()
+	if _, err := os.Stat(expectedSnapshotRoot); !os.IsNotExist(err) {
+		t.Errorf("expected snapshot root to be removed after cleanup, got: %v", err)
+	}
+	if _, err := os.Stat(parentDir); err != nil {
+		t.Errorf("expected parent dir to be untouched by cleanup: %v", err)
+	}
+}
+
 func TestResolveConfigMounts_ResolvesFileSymlink(t *testing.T) {
 	realFile := filepath.Join(t.TempDir(), "real.json")
 	if err := os.WriteFile(realFile, []byte(`{"key": "value"}`), 0644); err != nil {
@@ -894,7 +935,7 @@ func TestResolveConfigMounts_ResolvesFileSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts(nil, []string{symFile})
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), nil, []string{symFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -926,7 +967,7 @@ func TestResolveConfigMounts_SkipsSpecialFiles(t *testing.T) {
 	}
 	defer ln.Close()
 
-	mounts, cleanup, err := ResolveConfigMounts([]string{dir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{dir}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -956,7 +997,7 @@ func TestResolveConfigMounts_InternalSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts([]string{realDir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{realDir}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -993,7 +1034,7 @@ func TestResolveConfigMounts_BrokenSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts([]string{dir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{dir}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1025,7 +1066,7 @@ func TestResolveConfigMounts_CircularSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, cleanup, err := ResolveConfigMounts([]string{dir}, nil)
+	_, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{dir}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1038,7 +1079,8 @@ func TestResolveConfigMounts_CleanedUp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts([]string{dir}, nil)
+	parentDir := t.TempDir()
+	mounts, cleanup, err := ResolveConfigMounts(parentDir, []string{dir}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1047,20 +1089,23 @@ func TestResolveConfigMounts_CleanedUp(t *testing.T) {
 		t.Fatalf("expected 1 mount, got %d", len(mounts))
 	}
 
-	tmpDir := filepath.Dir(mounts[0].Source)
-	if _, err := os.Stat(tmpDir); err != nil {
-		t.Fatalf("expected temp dir to exist before cleanup: %v", err)
+	snapshotDir := filepath.Join(parentDir, "config")
+	if _, err := os.Stat(snapshotDir); err != nil {
+		t.Fatalf("expected snapshot dir to exist before cleanup: %v", err)
 	}
 
 	cleanup()
 
-	if _, err := os.Stat(tmpDir); !os.IsNotExist(err) {
-		t.Errorf("expected temp dir to be removed after cleanup, but it still exists")
+	if _, err := os.Stat(snapshotDir); !os.IsNotExist(err) {
+		t.Errorf("expected snapshot dir to be removed after cleanup, but it still exists")
+	}
+	if _, err := os.Stat(parentDir); err != nil {
+		t.Errorf("expected parent dir to be untouched by cleanup: %v", err)
 	}
 }
 
 func TestResolveConfigMounts_MissingDir(t *testing.T) {
-	mounts, cleanup, err := ResolveConfigMounts([]string{"/nonexistent/test-dir"}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{"/nonexistent/test-dir"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1084,7 +1129,7 @@ func TestResolveConfigMounts_PreservesContainerTargets(t *testing.T) {
 		t.Fatalf("write config file: %v", err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts([]string{configDir}, []string{configFile})
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{configDir}, []string{configFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1107,7 +1152,7 @@ func TestContainerRuntime_Start_UsesConfigMounts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts([]string{mountsDir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{mountsDir}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1160,7 +1205,7 @@ func TestResolveConfigMounts_ResolvesDirSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts, cleanup, err := ResolveConfigMounts([]string{symDir}, nil)
+	mounts, cleanup, err := ResolveConfigMounts(t.TempDir(), []string{symDir}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

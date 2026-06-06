@@ -10,6 +10,50 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
+func TestPrepareContainerConfigMounts_StoresSnapshotUnderRunDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	runDir := filepath.Join(t.TempDir(), "runs", "run-42-1")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+
+	opencodeDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(opencodeDir, 0755); err != nil {
+		t.Fatalf("mkdir opencode dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(opencodeDir, "auth.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+
+	oldLookup := lookupGHToken
+	lookupGHToken = func() (string, error) { return "gho_run_dir_token", nil }
+	t.Cleanup(func() { lookupGHToken = oldLookup })
+
+	opts := sandbox.StartOptions{
+		AgentConfigDirs: []string{opencodeDir},
+	}
+
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), runDir, &opts)
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	if len(opts.ConfigMounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(opts.ConfigMounts))
+	}
+	source := opts.ConfigMounts[0].Source
+	expectedRoot := filepath.Join(runDir, "config")
+	if !strings.HasPrefix(source, expectedRoot) {
+		t.Errorf("expected mount source %q to live under run-owned snapshot root %q", source, expectedRoot)
+	}
+	if info, err := os.Stat(expectedRoot); err != nil || !info.IsDir() {
+		t.Errorf("expected run-owned snapshot root to exist as a directory: %v", err)
+	}
+}
+
 func TestPrepareContainerConfigMounts_RewritesGitConfigCopiesSSHAndHydratesGH(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -64,7 +108,7 @@ func TestPrepareContainerConfigMounts_RewritesGitConfigCopiesSSHAndHydratesGH(t 
 		SSH:              true,
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(repoDir, &opts)
+	cleanup, err := PrepareContainerConfigMounts(repoDir, "", &opts)
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -131,7 +175,7 @@ func TestPrepareContainerConfigMounts_ErrorsWhenGHTokenMissingFromCopiedConfig(t
 	t.Cleanup(func() { lookupGHToken = oldLookup })
 
 	opts := sandbox.StartOptions{AgentConfigDirs: []string{ghConfigDir}}
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), &opts)
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts)
 	if cleanup != nil {
 		defer cleanup()
 	}
