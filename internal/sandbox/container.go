@@ -282,15 +282,28 @@ func ResolveRuntime(preferred string) (string, error) {
 
 const maxCopyDepth = 50
 
-// ResolveConfigMounts creates a temp directory and copies each dir/file
-// from the given lists into it, resolving symlinks. Returns the mount
-// pairs and a cleanup function to remove the temp directory.
-func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
-	tmpDir, err := os.MkdirTemp("", "sandman-config-*")
-	if err != nil {
-		return nil, nil, fmt.Errorf("create config temp dir: %w", err)
+// ResolveConfigMounts creates a `config` subdirectory under parentDir and copies each
+// dir/file from the given lists into it, resolving symlinks. Returns the mount pairs
+// and a cleanup function that removes the `config` subdirectory. The caller owns
+// parentDir; passing a run-owned parent path keeps the snapshot lifecycle tied to
+// that run.
+func ResolveConfigMounts(parentDir string, dirs, files []string) ([]ConfigMount, func(), error) {
+	if parentDir == "" {
+		return nil, nil, fmt.Errorf("parent dir is required for config snapshot")
 	}
-	cleanup := func() { os.RemoveAll(tmpDir) }
+	if err := os.RemoveAll(filepath.Join(parentDir, "config")); err != nil {
+		return nil, nil, fmt.Errorf("clear stale config snapshot: %w", err)
+	}
+	snapshotDir, err := os.MkdirTemp(parentDir, ".config-*")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create config snapshot dir: %w", err)
+	}
+	publishedDir := filepath.Join(parentDir, "config")
+	if err := os.Rename(snapshotDir, publishedDir); err != nil {
+		_ = os.RemoveAll(snapshotDir)
+		return nil, nil, fmt.Errorf("publish config snapshot dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(publishedDir) }
 
 	var mounts []ConfigMount
 	usedTargets := make(map[string]bool)
@@ -312,7 +325,7 @@ func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
 			continue
 		}
 		usedTargets[target] = true
-		dst := filepath.Join(tmpDir, strings.TrimPrefix(target, "/"))
+		dst := filepath.Join(publishedDir, strings.TrimPrefix(target, "/"))
 		if err := copyResolved(dir, dst, 0); err != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("copy config dir %q: %w", dir, err)
@@ -337,7 +350,7 @@ func ResolveConfigMounts(dirs, files []string) ([]ConfigMount, func(), error) {
 			continue
 		}
 		usedTargets[target] = true
-		dst := filepath.Join(tmpDir, strings.TrimPrefix(target, "/"))
+		dst := filepath.Join(publishedDir, strings.TrimPrefix(target, "/"))
 		if err := copyResolved(file, dst, 0); err != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("copy config file %q: %w", file, err)

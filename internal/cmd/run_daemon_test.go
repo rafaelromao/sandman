@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,6 +112,12 @@ func TestRun_RemovesRunDirOnCompletion(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected run dirs to be cleaned up, got %d", len(entries))
+	}
+	for _, entry := range entries {
+		runPath := filepath.Join(runsDir, entry.Name())
+		if _, err := os.Stat(filepath.Join(runPath, "config")); err == nil {
+			t.Errorf("expected run-owned config/ snapshot to be removed with run dir %q", runPath)
+		}
 	}
 }
 
@@ -342,5 +349,37 @@ func TestRun_RemovesSocketAndRunDirOnError(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected run dirs to be cleaned up after error, got %d", len(entries))
+	}
+}
+
+func TestRun_SetsRunDirOnBatchRequest(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	sandmanDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.RunDir == "" {
+		t.Fatal("expected RunDir to be set on batch.Request")
+	}
+	if !strings.HasPrefix(spy.req.RunDir, ".sandman/runs/") {
+		t.Errorf("expected RunDir %q to be under .sandman/runs/", spy.req.RunDir)
+	}
+	if _, err := os.Stat(spy.req.RunDir); !os.IsNotExist(err) {
+		t.Errorf("expected RunDir to be cleaned up after run, got stat err: %v", err)
 	}
 }

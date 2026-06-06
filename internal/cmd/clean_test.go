@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -424,5 +425,92 @@ func TestClean_Success_CleansPromptOnlyRun(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(worktreeDir, "sandman", "prompt-only-123")); !os.IsNotExist(err) {
 		t.Fatalf("expected prompt-only worktree to be removed")
+	}
+}
+
+func TestClean_All_RemovesStaleRunOwnedSnapshots(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	inactive := filepath.Join(dir, ".sandman", "runs", "run-99-1")
+	if err := os.MkdirAll(filepath.Join(inactive, "config"), 0755); err != nil {
+		t.Fatalf("mkdir inactive config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inactive, "config", "host.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write host.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inactive, "batch.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write batch.json: %v", err)
+	}
+
+	deps := Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    &fakeEventLog{},
+		GitRunner:   &fakeGitRunner{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(inactive, "config")); !os.IsNotExist(err) {
+		t.Errorf("expected stale run-owned config/ to be removed under --all, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(inactive, "batch.json")); err != nil {
+		t.Errorf("expected inactive run manifest to be preserved (config snapshot is what gets removed): %v", err)
+	}
+	if !strings.Contains(buf.String(), "stale run snapshots") {
+		t.Errorf("expected output to report stale run snapshots cleaned, got: %s", buf.String())
+	}
+}
+
+func TestClean_Success_PreservesActiveRunSnapshots(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	active := filepath.Join(dir, ".sandman", "runs", "active-1")
+	if err := os.MkdirAll(filepath.Join(active, "config"), 0755); err != nil {
+		t.Fatalf("mkdir active config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(active, "config", "host.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write host.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(active, "batch.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write batch.json: %v", err)
+	}
+	sock := daemon.NewControlSocket(active, daemon.NewBroadcaster())
+	if err := sock.Start(); err != nil {
+		t.Fatalf("start control socket: %v", err)
+	}
+	defer sock.Stop()
+
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	deps := Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: worktreeDir}},
+		EventLog:    &fakeEventLog{},
+		GitRunner:   &fakeGitRunner{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--success"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(active, "config")); err != nil {
+		t.Errorf("expected active run config/ to be preserved, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(active, "batch.json")); err != nil {
+		t.Errorf("expected active run manifest to be preserved, got: %v", err)
 	}
 }

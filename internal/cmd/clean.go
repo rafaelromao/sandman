@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/spf13/cobra"
 )
@@ -112,6 +113,11 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				gr = newRealGitRunner()
 			}
 
+			staleRemoved, staleErr := daemon.CleanupStaleRunSnapshots(".sandman")
+			if staleErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", staleErr)
+			}
+
 			if all {
 				eventsList, err := deps.EventLog.Read()
 				if err != nil {
@@ -132,7 +138,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				removed, _ := gr.removeOrphanBranches()
 				_ = os.RemoveAll(cfg.WorktreeDir)
 				_ = os.RemoveAll(".sandman/logs")
-				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale branches and logs\n", removed)
+				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale branches and logs and %d stale run snapshots\n", removed, staleRemoved)
 				return nil
 			}
 
@@ -166,7 +172,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				removed++
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d runs\n", removed)
+			fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d runs and %d stale run snapshots\n", removed, staleRemoved)
 			return nil
 		},
 	}
