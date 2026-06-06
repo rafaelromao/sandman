@@ -471,6 +471,7 @@ func (o *Orchestrator) AbortIssue(issueNumber int) error {
 	if !ok {
 		return ErrNoSuchIssue
 	}
+	// The issue may unregister between lookup and cancel; cancel is still safe.
 	cancel()
 	return nil
 }

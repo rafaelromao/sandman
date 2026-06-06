@@ -109,6 +109,13 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 	if len(abortBody) == 0 {
 		t.Fatal("expected non-empty abort response body")
 	}
+	var abortResp map[string]any
+	if err := json.Unmarshal(abortBody, &abortResp); err != nil {
+		t.Fatalf("parse abort response: %v", err)
+	}
+	if abortResp["status"] != "aborted" || abortResp["scope"] != "issue" {
+		t.Fatalf("unexpected abort response: %v", abortResp)
+	}
 
 	waitForPortalRun(t, portalURL, 1, func(run portalRun) bool {
 		return run.Kind == "completed" && run.Status == "aborted"
@@ -169,6 +176,9 @@ func TestPortal_E2E_AbortReturns404ForUnknownRun(t *testing.T) {
 	if len(body) == 0 {
 		t.Fatal("expected non-empty 404 response body")
 	}
+	if !strings.Contains(string(body), "run-does-not-exist") {
+		t.Fatalf("expected 404 body to mention missing run, got %s", body)
+	}
 }
 
 func writeAbortE2EConfig(t *testing.T, repoDir string) {
@@ -206,7 +216,7 @@ repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")")
 case "$*" in
   *"Implement GitHub issue #1"*)
     child=0
-    trap 'kill "$child" >/dev/null 2>&1 || true; exit 0' INT
+    trap 'if [ "$child" -ne 0 ]; then kill "$child" >/dev/null 2>&1 || true; fi; exit 130' INT
     mkdir -p "$repo_root/.sandman/logs"
     cat > "$repo_root/.sandman/logs/1.log" <<'EOF'
 --- run 0 ---
