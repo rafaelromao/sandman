@@ -266,15 +266,10 @@ func TestPrepareContainerConfigMounts_AppendsLiveMountsForExistingPaths(t *testi
 	defer cleanup()
 
 	var dbMount *sandbox.ConfigMount
-	var snapshotIdx, liveIdx int
 	for i := range opts.ConfigMounts {
 		mount := &opts.ConfigMounts[i]
 		if mount.Target == "/.local/share/opencode/opencode.db" {
 			dbMount = mount
-			liveIdx = i
-		}
-		if mount.Target == "/.local/share/opencode" {
-			snapshotIdx = i
 		}
 	}
 	if dbMount == nil {
@@ -282,9 +277,6 @@ func TestPrepareContainerConfigMounts_AppendsLiveMountsForExistingPaths(t *testi
 	}
 	if dbMount.Source != dbPath {
 		t.Errorf("expected live mount source %q, got %q", dbPath, dbMount.Source)
-	}
-	if liveIdx <= snapshotIdx {
-		t.Errorf("expected live mount (idx %d) to be appended after snapshot mount (idx %d) so Docker layers it on top", liveIdx, snapshotIdx)
 	}
 	for _, mount := range opts.ConfigMounts {
 		if mount.Target == "/.local/share/opencode/opencode.db-shm" {

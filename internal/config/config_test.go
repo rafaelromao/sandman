@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -190,7 +191,7 @@ func TestBuiltInAgentPresets_OpencodeExcludesMutableState(t *testing.T) {
 		"~/.local/share/opencode/opencode.db-wal",
 	}
 	for _, want := range wantExcluded {
-		if !slicesContains(preset.SnapshotExcludes, want) {
+		if !slices.Contains(preset.SnapshotExcludes, want) {
 			t.Errorf("expected SnapshotExcludes to contain %q, got %v", want, preset.SnapshotExcludes)
 		}
 	}
@@ -208,19 +209,10 @@ func TestBuiltInAgentPresets_OpencodeLiveMountsDatabase(t *testing.T) {
 		"~/.local/share/opencode/opencode.db-wal",
 	}
 	for _, want := range wantLive {
-		if !slicesContains(preset.LiveMounts, want) {
+		if !slices.Contains(preset.LiveMounts, want) {
 			t.Errorf("expected LiveMounts to contain %q, got %v", want, preset.LiveMounts)
 		}
 	}
-}
-
-func slicesContains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func TestConfig_ResolveAgentProvider_Pi(t *testing.T) {

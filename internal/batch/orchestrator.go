@@ -1087,27 +1087,37 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 	}
 
 	if preset, ok := config.BuiltInAgentPresets[agentCfg.Preset]; ok {
-		for _, p := range preset.SnapshotExcludes {
-			expanded, err := expandPath(p)
-			if err != nil {
-				return sandbox.StartOptions{}, fmt.Errorf("expand snapshot exclude %q: %w", p, err)
-			}
-			if expanded != "" {
-				opts.AgentConfigExcludes = append(opts.AgentConfigExcludes, expanded)
-			}
+		expanded, err := expandPaths(preset.SnapshotExcludes, "snapshot exclude")
+		if err != nil {
+			return sandbox.StartOptions{}, err
 		}
-		for _, p := range preset.LiveMounts {
-			expanded, err := expandPath(p)
-			if err != nil {
-				return sandbox.StartOptions{}, fmt.Errorf("expand live mount %q: %w", p, err)
-			}
-			if expanded != "" {
-				opts.LiveMounts = append(opts.LiveMounts, expanded)
-			}
+		opts.AgentConfigExcludes = append(opts.AgentConfigExcludes, expanded...)
+
+		expanded, err = expandPaths(preset.LiveMounts, "live mount")
+		if err != nil {
+			return sandbox.StartOptions{}, err
 		}
+		opts.LiveMounts = append(opts.LiveMounts, expanded...)
 	}
 
 	return opts, nil
+}
+
+func expandPaths(paths []string, label string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		expanded, err := expandPath(p)
+		if err != nil {
+			return nil, fmt.Errorf("expand %s %q: %w", label, p, err)
+		}
+		if expanded != "" {
+			out = append(out, expanded)
+		}
+	}
+	return out, nil
 }
 
 func expandPath(path string) (string, error) {

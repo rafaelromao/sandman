@@ -121,7 +121,6 @@ func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOp
 	}
 
 	mounts = appendLiveMounts(mounts, opts.LiveMounts)
-	opts.LiveMounts = nil
 
 	opts.ConfigMounts = mounts
 	return cleanup, nil

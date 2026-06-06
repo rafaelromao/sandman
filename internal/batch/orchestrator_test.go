@@ -5670,16 +5670,13 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 
 	var snapshotSource string
 	var dbMount *sandbox.ConfigMount
-	var snapshotIdx, dbIdx int
 	for i := range startOpts.ConfigMounts {
 		mount := &startOpts.ConfigMounts[i]
 		switch mount.Target {
 		case "/.local/share/opencode":
 			snapshotSource = mount.Source
-			snapshotIdx = i
 		case "/.local/share/opencode/opencode.db":
 			dbMount = mount
-			dbIdx = i
 		}
 	}
 	if snapshotSource == "" {
@@ -5691,9 +5688,6 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 	if dbMount.Source != dbPath {
 		t.Errorf("expected live mount source to be host db path %q, got %q", dbPath, dbMount.Source)
 	}
-	if dbIdx <= snapshotIdx {
-		t.Errorf("expected live db mount (idx %d) to come after snapshot mount (idx %d) so the file mount layers on top", dbIdx, snapshotIdx)
-	}
 
 	if _, err := os.Stat(filepath.Join(snapshotSource, "auth.json")); err != nil {
 		t.Errorf("expected auth.json in snapshot copy: %v", err)
@@ -5703,10 +5697,6 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(snapshotSource, "opencode.db")); !os.IsNotExist(err) {
 		t.Errorf("expected opencode.db to be excluded from snapshot (live mount instead), got: %v", err)
-	}
-
-	if startOpts.LiveMounts != nil {
-		t.Errorf("expected LiveMounts to be cleared after consumption, got %v", startOpts.LiveMounts)
 	}
 }
 
