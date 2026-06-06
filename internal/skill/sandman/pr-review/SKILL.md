@@ -16,6 +16,8 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 4. **You must NOT exit the polling loop on a `0/0` count of (formal reviews, inline comments) when the top-level PR conversation has new comments from any non-agent author.** A reviewer who only posts a top-level PR conversation comment (no formal review event, no inline file comments) is still a real reviewer response. Re-classify the state, run the self-check (Step 4), and continue polling — do not give up.
 
+5. **You must ALWAYS request another review after any new commit that addresses review feedback.** As soon as you push a fix for reviewer feedback, the previous review state is stale; post `{{REVIEW_COMMAND}}` again and continue the loop until the new revision is reviewed.
+
 ## Workflow
 
 ### Prerequisites
