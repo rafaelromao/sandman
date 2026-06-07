@@ -211,7 +211,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	if err != nil {
 		t.Fatalf("update config: %v", err)
 	}
-	imageTag := preflightSmokeImage(t, runtime, repoDir, tc.name)
+	imageTag := preflightSmokeImage(t, runtime, repoDir, tc.name, tc.buildTools)
 	preflightSmokeContainer(t, runtime, imageTag, repoDir, homeDir, tc.name, tc.buildTools, tc.authPaths)
 	preflightSmokeWorktree(t, repoDir, tc.wantBranch)
 
@@ -519,9 +519,20 @@ func ensurePiFreePackage(t *testing.T, homeDir string) {
 	}
 }
 
-func preflightSmokeImage(t *testing.T, runtime, repoDir, provider string) string {
+func preflightSmokeImage(t *testing.T, runtime, repoDir, provider, buildTools string) string {
 	t.Helper()
 
+	// If TestMain pre-warmed a matching image, reuse it. The pre-warmed
+	// image is shared across tests for the same (provider, buildTools)
+	// pair, so we do not register a Cleanup to remove it; the next
+	// pre-warm (or the developer's manual `podman rmi`) handles it.
+	if tag := smokePrewarmLookup(provider, buildTools); tag != "" {
+		return tag
+	}
+
+	// Fall back to the in-test build path. The tag is unique per test
+	// (UnixNano) so concurrent tests do not collide, and Cleanup
+	// removes it when the test finishes.
 	tag := fmt.Sprintf("sandman-smoke-%s-%d:latest", provider, time.Now().UnixNano())
 	cmd := exec.Command(runtime, "build", "-t", tag, "-f", filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
