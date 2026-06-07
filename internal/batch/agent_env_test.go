@@ -1,6 +1,11 @@
 package batch
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/rafaelromao/sandman/internal/config"
+)
 
 func TestShellQuote(t *testing.T) {
 	tests := []struct {
@@ -36,5 +41,25 @@ func TestApplyAgentEnv_ExportsSortedQuotedVariables(t *testing.T) {
 	want := "export ALPHA='it'\"'\"'s fine'; export BETA='two words'; printenv AGENT_TOKEN"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestApplyAgentEnv_OpencodePresetRendersPermissionExport(t *testing.T) {
+	preset, ok := config.BuiltInAgentPresets["opencode"]
+	if !ok {
+		t.Fatal("expected opencode preset to exist")
+	}
+	if _, ok := preset.Env["OPENCODE_PERMISSION"]; !ok {
+		t.Fatal("expected opencode preset env to carry OPENCODE_PERMISSION")
+	}
+
+	got := applyAgentEnv(`opencode run --dangerously-skip-permissions "$(cat .sandman/rendered-prompt.md)"`, preset.Env)
+
+	wantPrefix := "export OPENCODE_PERMISSION='"
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Fatalf("expected rendered opencode command to start with %q, got:\n%s", wantPrefix, got)
+	}
+	if !strings.HasSuffix(got, "'; opencode run --dangerously-skip-permissions \"$(cat .sandman/rendered-prompt.md)\"") {
+		t.Fatalf("expected rendered opencode command to end with the opencode run invocation, got:\n%s", got)
 	}
 }

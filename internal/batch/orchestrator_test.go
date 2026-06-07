@@ -1619,6 +1619,7 @@ func TestRunBatch_LeavesWorktreeOnSuccess(t *testing.T) {
 }
 
 func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
+	opencodePrefix := "export OPENCODE_PERMISSION='" + config.OpencodePermissionAllowAll + "'; "
 	tests := []struct {
 		name     string
 		agent    string
@@ -1631,18 +1632,18 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			agent:    "opencode",
 			cfgModel: "config-model",
 			reqModel: "request-model",
-			wantCmd:  `opencode run -m request-model "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd:  opencodePrefix + `opencode run -m request-model "$(cat .sandman/rendered-prompt.md)"`,
 		},
 		{
 			name:     "config model is used",
 			agent:    "opencode",
 			cfgModel: "config-model",
-			wantCmd:  `opencode run -m config-model "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd:  opencodePrefix + `opencode run -m config-model "$(cat .sandman/rendered-prompt.md)"`,
 		},
 		{
 			name:    "default behavior leaves model out",
 			agent:   "opencode",
-			wantCmd: `opencode run "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd: opencodePrefix + `opencode run "$(cat .sandman/rendered-prompt.md)"`,
 		},
 		{
 			name:     "pi splits provider and model",

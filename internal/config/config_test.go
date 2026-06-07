@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -247,6 +248,65 @@ func TestBuiltInAgentPresets_PiLiveMountsRuntimeState(t *testing.T) {
 			t.Errorf("expected LiveMounts to contain %q, got %v", want, preset.LiveMounts)
 		}
 	}
+}
+
+func TestBuiltInAgentPresets_OpencodeEnvPermissionAllowAll(t *testing.T) {
+	preset, ok := BuiltInAgentPresets["opencode"]
+	if !ok {
+		t.Fatal("expected opencode preset to exist")
+	}
+
+	raw, ok := preset.Env["OPENCODE_PERMISSION"]
+	if !ok {
+		t.Fatal("expected opencode preset to set OPENCODE_PERMISSION")
+	}
+
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		t.Fatalf("OPENCODE_PERMISSION must be valid JSON object: %v\nraw=%s", err, raw)
+	}
+
+	wantKeys := []string{
+		"read", "edit", "glob", "grep", "list", "bash", "task",
+		"external_directory", "todowrite", "question", "webfetch", "websearch",
+		"repo_clone", "repo_overview", "lsp", "doom_loop", "skill",
+	}
+	if len(parsed) != len(wantKeys) {
+		t.Errorf("OPENCODE_PERMISSION map size: got %d, want %d (keys=%v)", len(parsed), len(wantKeys), keysOf(parsed))
+	}
+	for _, key := range wantKeys {
+		value, present := parsed[key]
+		if !present {
+			t.Errorf("OPENCODE_PERMISSION missing key %q (got keys=%v)", key, keysOf(parsed))
+			continue
+		}
+		if value != "allow" {
+			t.Errorf("OPENCODE_PERMISSION[%q]: got %q, want %q", key, value, "allow")
+		}
+	}
+
+	if _, ok := parsed["external_directory"]; !ok {
+		t.Error("OPENCODE_PERMISSION must contain external_directory (the key that caused the observed subagent hang)")
+	}
+}
+
+func TestBuiltInAgentPresets_PiEnvUnchanged(t *testing.T) {
+	preset, ok := BuiltInAgentPresets["pi"]
+	if !ok {
+		t.Fatal("expected pi preset to exist")
+	}
+	if _, ok := preset.Env["OPENCODE_PERMISSION"]; ok {
+		t.Error("pi preset must not set OPENCODE_PERMISSION (pi has its own permission model)")
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func TestConfig_ResolveAgentProvider_Pi(t *testing.T) {

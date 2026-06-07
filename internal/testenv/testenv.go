@@ -24,8 +24,9 @@ import (
 
 // E2E scenario identifiers (stable across versions).
 const (
-	E2EScenarioBatch         = "batch"
-	E2EScenarioContinueMulti = "continue_multi"
+	E2EScenarioBatch            = "batch"
+	E2EScenarioContinueMulti    = "continue_multi"
+	E2EScenarioOpencodeSubagent = "opencode_subagent"
 )
 
 // Canonical env var names.
@@ -37,7 +38,7 @@ const (
 // allE2EScenarios is the canonical list of stable scenario identifiers
 // accepted by SANDMAN_E2E_GATES. Adding a new scenario requires editing
 // this list and exporting a new E2EScenario* constant.
-var allE2EScenarios = []string{E2EScenarioBatch, E2EScenarioContinueMulti}
+var allE2EScenarios = []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}
 
 // ParseList parses a comma-separated allowlist. Semantics:
 //   - empty/whitespace raw returns nil (no filter)

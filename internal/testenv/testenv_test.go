@@ -144,53 +144,63 @@ func TestResolveProviderAllowlist_AllExpandsToKnown(t *testing.T) {
 }
 
 func TestE2EGateListAllowed_AllEnablesEverything(t *testing.T) {
-	got := E2EGateListAllowed(E2EScenarioBatch, "all", []string{E2EScenarioBatch, E2EScenarioContinueMulti})
+	got := E2EGateListAllowed(E2EScenarioBatch, "all", []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent})
 	if !got {
 		t.Fatal("expected batch enabled when raw=\"all\"")
 	}
-	got = E2EGateListAllowed(E2EScenarioContinueMulti, "all", []string{E2EScenarioBatch, E2EScenarioContinueMulti})
+	got = E2EGateListAllowed(E2EScenarioContinueMulti, "all", []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent})
 	if !got {
 		t.Fatal("expected continue_multi enabled when raw=\"all\"")
+	}
+	got = E2EGateListAllowed(E2EScenarioOpencodeSubagent, "all", []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent})
+	if !got {
+		t.Fatal("expected opencode_subagent enabled when raw=\"all\"")
 	}
 }
 
 func TestE2EGateListAllowed_StarEnablesEverything(t *testing.T) {
-	got := E2EGateListAllowed(E2EScenarioBatch, "*", []string{E2EScenarioBatch, E2EScenarioContinueMulti})
+	got := E2EGateListAllowed(E2EScenarioBatch, "*", []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent})
 	if !got {
 		t.Fatal("expected batch enabled when raw=\"*\"")
 	}
 }
 
 func TestE2EGateListAllowed_SingleScenarioEnablesOnlyThat(t *testing.T) {
-	if !E2EGateListAllowed(E2EScenarioBatch, E2EScenarioBatch, []string{E2EScenarioBatch, E2EScenarioContinueMulti}) {
+	if !E2EGateListAllowed(E2EScenarioBatch, E2EScenarioBatch, []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}) {
 		t.Fatal("expected batch enabled when raw=\"batch\"")
 	}
-	if E2EGateListAllowed(E2EScenarioContinueMulti, E2EScenarioBatch, []string{E2EScenarioBatch, E2EScenarioContinueMulti}) {
+	if E2EGateListAllowed(E2EScenarioContinueMulti, E2EScenarioBatch, []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}) {
 		t.Fatal("expected continue_multi disabled when raw=\"batch\"")
+	}
+	if E2EGateListAllowed(E2EScenarioOpencodeSubagent, E2EScenarioBatch, []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}) {
+		t.Fatal("expected opencode_subagent disabled when raw=\"batch\"")
 	}
 }
 
 func TestE2EGateListAllowed_CommaListEnablesListedScenarios(t *testing.T) {
 	raw := E2EScenarioBatch + "," + E2EScenarioContinueMulti
-	if !E2EGateListAllowed(E2EScenarioBatch, raw, []string{E2EScenarioBatch, E2EScenarioContinueMulti}) {
+	if !E2EGateListAllowed(E2EScenarioBatch, raw, []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}) {
 		t.Fatal("expected batch enabled")
 	}
-	if !E2EGateListAllowed(E2EScenarioContinueMulti, raw, []string{E2EScenarioBatch, E2EScenarioContinueMulti}) {
+	if !E2EGateListAllowed(E2EScenarioContinueMulti, raw, []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}) {
 		t.Fatal("expected continue_multi enabled")
+	}
+	if E2EGateListAllowed(E2EScenarioOpencodeSubagent, raw, []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}) {
+		t.Fatal("expected opencode_subagent disabled when not listed")
 	}
 }
 
 func TestE2EGateListAllowed_EmptyRawDisables(t *testing.T) {
-	if E2EGateListAllowed(E2EScenarioBatch, "", []string{E2EScenarioBatch, E2EScenarioContinueMulti}) {
+	if E2EGateListAllowed(E2EScenarioBatch, "", []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}) {
 		t.Fatal("expected batch disabled when raw is empty")
 	}
-	if E2EGateListAllowed(E2EScenarioContinueMulti, "  ", []string{E2EScenarioBatch, E2EScenarioContinueMulti}) {
+	if E2EGateListAllowed(E2EScenarioContinueMulti, "  ", []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}) {
 		t.Fatal("expected continue_multi disabled when raw is whitespace")
 	}
 }
 
 func TestE2EGateListAllowed_InvalidRawDisables(t *testing.T) {
-	if E2EGateListAllowed(E2EScenarioBatch, "claude", []string{E2EScenarioBatch, E2EScenarioContinueMulti}) {
+	if E2EGateListAllowed(E2EScenarioBatch, "claude", []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}) {
 		t.Fatal("expected batch disabled when raw contains unknown scenario")
 	}
 }
