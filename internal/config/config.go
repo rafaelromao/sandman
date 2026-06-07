@@ -51,16 +51,17 @@ type GitConfig struct {
 
 // Agent holds a configured agent provider or a custom override.
 type Agent struct {
-	Name          string            `yaml:"name,omitempty"`
-	Preset        string            `yaml:"preset,omitempty"`
-	Command       string            `yaml:"command,omitempty"`
-	Model         string            `yaml:"model,omitempty"`
-	ModelProvider string            `yaml:"-"`
-	ModelName     string            `yaml:"-"`
-	Env           map[string]string `yaml:"env,omitempty"`
-	ConfigDirs    []string          `yaml:"config_dirs,omitempty"`
-	ConfigFiles   []string          `yaml:"config_files,omitempty"`
-	KeychainAuth  bool              `yaml:"keychain_auth,omitempty"`
+	Name                   string            `yaml:"name,omitempty"`
+	Preset                 string            `yaml:"preset,omitempty"`
+	Command                string            `yaml:"command,omitempty"`
+	Model                  string            `yaml:"model,omitempty"`
+	ModelProvider          string            `yaml:"-"`
+	ModelName              string            `yaml:"-"`
+	Env                    map[string]string `yaml:"env,omitempty"`
+	ConfigDirs             []string          `yaml:"config_dirs,omitempty"`
+	ConfigFiles            []string          `yaml:"config_files,omitempty"`
+	KeychainAuth           bool              `yaml:"keychain_auth,omitempty"`
+	OpencodePermissionMode string            `yaml:"-"`
 }
 
 // AgentPreset defines the built-in defaults for a provider preset.
@@ -75,11 +76,21 @@ type AgentPreset struct {
 	KeychainAuth     bool
 }
 
+// OpencodePermissionExternalDirectoryAllow is the OPENCODE_PERMISSION value
+// shipped with the opencode preset. It only allow-lists the subagent
+// external_directory permission that was hanging, so it avoids overwriting
+// unrelated explicit deny rules in OpenCode config while still preventing the
+// subagent permission.asked hang observed in Sandman containers.
+const OpencodePermissionExternalDirectoryAllow = `{"external_directory":"allow"}`
+
 // BuiltInAgentPresets lists the provider presets Sandman knows about without repo-specific config.
 var BuiltInAgentPresets = map[string]AgentPreset{
 	"opencode": {
 		DisplayName: "OpenCode",
 		Command:     `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		Env: map[string]string{
+			"OPENCODE_PERMISSION": OpencodePermissionExternalDirectoryAllow,
+		},
 		ConfigDirs: []string{
 			"~/.config/opencode",
 			"~/.local/share/opencode",
@@ -327,7 +338,7 @@ func (c *Config) ResolveAgentProvider(name string) (Agent, error) {
 }
 
 func (p AgentPreset) Agent(preset string) Agent {
-	return Agent{
+	agent := Agent{
 		Preset:       preset,
 		Command:      p.Command,
 		Env:          copyStringMap(p.Env),
@@ -335,6 +346,10 @@ func (p AgentPreset) Agent(preset string) Agent {
 		ConfigFiles:  append([]string(nil), p.ConfigFiles...),
 		KeychainAuth: p.KeychainAuth,
 	}
+	if _, ok := p.Env["OPENCODE_PERMISSION"]; ok {
+		agent.OpencodePermissionMode = "builtin"
+	}
+	return agent
 }
 
 func (p AgentPreset) AgentWithOverrides(preset string, override Agent) Agent {
@@ -352,7 +367,15 @@ func (p AgentPreset) AgentWithOverrides(preset string, override Agent) Agent {
 		agent.Model = override.Model
 	}
 	if len(override.Env) > 0 {
-		agent.Env = copyStringMap(override.Env)
+		if agent.Env == nil {
+			agent.Env = make(map[string]string, len(override.Env))
+		}
+		for k, v := range override.Env {
+			agent.Env[k] = v
+		}
+		if _, ok := override.Env["OPENCODE_PERMISSION"]; ok {
+			agent.OpencodePermissionMode = "custom"
+		}
 	}
 	if len(override.ConfigDirs) > 0 {
 		agent.ConfigDirs = append([]string(nil), override.ConfigDirs...)

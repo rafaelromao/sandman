@@ -97,6 +97,7 @@ Gated end-to-end scenarios (opt-in, no build tag required):
 ```bash
 SANDMAN_E2E_GATES=batch go test -run TestRunBatch_EndToEnd ./internal/batch
 SANDMAN_E2E_GATES=continue_multi go test -tags e2e -run TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues ./internal/cmd
+SANDMAN_E2E_GATES=opencode_subagent go test -tags e2e -run TestOpencodeSubagentPermissionAllowAll ./internal/cmd
 SANDMAN_E2E_GATES=all go test ./...
 ```
 

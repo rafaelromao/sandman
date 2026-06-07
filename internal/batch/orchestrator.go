@@ -1437,6 +1437,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			agentRun.model = s.agentCfg.Model
 			agentRun.modelProvider = s.agentCfg.ModelProvider
 			agentRun.modelName = s.agentCfg.ModelName
+			agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
 			agentRun.baseBranch = s.baseBranch
 			agentRun.outputWriter = s.outputWriter
 			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
@@ -1766,6 +1767,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 			agentRun.model = s.agentCfg.Model
 			agentRun.modelProvider = s.agentCfg.ModelProvider
 			agentRun.modelName = s.agentCfg.ModelName
+			agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
 			agentRun.baseBranch = s.baseBranch
 			agentRun.outputWriter = s.outputWriter
 			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
