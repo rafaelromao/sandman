@@ -1,8 +1,10 @@
 # ADR-0019: Canonical test env vars for provider allowlists and e2e scenario gates
 
+> Historical note: this ADR records the original decision to introduce the canonical test env vars (`SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`) alongside a per-scenario legacy fallback. The legacy fallback path was later removed in issue #628; the current code reads only the canonical vars. See the Migration path section below and the corresponding changes to `internal/testenv/testenv.go` and the four test call sites for the post-removal state.
+
 ## Status
 
-accepted; legacy fallback removed (issue #628)
+accepted
 
 ## Context
 
@@ -42,7 +44,7 @@ The legacy fallback was removed in issue #628. The four pre-existing env var nam
 
 ### Negative
 
-- Removing the legacy fallback is a breaking change for any developer whose shell still exports the old names. They will see tests skip silently when only the legacy var is set. The README no longer documents the legacy names, so the breakage should be self-evident from the `t.Skip` message at the test entry point.
+- Removing the legacy fallback is a breaking change for any developer whose shell still exports the old names. They will see tests skip silently when only the legacy var is set. The new `t.Skip` message at each test entry point names the canonical var to set, so the migration path may be self-evident from the failure output.
 - `E2EGateAllowed` discards parse errors silently (returns `false`) to keep the call site one-liner-friendly. A typo in the canonical var (e.g. `SANDMAN_E2E_GATES=batchh`) will skip the test with no diagnostic at runtime. The testenv unit tests cover the parse-error path independently.
 - The `internal/testenv` package introduces the term "scenario" in code; `CONTEXT.md` does not yet define it. The term is used as a stable identifier for an opt-in e2e gate, distinct from `AgentRun` (a single execution) or `Batch` (the set of runs in one invocation).
 
