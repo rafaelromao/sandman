@@ -118,7 +118,7 @@ func TestSmoke_RealAgentCLIs_PythonPreset(t *testing.T) {
 }
 
 func parseSmokeProviders(cases []smokeProviderCase) (map[string]bool, error) {
-	return testenv.ResolveProviderAllowlist(testenv.LegacySmokeProvidersEnvVar, smokeProviderNames(cases))
+	return testenv.ResolveProviderAllowlist(smokeProviderNames(cases))
 }
 
 func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
@@ -127,7 +127,7 @@ func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
 		t.Fatal(err)
 	}
 	if len(allowed) == 0 {
-		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode,pi (or SANDMAN_SMOKE_PROVIDERS=opencode,pi) and run `go test -tags smoke ./internal/cmd -run Smoke`")
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode,pi and run `go test -tags smoke ./internal/cmd -run Smoke`")
 	}
 
 	for _, tc := range cases {

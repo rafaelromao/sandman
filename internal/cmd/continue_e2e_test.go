@@ -188,8 +188,8 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 }
 
 func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
-	if !testenv.E2EGateAllowed(testenv.E2EScenarioContinueMulti, testenv.LegacyContinueMultiEnvVar) {
-		t.Skip("set SANDMAN_E2E_GATES=continue_multi (or SANDMAN_ENABLE_MULTI_ISSUE_CONTINUE_E2E=1) to run multi-issue continue e2e")
+	if !testenv.E2EGateAllowed(testenv.E2EScenarioContinueMulti) {
+		t.Skip("set SANDMAN_E2E_GATES=continue_multi (or all) to run multi-issue continue e2e")
 	}
 	if !podmanAvailable(t) {
 		return

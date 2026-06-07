@@ -100,7 +100,7 @@ SANDMAN_E2E_GATES=continue_multi go test -tags e2e -run TestContinueFlow_PodmanS
 SANDMAN_E2E_GATES=all go test ./...
 ```
 
-`SANDMAN_TEST_PROVIDERS` and `SANDMAN_E2E_GATES` accept a comma list, `all`, or `*`. The legacy vars (`SANDMAN_SMOKE_PROVIDERS`, `SANDMAN_E2E_PROVIDERS`, `SANDMAN_E2E`, `SANDMAN_ENABLE_MULTI_ISSUE_CONTINUE_E2E`) still work; the new vars take precedence when set.
+`SANDMAN_TEST_PROVIDERS` and `SANDMAN_E2E_GATES` accept a comma list, `all`, or `*`.
 
 Pi smoke/e2e require `pi-free` installed in active Pi setup.
 
