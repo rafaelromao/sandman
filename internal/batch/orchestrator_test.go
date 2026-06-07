@@ -2254,17 +2254,23 @@ func TestRunBatch_EndToEnd(t *testing.T) {
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
+	fakeBinDir := filepath.Join(dir, "fake-bin")
+	if err := os.MkdirAll(fakeBinDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	fakeOpencode := filepath.Join(fakeBinDir, "opencode")
+	if err := os.WriteFile(fakeOpencode, []byte("#!/bin/sh\ntouch agent-ran.txt\n"), 0755); err != nil {
+		t.Fatalf("write fake opencode: %v", err)
+	}
+	t.Setenv("PATH", fakeBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
 	configPath := filepath.Join(dir, ".sandman", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		t.Fatalf("create .sandman: %v", err)
 	}
-	configData := `default_agent: test-agent
+	configData := `default_agent: opencode
 worktree_dir: .sandman/worktrees
 sandbox: worktree
-agents:
-  test-agent:
-    name: test-agent
-    command: touch agent-ran.txt
 `
 	if err := os.WriteFile(configPath, []byte(configData), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
