@@ -10,6 +10,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 const continueE2EBranch = "sandman/1-fix-failing-test"
@@ -187,8 +188,8 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 }
 
 func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
-	if os.Getenv("SANDMAN_ENABLE_MULTI_ISSUE_CONTINUE_E2E") == "" {
-		t.Skip("TODO: enable multi-issue continue podman e2e once podman startup is stable")
+	if !testenv.E2EGateAllowed(testenv.E2EScenarioContinueMulti, "SANDMAN_ENABLE_MULTI_ISSUE_CONTINUE_E2E") {
+		t.Skip("set SANDMAN_E2E_GATES=continue_multi (or SANDMAN_ENABLE_MULTI_ISSUE_CONTINUE_E2E=1) to run multi-issue continue e2e; TODO: enable podman e2e once podman startup is stable")
 	}
 	if !podmanAvailable(t) {
 		return
