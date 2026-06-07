@@ -71,12 +71,12 @@ var prFlowProviderCases = []prFlowProviderCase{
 func runPRFlowProviderCases(t *testing.T, fn func(t *testing.T, tc prFlowProviderCase)) {
 	t.Helper()
 
-	allowed, err := testenv.ResolveProviderAllowlist("SANDMAN_E2E_PROVIDERS", prFlowProviderNames())
+	allowed, err := testenv.ResolveProviderAllowlist(testenv.LegacyE2EProvidersEnvVar, prFlowProviderNames())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(allowed) == 0 {
-		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode,pi and run `go test -tags e2e ./internal/cmd -run PRFlow`")
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode,pi (or SANDMAN_E2E_PROVIDERS=opencode,pi) and run `go test -tags e2e ./internal/cmd -run PRFlow`")
 	}
 
 	for _, tc := range prFlowProviderCases {

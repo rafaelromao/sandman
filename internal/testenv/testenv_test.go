@@ -2,11 +2,12 @@ package testenv
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
 func TestParseList_EmptyReturnsNil(t *testing.T) {
-	allowed, err := ParseList("", []string{"opencode", "pi"})
+	allowed, err := ParseList("", []string{"opencode", "pi"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -16,7 +17,7 @@ func TestParseList_EmptyReturnsNil(t *testing.T) {
 }
 
 func TestParseList_WhitespaceOnlyReturnsNil(t *testing.T) {
-	allowed, err := ParseList("   ", []string{"opencode", "pi"})
+	allowed, err := ParseList("   ", []string{"opencode", "pi"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -26,7 +27,7 @@ func TestParseList_WhitespaceOnlyReturnsNil(t *testing.T) {
 }
 
 func TestParseList_AllReturnsKnown(t *testing.T) {
-	allowed, err := ParseList("all", []string{"opencode", "pi"})
+	allowed, err := ParseList("all", []string{"opencode", "pi"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -37,7 +38,7 @@ func TestParseList_AllReturnsKnown(t *testing.T) {
 }
 
 func TestParseList_StarReturnsKnown(t *testing.T) {
-	allowed, err := ParseList("*", []string{"opencode", "pi"})
+	allowed, err := ParseList("*", []string{"opencode", "pi"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -48,7 +49,7 @@ func TestParseList_StarReturnsKnown(t *testing.T) {
 }
 
 func TestParseList_CommaListReturnsExplicit(t *testing.T) {
-	allowed, err := ParseList("opencode,pi", []string{"opencode", "pi"})
+	allowed, err := ParseList("opencode,pi", []string{"opencode", "pi"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestParseList_CommaListReturnsExplicit(t *testing.T) {
 }
 
 func TestParseList_TrimsWhitespaceAroundEntries(t *testing.T) {
-	allowed, err := ParseList("  opencode , pi  ", []string{"opencode", "pi"})
+	allowed, err := ParseList("  opencode , pi  ", []string{"opencode", "pi"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -70,7 +71,7 @@ func TestParseList_TrimsWhitespaceAroundEntries(t *testing.T) {
 }
 
 func TestParseList_EmptyEntriesAreSkipped(t *testing.T) {
-	allowed, err := ParseList(",,opencode,,,pi,,", []string{"opencode", "pi"})
+	allowed, err := ParseList(",,opencode,,,pi,,", []string{"opencode", "pi"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,16 +82,29 @@ func TestParseList_EmptyEntriesAreSkipped(t *testing.T) {
 }
 
 func TestParseList_UnknownNameReturnsError(t *testing.T) {
-	_, err := ParseList("opencode,claude", []string{"opencode", "pi"})
+	_, err := ParseList("opencode,claude", []string{"opencode", "pi"}, "provider")
+	if err == nil {
+		t.Fatal("expected error for unknown name, got nil")
+	}
+	if !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("expected error to mention kind, got %v", err)
+	}
+}
+
+func TestParseList_SingleUnknownNameReturnsError(t *testing.T) {
+	_, err := ParseList("claude", []string{"opencode", "pi"}, "provider")
 	if err == nil {
 		t.Fatal("expected error for unknown name, got nil")
 	}
 }
 
-func TestParseList_SingleUnknownNameReturnsError(t *testing.T) {
-	_, err := ParseList("claude", []string{"opencode", "pi"})
+func TestParseList_EmptyKindUsesGenericError(t *testing.T) {
+	_, err := ParseList("claude", []string{"opencode", "pi"}, "")
 	if err == nil {
 		t.Fatal("expected error for unknown name, got nil")
+	}
+	if strings.Contains(err.Error(), "unknown provider") {
+		t.Fatalf("expected generic error when kind is empty, got %v", err)
 	}
 }
 
