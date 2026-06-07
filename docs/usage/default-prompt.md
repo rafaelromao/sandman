@@ -47,6 +47,10 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 
     For TDD planning, load `sandman-tdd`, draft the plan, ask a subagent to review it, revise until consensus, then proceed automatically. Do not wait for human approval.
 
+    ## Search Scope Restriction
+
+    Never run grep, rg, find, or any recursive content/file search against directories outside the current working directory (e.g. /tmp, /var, /usr, /etc, /opt, /home, node_modules, .git, target, dist, build, vendor). Such searches return massive output that floods the context window. Restrict searches to the cwd or explicit sub-paths within it; use the Glob/Grep tools which already scope to the project by default.
+
     ## Required Skill Chain
 
     During `sandman implement`, follow all delegated subskills it calls:
@@ -85,6 +89,7 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 - `Runtime Context` passes branch, base, and review metadata into the shared workflow.
 - `Mandatory Execution Contract` forces the agent to load and obey the Sandman skill chain.
 - `AFK Rule` replaces human approval with subagent consensus.
+- `Search Scope Restriction` keeps recursive search (grep, rg, find) bounded to the working directory and explicitly named sub-paths, so agent context is not flooded by scans of system folders.
 - `Required Skill Chain` names the mandatory subskills the agent must follow.
 - `Required Order` makes the sequence explicit, including continuation before exit and merge only when gates are true.
 - `Completion Requirements` define what the agent must report at the end.
