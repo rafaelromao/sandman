@@ -23,6 +23,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 const (
@@ -70,12 +71,12 @@ var prFlowProviderCases = []prFlowProviderCase{
 func runPRFlowProviderCases(t *testing.T, fn func(t *testing.T, tc prFlowProviderCase)) {
 	t.Helper()
 
-	allowed, err := parseE2EProviders()
+	allowed, err := testenv.ResolveProviderAllowlist(testenv.LegacyE2EProvidersEnvVar, prFlowProviderNames())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(allowed) == 0 {
-		t.Skip("set SANDMAN_E2E_PROVIDERS=opencode,pi and run `go test -tags e2e ./internal/cmd -run PRFlow`")
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode,pi (or SANDMAN_E2E_PROVIDERS=opencode,pi) and run `go test -tags e2e ./internal/cmd -run PRFlow`")
 	}
 
 	for _, tc := range prFlowProviderCases {
@@ -2083,38 +2084,12 @@ func prependPath(t *testing.T, dir string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-func parseE2EProviders() (map[string]bool, error) {
-	raw := strings.TrimSpace(os.Getenv("SANDMAN_E2E_PROVIDERS"))
-	if raw == "" {
-		return nil, nil
+func prFlowProviderNames() []string {
+	names := make([]string, len(prFlowProviderCases))
+	for i, tc := range prFlowProviderCases {
+		names[i] = tc.name
 	}
-	if raw == "all" || raw == "*" {
-		allowed := make(map[string]bool, len(prFlowProviderCases))
-		for _, tc := range prFlowProviderCases {
-			allowed[tc.name] = true
-		}
-		return allowed, nil
-	}
-
-	allowed := make(map[string]bool)
-	for _, name := range strings.Split(raw, ",") {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		known := false
-		for _, tc := range prFlowProviderCases {
-			if tc.name == name {
-				allowed[name] = true
-				known = true
-				break
-			}
-		}
-		if !known {
-			return nil, fmt.Errorf("unknown e2e provider %q", name)
-		}
-	}
-	return allowed, nil
+	return names
 }
 
 func hasProviderAuth(home string, paths []string) bool {

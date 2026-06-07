@@ -20,6 +20,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/scaffold"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 const smokePrompt = `# Smoke test
@@ -117,12 +118,12 @@ func TestSmoke_RealAgentCLIs_PythonPreset(t *testing.T) {
 }
 
 func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
-	allowed, err := parseSmokeProviders()
+	allowed, err := testenv.ResolveProviderAllowlist(testenv.LegacySmokeProvidersEnvVar, smokeProviderNames(cases))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(allowed) == 0 {
-		t.Skip("set SANDMAN_SMOKE_PROVIDERS=opencode,pi and run `go test -tags smoke ./internal/cmd -run Smoke`")
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode,pi (or SANDMAN_SMOKE_PROVIDERS=opencode,pi) and run `go test -tags smoke ./internal/cmd -run Smoke`")
 	}
 
 	for _, tc := range cases {
@@ -136,33 +137,12 @@ func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
 	}
 }
 
-func parseSmokeProviders() (map[string]bool, error) {
-	raw := strings.TrimSpace(os.Getenv("SANDMAN_SMOKE_PROVIDERS"))
-	if raw == "" {
-		return nil, nil
+func smokeProviderNames(cases []smokeProviderCase) []string {
+	names := make([]string, len(cases))
+	for i, tc := range cases {
+		names[i] = tc.name
 	}
-	if raw == "all" || raw == "*" {
-		allowed := make(map[string]bool, len(smokeProviderCases))
-		for _, tc := range smokeProviderCases {
-			allowed[tc.name] = true
-		}
-		return allowed, nil
-	}
-
-	allowed := make(map[string]bool)
-	for _, name := range strings.Split(raw, ",") {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		switch name {
-		case "opencode", "pi":
-			allowed[name] = true
-		default:
-			return nil, fmt.Errorf("unknown smoke provider %q", name)
-		}
-	}
-	return allowed, nil
+	return names
 }
 
 func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
