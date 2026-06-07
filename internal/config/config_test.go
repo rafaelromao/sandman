@@ -266,12 +266,7 @@ func TestBuiltInAgentPresets_OpencodeEnvPermissionAllowAll(t *testing.T) {
 		t.Fatalf("OPENCODE_PERMISSION must be valid JSON object: %v\nraw=%s", err, raw)
 	}
 
-	wantKeys := []string{
-		"*",
-		"read", "edit", "glob", "grep", "list", "bash", "task",
-		"external_directory", "todowrite", "question", "webfetch", "websearch",
-		"repo_clone", "repo_overview", "lsp", "doom_loop", "skill",
-	}
+	wantKeys := []string{"external_directory"}
 	if len(parsed) != len(wantKeys) {
 		t.Errorf("OPENCODE_PERMISSION map size: got %d, want %d (keys=%v)", len(parsed), len(wantKeys), keysOf(parsed))
 	}

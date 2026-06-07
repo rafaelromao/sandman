@@ -75,16 +75,12 @@ type AgentPreset struct {
 	KeychainAuth     bool
 }
 
-// OpencodePermissionAllowAll is the OPENCODE_PERMISSION value shipped with
-// the opencode preset. It allow-lists every permission type recognised by
-// opencode v1.15.7's config schema, plus a wildcard catch-all for custom or
-// MCP permissions. Setting it on the parent agent process makes opencode
-// merge it into result.permission after schema validation, so the override
-// reaches every subagent without modifying the per-run opencode.json
-// snapshot. This prevents the subagent permission.asked hang observed when a
-// subagent (e.g. external_directory) emits an event that the host CLI
-// auto-reply handler does not recognise.
-const OpencodePermissionAllowAll = `{"*":"allow","read":"allow","edit":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow","task":"allow","external_directory":"allow","todowrite":"allow","question":"allow","webfetch":"allow","websearch":"allow","repo_clone":"allow","repo_overview":"allow","lsp":"allow","doom_loop":"allow","skill":"allow"}`
+// OpencodePermissionExternalDirectoryAllow is the OPENCODE_PERMISSION value
+// shipped with the opencode preset. It only allow-lists the subagent
+// external_directory permission that was hanging, so it avoids overwriting
+// unrelated explicit deny rules in OpenCode config while still preventing the
+// subagent permission.asked hang observed in Sandman containers.
+const OpencodePermissionExternalDirectoryAllow = `{"external_directory":"allow"}`
 
 // BuiltInAgentPresets lists the provider presets Sandman knows about without repo-specific config.
 var BuiltInAgentPresets = map[string]AgentPreset{
@@ -92,7 +88,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		DisplayName: "OpenCode",
 		Command:     `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 		Env: map[string]string{
-			"OPENCODE_PERMISSION": OpencodePermissionAllowAll,
+			"OPENCODE_PERMISSION": OpencodePermissionExternalDirectoryAllow,
 		},
 		ConfigDirs: []string{
 			"~/.config/opencode",
