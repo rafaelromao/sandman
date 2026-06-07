@@ -117,8 +117,12 @@ func TestSmoke_RealAgentCLIs_PythonPreset(t *testing.T) {
 	runSmokeProviderCases(t, cases)
 }
 
+func parseSmokeProviders(cases []smokeProviderCase) (map[string]bool, error) {
+	return testenv.ResolveProviderAllowlist(testenv.LegacySmokeProvidersEnvVar, smokeProviderNames(cases))
+}
+
 func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
-	allowed, err := testenv.ResolveProviderAllowlist(testenv.LegacySmokeProvidersEnvVar, smokeProviderNames(cases))
+	allowed, err := parseSmokeProviders(cases)
 	if err != nil {
 		t.Fatal(err)
 	}
