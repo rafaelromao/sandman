@@ -6,23 +6,7 @@ import (
 	"testing"
 )
 
-func setupPiTestShim(t *testing.T) string {
-	t.Helper()
-
-	dir := t.TempDir()
-	writePiTestShim(t, dir)
-	prependTestPath(t, dir)
-	return dir
-}
-
-func writePiTestShim(t *testing.T, dir string) {
-	t.Helper()
-
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatalf("create pi shim dir: %v", err)
-	}
-
-	script := `#!/bin/sh
+const piShimScriptPrefix = `#!/bin/sh
 set -eu
 
 case "${1:-}" in
@@ -89,7 +73,9 @@ case "$issue" in
   1) title="Fix failing test" ;;
   *) title="Fix ${issue}" ;;
 esac
+`
 
+const piShimScriptFull = piShimScriptPrefix + `
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
 
@@ -110,24 +96,50 @@ if [ -n "$provider" ] || [ -n "$model" ]; then
 fi
 `
 
+const piShimScriptLight = piShimScriptPrefix + `
+printf '%s\n' "smoke pi shim saw issue #${issue} (${title})"
+`
+
+func setupPiTestShim(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	writePiTestShim(t, dir)
+	prependTestPath(t, dir)
+	return dir
+}
+
+func writePiTestShim(t *testing.T, dir string) {
+	t.Helper()
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("create pi shim dir: %v", err)
+	}
+
 	path := filepath.Join(dir, "pi")
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(path, []byte(piShimScriptFull), 0755); err != nil {
 		t.Fatalf("write pi shim: %v", err)
 	}
 }
 
 func appendPiTestShimToDockerfile(t *testing.T, repoDir string) {
 	t.Helper()
+	if err := appendPiShimDirToDockerfile(repoDir); err != nil {
+		t.Fatalf("append pi shim to Dockerfile: %v", err)
+	}
+}
 
+func appendPiShimDirToDockerfile(repoDir string) error {
 	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
 	dockerfile, err := os.ReadFile(dockerfilePath)
 	if err != nil {
-		t.Fatalf("read Dockerfile: %v", err)
+		return err
 	}
 	dockerfile = append(dockerfile, []byte("\nCOPY .sandman/bin/pi /usr/local/share/mise/shims/pi\nRUN chmod +x /usr/local/share/mise/shims/pi\n")...)
 	if err := os.WriteFile(dockerfilePath, dockerfile, 0644); err != nil {
-		t.Fatalf("append pi shim to Dockerfile: %v", err)
+		return err
 	}
+	return nil
 }
 
 func prependTestPath(t *testing.T, dir string) {

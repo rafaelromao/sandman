@@ -38,6 +38,10 @@ When any Sandman skill refers to user approval, user confirmation, or user satis
 
 For TDD planning, load `sandman-tdd`, draft the plan, ask a subagent to review it, revise until consensus, then proceed automatically. Do not wait for human approval.
 
+## Search Scope Restriction
+
+Never run grep, rg, find, or any recursive content/file search against directories outside the current working directory (e.g. /tmp, /var, /usr, /etc, /opt, /home, node_modules, .git, target, dist, build, vendor). Such searches return massive output that floods the context window. Restrict searches to the cwd or explicit sub-paths within it; use the Glob/Grep tools which already scope to the project by default.
+
 ## Required Skill Chain
 
 During `sandman implement`, follow all delegated subskills it calls:
