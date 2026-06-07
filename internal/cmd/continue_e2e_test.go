@@ -72,7 +72,7 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if !strings.Contains(string(initialContext), "# Continuation Context") {
 		t.Fatalf("expected initial context header, got:\n%s", initialContext)
 	}
-	if !strings.Contains(string(initialContext), "Initial run.") {
+	if !strings.Contains(string(initialContext), "Initial run for "+continueE2EBranch+".") {
 		t.Fatalf("expected initial context contents, got:\n%s", initialContext)
 	}
 
@@ -107,7 +107,7 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if strings.Contains(string(firstContinuePrompt), "# Continuation Context") {
 		t.Fatalf("expected context header stripped, got:\n%s", firstContinuePrompt)
 	}
-	if !strings.Contains(string(firstContinuePrompt), "Initial run.") {
+	if !strings.Contains(string(firstContinuePrompt), "Initial run for "+continueE2EBranch+".") {
 		t.Fatalf("expected initial context in first continue prompt, got:\n%s", firstContinuePrompt)
 	}
 	if !strings.Contains(string(firstContinuePrompt), "finish the tests") {
@@ -121,7 +121,7 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if err != nil {
 		t.Fatalf("read first continue context: %v", err)
 	}
-	if !strings.Contains(string(firstContinueContext), "First continue.") {
+	if !strings.Contains(string(firstContinueContext), "First continue for "+continueE2EBranch+".") {
 		t.Fatalf("expected first continue context contents, got:\n%s", firstContinueContext)
 	}
 
@@ -137,7 +137,7 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if err != nil {
 		t.Fatalf("read second continue prompt: %v", err)
 	}
-	if !strings.Contains(string(secondContinuePrompt), "First continue.") {
+	if !strings.Contains(string(secondContinuePrompt), "First continue for "+continueE2EBranch+".") {
 		t.Fatalf("expected updated context in second continue prompt, got:\n%s", secondContinuePrompt)
 	}
 	if !strings.Contains(string(secondContinuePrompt), "push the PR") {
@@ -148,7 +148,7 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if err != nil {
 		t.Fatalf("read second continue context: %v", err)
 	}
-	if !strings.Contains(string(secondContinueContext), "Second continue.") {
+	if !strings.Contains(string(secondContinueContext), "Second continue for "+continueE2EBranch+".") {
 		t.Fatalf("expected second continue context contents, got:\n%s", secondContinueContext)
 	}
 
@@ -218,7 +218,7 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	}
 
 	forcePodmanSandbox(t, repoDir)
-	writeFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
+	writeMergedFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 	installFakeOpenCodeForContainer(t, repoDir)
 
 	for _, issue := range []string{"1", "2"} {
@@ -402,16 +402,13 @@ case "$step" in
     if [ -f double.go ]; then
       perl -0pi -e 's/return 0/return 4/' double.go
     fi
-    mkdir -p /workspace/.sandman/bin
-    printf '%s\n' open > /workspace/.sandman/bin/pr-state
-    printf '%s\n' 0 > /workspace/.sandman/bin/pr-state-count
-    write_context "Initial run."
+    write_context "Initial run for $branch."
     ;;
   1)
-    write_context "First continue."
+    write_context "First continue for $branch."
     ;;
   2)
-    write_context "Second continue."
+    write_context "Second continue for $branch."
     ;;
   *)
     printf 'unexpected fake opencode step %s for %s\n' "$step" "$branch" >&2
@@ -594,7 +591,7 @@ esac
 func writeMergedFakeGHShimForContainer(t *testing.T, hostDir string) {
 	t.Helper()
 
-	containerShimDir := "/workspace/.sandman/bin"
+	containerShimDir := hostDir
 	script := strings.ReplaceAll(`#!/bin/sh
 set -eu
 
@@ -643,8 +640,23 @@ JSON
         esac
         shift
       done
+      head_key="$(printf '%s' "${head:-default}" | tr '/ ' '__')"
+      state_file="__SHIM_DIR__/pr-state-${head_key}"
+      state="merged"
+      if [ -f "$state_file" ]; then
+        state=$(cat "$state_file")
+      fi
+      merged_at=""
+      pr_state="$state"
+      if [ "$state" = "merged" ]; then
+        merged_at="2026-06-05T00:00:00Z"
+        next_state="open"
+      else
+        next_state="merged"
+      fi
+      printf '%s\n' "$next_state" > "$state_file"
       cat <<JSON
-[{"number":1,"state":"open","mergedAt":"","headRefName":"$head","headRefOid":""}]
+[{"number":1,"state":"$pr_state","mergedAt":"$merged_at","headRefName":"$head","headRefOid":""}]
 JSON
       exit 0
     fi
