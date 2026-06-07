@@ -51,6 +51,8 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 
     Never run grep, rg, find, or any recursive content/file search against directories outside the current working directory (e.g. /tmp, /var, /usr, /etc, /opt, /home, node_modules, .git, target, dist, build, vendor). Such searches return massive output that floods the context window. Restrict searches to the cwd or explicit sub-paths within it; use the Glob/Grep tools which already scope to the project by default.
 
+    This restriction applies to the current agent and to every subagent invoked in the current session, including subagents launched directly and subagents launched by any Sandman or other skill loaded during the run. When spawning, delegating to, or handing work off to a subagent, pass this Search Scope Restriction into the subagent's instructions verbatim, or reference this section by name, so the subagent obeys the same rule.
+
     ## Required Skill Chain
 
     During `sandman implement`, follow all delegated subskills it calls:
@@ -89,7 +91,7 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 - `Runtime Context` passes branch, base, and review metadata into the shared workflow.
 - `Mandatory Execution Contract` forces the agent to load and obey the Sandman skill chain.
 - `AFK Rule` replaces human approval with subagent consensus.
-- `Search Scope Restriction` keeps recursive search (grep, rg, find) bounded to the working directory and explicitly named sub-paths, so agent context is not flooded by scans of system folders.
+- `Search Scope Restriction` keeps recursive search (grep, rg, find) bounded to the working directory and explicitly named sub-paths, so agent context is not flooded by scans of system folders. The rule propagates: the agent must forward it to every subagent it spawns or hands work off to, including subagents launched by Sandman or other loaded skills.
 - `Required Skill Chain` names the mandatory subskills the agent must follow.
 - `Required Order` makes the sequence explicit, including continuation before exit and merge only when gates are true.
 - `Completion Requirements` define what the agent must report at the end.
