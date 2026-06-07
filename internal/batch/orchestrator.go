@@ -1147,72 +1147,148 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
+// runSession owns the per-AgentRun state and lifecycle for a single issue
+// (or prompt-only) execution. It is private to the orchestrator package and
+// is built by runSingle / runPromptOnlySingle. A session is short-lived: it
+// lives for one execute call and is discarded on return.
+type runSession struct {
+	o *Orchestrator
+
+	// Inputs captured from the runSingle / runPromptOnlySingle call site.
+	issueNumber                int
+	cfg                        *config.Config
+	agentName                  string
+	agentCfg                   config.Agent
+	continuation               bool
+	previousRunIDs             map[int]string
+	resolveGitIdentity         func() (gitIdentity, error)
+	branches                   map[int]string
+	renderCfg                  prompt.RenderConfig
+	outputWriter               io.Writer
+	activeRuns                 map[int]sandbox.Sandbox
+	activeMu                   *sync.Mutex
+	sbFactory                  SandboxFactory
+	containerAlloc             containerAllocator
+	force                      bool
+	baseBranch                 string
+	externalBlockers           []int
+	parallel                   int
+	startDelay                 time.Duration
+	retries                    int
+	runIdleTimeout             int
+	sandboxMode                string
+	containerCapacity          int
+	containerCapacitySet       bool
+	maxContainers              int
+	maxContainersSet           bool
+	dangerouslySkipPermissions bool
+}
+
+// runSingle runs a single issue-driven AgentRun. It builds a runSession and
+// delegates to (*runSession).execute.
 func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
-	issue, err := o.githubClient.FetchIssue(num)
+	s := &runSession{
+		o:                          o,
+		issueNumber:                num,
+		cfg:                        cfg,
+		agentName:                  agentName,
+		agentCfg:                   agentCfg,
+		continuation:               continuation,
+		previousRunIDs:             previousRunIDs,
+		resolveGitIdentity:         resolveGitIdentity,
+		branches:                   branches,
+		renderCfg:                  renderCfg,
+		outputWriter:               outputWriter,
+		activeRuns:                 activeRuns,
+		activeMu:                   activeMu,
+		sbFactory:                  sbFactory,
+		containerAlloc:             containerAlloc,
+		force:                      force,
+		baseBranch:                 baseBranch,
+		externalBlockers:           externalBlockers,
+		parallel:                   parallel,
+		startDelay:                 startDelay,
+		retries:                    retries,
+		runIdleTimeout:             runIdleTimeout,
+		sandboxMode:                sandboxMode,
+		containerCapacity:          containerCapacity,
+		containerCapacitySet:       containerCapacitySet,
+		maxContainers:              maxContainers,
+		maxContainersSet:           maxContainersSet,
+		dangerouslySkipPermissions: dangerouslySkipPermissions,
+	}
+	return s.execute(ctx)
+}
+
+// execute runs the issue-driven AgentRun lifecycle owned by this session. It
+// contains the body that previously lived in (*Orchestrator).runSingle.
+func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
+	o := s.o
+	issue, err := o.githubClient.FetchIssue(s.issueNumber)
 	if err != nil {
-		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", num, err)
-		return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure"}, false
+		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", s.issueNumber, err)
+		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure"}, false
 	}
 
-	branch := branches[num]
+	branch := s.branches[s.issueNumber]
 	if branch == "" {
 		branch = BranchName(issue.Number, issue.Title)
 	}
-	if !continuation {
-		if err := o.syncBaseBranch(".", baseBranch); err != nil {
-			fmt.Fprintf(o.errorLog, "error: sync base branch for issue %d: %v\n", num, err)
-			return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
+	if !s.continuation {
+		if err := o.syncBaseBranch(".", s.baseBranch); err != nil {
+			fmt.Fprintf(o.errorLog, "error: sync base branch for issue %d: %v\n", s.issueNumber, err)
+			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 		}
 	}
 	var container sandbox.Container
-	if containerAlloc != nil {
-		lease, err := containerAlloc.Acquire()
+	if s.containerAlloc != nil {
+		lease, err := s.containerAlloc.Acquire()
 		if err != nil {
-			fmt.Fprintf(o.errorLog, "error: acquire container for issue %d: %v\n", num, err)
-			return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
+			fmt.Fprintf(o.errorLog, "error: acquire container for issue %d: %v\n", s.issueNumber, err)
+			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 		}
 		container = lease.container
 		defer lease.Release()
 	}
 
-	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, baseBranch, container)
+	wt := s.sbFactory.NewSandbox(".", s.cfg.WorktreeDir, branch, s.baseBranch, container)
 	if setter, ok := wt.(interface{ SetForce(bool) }); ok {
-		setter.SetForce(force)
+		setter.SetForce(s.force)
 	}
 	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
-		identity, err := resolveGitIdentity()
+		identity, err := s.resolveGitIdentity()
 		if err != nil {
-			fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", num, err)
-			return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
+			fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
+			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 		}
 		setter.SetGitIdentity(identity.Name, identity.Email)
 	}
 	if err := wt.Start(); err != nil {
-		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", num, err)
-		return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
+		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", s.issueNumber, err)
+		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
 
-	blockedBy, err := o.recheckBlockedBy(ctx, externalBlockers)
+	blockedBy, err := o.recheckBlockedBy(ctx, s.externalBlockers)
 	if err != nil {
-		fmt.Fprintf(o.errorLog, "error: recheck blockers for issue %d: %v\n", num, err)
+		fmt.Fprintf(o.errorLog, "error: recheck blockers for issue %d: %v\n", s.issueNumber, err)
 		_ = wt.Stop()
-		return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch}, false
+		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
-	runID := generateRunID(num)
+	runID := generateRunID(s.issueNumber)
 	if len(blockedBy) > 0 {
-		res := AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "blocked", Branch: branch}
-		o.logBlocked(num, blockedBy, runID)
+		res := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "blocked", Branch: branch}
+		o.logBlocked(s.issueNumber, blockedBy, runID)
 		_ = wt.Stop()
 		return res, false
 	}
 
-	activeMu.Lock()
-	activeRuns[num] = wt
-	activeMu.Unlock()
+	s.activeMu.Lock()
+	s.activeRuns[s.issueNumber] = wt
+	s.activeMu.Unlock()
 	defer func() {
-		activeMu.Lock()
-		delete(activeRuns, num)
-		activeMu.Unlock()
+		s.activeMu.Lock()
+		delete(s.activeRuns, s.issueNumber)
+		s.activeMu.Unlock()
 	}()
 
 	issueShutdownDone := make(chan struct{})
@@ -1249,71 +1325,71 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		promptSourceType := "current"
 		promptSourceValue := ""
 		switch {
-		case renderCfg.PromptFlag != "":
+		case s.renderCfg.PromptFlag != "":
 			promptSourceType = "prompt"
-			promptSourceValue = renderCfg.PromptFlag
-		case renderCfg.TemplateFlag != "":
+			promptSourceValue = s.renderCfg.PromptFlag
+		case s.renderCfg.TemplateFlag != "":
 			promptSourceType = "template"
-			promptSourceValue = renderCfg.TemplateFlag
+			promptSourceValue = s.renderCfg.TemplateFlag
 		}
 
 		payload := map[string]any{
 			"branch":                 branch,
-			"base_branch":            baseBranch,
+			"base_branch":            s.baseBranch,
 			"prompt_source_type":     promptSourceType,
-			"parallel":               parallel,
-			"start_delay":            int(startDelay / time.Second),
-			"retries":                retries,
-			"sandbox":                sandboxMode,
-			"container_capacity":     containerCapacity,
-			"container_capacity_set": containerCapacitySet,
-			"max_containers":         maxContainers,
-			"max_containers_set":     maxContainersSet,
+			"parallel":               s.parallel,
+			"start_delay":            int(s.startDelay / time.Second),
+			"retries":                s.retries,
+			"sandbox":                s.sandboxMode,
+			"container_capacity":     s.containerCapacity,
+			"container_capacity_set": s.containerCapacitySet,
+			"max_containers":         s.maxContainers,
+			"max_containers_set":     s.maxContainersSet,
 		}
-		if continuation {
-			payload["previous_run_id"] = previousRunIDs[num]
+		if s.continuation {
+			payload["previous_run_id"] = s.previousRunIDs[s.issueNumber]
 		}
-		if promptSourceValue != "" && !continuation {
+		if promptSourceValue != "" && !s.continuation {
 			payload["prompt_source_value"] = promptSourceValue
 		}
-		if len(renderCfg.PromptArgs) > 0 {
-			payload["prompt_args"] = renderCfg.PromptArgs
+		if len(s.renderCfg.PromptArgs) > 0 {
+			payload["prompt_args"] = s.renderCfg.PromptArgs
 		}
-		if renderCfg.ReviewCommandSet {
-			payload["review_command"] = renderCfg.ReviewCommand
+		if s.renderCfg.ReviewCommandSet {
+			payload["review_command"] = s.renderCfg.ReviewCommand
 		}
-		if agentName != "" {
-			payload["agent"] = agentName
+		if s.agentName != "" {
+			payload["agent"] = s.agentName
 		}
-		if model := strings.TrimSpace(agentCfg.Model); model != "" {
+		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
 			payload["model"] = model
 		}
 		eventType := "run.started"
-		if continuation {
+		if s.continuation {
 			eventType = "run.continued"
 		}
 		_ = o.eventLog.Log(events.Event{
 			Type:      eventType,
 			Timestamp: time.Now(),
 			RunID:     runID,
-			Issue:     num,
-			IssueRef:  issueRef(num),
+			Issue:     s.issueNumber,
+			IssueRef:  issueRef(s.issueNumber),
 			Payload:   payload,
 		})
 	}
 
-	if renderCfg.PromptFile == "" {
-		renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
+	if s.renderCfg.PromptFile == "" {
+		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
 	}
-	if renderCfg.RenderedPromptFile == "" {
-		renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+	if s.renderCfg.RenderedPromptFile == "" {
+		s.renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
 	}
 
-	attempts := retries + 1
+	attempts := s.retries + 1
 	var result AgentRunResult
-	logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%d.log", num))
+	logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%d.log", s.issueNumber))
 	for attempt := 0; attempt < attempts; attempt++ {
-		attemptRenderCfg := renderCfg
+		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
 			contCtxPath := filepath.Join(wt.WorkDir(), ".sandman", "continuation-context.md")
@@ -1334,36 +1410,36 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 				}
 				if !prFound {
 					if prLookupErr != nil {
-						fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", num, prLookupErr)
-						return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+						fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
+						return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 					}
-					if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {
-						fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", num, err)
-						return AgentRunResult{IssueNumber: num, Issue: issueRef(num), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+					if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
+						fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", s.issueNumber, err)
+						return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 					}
 				}
 			}
-			if err := logRetryMarkerFn(logPath, attempt, retries); err != nil {
+			if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
 				if o.errorLog != nil {
-					fmt.Fprintf(o.errorLog, "warning: write retry marker for issue %d: %v\n", num, err)
+					fmt.Fprintf(o.errorLog, "warning: write retry marker for issue %d: %v\n", s.issueNumber, err)
 				}
 			}
-		} else if err := logRunMarkerFn(logPath, attempt, retries); err != nil {
+		} else if err := logRunMarkerFn(logPath, attempt, s.retries); err != nil {
 			if o.errorLog != nil {
-				fmt.Fprintf(o.errorLog, "warning: write run marker for issue %d: %v\n", num, err)
+				fmt.Fprintf(o.errorLog, "warning: write run marker for issue %d: %v\n", s.issueNumber, err)
 			}
 		}
 
 		runnable := factory.NewRunnable(issue, branch, wt)
 		if agentRun, ok := runnable.(*AgentRun); ok {
-			agentRun.env = agentCfg.Env
-			agentRun.preset = agentCfg.Preset
-			agentRun.model = agentCfg.Model
-			agentRun.modelProvider = agentCfg.ModelProvider
-			agentRun.modelName = agentCfg.ModelName
-			agentRun.baseBranch = baseBranch
-			agentRun.outputWriter = outputWriter
-			agentRun.dangerouslySkipPermissions = &dangerouslySkipPermissions
+			agentRun.env = s.agentCfg.Env
+			agentRun.preset = s.agentCfg.Preset
+			agentRun.model = s.agentCfg.Model
+			agentRun.modelProvider = s.agentCfg.ModelProvider
+			agentRun.modelName = s.agentCfg.ModelName
+			agentRun.baseBranch = s.baseBranch
+			agentRun.outputWriter = s.outputWriter
+			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
 		}
 
 		var (
@@ -1371,13 +1447,13 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			heartbeatDone      chan struct{}
 			cancelHeartbeat    context.CancelFunc
 		)
-		if runIdleTimeout > 0 {
+		if s.runIdleTimeout > 0 {
 			var heartbeatCtx context.Context
 			heartbeatCtx, cancelHeartbeat = context.WithCancel(ctx)
 			heartbeatDone = make(chan struct{})
 			heartbeat := &Heartbeat{
 				LogPath:      logPath,
-				IdleTimeout:  time.Duration(runIdleTimeout) * time.Second,
+				IdleTimeout:  time.Duration(s.runIdleTimeout) * time.Second,
 				TickInterval: o.heartbeatTickInterval,
 			}
 			heartbeat.OnIdle = func(idle time.Duration) {
@@ -1387,12 +1463,12 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 						Type:      "run.idle_timeout",
 						Timestamp: time.Now(),
 						RunID:     runID,
-						Issue:     num,
-						IssueRef:  issueRef(num),
+						Issue:     s.issueNumber,
+						IssueRef:  issueRef(s.issueNumber),
 						Payload: map[string]any{
-							"issue":                num,
+							"issue":                s.issueNumber,
 							"idle_seconds":         idle.Seconds(),
-							"idle_timeout_seconds": runIdleTimeout,
+							"idle_timeout_seconds": s.runIdleTimeout,
 							"attempt":              attempt + 1,
 						},
 					})
@@ -1409,12 +1485,12 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			}()
 		}
 
-		result = runnable.Run(ctx, o.renderer, agentCfg.Command, attemptRenderCfg)
+		result = runnable.Run(ctx, o.renderer, s.agentCfg.Command, attemptRenderCfg)
 		if result.Issue == nil {
-			result.Issue = issueRef(num)
+			result.Issue = issueRef(s.issueNumber)
 		}
 		if result.IssueNumber == 0 {
-			result.IssueNumber = num
+			result.IssueNumber = s.issueNumber
 		}
 		result.RetriesTotal = attempt + 1
 		if cancelHeartbeat != nil {
@@ -1450,14 +1526,14 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 			Type:      terminalEventType,
 			Timestamp: time.Now(),
 			RunID:     runID,
-			Issue:     num,
-			IssueRef:  issueRef(num),
+			Issue:     s.issueNumber,
+			IssueRef:  issueRef(s.issueNumber),
 			Payload: map[string]any{
 				"status":         terminalStatus,
 				"branch":         result.Branch,
-				"base_branch":    baseBranch,
+				"base_branch":    s.baseBranch,
 				"worktree_state": worktreeState,
-				"retries_total":  retries,
+				"retries_total":  s.retries,
 				"retries_done":   retriesDone,
 			},
 		})
@@ -1533,15 +1609,50 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	return &Result{Runs: []AgentRunResult{result}}, nil
 }
 
-// runPromptOnlySingle executes a single prompt-only AgentRun.
+// runPromptOnlySingle runs a single prompt-only AgentRun. It builds a
+// runSession and delegates to (*runSession).executePromptOnly.
 func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
-	if err := o.syncBaseBranch(".", baseBranch); err != nil {
+	s := &runSession{
+		o:                          o,
+		cfg:                        cfg,
+		agentName:                  agentName,
+		agentCfg:                   agentCfg,
+		resolveGitIdentity:         resolveGitIdentity,
+		branches:                   map[int]string{0: branch},
+		renderCfg:                  renderCfg,
+		outputWriter:               outputWriter,
+		sbFactory:                  sbFactory,
+		containerAlloc:             containerAlloc,
+		force:                      force,
+		baseBranch:                 baseBranch,
+		parallel:                   parallel,
+		startDelay:                 startDelay,
+		retries:                    retries,
+		sandboxMode:                sandboxMode,
+		containerCapacity:          containerCapacity,
+		containerCapacitySet:       containerCapacitySet,
+		maxContainers:              maxContainers,
+		maxContainersSet:           maxContainersSet,
+		dangerouslySkipPermissions: dangerouslySkipPermissions,
+	}
+	return s.executePromptOnly(ctx)
+}
+
+// executePromptOnly runs the prompt-only AgentRun lifecycle owned by this
+// session. It contains the body that previously lived in
+// (*Orchestrator).runPromptOnlySingle. Unlike execute, the prompt-only
+// flavor owns its own local active-runs map because it does not share the
+// per-issue active-run bookkeeping that RunBatch uses.
+func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, bool) {
+	o := s.o
+	branch := s.branches[0]
+	if err := o.syncBaseBranch(".", s.baseBranch); err != nil {
 		fmt.Fprintf(o.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
 		return AgentRunResult{Status: "failure", Branch: branch}, false
 	}
 	var container sandbox.Container
-	if containerAlloc != nil {
-		lease, err := containerAlloc.Acquire()
+	if s.containerAlloc != nil {
+		lease, err := s.containerAlloc.Acquire()
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: acquire container for prompt-only run: %v\n", err)
 			return AgentRunResult{Status: "failure", Branch: branch}, false
@@ -1550,12 +1661,12 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		defer lease.Release()
 	}
 
-	wt := sbFactory.NewSandbox(".", cfg.WorktreeDir, branch, baseBranch, container)
+	wt := s.sbFactory.NewSandbox(".", s.cfg.WorktreeDir, branch, s.baseBranch, container)
 	if setter, ok := wt.(interface{ SetForce(bool) }); ok {
-		setter.SetForce(force)
+		setter.SetForce(s.force)
 	}
 	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
-		identity, err := resolveGitIdentity()
+		identity, err := s.resolveGitIdentity()
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: resolve git identity for prompt-only run: %v\n", err)
 			return AgentRunResult{Status: "failure", Branch: branch}, false
@@ -1595,53 +1706,53 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 	runID := generateRunID(0)
 	if o.eventLog != nil {
 		promptSourceType := "current"
-		payload := map[string]any{"branch": branch, "base_branch": baseBranch, "prompt_source_type": "prompt", "parallel": parallel, "start_delay": int(startDelay / time.Second), "retries": retries, "sandbox": sandboxMode, "container_capacity": containerCapacity, "container_capacity_set": containerCapacitySet, "max_containers": maxContainers, "max_containers_set": maxContainersSet}
-		if renderCfg.PromptFlag != "" {
+		payload := map[string]any{"branch": branch, "base_branch": s.baseBranch, "prompt_source_type": "prompt", "parallel": s.parallel, "start_delay": int(s.startDelay / time.Second), "retries": s.retries, "sandbox": s.sandboxMode, "container_capacity": s.containerCapacity, "container_capacity_set": s.containerCapacitySet, "max_containers": s.maxContainers, "max_containers_set": s.maxContainersSet}
+		if s.renderCfg.PromptFlag != "" {
 			promptSourceType = "prompt"
-			payload["prompt_source_value"] = renderCfg.PromptFlag
-		} else if renderCfg.TemplateFlag != "" {
+			payload["prompt_source_value"] = s.renderCfg.PromptFlag
+		} else if s.renderCfg.TemplateFlag != "" {
 			promptSourceType = "template"
-			payload["prompt_source_value"] = renderCfg.TemplateFlag
+			payload["prompt_source_value"] = s.renderCfg.TemplateFlag
 		}
 		payload["prompt_source_type"] = promptSourceType
-		if len(renderCfg.PromptArgs) > 0 {
-			payload["prompt_args"] = renderCfg.PromptArgs
+		if len(s.renderCfg.PromptArgs) > 0 {
+			payload["prompt_args"] = s.renderCfg.PromptArgs
 		}
-		if renderCfg.ReviewCommandSet {
-			payload["review_command"] = renderCfg.ReviewCommand
+		if s.renderCfg.ReviewCommandSet {
+			payload["review_command"] = s.renderCfg.ReviewCommand
 		}
-		if agentName != "" {
-			payload["agent"] = agentName
+		if s.agentName != "" {
+			payload["agent"] = s.agentName
 		}
-		if model := strings.TrimSpace(agentCfg.Model); model != "" {
+		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
 			payload["model"] = model
 		}
 		_ = o.eventLog.Log(events.Event{Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}
 
-	if renderCfg.PromptFile == "" {
-		renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
+	if s.renderCfg.PromptFile == "" {
+		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
 	}
-	if renderCfg.RenderedPromptFile == "" {
-		renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+	if s.renderCfg.RenderedPromptFile == "" {
+		s.renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
 	}
 
-	attempts := retries + 1
+	attempts := s.retries + 1
 	var result AgentRunResult
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
-			if err := o.resetRetryBranch(ctx, wt, branch, baseBranch); err != nil {
+			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
 				fmt.Fprintf(o.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
 				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
 			}
-			if err := o.writeRetryMarker(wt.WorkDir(), 0, branch, attempt, retries); err != nil {
+			if err := o.writeRetryMarker(wt.WorkDir(), 0, branch, attempt, s.retries); err != nil {
 				if o.errorLog != nil {
 					fmt.Fprintf(o.errorLog, "warning: write retry marker for prompt-only run: %v\n", err)
 				}
 			}
 		} else {
 			logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
-			if err := logRunMarkerFn(logPath, attempt, retries); err != nil {
+			if err := logRunMarkerFn(logPath, attempt, s.retries); err != nil {
 				if o.errorLog != nil {
 					fmt.Fprintf(o.errorLog, "warning: write run marker for prompt-only run: %v\n", err)
 				}
@@ -1650,17 +1761,17 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 
 		runnable := factory.NewRunnable(nil, branch, wt)
 		if agentRun, ok := runnable.(*AgentRun); ok {
-			agentRun.env = agentCfg.Env
-			agentRun.preset = agentCfg.Preset
-			agentRun.model = agentCfg.Model
-			agentRun.modelProvider = agentCfg.ModelProvider
-			agentRun.modelName = agentCfg.ModelName
-			agentRun.baseBranch = baseBranch
-			agentRun.outputWriter = outputWriter
-			agentRun.dangerouslySkipPermissions = &dangerouslySkipPermissions
+			agentRun.env = s.agentCfg.Env
+			agentRun.preset = s.agentCfg.Preset
+			agentRun.model = s.agentCfg.Model
+			agentRun.modelProvider = s.agentCfg.ModelProvider
+			agentRun.modelName = s.agentCfg.ModelName
+			agentRun.baseBranch = s.baseBranch
+			agentRun.outputWriter = s.outputWriter
+			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
 		}
 
-		result = runnable.Run(ctx, o.renderer, agentCfg.Command, renderCfg)
+		result = runnable.Run(ctx, o.renderer, s.agentCfg.Command, s.renderCfg)
 		result.RetriesTotal = attempt + 1
 		if result.Status == "success" {
 			break
@@ -1674,7 +1785,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		if retriesDone < 0 {
 			retriesDone = 0
 		}
-		_ = o.eventLog.Log(events.Event{Type: terminalEventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": terminalStatus, "branch": result.Branch, "base_branch": baseBranch, "worktree_state": "preserved", "retries_total": retries, "retries_done": retriesDone}})
+		_ = o.eventLog.Log(events.Event{Type: terminalEventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": terminalStatus, "branch": result.Branch, "base_branch": s.baseBranch, "worktree_state": "preserved", "retries_total": s.retries, "retries_done": retriesDone}})
 	}
 
 	return result, true
