@@ -267,6 +267,7 @@ func TestBuiltInAgentPresets_OpencodeEnvPermissionAllowAll(t *testing.T) {
 	}
 
 	wantKeys := []string{
+		"*",
 		"read", "edit", "glob", "grep", "list", "bash", "task",
 		"external_directory", "todowrite", "question", "webfetch", "websearch",
 		"repo_clone", "repo_overview", "lsp", "doom_loop", "skill",
