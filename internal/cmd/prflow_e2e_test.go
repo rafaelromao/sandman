@@ -68,10 +68,14 @@ var prFlowProviderCases = []prFlowProviderCase{
 	},
 }
 
+func parseE2EProviders() (map[string]bool, error) {
+	return testenv.ResolveProviderAllowlist(testenv.LegacyE2EProvidersEnvVar, prFlowProviderNames())
+}
+
 func runPRFlowProviderCases(t *testing.T, fn func(t *testing.T, tc prFlowProviderCase)) {
 	t.Helper()
 
-	allowed, err := testenv.ResolveProviderAllowlist(testenv.LegacyE2EProvidersEnvVar, prFlowProviderNames())
+	allowed, err := parseE2EProviders()
 	if err != nil {
 		t.Fatal(err)
 	}
