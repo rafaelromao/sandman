@@ -69,7 +69,7 @@ var prFlowProviderCases = []prFlowProviderCase{
 }
 
 func parseE2EProviders() (map[string]bool, error) {
-	return testenv.ResolveProviderAllowlist(testenv.LegacyE2EProvidersEnvVar, prFlowProviderNames())
+	return testenv.ResolveProviderAllowlist(prFlowProviderNames())
 }
 
 func runPRFlowProviderCases(t *testing.T, fn func(t *testing.T, tc prFlowProviderCase)) {
@@ -80,7 +80,7 @@ func runPRFlowProviderCases(t *testing.T, fn func(t *testing.T, tc prFlowProvide
 		t.Fatal(err)
 	}
 	if len(allowed) == 0 {
-		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode,pi (or SANDMAN_E2E_PROVIDERS=opencode,pi) and run `go test -tags e2e ./internal/cmd -run PRFlow`")
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode,pi and run `go test -tags e2e ./internal/cmd -run PRFlow`")
 	}
 
 	for _, tc := range prFlowProviderCases {

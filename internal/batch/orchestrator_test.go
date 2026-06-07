@@ -2247,8 +2247,8 @@ func TestRunBatch_AgentFailure(t *testing.T) {
 }
 
 func TestRunBatch_EndToEnd(t *testing.T) {
-	if !testenv.E2EGateAllowed(testenv.E2EScenarioBatch, testenv.LegacyE2EBatchEnvVar) {
-		t.Skip("set SANDMAN_E2E_GATES=batch (or SANDMAN_E2E=1) to run end-to-end batch test")
+	if !testenv.E2EGateAllowed(testenv.E2EScenarioBatch) {
+		t.Skip("set SANDMAN_E2E_GATES=batch (or all) to run end-to-end batch test")
 	}
 	dir := t.TempDir()
 	t.Chdir(dir)

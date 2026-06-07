@@ -3,20 +3,17 @@
 // tests, and the batch orchestrator end-to-end test to decide which
 // providers and scenarios should run.
 //
-// Two canonical env vars are exposed:
+// Two canonical env vars drive the gates:
 //
-//   - SANDMAN_TEST_PROVIDERS  — comma list of provider names, "all", or "*".
-//     Drives provider allowlists in smoke and e2e tests. Falls back to the
-//     per-suite legacy var (SANDMAN_SMOKE_PROVIDERS, SANDMAN_E2E_PROVIDERS)
-//     when unset.
-//   - SANDMAN_E2E_GATES       — comma list of scenario names, "all", or "*".
+//   - SANDMAN_TEST_PROVIDERS — comma list of provider names, "all", or "*".
+//     Drives provider allowlists in smoke and e2e tests. The known names
+//     are passed in by the caller (e.g. the smoke or prflow case lists).
+//   - SANDMAN_E2E_GATES      — comma list of scenario names, "all", or "*".
 //     Stable scenario identifiers are E2EScenarioBatch and
-//     E2EScenarioContinueMulti. Falls back to the per-scenario legacy
-//     presence check (SANDMAN_E2E, SANDMAN_ENABLE_MULTI_ISSUE_CONTINUE_E2E)
-//     when unset.
+//     E2EScenarioContinueMulti.
 //
-// When a canonical var is set, it is the sole source of truth; legacy vars
-// are ignored. The default state (no vars set) preserves skip behavior.
+// When neither var is set, helpers return the skip-friendly default
+// (nil allowlist / false gate) and tests skip themselves.
 package testenv
 
 import (
@@ -35,11 +32,12 @@ const (
 const (
 	CanonicalE2EGatesEnvVar     = "SANDMAN_E2E_GATES"
 	CanonicalProviderListEnvVar = "SANDMAN_TEST_PROVIDERS"
-	LegacyE2EBatchEnvVar        = "SANDMAN_E2E"
-	LegacyContinueMultiEnvVar   = "SANDMAN_ENABLE_MULTI_ISSUE_CONTINUE_E2E"
-	LegacySmokeProvidersEnvVar  = "SANDMAN_SMOKE_PROVIDERS"
-	LegacyE2EProvidersEnvVar    = "SANDMAN_E2E_PROVIDERS"
 )
+
+// allE2EScenarios is the canonical list of stable scenario identifiers
+// accepted by SANDMAN_E2E_GATES. Adding a new scenario requires editing
+// this list and exporting a new E2EScenario* constant.
+var allE2EScenarios = []string{E2EScenarioBatch, E2EScenarioContinueMulti}
 
 // ParseList parses a comma-separated allowlist. Semantics:
 //   - empty/whitespace raw returns nil (no filter)
@@ -82,30 +80,23 @@ func ParseList(raw string, known []string, kind string) (map[string]bool, error)
 	return allowed, nil
 }
 
-// ResolveProviderAllowlist resolves a provider allowlist from the canonical
-// env var (SANDMAN_TEST_PROVIDERS) with a fallback to a legacy env var
-// (e.g. SANDMAN_SMOKE_PROVIDERS, SANDMAN_E2E_PROVIDERS). The canonical var
-// takes precedence when set; the legacy var is consulted only when the
-// canonical var is empty. Returns nil if neither var is set.
-func ResolveProviderAllowlist(legacyEnvVar string, known []string) (map[string]bool, error) {
+// ResolveProviderAllowlist resolves a provider allowlist from the
+// canonical env var SANDMAN_TEST_PROVIDERS. Returns nil if it is unset.
+func ResolveProviderAllowlist(known []string) (map[string]bool, error) {
 	if raw := strings.TrimSpace(os.Getenv(CanonicalProviderListEnvVar)); raw != "" {
-		return ParseList(raw, known, "provider")
-	}
-	if raw := strings.TrimSpace(os.Getenv(legacyEnvVar)); raw != "" {
 		return ParseList(raw, known, "provider")
 	}
 	return nil, nil
 }
 
 // E2EGateListAllowed reports whether `scenario` is enabled by the parsed
-// canonical gate list. `raw` is the value of the canonical env var. When
-// `raw` is empty, the function falls back to a presence check on
-// `legacyEnvVar`. The canonical value always wins: if it is set, the
-// legacy var is ignored. Returns false for invalid canonical values.
-func E2EGateListAllowed(scenario, raw, legacyEnvVar string, known []string) bool {
+// canonical gate list. `raw` is the value of the canonical env var. An
+// empty or invalid canonical value disables every scenario. Returns
+// false for invalid canonical values.
+func E2EGateListAllowed(scenario, raw string, known []string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return legacyEnvVar != "" && os.Getenv(legacyEnvVar) != ""
+		return false
 	}
 	allowed, err := ParseList(raw, known, "scenario")
 	if err != nil {
@@ -118,9 +109,9 @@ func E2EGateListAllowed(scenario, raw, legacyEnvVar string, known []string) bool
 // that reads the canonical e2e gate env var from the environment. Use it
 // at test entry points:
 //
-//	if !testenv.E2EGateAllowed(testenv.E2EScenarioBatch, testenv.LegacyE2EBatchEnvVar) {
+//	if !testenv.E2EGateAllowed(testenv.E2EScenarioBatch) {
 //	    t.Skip(...)
 //	}
-func E2EGateAllowed(scenario, legacyEnvVar string) bool {
-	return E2EGateListAllowed(scenario, os.Getenv(CanonicalE2EGatesEnvVar), legacyEnvVar, []string{E2EScenarioBatch, E2EScenarioContinueMulti})
+func E2EGateAllowed(scenario string) bool {
+	return E2EGateListAllowed(scenario, os.Getenv(CanonicalE2EGatesEnvVar), allE2EScenarios)
 }
