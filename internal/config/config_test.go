@@ -286,6 +286,38 @@ func TestBuiltInAgentPresets_OpencodeEnvPermissionAllowAll(t *testing.T) {
 	}
 }
 
+func TestAgentWithOverrides_MergesPresetEnv(t *testing.T) {
+	preset := AgentPreset{
+		DisplayName: "OpenCode",
+		Command:     "opencode",
+		Env:         map[string]string{"OPENCODE_PERMISSION": OpencodePermissionExternalDirectoryAllow},
+	}
+
+	agent := preset.AgentWithOverrides("opencode", Agent{Env: map[string]string{"API_KEY": "abc123"}})
+	if agent.Env["OPENCODE_PERMISSION"] != OpencodePermissionExternalDirectoryAllow {
+		t.Fatalf("expected preset OPENCODE_PERMISSION to be preserved, got %#v", agent.Env)
+	}
+	if agent.Env["API_KEY"] != "abc123" {
+		t.Fatalf("expected override env to be merged, got %#v", agent.Env)
+	}
+}
+
+func TestAgentWithOverrides_UserOpencodePermissionOverridesPreset(t *testing.T) {
+	preset := AgentPreset{
+		DisplayName: "OpenCode",
+		Command:     "opencode",
+		Env:         map[string]string{"OPENCODE_PERMISSION": OpencodePermissionExternalDirectoryAllow},
+	}
+
+	agent := preset.AgentWithOverrides("opencode", Agent{Env: map[string]string{"OPENCODE_PERMISSION": `{"external_directory":"allow","read":"allow"}`}})
+	if got := agent.Env["OPENCODE_PERMISSION"]; got != `{"external_directory":"allow","read":"allow"}` {
+		t.Fatalf("expected user OPENCODE_PERMISSION to override preset, got %q", got)
+	}
+	if agent.OpencodePermissionMode != "custom" {
+		t.Fatalf("expected custom permission mode, got %q", agent.OpencodePermissionMode)
+	}
+}
+
 func TestBuiltInAgentPresets_PiEnvUnchanged(t *testing.T) {
 	preset, ok := BuiltInAgentPresets["pi"]
 	if !ok {

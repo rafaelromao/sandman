@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func applyAgentEnv(command string, env map[string]string) string {
+func applyAgentEnv(command string, env map[string]string, opencodePermissionMode string) string {
 	if len(env) == 0 {
 		return command
 	}
@@ -13,7 +13,7 @@ func applyAgentEnv(command string, env map[string]string) string {
 
 	keys := make([]string, 0, len(env))
 	for key := range env {
-		if key == "OPENCODE_PERMISSION" && !applyOpencodePermission {
+		if key == "OPENCODE_PERMISSION" && opencodePermissionMode == "builtin" && !applyOpencodePermission {
 			continue
 		}
 		keys = append(keys, key)

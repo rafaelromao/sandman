@@ -24,6 +24,7 @@ type AgentRun struct {
 	modelProvider              string
 	modelName                  string
 	dangerouslySkipPermissions *bool
+	opencodePermissionMode     string
 	sandbox                    sandbox.Sandbox
 	status                     string
 	env                        map[string]string
@@ -124,7 +125,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 		r.status = "failure"
 		return r.Result()
 	}
-	renderedCmd = applyAgentEnv(renderedCmd, r.env)
+	renderedCmd = applyAgentEnv(renderedCmd, r.env, r.opencodePermissionMode)
 
 	if err := r.Execute(ctx, renderedCmd, os.Stdout, os.Stderr); err != nil {
 		r.status = "failure"

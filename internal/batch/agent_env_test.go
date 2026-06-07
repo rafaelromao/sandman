@@ -28,7 +28,7 @@ func TestShellQuote(t *testing.T) {
 }
 
 func TestApplyAgentEnv_EmptyEnvReturnsCommand(t *testing.T) {
-	if got := applyAgentEnv("printenv AGENT_TOKEN", nil); got != "printenv AGENT_TOKEN" {
+	if got := applyAgentEnv("printenv AGENT_TOKEN", nil, ""); got != "printenv AGENT_TOKEN" {
 		t.Fatalf("got %q, want %q", got, "printenv AGENT_TOKEN")
 	}
 }
@@ -37,7 +37,7 @@ func TestApplyAgentEnv_ExportsSortedQuotedVariables(t *testing.T) {
 	got := applyAgentEnv("printenv AGENT_TOKEN", map[string]string{
 		"BETA":  "two words",
 		"ALPHA": "it's fine",
-	})
+	}, "")
 	want := "export ALPHA='it'\"'\"'s fine'; export BETA='two words'; printenv AGENT_TOKEN"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -49,11 +49,12 @@ func TestApplyAgentEnv_OpencodePresetRendersPermissionExportForDangerousRuns(t *
 	if !ok {
 		t.Fatal("expected opencode preset to exist")
 	}
+	agent := preset.Agent("opencode")
 	if _, ok := preset.Env["OPENCODE_PERMISSION"]; !ok {
 		t.Fatal("expected opencode preset env to carry OPENCODE_PERMISSION")
 	}
 
-	got := applyAgentEnv(`opencode run --dangerously-skip-permissions "$(cat .sandman/rendered-prompt.md)"`, preset.Env)
+	got := applyAgentEnv(`opencode run --dangerously-skip-permissions "$(cat .sandman/rendered-prompt.md)"`, agent.Env, agent.OpencodePermissionMode)
 
 	wantPrefix := "export OPENCODE_PERMISSION='"
 	if !strings.HasPrefix(got, wantPrefix) {
@@ -69,10 +70,20 @@ func TestApplyAgentEnv_DoesNotExportOpencodePermissionForNonDangerousRuns(t *tes
 	if !ok {
 		t.Fatal("expected opencode preset to exist")
 	}
+	agent := preset.Agent("opencode")
 
-	got := applyAgentEnv(`opencode run "$(cat .sandman/rendered-prompt.md)"`, preset.Env)
+	got := applyAgentEnv(`opencode run "$(cat .sandman/rendered-prompt.md)"`, agent.Env, agent.OpencodePermissionMode)
 	want := `opencode run "$(cat .sandman/rendered-prompt.md)"`
 	if got != want {
 		t.Fatalf("expected non-dangerous opencode command to stay unchanged, got:\n%s", got)
+	}
+}
+
+func TestApplyAgentEnv_PreservesUserOpencodePermissionOverride(t *testing.T) {
+	got := applyAgentEnv(`opencode run "$(cat .sandman/rendered-prompt.md)"`, map[string]string{
+		"OPENCODE_PERMISSION": `{"external_directory":"allow"}`,
+	}, "custom")
+	if !strings.HasPrefix(got, "export OPENCODE_PERMISSION='") {
+		t.Fatalf("expected user OPENCODE_PERMISSION to be preserved, got:\n%s", got)
 	}
 }
