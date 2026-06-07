@@ -9,10 +9,17 @@ func applyAgentEnv(command string, env map[string]string) string {
 	if len(env) == 0 {
 		return command
 	}
+	applyOpencodePermission := strings.Contains(command, "--dangerously-skip-permissions")
 
 	keys := make([]string, 0, len(env))
 	for key := range env {
+		if key == "OPENCODE_PERMISSION" && !applyOpencodePermission {
+			continue
+		}
 		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return command
 	}
 	sort.Strings(keys)
 

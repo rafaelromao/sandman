@@ -44,7 +44,7 @@ func TestApplyAgentEnv_ExportsSortedQuotedVariables(t *testing.T) {
 	}
 }
 
-func TestApplyAgentEnv_OpencodePresetRendersPermissionExport(t *testing.T) {
+func TestApplyAgentEnv_OpencodePresetRendersPermissionExportForDangerousRuns(t *testing.T) {
 	preset, ok := config.BuiltInAgentPresets["opencode"]
 	if !ok {
 		t.Fatal("expected opencode preset to exist")
@@ -61,5 +61,18 @@ func TestApplyAgentEnv_OpencodePresetRendersPermissionExport(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "'; opencode run --dangerously-skip-permissions \"$(cat .sandman/rendered-prompt.md)\"") {
 		t.Fatalf("expected rendered opencode command to end with the opencode run invocation, got:\n%s", got)
+	}
+}
+
+func TestApplyAgentEnv_DoesNotExportOpencodePermissionForNonDangerousRuns(t *testing.T) {
+	preset, ok := config.BuiltInAgentPresets["opencode"]
+	if !ok {
+		t.Fatal("expected opencode preset to exist")
+	}
+
+	got := applyAgentEnv(`opencode run "$(cat .sandman/rendered-prompt.md)"`, preset.Env)
+	want := `opencode run "$(cat .sandman/rendered-prompt.md)"`
+	if got != want {
+		t.Fatalf("expected non-dangerous opencode command to stay unchanged, got:\n%s", got)
 	}
 }
