@@ -144,7 +144,6 @@ Selection fields are only shown in `issue-driven` mode.
 |-------|-------------|---------|
 | `agent` | Agent provider name | Config's `agent`, else `opencode` |
 | `model` | Model identifier | Config's `model` or resolved from agent |
-
 | `parallel` | Number of parallel worktrees | Config's `parallel` or `4` |
 | `startDelay` | Seconds to wait before starting | Config's `start-delay` or `0` |
 | `containerCapacity` | Container pool size | Config's `container-capacity` or `1` |

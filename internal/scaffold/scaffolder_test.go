@@ -417,7 +417,7 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 				t.Fatalf("load config: %v", err)
 			}
 			if cfg.DefaultAgent != agent {
-				t.Errorf("expected default_agent %q, got %q", agent, cfg.DefaultAgent)
+				t.Errorf("expected agent %q, got %q", agent, cfg.DefaultAgent)
 			}
 			resolved, err := cfg.ResolveAgentProvider(agent)
 			if err != nil {
