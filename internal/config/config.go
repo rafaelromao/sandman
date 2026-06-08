@@ -12,7 +12,7 @@ import (
 // Defaults for optional config fields.
 const (
 	DefaultAgent             = "opencode"
-	DefaultModel             = "opencode/deepseek-v4-flash-free"
+	DefaultModel             = "opencode/BigPickle"
 	DefaultBuildToolsPreset  = "generic"
 	DefaultReviewCommand     = "/oc review"
 	DefaultParallel          = 4
@@ -26,11 +26,11 @@ const (
 
 // Config holds the loaded Sandman configuration.
 type Config struct {
-	DefaultAgent      string           `yaml:"default_agent"`
-	DefaultModel      string           `yaml:"default_model"`
+	DefaultAgent      string           `yaml:"agent"`
+	DefaultModel      string           `yaml:"model"`
 	BuildTools        string           `yaml:"build_tools"`
 	ReviewCommand     string           `yaml:"review_command"`
-	DefaultParallel   int              `yaml:"default_parallel"`
+	DefaultParallel   int              `yaml:"parallel"`
 	StartDelay        int              `yaml:"start_delay"`
 	RunIdleTimeout    int              `yaml:"run_idle_timeout"`
 	Retries           int              `yaml:"retries"`
@@ -163,11 +163,11 @@ type Store interface {
 // SupportedKeys lists config keys exposed by GetValue/SetValue and config list.
 func SupportedKeys() []string {
 	return []string{
-		"default_agent",
-		"default_model",
+		"agent",
+		"model",
 		"build_tools",
 		"review_command",
-		"default_parallel",
+		"parallel",
 		"start_delay",
 		"run_idle_timeout",
 		"retries",
@@ -187,11 +187,11 @@ func Load(path string) (*Config, error) {
 	}
 
 	type rawConfig struct {
-		DefaultAgent      string           `yaml:"default_agent"`
-		DefaultModel      string           `yaml:"default_model"`
+		DefaultAgent      string           `yaml:"agent"`
+		DefaultModel      string           `yaml:"model"`
 		BuildTools        string           `yaml:"build_tools"`
 		ReviewCommand     string           `yaml:"review_command"`
-		DefaultParallel   int              `yaml:"default_parallel"`
+		DefaultParallel   int              `yaml:"parallel"`
 		StartDelay        int              `yaml:"start_delay"`
 		RunIdleTimeout    *int             `yaml:"run_idle_timeout"`
 		Retries           int              `yaml:"retries"`
@@ -277,6 +277,9 @@ func Load(path string) (*Config, error) {
 
 	if strings.TrimSpace(cfg.DefaultAgent) == "" {
 		cfg.DefaultAgent = DefaultAgent
+	}
+	if strings.TrimSpace(cfg.DefaultModel) == "" {
+		cfg.DefaultModel = DefaultModel
 	}
 	cfg.Agent = cfg.DefaultAgent
 	cfg.AgentProviders = make(map[string]Agent, len(BuiltInAgentPresets))
@@ -416,15 +419,15 @@ func SplitPiModel(model string) (string, string, error) {
 // GetValue returns the string representation of a config field by its dot-notation key.
 func (c *Config) GetValue(key string) (string, error) {
 	switch strings.ToLower(key) {
-	case "default_agent":
+	case "agent":
 		return c.DefaultAgent, nil
-	case "default_model":
+	case "model":
 		return c.DefaultModel, nil
 	case "build_tools":
 		return c.EffectiveBuildTools(), nil
 	case "review_command":
 		return c.EffectiveReviewCommand(), nil
-	case "default_parallel":
+	case "parallel":
 		return fmt.Sprintf("%d", c.DefaultParallel), nil
 	case "start_delay":
 		return fmt.Sprintf("%d", c.StartDelay), nil
@@ -452,25 +455,25 @@ func (c *Config) GetValue(key string) (string, error) {
 // SetValue updates a config field by its dot-notation key.
 func (c *Config) SetValue(key, value string) error {
 	switch strings.ToLower(key) {
-	case "default_agent":
+	case "agent":
 		if _, err := c.ResolveAgentProvider(strings.TrimSpace(value)); err != nil {
 			return err
 		}
 		c.DefaultAgent = strings.TrimSpace(value)
 		c.Agent = c.DefaultAgent
-	case "default_model":
+	case "model":
 		c.DefaultModel = value
 	case "build_tools":
 		c.BuildTools = value
 	case "review_command":
 		c.ReviewCommand = value
-	case "default_parallel":
+	case "parallel":
 		n, err := strconv.Atoi(value)
 		if err != nil {
-			return fmt.Errorf("invalid value for default_parallel: %w", err)
+			return fmt.Errorf("invalid value for parallel: %w", err)
 		}
 		if n <= 0 {
-			return fmt.Errorf("default_parallel must be greater than 0")
+			return fmt.Errorf("parallel must be greater than 0")
 		}
 		c.DefaultParallel = n
 	case "start_delay":

@@ -109,11 +109,11 @@ Runs `sandman history`:
 Runs `sandman config get <key>` or `sandman config set <key> <value>`. Default mode is `get`:
 
 ```json
-{"command": "config", "configMode": "get", "configKey": "default-agent"}
+{"command": "config", "configMode": "get", "configKey": "agent"}
 ```
 
 ```json
-{"command": "config", "configMode": "set", "configKey": "default-agent", "configValue": "opencode"}
+{"command": "config", "configMode": "set", "configKey": "agent", "configValue": "opencode"}
 ```
 
 ## Launch form
@@ -142,10 +142,10 @@ Selection fields are only shown in `issue-driven` mode.
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `agent` | Agent provider name | Config's `default-agent` or `agent`, else `opencode` |
-| `model` | Model identifier | Config's `default-model` or resolved from agent |
-| `baseBranch` | Base branch for worktrees | Config's `git.base-branch` or `main` |
-| `parallel` | Number of parallel worktrees | Config's `default-parallel` or `4` |
+| `agent` | Agent provider name | Config's `agent`, else `opencode` |
+| `model` | Model identifier | Config's `model` or resolved from agent |
+
+| `parallel` | Number of parallel worktrees | Config's `parallel` or `4` |
 | `startDelay` | Seconds to wait before starting | Config's `start-delay` or `0` |
 | `containerCapacity` | Container pool size | Config's `container-capacity` or `1` |
 | `maxContainers` | Maximum containers | Config's `max-containers` or `0` |

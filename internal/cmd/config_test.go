@@ -20,7 +20,7 @@ func TestConfigGet_DefaultAgent(t *testing.T) {
 	cmd := NewConfigGetCmd(store)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"default_agent"})
+	cmd.SetArgs([]string{"agent"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -174,11 +174,11 @@ func TestConfigGet_UnknownKey_ReturnsError(t *testing.T) {
 func TestConfigList_PrintsSupportedKeysAndEffectiveValues(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: pi
-default_model: openai/gpt-4.1
+	content := `agent: pi
+model: openai/gpt-4.1
 build_tools: go
 review_command: /review please
-default_parallel: 3
+parallel: 3
 start_delay: 5
 container_capacity: 7
 max_containers: 2
@@ -202,11 +202,11 @@ git:
 	}
 
 	want := []string{
-		"default_agent: pi",
-		"default_model: openai/gpt-4.1",
+		"agent: pi",
+		"model: openai/gpt-4.1",
 		"build_tools: go",
 		"review_command: /review please",
-		"default_parallel: 3",
+		"parallel: 3",
 		"start_delay: 5",
 		"run_idle_timeout: 1800",
 		"retries: 0",
@@ -246,13 +246,13 @@ func TestConfigList_LoadError_ReturnsError(t *testing.T) {
 func TestConfigSet_DefaultAgent_UpdatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
 	store := &config.FileStore{Path: path}
 	cmd := NewConfigSetCmd(store)
-	cmd.SetArgs([]string{"default_agent", "pi"})
+	cmd.SetArgs([]string{"agent", "pi"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -264,14 +264,14 @@ func TestConfigSet_DefaultAgent_UpdatesFile(t *testing.T) {
 		t.Fatalf("reload config: %v", err)
 	}
 	if cfg.DefaultAgent != "pi" {
-		t.Errorf("default_agent: got %q, want %q", cfg.DefaultAgent, "pi")
+		t.Errorf("agent: got %q, want %q", cfg.DefaultAgent, "pi")
 	}
 }
 
 func TestConfigSet_BuildTools_UpdatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -296,7 +296,7 @@ func TestConfigSet_BuildTools_UpdatesFile(t *testing.T) {
 func TestConfigSet_ReviewCommand_UpdatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	oldSync := syncSandmanSkill
@@ -330,7 +330,7 @@ func TestConfigSet_ReviewCommand_UpdatesFile(t *testing.T) {
 func TestConfigSet_ReviewCommand_DoesNotSaveWhenSyncFails(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\nreview_command: /old review\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\nreview_command: /old review\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	oldSync := syncSandmanSkill
@@ -361,7 +361,7 @@ func TestConfigSet_ReviewCommand_DoesNotSaveWhenSyncFails(t *testing.T) {
 func TestConfigSet_StartDelay_UpdatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -386,7 +386,7 @@ func TestConfigSet_StartDelay_UpdatesFile(t *testing.T) {
 func TestConfigSet_UnknownKey_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -406,37 +406,37 @@ func TestConfigSet_UnknownKey_ReturnsError(t *testing.T) {
 func TestConfigSet_DefaultParallel_InvalidValue_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
 	store := &config.FileStore{Path: path}
 	cmd := NewConfigSetCmd(store)
-	cmd.SetArgs([]string{"default_parallel", "not-a-number"})
+	cmd.SetArgs([]string{"parallel", "not-a-number"})
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error for invalid default_parallel")
+		t.Fatal("expected error for invalid parallel")
 	}
-	if !strings.Contains(err.Error(), "invalid value for default_parallel") {
-		t.Errorf("expected error to mention 'invalid value for default_parallel', got: %v", err)
+	if !strings.Contains(err.Error(), "invalid value for parallel") {
+		t.Errorf("expected error to mention 'invalid value for parallel', got: %v", err)
 	}
 }
 
 func TestConfigSet_DefaultParallel_NegativeValue_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
 	store := &config.FileStore{Path: path}
 	cmd := NewConfigSetCmd(store)
-	cmd.SetArgs([]string{"default_parallel", "-1"})
+	cmd.SetArgs([]string{"parallel", "-1"})
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error for negative default_parallel")
+		t.Fatal("expected error for negative parallel")
 	}
 	if !strings.Contains(err.Error(), "must be greater than 0") {
 		t.Errorf("expected error to mention 'must be greater than 0', got: %v", err)
@@ -446,7 +446,7 @@ func TestConfigSet_DefaultParallel_NegativeValue_ReturnsError(t *testing.T) {
 func TestConfigSet_GitAuthorName_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -466,7 +466,7 @@ func TestConfigSet_GitAuthorName_ReturnsError(t *testing.T) {
 func TestConfigSet_MaxContainers_AutoModeUpdatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\ncontainer_capacity: 4\nmax_containers: 2\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\ncontainer_capacity: 4\nmax_containers: 2\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -491,7 +491,7 @@ func TestConfigSet_MaxContainers_AutoModeUpdatesFile(t *testing.T) {
 func TestConfigSet_ContainerCapacity_UpdatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("default_agent: opencode\ncontainer_capacity: 4\nmax_containers: 0\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("agent: opencode\ncontainer_capacity: 4\nmax_containers: 0\n"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 

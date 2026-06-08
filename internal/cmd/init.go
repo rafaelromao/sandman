@@ -53,7 +53,9 @@ func NewInitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			buildTools, _ := cmd.Flags().GetString("build-tools")
 			toolVersion, _ := cmd.Flags().GetString("tool-version")
-			defaultAgent, _ := cmd.Flags().GetString("default-agent")
+			agent, _ := cmd.Flags().GetString("agent")
+			model, _ := cmd.Flags().GetString("model")
+			parallel, _ := cmd.Flags().GetInt("parallel")
 			reviewCommand, _ := cmd.Flags().GetString("review-command")
 
 			if toolVersion == "" {
@@ -74,7 +76,9 @@ func NewInitCmd() *cobra.Command {
 			if err := s.Scaffold(wd, scaffold.Options{
 				BuildTools:    buildTools,
 				ToolVersion:   toolVersion,
-				DefaultAgent:  defaultAgent,
+				Agent:         agent,
+				Model:         model,
+				Parallel:      parallel,
 				ReviewCommand: reviewCommand,
 			}, prompter); err != nil {
 				return err
@@ -96,7 +100,9 @@ func NewInitCmd() *cobra.Command {
 
 	cmd.Flags().String("build-tools", "", fmt.Sprintf("Build tools preset (%s)", strings.Join(scaffold.KnownBuildToolsPresets, ", ")))
 	cmd.Flags().String("tool-version", "", "Logical version selector (repo, latest, lts, or semver shorthand)")
-	cmd.Flags().String("default-agent", "", "Default built-in agent preset (opencode or pi)")
+	cmd.Flags().String("agent", "", "Default built-in agent preset (opencode or pi)")
+	cmd.Flags().String("model", "", "Default model for the agent")
+	cmd.Flags().Int("parallel", -1, "Default parallel container count (-1 = use config default 4)")
 	cmd.Flags().String("review-command", "", "Review command to store in config and install into shared skills")
 
 	return cmd

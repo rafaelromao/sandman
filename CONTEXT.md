@@ -167,7 +167,7 @@ A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the 
 _Avoid_: dashboard, monitor, control panel.
 
 **Continue**:
-Re-run the latest AgentRun for one or more issues with a new raw prompt while reusing each issue's prior branch, base branch, agent, and review command. Multi-issue `sandman continue <issue>... <prompt>` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. Continuation keeps branch checkout unchanged, resolves the model from `--model` or `default_model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. Invoked via `sandman continue`.
+Re-run the latest AgentRun for one or more issues with a new raw prompt while reusing each issue's prior branch, base branch, agent, and review command. Multi-issue `sandman continue <issue>... <prompt>` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. Continuation keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. Invoked via `sandman continue`.
 _Avoid_: Retry.
 
 **Continuation**:

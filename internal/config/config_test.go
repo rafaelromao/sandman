@@ -14,10 +14,10 @@ import (
 func TestLoad_ValidConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: pi
+	content := `agent: pi
 build_tools: go
 review_command: /review please
-default_parallel: 3
+parallel: 3
 start_delay: 5
 retries: 2
 worktree_dir: /tmp/wt
@@ -35,7 +35,7 @@ git:
 	}
 
 	if cfg.DefaultAgent != "pi" {
-		t.Errorf("default_agent: got %q, want %q", cfg.DefaultAgent, "pi")
+		t.Errorf("agent: got %q, want %q", cfg.DefaultAgent, "pi")
 	}
 	if cfg.Agent != cfg.DefaultAgent {
 		t.Errorf("agent alias: got %q, want %q", cfg.Agent, cfg.DefaultAgent)
@@ -47,7 +47,7 @@ git:
 		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/review please")
 	}
 	if cfg.DefaultParallel != 3 {
-		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 3)
+		t.Errorf("parallel: got %d, want %d", cfg.DefaultParallel, 3)
 	}
 	if cfg.StartDelay != 5 {
 		t.Errorf("start_delay: got %d, want %d", cfg.StartDelay, 5)
@@ -125,14 +125,14 @@ func TestLoad_DefaultAgentDefaultsToOpenCode(t *testing.T) {
 	}
 
 	if cfg.DefaultAgent != DefaultAgent {
-		t.Fatalf("default_agent: got %q, want %q", cfg.DefaultAgent, DefaultAgent)
+		t.Fatalf("agent: got %q, want %q", cfg.DefaultAgent, DefaultAgent)
 	}
 }
 
 func TestLoad_RejectsUnknownDefaultAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: codex
+	content := `agent: codex
 git:
   base_branch: main
 `
@@ -439,7 +439,7 @@ func TestLoad_AgentWithKeychainAuth(t *testing.T) {
 func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: opencode
+	content := `agent: opencode
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -451,7 +451,7 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	}
 
 	if cfg.DefaultParallel != 4 {
-		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 4)
+		t.Errorf("parallel: got %d, want %d", cfg.DefaultParallel, 4)
 	}
 	if cfg.BuildTools != DefaultBuildToolsPreset {
 		t.Errorf("build_tools: got %q, want %q", cfg.BuildTools, DefaultBuildToolsPreset)
@@ -476,7 +476,7 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 func TestLoad_MissingContainerSettings_AppliesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: opencode
+	content := `agent: opencode
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -501,7 +501,7 @@ func TestLoad_MissingContainerSettings_AppliesDefaults(t *testing.T) {
 func TestLoad_MissingRunIdleTimeout_AppliesDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: opencode
+	content := `agent: opencode
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -523,7 +523,7 @@ func TestLoad_MissingRunIdleTimeout_AppliesDefault(t *testing.T) {
 func TestLoad_RunIdleTimeoutZeroIsAccepted(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: opencode
+	content := `agent: opencode
 run_idle_timeout: 0
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -543,7 +543,7 @@ run_idle_timeout: 0
 func TestLoad_RunIdleTimeoutPositive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: opencode
+	content := `agent: opencode
 run_idle_timeout: 600
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -568,28 +568,28 @@ func TestLoad_InvalidContainerSettings_ReturnValidationError(t *testing.T) {
 	}{
 		{
 			name: "negative container capacity",
-			content: `default_agent: opencode
+			content: `agent: opencode
 container_capacity: -1
 `,
 			wantErr: "container_capacity must be 0 or greater",
 		},
 		{
 			name: "negative max containers",
-			content: `default_agent: opencode
+			content: `agent: opencode
 max_containers: -1
 `,
 			wantErr: "max_containers must be 0 or greater",
 		},
 		{
 			name: "negative start delay",
-			content: `default_agent: opencode
+			content: `agent: opencode
 start_delay: -1
 `,
 			wantErr: "start_delay must be 0 or greater",
 		},
 		{
 			name: "negative run idle timeout",
-			content: `default_agent: opencode
+			content: `agent: opencode
 run_idle_timeout: -1
 `,
 			wantErr: "run_idle_timeout must be 0 or greater",
@@ -618,7 +618,7 @@ run_idle_timeout: -1
 func TestLoad_ContainerCapacityZeroIsAccepted(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: opencode
+	content := `agent: opencode
 container_capacity: 0
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -638,8 +638,8 @@ container_capacity: 0
 func TestLoad_NegativeDefaultParallel_DefaultsToFour(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: opencode
-default_parallel: -2
+	content := `agent: opencode
+parallel: -2
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -651,7 +651,7 @@ default_parallel: -2
 	}
 
 	if cfg.DefaultParallel != 4 {
-		t.Errorf("default_parallel: got %d, want %d", cfg.DefaultParallel, 4)
+		t.Errorf("parallel: got %d, want %d", cfg.DefaultParallel, 4)
 	}
 }
 
@@ -670,22 +670,22 @@ func TestLoad_MissingFile_ReturnsError(t *testing.T) {
 func TestConfig_GetAndSetDefaultAgent(t *testing.T) {
 	cfg := &Config{DefaultAgent: DefaultAgent}
 
-	if got, err := cfg.GetValue("default_agent"); err != nil || got != DefaultAgent {
-		t.Fatalf("GetValue(default_agent) = %q, %v", got, err)
+	if got, err := cfg.GetValue("agent"); err != nil || got != DefaultAgent {
+		t.Fatalf("GetValue(agent) = %q, %v", got, err)
 	}
 	if got, err := cfg.GetValue("retries"); err != nil || got != "0" {
 		t.Fatalf("GetValue(retries) = %q, %v", got, err)
 	}
-	if err := cfg.SetValue("default_agent", "pi"); err != nil {
-		t.Fatalf("SetValue(default_agent): %v", err)
+	if err := cfg.SetValue("agent", "pi"); err != nil {
+		t.Fatalf("SetValue(agent): %v", err)
 	}
 	if cfg.DefaultAgent != "pi" || cfg.Agent != "pi" {
-		t.Fatalf("default_agent not updated: %#v", cfg)
+		t.Fatalf("agent not updated: %#v", cfg)
 	}
-	if _, err := cfg.GetValue("agent"); err == nil {
+	if _, err := cfg.GetValue("default_agent"); err == nil {
 		t.Fatal("expected old key to be rejected")
 	}
-	if err := cfg.SetValue("agent", "opencode"); err == nil {
+	if err := cfg.SetValue("default_agent", "opencode"); err == nil {
 		t.Fatal("expected old key to be rejected")
 	}
 	if err := cfg.SetValue("retries", "3"); err != nil {
@@ -730,7 +730,7 @@ func TestBuiltInPresets_AreOnlySupportedAgents(t *testing.T) {
 func TestLoad_AgentsMapDoesNotPopulateAgentProviders(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `default_agent: opencode
+	content := `agent: opencode
 agents:
   custom-agent:
     name: custom-agent
@@ -796,10 +796,10 @@ func TestConfig_SetValue(t *testing.T) {
 		value   string
 		wantErr bool
 	}{
-		{"default_agent", "opencode", false},
+		{"agent", "opencode", false},
 		{"build_tools", "go", false},
 		{"review_command", "/oc review", false},
-		{"default_parallel", "4", false},
+		{"parallel", "4", false},
 		{"start_delay", "0", false},
 		{"start_delay", "5", false},
 		{"run_idle_timeout", "0", false},
@@ -814,8 +814,8 @@ func TestConfig_SetValue(t *testing.T) {
 		{"git.base_branch", "master", false},
 		{"git.default_branch", "master", true},
 		{"unknown_key", "value", true},
-		{"default_parallel", "not-a-number", true},
-		{"default_parallel", "-1", true},
+		{"parallel", "not-a-number", true},
+		{"parallel", "-1", true},
 		{"start_delay", "not-a-number", true},
 		{"start_delay", "-1", true},
 		{"run_idle_timeout", "not-a-number", true},
@@ -842,5 +842,121 @@ func TestConfig_SetValue(t *testing.T) {
 				t.Errorf("after SetValue(%q, %q), GetValue = %q, want %q", tt.key, tt.value, got, tt.value)
 			}
 		})
+	}
+}
+
+func TestLoad_DefaultModelDefaultsToBigPickle(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.DefaultModel != DefaultModel {
+		t.Fatalf("model: got %q, want %q", cfg.DefaultModel, DefaultModel)
+	}
+}
+
+func TestLoad_ModelFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+model: openai/gpt-4.1
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.DefaultModel != "openai/gpt-4.1" {
+		t.Fatalf("model: got %q, want %q", cfg.DefaultModel, "openai/gpt-4.1")
+	}
+}
+
+func TestLoad_ModelEmptyDefaultsToBigPickle(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+model: ""
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.DefaultModel != DefaultModel {
+		t.Fatalf("model: got %q, want %q", cfg.DefaultModel, DefaultModel)
+	}
+}
+
+func TestLoad_ParallelFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+parallel: 8
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.DefaultParallel != 8 {
+		t.Fatalf("parallel: got %d, want %d", cfg.DefaultParallel, 8)
+	}
+}
+
+func TestDefaultModelConstant(t *testing.T) {
+	if DefaultModel != "opencode/BigPickle" {
+		t.Fatalf("DefaultModel: got %q, want %q", DefaultModel, "opencode/BigPickle")
+	}
+}
+
+func TestConfig_GetAndSetModel(t *testing.T) {
+	cfg := &Config{DefaultModel: DefaultModel}
+
+	if got, err := cfg.GetValue("model"); err != nil || got != DefaultModel {
+		t.Fatalf("GetValue(model) = %q, %v", got, err)
+	}
+	if err := cfg.SetValue("model", "openai/gpt-4.1"); err != nil {
+		t.Fatalf("SetValue(model): %v", err)
+	}
+	if cfg.DefaultModel != "openai/gpt-4.1" {
+		t.Fatalf("model not updated: %#v", cfg)
+	}
+}
+
+func TestConfig_GetAndSetParallel(t *testing.T) {
+	cfg := &Config{DefaultParallel: DefaultParallel}
+
+	if got, err := cfg.GetValue("parallel"); err != nil || got != "4" {
+		t.Fatalf("GetValue(parallel) = %q, %v", got, err)
+	}
+	if err := cfg.SetValue("parallel", "8"); err != nil {
+		t.Fatalf("SetValue(parallel): %v", err)
+	}
+	if cfg.DefaultParallel != 8 {
+		t.Fatalf("parallel not updated: %#v", cfg)
+	}
+	if err := cfg.SetValue("parallel", "-1"); err == nil {
+		t.Fatal("expected error for negative parallel")
 	}
 }

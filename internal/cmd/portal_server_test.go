@@ -1219,7 +1219,7 @@ func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
 		{name: "status", body: `{"command":"status"}`, want: []string{"status"}},
 		{name: "history", body: `{"command":"history"}`, want: []string{"history"}},
 		{name: "clean", body: `{"command":"clean","cleanMode":"failed","confirmed":true}`, want: []string{"clean", "--failed"}},
-		{name: "config", body: `{"command":"config","configMode":"set","configKey":"default_agent","configValue":"pi"}`, want: []string{"config", "set", "default_agent", "pi"}},
+		{name: "config", body: `{"command":"config","configMode":"set","configKey":"agent","configValue":"pi"}`, want: []string{"config", "set", "agent", "pi"}},
 	}
 
 	for _, tc := range cases {

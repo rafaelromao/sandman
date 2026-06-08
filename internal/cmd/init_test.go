@@ -473,7 +473,7 @@ func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	cmd := NewInitCmd()
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
-	cmd.SetArgs([]string{"--build-tools", "generic", "--default-agent", "pi"})
+	cmd.SetArgs([]string{"--build-tools", "generic", "--agent", "pi"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -487,8 +487,8 @@ func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	if !strings.Contains(string(configData), "build_tools: generic") {
 		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
 	}
-	if !strings.Contains(string(configData), "default_agent: pi") {
-		t.Errorf("config missing default_agent preset, got:\n%s", configData)
+	if !strings.Contains(string(configData), "agent: pi") {
+		t.Errorf("config missing agent preset, got:\n%s", configData)
 	}
 
 	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))

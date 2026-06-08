@@ -39,9 +39,10 @@ const piNodeVersion = "22.19.0"
 type Options struct {
 	BuildTools    string // --build-tools override
 	ToolVersion   string // --tool-version override
-	DefaultAgent  string // --default-agent override
+	Agent         string // --agent override
+	Model         string // --model override
+	Parallel      int    // --parallel override (-1 = use config default)
 	ReviewCommand string // --review-command override
-	Agent         string // legacy alias for tests
 }
 
 // BuildToolsPreset describes a scaffold-time recipe for the container image.
@@ -304,11 +305,21 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	}
 
+	parallel := config.DefaultParallel
+	if opts.Parallel > 0 {
+		parallel = opts.Parallel
+	}
+	model := config.DefaultModel
+	if opts.Model != "" {
+		model = opts.Model
+	}
+
 	cfg := &config.Config{
 		DefaultAgent:      defaultAgent,
+		DefaultModel:      model,
 		BuildTools:        preset.Name,
 		ReviewCommand:     effectiveReviewCommand(opts.ReviewCommand),
-		DefaultParallel:   config.DefaultParallel,
+		DefaultParallel:   parallel,
 		StartDelay:        config.DefaultStartDelay,
 		ContainerCapacity: config.DefaultContainerCapacity,
 		MaxContainers:     config.DefaultMaxContainers,
@@ -353,16 +364,13 @@ func effectiveReviewCommand(value string) string {
 }
 
 func (s *Scaffolder) resolveDefaultAgent(opts Options) (string, error) {
-	if opts.DefaultAgent == "" {
-		opts.DefaultAgent = opts.Agent
-	}
-	if opts.DefaultAgent == "" {
+	if opts.Agent == "" {
 		return config.DefaultAgent, nil
 	}
-	if _, ok := config.BuiltInAgentPresets[opts.DefaultAgent]; !ok {
-		return "", fmt.Errorf("unknown default agent: %q (supported: %s)", opts.DefaultAgent, strings.Join(KnownAgents, ", "))
+	if _, ok := config.BuiltInAgentPresets[opts.Agent]; !ok {
+		return "", fmt.Errorf("unknown default agent: %q (supported: %s)", opts.Agent, strings.Join(KnownAgents, ", "))
 	}
-	return opts.DefaultAgent, nil
+	return opts.Agent, nil
 }
 
 func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Prompter) (BuildToolsPreset, error) {

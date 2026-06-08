@@ -1964,7 +1964,7 @@
         commandNote('Read or write repo-scoped configuration values.'),
         '<div class="command-grid two">',
         commandField('Mode', '<select name="configMode"><option value="get"' + (state.configMode === 'get' ? ' selected' : '') + '>Get</option><option value="set"' + (state.configMode === 'set' ? ' selected' : '') + '>Set</option></select>'),
-        commandField('Key', '<input name="configKey" type="text" placeholder="default_agent" value="' + escapeHTML(state.configKey || '') + '">'),
+        commandField('Key', '<input name="configKey" type="text" placeholder="agent" value="' + escapeHTML(state.configKey || '') + '">'),
         isGet ? '' : commandField('Value', '<input name="configValue" type="text" placeholder="opencode" value="' + escapeHTML(state.configValue || '') + '">'),
         '</div>',
       ].join(''));

@@ -188,7 +188,7 @@ func writeAbortE2EConfig(t *testing.T, repoDir string) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
-	configYAML := []byte("default_agent: opencode\nsandbox: worktree\ngit:\n  base_branch: main\n")
+	configYAML := []byte("agent: opencode\nsandbox: worktree\ngit:\n  base_branch: main\n")
 	if err := os.WriteFile(configPath, configYAML, 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

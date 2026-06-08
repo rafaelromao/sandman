@@ -2248,7 +2248,7 @@ func TestRunBatch_EndToEnd(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		t.Fatalf("create .sandman: %v", err)
 	}
-	configData := `default_agent: opencode
+	configData := `agent: opencode
 worktree_dir: .sandman/worktrees
 sandbox: worktree
 `

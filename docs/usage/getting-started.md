@@ -80,7 +80,7 @@ Sandman auto-detects repo hints and defaults to the matching BuildToolsPreset wh
 You can skip the prompts by passing flags:
 
 ```bash
-sandman init --default-agent opencode --build-tools node
+sandman init --agent opencode --build-tools node
 ```
 
 ## First run
