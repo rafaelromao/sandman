@@ -117,15 +117,20 @@ type Orchestrator struct {
 	eventLog                events.EventLog
 	runnableFactory         RunnableFactory
 	sandboxFactory          SandboxFactory
-	baseBranchSync          func(repoPath, sourceBranch string) error
-	baseBranchSyncMu        sync.Mutex
 	containerRuntimeFactory ContainerRuntimeFactory
-	retryReset              func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
-	killTimeout             time.Duration
 	// heartbeatTickInterval overrides the default 30s heartbeat tick for tests.
 	// Zero means use the default tick interval.
 	heartbeatTickInterval time.Duration
 	errorLog              io.Writer
+
+	// runSessionOpts bundles the test-injection hooks consumed by
+	// runSession (the function overrides and the test-tunable killTimeout)
+	// together with the shared baseBranchSyncMu mutex that gates
+	// syncBaseBranch. Production code leaves the function and timeout
+	// fields at their zero values; NewOrchestrator initialises the mutex.
+	// Tests in this package set fields on this struct directly to drive
+	// injected behaviour.
+	runSessionOpts runSessionOptions
 
 	issueCancelsMu sync.Mutex
 	issueCancels   map[int]context.CancelFunc
@@ -472,6 +477,9 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.Renderer, confi
 		configStore:  configStore,
 		eventLog:     eventLog,
 		errorLog:     os.Stderr,
+		runSessionOpts: runSessionOptions{
+			baseBranchSyncMu: &sync.Mutex{},
+		},
 		issueCancels: make(map[int]context.CancelFunc),
 	}
 }
@@ -710,7 +718,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return
 		}
 
-		timeout := o.killTimeout
+		timeout := o.runSessionOpts.killTimeout
 		if timeout == 0 {
 			timeout = 10 * time.Second
 		}
@@ -1147,6 +1155,25 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
+// runSessionOptions bundles the test-injection hooks consumed by runSession
+// (the function overrides and the test-tunable killTimeout) together with
+// the shared baseBranchSyncMu mutex that gates syncBaseBranch. The function
+// and timeout fields exist only so tests in this package can override
+// behaviour that would otherwise touch the network, run real git, or sleep
+// for the production timeout; production code leaves them at their zero
+// values. The baseBranchSyncMu pointer is initialised once per Orchestrator
+// in NewOrchestrator and shared across all sessions via this struct's value
+// copy at construction time, so that concurrent calls to syncBaseBranch
+// serialise on the same mutex. If baseBranchSyncMu is ever converted from a
+// pointer to a value type, update runSingle / runPromptOnlySingle to share
+// it explicitly — otherwise serialisation will silently break.
+type runSessionOptions struct {
+	baseBranchSync   func(repoPath, sourceBranch string) error
+	baseBranchSyncMu *sync.Mutex
+	retryReset       func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
+	killTimeout      time.Duration
+}
+
 // runSession owns the per-AgentRun state and lifecycle for a single issue
 // (or prompt-only) execution. It is private to the orchestrator package and
 // is built by runSingle / runPromptOnlySingle. A session is short-lived: it
@@ -1182,6 +1209,11 @@ type runSession struct {
 	maxContainers              int
 	maxContainersSet           bool
 	dangerouslySkipPermissions bool
+
+	// opts carries the test-injection hooks copied from
+	// Orchestrator.runSessionOpts at session construction. Zero-valued in
+	// production; populated by tests to drive the per-session behaviour.
+	opts runSessionOptions
 }
 
 // applyForceAndIdentity applies s.force and the resolved git identity to wt.
@@ -1403,6 +1435,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		maxContainers:              maxContainers,
 		maxContainersSet:           maxContainersSet,
 		dangerouslySkipPermissions: dangerouslySkipPermissions,
+		opts:                       o.runSessionOpts,
 	}
 	return s.execute(ctx)
 }
@@ -1479,7 +1512,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			return
 		}
 
-		timeout := o.killTimeout
+		timeout := s.opts.killTimeout
 		if timeout == 0 {
 			timeout = 10 * time.Second
 		}
@@ -1630,8 +1663,8 @@ func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]
 }
 
 func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-	if o.retryReset != nil {
-		return o.retryReset(ctx, sb, branch, baseBranch)
+	if o.runSessionOpts.retryReset != nil {
+		return o.runSessionOpts.retryReset(ctx, sb, branch, baseBranch)
 	}
 
 	var output bytes.Buffer
@@ -1682,6 +1715,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		maxContainers:              maxContainers,
 		maxContainersSet:           maxContainersSet,
 		dangerouslySkipPermissions: dangerouslySkipPermissions,
+		opts:                       o.runSessionOpts,
 	}
 	return s.executePromptOnly(ctx)
 }
@@ -1827,9 +1861,13 @@ func (o *Orchestrator) syncBaseBranch(repoPath, baseBranch string) error {
 	if baseBranch == "" {
 		return nil
 	}
-	o.baseBranchSyncMu.Lock()
-	defer o.baseBranchSyncMu.Unlock()
-	syncFn := o.baseBranchSync
+	mu := o.runSessionOpts.baseBranchSyncMu
+	if mu == nil {
+		return nil
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	syncFn := o.runSessionOpts.baseBranchSync
 	if syncFn == nil {
 		if o.sandboxFactory != nil {
 			return nil
