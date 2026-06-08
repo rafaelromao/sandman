@@ -66,7 +66,7 @@ func TestControlSocket_RemovesStaleSocketOnStart(t *testing.T) {
 func TestIsRunActive(t *testing.T) {
 	dir := t.TempDir()
 	if IsRunActive(dir) {
-		t.Fatal("expected dir without cmd.sock to be inactive")
+		t.Fatal("expected dir without sockets to be inactive")
 	}
 
 	cmdServer := NewCommandServer(dir, nil)
@@ -77,6 +77,18 @@ func TestIsRunActive(t *testing.T) {
 
 	if !IsRunActive(dir) {
 		t.Fatal("expected dir with live cmd.sock to be active")
+	}
+
+	cmdServer.Stop()
+
+	sock := NewControlSocket(dir, NewBroadcaster())
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	defer sock.Stop()
+
+	if !IsRunActive(dir) {
+		t.Fatal("expected dir with live run.sock but no cmd.sock to be active (continue runs)")
 	}
 }
 

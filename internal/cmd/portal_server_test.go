@@ -463,7 +463,7 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 		}
 	})
 
-	t.Run("unreachable cmd socket", func(t *testing.T) {
+	t.Run("dial failure is sanitized", func(t *testing.T) {
 		repoRoot, err := os.MkdirTemp("/tmp", "sm-abort-")
 		if err != nil {
 			t.Fatal(err)
@@ -497,8 +497,8 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 		if !errors.As(err, &abortErr) {
 			t.Fatalf("expected portalAbortError, got %v", err)
 		}
-		if abortErr.status != http.StatusConflict {
-			t.Fatalf("expected 409, got %d", abortErr.status)
+		if abortErr.status != http.StatusBadGateway {
+			t.Fatalf("expected 502, got %d", abortErr.status)
 		}
 		if strings.Contains(abortErr.message, "cmd.sock") {
 			t.Fatalf("expected sanitized error, got %q", abortErr.message)
