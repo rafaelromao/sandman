@@ -510,11 +510,12 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		dir := filepath.Join(runsDir, entry.Name())
-		if !daemon.IsRunActive(dir) {
+		sockPath := filepath.Join(runsDir, entry.Name(), "run.sock")
+		info, err := os.Lstat(sockPath)
+		if err != nil || info.IsDir() || info.Mode()&os.ModeSocket == 0 {
 			continue
 		}
-		instances = append(instances, portalInstance{Name: entry.Name(), SocketPath: filepath.Join(dir, "run.sock")})
+		instances = append(instances, portalInstance{Name: entry.Name(), SocketPath: sockPath})
 	}
 
 	sort.Slice(instances, func(i, j int) bool {
