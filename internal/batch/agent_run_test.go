@@ -131,6 +131,10 @@ func (s *spyRenderer) Render(cfg prompt.RenderConfig, data prompt.IssueData) (st
 	return s.result, s.err
 }
 
+func (s *spyRenderer) RenderReview(cfg prompt.RenderConfig, data prompt.PRData) (string, error) {
+	return "", nil
+}
+
 func TestAgentRun_Prepare_PopulatesBranchFields(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Users cannot log in."}
 	sb := &fakeSandbox{}

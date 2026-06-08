@@ -841,6 +841,8 @@ func TestConfig_SetValue(t *testing.T) {
 		{"agent", "opencode", false},
 		{"build_tools", "go", false},
 		{"review_command", "/oc review", false},
+		{"review_agent", "opencode", false},
+		{"review_model", "opencode/big-pickle", false},
 		{"parallel", "4", false},
 		{"start_delay", "0", false},
 		{"start_delay", "5", false},
@@ -1000,5 +1002,174 @@ func TestConfig_GetAndSetParallel(t *testing.T) {
 	}
 	if err := cfg.SetValue("parallel", "-1"); err == nil {
 		t.Fatal("expected error for negative parallel")
+	}
+}
+
+func TestLoad_ReviewAgentAndModelFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+model: openai/gpt-4.1
+review_agent: pi
+review_model: openai/gpt-5
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.DefaultReviewAgent != "pi" {
+		t.Errorf("review_agent: got %q, want %q", cfg.DefaultReviewAgent, "pi")
+	}
+	if cfg.DefaultReviewModel != "openai/gpt-5" {
+		t.Errorf("review_model: got %q, want %q", cfg.DefaultReviewModel, "openai/gpt-5")
+	}
+}
+
+func TestLoad_ReviewAgentDefaultsToDefaultAgent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: pi
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.DefaultReviewAgent != "pi" {
+		t.Errorf("review_agent fallback: got %q, want %q", cfg.DefaultReviewAgent, "pi")
+	}
+}
+
+func TestLoad_ReviewModelDefaultsToDefaultModel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+model: openai/gpt-4.1
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.DefaultReviewModel != "openai/gpt-4.1" {
+		t.Errorf("review_model fallback: got %q, want %q", cfg.DefaultReviewModel, "openai/gpt-4.1")
+	}
+}
+
+func TestConfig_ReviewAgentAndModelResolution(t *testing.T) {
+	tests := []struct {
+		name         string
+		defaultAgent string
+		defaultModel string
+		reviewAgent  string
+		reviewModel  string
+		wantAgent    string
+		wantModel    string
+	}{
+		{
+			name:         "empty fields fall back to defaults",
+			defaultAgent: "opencode",
+			defaultModel: "opencode/big-pickle",
+			reviewAgent:  "",
+			reviewModel:  "",
+			wantAgent:    "opencode",
+			wantModel:    "opencode/big-pickle",
+		},
+		{
+			name:         "explicit review agent and model win",
+			defaultAgent: "opencode",
+			defaultModel: "opencode/big-pickle",
+			reviewAgent:  "pi",
+			reviewModel:  "openai/gpt-5",
+			wantAgent:    "pi",
+			wantModel:    "openai/gpt-5",
+		},
+		{
+			name:         "review agent set, model falls back to default",
+			defaultAgent: "opencode",
+			defaultModel: "opencode/big-pickle",
+			reviewAgent:  "pi",
+			reviewModel:  "",
+			wantAgent:    "pi",
+			wantModel:    "opencode/big-pickle",
+		},
+		{
+			name:         "review model set, agent falls back to default",
+			defaultAgent: "opencode",
+			defaultModel: "opencode/big-pickle",
+			reviewAgent:  "",
+			reviewModel:  "openai/gpt-5",
+			wantAgent:    "opencode",
+			wantModel:    "openai/gpt-5",
+		},
+		{
+			name:         "empty defaults still resolve to constants",
+			defaultAgent: "",
+			defaultModel: "",
+			reviewAgent:  "",
+			reviewModel:  "",
+			wantAgent:    DefaultAgent,
+			wantModel:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				DefaultAgent:       tt.defaultAgent,
+				DefaultModel:       tt.defaultModel,
+				DefaultReviewAgent: tt.reviewAgent,
+				DefaultReviewModel: tt.reviewModel,
+			}
+
+			if got := cfg.EffectiveReviewAgent(); got != tt.wantAgent {
+				t.Errorf("EffectiveReviewAgent: got %q, want %q", got, tt.wantAgent)
+			}
+			if got := cfg.EffectiveReviewModel(); got != tt.wantModel {
+				t.Errorf("EffectiveReviewModel: got %q, want %q", got, tt.wantModel)
+			}
+		})
+	}
+}
+
+func TestConfig_GetAndSetReviewAgentAndModel(t *testing.T) {
+	cfg := &Config{DefaultAgent: "opencode", DefaultModel: "opencode/big-pickle"}
+
+	if got, err := cfg.GetValue("review_agent"); err != nil || got != "opencode" {
+		t.Fatalf("GetValue(review_agent) = %q, %v", got, err)
+	}
+	if got, err := cfg.GetValue("review_model"); err != nil || got != "opencode/big-pickle" {
+		t.Fatalf("GetValue(review_model) = %q, %v", got, err)
+	}
+
+	if err := cfg.SetValue("review_agent", "pi"); err != nil {
+		t.Fatalf("SetValue(review_agent): %v", err)
+	}
+	if cfg.DefaultReviewAgent != "pi" {
+		t.Fatalf("review_agent not updated: %#v", cfg)
+	}
+
+	if err := cfg.SetValue("review_model", "openai/gpt-5"); err != nil {
+		t.Fatalf("SetValue(review_model): %v", err)
+	}
+	if cfg.DefaultReviewModel != "openai/gpt-5" {
+		t.Fatalf("review_model not updated: %#v", cfg)
+	}
+
+	if err := cfg.SetValue("review_agent", "unknown-agent"); err == nil {
+		t.Fatal("expected validation error for unknown review agent")
 	}
 }

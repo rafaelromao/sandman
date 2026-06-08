@@ -499,3 +499,82 @@ func TestParseBlockedBy(t *testing.T) {
 		})
 	}
 }
+
+func TestCLIClient_FetchPR_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":42,"state":"open","title":"Add review command","body":"Adds the sandman review one-shot.","mergedAt":null,"headRefName":"issue-381/sandman-review-config-default-prompt-and-one-shot-mode","headRefOid":"deadbeef"}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FetchPR(42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.Number != 42 {
+		t.Errorf("expected number 42, got %d", pr.Number)
+	}
+	if pr.State != "open" {
+		t.Errorf("expected state open, got %q", pr.State)
+	}
+	if pr.Title != "Add review command" {
+		t.Errorf("expected title to round-trip, got %q", pr.Title)
+	}
+	if pr.Body != "Adds the sandman review one-shot." {
+		t.Errorf("expected body to round-trip, got %q", pr.Body)
+	}
+	if pr.Merged {
+		t.Error("expected merged false")
+	}
+	if pr.HeadRefName != "issue-381/sandman-review-config-default-prompt-and-one-shot-mode" {
+		t.Errorf("expected head ref name to round-trip, got %q", pr.HeadRefName)
+	}
+	if pr.HeadRefOid != "deadbeef" {
+		t.Errorf("expected head ref oid to round-trip, got %q", pr.HeadRefOid)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
+	}
+	if runner.calls[0].name != "gh" {
+		t.Errorf("expected command gh, got %q", runner.calls[0].name)
+	}
+	if runner.calls[1].name != "gh" {
+		t.Errorf("expected command gh, got %q", runner.calls[1].name)
+	}
+	expectedArgs := []string{"pr", "view", "42", "--json", "number,title,body,state,mergedAt,headRefName,headRefOid"}
+	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
+		t.Errorf("unexpected fetch args: %v", runner.calls[1].args)
+	}
+}
+
+func TestCLIClient_FetchPR_DetectsMerged(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":7,"state":"closed","title":"Merged PR","body":"","mergedAt":"2026-06-08T12:00:00Z","headRefName":"x","headRefOid":"abc"}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FetchPR(7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !pr.Merged {
+		t.Error("expected merged true when mergedAt is set")
+	}
+}
+
+func TestCLIClient_FetchPR_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	_, err := client.FetchPR(99)
+	if err == nil {
+		t.Fatal("expected error when gh pr view fails")
+	}
+}

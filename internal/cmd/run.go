@@ -57,6 +57,10 @@ func (c *cachedGitHubClient) SearchIssues(query string) ([]github.Issue, error) 
 	return c.client.SearchIssues(query)
 }
 
+func (c *cachedGitHubClient) FetchPR(number int) (*github.PR, error) {
+	return c.client.FetchPR(number)
+}
+
 func (c *cachedGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
 	return c.client.FindPRByBranch(branch)
 }

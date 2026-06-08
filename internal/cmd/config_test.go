@@ -204,6 +204,8 @@ git:
 	want := []string{
 		"agent: pi",
 		"model: openai/gpt-4.1",
+		"review_agent: pi",
+		"review_model: openai/gpt-4.1",
 		"build_tools: go",
 		"review_command: /review please",
 		"parallel: 3",
