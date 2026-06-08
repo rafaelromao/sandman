@@ -99,6 +99,11 @@ Capture the PR URL and number.
 - If you do ignore feedback, explain why in the PR thread before continuing.
 - Stop when the PR Review Agent approves or after max passes
 
+### 9. Handoff
+
+- Load the `sandman-handoff` skill
+- Follow its workflow to write `.sandman/continuation-context.md`
+
 ## Checklist
 
 - [ ] Branch created from latest main
