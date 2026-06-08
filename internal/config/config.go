@@ -282,9 +282,6 @@ func Load(path string) (*Config, error) {
 	if strings.TrimSpace(cfg.DefaultAgent) == "" {
 		cfg.DefaultAgent = DefaultAgent
 	}
-	if strings.TrimSpace(cfg.DefaultModel) == "" {
-		cfg.DefaultModel = DefaultModel
-	}
 	cfg.Agent = cfg.DefaultAgent
 	cfg.AgentProviders = make(map[string]Agent, len(BuiltInAgentPresets))
 	for name := range BuiltInAgentPresets {

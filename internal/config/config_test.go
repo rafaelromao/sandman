@@ -887,7 +887,7 @@ func TestConfig_SetValue(t *testing.T) {
 	}
 }
 
-func TestLoad_DefaultModelDefaultsToBigPickle(t *testing.T) {
+func TestLoad_DefaultModelAbsent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: opencode
@@ -901,8 +901,28 @@ func TestLoad_DefaultModelDefaultsToBigPickle(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultModel != DefaultModel {
-		t.Fatalf("model: got %q, want %q", cfg.DefaultModel, DefaultModel)
+	if cfg.DefaultModel != "" {
+		t.Fatalf("model: got %q, want empty string to preserve per-agent model", cfg.DefaultModel)
+	}
+}
+
+func TestLoad_ModelEmptyPreservesPerAgentModel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+model: ""
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.DefaultModel != "" {
+		t.Fatalf("model: got %q, want empty string to preserve per-agent model", cfg.DefaultModel)
 	}
 }
 
@@ -923,26 +943,6 @@ model: openai/gpt-4.1
 
 	if cfg.DefaultModel != "openai/gpt-4.1" {
 		t.Fatalf("model: got %q, want %q", cfg.DefaultModel, "openai/gpt-4.1")
-	}
-}
-
-func TestLoad_ModelEmptyDefaultsToBigPickle(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	content := `agent: opencode
-model: ""
-`
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if cfg.DefaultModel != DefaultModel {
-		t.Fatalf("model: got %q, want %q", cfg.DefaultModel, DefaultModel)
 	}
 }
 
