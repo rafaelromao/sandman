@@ -2,6 +2,7 @@ package prompt
 
 // RenderConfig holds template source preferences.
 type RenderConfig struct {
+	Branch             string            // explicit branch name override for prompt-only runs
 	PromptFlag         string            // --prompt: inline template
 	TemplateFlag       string            // --template: path to template file
 	PromptFile         string            // .sandman/prompt.md project template path

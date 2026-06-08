@@ -76,6 +76,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 				Sandbox: sandboxMode,
 				PromptConfig: prompt.RenderConfig{
 					PromptFlag: rendered,
+					Branch:     fmt.Sprintf("sandman/review-%d", pr.Number),
 				},
 			}); err != nil {
 				return fmt.Errorf("run review batch: %w", err)
