@@ -38,13 +38,25 @@ gh issue view <ID> --json title,number
 - Let `sandman-tdd` handle the plan draft and user approval internally, scoped to the repository codebase
 - Do NOT add a separate confirmation prompt — `sandman-tdd` already asks for approval before writing code
 
-### 3. Implement (TDD)
+### 3. Handoff (plan-approved)
+
+After the TDD plan is approved via subagent consensus:
+
+- Load the `sandman-handoff` skill
+- Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
+- Substitute `<STAGE>` in the skill template's `## Stage:` line with `plan-approved`
+- Write the result to `.sandman/handoff.md` in the current worktree
+- If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
+
+> The `sandman-handoff` skill's prose still references `.sandman/continuation-context.md` from before the rename. The runtime file path is `.sandman/handoff.md` — write there.
+
+### 4. Implement (TDD)
 
 - Follow `sandman-tdd` workflow: vertical slices, one test → one implementation, within the repository codebase
 - Run project tests and formatting after each cycle
 - Do NOT commit during TDD; keep working
 
-### 4. Commit implementation
+### 5. Commit implementation
 
 Once all tests pass and user is satisfied:
 
@@ -53,7 +65,15 @@ git add -A
 git commit -m "feat: <issue title>"
 ```
 
-### 5. Self-review
+### 6. Handoff (implementation-committed)
+
+- Load the `sandman-handoff` skill
+- Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
+- Substitute `<STAGE>` in the skill template's `## Stage:` line with `implementation-committed`
+- Write the result to `.sandman/handoff.md` in the current worktree
+- If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
+
+### 7. Self-review
 
 - Load the `sandman-review` skill
 - Perform a self-review of the changes
@@ -73,7 +93,7 @@ git commit -m "refactor: self-review fixes"
 
 - Repeat the Self-review cycle until all tests pass.
 
-### 6. Merge base branch before PR
+### 8. Merge base branch before PR
 
 - Load the `sandman-merge` skill
 - Use it to merge the base branch into the current branch before creating the PR
@@ -82,7 +102,7 @@ git commit -m "refactor: self-review fixes"
 - Do NOT rebase
 - Do NOT force-push
 
-### 7. Push & create PR
+### 9. Push & create PR
 
 ```bash
 git push -u origin <branch>
@@ -91,7 +111,15 @@ gh pr create --title "<issue title>" --body "Fixes #<ID>"
 
 Capture the PR URL and number.
 
-### 8. Delegate review
+### 10. Handoff (pr-created)
+
+- Load the `sandman-handoff` skill
+- Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
+- Substitute `<STAGE>` in the skill template's `## Stage:` line with `pr-created`
+- Write the result to `.sandman/handoff.md` in the current worktree
+- If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
+
+### 11. Delegate review
 
 - Load the `sandman-pr-review` skill
 - Run the delegated review loop on the PR
@@ -99,10 +127,18 @@ Capture the PR URL and number.
 - If you do ignore feedback, explain why in the PR thread before continuing.
 - Stop when the PR Review Agent approves or after max passes
 
-### 9. Handoff
+### 12. Handoff (pr-review-finished)
+
+When the delegated review result is either PR approval or a hard blocker:
 
 - Load the `sandman-handoff` skill
-- Follow its workflow to write `.sandman/continuation-context.md`
+- Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
+- Substitute `<STAGE>` in the skill template's `## Stage:` line with `pr-review-finished`
+- If the review returned a hard blocker, fill the `## Blockers` section with the blocker; otherwise leave `## Blockers` empty
+- Write the result to `.sandman/handoff.md` in the current worktree
+- If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
+
+After the PR is merged, do NOT write a new handoff. The file naturally disappears on worktree cleanup or the next `sandman run`.
 
 ## Checklist
 
@@ -114,4 +150,4 @@ Capture the PR URL and number.
 - [ ] Base branch merged into current branch with `sandman-merge`
 - [ ] PR created with `Fixes #<ID>`
 - [ ] Delegate review completed
-- [ ] Handoff context written
+- [ ] Handoff written after each checkpoint (4 stages: plan-approved, implementation-committed, pr-created, pr-review-finished)
