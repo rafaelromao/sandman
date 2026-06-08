@@ -5799,7 +5799,7 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 		t.Fatalf("build start options: %v", err)
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &startOpts)
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &startOpts, nil)
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -5879,7 +5879,7 @@ func TestPrepareContainerConfigMounts_PiPresetEndToEnd(t *testing.T) {
 		t.Fatalf("build start options: %v", err)
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &startOpts)
+	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &startOpts, nil)
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
