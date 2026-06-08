@@ -12,7 +12,7 @@ import (
 // Defaults for optional config fields.
 const (
 	DefaultAgent             = "opencode"
-	DefaultModel             = "opencode/BigPickle"
+	DefaultModel             = "opencode/big-pickle"
 	DefaultBuildToolsPreset  = "generic"
 	DefaultReviewCommand     = "/oc review"
 	DefaultParallel          = 4

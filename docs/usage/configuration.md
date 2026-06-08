@@ -10,7 +10,7 @@ agent: opencode
 
 # Default model passed to the agent when `--model` is omitted.
 # Falls back to the agent provider's configured model if empty.
-model: opencode/BigPickle
+model: opencode/big-pickle
 
 # Build tools preset for the container image (generic, go, node, python).
 build_tools: generic

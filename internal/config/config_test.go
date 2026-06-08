@@ -967,8 +967,8 @@ parallel: 8
 }
 
 func TestDefaultModelConstant(t *testing.T) {
-	if DefaultModel != "opencode/BigPickle" {
-		t.Fatalf("DefaultModel: got %q, want %q", DefaultModel, "opencode/BigPickle")
+	if DefaultModel != "opencode/big-pickle" {
+		t.Fatalf("DefaultModel: got %q, want %q", DefaultModel, "opencode/big-pickle")
 	}
 }
 

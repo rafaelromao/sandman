@@ -182,7 +182,7 @@ sandman config set <key> <value>
 | Key | Type | Example |
 |-----|------|---------|
 | `agent` | string | `opencode` |
-| `model` | string | `opencode/BigPickle` |
+| `model` | string | `opencode/big-pickle` |
 | `build_tools` | string | `node` |
 | `parallel` | int | `4` |
 | `start_delay` | int | `0` |
