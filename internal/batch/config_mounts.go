@@ -12,18 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var lookupGHToken = func() (string, error) {
-	out, err := exec.Command("gh", "auth", "token").Output()
-	if err != nil {
-		return "", err
-	}
-	token := strings.TrimSpace(string(out))
-	if token == "" {
-		return "", fmt.Errorf("gh auth token returned empty token")
-	}
-	return token, nil
-}
-
 // prepareSnapshotParent returns the parent directory under which the
 // container config snapshot should be stored, plus a cleanup that
 // removes the parent when no run owns it. When runDir is set, the
@@ -56,7 +44,11 @@ func prepareSnapshotParent(runDir string) (string, func(), error) {
 // LiveMounts are also implicitly excluded from the snapshot — without that
 // union, the snapshot copy of a live-mounted file would shadow the live
 // bind mount and the host file would be neither read nor written.
-func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOptions) (func(), error) {
+//
+// lookupGHToken is the explicit port used to resolve the host GitHub auth
+// token when hydrating the copied gh hosts.yml; production callers pass a
+// function that shells out to `gh auth token`, tests pass a fake.
+func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOptions, lookupGHToken func() (string, error)) (func(), error) {
 	dirs := append([]string(nil), opts.AgentConfigDirs...)
 	files := append([]string(nil), opts.AgentConfigFiles...)
 	excludes := append([]string(nil), opts.AgentConfigExcludes...)
@@ -121,7 +113,7 @@ func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOp
 		opts.SSH = false
 	}
 
-	if err := hydrateGHConfigMount(mounts); err != nil {
+	if err := hydrateGHConfigMount(mounts, lookupGHToken); err != nil {
 		cleanup()
 		return nil, err
 	}
@@ -211,19 +203,19 @@ func rewriteGitConfigFile(path, absRepo string) error {
 // hydrateGHConfigMount injects an oauth_token into the copied gh hosts.yml
 // when the host uses keyring-backed auth (which leaves oauth_token empty in
 // the on-disk file). Without this, gh inside the container cannot authenticate.
-func hydrateGHConfigMount(mounts []sandbox.ConfigMount) error {
+func hydrateGHConfigMount(mounts []sandbox.ConfigMount, lookupGHToken func() (string, error)) error {
 	for _, mount := range mounts {
 		if mount.Target != "/.config/gh" {
 			continue
 		}
 		hostsPath := filepath.Join(mount.Source, "hosts.yml")
-		return hydrateGHHostsFile(hostsPath)
+		return hydrateGHHostsFile(hostsPath, lookupGHToken)
 	}
 
 	return nil
 }
 
-func hydrateGHHostsFile(path string) error {
+func hydrateGHHostsFile(path string, lookupGHToken func() (string, error)) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -123,6 +123,16 @@ type Orchestrator struct {
 	heartbeatTickInterval time.Duration
 	errorLog              io.Writer
 
+	// lookupGHToken resolves the host GitHub auth token for hydrating the
+	// copied gh hosts.yml in container config snapshots. It runs once per
+	// batch from resolveSandboxExecutionPolicy, *before* any runSession is
+	// built, so the dependency lives on the Orchestrator (per-batch
+	// lifetime) rather than on runSessionOptions (per-session lifetime).
+	// NewOrchestrator initialises it to defaultLookupGHToken; tests in
+	// this package assign a fake to drive token-resolution paths without
+	// shelling out to `gh auth token`.
+	lookupGHToken func() (string, error)
+
 	// runSessionOpts bundles the test-injection hooks consumed by
 	// runSession (the function overrides and the test-tunable killTimeout)
 	// together with the shared baseBranchSyncMu mutex that gates
@@ -134,6 +144,23 @@ type Orchestrator struct {
 
 	issueCancelsMu sync.Mutex
 	issueCancels   map[int]context.CancelFunc
+}
+
+// defaultLookupGHToken shells out to `gh auth token` and returns the
+// trimmed token. An empty output is treated as an error so callers do not
+// silently inject an empty oauth_token. The exec.ErrNotFound special-case
+// for callers that want to skip token injection on minimal hosts lives
+// in hydrateGHHostsFile, not here.
+func defaultLookupGHToken() (string, error) {
+	out, err := exec.Command("gh", "auth", "token").Output()
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(string(out))
+	if token == "" {
+		return "", fmt.Errorf("gh auth token returned empty token")
+	}
+	return token, nil
 }
 
 type containerLease struct {
@@ -472,11 +499,12 @@ func (p *containerPool) Close() error {
 // NewOrchestrator creates an Orchestrator with the given dependencies.
 func NewOrchestrator(githubClient github.Client, renderer prompt.Renderer, configStore config.Store, eventLog events.EventLog) *Orchestrator {
 	return &Orchestrator{
-		githubClient: githubClient,
-		renderer:     renderer,
-		configStore:  configStore,
-		eventLog:     eventLog,
-		errorLog:     os.Stderr,
+		githubClient:  githubClient,
+		renderer:      renderer,
+		configStore:   configStore,
+		eventLog:      eventLog,
+		errorLog:      os.Stderr,
+		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
 			baseBranchSyncMu: &sync.Mutex{},
 		},
@@ -990,7 +1018,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(cfg *config.Config, agentCf
 		return nil, fmt.Errorf("max_containers must be 0 or greater")
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(".", req.RunDir, &startOpts)
+	cleanup, err := PrepareContainerConfigMounts(".", req.RunDir, &startOpts, o.lookupGHToken)
 	if err != nil {
 		return nil, fmt.Errorf("prepare container config mounts: %w", err)
 	}
