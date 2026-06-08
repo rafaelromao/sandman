@@ -59,7 +59,7 @@ type portalRunMatch struct {
 
 type portalRunsView struct{}
 
-// compute is the public entry point for computing displayable portal runs.
+// compute is the entry point for computing displayable portal runs.
 func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]portalRun, error) {
 	activeInstances, err := v.discoverActiveRuns(repoRoot)
 	if err != nil {
