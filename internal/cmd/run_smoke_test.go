@@ -95,6 +95,16 @@ var smokeProviderCases = []smokeProviderCase{
 	},
 }
 
+// applySmokeModelOverrides lets operators steer the smoke tests at a
+// different model per agent via the SANDMAN_TEST_MODEL_<AGENT> env
+// vars. When unset, the literal model in smokeProviderCases is used.
+func applySmokeModelOverrides() {
+	for i := range smokeProviderCases {
+		tc := &smokeProviderCases[i]
+		tc.model = testenv.ResolveTestModel(tc.name, tc.model)
+	}
+}
+
 func TestSmoke_RealAgentCLIs(t *testing.T) {
 	runSmokeProviderCases(t, smokeProviderCases)
 }

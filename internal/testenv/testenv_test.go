@@ -221,3 +221,53 @@ func TestE2EGateAllowed_DisabledWhenCanonicalUnset(t *testing.T) {
 		t.Fatal("expected batch disabled when canonical env unset")
 	}
 }
+
+func TestTestModelEnvVar_UppercasesAgent(t *testing.T) {
+	if got, want := TestModelEnvVar("opencode"), "SANDMAN_TEST_MODEL_OPENCODE"; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+	if got, want := TestModelEnvVar("pi"), "SANDMAN_TEST_MODEL_PI"; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+	if got, want := TestModelEnvVar("OpenCode"), "SANDMAN_TEST_MODEL_OPENCODE"; got != want {
+		t.Fatalf("expected mixed-case input to upper-case, got %q", got)
+	}
+	if got, want := TestModelEnvVar("  claude  "), "SANDMAN_TEST_MODEL_CLAUDE"; got != want {
+		t.Fatalf("expected whitespace-trimmed upper-case, got %q", got)
+	}
+}
+
+func TestResolveTestModel_UnsetReturnsDefault(t *testing.T) {
+	t.Setenv("SANDMAN_TEST_MODEL_OPENCODE", "")
+	if got := ResolveTestModel("opencode", "opencode/big-pickle"); got != "opencode/big-pickle" {
+		t.Fatalf("expected default, got %q", got)
+	}
+}
+
+func TestResolveTestModel_SetReturnsOverride(t *testing.T) {
+	t.Setenv("SANDMAN_TEST_MODEL_OPENCODE", "opencode/some-other-model")
+	if got := ResolveTestModel("opencode", "opencode/big-pickle"); got != "opencode/some-other-model" {
+		t.Fatalf("expected override, got %q", got)
+	}
+}
+
+func TestResolveTestModel_TrimsSurroundingWhitespace(t *testing.T) {
+	t.Setenv("SANDMAN_TEST_MODEL_PI", "   kilo/some-model  ")
+	if got := ResolveTestModel("pi", "kilo/kilo-auto/free"); got != "kilo/some-model" {
+		t.Fatalf("expected trimmed override, got %q", got)
+	}
+}
+
+func TestResolveTestModel_EmptyOverrideReturnsDefault(t *testing.T) {
+	t.Setenv("SANDMAN_TEST_MODEL_OPENCODE", "   ")
+	if got := ResolveTestModel("opencode", "opencode/big-pickle"); got != "opencode/big-pickle" {
+		t.Fatalf("expected default when override is whitespace, got %q", got)
+	}
+}
+
+func TestResolveTestModel_AgentScoped(t *testing.T) {
+	t.Setenv("SANDMAN_TEST_MODEL_OPENCODE", "opencode/x")
+	if got := ResolveTestModel("pi", "kilo/kilo-auto/free"); got != "kilo/kilo-auto/free" {
+		t.Fatalf("expected pi default unaffected by opencode env, got %q", got)
+	}
+}

@@ -103,6 +103,17 @@ SANDMAN_E2E_GATES=all go test ./...
 
 `SANDMAN_TEST_PROVIDERS` and `SANDMAN_E2E_GATES` accept a comma list, `all`, or `*`.
 
+Override the model the smoke and e2e tests target per agent with
+`SANDMAN_TEST_MODEL_<AGENT>` (one var per supported agent, e.g.
+`SANDMAN_TEST_MODEL_OPENCODE`, `SANDMAN_TEST_MODEL_PI`). When unset, the
+literal model baked into the test cases is used.
+
+```bash
+SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
+  SANDMAN_TEST_MODEL_PI=kilo/kilo-auto/free \
+  SANDMAN_TEST_PROVIDERS=opencode,pi go test -tags smoke ./internal/cmd -run Smoke
+```
+
 Pi smoke/e2e require `pi-free` installed in active Pi setup.
 
 ## License
