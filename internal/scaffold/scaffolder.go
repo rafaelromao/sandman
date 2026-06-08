@@ -71,8 +71,8 @@ var KnownAgents = func() []string {
 }()
 
 // sharedPackages is the baseline apt package set installed for every
-// BuildToolsPreset. The 5 entries of builtInBuildToolsPresets all reference
-// this slice; do not mutate it in place or the change will leak across presets.
+// BuildToolsPreset. All entries of builtInBuildToolsPresets reference this
+// slice; do not mutate it in place or the change will leak across presets.
 var sharedPackages = []string{
 	"bash",
 	"build-essential",
