@@ -1,9 +1,9 @@
 ---
-name: sandman-continuation
-description: Writes Sandman continuation context before exit so the next run can resume cleanly. Use when user says sandman continuation, needs handoff state, or wants the continuation-context step from Sandman's default prompt.
+name: sandman-handoff
+description: Writes Sandman handoff context before exit so the next run can resume cleanly. Use when user says sandman handoff, needs handoff state, or wants the handoff step from Sandman's default prompt.
 ---
 
-# Continuation
+# Handoff
 
 ## Goal
 
@@ -12,6 +12,7 @@ Write `.sandman/continuation-context.md` in the current worktree before exiting.
 ## Template
 
 ```markdown
+## Stage: <name>
 ## Completed
 (what was implemented, committed, or merged)
 

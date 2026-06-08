@@ -1,6 +1,6 @@
 ---
 name: sandman
-description: Routes to Sandman modes for issue implementation, test-driven development, review, PR review, merge, PR merge, and continuation workflows. Use when user mentions sandman or asks for implement, tdd, review, pr-review, merge, pr-merge, or continuation modes.
+description: Routes to Sandman modes for issue implementation, test-driven development, review, PR review, merge, PR merge, and handoff workflows. Use when user mentions sandman or asks for implement, tdd, review, pr-review, merge, pr-merge, or handoff modes.
 ---
 
 # Sandman
@@ -16,7 +16,7 @@ sandman review
 sandman pr-review
 sandman merge
 sandman pr-merge
-sandman continuation
+sandman handoff
 ```
 
 ## Modes
@@ -27,7 +27,7 @@ sandman continuation
 - `pr-review` -> `sandman-pr-review`
 - `merge` -> `sandman-merge`
 - `pr-merge` -> `sandman-pr-merge`
-- `continuation` -> `sandman-continuation`
+- `handoff` -> `sandman-handoff`
 
 ## Use
 
