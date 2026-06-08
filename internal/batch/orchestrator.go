@@ -119,15 +119,17 @@ type Orchestrator struct {
 	sandboxFactory          SandboxFactory
 	containerRuntimeFactory ContainerRuntimeFactory
 	// heartbeatTickInterval overrides the default 30s heartbeat tick for tests.
-	// Zero means use the default tick interval. Candidate for the same
-	// test-only-options treatment in a future slice.
+	// Zero means use the default tick interval.
 	heartbeatTickInterval time.Duration
 	errorLog              io.Writer
 
 	// runSessionOpts bundles the test-injection hooks consumed by
-	// runSession. Production code never sets any of these fields; tests
-	// in this package populate them via the runSession (and its
-	// constructor helpers) to drive injected behaviour.
+	// runSession (the function overrides and the test-tunable killTimeout)
+	// together with the shared baseBranchSyncMu mutex that gates
+	// syncBaseBranch. Production code leaves the function and timeout
+	// fields at their zero values; NewOrchestrator initialises the mutex.
+	// Tests in this package set fields on this struct directly to drive
+	// injected behaviour.
 	runSessionOpts runSessionOptions
 
 	issueCancelsMu sync.Mutex
@@ -1153,13 +1155,18 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
-// runSessionOptions bundles the test-injection hooks consumed by runSession.
-// These exist only so tests in this package can override behaviour that
-// would otherwise touch the network, run real git, or sleep for the
-// production timeout. Production code never sets any field; zero values
-// preserve the default behaviour. The baseBranchSyncMu pointer is shared
-// across all sessions that flow from a single Orchestrator so that calls
-// to syncBaseBranch serialise on the same mutex.
+// runSessionOptions bundles the test-injection hooks consumed by runSession
+// (the function overrides and the test-tunable killTimeout) together with
+// the shared baseBranchSyncMu mutex that gates syncBaseBranch. The function
+// and timeout fields exist only so tests in this package can override
+// behaviour that would otherwise touch the network, run real git, or sleep
+// for the production timeout; production code leaves them at their zero
+// values. The baseBranchSyncMu pointer is initialised once per Orchestrator
+// in NewOrchestrator and shared across all sessions via this struct's value
+// copy at construction time, so that concurrent calls to syncBaseBranch
+// serialise on the same mutex. If baseBranchSyncMu is ever converted from a
+// pointer to a value type, update runSingle / runPromptOnlySingle to share
+// it explicitly — otherwise serialisation will silently break.
 type runSessionOptions struct {
 	baseBranchSync   func(repoPath, sourceBranch string) error
 	baseBranchSyncMu *sync.Mutex
@@ -1854,10 +1861,12 @@ func (o *Orchestrator) syncBaseBranch(repoPath, baseBranch string) error {
 	if baseBranch == "" {
 		return nil
 	}
-	if mu := o.runSessionOpts.baseBranchSyncMu; mu != nil {
-		mu.Lock()
-		defer mu.Unlock()
+	mu := o.runSessionOpts.baseBranchSyncMu
+	if mu == nil {
+		return nil
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	syncFn := o.runSessionOpts.baseBranchSync
 	if syncFn == nil {
 		if o.sandboxFactory != nil {
