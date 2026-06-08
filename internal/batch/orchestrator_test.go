@@ -7158,3 +7158,20 @@ func TestRunSession_ApplyForceAndIdentity_PropagatesForceFalse(t *testing.T) {
 		t.Error("expected SetForce(false) to forward the force value")
 	}
 }
+
+func TestOrchestrator_ResetRetryBranch_Command(t *testing.T) {
+	ctx := context.Background()
+	sb := &fakeSandbox{}
+	o := &Orchestrator{errorLog: io.Discard}
+
+	err := o.resetRetryBranch(ctx, sb, "sandman/42-fix-bug", "main")
+	if err != nil {
+		t.Fatalf("resetRetryBranch returned error: %v", err)
+	}
+
+	expected := fmt.Sprintf("git reset --hard && git checkout -B --force %s %s && git clean -fd",
+		shellQuote("sandman/42-fix-bug"), shellQuote("main"))
+	if sb.execCommand != expected {
+		t.Errorf("expected exec command %q, got %q", expected, sb.execCommand)
+	}
+}
