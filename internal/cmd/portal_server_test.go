@@ -167,7 +167,7 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestPortal_LoadPortalRunsTreatsAbortedAsTerminalAborted(t *testing.T) {
 		{Type: "run.aborted", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-fix"}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestPortal_LoadPortalRunsTreatsAbortedEventAsAbortedRegardlessOfPayloadStat
 		{Type: "run.aborted", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestPortal_LoadPortalRuns_ShowsQueuedIssuesFromEvents(t *testing.T) {
 		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-3", Issue: 3, Payload: map[string]any{}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -1625,7 +1625,7 @@ func TestLoadPortalRuns_DedupsBlockedAndQueuedRows(t *testing.T) {
 		{Type: "run.blocked", Timestamp: batchStartedAt.Add(2 * time.Minute), RunID: "blocked-run", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -1665,7 +1665,7 @@ func TestLoadPortalRuns_DedupsActiveBatchAndQueuedEvent(t *testing.T) {
 		{Type: "run.queued", Timestamp: batchStartedAt.Add(30 * time.Second), RunID: "queued-run-7", Issue: 7, Payload: map[string]any{}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -1703,7 +1703,7 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 		{Type: "run.blocked", Timestamp: batchStartedAt.Add(-3 * time.Minute), RunID: "blocked-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -1768,7 +1768,7 @@ func TestPortal_KeepsCompletedRunsThatStartAfterAnOlderActiveBatch(t *testing.T)
 		{Type: "run.finished", Timestamp: completedFinishedAt, RunID: "run-558-1", Issue: 558, Payload: map[string]any{"status": "failure", "branch": "sandman/558-fix"}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -1912,7 +1912,7 @@ func TestPortalRunFromActiveBatchIssue_AbortedRunHasAbortedByOperatorLog(t *test
 		},
 	}
 
-	run := portalRunFromActiveBatchIssue(repoRoot, active, 42, state, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, "", nil)
 
 	if run.Status != "aborted" {
 		t.Fatalf("expected status 'aborted', got %q", run.Status)
@@ -1931,7 +1931,7 @@ func TestDedupPortalRunGroup_AbortedWinsOverActiveBlockedQueued(t *testing.T) {
 		{Key: "aborted-row", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base},
 	}
 
-	result := dedupPortalRunGroup(group)
+	result := (&portalRunsView{}).dedupRunGroup(group)
 
 	if len(result) != 1 {
 		t.Fatalf("expected aborted to win and return 1 row, got %d: %#v", len(result), result)
@@ -1951,7 +1951,7 @@ func TestDedupPortalRunGroup_TieBrokenByLatestStartedAt(t *testing.T) {
 		{Key: "aborted-later", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base.Add(5 * time.Minute)},
 	}
 
-	result := dedupPortalRunGroup(group)
+	result := (&portalRunsView{}).dedupRunGroup(group)
 
 	if len(result) != 1 {
 		t.Fatalf("expected single row, got %d: %#v", len(result), result)
@@ -1968,7 +1968,7 @@ func TestDedupPortalRunGroup_AllZeroPriorityRowsAreUntouched(t *testing.T) {
 		{Key: "failure-row", Kind: "completed", Status: "failure", IssueNumber: 42, StartedAt: base.Add(1 * time.Minute)},
 	}
 
-	result := dedupPortalRunGroup(group)
+	result := (&portalRunsView{}).dedupRunGroup(group)
 
 	if len(result) != 2 {
 		t.Fatalf("expected succeeded and failure rows to be untouched (2 rows), got %d: %#v", len(result), result)
@@ -2009,7 +2009,7 @@ func TestPortal_ActiveRowSurvivesOlderAbortedAtNearSameTime(t *testing.T) {
 		{Type: "run.aborted", Timestamp: newBatchStart.Add(-300 * time.Millisecond), RunID: "older-run-42", Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-old"}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -2052,7 +2052,7 @@ func TestPortal_QueuedThenSuccessShowsSuccessAfterBatchEnds(t *testing.T) {
 		{Type: "run.finished", Timestamp: batchStartedAt.Add(8 * time.Minute), RunID: "started-run-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -2110,7 +2110,7 @@ func TestPortal_QueuedAndBlockedAgentRunDedupsToBlocked(t *testing.T) {
 		{Type: "run.blocked", Timestamp: historicalStart.Add(2 * time.Minute), RunID: "blocked-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{77}}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -2166,7 +2166,7 @@ func TestPortal_CurrentActiveSurvivesOlderAbortedFromAnotherBatch(t *testing.T) 
 		{Type: "run.aborted", Timestamp: olderBatchStart.Add(2 * time.Minute), RunID: "older-run-42", Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-old"}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -2212,7 +2212,7 @@ func TestPortal_GenuinelyQueuedRunStaysQueued(t *testing.T) {
 		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-only-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
@@ -2248,7 +2248,7 @@ func TestPortal_QueuedThenFailureShowsFailureAfterBatchEnds(t *testing.T) {
 		{Type: "run.finished", Timestamp: batchStartedAt.Add(8 * time.Minute), RunID: "started-run-42", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
 	})
 
-	runs, err := loadPortalRuns(repoRoot)
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
