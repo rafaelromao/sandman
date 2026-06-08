@@ -1184,11 +1184,8 @@ type runSession struct {
 	dangerouslySkipPermissions bool
 }
 
-// applyForceAndIdentity applies the session's force flag and resolved git
-// identity to the given sandbox. On identity resolution failure it returns
-// (errResult, false) so the caller can short-circuit. Issue-driven sessions
-// receive a populated Issue/IssueNumber; prompt-only (issueNumber == 0) does
-// not, matching the existing error-path convention.
+// applyForceAndIdentity applies s.force and the resolved git identity to wt.
+// On identity failure returns (_, false) so the caller can short-circuit.
 func (s *runSession) applyForceAndIdentity(wt sandbox.Sandbox, branch string) (AgentRunResult, bool) {
 	o := s.o
 	if setter, ok := wt.(interface{ SetForce(bool) }); ok {
@@ -1211,11 +1208,7 @@ func (s *runSession) applyForceAndIdentity(wt sandbox.Sandbox, branch string) (A
 }
 
 // withHeartbeat runs fn under the run-idle-timeout watchdog when
-// s.runIdleTimeout > 0. The watchdog emits a run.idle_timeout event and kills
-// the process via wt.Process(); any non-success result is rewritten to
-// "aborted". When s.runIdleTimeout <= 0, fn is called directly.
-//
-// attempt is 0-indexed; the run.idle_timeout event payload records attempt+1.
+// s.runIdleTimeout > 0; any non-success result is rewritten to "aborted".
 func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt int, logPath string, wt sandbox.Sandbox, fn func() AgentRunResult) AgentRunResult {
 	o := s.o
 	if s.runIdleTimeout <= 0 {
@@ -1268,16 +1261,15 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 	return result
 }
 
-// emitTerminal writes the terminal run event (run.finished or run.aborted) to
-// the event log. For prompt-only (issueNumber == 0) IssueRef is left nil to
-// match the existing event payload convention. worktree_state is always
-// "preserved". No-op when the orchestrator has no event log.
-func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult) {
+// emitTerminal writes the terminal run event (run.finished or run.aborted) and
+// returns the normalised status so the caller can use it without recomputing.
+// No-op when the orchestrator has no event log.
+func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult) string {
 	o := s.o
-	if o.eventLog == nil {
-		return
-	}
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	if o.eventLog == nil {
+		return terminalStatus
+	}
 	retriesDone := result.RetriesTotal - 1
 	if retriesDone < 0 {
 		retriesDone = 0
@@ -1300,18 +1292,12 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 		event.IssueRef = issueRef(s.issueNumber)
 	}
 	_ = o.eventLog.Log(event)
+	return terminalStatus
 }
 
-// runOnce runs the retry loop for a session. Each iteration calls
-// prepareAttempt to (re)build the per-attempt render config and optionally
-// short-circuit with an error result. The runnable is built from the factory,
-// configured with the session's agent fields, and run under withHeartbeat.
-//
-// requireMergedPR controls the success path: true means an attempt succeeds
-// when status=="success" OR parseLogForCompletion matches, AND the branch's PR
-// is merged; false means an attempt succeeds on status=="success" alone.
-//
-// prepareAttempt returns (cfg, nil) to continue or (_, &errResult) to abort.
+// runOnce runs the retry loop for a session. mergeRequired gates the
+// issue-driven flavour's extra parseLogForCompletion + checkPRMerged checks;
+// prepareAttempt returns (_, &errResult) to short-circuit.
 func (s *runSession) runOnce(
 	ctx context.Context,
 	issue *github.Issue,
@@ -1319,8 +1305,8 @@ func (s *runSession) runOnce(
 	wt sandbox.Sandbox,
 	logPath string,
 	runID string,
-	requireMergedPR bool,
-	prepareAttempt func(attempt int, prevResult AgentRunResult) (prompt.RenderConfig, *AgentRunResult),
+	mergeRequired bool,
+	prepareAttempt func(attempt int) (prompt.RenderConfig, *AgentRunResult),
 ) (AgentRunResult, bool) {
 	o := s.o
 	if s.renderCfg.PromptFile == "" {
@@ -1339,7 +1325,7 @@ func (s *runSession) runOnce(
 	}
 
 	for attempt := 0; attempt < attempts; attempt++ {
-		attemptRenderCfg, errResult := prepareAttempt(attempt, result)
+		attemptRenderCfg, errResult := prepareAttempt(attempt)
 		if errResult != nil {
 			return *errResult, false
 		}
@@ -1369,11 +1355,11 @@ func (s *runSession) runOnce(
 		result.RetriesTotal = attempt + 1
 
 		success := result.Status == "success"
-		if requireMergedPR {
+		if mergeRequired {
 			success = success || parseLogForCompletion(logPath)
 		}
 		if success {
-			if requireMergedPR && !checkPRMerged(o.githubClient, branch) {
+			if mergeRequired && !checkPRMerged(o.githubClient, branch) {
 				result.Status = "failure"
 				continue
 			}
@@ -1567,7 +1553,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%d.log", s.issueNumber))
-	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, true, func(attempt int, prevResult AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
+	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, true, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
@@ -1614,10 +1600,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return result, false
 	}
 
-	_, terminalStatus := terminalRunEvent(ctx, result.Status)
-	result.Status = terminalStatus
-
-	s.emitTerminal(ctx, runID, result)
+	result.Status = s.emitTerminal(ctx, runID, result)
 
 	return result, true
 }
@@ -1660,8 +1643,6 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 }
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (*Result, error) {
-	_ = startDelay
-	_ = parallel
 	branch := promptOnlyBranch(req.PromptConfig)
 	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, resolveGitIdentity, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Force, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions)
 	if !started {
@@ -1785,7 +1766,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 
 	logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
-	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int, prevResult AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
+	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
 			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
 				fmt.Fprintf(o.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
@@ -1807,10 +1788,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		return result, false
 	}
 
-	_, terminalStatus := terminalRunEvent(ctx, result.Status)
-	result.Status = terminalStatus
-
-	s.emitTerminal(ctx, runID, result)
+	result.Status = s.emitTerminal(ctx, runID, result)
 
 	return result, true
 }
