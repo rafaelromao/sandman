@@ -1,22 +1,18 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -356,67 +352,10 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		launchDataJSON, err := json.Marshal(struct {
-			Agent             string `json:"agent"`
-			Model             string `json:"model"`
-			BaseBranch        string `json:"baseBranch"`
-			Sandbox           string `json:"sandbox"`
-			Parallel          int    `json:"parallel"`
-			StartDelay        int    `json:"startDelay"`
-			ContainerCapacity int    `json:"containerCapacity"`
-			MaxContainers     int    `json:"maxContainers"`
-			Ralph             int    `json:"ralph"`
-		}{
-			Agent:             launchData.Agent,
-			Model:             launchData.Model,
-			BaseBranch:        launchData.BaseBranch,
-			Sandbox:           launchData.Sandbox,
-			Parallel:          launchData.Parallel,
-			StartDelay:        launchData.StartDelay,
-			ContainerCapacity: launchData.ContainerCapacity,
-			MaxContainers:     launchData.MaxContainers,
-			Ralph:             launchData.Ralph,
-		})
+		data, err := buildPortalPageData(repoRoot, launchData)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
-		}
-		data := struct {
-			RepoRoot              string
-			PollInterval          int
-			CommandsPath          string
-			RunsPath              string
-			InstancesPath         string
-			RefreshPath           string
-			PortalTitle           string
-			PortalSubtitle        string
-			PortalStateStorageKey string
-			LaunchData            portalLaunchFormData
-			LaunchDataJSON        template.JS
-			ThemeOptionsHTML      template.HTML
-			SupportedThemesJSON   template.JS
-			PortalStateJS         template.JS
-			PortalScrollJS        template.JS
-			PortalDiffJS          template.JS
-			PortalAbortSupported  bool
-		}{
-			RepoRoot:              repoRoot,
-			PollInterval:          int(portalPollInterval / time.Millisecond),
-			CommandsPath:          "/api/commands",
-			RunsPath:              "/api/runs",
-			InstancesPath:         "/api/instances",
-			RefreshPath:           "/api/runs",
-			PortalTitle:           "Sandman Portal",
-			PortalSubtitle:        "A control room for your Sandman runs.",
-			PortalStateStorageKey: fmt.Sprintf("sandman.portal.view-state.v1:%s", repoRoot),
-			LaunchData:            launchData,
-			LaunchDataJSON:        template.JS(launchDataJSON),
-			ThemeOptionsHTML:      portalThemeOptionsHTML,
-			SupportedThemesJSON:   portalSupportedThemesJSON,
-			PortalStateJS:         portalStateJS,
-			PortalScrollJS:        portalScrollJS,
-			PortalDiffJS:          portalDiffJS,
-			PortalAbortSupported:  portalAbortSupported(),
 		}
 		if err := portalPageTemplate.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -502,7 +441,9 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 }
 
 func portalRunForKey(repoRoot, runKey string) (portalRun, error) {
-	runs, err := loadPortalRuns(repoRoot)
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
+	view := &portalRunsView{}
+	runs, err := view.compute(repoRoot, eventLog)
 	if err != nil {
 		return portalRun{}, err
 	}
@@ -569,205 +510,4 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 		return strings.Compare(instances[i].Name, instances[j].Name) < 0
 	})
 	return instances, nil
-}
-
-func loadPortalRuns(repoRoot string) ([]portalRun, error) {
-	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
-	view := &portalRunsView{}
-	return view.compute(repoRoot, eventLog)
-}
-
-func dedupPortalRunGroup(runs []portalRun) []portalRun {
-	view := &portalRunsView{}
-	return view.dedupRunGroup(runs)
-}
-
-func portalRunFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, liveOutput string, eventsByRun map[string][]portalEvent) portalRun {
-	view := &portalRunsView{}
-	return view.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, liveOutput, eventsByRun)
-}
-
-func kindForRun(runState events.RunState) string {
-	if runState.IsActive() {
-		return "active"
-	}
-	return "completed"
-}
-
-func statusOrDefault(status string, active bool) string {
-	status = strings.TrimSpace(status)
-	if active {
-		return "active"
-	}
-	if status == "" {
-		return "completed"
-	}
-	return status
-}
-
-func durationForRun(runState events.RunState) string {
-	if runState.IsActive() {
-		return time.Since(runState.Started.Timestamp).Round(time.Second).String()
-	}
-	return runState.Duration().String()
-}
-
-func portalLogPath(repoRoot string, issueNumber int, branch string) string {
-	logDir := filepath.Join(repoRoot, ".sandman", "logs")
-	if issueNumber > 0 {
-		return filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))
-	}
-	branch = strings.TrimSpace(branch)
-	if branch == "" {
-		return ""
-	}
-	return filepath.Join(logDir, sanitizePortalFilename(branch)+".log")
-}
-
-func sanitizePortalFilename(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(value)
-	if value == "" {
-		return "prompt-only"
-	}
-	return value
-}
-
-func portalLogDownloadURL(repoRoot string, issueNumber int, branch string) string {
-	logPath := portalLogPath(repoRoot, issueNumber, branch)
-	if logPath == "" {
-		return ""
-	}
-	relPath, err := filepath.Rel(repoRoot, logPath)
-	if err != nil {
-		return ""
-	}
-	return "/api/logs?path=" + url.QueryEscape(relPath)
-}
-
-func filterPortalIssueOutput(text string, issueNumber int) string {
-	prefix := fmt.Sprintf("[issue-%d] ", issueNumber)
-	lines := strings.Split(text, "\n")
-	filtered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if strings.HasPrefix(line, prefix) {
-			filtered = append(filtered, line)
-		}
-	}
-	return strings.TrimSpace(strings.Join(filtered, "\n"))
-}
-
-func portalBlockedMessage(payload map[string]any) string {
-	blockers := portalBlockedByIssues(payload)
-	if len(blockers) == 0 {
-		return "Blocked. Waiting on unresolved blockers."
-	}
-	parts := make([]string, 0, len(blockers))
-	for _, blocker := range blockers {
-		parts = append(parts, fmt.Sprintf("#%d", blocker))
-	}
-	return fmt.Sprintf("Blocked by %s.", strings.Join(parts, ", "))
-}
-
-func portalBlockedByIssues(payload map[string]any) []int {
-	if payload == nil {
-		return nil
-	}
-	raw, ok := payload["blocked_by"]
-	if !ok {
-		return nil
-	}
-	switch values := raw.(type) {
-	case []int:
-		return append([]int(nil), values...)
-	case []any:
-		issues := make([]int, 0, len(values))
-		for _, value := range values {
-			switch n := value.(type) {
-			case float64:
-				issues = append(issues, int(n))
-			case int:
-				issues = append(issues, n)
-			}
-		}
-		return issues
-	default:
-		return nil
-	}
-}
-
-func readPortalTextFile(path string) string {
-	if path == "" {
-		return ""
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	if len(data) > portalReadLimit {
-		tail := data[len(data)-portalReadLimit:]
-		return cleanPortalText("[truncated]\n" + string(tail))
-	}
-	return cleanPortalText(string(data))
-}
-
-func readPortalSocketOutput(sockPath string) string {
-	conn, err := net.DialTimeout("unix", sockPath, portalReadTimeout)
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(portalReadTimeout))
-
-	var buf bytes.Buffer
-	tmp := make([]byte, 4096)
-	for {
-		n, readErr := conn.Read(tmp)
-		if n > 0 {
-			_, _ = buf.Write(tmp[:n])
-		}
-		if readErr != nil {
-			if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
-				break
-			}
-			break
-		}
-	}
-	if buf.Len() > portalReadLimit {
-		data := buf.Bytes()
-		buf = *bytes.NewBuffer(append([]byte(nil), data[len(data)-portalReadLimit:]...))
-	}
-	return cleanPortalText(buf.String())
-}
-
-func cleanPortalText(text string) string {
-	text = portalANSISequence.ReplaceAllString(text, "")
-	text = strings.Map(func(r rune) rune {
-		switch r {
-		case '\n', '\t':
-			return r
-		case '\r':
-			return -1
-		}
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, text)
-	return text
-}
-
-func parseRunDirIssue(name string) (int, bool) {
-	if !strings.HasPrefix(name, "run-") {
-		return 0, false
-	}
-	parts := strings.Split(strings.TrimPrefix(name, "run-"), "-")
-	if len(parts) < 2 {
-		return 0, false
-	}
-	n, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, false
-	}
-	return n, true
 }

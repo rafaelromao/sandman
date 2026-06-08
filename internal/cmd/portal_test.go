@@ -46,7 +46,7 @@ func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
 	}()
 
 	time.Sleep(50 * time.Millisecond)
-	output := readPortalSocketOutput(sockPath)
+	output := (&portalRunsView{}).readPortalSocketOutput(sockPath)
 
 	if len(output) != portalReadLimit {
 		t.Fatalf("expected output length %d, got %d", portalReadLimit, len(output))
