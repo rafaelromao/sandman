@@ -64,12 +64,17 @@ func CleanupStaleRunSnapshots(baseDir string) (int, error) {
 	return removed, nil
 }
 
+// BatchManifest records the issues included in a batch run and when the
+// batch was started. It is persisted to disk via WriteManifest and read
+// back via ReadManifest so other sandman commands (status, portal) can
+// inspect a live or completed run.
 type BatchManifest struct {
 	Issues    []int     `json:"issues"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
 // RunDir returns a unique run directory path under baseDir/runs/.
+// The directory itself is not created; callers decide when to mkdir.
 func RunDir(baseDir string, issues []int) string {
 	id := fmt.Sprintf("run-%d", time.Now().UnixNano())
 	if len(issues) > 0 {
@@ -78,10 +83,14 @@ func RunDir(baseDir string, issues []int) string {
 	return filepath.Join(baseDir, "runs", id)
 }
 
+// ManifestPath returns the on-disk path of the batch manifest file
+// within a run directory.
 func ManifestPath(runDir string) string {
 	return filepath.Join(runDir, "batch.json")
 }
 
+// WriteManifest serialises a BatchManifest as JSON and writes it to
+// ManifestPath(runDir). The file is created with mode 0644.
 func WriteManifest(runDir string, manifest BatchManifest) error {
 	data, err := json.Marshal(manifest)
 	if err != nil {
@@ -93,6 +102,8 @@ func WriteManifest(runDir string, manifest BatchManifest) error {
 	return nil
 }
 
+// ReadManifest decodes the batch manifest stored at ManifestPath(runDir).
+// The returned BatchManifest is the zero value if the file does not exist.
 func ReadManifest(runDir string) (BatchManifest, error) {
 	data, err := os.ReadFile(ManifestPath(runDir))
 	if err != nil {
