@@ -56,6 +56,15 @@ func NewInitCmd() *cobra.Command {
 			defaultAgent, _ := cmd.Flags().GetString("default-agent")
 			reviewCommand, _ := cmd.Flags().GetString("review-command")
 
+			retriesOverride, err := resolveInitInt(cmd, "retries")
+			if err != nil {
+				return err
+			}
+			runIdleTimeoutOverride, err := resolveInitInt(cmd, "run-idle-timeout")
+			if err != nil {
+				return err
+			}
+
 			if toolVersion == "" {
 				toolVersion = "repo"
 			}
@@ -72,10 +81,12 @@ func NewInitCmd() *cobra.Command {
 			}
 
 			if err := s.Scaffold(wd, scaffold.Options{
-				BuildTools:    buildTools,
-				ToolVersion:   toolVersion,
-				DefaultAgent:  defaultAgent,
-				ReviewCommand: reviewCommand,
+				BuildTools:     buildTools,
+				ToolVersion:    toolVersion,
+				DefaultAgent:   defaultAgent,
+				ReviewCommand:  reviewCommand,
+				Retries:        retriesOverride,
+				RunIdleTimeout: runIdleTimeoutOverride,
 			}, prompter); err != nil {
 				return err
 			}
@@ -98,6 +109,26 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().String("tool-version", "", "Logical version selector (repo, latest, lts, or semver shorthand)")
 	cmd.Flags().String("default-agent", "", "Default built-in agent preset (opencode or pi)")
 	cmd.Flags().String("review-command", "", "Review command to store in config and install into shared skills")
+	cmd.Flags().Int("retries", -1, fmt.Sprintf("Persist `retries` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRetries))
+	cmd.Flags().Int("run-idle-timeout", -1, fmt.Sprintf("Persist `run_idle_timeout` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRunIdleTimeout))
 
 	return cmd
+}
+
+// resolveInitInt reads an `init` int flag and returns nil when unset or set to
+// the sentinel `-1`, a pointer to the user-supplied value when `>= 0`, or an
+// error when the flag value is `< -1` (invalid).
+func resolveInitInt(cmd *cobra.Command, name string) (*int, error) {
+	flag := cmd.Flags().Lookup(name)
+	if flag == nil || !flag.Changed {
+		return nil, nil
+	}
+	value, _ := cmd.Flags().GetInt(name)
+	if value == -1 {
+		return nil, nil
+	}
+	if value < 0 {
+		return nil, fmt.Errorf("%s must be 0 or greater", strings.ReplaceAll(name, "-", "_"))
+	}
+	return &value, nil
 }

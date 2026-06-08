@@ -37,11 +37,13 @@ const piNodeVersion = "22.19.0"
 
 // Options configures the scaffolding behavior.
 type Options struct {
-	BuildTools    string // --build-tools override
-	ToolVersion   string // --tool-version override
-	DefaultAgent  string // --default-agent override
-	ReviewCommand string // --review-command override
-	Agent         string // legacy alias for tests
+	BuildTools     string // --build-tools override
+	ToolVersion    string // --tool-version override
+	DefaultAgent   string // --default-agent override
+	ReviewCommand  string // --review-command override
+	Agent          string // legacy alias for tests
+	Retries        *int   // --retries override; nil = use config.DefaultRetries
+	RunIdleTimeout *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
 }
 
 // BuildToolsPreset describes a scaffold-time recipe for the container image.
@@ -304,12 +306,23 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	}
 
+	retries, err := resolveRetries(opts.Retries)
+	if err != nil {
+		return err
+	}
+	runIdleTimeout, err := resolveRunIdleTimeout(opts.RunIdleTimeout)
+	if err != nil {
+		return err
+	}
+
 	cfg := &config.Config{
 		DefaultAgent:      defaultAgent,
 		BuildTools:        preset.Name,
 		ReviewCommand:     effectiveReviewCommand(opts.ReviewCommand),
 		DefaultParallel:   config.DefaultParallel,
 		StartDelay:        config.DefaultStartDelay,
+		RunIdleTimeout:    runIdleTimeout,
+		Retries:           retries,
 		ContainerCapacity: config.DefaultContainerCapacity,
 		MaxContainers:     config.DefaultMaxContainers,
 		WorktreeDir:       config.DefaultWorktreeDir,
@@ -350,6 +363,26 @@ func effectiveReviewCommand(value string) string {
 		return config.DefaultReviewCommand
 	}
 	return value
+}
+
+func resolveRetries(override *int) (int, error) {
+	if override == nil {
+		return config.DefaultRetries, nil
+	}
+	if *override < 0 {
+		return 0, fmt.Errorf("retries must be 0 or greater")
+	}
+	return *override, nil
+}
+
+func resolveRunIdleTimeout(override *int) (int, error) {
+	if override == nil {
+		return config.DefaultRunIdleTimeout, nil
+	}
+	if *override < 0 {
+		return 0, fmt.Errorf("run_idle_timeout must be 0 or greater")
+	}
+	return *override, nil
 }
 
 func (s *Scaffolder) resolveDefaultAgent(opts Options) (string, error) {
