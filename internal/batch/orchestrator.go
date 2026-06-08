@@ -1603,7 +1603,13 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 					attemptRenderCfg.HandoffPrompt = buildPRReviewHandoffPrompt(string(content))
 					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 				} else {
-					attemptRenderCfg.HandoffPrompt = buildRetryHandoffPrompt(string(content))
+					stage, contextWithoutStage := parseStage(string(content))
+					if stage != "" {
+						priorContext := strings.TrimSpace(stripHandoffHeader(contextWithoutStage))
+						attemptRenderCfg.HandoffPrompt = buildHandoffPrompt(priorContext, stage)
+					} else {
+						attemptRenderCfg.HandoffPrompt = buildRetryHandoffPrompt(string(content))
+					}
 					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 				}
 			} else {
