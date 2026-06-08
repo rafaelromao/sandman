@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -76,7 +77,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 				Sandbox: sandboxMode,
 				PromptConfig: prompt.RenderConfig{
 					PromptFlag: rendered,
-					Branch:     fmt.Sprintf("sandman/review-%d", pr.Number),
+					Branch:     fmt.Sprintf("sandman/review-%d-%d", pr.Number, time.Now().UnixNano()),
 				},
 			}); err != nil {
 				return fmt.Errorf("run review batch: %w", err)
