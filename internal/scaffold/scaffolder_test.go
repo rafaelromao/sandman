@@ -1283,7 +1283,7 @@ func TestResolveVersion_NodeResolver_PassThroughUnknownSelector(t *testing.T) {
 
 func TestResolveVersion_PythonResolver_Selectors(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".python-version"), []byte("3.12.9\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".python-version"), []byte("3.12\n"), 0644); err != nil {
 		t.Fatalf("write .python-version: %v", err)
 	}
 	prompter := &fakePrompter{confirm: true}
@@ -1349,7 +1349,7 @@ func TestResolveVersion_PythonResolver_EmptySelectorDefaultsToLatest(t *testing.
 
 func TestResolveVersion_PythonResolver_EmptySelectorDefaultsToRepoWithHint(t *testing.T) {
 	dir := t.TempDir()
-	hintSelector := "3.12.9"
+	hintSelector := "3.12"
 	if err := os.WriteFile(filepath.Join(dir, ".python-version"), []byte(hintSelector+"\n"), 0644); err != nil {
 		t.Fatalf("write .python-version: %v", err)
 	}
