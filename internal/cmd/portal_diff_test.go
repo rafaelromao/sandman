@@ -361,8 +361,8 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_AbortButtonsAllowedOnSharedSocketRows(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
-  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', issueNumber: 41, socketPath: '/tmp/sock' },
-  { key: 'b', kind: 'active', status: 'queued', issueLabel: 'B', runId: 'r2', issueNumber: 42, socketPath: '/tmp/sock' },
+  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', issueNumber: 41, socketPath: '/tmp/sock', batchKey: 'run-41-1' },
+  { key: 'b', kind: 'active', status: 'queued', issueLabel: 'B', runId: 'r2', issueNumber: 42, socketPath: '/tmp/sock', batchKey: 'run-42-1' },
 ];
 const abortReservations = new Set();
 const opts = { helpers, abortReservations, expandedKey: null };
@@ -409,7 +409,7 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_StopButtonsHiddenWhenPlatformUnsupported(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
-  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', socketPath: '/tmp/sock' },
+  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', socketPath: '/tmp/sock', batchKey: 'run-1' },
 ];
 const abortReservations = new Set();
 const opts = { helpers, abortReservations, abortSupported: false, expandedKey: null };
@@ -418,6 +418,43 @@ const aRow = body.children[0];
 const aBtn = aRow.querySelector('button[data-action="abort-run"]');
 if (aBtn) throw new Error('a should NOT have abort button when abortSupported is false');
 if (abortReservations.size !== 0) throw new Error('abortReservations should not be touched when abortSupported is false, got size ' + abortReservations.size);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffDiffRuns_AbortButtonHiddenForRowsFromFinishedBatch(t *testing.T) {
+	js := `const body = makeMockBody();
+const abortReservations = new Set();
+const activeRun = { key: 'run-42-1-issue-42', kind: 'active', status: 'active', issueLabel: '#42', runId: 'r1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: 'run-42-1' };
+const historicalBlocked = { key: 'run-old-1', kind: 'active', status: 'blocked', issueLabel: '#42', runId: 'r-old', issueNumber: 42, socketPath: '/tmp/sock', batchKey: '' };
+if (!helpers.isRunAbortable(activeRun, abortReservations)) throw new Error('active run with batchKey should be abortable');
+if (helpers.isRunAbortable(historicalBlocked, abortReservations)) throw new Error('historical blocked row with empty batchKey should NOT be abortable');
+
+const opts = { helpers, abortReservations, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, [activeRun, historicalBlocked], opts);
+const activeRow = body.children[0];
+const historicalRow = body.children[1];
+const activeBtn = activeRow.querySelector('button[data-action="abort-run"]');
+const historicalBtn = historicalRow.querySelector('button[data-action="abort-run"]');
+if (!activeBtn) throw new Error('active run should have abort button');
+if (historicalBtn) throw new Error('historical blocked row should NOT have abort button');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffDiffRuns_AbortButtonHiddenWhenRunDirSocketVanishes(t *testing.T) {
+	js := `const body = makeMockBody();
+const abortReservations = new Set();
+const deadDaemonRun = { key: 'run-42-1-issue-42', kind: 'active', status: 'active', issueLabel: '#42', runId: 'r1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: '' };
+if (helpers.isRunAbortable(deadDaemonRun, abortReservations)) throw new Error('run with empty batchKey (vanished socket) should NOT be abortable');
+
+const opts = { helpers, abortReservations, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, [deadDaemonRun], opts);
+const row = body.children[0];
+const btn = row.querySelector('button[data-action="abort-run"]');
+if (btn) throw new Error('run with vanished socket should NOT have abort button');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1103,7 +1140,7 @@ const renderTerminalContent = (text) => {
 const isRunAbortable = (run, abortReservations) => {
   if (!run || run.kind !== 'active') return false;
   if (run.status !== 'active' && run.status !== 'queued' && run.status !== 'blocked') return false;
-  if (!run.socketPath) return false;
+  if (!run.batchKey) return false;
   const reservationKey = run.key + ':' + String(run.issueNumber != null ? run.issueNumber : '');
   if (abortReservations && abortReservations.has && abortReservations.has(reservationKey)) return false;
   return true;

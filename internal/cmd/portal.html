@@ -2503,7 +2503,7 @@
     function isRunAbortable(run, abortReservations) {
       if (!run || run.kind !== 'active') return false;
       if (run.status !== 'active' && run.status !== 'queued' && run.status !== 'blocked') return false;
-      if (!run.socketPath) return false;
+      if (!run.batchKey) return false;
       const reservationKey = run.key + ':' + String(run.issueNumber != null ? run.issueNumber : '');
       if (abortReservations && abortReservations.has && abortReservations.has(reservationKey)) return false;
       return true;

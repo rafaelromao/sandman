@@ -572,6 +572,50 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 	})
 }
 
+func TestAbortPortalRun_RejectsRunFromFinishedBatch(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-abort-stale-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Close the listener and remove the socket to simulate a dead daemon.
+	_ = ln.Close()
+	_ = os.Remove(activeSock)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	err = abortPortalRun(context.Background(), repoRoot, "run-42-1", 42)
+	var abortErr *portalAbortError
+	if !errors.As(err, &abortErr) {
+		t.Fatalf("expected portalAbortError, got %v", err)
+	}
+	if abortErr.status != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", abortErr.status, abortErr.message)
+	}
+	if strings.TrimSpace(abortErr.message) == "" {
+		t.Fatal("expected non-empty message")
+	}
+}
+
 func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
