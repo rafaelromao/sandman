@@ -18,6 +18,7 @@ const (
 	DefaultParallel          = 4
 	DefaultStartDelay        = 0
 	DefaultRunIdleTimeout    = 1800
+	DefaultRetries           = 3
 	DefaultContainerCapacity = 4
 	DefaultMaxContainers     = 0
 	DefaultWorktreeDir       = ".sandman/worktrees"
@@ -194,7 +195,7 @@ func Load(path string) (*Config, error) {
 		DefaultParallel   int              `yaml:"parallel"`
 		StartDelay        int              `yaml:"start_delay"`
 		RunIdleTimeout    *int             `yaml:"run_idle_timeout"`
-		Retries           int              `yaml:"retries"`
+		Retries           *int             `yaml:"retries"`
 		ContainerCapacity *int             `yaml:"container_capacity"`
 		MaxContainers     *int             `yaml:"max_containers"`
 		WorktreeDir       string           `yaml:"worktree_dir"`
@@ -218,7 +219,6 @@ func Load(path string) (*Config, error) {
 		ReviewCommand:   raw.ReviewCommand,
 		DefaultParallel: raw.DefaultParallel,
 		StartDelay:      raw.StartDelay,
-		Retries:         raw.Retries,
 		WorktreeDir:     raw.WorktreeDir,
 		Sandbox:         raw.Sandbox,
 		Agents:          raw.Agents,
@@ -242,8 +242,12 @@ func Load(path string) (*Config, error) {
 	} else {
 		cfg.RunIdleTimeout = *raw.RunIdleTimeout
 	}
-	if cfg.Retries < 0 {
+	if raw.Retries == nil {
+		cfg.Retries = DefaultRetries
+	} else if *raw.Retries < 0 {
 		return nil, fmt.Errorf("validate config: retries must be 0 or greater")
+	} else {
+		cfg.Retries = *raw.Retries
 	}
 	if cfg.BuildTools == "" {
 		cfg.BuildTools = DefaultBuildToolsPreset

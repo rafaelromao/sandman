@@ -27,6 +27,12 @@ parallel: 4
 # Default: 1800 (30 minutes).
 run_idle_timeout: 1800
 
+# Number of times to retry a failed AgentRun before recording it as failed.
+# 0 disables retries. `sandman run --ralph` silently sets this to 3 for the
+# invocation if you do not pass `--retries` on the CLI.
+# Default: 3.
+retries: 3
+
 # Maximum concurrent agent runs per ContainerSandbox.
 # 0 means unlimited (no per-container cap; any number of runs may execute concurrently inside one container).
 container_capacity: 4

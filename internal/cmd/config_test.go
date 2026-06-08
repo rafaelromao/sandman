@@ -209,7 +209,7 @@ git:
 		"parallel: 3",
 		"start_delay: 5",
 		"run_idle_timeout: 1800",
-		"retries: 0",
+		"retries: 3",
 		"container_capacity: 7",
 		"max_containers: 2",
 		"worktree_dir: /tmp/wt",

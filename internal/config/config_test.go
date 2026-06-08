@@ -468,8 +468,8 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	if cfg.ReviewCommand != "/oc review" {
 		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/oc review")
 	}
-	if cfg.Retries != 0 {
-		t.Errorf("retries: got %d, want %d", cfg.Retries, 0)
+	if cfg.Retries != DefaultRetries {
+		t.Errorf("retries: got %d, want %d", cfg.Retries, DefaultRetries)
 	}
 }
 
@@ -517,6 +517,48 @@ func TestLoad_MissingRunIdleTimeout_AppliesDefault(t *testing.T) {
 	}
 	if DefaultRunIdleTimeout != 1800 {
 		t.Errorf("DefaultRunIdleTimeout: got %d, want 1800", DefaultRunIdleTimeout)
+	}
+}
+
+func TestLoad_MissingRetries_AppliesDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `default_agent: opencode
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Retries != DefaultRetries {
+		t.Errorf("retries: got %d, want %d", cfg.Retries, DefaultRetries)
+	}
+	if DefaultRetries != 3 {
+		t.Errorf("DefaultRetries: got %d, want 3", DefaultRetries)
+	}
+}
+
+func TestLoad_RetriesZeroIsAccepted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `default_agent: opencode
+retries: 0
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Retries != 0 {
+		t.Errorf("retries: got %d, want 0", cfg.Retries)
 	}
 }
 

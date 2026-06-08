@@ -547,3 +547,149 @@ func TestInit_ExistingDirectoryPrompts(t *testing.T) {
 		t.Fatal("expected error when declining overwrite")
 	}
 }
+
+func TestInit_RetriesFlagOverridesPersistedDefault(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantInYAML  string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:       "default persists 3",
+			args:       []string{"--build-tools", "generic"},
+			wantInYAML: "retries: 3",
+		},
+		{
+			name:       "explicit 5 persists 5",
+			args:       []string{"--build-tools", "generic", "--retries", "5"},
+			wantInYAML: "retries: 5",
+		},
+		{
+			name:       "explicit 0 persists 0",
+			args:       []string{"--build-tools", "generic", "--retries", "0"},
+			wantInYAML: "retries: 0",
+		},
+		{
+			name:       "sentinel -1 persists 3",
+			args:       []string{"--build-tools", "generic", "--retries", "-1"},
+			wantInYAML: "retries: 3",
+		},
+		{
+			name:        "below sentinel rejected",
+			args:        []string{"--build-tools", "generic", "--retries", "-2"},
+			wantErr:     true,
+			errContains: "retries",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+
+			var out bytes.Buffer
+			cmd := NewInitCmd()
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetIn(strings.NewReader(""))
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Fatalf("error should contain %q, got %v", tt.errContains, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+			if err != nil {
+				t.Fatalf("read config.yaml: %v", err)
+			}
+			if !strings.Contains(string(data), tt.wantInYAML) {
+				t.Fatalf("config.yaml missing %q, got:\n%s", tt.wantInYAML, data)
+			}
+		})
+	}
+}
+
+func TestInit_RunIdleTimeoutFlagOverridesPersistedDefault(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantInYAML  string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:       "default persists 1800",
+			args:       []string{"--build-tools", "generic"},
+			wantInYAML: "run_idle_timeout: 1800",
+		},
+		{
+			name:       "explicit 600 persists 600",
+			args:       []string{"--build-tools", "generic", "--run-idle-timeout", "600"},
+			wantInYAML: "run_idle_timeout: 600",
+		},
+		{
+			name:       "explicit 0 persists 0",
+			args:       []string{"--build-tools", "generic", "--run-idle-timeout", "0"},
+			wantInYAML: "run_idle_timeout: 0",
+		},
+		{
+			name:       "sentinel -1 persists 1800",
+			args:       []string{"--build-tools", "generic", "--run-idle-timeout", "-1"},
+			wantInYAML: "run_idle_timeout: 1800",
+		},
+		{
+			name:        "below sentinel rejected",
+			args:        []string{"--build-tools", "generic", "--run-idle-timeout", "-2"},
+			wantErr:     true,
+			errContains: "run_idle_timeout",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+
+			var out bytes.Buffer
+			cmd := NewInitCmd()
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetIn(strings.NewReader(""))
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Fatalf("error should contain %q, got %v", tt.errContains, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+			if err != nil {
+				t.Fatalf("read config.yaml: %v", err)
+			}
+			if !strings.Contains(string(data), tt.wantInYAML) {
+				t.Fatalf("config.yaml missing %q, got:\n%s", tt.wantInYAML, data)
+			}
+		})
+	}
+}

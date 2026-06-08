@@ -18,6 +18,8 @@ sandman init [flags]
 | `--model` | `""` | Default model for the agent |
 | `--parallel` | `-1` | Default parallel container count (`-1` = use config default 4) |
 | `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/oc review` |
+| `--retries` | `-1` | Persist `retries` in scaffolded config. `-1` keeps the built-in default of `3`; `0` disables retries |
+| `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `1800`; `0` disables the heartbeat watchdog |
 
 When `--tool-version` is omitted, `init` infers `repo` as the version selector, reading version hints from the repo when available. If flags are completely omitted and no repo hints are found, interactive prompts guide you through the choices.
 

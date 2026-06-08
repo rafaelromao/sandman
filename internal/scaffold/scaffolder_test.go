@@ -25,6 +25,27 @@ func (f *fakePrompter) Select(msg string, options []string) (string, error) {
 	return f.selected, f.selectErr
 }
 
+func TestScaffold_PersistsRuntimeDefaults(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "retries: 3") {
+		t.Errorf("scaffolded config missing %q, got:\n%s", "retries: 3", content)
+	}
+	if !strings.Contains(content, "run_idle_timeout: 1800") {
+		t.Errorf("scaffolded config missing %q, got:\n%s", "run_idle_timeout: 1800", content)
+	}
+}
+
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
 		t.Run(preset, func(t *testing.T) {
