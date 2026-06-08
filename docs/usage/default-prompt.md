@@ -61,16 +61,14 @@ The long workflow now lives in the shared Sandman skill. This page describes the
     - `sandman-review` for self-review.
     - `sandman-merge` before PR creation, with no rebase and no force-push.
     - `sandman-pr-review` for delegated PR review. Do not review the PR yourself. Use the configured review command and collect all top-level, review-summary, and inline feedback.
-    - `sandman-continuation` before exit.
     - `sandman-pr-merge` only if the PR is fully approved, required checks are green, and GitHub reports it mergeable.
 
     ## Required Order
 
     1. Run `sandman implement` and complete every required step in `sandman-implement` and all subskills it loads.
     2. For any plan-approval, confirmation, or satisfaction step, use subagent review and proceed after consensus. Do not ask the user.
-    3. Always load and run `sandman-continuation` before exiting, even if implementation, tests, CI, review, or merge failed.
-    4. If the delegated PR review completed with full approval and all merge gates are true, load and run `sandman-pr-merge`.
-    5. If any merge gate is false or ambiguous, do not merge. Leave the PR open and report blockers in the continuation context.
+    3. If the delegated PR review completed with full approval and all merge gates are true, load and run `sandman-pr-merge`.
+    4. If any merge gate is false or ambiguous, do not merge. Leave the PR open and report blockers in the handoff.
 
     ## Completion Requirements
 
@@ -80,7 +78,7 @@ The long workflow now lives in the shared Sandman skill. This page describes the
     - Whether each required skill checklist was completed.
     - Test/format commands run and outcomes.
     - PR URL and review status, if a PR was created.
-    - Whether `.sandman/continuation-context.md` was written.
+    - Whether `.sandman/handoff.md` was written.
     - Whether PR merge was performed or skipped, with reason.
 <!-- default-prompt:end -->
 
