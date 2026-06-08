@@ -1835,6 +1835,9 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 }
 
 func promptOnlyBranch(cfg prompt.RenderConfig) string {
+	if branch := strings.TrimSpace(cfg.Branch); branch != "" {
+		return branch
+	}
 	source := strings.TrimSpace(cfg.PromptFlag)
 	if source == "" && cfg.TemplateFlag != "" {
 		if data, err := os.ReadFile(cfg.TemplateFlag); err == nil {
