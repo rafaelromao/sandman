@@ -699,7 +699,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "") {
-		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newPromptOnlyIdentityResolver("."), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
+		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newBatchIdentityResolver(o, "."), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
 	}
 
 	startGate := newBatchStartGate(effectiveParallel, startDelay)
@@ -1231,22 +1231,18 @@ type runSession struct {
 // On identity failure returns (_, false) so the caller can short-circuit.
 func (s *runSession) applyForceAndIdentity(wt sandbox.Sandbox, branch string) (AgentRunResult, bool) {
 	o := s.o
-	if setter, ok := wt.(interface{ SetForce(bool) }); ok {
-		setter.SetForce(s.force)
-	}
-	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
-		identity, err := s.identityResolver.resolve()
-		if err != nil {
-			fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
-			result := AgentRunResult{Status: "failure", Branch: branch}
-			if s.issueNumber > 0 {
-				result.IssueNumber = s.issueNumber
-				result.Issue = issueRef(s.issueNumber)
-			}
-			return result, false
+	wt.SetForce(s.force)
+	identity, err := s.identityResolver.resolve()
+	if err != nil {
+		fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
+		result := AgentRunResult{Status: "failure", Branch: branch}
+		if s.issueNumber > 0 {
+			result.IssueNumber = s.issueNumber
+			result.Issue = issueRef(s.issueNumber)
 		}
-		setter.SetGitIdentity(identity.Name, identity.Email)
+		return result, false
 	}
+	wt.SetGitIdentity(identity.Name, identity.Email)
 	return AgentRunResult{}, true
 }
 

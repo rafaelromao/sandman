@@ -21,6 +21,10 @@ type fakeWorktreeForContainer struct {
 	execCommand        string
 	execError          error
 	process            Process
+	setForceCalled     bool
+	setForceValue      bool
+	setIdentityName    string
+	setIdentityEmail   string
 }
 
 func (f *fakeWorktreeForContainer) Start() error {
@@ -58,6 +62,19 @@ func (f *fakeWorktreeForContainer) ExecInteractive(ctx context.Context, command 
 func (f *fakeWorktreeForContainer) Process() Process {
 	return f.process
 }
+
+func (f *fakeWorktreeForContainer) SetForce(force bool) {
+	f.setForceCalled = true
+	f.setForceValue = force
+}
+
+func (f *fakeWorktreeForContainer) SetGitIdentity(name, email string) {
+	f.setIdentityName = name
+	f.setIdentityEmail = email
+}
+
+// Ensure fakeWorktreeForContainer satisfies Sandbox.
+var _ Sandbox = (*fakeWorktreeForContainer)(nil)
 
 type fakeContainer struct {
 	id         string
@@ -340,5 +357,50 @@ func TestSharedContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	}
 	if captured[5] != "shared123" {
 		t.Errorf("expected container id shared123, got %q", captured[5])
+	}
+}
+
+func TestContainerSandbox_SetForce_ForwardsToWorktree(t *testing.T) {
+	wt := &fakeWorktreeForContainer{}
+	ctr := &fakeContainer{id: "abc123"}
+	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	sb.SetForce(true)
+
+	if !wt.setForceCalled {
+		t.Fatal("expected worktree.SetForce to be called")
+	}
+	if !wt.setForceValue {
+		t.Error("expected SetForce(true) to forward value true to worktree")
+	}
+}
+
+func TestContainerSandbox_SetGitIdentity_ForwardsToWorktree(t *testing.T) {
+	wt := &fakeWorktreeForContainer{}
+	ctr := &fakeContainer{id: "abc123"}
+	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	sb.SetGitIdentity("Sandman", "[email protected]")
+
+	if wt.setIdentityName != "Sandman" {
+		t.Errorf("expected worktree name %q, got %q", "Sandman", wt.setIdentityName)
+	}
+	if wt.setIdentityEmail != "[email protected]" {
+		t.Errorf("expected worktree email %q, got %q", "[email protected]", wt.setIdentityEmail)
+	}
+}
+
+func TestSharedContainerSandbox_SetForce_ForwardsToWorktree(t *testing.T) {
+	wt := &fakeWorktreeForContainer{}
+	ctr := &fakeContainer{id: "shared123"}
+	sb := NewSharedContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	sb.SetForce(false)
+
+	if !wt.setForceCalled {
+		t.Fatal("expected worktree.SetForce to be called")
+	}
+	if wt.setForceValue {
+		t.Error("expected SetForce(false) to forward value false to worktree")
 	}
 }

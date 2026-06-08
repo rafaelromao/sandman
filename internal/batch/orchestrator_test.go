@@ -252,6 +252,10 @@ type retrySandbox struct {
 	execCommand      string
 	execErrors       []error
 	workDir          string
+	setForceCalled   bool
+	setForceValue    bool
+	setIdentityName  string
+	setIdentityEmail string
 }
 
 func (s *retrySandbox) Start() error {
@@ -278,6 +282,17 @@ func (s *retrySandbox) WritePrompt(content string) error {
 	return nil
 }
 func (s *retrySandbox) Process() sandbox.Process { return nil }
+func (s *retrySandbox) SetForce(force bool) {
+	s.setForceCalled = true
+	s.setForceValue = force
+}
+func (s *retrySandbox) SetGitIdentity(name, email string) {
+	s.setIdentityName = name
+	s.setIdentityEmail = email
+}
+
+// Ensure retrySandbox satisfies sandbox.Sandbox.
+var _ sandbox.Sandbox = (*retrySandbox)(nil)
 
 type retrySandboxFactory struct {
 	sandbox *retrySandbox
@@ -7007,5 +7022,53 @@ func TestOrchestrator_AbortIssue_BlockedRun(t *testing.T) {
 	}
 	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
 		t.Fatalf("expected aborted terminal status, got %q", status)
+	}
+}
+
+func TestRunSession_ApplyForceAndIdentity_CallsMethodsDirectlyOnSandbox(t *testing.T) {
+	wt := &fakeSandbox{}
+	s := &runSession{
+		o:                &Orchestrator{errorLog: io.Discard},
+		force:            true,
+		issueNumber:      42,
+		identityResolver: noopIdentityResolver(),
+	}
+
+	_, ok := s.applyForceAndIdentity(wt, "sandman/42-fix-bug")
+	if !ok {
+		t.Fatal("expected applyForceAndIdentity to succeed")
+	}
+
+	if !wt.setForceCalled {
+		t.Fatal("expected sandbox.SetForce to be called")
+	}
+	if !wt.setForceValue {
+		t.Error("expected SetForce(true) to forward the force value")
+	}
+	if wt.setIdentityName != "" || wt.setIdentityEmail != "" {
+		t.Errorf("expected noop identity to leave name/email unset, got name=%q email=%q",
+			wt.setIdentityName, wt.setIdentityEmail)
+	}
+}
+
+func TestRunSession_ApplyForceAndIdentity_PropagatesForceFalse(t *testing.T) {
+	wt := &fakeSandbox{}
+	s := &runSession{
+		o:                &Orchestrator{errorLog: io.Discard},
+		force:            false,
+		issueNumber:      7,
+		identityResolver: noopIdentityResolver(),
+	}
+
+	_, ok := s.applyForceAndIdentity(wt, "sandman/7-other")
+	if !ok {
+		t.Fatal("expected applyForceAndIdentity to succeed")
+	}
+
+	if !wt.setForceCalled {
+		t.Fatal("expected sandbox.SetForce to be called")
+	}
+	if wt.setForceValue {
+		t.Error("expected SetForce(false) to forward the force value")
 	}
 }

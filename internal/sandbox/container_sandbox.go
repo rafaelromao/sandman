@@ -50,16 +50,12 @@ func NewSharedContainerSandbox(worktree Sandbox, container Container, binary, re
 
 // SetGitIdentity forwards worktree-local git identity configuration to the underlying worktree.
 func (s *ContainerSandbox) SetGitIdentity(name, email string) {
-	if setter, ok := s.worktree.(interface{ SetGitIdentity(string, string) }); ok {
-		setter.SetGitIdentity(name, email)
-	}
+	s.worktree.SetGitIdentity(name, email)
 }
 
 // SetForce forwards force-clean behavior to the underlying worktree.
 func (s *ContainerSandbox) SetForce(force bool) {
-	if setter, ok := s.worktree.(interface{ SetForce(bool) }); ok {
-		setter.SetForce(force)
-	}
+	s.worktree.SetForce(force)
 }
 
 func (s *ContainerSandbox) containerWorkDir() string {

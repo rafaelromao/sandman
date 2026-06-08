@@ -62,6 +62,10 @@ type fakeSandbox struct {
 	process               *fakeProcess
 	stopCalled            bool
 	workDir               string
+	setForceCalled        bool
+	setForceValue         bool
+	setIdentityName       string
+	setIdentityEmail      string
 }
 
 func (f *fakeSandbox) Start() error {
@@ -100,6 +104,17 @@ func (f *fakeSandbox) Process() sandbox.Process {
 	}
 	return f.process
 }
+func (f *fakeSandbox) SetForce(force bool) {
+	f.setForceCalled = true
+	f.setForceValue = force
+}
+func (f *fakeSandbox) SetGitIdentity(name, email string) {
+	f.setIdentityName = name
+	f.setIdentityEmail = email
+}
+
+// Ensure fakeSandbox satisfies sandbox.Sandbox.
+var _ sandbox.Sandbox = (*fakeSandbox)(nil)
 
 type spyRenderer struct {
 	called bool
