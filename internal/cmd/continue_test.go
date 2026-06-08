@@ -163,7 +163,7 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if strings.Contains(spy.req.HandoffPrompts[42], "# Handoff Context") {
 		t.Fatalf("expected header stripped, got %q", spy.req.HandoffPrompts[42])
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[42], "finish the tests") {
+	if !strings.Contains(spy.req.HandoffPrompts[42], "Continue the work.") {
 		t.Fatalf("expected new instruction, got %q", spy.req.HandoffPrompts[42])
 	}
 	if !strings.Contains(spy.req.HandoffPrompts[42], ".sandman/handoff.md") {
@@ -922,5 +922,188 @@ func TestContinue_PreservesRunBatchErrorMessage(t *testing.T) {
 	var coded *ExitCodedError
 	if errors.As(err, &coded) {
 		t.Errorf("expected plain error (not *ExitCodedError) for non-abort failure, got %v", err)
+	}
+}
+
+func TestParseStage_ExtractsStage(t *testing.T) {
+	content := "## Stage: plan-approved\n\n## Completed\nFixed the bug.\n"
+	stage, rest := parseStage(content)
+	if stage != "plan-approved" {
+		t.Fatalf("expected stage plan-approved, got %q", stage)
+	}
+	if strings.Contains(rest, "## Stage:") {
+		t.Fatalf("expected stage line stripped from rest, got %q", rest)
+	}
+	if !strings.Contains(rest, "## Completed") {
+		t.Fatalf("expected rest to contain remaining content, got %q", rest)
+	}
+}
+
+func TestParseStage_EmptyWhenNoStage(t *testing.T) {
+	content := "## Completed\nFixed the bug.\n"
+	stage, rest := parseStage(content)
+	if stage != "" {
+		t.Fatalf("expected empty stage, got %q", stage)
+	}
+	if rest != content {
+		t.Fatalf("expected unchanged content, got %q", rest)
+	}
+}
+
+func TestParseStage_FirstStageLineWins(t *testing.T) {
+	content := "## Stage: plan-approved\n\n## Stage: implementation-committed\n"
+	stage, rest := parseStage(content)
+	if stage != "plan-approved" {
+		t.Fatalf("expected first stage plan-approved, got %q", stage)
+	}
+	if strings.Contains(rest, "## Stage: plan-approved") {
+		t.Fatalf("expected first stage line stripped, got %q", rest)
+	}
+}
+
+func TestParseStage_StripsStageWithExtraWhitespace(t *testing.T) {
+	content := "## Stage:   plan-approved   \n\n## Completed\n"
+	stage, rest := parseStage(content)
+	if stage != "plan-approved" {
+		t.Fatalf("expected stage plan-approved, got %q", stage)
+	}
+	if strings.Contains(rest, "## Stage:") {
+		t.Fatalf("expected stage line stripped, got %q", rest)
+	}
+}
+
+func TestParseStage_HandlesStageWithNoValue(t *testing.T) {
+	content := "## Stage: \n\n## Completed\n"
+	stage, rest := parseStage(content)
+	if stage != "" {
+		t.Fatalf("expected empty stage value, got %q", stage)
+	}
+	if strings.Contains(rest, "## Stage:") {
+		t.Fatalf("expected stage line stripped, got %q", rest)
+	}
+}
+
+func TestStageInstruction_ReturnsPlanApproved(t *testing.T) {
+	got := stageInstruction("plan-approved")
+	want := "Resume from self-review. Load sandman-review and re-evaluate the committed changes."
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestStageInstruction_ReturnsImplementationCommitted(t *testing.T) {
+	got := stageInstruction("implementation-committed")
+	want := "Resume from merging the base branch and creating the PR. Load sandman-merge, then push and create PR."
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestStageInstruction_ReturnsPRCreated(t *testing.T) {
+	got := stageInstruction("pr-created")
+	want := "Resume from delegated PR review. Load sandman-pr-review and run the review loop."
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestStageInstruction_ReturnsPRReviewFinished(t *testing.T) {
+	got := stageInstruction("pr-review-finished")
+	want := "Run sandman-pr-merge if all merge gates pass."
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestStageInstruction_FallsBackToContinueTheWork(t *testing.T) {
+	got := stageInstruction("")
+	if got != "Continue the work." {
+		t.Fatalf("expected 'Continue the work.', got %q", got)
+	}
+	got = stageInstruction("unknown-stage")
+	if got != "Continue the work." {
+		t.Fatalf("expected 'Continue the work.' for unknown stage, got %q", got)
+	}
+}
+
+func TestBuildHandoffPrompt_ReturnsStageInstructionWhenStageGiven(t *testing.T) {
+	result := buildHandoffPrompt("## Completed\nDone.\n", "plan-approved")
+	if !strings.Contains(result, "Resume from self-review") {
+		t.Fatalf("expected stage instruction, got %q", result)
+	}
+	if !strings.Contains(result, "## Prior Context") {
+		t.Fatalf("expected prior context section, got %q", result)
+	}
+	if !strings.Contains(result, "Done.") {
+		t.Fatalf("expected prior context content, got %q", result)
+	}
+	if !strings.Contains(result, "overwrite `.sandman/handoff.md`") {
+		t.Fatalf("expected update instruction, got %q", result)
+	}
+}
+
+func TestBuildHandoffPrompt_FallsBackToContinueTheWork(t *testing.T) {
+	result := buildHandoffPrompt("## Completed\nDone.\n", "")
+	if !strings.Contains(result, "Continue the work.") {
+		t.Fatalf("expected 'Continue the work.', got %q", result)
+	}
+}
+
+func TestContinue_StageAwarePrompt(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	contextPath := filepath.Join(dir, branch, ".sandman", "handoff.md")
+	if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err != nil {
+		t.Fatalf("mkdir handoff dir: %v", err)
+	}
+	handoffContent := "## Stage: plan-approved\n\n## Completed\nInitial implementation done.\n"
+	if err := os.WriteFile(contextPath, []byte(handoffContent), 0644); err != nil {
+		t.Fatalf("write handoff context: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+
+	prompt := spy.req.HandoffPrompts[42]
+
+	if !strings.Contains(prompt, "Resume from self-review") {
+		t.Fatalf("expected stage-specific instruction, got %q", prompt)
+	}
+	if strings.Contains(prompt, "## Stage:") {
+		t.Fatalf("expected stage line stripped from prior context, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Initial implementation done.") {
+		t.Fatalf("expected prior context content, got %q", prompt)
+	}
+	if strings.Contains(strings.ToLower(prompt), "finish the tests") {
+		t.Fatalf("expected user prompt text not to appear in rendered prompt, got %q", prompt)
+	}
+	if spy.req.PromptConfig.HandoffPrompt != "finish the tests" {
+		t.Fatalf("expected raw prompt preserved, got %q", spy.req.PromptConfig.HandoffPrompt)
 	}
 }

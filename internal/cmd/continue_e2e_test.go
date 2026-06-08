@@ -69,8 +69,8 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if err != nil {
 		t.Fatalf("read initial continuation context: %v", err)
 	}
-	if !strings.Contains(string(initialContext), "# Handoff Context") {
-		t.Fatalf("expected initial context header, got:\n%s", initialContext)
+	if !strings.Contains(string(initialContext), "## Stage: plan-approved") {
+		t.Fatalf("expected initial context stage, got:\n%s", initialContext)
 	}
 	if !strings.Contains(string(initialContext), "Initial run for "+continueE2EBranch+".") {
 		t.Fatalf("expected initial context contents, got:\n%s", initialContext)
@@ -110,8 +110,8 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if !strings.Contains(string(firstHandoffPrompt), "Initial run for "+continueE2EBranch+".") {
 		t.Fatalf("expected initial context in first continue prompt, got:\n%s", firstHandoffPrompt)
 	}
-	if !strings.Contains(string(firstHandoffPrompt), "finish the tests") {
-		t.Fatalf("expected new instruction in first continue prompt, got:\n%s", firstHandoffPrompt)
+	if !strings.Contains(string(firstHandoffPrompt), "Resume from self-review") {
+		t.Fatalf("expected stage-specific instruction in first continue prompt, got:\n%s", firstHandoffPrompt)
 	}
 	if !strings.Contains(string(firstHandoffPrompt), "overwrite `.sandman/handoff.md`") {
 		t.Fatalf("expected context overwrite instruction, got:\n%s", firstHandoffPrompt)
@@ -140,8 +140,8 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if !strings.Contains(string(secondHandoffPrompt), "First continue for "+continueE2EBranch+".") {
 		t.Fatalf("expected updated context in second continue prompt, got:\n%s", secondHandoffPrompt)
 	}
-	if !strings.Contains(string(secondHandoffPrompt), "push the PR") {
-		t.Fatalf("expected second instruction in continue prompt, got:\n%s", secondHandoffPrompt)
+	if !strings.Contains(string(secondHandoffPrompt), "Resume from merging") {
+		t.Fatalf("expected stage-specific instruction in second continue prompt, got:\n%s", secondHandoffPrompt)
 	}
 
 	secondHandoffContext, err := os.ReadFile(contextPath)
@@ -266,8 +266,8 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	if !strings.Contains(string(handoffPrompt1), "Initial run for sandman/1-fix-failing-test.") {
 		t.Fatalf("expected issue 1 prompt to use its own prior context, got:\n%s", handoffPrompt1)
 	}
-	if !strings.Contains(string(handoffPrompt1), "finish both") {
-		t.Fatalf("expected issue 1 prompt to include new instruction, got:\n%s", handoffPrompt1)
+	if !strings.Contains(string(handoffPrompt1), "Resume from self-review") {
+		t.Fatalf("expected issue 1 prompt to include stage instruction, got:\n%s", handoffPrompt1)
 	}
 	if !strings.Contains(string(handoffPrompt1), "overwrite `.sandman/handoff.md`") {
 		t.Fatalf("expected issue 1 prompt to include continuation update instruction, got:\n%s", handoffPrompt1)
@@ -280,8 +280,8 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	if !strings.Contains(string(handoffPrompt2), "Initial run for sandman/2-fix-failing-test.") {
 		t.Fatalf("expected issue 2 prompt to use its own prior context, got:\n%s", handoffPrompt2)
 	}
-	if !strings.Contains(string(handoffPrompt2), "finish both") {
-		t.Fatalf("expected issue 2 prompt to include new instruction, got:\n%s", handoffPrompt2)
+	if !strings.Contains(string(handoffPrompt2), "Resume from self-review") {
+		t.Fatalf("expected issue 2 prompt to include stage instruction, got:\n%s", handoffPrompt2)
 	}
 	if !strings.Contains(string(handoffPrompt2), "overwrite `.sandman/handoff.md`") {
 		t.Fatalf("expected issue 2 prompt to include continuation update instruction, got:\n%s", handoffPrompt2)
@@ -377,8 +377,9 @@ mkdir -p .sandman
 
 write_context() {
   completed="$1"
+  stage="$2"
   cat > .sandman/handoff.md <<EOF
-# Handoff Context
+## Stage: $stage
 
 ## Completed
 $completed
@@ -402,13 +403,13 @@ case "$step" in
     if [ -f double.go ]; then
       perl -0pi -e 's/return 0/return 4/' double.go
     fi
-    write_context "Initial run for $branch."
+    write_context "Initial run for $branch." "plan-approved"
     ;;
   1)
-    write_context "First continue for $branch."
+    write_context "First continue for $branch." "implementation-committed"
     ;;
   2)
-    write_context "Second continue for $branch."
+    write_context "Second continue for $branch." "pr-created"
     ;;
   *)
     printf 'unexpected fake opencode step %s for %s\n' "$step" "$branch" >&2

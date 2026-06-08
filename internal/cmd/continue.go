@@ -95,8 +95,9 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 					}
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: missing handoff context %q; continuing with bare prompt\n", contextPath)
 				} else {
-					priorContext := strings.TrimSpace(stripHandoffHeader(string(content)))
-					handoffPrompt = buildHandoffPrompt(promptText, priorContext)
+					stage, contextWithoutStage := parseStage(string(content))
+					priorContext := strings.TrimSpace(stripHandoffHeader(contextWithoutStage))
+					handoffPrompt = buildHandoffPrompt(priorContext, stage)
 				}
 				handoffPrompts[num] = handoffPrompt
 			}
@@ -415,7 +416,7 @@ func stripHandoffHeader(content string) string {
 	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
 		i++
 	}
-	if i < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
+	if i < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i]), "# ") {
 		i++
 		for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
 			i++
@@ -424,12 +425,40 @@ func stripHandoffHeader(content string) string {
 	return strings.Join(lines[i:], "\n")
 }
 
-func buildHandoffPrompt(promptText, priorContext string) string {
+func parseStage(content string) (stage string, rest string) {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## Stage:") {
+			stage = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Stage:"))
+			rest = strings.Join(append(lines[:i], lines[i+1:]...), "\n")
+			return
+		}
+	}
+	return "", content
+}
+
+func stageInstruction(stage string) string {
+	switch stage {
+	case "plan-approved":
+		return "Resume from self-review. Load sandman-review and re-evaluate the committed changes."
+	case "implementation-committed":
+		return "Resume from merging the base branch and creating the PR. Load sandman-merge, then push and create PR."
+	case "pr-created":
+		return "Resume from delegated PR review. Load sandman-pr-review and run the review loop."
+	case "pr-review-finished":
+		return "Run sandman-pr-merge if all merge gates pass."
+	default:
+		return "Continue the work."
+	}
+}
+
+func buildHandoffPrompt(priorContext, stage string) string {
 	var b strings.Builder
 	b.WriteString("## Prior Context\n\n")
 	b.WriteString(strings.TrimSpace(priorContext))
 	b.WriteString("\n\n## New Instruction\n\n")
-	b.WriteString(strings.TrimSpace(promptText))
+	b.WriteString(stageInstruction(stage))
 	b.WriteString("\n\n## Update Handoff Context\n\n")
 	b.WriteString("Before exiting, overwrite `.sandman/handoff.md` with an updated summary using this template:\n\n")
 	b.WriteString("```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n")
