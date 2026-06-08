@@ -102,9 +102,9 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 		renderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
 	}
 
-	if renderCfg.ContinuePrompt != "" {
-		renderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
-		if err := r.writeContinuePrompt(renderedPromptFile, renderCfg.ContinuePrompt); err != nil {
+	if renderCfg.HandoffPrompt != "" {
+		renderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
+		if err := r.writeHandoffPrompt(renderedPromptFile, renderCfg.HandoffPrompt); err != nil {
 			r.status = "failure"
 			return r.Result()
 		}
@@ -175,7 +175,7 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func (r *AgentRun) writeContinuePrompt(renderedPromptFile, content string) error {
+func (r *AgentRun) writeHandoffPrompt(renderedPromptFile, content string) error {
 	promptPath := filepath.Join(r.sandbox.WorkDir(), renderedPromptFile)
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		return fmt.Errorf("create prompt dir: %w", err)

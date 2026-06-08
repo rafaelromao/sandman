@@ -64,12 +64,12 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
-	contextPath := filepath.Join(dir, branch, ".sandman", "continuation-context.md")
+	contextPath := filepath.Join(dir, branch, ".sandman", "handoff.md")
 	if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err != nil {
-		t.Fatalf("mkdir continuation dir: %v", err)
+		t.Fatalf("mkdir handoff dir: %v", err)
 	}
-	if err := os.WriteFile(contextPath, []byte("# Continuation Context\n\n## Completed\nInitial pass.\n"), 0644); err != nil {
-		t.Fatalf("write continuation context: %v", err)
+	if err := os.WriteFile(contextPath, []byte("# Handoff Context\n\n## Completed\nInitial pass.\n"), 0644); err != nil {
+		t.Fatalf("write handoff context: %v", err)
 	}
 
 	spy := &spyContinueBatchRunner{result: &batch.Result{}}
@@ -103,14 +103,14 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
 		t.Fatalf("expected issue 42, got %v", spy.req.Issues)
 	}
-	if len(spy.req.ContinuePrompts) != 1 {
-		t.Fatalf("expected 1 continue prompt, got %v", spy.req.ContinuePrompts)
+	if len(spy.req.HandoffPrompts) != 1 {
+		t.Fatalf("expected 1 continue prompt, got %v", spy.req.HandoffPrompts)
 	}
 	if spy.req.BaseBranches[42] != "main" {
 		t.Fatalf("expected base branch main, got %q", spy.req.BaseBranches[42])
 	}
-	if spy.req.PromptConfig.ContinuePrompt != "finish the tests" {
-		t.Fatalf("expected shared bare prompt, got %q", spy.req.PromptConfig.ContinuePrompt)
+	if spy.req.PromptConfig.HandoffPrompt != "finish the tests" {
+		t.Fatalf("expected shared bare prompt, got %q", spy.req.PromptConfig.HandoffPrompt)
 	}
 	if !spy.req.Continuation {
 		t.Fatal("expected continuation request")
@@ -157,17 +157,17 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if !spy.req.MaxContainersSet {
 		t.Fatal("expected max containers flag to be preserved")
 	}
-	if !strings.Contains(spy.req.ContinuePrompts[42], "## Prior Context") {
-		t.Fatalf("expected prior context section, got %q", spy.req.ContinuePrompts[42])
+	if !strings.Contains(spy.req.HandoffPrompts[42], "## Prior Context") {
+		t.Fatalf("expected prior context section, got %q", spy.req.HandoffPrompts[42])
 	}
-	if strings.Contains(spy.req.ContinuePrompts[42], "# Continuation Context") {
-		t.Fatalf("expected header stripped, got %q", spy.req.ContinuePrompts[42])
+	if strings.Contains(spy.req.HandoffPrompts[42], "# Handoff Context") {
+		t.Fatalf("expected header stripped, got %q", spy.req.HandoffPrompts[42])
 	}
-	if !strings.Contains(spy.req.ContinuePrompts[42], "finish the tests") {
-		t.Fatalf("expected new instruction, got %q", spy.req.ContinuePrompts[42])
+	if !strings.Contains(spy.req.HandoffPrompts[42], "finish the tests") {
+		t.Fatalf("expected new instruction, got %q", spy.req.HandoffPrompts[42])
 	}
-	if !strings.Contains(spy.req.ContinuePrompts[42], ".sandman/continuation-context.md") {
-		t.Fatalf("expected update instruction, got %q", spy.req.ContinuePrompts[42])
+	if !strings.Contains(spy.req.HandoffPrompts[42], ".sandman/handoff.md") {
+		t.Fatalf("expected update instruction, got %q", spy.req.HandoffPrompts[42])
 	}
 	if spy.req.PromptConfig.ReviewCommand != "/custom review 2" {
 		t.Fatalf("expected review command replay, got %q", spy.req.PromptConfig.ReviewCommand)
@@ -411,10 +411,10 @@ func TestContinue_WarnsAndUsesBarePromptWhenContinuationContextMissing(t *testin
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.req.PromptConfig.ContinuePrompt != "finish the tests" {
-		t.Fatalf("expected bare prompt, got %q", spy.req.PromptConfig.ContinuePrompt)
+	if spy.req.PromptConfig.HandoffPrompt != "finish the tests" {
+		t.Fatalf("expected bare prompt, got %q", spy.req.PromptConfig.HandoffPrompt)
 	}
-	if !strings.Contains(buf.String(), "missing continuation context") {
+	if !strings.Contains(buf.String(), "missing handoff context") {
 		t.Fatalf("expected warning about missing context, got %q", buf.String())
 	}
 }
@@ -499,13 +499,13 @@ func TestContinue_DoesNotBlockWhenPRNotMerged(t *testing.T) {
 	}
 }
 
-type continuationFlowState struct {
+type handoffFlowState struct {
 	prompts  []string
 	contexts []string
 	step     int
 }
 
-func (s *continuationFlowState) nextContext() string {
+func (s *handoffFlowState) nextContext() string {
 	if s.step >= len(s.contexts) {
 		return ""
 	}
@@ -514,14 +514,14 @@ func (s *continuationFlowState) nextContext() string {
 	return context
 }
 
-type continuationFlowBatchRunner struct {
+type handoffFlowBatchRunner struct {
 	log         *fakeEventLog
-	state       *continuationFlowState
+	state       *handoffFlowState
 	worktreeDir string
 	runIndex    int
 }
 
-func (r *continuationFlowBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
+func (r *handoffFlowBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
 	issue := req.Issues[0]
 	branch := req.Branches[issue]
 	if branch == "" {
@@ -530,7 +530,7 @@ func (r *continuationFlowBatchRunner) RunBatch(ctx context.Context, req batch.Re
 	runID := fmt.Sprintf("run-%d-%d", issue, r.runIndex)
 	r.runIndex++
 	worktreePath := filepath.Join(r.worktreeDir, branch)
-	contextPath := filepath.Join(worktreePath, ".sandman", "continuation-context.md")
+	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
 	if content := r.state.nextContext(); content != "" {
 		if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err == nil {
 			_ = os.WriteFile(contextPath, []byte(content), 0644)
@@ -541,8 +541,8 @@ func (r *continuationFlowBatchRunner) RunBatch(ctx context.Context, req batch.Re
 	if req.Continuation {
 		eventType = "run.continued"
 		payload = map[string]any{"branch": branch, "base_branch": req.BaseBranch, "previous_run_id": req.PreviousRunIDs[issue]}
-		promptText := req.PromptConfig.ContinuePrompt
-		if perIssuePrompt, ok := req.ContinuePrompts[issue]; ok {
+		promptText := req.PromptConfig.HandoffPrompt
+		if perIssuePrompt, ok := req.HandoffPrompts[issue]; ok {
 			promptText = perIssuePrompt
 		}
 		r.state.prompts = append(r.state.prompts, promptText)
@@ -559,13 +559,13 @@ func TestContinue_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	state := &continuationFlowState{contexts: []string{
+	state := &handoffFlowState{contexts: []string{
 		"## Completed\nInitial run.\n",
 		"## Completed\nFirst continue.\n",
 		"## Completed\nSecond continue.\n",
 	}}
 	log := &fakeEventLog{}
-	runner := &continuationFlowBatchRunner{log: log, state: state, worktreeDir: dir}
+	runner := &handoffFlowBatchRunner{log: log, state: state, worktreeDir: dir}
 	deps := Dependencies{
 		BatchRunner: runner,
 		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
@@ -576,7 +576,7 @@ func TestContinue_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial run failed: %v", err)
 	}
-	initialContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "continuation-context.md"))
+	initialContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "handoff.md"))
 	if err != nil {
 		t.Fatalf("read initial context: %v", err)
 	}
@@ -592,12 +592,12 @@ func TestContinue_ChainedContinuationFlow(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
-	firstContinueContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "continuation-context.md"))
+	firstHandoffContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "handoff.md"))
 	if err != nil {
 		t.Fatalf("read first continue context: %v", err)
 	}
-	if !strings.Contains(string(firstContinueContext), "First continue.") {
-		t.Fatalf("expected first continue context, got %q", string(firstContinueContext))
+	if !strings.Contains(string(firstHandoffContext), "First continue.") {
+		t.Fatalf("expected first continue context, got %q", string(firstHandoffContext))
 	}
 
 	buf.Reset()
@@ -608,12 +608,12 @@ func TestContinue_ChainedContinuationFlow(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("second continue failed: %v", err)
 	}
-	secondContinueContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "continuation-context.md"))
+	secondHandoffContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "handoff.md"))
 	if err != nil {
 		t.Fatalf("read second continue context: %v", err)
 	}
-	if !strings.Contains(string(secondContinueContext), "Second continue.") {
-		t.Fatalf("expected second continue context, got %q", string(secondContinueContext))
+	if !strings.Contains(string(secondHandoffContext), "Second continue.") {
+		t.Fatalf("expected second continue context, got %q", string(secondHandoffContext))
 	}
 
 	if len(state.prompts) != 2 {
@@ -674,12 +674,12 @@ func TestContinue_MultipleIssuesBuildsBranchesAndPreviousRunIDsMaps(t *testing.T
 		}
 	}
 	for branch, context := range map[string]string{branchA: "## Completed\nFirst issue.\n", branchB: "## Completed\nSecond issue.\n"} {
-		contextPath := filepath.Join(dir, branch, ".sandman", "continuation-context.md")
+		contextPath := filepath.Join(dir, branch, ".sandman", "handoff.md")
 		if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err != nil {
-			t.Fatalf("mkdir continuation dir %s: %v", branch, err)
+			t.Fatalf("mkdir handoff dir %s: %v", branch, err)
 		}
 		if err := os.WriteFile(contextPath, []byte(context), 0644); err != nil {
-			t.Fatalf("write continuation context %s: %v", branch, err)
+			t.Fatalf("write handoff context %s: %v", branch, err)
 		}
 	}
 
@@ -711,19 +711,19 @@ func TestContinue_MultipleIssuesBuildsBranchesAndPreviousRunIDsMaps(t *testing.T
 	if len(spy.req.Issues) != 2 || spy.req.Issues[0] != 1 || spy.req.Issues[1] != 2 {
 		t.Fatalf("expected issues=[1 2], got %v", spy.req.Issues)
 	}
-	if len(spy.req.ContinuePrompts) != 2 {
-		t.Fatalf("expected 2 continue prompts, got %v", spy.req.ContinuePrompts)
+	if len(spy.req.HandoffPrompts) != 2 {
+		t.Fatalf("expected 2 continue prompts, got %v", spy.req.HandoffPrompts)
 	}
 	if spy.req.BaseBranches[1] != "main" || spy.req.BaseBranches[2] != "main" {
 		t.Fatalf("expected base branches to replay main, got %#v", spy.req.BaseBranches)
 	}
-	if !strings.Contains(spy.req.ContinuePrompts[1], "First issue.") {
-		t.Fatalf("expected issue 1 prompt to include its own context, got %q", spy.req.ContinuePrompts[1])
+	if !strings.Contains(spy.req.HandoffPrompts[1], "First issue.") {
+		t.Fatalf("expected issue 1 prompt to include its own context, got %q", spy.req.HandoffPrompts[1])
 	}
-	if !strings.Contains(spy.req.ContinuePrompts[2], "Second issue.") {
-		t.Fatalf("expected issue 2 prompt to include its own context, got %q", spy.req.ContinuePrompts[2])
+	if !strings.Contains(spy.req.HandoffPrompts[2], "Second issue.") {
+		t.Fatalf("expected issue 2 prompt to include its own context, got %q", spy.req.HandoffPrompts[2])
 	}
-	if spy.req.ContinuePrompts[1] == spy.req.ContinuePrompts[2] {
+	if spy.req.HandoffPrompts[1] == spy.req.HandoffPrompts[2] {
 		t.Fatal("expected different prompts per issue")
 	}
 	if spy.req.Branches[1] != branchA {

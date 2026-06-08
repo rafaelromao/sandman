@@ -544,14 +544,14 @@ func TestAgentRun_Prepare_PassesRenderConfigToRenderer(t *testing.T) {
 	}
 }
 
-func TestAgentRun_Run_WritesRawContinuePrompt(t *testing.T) {
+func TestAgentRun_Run_WritesRawHandoffPrompt(t *testing.T) {
 	dir := t.TempDir()
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{workDir: dir}
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{ContinuePrompt: "finish {{ISSUE_NUMBER}}"})
+	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{HandoffPrompt: "finish {{ISSUE_NUMBER}}"})
 
 	if res.Status != "success" {
 		t.Fatalf("expected success, got %s", res.Status)
@@ -562,7 +562,7 @@ func TestAgentRun_Run_WritesRawContinuePrompt(t *testing.T) {
 	if sb.writePromptCalled {
 		t.Fatal("expected WritePrompt not to be called for continue prompt")
 	}
-	promptPath := filepath.Join(dir, ".sandman", "continue-prompt.md")
+	promptPath := filepath.Join(dir, ".sandman", "handoff-prompt.md")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		t.Fatalf("expected continue prompt file: %v", err)
@@ -570,7 +570,7 @@ func TestAgentRun_Run_WritesRawContinuePrompt(t *testing.T) {
 	if string(data) != "finish {{ISSUE_NUMBER}}" {
 		t.Fatalf("expected raw continue prompt, got %q", string(data))
 	}
-	if sb.execCommand != "opencode run .sandman/continue-prompt.md" {
+	if sb.execCommand != "opencode run .sandman/handoff-prompt.md" {
 		t.Fatalf("expected continue prompt file in command, got %q", sb.execCommand)
 	}
 }

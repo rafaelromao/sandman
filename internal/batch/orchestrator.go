@@ -664,7 +664,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 	if req.PromptConfig.RenderedPromptFile == "" {
 		if req.Continuation {
-			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
+			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 		} else {
 			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
 		}
@@ -894,8 +894,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 			renderCfg := req.PromptConfig
 			if req.Continuation {
-				if continuationPrompt, ok := req.ContinuePrompts[issueNum]; ok {
-					renderCfg.ContinuePrompt = continuationPrompt
+				if handoffPrompt, ok := req.HandoffPrompts[issueNum]; ok {
+					renderCfg.HandoffPrompt = handoffPrompt
 				}
 			}
 			issueBaseBranch := baseBranch
@@ -1597,20 +1597,20 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
-			contCtxPath := filepath.Join(wt.WorkDir(), ".sandman", "continuation-context.md")
+			contCtxPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
 			if content, err := os.ReadFile(contCtxPath); err == nil {
 				if openPR != nil {
-					attemptRenderCfg.ContinuePrompt = buildPRReviewContinuationPrompt(string(content))
-					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
+					attemptRenderCfg.HandoffPrompt = buildPRReviewHandoffPrompt(string(content))
+					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 				} else {
-					attemptRenderCfg.ContinuePrompt = buildRetryPrompt(string(content))
-					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
+					attemptRenderCfg.HandoffPrompt = buildRetryHandoffPrompt(string(content))
+					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 				}
 			} else {
 				prFound := false
 				if openPR != nil {
-					attemptRenderCfg.ContinuePrompt = "Continue with sandman-pr-review until the PR is merged"
-					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "continue-prompt.md")
+					attemptRenderCfg.HandoffPrompt = "Continue with sandman-pr-review until the PR is merged"
+					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 					prFound = true
 				}
 				if !prFound {

@@ -52,7 +52,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 			branches := make(map[int]string, len(issues))
 			baseBranches := make(map[int]string, len(issues))
 			previousRunIDs := make(map[int]string, len(issues))
-			continuePrompts := make(map[int]string, len(issues))
+			handoffPrompts := make(map[int]string, len(issues))
 			for _, num := range issues {
 				lastRun := lastRuns[num]
 				if lastRun.RunID == "" {
@@ -87,18 +87,18 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				baseBranches[num] = strings.TrimSpace(baseBranch)
 				previousRunIDs[num] = lastRun.RunID
 
-				continuePrompt := promptText
-				contextPath := filepath.Join(worktreePath, ".sandman", "continuation-context.md")
+				handoffPrompt := promptText
+				contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
 				if content, err := os.ReadFile(contextPath); err != nil {
 					if !os.IsNotExist(err) {
-						return fmt.Errorf("read continuation context %q: %w", contextPath, err)
+						return fmt.Errorf("read handoff context %q: %w", contextPath, err)
 					}
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: missing continuation context %q; continuing with bare prompt\n", contextPath)
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: missing handoff context %q; continuing with bare prompt\n", contextPath)
 				} else {
-					priorContext := strings.TrimSpace(stripContinuationContextHeader(string(content)))
-					continuePrompt = buildContinuationPrompt(promptText, priorContext)
+					priorContext := strings.TrimSpace(stripHandoffHeader(string(content)))
+					handoffPrompt = buildHandoffPrompt(promptText, priorContext)
 				}
-				continuePrompts[num] = continuePrompt
+				handoffPrompts[num] = handoffPrompt
 			}
 
 			// Replay agent/model/review settings from the first issue's last run.
@@ -232,10 +232,10 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				Continuation:               true,
 				PreviousRunIDs:             previousRunIDs,
 				BaseBranches:               baseBranches,
-				ContinuePrompts:            continuePrompts,
+				HandoffPrompts:             handoffPrompts,
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				PromptConfig: prompt.RenderConfig{
-					ContinuePrompt:   promptText,
+					HandoffPrompt:    promptText,
 					ReviewCommand:    reviewCommand,
 					ReviewCommandSet: true,
 				},
@@ -409,7 +409,7 @@ func payloadBool(payload map[string]any, key string) (bool, bool) {
 	return false, false
 }
 
-func stripContinuationContextHeader(content string) string {
+func stripHandoffHeader(content string) string {
 	lines := strings.Split(content, "\n")
 	i := 0
 	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
@@ -424,14 +424,14 @@ func stripContinuationContextHeader(content string) string {
 	return strings.Join(lines[i:], "\n")
 }
 
-func buildContinuationPrompt(promptText, priorContext string) string {
+func buildHandoffPrompt(promptText, priorContext string) string {
 	var b strings.Builder
 	b.WriteString("## Prior Context\n\n")
 	b.WriteString(strings.TrimSpace(priorContext))
 	b.WriteString("\n\n## New Instruction\n\n")
 	b.WriteString(strings.TrimSpace(promptText))
-	b.WriteString("\n\n## Update Continuation Context\n\n")
-	b.WriteString("Before exiting, overwrite `.sandman/continuation-context.md` with an updated summary using this template:\n\n")
+	b.WriteString("\n\n## Update Handoff Context\n\n")
+	b.WriteString("Before exiting, overwrite `.sandman/handoff.md` with an updated summary using this template:\n\n")
 	b.WriteString("```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n")
 	return b.String()
 }
