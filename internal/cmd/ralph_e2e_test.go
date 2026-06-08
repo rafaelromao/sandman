@@ -83,6 +83,41 @@ JSON
     printf 'unexpected gh api path: %%s\n' "$path" >&2
     exit 1
     ;;
+  pr)
+    if [ "${2:-}" = "list" ]; then
+      head=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --head)
+            shift
+            head="${1:-}"
+            ;;
+        esac
+        shift
+      done
+      head_ref_oid="$(git rev-parse HEAD 2>/dev/null || printf 'abc123')"
+      cat <<JSON
+[{"number":1,"state":"merged","mergedAt":"2026-06-05T00:00:00Z","headRefName":"$head","headRefOid":"$head_ref_oid"}]
+JSON
+      exit 0
+    fi
+    if [ "${2:-}" = "create" ]; then
+      printf 'https://github.com/%%s/%%s/pull/1\n' "$owner" "$repo"
+      exit 0
+    fi
+    if [ "${2:-}" = "checks" ]; then
+      printf 'all checks passed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "view" ]; then
+      printf 'https://github.com/%%s/%%s/pull/1\n' "$owner" "$repo"
+      exit 0
+    fi
+    if [ "${2:-}" = "comment" ]; then
+      printf 'commented\n'
+      exit 0
+    fi
+    ;;
   auth)
     if [ "${2:-}" = "status" ]; then
       cat <<'JSON'
