@@ -311,10 +311,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if opts.Parallel > 0 {
 		parallel = opts.Parallel
 	}
-	model := config.DefaultModel
-	if opts.Model != "" {
-		model = opts.Model
-	}
+	model := opts.Model
 
 	retries, err := resolveRetries(opts.Retries)
 	if err != nil {
