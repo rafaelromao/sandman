@@ -1389,9 +1389,6 @@ func (s *runSession) runOnce(
 // runSingle runs a single issue-driven AgentRun. It builds a runSession and
 // delegates to (*runSession).execute.
 func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
-	if identityResolver == nil {
-		identityResolver = noopIdentityResolver()
-	}
 	s := &runSession{
 		o:                          o,
 		issueNumber:                num,
@@ -1679,9 +1676,6 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 // runPromptOnlySingle runs a single prompt-only AgentRun. It builds a
 // runSession and delegates to (*runSession).executePromptOnly.
 func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
-	if identityResolver == nil {
-		identityResolver = noopIdentityResolver()
-	}
 	s := &runSession{
 		o:                          o,
 		cfg:                        cfg,

@@ -5,9 +5,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/rafaelromao/sandman/internal/github"
-	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
 // initRepoWithIdentity runs `git init` in repoDir and sets the given
@@ -179,7 +176,7 @@ func TestSkipResolveShortCircuits(t *testing.T) {
 }
 
 func TestNewBatchIdentityResolverSkipsWithSandboxFactory(t *testing.T) {
-	o := &Orchestrator{sandboxFactory: stubSandboxFactory{}}
+	o := &Orchestrator{sandboxFactory: &fakeSandboxFactory{}}
 	r := newBatchIdentityResolver(o, ".")
 	if !r.skipResolve {
 		t.Fatal("expected skipResolve=true when sandboxFactory is set")
@@ -187,7 +184,7 @@ func TestNewBatchIdentityResolverSkipsWithSandboxFactory(t *testing.T) {
 }
 
 func TestNewBatchIdentityResolverSkipsWithRunnableFactory(t *testing.T) {
-	o := &Orchestrator{runnableFactory: stubRunnableFactory{}}
+	o := &Orchestrator{runnableFactory: &fakeRunnableFactory{}}
 	r := newBatchIdentityResolver(o, ".")
 	if !r.skipResolve {
 		t.Fatal("expected skipResolve=true when runnableFactory is set")
@@ -195,7 +192,7 @@ func TestNewBatchIdentityResolverSkipsWithRunnableFactory(t *testing.T) {
 }
 
 func TestNewBatchIdentityResolverSkipsWithContainerRuntimeFactory(t *testing.T) {
-	o := &Orchestrator{containerRuntimeFactory: stubContainerRuntimeFactory{}}
+	o := &Orchestrator{containerRuntimeFactory: &fakeContainerRuntimeFactory{}}
 	r := newBatchIdentityResolver(o, ".")
 	if !r.skipResolve {
 		t.Fatal("expected skipResolve=true when containerRuntimeFactory is set")
@@ -222,22 +219,3 @@ func TestNewPromptOnlyIdentityResolver(t *testing.T) {
 		t.Errorf("repoPath = %q, want %q", r.repoPath, "/some/repo")
 	}
 }
-
-// stubSandboxFactory satisfies SandboxFactory with no-op methods.
-type stubSandboxFactory struct{}
-
-func (stubSandboxFactory) NewSandbox(_, _, _, _ string, _ sandbox.Container) sandbox.Sandbox {
-	return nil
-}
-
-// stubRunnableFactory satisfies RunnableFactory with no-op methods.
-type stubRunnableFactory struct{}
-
-func (stubRunnableFactory) NewRunnable(_ *github.Issue, _ string, _ sandbox.Sandbox) Runnable {
-	return nil
-}
-
-// stubContainerRuntimeFactory satisfies ContainerRuntimeFactory with no-op methods.
-type stubContainerRuntimeFactory struct{}
-
-func (stubContainerRuntimeFactory) New(_ string) sandbox.ContainerStarter { return nil }
