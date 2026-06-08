@@ -7026,9 +7026,6 @@ func TestOrchestrator_AbortIssue_BlockedRun(t *testing.T) {
 }
 
 func TestRunSession_ApplyForceAndIdentity_CallsMethodsDirectlyOnSandbox(t *testing.T) {
-	// After widening the Sandbox interface, applyForceAndIdentity must call
-	// SetForce and SetGitIdentity directly on the sandbox — no type-assertion
-	// guard. The fake records the calls so we can verify.
 	wt := &fakeSandbox{}
 	s := &runSession{
 		o:                &Orchestrator{errorLog: io.Discard},
