@@ -14,8 +14,15 @@ import (
 // connectable. Run dirs that survived a crash (no live socket) are stale and
 // safe to clean up.
 func IsRunActive(runPath string) bool {
-	sockPath := filepath.Join(runPath, "run.sock")
-	conn, err := net.DialTimeout("unix", sockPath, 100*time.Millisecond)
+	cmdSock := filepath.Join(runPath, "cmd.sock")
+	conn, err := net.DialTimeout("unix", cmdSock, 100*time.Millisecond)
+	if err == nil {
+		_ = conn.Close()
+		return true
+	}
+
+	runSock := filepath.Join(runPath, "run.sock")
+	conn, err = net.DialTimeout("unix", runSock, 100*time.Millisecond)
 	if err != nil {
 		return false
 	}

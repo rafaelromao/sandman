@@ -384,10 +384,22 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 		return err
 	}
 	if run.SocketPath == "" {
+		if run.BatchKey == "" {
+			return &portalAbortError{status: http.StatusConflict, message: fmt.Sprintf("daemon for run %q is no longer live", runKey)}
+		}
 		return &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
 	}
 
+	if _, err := os.Stat(run.SocketPath); os.IsNotExist(err) {
+		return &portalAbortError{status: http.StatusConflict, message: fmt.Sprintf("daemon for run %q is no longer live", runKey)}
+	}
+
 	runDir := filepath.Dir(run.SocketPath)
+
+	if !daemon.IsRunActive(runDir) {
+		return &portalAbortError{status: http.StatusConflict, message: fmt.Sprintf("daemon for run %q is no longer live", runKey)}
+	}
+
 	cmdSock := filepath.Join(runDir, "cmd.sock")
 	if _, err := os.Stat(cmdSock); err != nil {
 		if os.IsNotExist(err) {
@@ -448,11 +460,11 @@ func portalRunForKey(repoRoot, runKey string) (portalRun, error) {
 		return portalRun{}, err
 	}
 	for _, run := range runs {
-		if run.Key == runKey && run.Kind == "active" {
+		if run.Key == runKey {
 			return run, nil
 		}
 	}
-	return portalRun{}, &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
+	return portalRun{}, &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("run %q not found", runKey)}
 }
 
 func signalPortalProcess(pid int, sig syscall.Signal) error {

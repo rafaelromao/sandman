@@ -406,28 +406,33 @@ func TestAbortPortalRunSendsAbortRequestAndReturnsSuccess(t *testing.T) {
 	}
 	done := make(chan struct{})
 	go func() {
-		conn, err := abortLn.Accept()
-		if err != nil {
+		for {
+			conn, err := abortLn.Accept()
+			if err != nil {
+				return
+			}
+			var req struct {
+				Action string `json:"action"`
+				Issue  int    `json:"issue"`
+			}
+			if err := json.NewDecoder(conn).Decode(&req); err != nil {
+				conn.Close()
+				continue
+			}
+			if req.Action != "abort" || req.Issue != 42 {
+				t.Errorf("unexpected abort request: %#v", req)
+				conn.Close()
+				return
+			}
+			if err := json.NewEncoder(conn).Encode(daemon.CommandResponse{Status: "ok"}); err != nil {
+				t.Errorf("write abort response: %v", err)
+				conn.Close()
+				return
+			}
+			conn.Close()
+			close(done)
 			return
 		}
-		defer conn.Close()
-		var req struct {
-			Action string `json:"action"`
-			Issue  int    `json:"issue"`
-		}
-		if err := json.NewDecoder(conn).Decode(&req); err != nil {
-			t.Errorf("decode abort request: %v", err)
-			return
-		}
-		if req.Action != "abort" || req.Issue != 42 {
-			t.Errorf("unexpected abort request: %#v", req)
-			return
-		}
-		if err := json.NewEncoder(conn).Encode(daemon.CommandResponse{Status: "ok"}); err != nil {
-			t.Errorf("write abort response: %v", err)
-			return
-		}
-		close(done)
 	}()
 
 	if err := abortPortalRun(context.Background(), repoRoot, "run-42-1", 42); err != nil {
@@ -486,15 +491,6 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 			{Type: "run.started", Timestamp: time.Now(), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
 		})
-
-		prevPeerPID := portalPeerPID
-		t.Cleanup(func() { portalPeerPID = prevPeerPID })
-		portalPeerPID = func(sockPath string) (int, error) {
-			if sockPath != activeSock {
-				t.Fatalf("expected socket %q, got %q", activeSock, sockPath)
-			}
-			return 12345, nil
-		}
 
 		err = abortPortalRun(context.Background(), repoRoot, "run-42-1", 42)
 		var abortErr *portalAbortError
@@ -570,6 +566,50 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 			t.Fatalf("expected 502, got %d: %s", resp.StatusCode, body)
 		}
 	})
+}
+
+func TestAbortPortalRun_RejectsRunFromFinishedBatch(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-abort-stale-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+	activeSock := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Close the listener and remove the socket to simulate a dead daemon.
+	_ = ln.Close()
+	_ = os.Remove(activeSock)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	err = abortPortalRun(context.Background(), repoRoot, "run-42-1", 42)
+	var abortErr *portalAbortError
+	if !errors.As(err, &abortErr) {
+		t.Fatalf("expected portalAbortError, got %v", err)
+	}
+	if abortErr.status != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", abortErr.status, abortErr.message)
+	}
+	if strings.TrimSpace(abortErr.message) == "" {
+		t.Fatal("expected non-empty message")
+	}
 }
 
 func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
