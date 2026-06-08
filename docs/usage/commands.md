@@ -14,7 +14,9 @@ sandman init [flags]
 |------|---------|-------------|
 | `--build-tools` | `""` | Build tools preset (`generic`, `dotnet`, `go`, `node`, `python`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
-| `--default-agent` | `""` | Default built-in agent preset for `init` (`opencode` or `pi`) |
+| `--agent` | `""` | Default built-in agent preset for `init` (`opencode` or `pi`) |
+| `--model` | `""` | Default model for the agent |
+| `--parallel` | `-1` | Default parallel container count (`-1` = use config default 4) |
 | `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/oc review` |
 | `--retries` | `-1` | Persist `retries` in scaffolded config. `-1` keeps the built-in default of `3`; `0` disables retries |
 | `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `1800`; `0` disables the heartbeat watchdog |
@@ -48,7 +50,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--parallel` | `default_parallel` from config (4) | Maximum concurrent agent runs; `0` falls back to `default_parallel` |
+| `--parallel` | `parallel` from config (4) | Maximum concurrent agent runs; `0` falls back to `parallel` |
 | `--start-delay` | config `start_delay` (0) | Wait this many seconds after any `AgentRun` finishes before starting the next one; `0` disables pacing |
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
 | `--base-branch` | config `git.base_branch` (`main`) | Base branch to fetch from origin before each `AgentRun` starts |
@@ -64,8 +66,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--prompt` | — | Inline prompt template (overrides file-based templates) |
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
-| `--model` | `default_model` from config | Override the model passed to the agent for built-in presets |
-| `--agent` | `default_agent` from config (`opencode`) | Built-in agent preset for this run |
+| `--model` | `model` from config | Override the model passed to the agent for built-in presets |
+| `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run |
 
 ### Flag interactions
 
@@ -81,8 +83,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
 - `--container-capacity` accepts `0` as unlimited mode (no per-container cap)
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means no cap (unbounded pool growth)
-- `--model` only applies to built-in presets; if omitted, Sandman uses `default_model` from config, falling back to the agent provider's configured model
-- `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `default_agent` from config
+- `--model` only applies to built-in presets; if omitted, Sandman uses `model` from config, falling back to the agent provider's configured model
+- `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
 - Pi splits `provider/model` into separate provider and model flags, and errors if `/` is missing
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 
@@ -114,11 +116,11 @@ Continue the last agent run for a given issue with a fresh prompt plus prior con
 sandman continue <issue-number> <prompt-text>
 ```
 
-Reuses the previously created branch and recorded agent and review command from the prior run, though `--agent` can override and `--model` falls back to `default_model` from config when omitted. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. Then it prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
+Reuses the previously created branch and recorded agent and review command from the prior run, though `--agent` can override and `--model` falls back to `model` from config when omitted. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. Then it prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model` | `default_model` from config | Override the model for the continued run |
+| `--model` | `model` from config | Override the model for the continued run |
 | `--agent` | prior run's agent | Override the agent preset for the continued run |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
 
@@ -179,10 +181,10 @@ sandman config set <key> <value>
 
 | Key | Type | Example |
 |-----|------|---------|
-| `default_agent` | string | `opencode` |
-| `default_model` | string | `opencode/deepseek-v4-flash-free` |
+| `agent` | string | `opencode` |
+| `model` | string | `opencode/big-pickle` |
 | `build_tools` | string | `node` |
-| `default_parallel` | int | `4` |
+| `parallel` | int | `4` |
 | `start_delay` | int | `0` |
 | `review_command` | string | `/oc review` |
 | `container_capacity` | int | `4` |

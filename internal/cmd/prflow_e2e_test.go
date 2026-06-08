@@ -126,7 +126,7 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 
 		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-binary-", tc.authPaths)
 
-		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--default-agent", tc.name)
+		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", tc.name)
 		if err != nil {
 			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 		}
@@ -255,7 +255,7 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 
 		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-", tc.authPaths)
 
-		runRootCommand(t, prFlowDeps(repoDir), "init", "--default-agent", tc.name)
+		runRootCommand(t, prFlowDeps(repoDir), "init", "--agent", tc.name)
 		for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
 			if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
 				t.Fatalf("expected scaffolded %s: %v", rel, err)
@@ -369,7 +369,7 @@ func TestPRFlow_WorktreeSandboxCommitsAndPushes(t *testing.T) {
 
 		deps := prFlowDeps(repoDir)
 
-		runRootCommand(t, deps, "init", "--default-agent", tc.name)
+		runRootCommand(t, deps, "init", "--agent", tc.name)
 
 		for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
 			if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
@@ -1102,7 +1102,7 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 
 		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-parallel-", tc.authPaths)
 
-		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--default-agent", tc.name)
+		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", tc.name)
 		if err != nil {
 			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 		}
@@ -1327,7 +1327,7 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 
 		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-parallel-auto-", tc.authPaths)
 
-		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--default-agent", tc.name)
+		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", tc.name)
 		if err != nil {
 			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 		}
@@ -1610,7 +1610,7 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 
 		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-queued-", tc.authPaths)
 
-		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--default-agent", tc.name)
+		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", tc.name)
 		if err != nil {
 			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 		}

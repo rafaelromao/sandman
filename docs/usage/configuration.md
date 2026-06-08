@@ -6,11 +6,11 @@ Sandman reads configuration from `.sandman/config.yaml` in the project root. You
 
 ```yaml
 # Default built-in agent preset used by `sandman run` when `--agent` is omitted.
-default_agent: opencode
+agent: opencode
 
 # Default model passed to the agent when `--model` is omitted.
 # Falls back to the agent provider's configured model if empty.
-default_model: opencode/deepseek-v4-flash-free
+model: opencode/big-pickle
 
 # Build tools preset for the container image (generic, go, node, python).
 build_tools: generic
@@ -19,7 +19,7 @@ build_tools: generic
 review_command: /oc review
 
 # Maximum number of concurrent agent runs.
-default_parallel: 4
+parallel: 4
 
 # Idle timeout in seconds for agent runs. When the agent produces no new log
 # output for this duration, the heartbeat watchdog aborts the run.
@@ -60,13 +60,13 @@ git:
 
 ## Built-in agents
 
-Sandman supports two built-in presets: `opencode` and `pi`. Both are installed into scaffolded Dockerfiles. `opencode` is the default `default_agent`.
+Sandman supports two built-in presets: `opencode` and `pi`. Both are installed into scaffolded Dockerfiles. `opencode` is the default `agent`.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
 Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill folder.
 
-`sandman run --agent` selects one of those built-ins per invocation. `sandman config set default_agent` changes the project default.
+`sandman run --agent` selects one of those built-ins per invocation. `sandman config set agent` changes the project default.
 
 Use `sandman run --base-branch` to override `git.base_branch` for a single invocation.
 
@@ -95,7 +95,7 @@ Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on 
 
 See [Sandman Skills](skills.md) for the shared workflow details.
 
-`sandman continue` replays the stored branch, base branch, agent, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, resolves the model from `--model` or `default_model`, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
+`sandman continue` replays the stored branch, base branch, agent, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, resolves the model from `--model` or `model`, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
 
 ## Container scheduling configuration
 
@@ -129,11 +129,11 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 Use `sandman config get` and `sandman config set` to read and write individual fields:
 
 ```bash
-sandman config get default_parallel
+sandman config get parallel
 sandman config set container_capacity 2
 sandman config set start_delay 5
 sandman config set run_idle_timeout 3600
-sandman config set default_model opencode/deepseek-v4-flash-free
+sandman config set model opencode/BigPickle
 sandman config set git.base_branch main
 ```
 

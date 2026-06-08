@@ -277,7 +277,7 @@ func TestScaffold_InstallsBothBuiltInAgents(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
 
-			err := s.Scaffold(dir, Options{BuildTools: "generic", DefaultAgent: "opencode", ToolVersion: selector}, &fakePrompter{confirm: true})
+			err := s.Scaffold(dir, Options{BuildTools: "generic", Agent: "opencode", ToolVersion: selector}, &fakePrompter{confirm: true})
 			if err != nil {
 				t.Fatalf("scaffold: %v", err)
 			}
@@ -319,7 +319,7 @@ func TestScaffold_PinsNodeVersionForPiWhenPiInstalled(t *testing.T) {
 		t.Run(tc.buildTools, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
-			if err := s.Scaffold(dir, Options{BuildTools: tc.buildTools, DefaultAgent: "opencode", ToolVersion: tc.toolVer}, &fakePrompter{confirm: true}); err != nil {
+			if err := s.Scaffold(dir, Options{BuildTools: tc.buildTools, Agent: "opencode", ToolVersion: tc.toolVer}, &fakePrompter{confirm: true}); err != nil {
 				t.Fatalf("scaffold: %v", err)
 			}
 			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
@@ -365,7 +365,7 @@ func TestScaffold_ResolvesNodeVersionSelectors(t *testing.T) {
 				wantPin = resolvedPin
 			}
 
-			if err := s.Scaffold(dir, Options{BuildTools: "node", DefaultAgent: "opencode", ToolVersion: tt.selector}, &fakePrompter{confirm: true}); err != nil {
+			if err := s.Scaffold(dir, Options{BuildTools: "node", Agent: "opencode", ToolVersion: tt.selector}, &fakePrompter{confirm: true}); err != nil {
 				t.Fatalf("scaffold: %v", err)
 			}
 
@@ -427,7 +427,7 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
 
-			err := s.Scaffold(dir, Options{BuildTools: "generic", DefaultAgent: agent}, &fakePrompter{confirm: true})
+			err := s.Scaffold(dir, Options{BuildTools: "generic", Agent: agent}, &fakePrompter{confirm: true})
 			if err != nil {
 				t.Fatalf("scaffold: %v", err)
 			}
@@ -438,7 +438,7 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 				t.Fatalf("load config: %v", err)
 			}
 			if cfg.DefaultAgent != agent {
-				t.Errorf("expected default_agent %q, got %q", agent, cfg.DefaultAgent)
+				t.Errorf("expected agent %q, got %q", agent, cfg.DefaultAgent)
 			}
 			resolved, err := cfg.ResolveAgentProvider(agent)
 			if err != nil {
@@ -485,7 +485,7 @@ func TestScaffold_AllAgentPresets_GenerateGoPresetFiles(t *testing.T) {
 				t.Fatalf("resolve go version: %v", err)
 			}
 
-			if err := s.Scaffold(dir, Options{BuildTools: "go", DefaultAgent: agent}, &fakePrompter{confirm: true}); err != nil {
+			if err := s.Scaffold(dir, Options{BuildTools: "go", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
 				t.Fatalf("scaffold: %v", err)
 			}
 
@@ -595,7 +595,7 @@ func TestScaffold_AllAgentPresets_GeneratePythonPresetFiles(t *testing.T) {
 				t.Fatalf("resolve python version: %v", err)
 			}
 
-			if err := s.Scaffold(dir, Options{BuildTools: "python", DefaultAgent: agent}, &fakePrompter{confirm: true}); err != nil {
+			if err := s.Scaffold(dir, Options{BuildTools: "python", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
 				t.Fatalf("scaffold: %v", err)
 			}
 

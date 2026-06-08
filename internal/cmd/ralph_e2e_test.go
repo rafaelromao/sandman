@@ -168,7 +168,7 @@ func setupRalphE2ETest(t *testing.T, binPath, repoDir, remoteDir string) {
 	t.Setenv("HOME", isolatedHome)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(isolatedHome, ".config"))
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "go", "--tool-version", "latest", "--default-agent", "opencode")
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "go", "--tool-version", "latest", "--agent", "opencode")
 	if err != nil {
 		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 	}
