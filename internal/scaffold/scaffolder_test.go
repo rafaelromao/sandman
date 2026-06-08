@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -406,6 +407,49 @@ func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoGoHints(t *testing.T) {
 	}
 }
 
+// referenceNormalizeGoVersionSelector and referenceGoPreviousMinorPrefix are
+// inlined copies of the pre-migration production functions. They are kept
+// here (rather than re-exported from production code) so the test oracle
+// remains an independent comparison point that does not depend on the
+// migrated versionResolver closures.
+func referenceNormalizeGoVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if len(selector) > 2 && strings.HasPrefix(strings.ToLower(selector), "go") && selector[2] >= '0' && selector[2] <= '9' {
+		return selector[2:]
+	}
+	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	return selector
+}
+
+func referenceGoPreviousMinorPrefix(version string) (string, error) {
+	version = referenceNormalizeGoVersionSelector(version)
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected Go version %q", version)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("parse Go major version %q: %w", version, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("parse Go minor version %q: %w", version, err)
+	}
+	if minor == 0 {
+		return "", fmt.Errorf("unexpected Go version %q", version)
+	}
+	minor--
+
+	prefix := fmt.Sprintf("%d.%d", major, minor)
+	if major == 1 && minor <= 20 {
+		return "prefix:" + prefix, nil
+	}
+	return prefix, nil
+}
+
 // referenceGoVersion replicates the pre-refactor Go resolution algorithm
 // locally so the parity tests have an independent oracle to compare against.
 // It is intentionally a copy of the algorithm (not a call into the migrated
@@ -426,7 +470,7 @@ func referenceGoVersion(dir, selector string, prompter Prompter) (string, error)
 			if prompter != nil {
 				selected, err := prompter.Select(fmt.Sprintf("Choose a Go version (repo: %s):", hint), []string{"repo", "latest", "lts"})
 				if err == nil {
-					choice = normalizeGoVersionSelector(selected)
+					choice = referenceNormalizeGoVersionSelector(selected)
 				}
 			}
 			if choice == "" {
@@ -436,7 +480,7 @@ func referenceGoVersion(dir, selector string, prompter Prompter) (string, error)
 			if prompter != nil {
 				selected, err := prompter.Select("Choose a Go version:", []string{"latest", "lts"})
 				if err == nil {
-					choice = normalizeGoVersionSelector(selected)
+					choice = referenceNormalizeGoVersionSelector(selected)
 				}
 			}
 			if choice == "" {
@@ -449,7 +493,7 @@ func referenceGoVersion(dir, selector string, prompter Prompter) (string, error)
 }
 
 func referenceGoVersionChoice(choice, hint string, hintFound bool) (string, error) {
-	choice = normalizeGoVersionSelector(choice)
+	choice = referenceNormalizeGoVersionSelector(choice)
 	if choice == "" {
 		return "", fmt.Errorf("empty version selector")
 	}
@@ -459,7 +503,7 @@ func referenceGoVersionChoice(choice, hint string, hintFound bool) (string, erro
 		if !hintFound {
 			return "", fmt.Errorf("no repo Go version hint found")
 		}
-		return referenceGoMiseVersion(normalizeGoVersionSelector(hint))
+		return referenceGoMiseVersion(referenceNormalizeGoVersionSelector(hint))
 	case "latest", "lts":
 		if strings.ToLower(choice) == "latest" {
 			return referenceGoMiseVersion("latest")
@@ -468,7 +512,7 @@ func referenceGoVersionChoice(choice, hint string, hintFound bool) (string, erro
 		if err != nil {
 			return "", err
 		}
-		prefix, err := goPreviousMinorPrefix(latest)
+		prefix, err := referenceGoPreviousMinorPrefix(latest)
 		if err != nil {
 			return "", err
 		}
@@ -479,7 +523,7 @@ func referenceGoVersionChoice(choice, hint string, hintFound bool) (string, erro
 }
 
 func referenceGoMiseVersion(selector string) (string, error) {
-	selector = normalizeGoVersionSelector(selector)
+	selector = referenceNormalizeGoVersionSelector(selector)
 	args := []string{"latest"}
 	if selector == "" || strings.EqualFold(selector, "latest") {
 		args = append(args, "go")
@@ -635,6 +679,701 @@ func TestResolveVersion_GoResolver_EmptySelectorErrors(t *testing.T) {
 	_, err := resolveVersion(resolver, dir, "", &fakePrompter{confirm: true})
 	if err == nil {
 		t.Fatal("expected error for empty selector after normalization")
+	}
+}
+
+// referenceDotnetVersion replicates the pre-refactor .NET resolution
+// algorithm locally so the parity tests have an independent oracle to
+// compare against. It is intentionally a copy of the algorithm (not a call
+// into the migrated resolveVersion/resolveMiseVersion path) so a regression
+// in the extracted resolver surfaces here.
+func referenceDotnetVersion(dir, selector string, prompter Prompter) (string, error) {
+	hint, found, err := readDotnetVersionHint(dir)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if prompter != nil {
+				selected, err := prompter.Select(fmt.Sprintf("Choose a .NET SDK version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = referenceNormalizeDotnetVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if prompter != nil {
+				selected, err := prompter.Select("Choose a .NET SDK version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = referenceNormalizeDotnetVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	return referenceDotnetVersionChoice(choice, hint, found)
+}
+
+func referenceDotnetVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = referenceNormalizeDotnetVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo .NET SDK version hint found")
+		}
+		return referenceDotnetMiseVersion(referenceNormalizeDotnetVersionSelector(hint))
+	case "latest", "lts":
+		return referenceDotnetMiseVersion(choice)
+	}
+
+	return referenceDotnetMiseVersion(choice)
+}
+
+func referenceDotnetMiseVersion(selector string) (string, error) {
+	selector = referenceNormalizeDotnetVersionSelector(selector)
+	args := []string{"latest"}
+	switch strings.ToLower(selector) {
+	case "", "latest":
+		args = append(args, "dotnet")
+	case "lts":
+		args = append(args, "dotnet@lts")
+	default:
+		args = append(args, "dotnet@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledDotnetVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledDotnetVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := bundledDotnetVersionCatalog["lts"]; ok {
+			return version, nil
+		}
+	}
+	if selector != "" && selector != "latest" && selector != "lts" {
+		return selector, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve dotnet version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve dotnet version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func referenceNormalizeDotnetVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "dotnet") && selector[6] >= '0' && selector[6] <= '9' {
+		return selector[6:]
+	}
+	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	return selector
+}
+
+// referenceNodeVersion replicates the pre-refactor Node resolution algorithm
+// locally so the parity tests have an independent oracle to compare against.
+func referenceNodeVersion(dir, selector string, prompter Prompter) (string, error) {
+	hint, found, err := readNodeVersionHint(dir)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if prompter != nil {
+				selected, err := prompter.Select(fmt.Sprintf("Choose a Node version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = referenceNormalizeNodeVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if prompter != nil {
+				selected, err := prompter.Select("Choose a Node version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = referenceNormalizeNodeVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	return referenceNodeVersionChoice(choice, hint, found)
+}
+
+func referenceNodeVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = referenceNormalizeNodeVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Node version hint found")
+		}
+		return referenceNodeMiseVersion(referenceNormalizeNodeVersionSelector(hint))
+	case "latest", "lts":
+		return referenceNodeMiseVersion(choice)
+	}
+
+	return referenceNodeMiseVersion(choice)
+}
+
+func referenceNodeMiseVersion(selector string) (string, error) {
+	selector = referenceNormalizeNodeVersionSelector(selector)
+	args := []string{"latest"}
+	switch strings.ToLower(selector) {
+	case "", "latest":
+		args = append(args, "node")
+	case "lts":
+		args = append(args, "node@lts")
+	default:
+		args = append(args, "node@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledNodeVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledNodeVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := bundledNodeVersionCatalog["lts"]; ok {
+			return version, nil
+		}
+	}
+	if selector != "" && selector != "latest" && selector != "lts" && nodeVersionSelectorPattern.MatchString(selector) {
+		return selector, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve node version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve node version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func referenceNormalizeNodeVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return ""
+	}
+	lower := strings.ToLower(selector)
+	switch {
+	case lower == "repo", lower == "latest", lower == "lts":
+		return lower
+	case strings.HasPrefix(lower, "lts/"):
+		return "lts"
+	}
+	if len(selector) > 1 && strings.HasPrefix(lower, "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	if version := nodeVersionSelectorPattern.FindString(selector); version != "" {
+		return version
+	}
+	return selector
+}
+
+// referencePythonVersion replicates the pre-refactor Python resolution
+// algorithm locally so the parity tests have an independent oracle to compare
+// against. The lts branch and pythonPreviousMinorPrefix are inlined because
+// they are deleted in the slice that lands the migration.
+func referencePythonVersion(dir, selector string, prompter Prompter) (string, error) {
+	hint, found, err := readPythonVersionHint(dir)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if prompter != nil {
+				selected, err := prompter.Select(fmt.Sprintf("Choose a Python version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = referenceNormalizePythonVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if prompter != nil {
+				selected, err := prompter.Select("Choose a Python version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = referenceNormalizePythonVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	return referencePythonVersionChoice(choice, hint, found)
+}
+
+func referencePythonVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = referenceNormalizePythonVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Python version hint found")
+		}
+		return referencePythonMiseVersion(referenceNormalizePythonVersionSelector(hint))
+	case "latest", "lts":
+		if strings.ToLower(choice) == "latest" {
+			return referencePythonMiseVersion("latest")
+		}
+		latest, err := referencePythonMiseVersion("latest")
+		if err != nil {
+			return "", err
+		}
+		prefix, err := referencePythonPreviousMinorPrefix(latest)
+		if err != nil {
+			return "", err
+		}
+		return referencePythonMiseVersion(prefix)
+	}
+
+	return referencePythonMiseVersion(choice)
+}
+
+func referencePythonMiseVersion(selector string) (string, error) {
+	selector = referenceNormalizePythonVersionSelector(selector)
+	args := []string{"latest"}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		args = append(args, "python")
+	} else {
+		args = append(args, "python@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledPythonVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledPythonVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve python version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve python version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func referenceNormalizePythonVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "python") && selector[6] >= '0' && selector[6] <= '9' {
+		return selector[6:]
+	}
+	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	return selector
+}
+
+func referencePythonPreviousMinorPrefix(version string) (string, error) {
+	version = referenceNormalizePythonVersionSelector(version)
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected Python version %q", version)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("parse Python major version %q: %w", version, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("parse Python minor version %q: %w", version, err)
+	}
+	if minor == 0 {
+		return "", fmt.Errorf("unexpected Python version %q", version)
+	}
+	minor--
+
+	return fmt.Sprintf("%d.%d", major, minor), nil
+}
+
+func TestResolveVersion_DotnetResolver_Selectors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte(`{"sdk":{"version":"8.0.100"}}`), 0644); err != nil {
+		t.Fatalf("write global.json: %v", err)
+	}
+	prompter := &fakePrompter{confirm: true}
+
+	tests := []struct {
+		name     string
+		selector string
+	}{
+		{name: "repo", selector: "repo"},
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "specific_version", selector: "9"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveVersion(dotnetResolver, dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("resolveVersion %s: %v", tt.selector, err)
+			}
+			want, err := referenceDotnetVersion(dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("referenceDotnetVersion %s: %v", tt.selector, err)
+			}
+			if got != want {
+				t.Fatalf("resolveVersion %s: got %q, want %q", tt.selector, got, want)
+			}
+		})
+	}
+}
+
+func TestResolveVersion_DotnetResolver_RepoFallsBackToLatestWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(dotnetResolver, dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion repo without hint: %v", err)
+	}
+	want, err := referenceDotnetVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceDotnetVersion repo: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected repo fallback to match reference (%q), got %q", want, got)
+	}
+}
+
+func TestResolveVersion_DotnetResolver_EmptySelectorDefaultsToLatest(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(dotnetResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector: %v", err)
+	}
+	want, err := referenceDotnetVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceDotnetVersion empty selector: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_DotnetResolver_EmptySelectorDefaultsToRepoWithHint(t *testing.T) {
+	dir := t.TempDir()
+	hintSelector := "8.0.100"
+	if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte(`{"sdk":{"version":"`+hintSelector+`"}}`), 0644); err != nil {
+		t.Fatalf("write global.json: %v", err)
+	}
+
+	got, err := resolveVersion(dotnetResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector with hint: %v", err)
+	}
+	want, err := referenceDotnetVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceDotnetVersion empty selector with hint: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector with hint: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_DotnetResolver_RepoFailsWhenPrompterSelectsRepoWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+	prompter := &fakePrompter{selected: "repo"}
+
+	_, err := resolveVersion(dotnetResolver, dir, "repo", prompter)
+	if err == nil {
+		t.Fatal("expected error when prompter selects repo without a hint")
+	}
+}
+
+func TestResolveVersion_DotnetResolver_PassThroughUnknownSelector(t *testing.T) {
+	dir := t.TempDir()
+	selector := "7.0.999"
+
+	got, err := resolveVersion(dotnetResolver, dir, selector, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion pass-through: %v", err)
+	}
+	want, err := referenceDotnetVersion(dir, selector, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceDotnetVersion pass-through: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion pass-through: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_NodeResolver_Selectors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	prompter := &fakePrompter{confirm: true}
+
+	tests := []struct {
+		name     string
+		selector string
+	}{
+		{name: "repo", selector: "repo"},
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "specific_version", selector: "20"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveVersion(nodeResolver, dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("resolveVersion %s: %v", tt.selector, err)
+			}
+			want, err := referenceNodeVersion(dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("referenceNodeVersion %s: %v", tt.selector, err)
+			}
+			if got != want {
+				t.Fatalf("resolveVersion %s: got %q, want %q", tt.selector, got, want)
+			}
+		})
+	}
+}
+
+func TestResolveVersion_NodeResolver_RepoFallsBackToLatestWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(nodeResolver, dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion repo without hint: %v", err)
+	}
+	want, err := referenceNodeVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceNodeVersion repo: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected repo fallback to match reference (%q), got %q", want, got)
+	}
+}
+
+func TestResolveVersion_NodeResolver_EmptySelectorDefaultsToLatest(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(nodeResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector: %v", err)
+	}
+	want, err := referenceNodeVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceNodeVersion empty selector: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_NodeResolver_EmptySelectorDefaultsToRepoWithHint(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	got, err := resolveVersion(nodeResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector with hint: %v", err)
+	}
+	want, err := referenceNodeVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceNodeVersion empty selector with hint: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector with hint: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_NodeResolver_RepoFailsWhenPrompterSelectsRepoWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+	prompter := &fakePrompter{selected: "repo"}
+
+	_, err := resolveVersion(nodeResolver, dir, "repo", prompter)
+	if err == nil {
+		t.Fatal("expected error when prompter selects repo without a hint")
+	}
+}
+
+func TestResolveVersion_NodeResolver_PassThroughUnknownSelector(t *testing.T) {
+	dir := t.TempDir()
+	selector := "v20.99.99"
+
+	got, err := resolveVersion(nodeResolver, dir, selector, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion pass-through: %v", err)
+	}
+	want, err := referenceNodeVersion(dir, selector, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceNodeVersion pass-through: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion pass-through: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_PythonResolver_Selectors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".python-version"), []byte("3.12\n"), 0644); err != nil {
+		t.Fatalf("write .python-version: %v", err)
+	}
+	prompter := &fakePrompter{confirm: true}
+
+	tests := []struct {
+		name     string
+		selector string
+	}{
+		{name: "repo", selector: "repo"},
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "specific_version", selector: "3.12"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveVersion(pythonResolver, dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("resolveVersion %s: %v", tt.selector, err)
+			}
+			want, err := referencePythonVersion(dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("referencePythonVersion %s: %v", tt.selector, err)
+			}
+			if got != want {
+				t.Fatalf("resolveVersion %s: got %q, want %q", tt.selector, got, want)
+			}
+		})
+	}
+}
+
+func TestResolveVersion_PythonResolver_RepoFallsBackToLatestWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(pythonResolver, dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion repo without hint: %v", err)
+	}
+	want, err := referencePythonVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referencePythonVersion repo: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected repo fallback to match reference (%q), got %q", want, got)
+	}
+}
+
+func TestResolveVersion_PythonResolver_EmptySelectorDefaultsToLatest(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(pythonResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector: %v", err)
+	}
+	want, err := referencePythonVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referencePythonVersion empty selector: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_PythonResolver_EmptySelectorDefaultsToRepoWithHint(t *testing.T) {
+	dir := t.TempDir()
+	hintSelector := "3.12"
+	if err := os.WriteFile(filepath.Join(dir, ".python-version"), []byte(hintSelector+"\n"), 0644); err != nil {
+		t.Fatalf("write .python-version: %v", err)
+	}
+
+	got, err := resolveVersion(pythonResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector with hint: %v", err)
+	}
+	want, err := referencePythonVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referencePythonVersion empty selector with hint: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector with hint: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_PythonResolver_RepoFailsWhenPrompterSelectsRepoWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+	prompter := &fakePrompter{selected: "repo"}
+
+	_, err := resolveVersion(pythonResolver, dir, "repo", prompter)
+	if err == nil {
+		t.Fatal("expected error when prompter selects repo without a hint")
 	}
 }
 
