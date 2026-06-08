@@ -15,7 +15,7 @@ This skill implements a GitHub issue by modifying the current repository's sourc
 
 - `gh` CLI authenticated
 - Working directory at repo root
-- `sandman-tdd`, `sandman-review`, and `sandman-merge` skills available
+- `sandman-tdd`, `sandman-review`, `sandman-merge`, and `sandman-handoff` skills available
 
 ## Workflow
 
@@ -99,6 +99,11 @@ Capture the PR URL and number.
 - If you do ignore feedback, explain why in the PR thread before continuing.
 - Stop when the PR Review Agent approves or after max passes
 
+### 9. Handoff
+
+- Load the `sandman-handoff` skill
+- Follow its workflow to write `.sandman/continuation-context.md`
+
 ## Checklist
 
 - [ ] Branch created from latest main
@@ -109,3 +114,4 @@ Capture the PR URL and number.
 - [ ] Base branch merged into current branch with `sandman-merge`
 - [ ] PR created with `Fixes #<ID>`
 - [ ] Delegate review completed
+- [ ] Handoff context written
