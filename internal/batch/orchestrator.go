@@ -671,7 +671,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "") {
-		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, func() (gitIdentity, error) { return resolveGitIdentity(".") }, policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
+		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newPromptOnlyIdentityResolver("."), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
 	}
 
 	startGate := newBatchStartGate(effectiveParallel, startDelay)
@@ -688,24 +688,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	var activeMu sync.Mutex
 	activeRuns := make(map[int]sandbox.Sandbox)
-	var resolveGitIdentityOnce sync.Once
-	resolvedGitIdentity := gitIdentity{}
-	resolveGitIdentityErr := error(nil)
-	resolveBatchGitIdentity := func() (gitIdentity, error) {
-		if o.sandboxFactory != nil || o.runnableFactory != nil || o.containerRuntimeFactory != nil {
-			return gitIdentity{}, nil
-		}
-		resolveGitIdentityOnce.Do(func() {
-			resolvedGitIdentity, resolveGitIdentityErr = resolveGitIdentity(".")
-			if resolveGitIdentityErr != nil {
-				return
-			}
-			if err := setGitConfigValue(".", "extensions.worktreeConfig", "true"); err != nil {
-				resolveGitIdentityErr = fmt.Errorf("enable worktree git config: %w", err)
-			}
-		})
-		return resolvedGitIdentity, resolveGitIdentityErr
-	}
+	batchIdentityResolver := newBatchIdentityResolver(o, ".")
 
 	// Graceful shutdown: on context cancel, SIGTERM all processes, wait 10s, then SIGKILL.
 	shutdownDone := make(chan struct{})
@@ -894,7 +877,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 
-			res, started := o.runSingle(issueCtx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, resolveBatchGitIdentity, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, req.Force, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
+			res, started := o.runSingle(issueCtx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, req.Force, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -1188,7 +1171,7 @@ type runSession struct {
 	agentCfg                   config.Agent
 	continuation               bool
 	previousRunIDs             map[int]string
-	resolveGitIdentity         func() (gitIdentity, error)
+	identityResolver           *gitIdentityResolver
 	branches                   map[int]string
 	renderCfg                  prompt.RenderConfig
 	outputWriter               io.Writer
@@ -1224,7 +1207,7 @@ func (s *runSession) applyForceAndIdentity(wt sandbox.Sandbox, branch string) (A
 		setter.SetForce(s.force)
 	}
 	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
-		identity, err := s.resolveGitIdentity()
+		identity, err := s.identityResolver.resolve()
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
 			result := AgentRunResult{Status: "failure", Branch: branch}
@@ -1405,7 +1388,7 @@ func (s *runSession) runOnce(
 
 // runSingle runs a single issue-driven AgentRun. It builds a runSession and
 // delegates to (*runSession).execute.
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
 	s := &runSession{
 		o:                          o,
 		issueNumber:                num,
@@ -1414,7 +1397,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		agentCfg:                   agentCfg,
 		continuation:               continuation,
 		previousRunIDs:             previousRunIDs,
-		resolveGitIdentity:         resolveGitIdentity,
+		identityResolver:           identityResolver,
 		branches:                   branches,
 		renderCfg:                  renderCfg,
 		outputWriter:               outputWriter,
@@ -1675,9 +1658,9 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 	return nil
 }
 
-func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (*Result, error) {
+func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
-	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, resolveGitIdentity, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Force, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions)
+	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Force, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -1692,13 +1675,13 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 
 // runPromptOnlySingle runs a single prompt-only AgentRun. It builds a
 // runSession and delegates to (*runSession).executePromptOnly.
-func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
+func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
 	s := &runSession{
 		o:                          o,
 		cfg:                        cfg,
 		agentName:                  agentName,
 		agentCfg:                   agentCfg,
-		resolveGitIdentity:         resolveGitIdentity,
+		identityResolver:           identityResolver,
 		branches:                   map[int]string{0: branch},
 		renderCfg:                  renderCfg,
 		outputWriter:               outputWriter,
@@ -1984,3 +1967,193 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, log
 
 // Ensure Orchestrator implements Runner.
 var _ Runner = (*Orchestrator)(nil)
+
+// gitIdentityResolver resolves the host git identity exactly once and caches
+// the result for all callers. It is created per batch by RunBatch (one
+// resolver shared across every runSession in the batch) and per prompt-only
+// invocation by runPromptOnly, and is owned by the session via the
+// identityResolver field. A single resolver preserves the sync.Once
+// semantics that the previous resolveBatchGitIdentity closure provided: the
+// first concurrent caller pays the cost of running `git config`; every
+// subsequent caller reads the cached value or error.
+//
+// Production usage:
+//
+//	resolver := newBatchIdentityResolver(o, ".")
+//	// later, from (*runSession).applyForceAndIdentity:
+//	identity, err := s.identityResolver.resolve()
+//
+// Test usage (no real git invocation, no worktree-config side effect):
+//
+//	resolver := noopIdentityResolver()
+type gitIdentityResolver struct {
+	repoPath    string
+	once        sync.Once
+	resolved    gitIdentity
+	err         error
+	skipResolve bool
+}
+
+// newBatchIdentityResolver returns a resolver that performs a real
+// resolution unless the orchestrator is running in a mode that handles git
+// identity itself (sandbox / runnable / container-runtime factories set), in
+// which case the resolver is a no-op. The repoPath is the path passed to
+// `git -C` for every config read and write.
+func newBatchIdentityResolver(o *Orchestrator, repoPath string) *gitIdentityResolver {
+	if o.sandboxFactory != nil || o.runnableFactory != nil || o.containerRuntimeFactory != nil {
+		return &gitIdentityResolver{skipResolve: true}
+	}
+	return &gitIdentityResolver{repoPath: repoPath}
+}
+
+// newPromptOnlyIdentityResolver returns a resolver that always performs a
+// real resolution. Prompt-only runs do not share the orchestrator's
+// sandbox-factory short-circuit, so they always need an identity.
+func newPromptOnlyIdentityResolver(repoPath string) *gitIdentityResolver {
+	return &gitIdentityResolver{repoPath: repoPath}
+}
+
+// noopIdentityResolver returns a resolver that returns a zero-value
+// identity with no error and never runs `git config`. Used by tests that
+// inject identity resolution into runSingle / runPromptOnlySingle.
+func noopIdentityResolver() *gitIdentityResolver {
+	return &gitIdentityResolver{skipResolve: true}
+}
+
+// resolve returns the cached git identity, computing it on the first call
+// and on every subsequent call returning the same value (or error). Safe
+// for concurrent use. When skipResolve is true, returns a zero identity and
+// nil error without running any external command.
+func (r *gitIdentityResolver) resolve() (gitIdentity, error) {
+	if r.skipResolve {
+		return gitIdentity{}, nil
+	}
+	r.once.Do(func() {
+		r.resolved, r.err = r.loadIdentity()
+		if r.err != nil {
+			return
+		}
+		if err := r.setWorktreeConfig(); err != nil {
+			r.err = fmt.Errorf("enable worktree git config: %w", err)
+		}
+	})
+	return r.resolved, r.err
+}
+
+// loadIdentity runs the full resolution cascade: home ~/.gitconfig, then
+// XDG_CONFIG_HOME/git/config, then repo-local .git/config. Returns a
+// descriptive error listing whichever keys are still missing.
+func (r *gitIdentityResolver) loadIdentity() (gitIdentity, error) {
+	home, err := os.UserHomeDir()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return gitIdentity{}, fmt.Errorf("resolve home dir for git identity: %w", err)
+	}
+
+	identity := gitIdentity{}
+	if home != "" {
+		identity.Name, err = r.resolveGitIdentityValue(filepath.Join(home, ".gitconfig"), "user.name")
+		if err != nil {
+			return gitIdentity{}, err
+		}
+		identity.Email, err = r.resolveGitIdentityValue(filepath.Join(home, ".gitconfig"), "user.email")
+		if err != nil {
+			return gitIdentity{}, err
+		}
+
+		gitConfigDir := r.hostGitConfigDir(home)
+		if strings.TrimSpace(identity.Name) == "" {
+			identity.Name, err = r.resolveGitIdentityValue(filepath.Join(gitConfigDir, "config"), "user.name")
+			if err != nil {
+				return gitIdentity{}, err
+			}
+		}
+		if strings.TrimSpace(identity.Email) == "" {
+			identity.Email, err = r.resolveGitIdentityValue(filepath.Join(gitConfigDir, "config"), "user.email")
+			if err != nil {
+				return gitIdentity{}, err
+			}
+		}
+	}
+
+	if strings.TrimSpace(identity.Name) == "" {
+		identity.Name, err = r.gitConfigValue("--includes", "--local", "--get", "user.name")
+		if err != nil {
+			return gitIdentity{}, err
+		}
+	}
+	if strings.TrimSpace(identity.Email) == "" {
+		identity.Email, err = r.gitConfigValue("--includes", "--local", "--get", "user.email")
+		if err != nil {
+			return gitIdentity{}, err
+		}
+	}
+
+	missing := make([]string, 0, 2)
+	if strings.TrimSpace(identity.Name) == "" {
+		missing = append(missing, "user.name")
+	}
+	if strings.TrimSpace(identity.Email) == "" {
+		missing = append(missing, "user.email")
+	}
+	if len(missing) > 0 {
+		return gitIdentity{}, fmt.Errorf("resolve git identity: missing %s; set them in ~/.gitconfig, %s, or repo-local .git/config", strings.Join(missing, " and "), filepath.Join(r.hostGitConfigDir("~"), "config"))
+	}
+
+	return identity, nil
+}
+
+// setWorktreeConfig enables extensions.worktreeConfig in the repo so the
+// worktree can carry its own git config.
+func (r *gitIdentityResolver) setWorktreeConfig() error {
+	return r.setGitConfigValue("extensions.worktreeConfig", "true")
+}
+
+// resolveGitIdentityValue reads a single key from the given git config file.
+// Returns an empty string (no error) if the file does not exist.
+func (r *gitIdentityResolver) resolveGitIdentityValue(configPath, key string) (string, error) {
+	if _, err := os.Stat(configPath); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("stat git config %q: %w", configPath, err)
+	}
+	return r.gitConfigValue("--includes", "--file", configPath, "--get", key)
+}
+
+// gitConfigValue runs `git -C <repoPath> config <args...>` and returns the
+// trimmed stdout. Exit code 1 (key not set) is treated as an empty string
+// with no error so callers can fall through to the next source.
+func (r *gitIdentityResolver) gitConfigValue(args ...string) (string, error) {
+	cmdArgs := append([]string{"-C", r.repoPath, "config"}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", nil
+		}
+		return "", fmt.Errorf("git %s: %w\n%s", strings.Join(cmdArgs, " "), err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// setGitConfigValue runs `git -C <repoPath> config <args...>` and discards
+// stdout. Any non-zero exit is returned as an error.
+func (r *gitIdentityResolver) setGitConfigValue(args ...string) error {
+	cmdArgs := append([]string{"-C", r.repoPath, "config"}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git %s: %w\n%s", strings.Join(cmdArgs, " "), err, out)
+	}
+	return nil
+}
+
+// hostGitConfigDir returns the host git config directory: $XDG_CONFIG_HOME/git
+// when set, otherwise $HOME/.config/git.
+func (r *gitIdentityResolver) hostGitConfigDir(home string) string {
+	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
+		return filepath.Join(xdg, "git")
+	}
+	return filepath.Join(home, ".config", "git")
+}
