@@ -1184,6 +1184,207 @@ type runSession struct {
 	dangerouslySkipPermissions bool
 }
 
+// applyForceAndIdentity applies the session's force flag and resolved git
+// identity to the given sandbox. On identity resolution failure it returns
+// (errResult, false) so the caller can short-circuit. Issue-driven sessions
+// receive a populated Issue/IssueNumber; prompt-only (issueNumber == 0) does
+// not, matching the existing error-path convention.
+func (s *runSession) applyForceAndIdentity(wt sandbox.Sandbox, branch string) (AgentRunResult, bool) {
+	o := s.o
+	if setter, ok := wt.(interface{ SetForce(bool) }); ok {
+		setter.SetForce(s.force)
+	}
+	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
+		identity, err := s.resolveGitIdentity()
+		if err != nil {
+			fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
+			result := AgentRunResult{Status: "failure", Branch: branch}
+			if s.issueNumber > 0 {
+				result.IssueNumber = s.issueNumber
+				result.Issue = issueRef(s.issueNumber)
+			}
+			return result, false
+		}
+		setter.SetGitIdentity(identity.Name, identity.Email)
+	}
+	return AgentRunResult{}, true
+}
+
+// withHeartbeat runs fn under the run-idle-timeout watchdog when
+// s.runIdleTimeout > 0. The watchdog emits a run.idle_timeout event and kills
+// the process via wt.Process(); any non-success result is rewritten to
+// "aborted". When s.runIdleTimeout <= 0, fn is called directly.
+//
+// attempt is 0-indexed; the run.idle_timeout event payload records attempt+1.
+func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt int, logPath string, wt sandbox.Sandbox, fn func() AgentRunResult) AgentRunResult {
+	o := s.o
+	if s.runIdleTimeout <= 0 {
+		return fn()
+	}
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+	defer cancelHeartbeat()
+	heartbeatDone := make(chan struct{})
+	var abortedByHeartbeat bool
+
+	heartbeat := &Heartbeat{
+		LogPath:      logPath,
+		IdleTimeout:  time.Duration(s.runIdleTimeout) * time.Second,
+		TickInterval: o.heartbeatTickInterval,
+	}
+	heartbeat.OnIdle = func(idle time.Duration) {
+		abortedByHeartbeat = true
+		if o.eventLog != nil {
+			_ = o.eventLog.Log(events.Event{
+				Type:      "run.idle_timeout",
+				Timestamp: time.Now(),
+				RunID:     runID,
+				Issue:     s.issueNumber,
+				IssueRef:  issueRef(s.issueNumber),
+				Payload: map[string]any{
+					"issue":                s.issueNumber,
+					"idle_seconds":         idle.Seconds(),
+					"idle_timeout_seconds": s.runIdleTimeout,
+					"attempt":              attempt + 1,
+				},
+			})
+		}
+	}
+	go func() {
+		defer close(heartbeatDone)
+		_ = heartbeat.Run(heartbeatCtx, func() error {
+			if p := wt.Process(); p != nil {
+				return p.Kill()
+			}
+			return nil
+		})
+	}()
+
+	result := fn()
+	cancelHeartbeat()
+	<-heartbeatDone
+	if abortedByHeartbeat && result.Status != "success" {
+		result.Status = "aborted"
+	}
+	return result
+}
+
+// emitTerminal writes the terminal run event (run.finished or run.aborted) to
+// the event log. For prompt-only (issueNumber == 0) IssueRef is left nil to
+// match the existing event payload convention. worktree_state is always
+// "preserved". No-op when the orchestrator has no event log.
+func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult) {
+	o := s.o
+	if o.eventLog == nil {
+		return
+	}
+	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	retriesDone := result.RetriesTotal - 1
+	if retriesDone < 0 {
+		retriesDone = 0
+	}
+	event := events.Event{
+		Type:      terminalEventType,
+		Timestamp: time.Now(),
+		RunID:     runID,
+		Issue:     s.issueNumber,
+		Payload: map[string]any{
+			"status":         terminalStatus,
+			"branch":         result.Branch,
+			"base_branch":    s.baseBranch,
+			"worktree_state": "preserved",
+			"retries_total":  s.retries,
+			"retries_done":   retriesDone,
+		},
+	}
+	if s.issueNumber > 0 {
+		event.IssueRef = issueRef(s.issueNumber)
+	}
+	_ = o.eventLog.Log(event)
+}
+
+// runOnce runs the retry loop for a session. Each iteration calls
+// prepareAttempt to (re)build the per-attempt render config and optionally
+// short-circuit with an error result. The runnable is built from the factory,
+// configured with the session's agent fields, and run under withHeartbeat.
+//
+// requireMergedPR controls the success path: true means an attempt succeeds
+// when status=="success" OR parseLogForCompletion matches, AND the branch's PR
+// is merged; false means an attempt succeeds on status=="success" alone.
+//
+// prepareAttempt returns (cfg, nil) to continue or (_, &errResult) to abort.
+func (s *runSession) runOnce(
+	ctx context.Context,
+	issue *github.Issue,
+	branch string,
+	wt sandbox.Sandbox,
+	logPath string,
+	runID string,
+	requireMergedPR bool,
+	prepareAttempt func(attempt int, prevResult AgentRunResult) (prompt.RenderConfig, *AgentRunResult),
+) (AgentRunResult, bool) {
+	o := s.o
+	if s.renderCfg.PromptFile == "" {
+		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
+	}
+	if s.renderCfg.RenderedPromptFile == "" {
+		s.renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+	}
+
+	attempts := s.retries + 1
+	var result AgentRunResult
+
+	factory := o.runnableFactory
+	if factory == nil {
+		factory = defaultRunnableFactory{}
+	}
+
+	for attempt := 0; attempt < attempts; attempt++ {
+		attemptRenderCfg, errResult := prepareAttempt(attempt, result)
+		if errResult != nil {
+			return *errResult, false
+		}
+
+		runnable := factory.NewRunnable(issue, branch, wt)
+		if agentRun, ok := runnable.(*AgentRun); ok {
+			agentRun.env = s.agentCfg.Env
+			agentRun.preset = s.agentCfg.Preset
+			agentRun.model = s.agentCfg.Model
+			agentRun.modelProvider = s.agentCfg.ModelProvider
+			agentRun.modelName = s.agentCfg.ModelName
+			agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
+			agentRun.baseBranch = s.baseBranch
+			agentRun.outputWriter = s.outputWriter
+			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
+		}
+
+		result = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
+			return runnable.Run(ctx, o.renderer, s.agentCfg.Command, attemptRenderCfg)
+		})
+		if result.Issue == nil && s.issueNumber > 0 {
+			result.Issue = issueRef(s.issueNumber)
+		}
+		if result.IssueNumber == 0 && s.issueNumber > 0 {
+			result.IssueNumber = s.issueNumber
+		}
+		result.RetriesTotal = attempt + 1
+
+		success := result.Status == "success"
+		if requireMergedPR {
+			success = success || parseLogForCompletion(logPath)
+		}
+		if success {
+			if requireMergedPR && !checkPRMerged(o.githubClient, branch) {
+				result.Status = "failure"
+				continue
+			}
+			result.Status = "success"
+			break
+		}
+	}
+
+	return result, true
+}
+
 // runSingle runs a single issue-driven AgentRun. It builds a runSession and
 // delegates to (*runSession).execute.
 func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, resolveGitIdentity func() (gitIdentity, error), branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
@@ -1252,16 +1453,8 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	wt := s.sbFactory.NewSandbox(".", s.cfg.WorktreeDir, branch, s.baseBranch, container)
-	if setter, ok := wt.(interface{ SetForce(bool) }); ok {
-		setter.SetForce(s.force)
-	}
-	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
-		identity, err := s.resolveGitIdentity()
-		if err != nil {
-			fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
-			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
-		}
-		setter.SetGitIdentity(identity.Name, identity.Email)
+	if errResult, ok := s.applyForceAndIdentity(wt, branch); !ok {
+		return errResult, false
 	}
 	if err := wt.Start(); err != nil {
 		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", s.issueNumber, err)
@@ -1315,11 +1508,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			p.Kill()
 		}
 	}()
-
-	factory := o.runnableFactory
-	if factory == nil {
-		factory = defaultRunnableFactory{}
-	}
 
 	if o.eventLog != nil {
 		promptSourceType := "current"
@@ -1378,17 +1566,8 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		})
 	}
 
-	if s.renderCfg.PromptFile == "" {
-		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
-	}
-	if s.renderCfg.RenderedPromptFile == "" {
-		s.renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
-	}
-
-	attempts := s.retries + 1
-	var result AgentRunResult
 	logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%d.log", s.issueNumber))
-	for attempt := 0; attempt < attempts; attempt++ {
+	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, true, func(attempt int, prevResult AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
@@ -1411,11 +1590,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 				if !prFound {
 					if prLookupErr != nil {
 						fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
-						return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+						return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 					}
 					if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
 						fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", s.issueNumber, err)
-						return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+						return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 					}
 				}
 			}
@@ -1429,116 +1608,16 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 				fmt.Fprintf(o.errorLog, "warning: write run marker for issue %d: %v\n", s.issueNumber, err)
 			}
 		}
-
-		runnable := factory.NewRunnable(issue, branch, wt)
-		if agentRun, ok := runnable.(*AgentRun); ok {
-			agentRun.env = s.agentCfg.Env
-			agentRun.preset = s.agentCfg.Preset
-			agentRun.model = s.agentCfg.Model
-			agentRun.modelProvider = s.agentCfg.ModelProvider
-			agentRun.modelName = s.agentCfg.ModelName
-			agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
-			agentRun.baseBranch = s.baseBranch
-			agentRun.outputWriter = s.outputWriter
-			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
-		}
-
-		var (
-			abortedByHeartbeat bool
-			heartbeatDone      chan struct{}
-			cancelHeartbeat    context.CancelFunc
-		)
-		if s.runIdleTimeout > 0 {
-			var heartbeatCtx context.Context
-			heartbeatCtx, cancelHeartbeat = context.WithCancel(ctx)
-			heartbeatDone = make(chan struct{})
-			heartbeat := &Heartbeat{
-				LogPath:      logPath,
-				IdleTimeout:  time.Duration(s.runIdleTimeout) * time.Second,
-				TickInterval: o.heartbeatTickInterval,
-			}
-			heartbeat.OnIdle = func(idle time.Duration) {
-				abortedByHeartbeat = true
-				if o.eventLog != nil {
-					_ = o.eventLog.Log(events.Event{
-						Type:      "run.idle_timeout",
-						Timestamp: time.Now(),
-						RunID:     runID,
-						Issue:     s.issueNumber,
-						IssueRef:  issueRef(s.issueNumber),
-						Payload: map[string]any{
-							"issue":                s.issueNumber,
-							"idle_seconds":         idle.Seconds(),
-							"idle_timeout_seconds": s.runIdleTimeout,
-							"attempt":              attempt + 1,
-						},
-					})
-				}
-			}
-			go func() {
-				defer close(heartbeatDone)
-				_ = heartbeat.Run(heartbeatCtx, func() error {
-					if p := wt.Process(); p != nil {
-						return p.Kill()
-					}
-					return nil
-				})
-			}()
-		}
-
-		result = runnable.Run(ctx, o.renderer, s.agentCfg.Command, attemptRenderCfg)
-		if result.Issue == nil {
-			result.Issue = issueRef(s.issueNumber)
-		}
-		if result.IssueNumber == 0 {
-			result.IssueNumber = s.issueNumber
-		}
-		result.RetriesTotal = attempt + 1
-		if cancelHeartbeat != nil {
-			cancelHeartbeat()
-		}
-		if heartbeatDone != nil {
-			<-heartbeatDone
-		}
-		if abortedByHeartbeat && result.Status != "success" {
-			result.Status = "aborted"
-		}
-		if result.Status == "success" || parseLogForCompletion(logPath) {
-			if !checkPRMerged(o.githubClient, branch) {
-				result.Status = "failure"
-				continue
-			}
-			result.Status = "success"
-			break
-		}
+		return attemptRenderCfg, nil
+	})
+	if !started {
+		return result, false
 	}
 
-	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	_, terminalStatus := terminalRunEvent(ctx, result.Status)
 	result.Status = terminalStatus
 
-	worktreeState := "preserved"
-
-	if o.eventLog != nil {
-		retriesDone := result.RetriesTotal - 1
-		if retriesDone < 0 {
-			retriesDone = 0
-		}
-		_ = o.eventLog.Log(events.Event{
-			Type:      terminalEventType,
-			Timestamp: time.Now(),
-			RunID:     runID,
-			Issue:     s.issueNumber,
-			IssueRef:  issueRef(s.issueNumber),
-			Payload: map[string]any{
-				"status":         terminalStatus,
-				"branch":         result.Branch,
-				"base_branch":    s.baseBranch,
-				"worktree_state": worktreeState,
-				"retries_total":  s.retries,
-				"retries_done":   retriesDone,
-			},
-		})
-	}
+	s.emitTerminal(ctx, runID, result)
 
 	return result, true
 }
@@ -1578,19 +1657,6 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 		return fmt.Errorf("reset retry branch: %w\n%s", err, output.String())
 	}
 	return nil
-}
-
-func (o *Orchestrator) writeRetryMarker(workDir string, issueNum int, branch string, attempt, retries int) error {
-	logDir := filepath.Join(workDir, ".sandman", "logs")
-	logName := fmt.Sprintf("%d.log", issueNum)
-	if issueNum == 0 {
-		name := strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)
-		if name == "" {
-			name = "prompt-only"
-		}
-		logName = name + ".log"
-	}
-	return logRetryMarker(filepath.Join(logDir, logName), attempt, retries)
 }
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, resolveGitIdentity func() (gitIdentity, error), sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (*Result, error) {
@@ -1663,16 +1729,8 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 
 	wt := s.sbFactory.NewSandbox(".", s.cfg.WorktreeDir, branch, s.baseBranch, container)
-	if setter, ok := wt.(interface{ SetForce(bool) }); ok {
-		setter.SetForce(s.force)
-	}
-	if setter, ok := wt.(interface{ SetGitIdentity(string, string) }); ok {
-		identity, err := s.resolveGitIdentity()
-		if err != nil {
-			fmt.Fprintf(o.errorLog, "error: resolve git identity for prompt-only run: %v\n", err)
-			return AgentRunResult{Status: "failure", Branch: branch}, false
-		}
-		setter.SetGitIdentity(identity.Name, identity.Email)
+	if errResult, ok := s.applyForceAndIdentity(wt, branch); !ok {
+		return errResult, false
 	}
 	if err := wt.Start(); err != nil {
 		fmt.Fprintf(o.errorLog, "error: start sandbox for prompt-only run: %v\n", err)
@@ -1698,11 +1756,6 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		}
 	}()
 	defer func() { delete(activeRuns, 0) }()
-
-	factory := o.runnableFactory
-	if factory == nil {
-		factory = defaultRunnableFactory{}
-	}
 
 	runID := generateRunID(0)
 	if o.eventLog != nil {
@@ -1731,64 +1784,33 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		_ = o.eventLog.Log(events.Event{Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}
 
-	if s.renderCfg.PromptFile == "" {
-		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
-	}
-	if s.renderCfg.RenderedPromptFile == "" {
-		s.renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
-	}
-
-	attempts := s.retries + 1
-	var result AgentRunResult
-	for attempt := 0; attempt < attempts; attempt++ {
+	logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
+	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int, prevResult AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
 			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
 				fmt.Fprintf(o.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
-				return AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}, false
+				return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			if err := o.writeRetryMarker(wt.WorkDir(), 0, branch, attempt, s.retries); err != nil {
+			if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
 				if o.errorLog != nil {
 					fmt.Fprintf(o.errorLog, "warning: write retry marker for prompt-only run: %v\n", err)
 				}
 			}
-		} else {
-			logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
-			if err := logRunMarkerFn(logPath, attempt, s.retries); err != nil {
-				if o.errorLog != nil {
-					fmt.Fprintf(o.errorLog, "warning: write run marker for prompt-only run: %v\n", err)
-				}
+		} else if err := logRunMarkerFn(logPath, attempt, s.retries); err != nil {
+			if o.errorLog != nil {
+				fmt.Fprintf(o.errorLog, "warning: write run marker for prompt-only run: %v\n", err)
 			}
 		}
-
-		runnable := factory.NewRunnable(nil, branch, wt)
-		if agentRun, ok := runnable.(*AgentRun); ok {
-			agentRun.env = s.agentCfg.Env
-			agentRun.preset = s.agentCfg.Preset
-			agentRun.model = s.agentCfg.Model
-			agentRun.modelProvider = s.agentCfg.ModelProvider
-			agentRun.modelName = s.agentCfg.ModelName
-			agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
-			agentRun.baseBranch = s.baseBranch
-			agentRun.outputWriter = s.outputWriter
-			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
-		}
-
-		result = runnable.Run(ctx, o.renderer, s.agentCfg.Command, s.renderCfg)
-		result.RetriesTotal = attempt + 1
-		if result.Status == "success" {
-			break
-		}
+		return s.renderCfg, nil
+	})
+	if !started {
+		return result, false
 	}
 
-	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	_, terminalStatus := terminalRunEvent(ctx, result.Status)
 	result.Status = terminalStatus
-	if o.eventLog != nil {
-		retriesDone := result.RetriesTotal - 1
-		if retriesDone < 0 {
-			retriesDone = 0
-		}
-		_ = o.eventLog.Log(events.Event{Type: terminalEventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: map[string]any{"status": terminalStatus, "branch": result.Branch, "base_branch": s.baseBranch, "worktree_state": "preserved", "retries_total": s.retries, "retries_done": retriesDone}})
-	}
+
+	s.emitTerminal(ctx, runID, result)
 
 	return result, true
 }
