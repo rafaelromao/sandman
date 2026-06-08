@@ -165,6 +165,42 @@ func TestCommandServer_StartRemovesStaleSocket(t *testing.T) {
 	defer second.Stop()
 }
 
+// TestCommandResponse_DecodesRecordedAbortResponse exercises the public
+// wire contract on the response side: each payload is a literal
+// recording of the bytes the Command Server writes for an abort reply,
+// and the test asserts the decoded fields round-trip. The two cases
+// cover the only Status values the daemon ever writes (ok, error) so
+// future clients can decode both shapes with confidence.
+func TestCommandResponse_DecodesRecordedAbortResponse(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		want    CommandResponse
+	}{
+		{
+			"abort succeeded",
+			`{"status":"ok"}`,
+			CommandResponse{Status: "ok"},
+		},
+		{
+			"abort failed",
+			`{"status":"error","message":"batch: no such issue"}`,
+			CommandResponse{Status: "error", Message: "batch: no such issue"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got CommandResponse
+			if err := json.Unmarshal([]byte(tc.payload), &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCommandServer_HandlesConcurrentConnections(t *testing.T) {
 	dir := t.TempDir()
 	stub := &fakeCommander{}
