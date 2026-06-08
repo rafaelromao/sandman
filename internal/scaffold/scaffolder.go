@@ -189,6 +189,8 @@ var bundledDotnetVersionCatalog = map[string]string{
 	"6.0":    "6.0.428",
 }
 
+var nodeVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
+
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
 
@@ -445,309 +447,180 @@ func (s *Scaffolder) resolveGoVersion(repoRoot, selector string, p Prompter) (st
 }
 
 func (s *Scaffolder) resolveDotnetVersion(repoRoot, selector string, p Prompter) (string, error) {
-	hint, found, err := readDotnetVersionHint(repoRoot)
-	if err != nil {
-		return "", err
-	}
-
-	choice := strings.TrimSpace(selector)
-	if choice == "repo" && !found {
-		choice = ""
-	}
-	if choice == "" {
-		if found {
-			if p != nil {
-				selected, err := p.Select(fmt.Sprintf("Choose a .NET SDK version (repo: %s):", hint), []string{"repo", "latest", "lts"})
-				if err == nil {
-					choice = normalizeDotnetVersionSelector(selected)
-				}
-			}
-			if choice == "" {
-				choice = "repo"
-			}
-		} else {
-			if p != nil {
-				selected, err := p.Select("Choose a .NET SDK version:", []string{"latest", "lts"})
-				if err == nil {
-					choice = normalizeDotnetVersionSelector(selected)
-				}
-			}
-			if choice == "" {
-				choice = "latest"
-			}
-		}
-	}
-
-	resolved, err := resolveDotnetVersionChoice(choice, hint, found)
-	if err != nil {
-		return "", fmt.Errorf("resolve dotnet version: %w", err)
-	}
-	return resolved, nil
-}
-
-func resolveDotnetVersionChoice(choice, hint string, hintFound bool) (string, error) {
-	choice = normalizeDotnetVersionSelector(choice)
-	if choice == "" {
-		return "", fmt.Errorf("empty version selector")
-	}
-
-	switch strings.ToLower(choice) {
-	case "repo":
-		if !hintFound {
-			return "", fmt.Errorf("no repo .NET SDK version hint found")
-		}
-		return resolveMiseDotnetVersion(normalizeDotnetVersionSelector(hint))
-	case "latest", "lts":
-		return resolveMiseDotnetVersion(choice)
-	}
-
-	return resolveMiseDotnetVersion(choice)
+	return resolveVersion(dotnetResolver, repoRoot, selector, p)
 }
 
 func (s *Scaffolder) resolveNodeVersion(repoRoot, selector string, p Prompter) (string, error) {
-	hint, found, err := readNodeVersionHint(repoRoot)
-	if err != nil {
-		return "", err
-	}
-
-	choice := strings.TrimSpace(selector)
-	if choice == "repo" && !found {
-		choice = ""
-	}
-	if choice == "" {
-		if found {
-			if p != nil {
-				selected, err := p.Select(fmt.Sprintf("Choose a Node version (repo: %s):", hint), []string{"repo", "latest", "lts"})
-				if err == nil {
-					choice = normalizeNodeVersionSelector(selected)
-				}
-			}
-			if choice == "" {
-				choice = "repo"
-			}
-		} else {
-			if p != nil {
-				selected, err := p.Select("Choose a Node version:", []string{"latest", "lts"})
-				if err == nil {
-					choice = normalizeNodeVersionSelector(selected)
-				}
-			}
-			if choice == "" {
-				choice = "latest"
-			}
-		}
-	}
-
-	resolved, err := resolveNodeVersionChoice(choice, hint, found)
-	if err != nil {
-		return "", fmt.Errorf("resolve node version: %w", err)
-	}
-	return resolved, nil
-}
-
-func resolveNodeVersionChoice(choice, hint string, hintFound bool) (string, error) {
-	choice = normalizeNodeVersionSelector(choice)
-	if choice == "" {
-		return "", fmt.Errorf("empty version selector")
-	}
-
-	switch strings.ToLower(choice) {
-	case "repo":
-		if !hintFound {
-			return "", fmt.Errorf("no repo Node version hint found")
-		}
-		return resolveMiseNodeVersion(normalizeNodeVersionSelector(hint))
-	case "latest", "lts":
-		return resolveMiseNodeVersion(choice)
-	}
-
-	return resolveMiseNodeVersion(choice)
-}
-
-var nodeVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
-
-func normalizeNodeVersionSelector(selector string) string {
-	selector = strings.TrimSpace(selector)
-	if selector == "" {
-		return ""
-	}
-	lower := strings.ToLower(selector)
-	switch {
-	case lower == "repo", lower == "latest", lower == "lts":
-		return lower
-	case strings.HasPrefix(lower, "lts/"):
-		return "lts"
-	}
-	if len(selector) > 1 && strings.HasPrefix(lower, "v") && selector[1] >= '0' && selector[1] <= '9' {
-		return selector[1:]
-	}
-	if version := nodeVersionSelectorPattern.FindString(selector); version != "" {
-		return version
-	}
-	return selector
-}
-
-func resolveMiseNodeVersion(selector string) (string, error) {
-	selector = normalizeNodeVersionSelector(selector)
-	args := []string{"latest"}
-	switch strings.ToLower(selector) {
-	case "", "latest":
-		args = append(args, "node")
-	case "lts":
-		args = append(args, "node@lts")
-	default:
-		args = append(args, "node@"+selector)
-	}
-
-	cmd := exec.Command("mise", args...)
-	out, err := cmd.Output()
-	if err == nil {
-		version := strings.TrimSpace(string(out))
-		if version != "" {
-			return version, nil
-		}
-	}
-
-	if version, ok := bundledNodeVersionCatalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := bundledNodeVersionCatalog["latest"]; ok {
-			return version, nil
-		}
-	}
-	if strings.EqualFold(selector, "lts") {
-		if version, ok := bundledNodeVersionCatalog["lts"]; ok {
-			return version, nil
-		}
-	}
-	if selector != "" && selector != "latest" && selector != "lts" && nodeVersionSelectorPattern.MatchString(selector) {
-		return selector, nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("resolve node version %q: %w", selector, err)
-	}
-	return "", fmt.Errorf("resolve node version %q: mise returned empty output and no bundled fallback", selector)
-}
-
-func normalizeGoVersionSelector(selector string) string {
-	selector = strings.TrimSpace(selector)
-	if len(selector) > 2 && strings.HasPrefix(strings.ToLower(selector), "go") && selector[2] >= '0' && selector[2] <= '9' {
-		return selector[2:]
-	}
-	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
-		return selector[1:]
-	}
-	return selector
-}
-
-func resolveMiseGoVersion(selector string) (string, error) {
-	return resolveMiseVersion(goResolver, selector)
-}
-
-func normalizeDotnetVersionSelector(selector string) string {
-	selector = strings.TrimSpace(selector)
-	if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "dotnet") && selector[6] >= '0' && selector[6] <= '9' {
-		return selector[6:]
-	}
-	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
-		return selector[1:]
-	}
-	return selector
-}
-
-func resolveMiseDotnetVersion(selector string) (string, error) {
-	selector = normalizeDotnetVersionSelector(selector)
-	args := []string{"latest"}
-	switch strings.ToLower(selector) {
-	case "", "latest":
-		args = append(args, "dotnet")
-	case "lts":
-		args = append(args, "dotnet@lts")
-	default:
-		args = append(args, "dotnet@"+selector)
-	}
-
-	cmd := exec.Command("mise", args...)
-	out, err := cmd.Output()
-	if err == nil {
-		version := strings.TrimSpace(string(out))
-		if version != "" {
-			return version, nil
-		}
-	}
-
-	if version, ok := bundledDotnetVersionCatalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := bundledDotnetVersionCatalog["latest"]; ok {
-			return version, nil
-		}
-	}
-	if strings.EqualFold(selector, "lts") {
-		if version, ok := bundledDotnetVersionCatalog["lts"]; ok {
-			return version, nil
-		}
-	}
-	if selector != "" && selector != "latest" && selector != "lts" {
-		return selector, nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("resolve dotnet version %q: %w", selector, err)
-	}
-	return "", fmt.Errorf("resolve dotnet version %q: mise returned empty output and no bundled fallback", selector)
-}
-
-func goPreviousMinorPrefix(version string) (string, error) {
-	version = normalizeGoVersionSelector(version)
-	parts := strings.Split(version, ".")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("unexpected Go version %q", version)
-	}
-
-	major, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return "", fmt.Errorf("parse Go major version %q: %w", version, err)
-	}
-	minor, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return "", fmt.Errorf("parse Go minor version %q: %w", version, err)
-	}
-	if minor == 0 {
-		return "", fmt.Errorf("unexpected Go version %q", version)
-	}
-	minor--
-
-	prefix := fmt.Sprintf("%d.%d", major, minor)
-	if major == 1 && minor <= 20 {
-		return "prefix:" + prefix, nil
-	}
-	return prefix, nil
+	return resolveVersion(nodeResolver, repoRoot, selector, p)
 }
 
 // versionResolver parameterises the shared tool-resolution algorithm with
 // the inputs that differ across the four built-in tool resolvers (go, dotnet,
-// node, python). The ltsFromLatest hook, when non-nil, computes the lts
-// selector from the latest resolved version (Go and Python); when nil, "lts"
-// is passed through to mise (.NET and Node).
+// node, python).
+//
+//   - ltsFromLatest, when non-nil, computes the lts selector from the latest
+//     resolved version (Go and Python); when nil, "lts" is passed through to
+//     mise (.NET and Node).
+//   - passThroughValid, when non-nil, lets resolveMiseVersion return the
+//     (already-normalised) selector as-is when both mise and the bundled
+//     catalog miss (.NET and Node); when nil, the selector errors out (Go
+//     and Python).
 type versionResolver struct {
-	label         string
-	miseTool      string
-	hintReader    func(repoRoot string) (string, bool, error)
-	normalize     func(selector string) string
-	catalog       map[string]string
-	ltsFromLatest func(latestVersion string) (string, error)
+	label            string
+	miseTool         string
+	hintReader       func(repoRoot string) (string, bool, error)
+	normalize        func(selector string) string
+	catalog          map[string]string
+	ltsFromLatest    func(latestVersion string) (string, error)
+	passThroughValid func(selector string) bool
 }
 
-// goResolver is the versionResolver configuration for Go.
+// goResolver is the versionResolver configuration for Go. The ltsFromLatest
+// hook goes one minor back from the latest resolved version; the Go-specific
+// quirk is that for Go 1.20 and older, the prefix is "prefix:MAJOR.MINOR"
+// (a Go module-version pseudo-constraint that matches the latest patch of
+// that minor).
 var goResolver = versionResolver{
-	label:         "Go",
-	miseTool:      "go",
-	hintReader:    readGoVersionHint,
-	normalize:     normalizeGoVersionSelector,
-	catalog:       bundledGoVersionCatalog,
-	ltsFromLatest: goPreviousMinorPrefix,
+	label:      "Go",
+	miseTool:   "go",
+	hintReader: readGoVersionHint,
+	normalize: func(selector string) string {
+		selector = strings.TrimSpace(selector)
+		if len(selector) > 2 && strings.HasPrefix(strings.ToLower(selector), "go") && selector[2] >= '0' && selector[2] <= '9' {
+			return selector[2:]
+		}
+		if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+			return selector[1:]
+		}
+		return selector
+	},
+	catalog: bundledGoVersionCatalog,
+	ltsFromLatest: func(version string) (string, error) {
+		version = strings.TrimSpace(version)
+		parts := strings.Split(version, ".")
+		if len(parts) < 2 {
+			return "", fmt.Errorf("unexpected Go version %q", version)
+		}
+
+		major, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return "", fmt.Errorf("parse Go major version %q: %w", version, err)
+		}
+		minor, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return "", fmt.Errorf("parse Go minor version %q: %w", version, err)
+		}
+		if minor == 0 {
+			return "", fmt.Errorf("unexpected Go version %q", version)
+		}
+		minor--
+
+		prefix := fmt.Sprintf("%d.%d", major, minor)
+		if major == 1 && minor <= 20 {
+			return "prefix:" + prefix, nil
+		}
+		return prefix, nil
+	},
+}
+
+// dotnetResolver is the versionResolver configuration for .NET. The
+// passThroughValid hook returns the (already-normalised) selector as-is
+// for any non-empty, non-"latest", non-"lts" selector that misses both
+// mise and the bundled catalog.
+var dotnetResolver = versionResolver{
+	label:      ".NET SDK",
+	miseTool:   "dotnet",
+	hintReader: readDotnetVersionHint,
+	normalize: func(selector string) string {
+		selector = strings.TrimSpace(selector)
+		if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "dotnet") && selector[6] >= '0' && selector[6] <= '9' {
+			return selector[6:]
+		}
+		if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+			return selector[1:]
+		}
+		return selector
+	},
+	catalog: bundledDotnetVersionCatalog,
+	passThroughValid: func(selector string) bool {
+		return selector != "" && !strings.EqualFold(selector, "latest") && !strings.EqualFold(selector, "lts")
+	},
+}
+
+// nodeResolver is the versionResolver configuration for Node. The
+// passThroughValid hook returns the (already-normalised) selector as-is
+// when it matches nodeVersionSelectorPattern (a `\d+(?:\.\d+){0,2}`
+// version shape) and is not "latest"/"lts".
+var nodeResolver = versionResolver{
+	label:      "Node",
+	miseTool:   "node",
+	hintReader: readNodeVersionHint,
+	normalize: func(selector string) string {
+		selector = strings.TrimSpace(selector)
+		if selector == "" {
+			return ""
+		}
+		lower := strings.ToLower(selector)
+		switch {
+		case lower == "repo", lower == "latest", lower == "lts":
+			return lower
+		case strings.HasPrefix(lower, "lts/"):
+			return "lts"
+		}
+		if len(selector) > 1 && strings.HasPrefix(lower, "v") && selector[1] >= '0' && selector[1] <= '9' {
+			return selector[1:]
+		}
+		if version := nodeVersionSelectorPattern.FindString(selector); version != "" {
+			return version
+		}
+		return selector
+	},
+	catalog: bundledNodeVersionCatalog,
+	passThroughValid: func(selector string) bool {
+		return selector != "" && nodeVersionSelectorPattern.MatchString(selector)
+	},
+}
+
+// pythonResolver is the versionResolver configuration for Python. The
+// ltsFromLatest hook computes the lts selector by going one minor back
+// from the latest resolved version.
+var pythonResolver = versionResolver{
+	label:      "Python",
+	miseTool:   "python",
+	hintReader: readPythonVersionHint,
+	normalize: func(selector string) string {
+		selector = strings.TrimSpace(selector)
+		if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "python") && selector[6] >= '0' && selector[6] <= '9' {
+			return selector[6:]
+		}
+		if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+			return selector[1:]
+		}
+		return selector
+	},
+	catalog: bundledPythonVersionCatalog,
+	ltsFromLatest: func(version string) (string, error) {
+		version = strings.TrimSpace(version)
+		parts := strings.Split(version, ".")
+		if len(parts) < 2 {
+			return "", fmt.Errorf("unexpected Python version %q", version)
+		}
+
+		major, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return "", fmt.Errorf("parse Python major version %q: %w", version, err)
+		}
+		minor, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return "", fmt.Errorf("parse Python minor version %q: %w", version, err)
+		}
+		if minor == 0 {
+			return "", fmt.Errorf("unexpected Python version %q", version)
+		}
+		minor--
+
+		return fmt.Sprintf("%d.%d", major, minor), nil
+	},
 }
 
 // resolveVersion resolves a version for a single tool, reading the repo hint,
@@ -831,8 +704,10 @@ func resolveMiseVersionChoice(r versionResolver, choice, hint string, hintFound 
 
 // resolveMiseVersion calls `mise latest <miseTool>[@selector]` and falls back
 // to the resolver's bundled catalog for "", "latest", "lts", and the exact
-// selector. Selectors that are neither in the catalog nor recognized by mise
-// return an error.
+// selector. When the resolver's passThroughValid hook accepts the selector
+// (.NET and Node), the selector is returned as-is. Selectors that are neither
+// in the catalog nor recognised by mise and not accepted by the hook return
+// an error.
 func resolveMiseVersion(r versionResolver, selector string) (string, error) {
 	selector = r.normalize(selector)
 	args := []string{"latest"}
@@ -866,6 +741,9 @@ func resolveMiseVersion(r versionResolver, selector string) (string, error) {
 		if version, ok := r.catalog["lts"]; ok {
 			return version, nil
 		}
+	}
+	if r.passThroughValid != nil && r.passThroughValid(selector) {
+		return selector, nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("resolve %s version %q: %w", r.miseTool, selector, err)
@@ -1046,44 +924,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 }
 
 func (s *Scaffolder) resolvePythonVersion(repoRoot, selector string, p Prompter) (string, error) {
-	hint, found, err := readPythonVersionHint(repoRoot)
-	if err != nil {
-		return "", err
-	}
-
-	choice := strings.TrimSpace(selector)
-	if choice == "repo" && !found {
-		choice = ""
-	}
-	if choice == "" {
-		if found {
-			if p != nil {
-				selected, err := p.Select(fmt.Sprintf("Choose a Python version (repo: %s):", hint), []string{"repo", "latest", "lts"})
-				if err == nil {
-					choice = normalizePythonVersionSelector(selected)
-				}
-			}
-			if choice == "" {
-				choice = "repo"
-			}
-		} else {
-			if p != nil {
-				selected, err := p.Select("Choose a Python version:", []string{"latest", "lts"})
-				if err == nil {
-					choice = normalizePythonVersionSelector(selected)
-				}
-			}
-			if choice == "" {
-				choice = "latest"
-			}
-		}
-	}
-
-	resolved, err := resolvePythonVersionChoice(choice, hint, found)
-	if err != nil {
-		return "", fmt.Errorf("resolve python version: %w", err)
-	}
-	return resolved, nil
+	return resolveVersion(pythonResolver, repoRoot, selector, p)
 }
 
 func readNodeVersionHint(repoRoot string) (string, bool, error) {
@@ -1179,102 +1020,6 @@ func parseNodeVersionHint(name string, data []byte) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func resolvePythonVersionChoice(choice, hint string, hintFound bool) (string, error) {
-	choice = normalizePythonVersionSelector(choice)
-	if choice == "" {
-		return "", fmt.Errorf("empty version selector")
-	}
-
-	switch strings.ToLower(choice) {
-	case "repo":
-		if !hintFound {
-			return "", fmt.Errorf("no repo Python version hint found")
-		}
-		return resolveMisePythonVersion(normalizePythonVersionSelector(hint))
-	case "latest", "lts":
-		if strings.ToLower(choice) == "latest" {
-			return resolveMisePythonVersion("latest")
-		}
-		latest, err := resolveMisePythonVersion("latest")
-		if err != nil {
-			return "", err
-		}
-		prefix, err := pythonPreviousMinorPrefix(latest)
-		if err != nil {
-			return "", err
-		}
-		return resolveMisePythonVersion(prefix)
-	}
-
-	return resolveMisePythonVersion(choice)
-}
-
-func normalizePythonVersionSelector(selector string) string {
-	selector = strings.TrimSpace(selector)
-	if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "python") && selector[6] >= '0' && selector[6] <= '9' {
-		return selector[6:]
-	}
-	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
-		return selector[1:]
-	}
-	return selector
-}
-
-func resolveMisePythonVersion(selector string) (string, error) {
-	selector = normalizePythonVersionSelector(selector)
-	args := []string{"latest"}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		args = append(args, "python")
-	} else {
-		args = append(args, "python@"+selector)
-	}
-
-	cmd := exec.Command("mise", args...)
-	out, err := cmd.Output()
-	if err == nil {
-		version := strings.TrimSpace(string(out))
-		if version != "" {
-			return version, nil
-		}
-	}
-
-	if version, ok := bundledPythonVersionCatalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := bundledPythonVersionCatalog["latest"]; ok {
-			return version, nil
-		}
-	}
-	if err != nil {
-		return "", fmt.Errorf("resolve python version %q: %w", selector, err)
-	}
-	return "", fmt.Errorf("resolve python version %q: mise returned empty output and no bundled fallback", selector)
-}
-
-func pythonPreviousMinorPrefix(version string) (string, error) {
-	version = normalizePythonVersionSelector(version)
-	parts := strings.Split(version, ".")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("unexpected Python version %q", version)
-	}
-
-	major, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return "", fmt.Errorf("parse Python major version %q: %w", version, err)
-	}
-	minor, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return "", fmt.Errorf("parse Python minor version %q: %w", version, err)
-	}
-	if minor == 0 {
-		return "", fmt.Errorf("unexpected Python version %q", version)
-	}
-	minor--
-
-	return fmt.Sprintf("%d.%d", major, minor), nil
 }
 
 func readPythonVersionHint(repoRoot string) (string, bool, error) {
