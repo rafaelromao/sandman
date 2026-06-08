@@ -588,3 +588,121 @@ func TestAgentRun_Result(t *testing.T) {
 		t.Errorf("expected status success, got %s", res.Status)
 	}
 }
+
+func TestAgentRun_Run_EmptyEnvLeavesCommandUnchanged(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{})
+
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+	if sb.execCommand != "opencode run .sandman/rendered-prompt.md" {
+		t.Errorf("expected unchanged command, got %q", sb.execCommand)
+	}
+}
+
+func TestAgentRun_Run_ExportsSortedQuotedVariables(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.env = map[string]string{
+		"BETA":  "two words",
+		"ALPHA": "it's fine",
+	}
+	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{})
+
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+	want := "export ALPHA='it'\"'\"'s fine'; export BETA='two words'; opencode run .sandman/rendered-prompt.md"
+	if sb.execCommand != want {
+		t.Errorf("expected sorted quoted exports, got:\n%s", sb.execCommand)
+	}
+}
+
+func TestAgentRun_Run_OpencodePresetExportsPermissionForDangerousRuns(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	preset, ok := config.BuiltInAgentPresets["opencode"]
+	if !ok {
+		t.Fatal("expected opencode preset to exist")
+	}
+	agent := preset.Agent("opencode")
+	if _, ok := preset.Env["OPENCODE_PERMISSION"]; !ok {
+		t.Fatal("expected opencode preset env to carry OPENCODE_PERMISSION")
+	}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.preset = "opencode"
+	run.env = agent.Env
+	run.opencodePermissionMode = agent.OpencodePermissionMode
+
+	res := run.Run(context.Background(), spy, `opencode run --dangerously-skip-permissions {{.PromptFile}}`, prompt.RenderConfig{})
+
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+	wantPrefix := "export OPENCODE_PERMISSION='"
+	if !strings.HasPrefix(sb.execCommand, wantPrefix) {
+		t.Fatalf("expected rendered opencode command to start with %q, got:\n%s", wantPrefix, sb.execCommand)
+	}
+	if !strings.HasSuffix(sb.execCommand, "'; opencode run --dangerously-skip-permissions .sandman/rendered-prompt.md") {
+		t.Fatalf("expected rendered opencode command to end with the opencode run invocation, got:\n%s", sb.execCommand)
+	}
+}
+
+func TestAgentRun_Run_OpencodePresetSkipsPermissionForNonDangerousRuns(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	preset, ok := config.BuiltInAgentPresets["opencode"]
+	if !ok {
+		t.Fatal("expected opencode preset to exist")
+	}
+	agent := preset.Agent("opencode")
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.preset = "opencode"
+	run.env = agent.Env
+	run.opencodePermissionMode = agent.OpencodePermissionMode
+
+	res := run.Run(context.Background(), spy, `opencode run {{.PromptFile}}`, prompt.RenderConfig{})
+
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+	want := `opencode run .sandman/rendered-prompt.md`
+	if sb.execCommand != want {
+		t.Fatalf("expected non-dangerous opencode command to stay unchanged, got:\n%s", sb.execCommand)
+	}
+}
+
+func TestAgentRun_Run_PreservesUserOpencodePermissionOverride(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.env = map[string]string{
+		"OPENCODE_PERMISSION": `{"external_directory":"allow"}`,
+	}
+	run.opencodePermissionMode = "custom"
+
+	res := run.Run(context.Background(), spy, `opencode run {{.PromptFile}}`, prompt.RenderConfig{})
+
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+	if !strings.HasPrefix(sb.execCommand, "export OPENCODE_PERMISSION='") {
+		t.Fatalf("expected user OPENCODE_PERMISSION to be preserved, got:\n%s", sb.execCommand)
+	}
+}
