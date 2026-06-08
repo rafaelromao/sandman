@@ -406,7 +406,7 @@ func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoGoHints(t *testing.T) {
 
 func TestResolveVersion_GoResolver_Selectors(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".go-version"), []byte("1.24.13\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".go-version"), []byte("1.24\n"), 0644); err != nil {
 		t.Fatalf("write .go-version: %v", err)
 	}
 	s := &Scaffolder{}
@@ -474,17 +474,18 @@ func TestResolveVersion_GoResolver_EmptySelectorDefaultsToLatest(t *testing.T) {
 
 func TestResolveVersion_GoResolver_EmptySelectorDefaultsToRepoWithHint(t *testing.T) {
 	dir := t.TempDir()
-	hint := "1.24.13"
-	if err := os.WriteFile(filepath.Join(dir, ".go-version"), []byte(hint+"\n"), 0644); err != nil {
+	hintSelector := "1.24"
+	if err := os.WriteFile(filepath.Join(dir, ".go-version"), []byte(hintSelector+"\n"), 0644); err != nil {
 		t.Fatalf("write .go-version: %v", err)
 	}
+	want := bundledGoVersionCatalog[hintSelector]
 
 	got, err := resolveVersion(goResolver, dir, "", &fakePrompter{confirm: true})
 	if err != nil {
 		t.Fatalf("resolveVersion empty selector with hint: %v", err)
 	}
-	if got != hint {
-		t.Fatalf("expected hint version %q, got %q", hint, got)
+	if got != want {
+		t.Fatalf("expected catalog version %q for hint %q, got %q", want, hintSelector, got)
 	}
 }
 
