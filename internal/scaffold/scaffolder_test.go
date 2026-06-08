@@ -1,7 +1,9 @@
 package scaffold
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -401,6 +403,238 @@ func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoGoHints(t *testing.T) {
 	}
 	if version != latest {
 		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
+	}
+}
+
+// referenceGoVersion replicates the pre-refactor Go resolution algorithm
+// locally so the parity tests have an independent oracle to compare against.
+// It is intentionally a copy of the algorithm (not a call into the migrated
+// resolveVersion/resolveMiseVersion path) so a regression in the extracted
+// resolver surfaces here.
+func referenceGoVersion(dir, selector string, prompter Prompter) (string, error) {
+	hint, found, err := readGoVersionHint(dir)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if prompter != nil {
+				selected, err := prompter.Select(fmt.Sprintf("Choose a Go version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = normalizeGoVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if prompter != nil {
+				selected, err := prompter.Select("Choose a Go version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = normalizeGoVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	return referenceGoVersionChoice(choice, hint, found)
+}
+
+func referenceGoVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = normalizeGoVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Go version hint found")
+		}
+		return referenceGoMiseVersion(normalizeGoVersionSelector(hint))
+	case "latest", "lts":
+		if strings.ToLower(choice) == "latest" {
+			return referenceGoMiseVersion("latest")
+		}
+		latest, err := referenceGoMiseVersion("latest")
+		if err != nil {
+			return "", err
+		}
+		prefix, err := goPreviousMinorPrefix(latest)
+		if err != nil {
+			return "", err
+		}
+		return referenceGoMiseVersion(prefix)
+	}
+
+	return referenceGoMiseVersion(choice)
+}
+
+func referenceGoMiseVersion(selector string) (string, error) {
+	selector = normalizeGoVersionSelector(selector)
+	args := []string{"latest"}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		args = append(args, "go")
+	} else {
+		args = append(args, "go@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledGoVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledGoVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve go version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve go version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func TestResolveVersion_GoResolver_Selectors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".go-version"), []byte("1.24\n"), 0644); err != nil {
+		t.Fatalf("write .go-version: %v", err)
+	}
+	prompter := &fakePrompter{confirm: true}
+
+	tests := []struct {
+		name     string
+		selector string
+	}{
+		{name: "repo", selector: "repo"},
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "specific_version", selector: "1.25"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveVersion(goResolver, dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("resolveVersion %s: %v", tt.selector, err)
+			}
+			want, err := referenceGoVersion(dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("referenceGoVersion %s: %v", tt.selector, err)
+			}
+			if got != want {
+				t.Fatalf("resolveVersion %s: got %q, want %q", tt.selector, got, want)
+			}
+		})
+	}
+}
+
+func TestResolveVersion_GoResolver_RepoFallsBackToLatestWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(goResolver, dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion repo without hint: %v", err)
+	}
+	want, err := referenceGoVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceGoVersion repo: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected repo fallback to match reference (%q), got %q", want, got)
+	}
+}
+
+func TestResolveVersion_GoResolver_EmptySelectorDefaultsToLatest(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(goResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector: %v", err)
+	}
+	want, err := referenceGoVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceGoVersion empty selector: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_GoResolver_EmptySelectorDefaultsToRepoWithHint(t *testing.T) {
+	dir := t.TempDir()
+	hintSelector := "1.24"
+	if err := os.WriteFile(filepath.Join(dir, ".go-version"), []byte(hintSelector+"\n"), 0644); err != nil {
+		t.Fatalf("write .go-version: %v", err)
+	}
+
+	got, err := resolveVersion(goResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector with hint: %v", err)
+	}
+	want, err := referenceGoVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceGoVersion empty selector with hint: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector with hint: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_GoResolver_EmptySelectorWithoutPrompterDefaultsToLatest(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(goResolver, dir, "", nil)
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector without prompter: %v", err)
+	}
+	want, err := referenceGoVersion(dir, "", nil)
+	if err != nil {
+		t.Fatalf("referenceGoVersion empty selector without prompter: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector without prompter: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_GoResolver_RepoFailsWhenPrompterSelectsRepoWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+	prompter := &fakePrompter{selected: "repo"}
+
+	_, err := resolveVersion(goResolver, dir, "repo", prompter)
+	if err == nil {
+		t.Fatal("expected error when prompter selects repo without a hint")
+	}
+}
+
+func TestResolveVersion_GoResolver_EmptySelectorErrors(t *testing.T) {
+	dir := t.TempDir()
+	resolver := versionResolver{
+		label:      goResolver.label,
+		miseTool:   goResolver.miseTool,
+		hintReader: goResolver.hintReader,
+		normalize:  func(string) string { return "" },
+		catalog:    goResolver.catalog,
+	}
+
+	_, err := resolveVersion(resolver, dir, "", &fakePrompter{confirm: true})
+	if err == nil {
+		t.Fatal("expected error for empty selector after normalization")
 	}
 }
 

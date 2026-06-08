@@ -441,74 +441,7 @@ func hasPythonRepoHint(repoRoot string) bool {
 }
 
 func (s *Scaffolder) resolveGoVersion(repoRoot, selector string, p Prompter) (string, error) {
-	hint, found, err := readGoVersionHint(repoRoot)
-	if err != nil {
-		return "", err
-	}
-
-	choice := strings.TrimSpace(selector)
-	if choice == "repo" && !found {
-		choice = ""
-	}
-	if choice == "" {
-		if found {
-			if p != nil {
-				selected, err := p.Select(fmt.Sprintf("Choose a Go version (repo: %s):", hint), []string{"repo", "latest", "lts"})
-				if err == nil {
-					choice = normalizeGoVersionSelector(selected)
-				}
-			}
-			if choice == "" {
-				choice = "repo"
-			}
-		} else {
-			if p != nil {
-				selected, err := p.Select("Choose a Go version:", []string{"latest", "lts"})
-				if err == nil {
-					choice = normalizeGoVersionSelector(selected)
-				}
-			}
-			if choice == "" {
-				choice = "latest"
-			}
-		}
-	}
-
-	resolved, err := resolveGoVersionChoice(choice, hint, found)
-	if err != nil {
-		return "", fmt.Errorf("resolve go version: %w", err)
-	}
-	return resolved, nil
-}
-
-func resolveGoVersionChoice(choice, hint string, hintFound bool) (string, error) {
-	choice = normalizeGoVersionSelector(choice)
-	if choice == "" {
-		return "", fmt.Errorf("empty version selector")
-	}
-
-	switch strings.ToLower(choice) {
-	case "repo":
-		if !hintFound {
-			return "", fmt.Errorf("no repo Go version hint found")
-		}
-		return resolveMiseGoVersion(normalizeGoVersionSelector(hint))
-	case "latest", "lts":
-		if strings.ToLower(choice) == "latest" {
-			return resolveMiseGoVersion("latest")
-		}
-		latest, err := resolveMiseGoVersion("latest")
-		if err != nil {
-			return "", err
-		}
-		prefix, err := goPreviousMinorPrefix(latest)
-		if err != nil {
-			return "", err
-		}
-		return resolveMiseGoVersion(prefix)
-	}
-
-	return resolveMiseGoVersion(choice)
+	return resolveVersion(goResolver, repoRoot, selector, p)
 }
 
 func (s *Scaffolder) resolveDotnetVersion(repoRoot, selector string, p Prompter) (string, error) {
@@ -709,35 +642,7 @@ func normalizeGoVersionSelector(selector string) string {
 }
 
 func resolveMiseGoVersion(selector string) (string, error) {
-	selector = normalizeGoVersionSelector(selector)
-	args := []string{"latest"}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		args = append(args, "go")
-	} else {
-		args = append(args, "go@"+selector)
-	}
-
-	cmd := exec.Command("mise", args...)
-	out, err := cmd.Output()
-	if err == nil {
-		version := strings.TrimSpace(string(out))
-		if version != "" {
-			return version, nil
-		}
-	}
-
-	if version, ok := bundledGoVersionCatalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := bundledGoVersionCatalog["latest"]; ok {
-			return version, nil
-		}
-	}
-	if err != nil {
-		return "", fmt.Errorf("resolve go version %q: %w", selector, err)
-	}
-	return "", fmt.Errorf("resolve go version %q: mise returned empty output and no bundled fallback", selector)
+	return resolveMiseVersion(goResolver, selector)
 }
 
 func normalizeDotnetVersionSelector(selector string) string {
@@ -819,6 +724,153 @@ func goPreviousMinorPrefix(version string) (string, error) {
 		return "prefix:" + prefix, nil
 	}
 	return prefix, nil
+}
+
+// versionResolver parameterises the shared tool-resolution algorithm with
+// the inputs that differ across the four built-in tool resolvers (go, dotnet,
+// node, python). The ltsFromLatest hook, when non-nil, computes the lts
+// selector from the latest resolved version (Go and Python); when nil, "lts"
+// is passed through to mise (.NET and Node).
+type versionResolver struct {
+	label         string
+	miseTool      string
+	hintReader    func(repoRoot string) (string, bool, error)
+	normalize     func(selector string) string
+	catalog       map[string]string
+	ltsFromLatest func(latestVersion string) (string, error)
+}
+
+// goResolver is the versionResolver configuration for Go.
+var goResolver = versionResolver{
+	label:         "Go",
+	miseTool:      "go",
+	hintReader:    readGoVersionHint,
+	normalize:     normalizeGoVersionSelector,
+	catalog:       bundledGoVersionCatalog,
+	ltsFromLatest: goPreviousMinorPrefix,
+}
+
+// resolveVersion resolves a version for a single tool, reading the repo hint,
+// determining the choice via Prompter or default, and dispatching to the
+// mise-backed resolution path.
+func resolveVersion(r versionResolver, repoRoot, selector string, p Prompter) (string, error) {
+	hint, found, err := r.hintReader(repoRoot)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if p != nil {
+				selected, err := p.Select(fmt.Sprintf("Choose a %s version (repo: %s):", r.label, hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = r.normalize(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if p != nil {
+				selected, err := p.Select(fmt.Sprintf("Choose a %s version:", r.label), []string{"latest", "lts"})
+				if err == nil {
+					choice = r.normalize(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	resolved, err := resolveMiseVersionChoice(r, choice, hint, found)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s version: %w", r.miseTool, err)
+	}
+	return resolved, nil
+}
+
+// resolveMiseVersionChoice normalizes the choice and dispatches to
+// resolveMiseVersion. The "lts" branch either resolves "latest" first and then
+// the ltsFromLatest-computed selector, or passes "lts" through to mise.
+func resolveMiseVersionChoice(r versionResolver, choice, hint string, hintFound bool) (string, error) {
+	choice = r.normalize(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo %s version hint found", r.label)
+		}
+		return resolveMiseVersion(r, r.normalize(hint))
+	case "latest":
+		return resolveMiseVersion(r, "latest")
+	case "lts":
+		if r.ltsFromLatest == nil {
+			return resolveMiseVersion(r, "lts")
+		}
+		latest, err := resolveMiseVersion(r, "latest")
+		if err != nil {
+			return "", err
+		}
+		prefix, err := r.ltsFromLatest(latest)
+		if err != nil {
+			return "", err
+		}
+		return resolveMiseVersion(r, prefix)
+	}
+
+	return resolveMiseVersion(r, choice)
+}
+
+// resolveMiseVersion calls `mise latest <miseTool>[@selector]` and falls back
+// to the resolver's bundled catalog for "", "latest", "lts", and the exact
+// selector. Selectors that are neither in the catalog nor recognized by mise
+// return an error.
+func resolveMiseVersion(r versionResolver, selector string) (string, error) {
+	selector = r.normalize(selector)
+	args := []string{"latest"}
+	switch strings.ToLower(selector) {
+	case "", "latest":
+		args = append(args, r.miseTool)
+	case "lts":
+		args = append(args, r.miseTool+"@lts")
+	default:
+		args = append(args, r.miseTool+"@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := r.catalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := r.catalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := r.catalog["lts"]; ok {
+			return version, nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve %s version %q: %w", r.miseTool, selector, err)
+	}
+	return "", fmt.Errorf("resolve %s version %q: mise returned empty output and no bundled fallback", r.miseTool, selector)
 }
 
 func readGoVersionHint(repoRoot string) (string, bool, error) {
