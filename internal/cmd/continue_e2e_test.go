@@ -60,16 +60,16 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if err != nil {
 		t.Fatalf("read rendered prompt: %v", err)
 	}
-	if !strings.Contains(string(initialPrompt), ".sandman/continuation-context.md") {
+	if !strings.Contains(string(initialPrompt), ".sandman/handoff.md") {
 		t.Fatalf("expected rendered prompt to mention continuation context, got:\n%s", initialPrompt)
 	}
 
-	contextPath := filepath.Join(worktreePath, ".sandman", "continuation-context.md")
+	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
 	initialContext, err := os.ReadFile(contextPath)
 	if err != nil {
 		t.Fatalf("read initial continuation context: %v", err)
 	}
-	if !strings.Contains(string(initialContext), "# Continuation Context") {
+	if !strings.Contains(string(initialContext), "# Handoff Context") {
 		t.Fatalf("expected initial context header, got:\n%s", initialContext)
 	}
 	if !strings.Contains(string(initialContext), "Initial run for "+continueE2EBranch+".") {
@@ -97,32 +97,32 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 		t.Fatalf("expected first continue success summary, got:\n%s", out)
 	}
 
-	firstContinuePrompt, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "continue-prompt.md"))
+	firstHandoffPrompt, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "handoff-prompt.md"))
 	if err != nil {
 		t.Fatalf("read first continue prompt: %v", err)
 	}
-	if !strings.Contains(string(firstContinuePrompt), "## Prior Context") {
-		t.Fatalf("expected prior context section, got:\n%s", firstContinuePrompt)
+	if !strings.Contains(string(firstHandoffPrompt), "## Prior Context") {
+		t.Fatalf("expected prior context section, got:\n%s", firstHandoffPrompt)
 	}
-	if strings.Contains(string(firstContinuePrompt), "# Continuation Context") {
-		t.Fatalf("expected context header stripped, got:\n%s", firstContinuePrompt)
+	if strings.Contains(string(firstHandoffPrompt), "# Handoff Context") {
+		t.Fatalf("expected context header stripped, got:\n%s", firstHandoffPrompt)
 	}
-	if !strings.Contains(string(firstContinuePrompt), "Initial run for "+continueE2EBranch+".") {
-		t.Fatalf("expected initial context in first continue prompt, got:\n%s", firstContinuePrompt)
+	if !strings.Contains(string(firstHandoffPrompt), "Initial run for "+continueE2EBranch+".") {
+		t.Fatalf("expected initial context in first continue prompt, got:\n%s", firstHandoffPrompt)
 	}
-	if !strings.Contains(string(firstContinuePrompt), "finish the tests") {
-		t.Fatalf("expected new instruction in first continue prompt, got:\n%s", firstContinuePrompt)
+	if !strings.Contains(string(firstHandoffPrompt), "finish the tests") {
+		t.Fatalf("expected new instruction in first continue prompt, got:\n%s", firstHandoffPrompt)
 	}
-	if !strings.Contains(string(firstContinuePrompt), "overwrite `.sandman/continuation-context.md`") {
-		t.Fatalf("expected context overwrite instruction, got:\n%s", firstContinuePrompt)
+	if !strings.Contains(string(firstHandoffPrompt), "overwrite `.sandman/handoff.md`") {
+		t.Fatalf("expected context overwrite instruction, got:\n%s", firstHandoffPrompt)
 	}
 
-	firstContinueContext, err := os.ReadFile(contextPath)
+	firstHandoffContext, err := os.ReadFile(contextPath)
 	if err != nil {
 		t.Fatalf("read first continue context: %v", err)
 	}
-	if !strings.Contains(string(firstContinueContext), "First continue for "+continueE2EBranch+".") {
-		t.Fatalf("expected first continue context contents, got:\n%s", firstContinueContext)
+	if !strings.Contains(string(firstHandoffContext), "First continue for "+continueE2EBranch+".") {
+		t.Fatalf("expected first continue context contents, got:\n%s", firstHandoffContext)
 	}
 
 	out, err = runSandmanBinary(t, binPath, repoDir, "continue", "1", "push the PR")
@@ -133,23 +133,23 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 		t.Fatalf("expected second continue success summary, got:\n%s", out)
 	}
 
-	secondContinuePrompt, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "continue-prompt.md"))
+	secondHandoffPrompt, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "handoff-prompt.md"))
 	if err != nil {
 		t.Fatalf("read second continue prompt: %v", err)
 	}
-	if !strings.Contains(string(secondContinuePrompt), "First continue for "+continueE2EBranch+".") {
-		t.Fatalf("expected updated context in second continue prompt, got:\n%s", secondContinuePrompt)
+	if !strings.Contains(string(secondHandoffPrompt), "First continue for "+continueE2EBranch+".") {
+		t.Fatalf("expected updated context in second continue prompt, got:\n%s", secondHandoffPrompt)
 	}
-	if !strings.Contains(string(secondContinuePrompt), "push the PR") {
-		t.Fatalf("expected second instruction in continue prompt, got:\n%s", secondContinuePrompt)
+	if !strings.Contains(string(secondHandoffPrompt), "push the PR") {
+		t.Fatalf("expected second instruction in continue prompt, got:\n%s", secondHandoffPrompt)
 	}
 
-	secondContinueContext, err := os.ReadFile(contextPath)
+	secondHandoffContext, err := os.ReadFile(contextPath)
 	if err != nil {
 		t.Fatalf("read second continue context: %v", err)
 	}
-	if !strings.Contains(string(secondContinueContext), "Second continue for "+continueE2EBranch+".") {
-		t.Fatalf("expected second continue context contents, got:\n%s", secondContinueContext)
+	if !strings.Contains(string(secondHandoffContext), "Second continue for "+continueE2EBranch+".") {
+		t.Fatalf("expected second continue context contents, got:\n%s", secondHandoffContext)
 	}
 
 	log := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
@@ -239,7 +239,7 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read issue 1 rendered prompt: %v", err)
 	}
-	if !strings.Contains(string(initialPrompt1), ".sandman/continuation-context.md") {
+	if !strings.Contains(string(initialPrompt1), ".sandman/handoff.md") {
 		t.Fatalf("expected issue 1 rendered prompt to mention continuation context, got:\n%s", initialPrompt1)
 	}
 
@@ -247,7 +247,7 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read issue 2 rendered prompt: %v", err)
 	}
-	if !strings.Contains(string(initialPrompt2), ".sandman/continuation-context.md") {
+	if !strings.Contains(string(initialPrompt2), ".sandman/handoff.md") {
 		t.Fatalf("expected issue 2 rendered prompt to mention continuation context, got:\n%s", initialPrompt2)
 	}
 
@@ -259,48 +259,48 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 		t.Fatalf("expected multi-issue continue success summary, got:\n%s", out)
 	}
 
-	continuePrompt1, err := os.ReadFile(filepath.Join(issueOneWorktree, ".sandman", "continue-prompt.md"))
+	handoffPrompt1, err := os.ReadFile(filepath.Join(issueOneWorktree, ".sandman", "handoff-prompt.md"))
 	if err != nil {
 		t.Fatalf("read issue 1 continue prompt: %v", err)
 	}
-	if !strings.Contains(string(continuePrompt1), "Initial run for sandman/1-fix-failing-test.") {
-		t.Fatalf("expected issue 1 prompt to use its own prior context, got:\n%s", continuePrompt1)
+	if !strings.Contains(string(handoffPrompt1), "Initial run for sandman/1-fix-failing-test.") {
+		t.Fatalf("expected issue 1 prompt to use its own prior context, got:\n%s", handoffPrompt1)
 	}
-	if !strings.Contains(string(continuePrompt1), "finish both") {
-		t.Fatalf("expected issue 1 prompt to include new instruction, got:\n%s", continuePrompt1)
+	if !strings.Contains(string(handoffPrompt1), "finish both") {
+		t.Fatalf("expected issue 1 prompt to include new instruction, got:\n%s", handoffPrompt1)
 	}
-	if !strings.Contains(string(continuePrompt1), "overwrite `.sandman/continuation-context.md`") {
-		t.Fatalf("expected issue 1 prompt to include continuation update instruction, got:\n%s", continuePrompt1)
+	if !strings.Contains(string(handoffPrompt1), "overwrite `.sandman/handoff.md`") {
+		t.Fatalf("expected issue 1 prompt to include continuation update instruction, got:\n%s", handoffPrompt1)
 	}
 
-	continuePrompt2, err := os.ReadFile(filepath.Join(issueTwoWorktree, ".sandman", "continue-prompt.md"))
+	handoffPrompt2, err := os.ReadFile(filepath.Join(issueTwoWorktree, ".sandman", "handoff-prompt.md"))
 	if err != nil {
 		t.Fatalf("read issue 2 continue prompt: %v", err)
 	}
-	if !strings.Contains(string(continuePrompt2), "Initial run for sandman/2-fix-failing-test.") {
-		t.Fatalf("expected issue 2 prompt to use its own prior context, got:\n%s", continuePrompt2)
+	if !strings.Contains(string(handoffPrompt2), "Initial run for sandman/2-fix-failing-test.") {
+		t.Fatalf("expected issue 2 prompt to use its own prior context, got:\n%s", handoffPrompt2)
 	}
-	if !strings.Contains(string(continuePrompt2), "finish both") {
-		t.Fatalf("expected issue 2 prompt to include new instruction, got:\n%s", continuePrompt2)
+	if !strings.Contains(string(handoffPrompt2), "finish both") {
+		t.Fatalf("expected issue 2 prompt to include new instruction, got:\n%s", handoffPrompt2)
 	}
-	if !strings.Contains(string(continuePrompt2), "overwrite `.sandman/continuation-context.md`") {
-		t.Fatalf("expected issue 2 prompt to include continuation update instruction, got:\n%s", continuePrompt2)
+	if !strings.Contains(string(handoffPrompt2), "overwrite `.sandman/handoff.md`") {
+		t.Fatalf("expected issue 2 prompt to include continuation update instruction, got:\n%s", handoffPrompt2)
 	}
 
-	continueContext1, err := os.ReadFile(filepath.Join(issueOneWorktree, ".sandman", "continuation-context.md"))
+	handoffContext1, err := os.ReadFile(filepath.Join(issueOneWorktree, ".sandman", "handoff.md"))
 	if err != nil {
 		t.Fatalf("read issue 1 continuation context: %v", err)
 	}
-	if !strings.Contains(string(continueContext1), "First continue for sandman/1-fix-failing-test.") {
-		t.Fatalf("expected issue 1 context to advance independently, got:\n%s", continueContext1)
+	if !strings.Contains(string(handoffContext1), "First continue for sandman/1-fix-failing-test.") {
+		t.Fatalf("expected issue 1 context to advance independently, got:\n%s", handoffContext1)
 	}
 
-	continueContext2, err := os.ReadFile(filepath.Join(issueTwoWorktree, ".sandman", "continuation-context.md"))
+	handoffContext2, err := os.ReadFile(filepath.Join(issueTwoWorktree, ".sandman", "handoff.md"))
 	if err != nil {
 		t.Fatalf("read issue 2 continuation context: %v", err)
 	}
-	if !strings.Contains(string(continueContext2), "First continue for sandman/2-fix-failing-test.") {
-		t.Fatalf("expected issue 2 context to advance independently, got:\n%s", continueContext2)
+	if !strings.Contains(string(handoffContext2), "First continue for sandman/2-fix-failing-test.") {
+		t.Fatalf("expected issue 2 context to advance independently, got:\n%s", handoffContext2)
 	}
 
 	log := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
@@ -377,8 +377,8 @@ mkdir -p .sandman
 
 write_context() {
   completed="$1"
-  cat > .sandman/continuation-context.md <<EOF
-# Continuation Context
+  cat > .sandman/handoff.md <<EOF
+# Handoff Context
 
 ## Completed
 $completed
