@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -265,7 +269,7 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun,
 		}
 		runDir := filepath.Dir(instance.SocketPath)
 		manifest, manifestErr := daemon.ReadManifest(runDir)
-		issueNumber, _ := parseRunDirIssue(instance.Name)
+		issueNumber, _ := v.parseRunDirIssue(instance.Name)
 		issueNumbers := []int(nil)
 		startedAt := info.ModTime()
 		if manifestErr == nil {
@@ -295,7 +299,7 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 	if batchStart.IsZero() {
 		batchStart = active.ModTime
 	}
-	liveOutput := readPortalSocketOutput(active.SocketPath)
+	liveOutput := v.readPortalSocketOutput(active.SocketPath)
 	runs := make([]portalRun, 0, len(active.IssueNumbers))
 	usedRunIDs := make(map[string]struct{})
 	for _, issueNumber := range active.IssueNumbers {
@@ -377,40 +381,40 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		IssueNumber: issueNumber,
 		StartedAt:   active.StartedAt,
 		SocketPath:  active.SocketPath,
-		LogPath:     portalLogPath(repoRoot, issueNumber, ""),
-		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, ""),
+		LogPath:     v.portalLogPath(repoRoot, issueNumber, ""),
+		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, ""),
 		Log:         "Queued. Waiting to start.",
 		BatchKey:    active.Key,
 	}
 	if state != nil {
 		run.Key = state.RunID
 		run.RunID = state.RunID
-		run.Status = statusOrDefault(state.Status(), state.IsActive())
+		run.Status = v.statusOrDefault(state.Status(), state.IsActive())
 		if run.Status == "aborted" {
 			run.Kind = "completed"
 		}
 		run.Branch = state.Branch()
 		run.StartedAt = state.Started.Timestamp
-		run.Duration = durationForRun(*state)
+		run.Duration = v.durationForRun(*state)
 		run.Events = eventsByRun[state.RunID]
-		run.LogPath = portalLogPath(repoRoot, issueNumber, state.Branch())
-		run.LogURL = portalLogDownloadURL(repoRoot, issueNumber, state.Branch())
+		run.LogPath = v.portalLogPath(repoRoot, issueNumber, state.Branch())
+		run.LogURL = v.portalLogDownloadURL(repoRoot, issueNumber, state.Branch())
 		if state.Finished != nil {
 			finishedAt := state.Finished.Timestamp
 			run.FinishedAt = &finishedAt
 			switch state.Status() {
 			case "blocked":
-				run.Log = portalBlockedMessage(state.Finished.Payload)
+				run.Log = v.portalBlockedMessage(state.Finished.Payload)
 			case "aborted":
 				run.Log = "Aborted by operator."
 			default:
-				run.Log = readPortalTextFile(run.LogPath)
+				run.Log = v.readPortalTextFile(run.LogPath)
 				if strings.TrimSpace(run.Log) == "" {
 					run.Log = "No log file yet."
 				}
 			}
 		} else {
-			run.Log = filterPortalIssueOutput(liveOutput, issueNumber)
+			run.Log = v.filterPortalIssueOutput(liveOutput, issueNumber)
 			if strings.TrimSpace(run.Log) == "" {
 				run.Log = "No live output captured yet."
 			}
@@ -423,7 +427,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.Status = "blocked"
 		run.StartedAt = blocked.Timestamp
 		run.Events = []portalEvent{{Type: blocked.Type, Timestamp: blocked.Timestamp, Payload: blocked.Payload}}
-		run.Log = portalBlockedMessage(blocked.Payload)
+		run.Log = v.portalBlockedMessage(blocked.Payload)
 	}
 	return run
 }
@@ -506,7 +510,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	if issueNumber > 0 {
 		issueLabel = fmt.Sprintf("#%d", issueNumber)
 	}
-	logPath := portalLogPath(repoRoot, issueNumber, "")
+	logPath := v.portalLogPath(repoRoot, issueNumber, "")
 	return portalRun{
 		Key:         match.instance.Key,
 		RunID:       match.instance.Key,
@@ -518,8 +522,8 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
-		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, ""),
-		Log:         readPortalSocketOutput(match.instance.SocketPath),
+		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, ""),
+		Log:         v.readPortalSocketOutput(match.instance.SocketPath),
 		Events:      eventsByRun[match.instance.Key],
 		BatchKey:    match.instance.Key,
 	}
@@ -548,30 +552,30 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		finishedAt = &runState.Finished.Timestamp
 	}
 
-	logPath := portalLogPath(repoRoot, issueNumber, branch)
-	logContent := readPortalTextFile(logPath)
+	logPath := v.portalLogPath(repoRoot, issueNumber, branch)
+	logContent := v.readPortalTextFile(logPath)
 	if active != nil {
-		logContent = readPortalSocketOutput(active.SocketPath)
+		logContent = v.readPortalSocketOutput(active.SocketPath)
 	}
 
 	portalRun := portalRun{
 		Key:         runID,
 		RunID:       runID,
-		Kind:        kindForRun(runState),
-		Status:      statusOrDefault(status, runState.IsActive()),
+		Kind:        v.kindForRun(runState),
+		Status:      v.statusOrDefault(status, runState.IsActive()),
 		IssueLabel:  issueLabel,
 		IssueNumber: issueNumber,
 		Branch:      branch,
 		StartedAt:   startedAt,
 		FinishedAt:  finishedAt,
-		Duration:    durationForRun(runState),
+		Duration:    v.durationForRun(runState),
 		LogPath:     logPath,
-		LogURL:      portalLogDownloadURL(repoRoot, issueNumber, branch),
+		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, branch),
 		Log:         logContent,
 		Events:      eventsByRun[runID],
 	}
 	if status == "blocked" {
-		portalRun.Log = portalBlockedMessage(runState.Finished.Payload)
+		portalRun.Log = v.portalBlockedMessage(runState.Finished.Payload)
 	}
 	if status == "aborted" {
 		portalRun.Kind = "completed"
@@ -580,6 +584,191 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		portalRun.SocketPath = active.SocketPath
 	}
 	return portalRun
+}
+
+func (v *portalRunsView) kindForRun(runState events.RunState) string {
+	if runState.IsActive() {
+		return "active"
+	}
+	return "completed"
+}
+
+func (v *portalRunsView) statusOrDefault(status string, active bool) string {
+	status = strings.TrimSpace(status)
+	if active {
+		return "active"
+	}
+	if status == "" {
+		return "completed"
+	}
+	return status
+}
+
+func (v *portalRunsView) durationForRun(runState events.RunState) string {
+	if runState.IsActive() {
+		return time.Since(runState.Started.Timestamp).Round(time.Second).String()
+	}
+	return runState.Duration().String()
+}
+
+func (v *portalRunsView) filterPortalIssueOutput(text string, issueNumber int) string {
+	prefix := fmt.Sprintf("[issue-%d] ", issueNumber)
+	lines := strings.Split(text, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, prefix) {
+			filtered = append(filtered, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(filtered, "\n"))
+}
+
+func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {
+	blockers := v.portalBlockedByIssues(payload)
+	if len(blockers) == 0 {
+		return "Blocked. Waiting on unresolved blockers."
+	}
+	parts := make([]string, 0, len(blockers))
+	for _, blocker := range blockers {
+		parts = append(parts, fmt.Sprintf("#%d", blocker))
+	}
+	return fmt.Sprintf("Blocked by %s.", strings.Join(parts, ", "))
+}
+
+func (v *portalRunsView) portalBlockedByIssues(payload map[string]any) []int {
+	if payload == nil {
+		return nil
+	}
+	raw, ok := payload["blocked_by"]
+	if !ok {
+		return nil
+	}
+	switch values := raw.(type) {
+	case []int:
+		return append([]int(nil), values...)
+	case []any:
+		issues := make([]int, 0, len(values))
+		for _, value := range values {
+			switch n := value.(type) {
+			case float64:
+				issues = append(issues, int(n))
+			case int:
+				issues = append(issues, n)
+			}
+		}
+		return issues
+	default:
+		return nil
+	}
+}
+
+func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {
+	logDir := filepath.Join(repoRoot, ".sandman", "logs")
+	if issueNumber > 0 {
+		return filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return ""
+	}
+	return filepath.Join(logDir, v.sanitizePortalFilename(branch)+".log")
+}
+
+func (v *portalRunsView) sanitizePortalFilename(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(value)
+	if value == "" {
+		return "prompt-only"
+	}
+	return value
+}
+
+func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, branch string) string {
+	logPath := v.portalLogPath(repoRoot, issueNumber, branch)
+	if logPath == "" {
+		return ""
+	}
+	relPath, err := filepath.Rel(repoRoot, logPath)
+	if err != nil {
+		return ""
+	}
+	return "/api/logs?path=" + url.QueryEscape(relPath)
+}
+
+func (v *portalRunsView) parseRunDirIssue(name string) (int, bool) {
+	if !strings.HasPrefix(name, "run-") {
+		return 0, false
+	}
+	parts := strings.Split(strings.TrimPrefix(name, "run-"), "-")
+	if len(parts) < 2 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func (v *portalRunsView) readPortalTextFile(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if len(data) > portalReadLimit {
+		tail := data[len(data)-portalReadLimit:]
+		return v.cleanPortalText("[truncated]\n" + string(tail))
+	}
+	return v.cleanPortalText(string(data))
+}
+
+func (v *portalRunsView) readPortalSocketOutput(sockPath string) string {
+	conn, err := net.DialTimeout("unix", sockPath, portalReadTimeout)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(portalReadTimeout))
+
+	var buf bytes.Buffer
+	tmp := make([]byte, 4096)
+	for {
+		n, readErr := conn.Read(tmp)
+		if n > 0 {
+			_, _ = buf.Write(tmp[:n])
+		}
+		if readErr != nil {
+			if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
+				break
+			}
+			break
+		}
+	}
+	if buf.Len() > portalReadLimit {
+		data := buf.Bytes()
+		buf = *bytes.NewBuffer(append([]byte(nil), data[len(data)-portalReadLimit:]...))
+	}
+	return v.cleanPortalText(buf.String())
+}
+
+func (v *portalRunsView) cleanPortalText(text string) string {
+	text = portalANSISequence.ReplaceAllString(text, "")
+	text = strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\t':
+			return r
+		case '\r':
+			return -1
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, text)
+	return text
 }
 
 func (v *portalRunsView) groupEventsByRun(eventsList []events.Event) map[string][]portalEvent {

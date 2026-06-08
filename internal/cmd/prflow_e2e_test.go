@@ -1728,7 +1728,7 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		cancel()
 
-		runs, err := loadPortalRuns(repoDir)
+		runs, err := (&portalRunsView{}).compute(repoDir, &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")})
 		if err != nil {
 			t.Fatalf("load portal runs after batch: %v", err)
 		}
