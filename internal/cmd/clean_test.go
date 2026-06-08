@@ -484,11 +484,11 @@ func TestClean_Success_PreservesActiveRunSnapshots(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(active, "batch.json"), []byte("{}"), 0644); err != nil {
 		t.Fatalf("write batch.json: %v", err)
 	}
-	sock := daemon.NewControlSocket(active, daemon.NewBroadcaster())
-	if err := sock.Start(); err != nil {
-		t.Fatalf("start control socket: %v", err)
+	cmdServer := daemon.NewCommandServer(active, nil)
+	if err := cmdServer.Start(); err != nil {
+		t.Fatalf("start command server: %v", err)
 	}
-	defer sock.Stop()
+	defer cmdServer.Stop()
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
 	deps := Dependencies{

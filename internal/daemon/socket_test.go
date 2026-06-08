@@ -66,17 +66,17 @@ func TestControlSocket_RemovesStaleSocketOnStart(t *testing.T) {
 func TestIsRunActive(t *testing.T) {
 	dir := t.TempDir()
 	if IsRunActive(dir) {
-		t.Fatal("expected dir without run.sock to be inactive")
+		t.Fatal("expected dir without cmd.sock to be inactive")
 	}
 
-	sock := NewControlSocket(dir, NewBroadcaster())
-	if err := sock.Start(); err != nil {
+	cmdServer := NewCommandServer(dir, nil)
+	if err := cmdServer.Start(); err != nil {
 		t.Fatalf("Start() failed: %v", err)
 	}
-	defer sock.Stop()
+	defer cmdServer.Stop()
 
 	if !IsRunActive(dir) {
-		t.Fatal("expected dir with live run.sock to be active")
+		t.Fatal("expected dir with live cmd.sock to be active")
 	}
 }
 
@@ -110,11 +110,11 @@ func TestCleanupStaleRunSnapshots_RemovesOnlyInactive(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(active, "batch.json"), []byte("{}"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	sock := NewControlSocket(active, NewBroadcaster())
-	if err := sock.Start(); err != nil {
+	cmdServer := NewCommandServer(active, nil)
+	if err := cmdServer.Start(); err != nil {
 		t.Fatalf("Start() failed: %v", err)
 	}
-	defer sock.Stop()
+	defer cmdServer.Stop()
 
 	// Inactive run with manifest but no config/ (should be a no-op)
 	manifestOnly := filepath.Join(runsDir, "manifest-only")
