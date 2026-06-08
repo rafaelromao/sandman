@@ -195,7 +195,7 @@ func TestRunBatch_IdleTimeoutRetriesAndSucceeds(t *testing.T) {
 	runFactory := &heartbeatDualRunnableFactory{first: stall, second: success}
 	spyLog := &spyEventLog{}
 	o := newHeartbeatOrchestrator(client, factory, runFactory, 0, spyLog)
-	o.killTimeout = 50 * time.Millisecond
+	o.runSessionOpts.killTimeout = 50 * time.Millisecond
 
 	result, _ := o.RunBatch(context.Background(), Request{
 		Issues:            []int{heartbeatTestIssueNum},

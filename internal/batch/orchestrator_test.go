@@ -708,7 +708,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 		},
 	}
 	var resetCalls []struct{ worktreePath, branch, baseBranch string }
-	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 		resetCalls = append(resetCalls, struct{ worktreePath, branch, baseBranch string }{sb.WorkDir(), branch, baseBranch})
 		return nil
 	}
@@ -782,7 +782,7 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 		},
 	}
 	var resetCalls int
-	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 		resetCalls++
 		return nil
 	}
@@ -827,7 +827,7 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 		},
 	}
 	var resetCalls int
-	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 		resetCalls++
 		return nil
 	}
@@ -879,7 +879,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 		},
 	}
 	var resetCalls int
-	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 		resetCalls++
 		return nil
 	}
@@ -948,7 +948,7 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 		},
 	}
 	var resetCalls int
-	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 		resetCalls++
 		return nil
 	}
@@ -1075,7 +1075,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 		},
 	}
 	var resetCalls int
-	o.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 		resetCalls++
 		return nil
 	}
@@ -1732,7 +1732,7 @@ func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.sandboxFactory = factory
 	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
-	o.killTimeout = 100 * time.Millisecond
+	o.runSessionOpts.killTimeout = 100 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -2061,7 +2061,7 @@ func TestRunBatch_SyncsBaseBranchBeforeEachAgentRunStarts(t *testing.T) {
 	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
 
 	tracker := &baseBranchSyncTracker{}
-	o.baseBranchSync = func(repoPath, sourceBranch string) error {
+	o.runSessionOpts.baseBranchSync = func(repoPath, sourceBranch string) error {
 		tracker.mu.Lock()
 		tracker.syncCalls++
 		tracker.mu.Unlock()
@@ -3284,7 +3284,7 @@ func TestRunBatch_LogsPromptOnlyTemplateSource(t *testing.T) {
 	spyLog := &spyEventLog{}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
 	tracker := &baseBranchSyncTracker{}
-	o.baseBranchSync = func(repoPath, sourceBranch string) error {
+	o.runSessionOpts.baseBranchSync = func(repoPath, sourceBranch string) error {
 		tracker.mu.Lock()
 		tracker.syncCalls++
 		tracker.mu.Unlock()
@@ -3336,7 +3336,7 @@ func TestRunBatch_LogsPromptOnlyTemplateSource(t *testing.T) {
 func TestRunBatch_PromptOnlyBaseBranchSyncFailureReturnsError(t *testing.T) {
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.baseBranchSync = func(repoPath, sourceBranch string) error { return errors.New("sync failed") }
+	o.runSessionOpts.baseBranchSync = func(repoPath, sourceBranch string) error { return errors.New("sync failed") }
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
 		return AgentRunResult{Status: "success", Branch: branch}
@@ -3624,7 +3624,7 @@ func TestRunBatch_ContinuationSkipsBaseBranchSync(t *testing.T) {
 	}
 	tracker := &baseBranchSyncTracker{}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.baseBranchSync = func(repoPath, sourceBranch string) error {
+	o.runSessionOpts.baseBranchSync = func(repoPath, sourceBranch string) error {
 		tracker.mu.Lock()
 		tracker.syncCalls++
 		tracker.mu.Unlock()
@@ -6535,7 +6535,7 @@ func TestSyncBaseBranchSerializesAcrossParallelCalls(t *testing.T) {
 	var inFlight atomic.Int32
 	var maxInFlight atomic.Int32
 	o := NewOrchestrator(nil, nil, nil, nil)
-	o.baseBranchSync = func(repoPath, sourceBranch string) error {
+	o.runSessionOpts.baseBranchSync = func(repoPath, sourceBranch string) error {
 		cur := inFlight.Add(1)
 		defer inFlight.Add(-1)
 		for {
@@ -6582,7 +6582,7 @@ func TestSyncBaseBranchSerializesAgainstRealGitFetch(t *testing.T) {
 	}
 
 	o := NewOrchestrator(nil, nil, nil, nil)
-	o.baseBranchSync = nil
+	o.runSessionOpts.baseBranchSync = nil
 
 	const callers = 16
 	var wg sync.WaitGroup
