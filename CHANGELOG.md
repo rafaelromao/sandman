@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `sandman init` gains two flags that persist runtime defaults in the scaffolded `.sandman/config.yaml`: `--retries` (sentinel `-1` keeps the built-in default of `3`; `0` disables retries) and `--run-idle-timeout` (sentinel `-1` keeps the built-in default of `1800`; `0` disables the heartbeat watchdog). `DefaultRetries = 3` is now applied by `Load()` when the YAML key is absent, mirroring the existing `run_idle_timeout` plumbing.
+- `sandman init` gains `--retries` and `--run-idle-timeout` flags that persist `retries` and `run_idle_timeout` in the scaffolded `.sandman/config.yaml`. Sentinel `-1` keeps the built-in default (`3` for `retries`, `1800` for `run_idle_timeout`); `0` disables retries / the heartbeat watchdog respectively.
 - Pi preset now snapshots `~/.pi/` but keeps `~/.pi/agent/npm` (npm cache) and `~/.pi/agent/sessions` (mutable per-run sessions) mounted live. Mirrors the OpenCode split using the same mechanism; no new fields or code paths (ADR-0017).
 - `run.idle_timeout` event type: documented in `events.go`, `monitoring.md`, and `configuration.md`. The heartbeat watchdog emits this event when an agent produces no log output for `run_idle_timeout` seconds (default: 1800, configurable via `run_idle_timeout` in config or `--run-idle-timeout` on the CLI). `0` disables the watchdog.
 - CLI summary line for `sandman run` and `sandman continue` now includes a non-zero `aborted` bucket (`Summary: N succeeded, N failed, N aborted, N blocked`), and emits only the buckets whose count is non-zero. A new `cmd.ExitCodedError` carries the process exit code for the abort path: when `RunBatch` returns `batch.ErrAborted`, the CLI prints `batch aborted by operator` to stderr and the process exits with code 130 (the standard Unix code for SIGINT). Real run failures keep the existing `run batch: ...` message and non-zero exit.
@@ -35,17 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking — schema rename.** The legacy `default_` prefix is dropped from three config keys: `default_agent` → `agent`, `default_model` → `model`, `default_parallel` → `parallel`. This is a hard cutover with no shim. Repos with the old keys silently fall back to project defaults after this release. Migrate existing `.sandman/config.yaml` files with:
-
-  ```bash
-  sed -i \
-    -e 's/^default_agent:/agent:/' \
-    -e 's/^default_model:/model:/' \
-    -e 's/^default_parallel:/parallel:/' \
-    .sandman/config.yaml
-  ```
-
-- **Breaking — default change.** Repos whose `.sandman/config.yaml` omits the `retries:` key now resolve to `retries: 3` at load time, up from the prior implicit `0`. This is the new ralph-style default. To preserve the prior no-retry behavior, set `retries: 0` explicitly in `.sandman/config.yaml` (or pass `sandman init --retries 0` on first scaffold).
+- Breaking schema rename: the legacy `default_` prefix is dropped from three config keys — `default_agent` → `agent`, `default_model` → `model`, `default_parallel` → `parallel`. Hard cutover with no shim; repos that still use the old keys silently fall back to project defaults after this release. Migrate existing `.sandman/config.yaml` files with `sed -i -e 's/^default_agent:/agent:/' -e 's/^default_model:/model:/' -e 's/^default_parallel:/parallel:/' .sandman/config.yaml`.
+- Breaking default change: `DefaultRetries = 3` is now applied by `Load()` when the YAML `retries:` key is absent (was implicitly `0`). This is the new ralph-style default and flows through `resolveRetries` to runtime behaviour. To preserve the prior no-retry behaviour, set `retries: 0` explicitly in `.sandman/config.yaml` (or pass `sandman init --retries 0` on first scaffold).
 - Renamed the `run.cancelled` event type to `run.aborted`. New runs emit `run.aborted` with `status: aborted`. The projected status for a cancellation event is now `"aborted"` (was `"failure"`), and `sandman clean --failed` now removes aborted runs. Legacy `run.cancelled` events in existing `events.jsonl` files continue to project as `"aborted"`, so the cut-over is lossless for the abort semantic.
 - Dependency resolution now treats in-batch success as sufficient to unblock dependents. When a blocker AgentRun in the same batch finishes with status `success`, its dependents start immediately without re-fetching the blocker's GitHub issue state. Only external blockers (issues not in the current batch) are still re-checked against GitHub closure right before a dependent starts, preserving the existing gate when an external blocker has not closed yet.
 
