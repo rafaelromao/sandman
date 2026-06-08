@@ -232,6 +232,10 @@ func (c *fetchIssueErrorClient) FetchIssueDependencies(number int) ([]int, error
 	return nil, nil
 }
 
+func (c *fetchIssueErrorClient) FetchPR(number int) (*github.PR, error) {
+	return nil, nil
+}
+
 func (c *fetchIssueErrorClient) SearchIssues(query string) ([]github.Issue, error) {
 	return nil, nil
 }

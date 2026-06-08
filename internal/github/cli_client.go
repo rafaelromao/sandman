@@ -61,6 +61,8 @@ type issueDependenciesPayload struct {
 type prPayload struct {
 	Number      int    `json:"number"`
 	State       string `json:"state"`
+	Title       string `json:"title"`
+	Body        string `json:"body"`
 	MergedAt    string `json:"mergedAt"`
 	HeadRefName string `json:"headRefName"`
 	HeadRefOid  string `json:"headRefOid"`
@@ -152,6 +154,35 @@ func (c *CLIClient) FetchIssue(number int) (*Issue, error) {
 		Body:      issue.Body,
 		Labels:    labelNames(issue.Labels),
 		BlockedBy: blockedBy,
+	}, nil
+}
+
+// FetchPR fetches pull request metadata via gh CLI.
+func (c *CLIClient) FetchPR(number int) (*PR, error) {
+	_, _, err := c.resolveRepo()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := c.command("gh", "pr", "view", fmt.Sprintf("%d", number), "--json", "number,title,body,state,mergedAt,headRefName,headRefOid")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh pr view: %w\n%s", err, out)
+	}
+
+	var payload prPayload
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return nil, fmt.Errorf("parse pr: %w", err)
+	}
+
+	return &PR{
+		Number:      payload.Number,
+		State:       payload.State,
+		Title:       payload.Title,
+		Body:        payload.Body,
+		Merged:      strings.TrimSpace(payload.MergedAt) != "",
+		HeadRefName: payload.HeadRefName,
+		HeadRefOid:  payload.HeadRefOid,
 	}, nil
 }
 

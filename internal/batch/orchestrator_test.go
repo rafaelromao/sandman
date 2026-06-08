@@ -95,6 +95,10 @@ func (n *noopRenderer) Render(cfg prompt.RenderConfig, data prompt.IssueData) (s
 	return "", nil
 }
 
+func (n *noopRenderer) RenderReview(cfg prompt.RenderConfig, data prompt.PRData) (string, error) {
+	return "", nil
+}
+
 type spyPromptRenderer struct {
 	called bool
 	cfg    prompt.RenderConfig
@@ -110,6 +114,10 @@ func (s *spyPromptRenderer) Render(cfg prompt.RenderConfig, data prompt.IssueDat
 	return s.result, s.err
 }
 
+func (s *spyPromptRenderer) RenderReview(cfg prompt.RenderConfig, data prompt.PRData) (string, error) {
+	return "", nil
+}
+
 type retryRenderer struct {
 	renderCalls int
 	result      string
@@ -119,6 +127,10 @@ type retryRenderer struct {
 func (r *retryRenderer) Render(cfg prompt.RenderConfig, data prompt.IssueData) (string, error) {
 	r.renderCalls++
 	return r.result, r.err
+}
+
+func (r *retryRenderer) RenderReview(cfg prompt.RenderConfig, data prompt.PRData) (string, error) {
+	return "", nil
 }
 
 type fakeGitHubClient struct {
@@ -147,6 +159,10 @@ func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
 		return issue.BlockedBy, nil
 	}
 	return nil, nil
+}
+
+func (f *fakeGitHubClient) FetchPR(number int) (*github.PR, error) {
+	return &github.PR{Number: number, State: "open"}, nil
 }
 
 func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {

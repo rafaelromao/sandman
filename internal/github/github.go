@@ -15,6 +15,8 @@ type Issue struct {
 type PR struct {
 	Number      int
 	State       string
+	Title       string
+	Body        string
 	Merged      bool
 	HeadRefName string
 	HeadRefOid  string
@@ -24,6 +26,7 @@ type PR struct {
 type Client interface {
 	FetchIssue(number int) (*Issue, error)
 	FetchIssueDependencies(number int) ([]int, error)
+	FetchPR(number int) (*PR, error)
 	FindPRByBranch(branch string) (*PR, error)
 	SearchIssues(query string) ([]Issue, error)
 }

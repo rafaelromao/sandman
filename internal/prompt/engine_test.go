@@ -498,3 +498,148 @@ func TestRender_MissingPromptFileFallsBack(t *testing.T) {
 		t.Errorf("expected built-in fallback, got:\n%s", result)
 	}
 }
+
+func TestDefaultPRReviewPrompt_EmbeddedTemplate(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+
+	want := strings.TrimSpace(string(data))
+	got := strings.TrimSpace(DefaultPRReviewPrompt())
+	if got != want {
+		t.Fatalf("default PR review prompt drifted\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestDefaultPRReviewPrompt_ContainsRequiredKeys(t *testing.T) {
+	prompt := DefaultPRReviewPrompt()
+	for _, key := range []string{"{{PR_NUMBER}}", "{{PR_TITLE}}", "{{PR_BODY}}", "{{REVIEW_FOCUS}}"} {
+		if !strings.Contains(prompt, key) {
+			t.Errorf("review prompt missing key %s", key)
+		}
+	}
+	if !strings.Contains(prompt, "gh pr comment {{PR_NUMBER}}") {
+		t.Error("review prompt must instruct agent to post via gh pr comment with PR_NUMBER")
+	}
+	if !strings.Contains(prompt, "gh pr diff {{PR_NUMBER}}") {
+		t.Error("review prompt must instruct agent to read the diff via gh pr diff with PR_NUMBER")
+	}
+}
+
+func TestApplyPRSubstitutions(t *testing.T) {
+	template := "PR #{{PR_NUMBER}}: {{PR_TITLE}}\n\n{{PR_BODY}}\n\nfocus: {{REVIEW_FOCUS}}"
+	data := PRData{
+		Number:      42,
+		Title:       "Add review command",
+		Body:        "Implements the one-shot review.",
+		ReviewFocus: "focus on config",
+	}
+
+	got := ApplyPRSubstitutions(template, data)
+	want := "PR #42: Add review command\n\nImplements the one-shot review.\n\nfocus: focus on config"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestApplyPRSubstitutions_EmptyFocusBecomesEmpty(t *testing.T) {
+	template := "PR #{{PR_NUMBER}} focus={{REVIEW_FOCUS}}"
+	data := PRData{Number: 1, ReviewFocus: ""}
+
+	got := ApplyPRSubstitutions(template, data)
+	if got != "PR #1 focus=" {
+		t.Errorf("expected empty focus to render as empty, got %q", got)
+	}
+}
+
+func TestRenderReview_BuiltInDefaultRendersPRData(t *testing.T) {
+	engine := &Engine{}
+	data := PRData{
+		Number:      17,
+		Title:       "Refactor daemon",
+		Body:        "Splits the orchestrator.",
+		ReviewFocus: "",
+	}
+
+	result, err := engine.RenderReview(RenderConfig{}, data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := DefaultPRReviewPrompt()
+	want = strings.ReplaceAll(want, "{{PR_NUMBER}}", "17")
+	want = strings.ReplaceAll(want, "{{PR_TITLE}}", "Refactor daemon")
+	want = strings.ReplaceAll(want, "{{PR_BODY}}", "Splits the orchestrator.")
+	want = strings.ReplaceAll(want, "{{REVIEW_FOCUS}}", "")
+
+	if result != want {
+		t.Errorf("unexpected rendered review prompt\nwant:\n%s\ngot:\n%s", want, result)
+	}
+}
+
+func TestRenderReview_PromptFlagOverridesDefault(t *testing.T) {
+	engine := &Engine{}
+	data := PRData{Number: 7, Title: "T", Body: "B", ReviewFocus: "F"}
+
+	result, err := engine.RenderReview(RenderConfig{
+		PromptFlag: "PR #{{PR_NUMBER}} focus={{REVIEW_FOCUS}}",
+	}, data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result != "PR #7 focus=F" {
+		t.Errorf("expected prompt-flag override, got %q", result)
+	}
+}
+
+func TestRenderReview_MissingKeyReturnsError(t *testing.T) {
+	engine := &Engine{}
+	cfg := RenderConfig{
+		PromptFlag: "PR #{{PR_NUMBER}} unknown={{UNKNOWN}}",
+	}
+	data := PRData{Number: 1}
+
+	_, err := engine.RenderReview(cfg, data)
+	if err == nil {
+		t.Fatal("expected error for missing key")
+	}
+	if !strings.Contains(err.Error(), "UNKNOWN") {
+		t.Errorf("error should mention missing key, got: %v", err)
+	}
+}
+
+func TestRenderReview_DoesNotConsumeIssueKeys(t *testing.T) {
+	engine := &Engine{}
+	// Use a template that mentions issue keys. The PR review path must not
+	// attempt to substitute ISSUE_NUMBER, so this is expected to fail.
+	cfg := RenderConfig{
+		PromptFlag: "issue={{ISSUE_NUMBER}} pr={{PR_NUMBER}}",
+	}
+	data := PRData{Number: 1}
+
+	_, err := engine.RenderReview(cfg, data)
+	if err == nil {
+		t.Fatal("expected error because ISSUE_NUMBER is not substituted by the review path")
+	}
+	if !strings.Contains(err.Error(), "ISSUE_NUMBER") {
+		t.Errorf("error should mention ISSUE_NUMBER, got: %v", err)
+	}
+}
+
+func TestRender_IssuePathDoesNotConsumePRKeys(t *testing.T) {
+	engine := &Engine{}
+	cfg := RenderConfig{
+		PromptFlag: "pr={{PR_NUMBER}} issue={{ISSUE_NUMBER}}",
+	}
+	data := IssueData{Number: 5}
+
+	_, err := engine.Render(cfg, data)
+	if err == nil {
+		t.Fatal("expected error because PR_NUMBER is not substituted by the issue path")
+	}
+	if !strings.Contains(err.Error(), "PR_NUMBER") {
+		t.Errorf("error should mention PR_NUMBER, got: %v", err)
+	}
+}

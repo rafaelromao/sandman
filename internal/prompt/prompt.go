@@ -23,7 +23,16 @@ type IssueData struct {
 	BaseBranch   string
 }
 
+// PRData holds the pull request metadata needed for review prompt rendering.
+type PRData struct {
+	Number      int
+	Title       string
+	Body        string
+	ReviewFocus string
+}
+
 // Renderer renders prompt templates with substitutions.
 type Renderer interface {
 	Render(cfg RenderConfig, data IssueData) (string, error)
+	RenderReview(cfg RenderConfig, data PRData) (string, error)
 }
