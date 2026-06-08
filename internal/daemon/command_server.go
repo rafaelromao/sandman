@@ -14,13 +14,28 @@ type IssueCommander interface {
 	AbortIssue(issueNumber int) error
 }
 
-// CommandRequest is the JSON envelope accepted by the command socket.
+// CommandRequest is the JSON wire format the Command Server accepts from
+// external clients on the cmd.sock Unix socket at
+// .sandman/runs/<run-id>/cmd.sock. The Daemon Process is the only reader;
+// the Portal is one of several potential clients (others being future
+// sandman subcommands or external scripts). The JSON field shape below is
+// the public contract — any change is a wire-format break for every
+// client, whether they import this type or decode the bytes themselves.
+// Currently the only Action is "abort", which targets a single in-flight
+// AgentRun by GitHub issue number via the IssueCommander seam.
 type CommandRequest struct {
 	Action string `json:"action"`
 	Issue  int    `json:"issue"`
 }
 
-// CommandResponse is the JSON envelope written back to the client.
+// CommandResponse is the JSON wire format the Command Server writes back
+// to clients. The Daemon Process is the only writer; the Portal (and any
+// future client) decodes it. The JSON field shape is the public contract
+// — any change is a wire-format break for every client. Status is "ok" on
+// success and "error" on failure; Message is populated when Status is
+// "error" and is treated as human-readable (not a stable identifier).
+// The Command Server is distinct from the Control Socket at run.sock,
+// which streams daemon output to Attach clients.
 type CommandResponse struct {
 	Status  string `json:"status"`
 	Message string `json:"message,omitempty"`

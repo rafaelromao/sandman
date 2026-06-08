@@ -165,6 +165,32 @@ func TestCommandServer_StartRemovesStaleSocket(t *testing.T) {
 	defer second.Stop()
 }
 
+func TestCommandResponse_DecodesRecordedAbortResponse(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		want    CommandResponse
+	}{
+		{"ok", `{"status":"ok"}`, CommandResponse{Status: "ok"}},
+		{
+			"error",
+			`{"status":"error","message":"batch: no such issue"}`,
+			CommandResponse{Status: "error", Message: "batch: no such issue"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got CommandResponse
+			if err := json.Unmarshal([]byte(tc.payload), &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCommandServer_HandlesConcurrentConnections(t *testing.T) {
 	dir := t.TempDir()
 	stub := &fakeCommander{}
