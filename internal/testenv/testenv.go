@@ -1,19 +1,25 @@
 // Package testenv provides shared helpers for parsing the env vars that
 // gate sandman test suites. It is consumed by smoke tests, prflow e2e
 // tests, and the batch orchestrator end-to-end test to decide which
-// providers and scenarios should run.
+// providers and scenarios should run, and to parameterize the model
+// each agent-driven test targets.
 //
-// Two canonical env vars drive the gates:
+// Canonical env vars:
 //
-//   - SANDMAN_TEST_PROVIDERS — comma list of provider names, "all", or "*".
+//   - SANDMAN_TEST_PROVIDERS      — comma list of provider names, "all", or "*".
 //     Drives provider allowlists in smoke and e2e tests. The known names
 //     are passed in by the caller (e.g. the smoke or prflow case lists).
-//   - SANDMAN_E2E_GATES      — comma list of scenario names, "all", or "*".
+//   - SANDMAN_E2E_GATES           — comma list of scenario names, "all", or "*".
 //     Stable scenario identifiers are E2EScenarioBatch and
 //     E2EScenarioContinueMulti.
+//   - SANDMAN_TEST_MODEL_<AGENT>  — one var per supported agent (e.g.
+//     SANDMAN_TEST_MODEL_OPENCODE, SANDMAN_TEST_MODEL_PI). Overrides the
+//     model the smoke and e2e tests target for that agent. When unset,
+//     the test falls back to the literal model baked into the test case.
 //
-// When neither var is set, helpers return the skip-friendly default
-// (nil allowlist / false gate) and tests skip themselves.
+// When the gate vars are unset, helpers return the skip-friendly default
+// (nil allowlist / false gate) and tests skip themselves. The model
+// override is a pure value substitution with no skip semantics.
 package testenv
 
 import (
@@ -34,6 +40,28 @@ const (
 	CanonicalE2EGatesEnvVar     = "SANDMAN_E2E_GATES"
 	CanonicalProviderListEnvVar = "SANDMAN_TEST_PROVIDERS"
 )
+
+// TestModelEnvVar returns the canonical env var name that overrides the
+// model the smoke and e2e tests use for the given agent. The returned
+// name follows the SANDMAN_TEST_MODEL_<AGENT> convention and is always
+// uppercased regardless of the agent casing the caller passes in.
+func TestModelEnvVar(agent string) string {
+	return "SANDMAN_TEST_MODEL_" + strings.ToUpper(strings.TrimSpace(agent))
+}
+
+// ResolveTestModel returns the model string the smoke and e2e tests
+// should target for the given agent. If the canonical per-agent env
+// var (SANDMAN_TEST_MODEL_<AGENT>) is set to a non-empty value, that
+// value (trimmed) is returned. Otherwise the supplied defaultModel is
+// returned unchanged. The helper is the only place that knows about
+// the env var convention, keeping the call sites declarative.
+func ResolveTestModel(agent, defaultModel string) string {
+	override := strings.TrimSpace(os.Getenv(TestModelEnvVar(agent)))
+	if override == "" {
+		return defaultModel
+	}
+	return override
+}
 
 // allE2EScenarios is the canonical list of stable scenario identifiers
 // accepted by SANDMAN_E2E_GATES. Adding a new scenario requires editing

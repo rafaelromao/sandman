@@ -55,6 +55,7 @@ type smokePrewarmVariant struct {
 // per-test in-test build (useful when iterating on the Dockerfile or
 // when you want every test to be hermetic).
 func TestMain(m *testing.M) {
+	applySmokeModelOverrides()
 	if os.Getenv("SANDMAN_SMOKE_PREFETCH") != "0" {
 		prewarmOnce.Do(prewarmSmokeImages)
 	}

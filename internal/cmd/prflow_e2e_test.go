@@ -68,6 +68,22 @@ var prFlowProviderCases = []prFlowProviderCase{
 	},
 }
 
+// applyPRFlowModelOverrides lets operators steer the prflow e2e tests
+// at a different model per agent via the SANDMAN_TEST_MODEL_<AGENT>
+// env vars. When unset, the literal model in prFlowProviderCases is
+// used. Runs in an init so every subtest sees the override before its
+// testCase is copied.
+func applyPRFlowModelOverrides() {
+	for i := range prFlowProviderCases {
+		tc := &prFlowProviderCases[i]
+		tc.model = testenv.ResolveTestModel(tc.name, tc.model)
+	}
+}
+
+func init() {
+	applyPRFlowModelOverrides()
+}
+
 func parseE2EProviders() (map[string]bool, error) {
 	return testenv.ResolveProviderAllowlist(prFlowProviderNames())
 }
