@@ -37,6 +37,7 @@ type GitHubClient interface {
 	ListOpenPRs() ([]github.PR, error)
 	ListPRComments(number int) ([]github.PRComment, error)
 	FetchPR(number int) (*github.PR, error)
+	RepoName() (string, error)
 }
 
 // BatchRunner is the subset of batch.Runner used by the review daemon.

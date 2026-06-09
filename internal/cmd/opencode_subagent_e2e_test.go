@@ -48,6 +48,10 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 	}
 
+	if _, err := runSandmanBinary(t, binPath, repoDir, "config", "set", "review_command", "/oc review"); err != nil {
+		t.Fatalf("sandman config set failed: %v", err)
+	}
+
 	forcePodmanSandbox(t, repoDir)
 	writeMergedFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 	installPermissionFakeOpenCodeForContainer(t, repoDir)
