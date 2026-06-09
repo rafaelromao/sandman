@@ -33,9 +33,10 @@ func newArchiveRunCmd(deps Dependencies) *cobra.Command {
 		probe = daemon.IsRunActive
 	}
 	return &cobra.Command{
-		Use:   "run <id>",
-		Short: "Archive a single run directory",
-		Args:  cobra.ExactArgs(1),
+		Use:     "run <id>",
+		Aliases: []string{"batch"},
+		Short:   "Archive a single run directory",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runArchiveRun(cmd, args[0], probe)
 		},

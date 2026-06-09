@@ -148,6 +148,8 @@ Move a completed run directory from `.sandman/runs/<id>` to `.sandman/archive/<i
 sandman archive run <id>
 ```
 
+`batch` is registered as an alias of `run` (they share the same handler) and is interchangeable from the command line.
+
 | Subcommand | Description |
 |------------|-------------|
 | `run <id>` | Move `.sandman/runs/<id>` to `.sandman/archive/<id>` |
