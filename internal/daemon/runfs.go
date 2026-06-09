@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -30,23 +31,34 @@ func IsRunActive(runPath string) bool {
 	return true
 }
 
-// CleanupStaleRunSnapshots removes `<baseDir>/runs/<id>/config/` subtrees
-// for run dirs that are not currently active (no live `run.sock`). Returns
-// the number of snapshot directories removed. The run dir itself and its
-// manifest are left in place so operators can inspect them; the snapshot
-// subtree, which can contain secrets copied from the host, is the part
-// that must not accumulate after crashes.
-func CleanupStaleRunSnapshots(baseDir string) (int, error) {
+// DeadBatch describes a run directory under <baseDir>/runs/ whose daemon
+// process is no longer live, paired with the batch manifest that the
+// directory persisted. RunDir is the absolute path to the run directory.
+// A run dir with no manifest file is returned with the zero-value
+// BatchManifest; only a malformed manifest is treated as an error.
+type DeadBatch struct {
+	RunDir   string
+	Manifest BatchManifest
+}
+
+// FindDeadRunBatches scans <baseDir>/runs/ for run directories that are
+// not currently owned by a live daemon and returns their parsed
+// manifests. Results are sorted lexicographically by RunDir for stable
+// iteration. A run dir with no `batch.json` is still returned with the
+// zero-value BatchManifest. Returns (nil, nil) if <baseDir>/runs/ is
+// missing so callers can treat a fresh repository the same as a clean
+// one.
+func FindDeadRunBatches(baseDir string) ([]DeadBatch, error) {
 	runsDir := filepath.Join(baseDir, "runs")
 	entries, err := os.ReadDir(runsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil
+			return nil, nil
 		}
-		return 0, fmt.Errorf("read runs dir: %w", err)
+		return nil, fmt.Errorf("read runs dir: %w", err)
 	}
 
-	var removed int
+	var batches []DeadBatch
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -55,7 +67,37 @@ func CleanupStaleRunSnapshots(baseDir string) (int, error) {
 		if IsRunActive(runPath) {
 			continue
 		}
-		snapshotPath := filepath.Join(runPath, "config")
+		manifest, err := ReadManifest(runPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				manifest = BatchManifest{}
+			} else {
+				return nil, fmt.Errorf("read manifest for %s: %w", runPath, err)
+			}
+		}
+		batches = append(batches, DeadBatch{RunDir: runPath, Manifest: manifest})
+	}
+	sort.SliceStable(batches, func(i, j int) bool {
+		return batches[i].RunDir < batches[j].RunDir
+	})
+	return batches, nil
+}
+
+// CleanupStaleRunSnapshots removes `<baseDir>/runs/<id>/config/` subtrees
+// for run dirs that are not currently active (no live `run.sock`). Returns
+// the number of snapshot directories removed. The run dir itself and its
+// manifest are left in place so operators can inspect them; the snapshot
+// subtree, which can contain secrets copied from the host, is the part
+// that must not accumulate after crashes.
+func CleanupStaleRunSnapshots(baseDir string) (int, error) {
+	dead, err := FindDeadRunBatches(baseDir)
+	if err != nil {
+		return 0, err
+	}
+
+	var removed int
+	for _, batch := range dead {
+		snapshotPath := filepath.Join(batch.RunDir, "config")
 		info, err := os.Stat(snapshotPath)
 		if err != nil {
 			continue
