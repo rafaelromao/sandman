@@ -16,7 +16,11 @@ model: opencode/big-pickle
 build_tools: generic
 
 # Review command injected into the prompt template and shared skill install.
-review_command: /oc review
+# Defaults to /sandman review, which requires `sandman review` to be
+# running before `sandman run`/`continue`/`--ralph` will start. Set
+# to /oc review (or any command that does not contain /sandman) to
+# opt out of the review daemon guard.
+review_command: /sandman review
 
 # Maximum number of concurrent agent runs.
 parallel: 4
