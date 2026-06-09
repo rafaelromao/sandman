@@ -229,13 +229,15 @@ To detect and remediate stranded worktrees, run the standalone cleanup script:
 scripts/reconcile-stranded-worktrees.sh
 ```
 
-The script parses `git worktree list --porcelain`, matches worktrees under `.sandman/worktrees/sandman/` whose directory name follows the `sandman/<number>-<slug>` pattern, and compares the actual branch against the expected branch derived from the directory name. For each mismatch it prints a one-line remediation command:
+The script parses `git worktree list --porcelain`, reads the configured `worktree_dir` from `.sandman/config.yaml` (defaults to `.sandman/worktrees`), matches worktrees under that directory whose directory name follows the `sandman/<number>-<slug>` pattern, and compares the actual branch against the expected branch derived from the directory name. For each mismatch it prints a one-line remediation command:
 
 ```
 Worktree /path/.sandman/worktrees/sandman/724-foo is on refs/heads/main, expected refs/heads/sandman/724-foo. Run: git -C /path/.sandman/worktrees/sandman/724-foo checkout -f sandman/724-foo
 ```
 
 The script is non-destructive: it never checks out branches or removes worktrees automatically. It exits 0 on success, including when no stranded worktrees are found.
+
+> **Warning:** The printed `git checkout -f` command will discard uncommitted changes in the worktree. Commit or stash any worktree-local changes before running the remediation command.
 
 > **Note:** The script only detects stranded worktrees for issue-driven branches (`sandman/<number>-<slug>`). Prompt-only worktrees (timestamp-based branch names) are not checked, as their directory name does not map to a predictable expected branch. `sandman run --force` reconciles all worktrees regardless of naming pattern.
 
