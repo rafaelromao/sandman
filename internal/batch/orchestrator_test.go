@@ -7440,25 +7440,19 @@ func (f *strandRunnableFactory) NewRunnable(issue *github.Issue, branch string, 
 
 func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 	workDir := t.TempDir()
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get wd: %v", err)
-	}
-	if err := os.Chdir(workDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	t.Chdir(workDir)
 	initGitRepo(t, workDir)
 
 	branch := "sandman/42-fix-bug"
 	pr := mergedPR(branch, "")
+	var errorBuf bytes.Buffer
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: pr},
 		},
 		renderer:        &noopRenderer{},
-		errorLog:        io.Discard,
+		errorLog:        &errorBuf,
 		runnableFactory: &strandRunnableFactory{},
 	}
 
@@ -7486,12 +7480,16 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 	o.runnableFactory = nil
 
 	t.Run("no force fails on branch mismatch", func(t *testing.T) {
+		errorBuf.Reset()
 		result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
 		if started {
 			t.Fatal("expected run not to start when worktree is on wrong branch")
 		}
 		if result.Status != "failure" {
 			t.Fatalf("status = %q, want failure", result.Status)
+		}
+		if !strings.Contains(errorBuf.String(), `expected "sandman/42-fix-bug"; re-run with --force to reconcile`) {
+			t.Fatalf("error log does not contain branch mismatch message:\n%s", errorBuf.String())
 		}
 	})
 
