@@ -1648,7 +1648,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			// used below to decide whether to reset the branch — the agent
 			// receives the same handoff content regardless of open-PR state.
 			handoffPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
-			handoffContent, handoffExists := ReadHandoffContent(handoffPath)
+			handoffContent, handoffExists, err := ReadHandoffContent(handoffPath)
+			if err != nil {
+				fmt.Fprintf(o.errorLog, "error: read handoff for issue %d: %v\n", s.issueNumber, err)
+				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
+			}
 			attemptRenderCfg.HandoffPrompt = handoffContent
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 			if !handoffExists {

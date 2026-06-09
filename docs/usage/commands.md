@@ -110,13 +110,13 @@ Displays each completed run with status, duration, and branch name.
 
 ## `sandman continue`
 
-Continue the last agent run for a given issue with a fresh prompt plus prior continuation context.
+Continue the last agent run for one or more issues. Reads the handoff document (`.sandman/handoff.md`) from each issue's worktree and passes it verbatim as the agent's resume prompt.
 
 ```bash
-sandman continue <issue-number> <prompt-text>
+sandman continue <issue-number>...
 ```
 
-Reuses the previously created branch and recorded agent and review command from the prior run, though `--agent` can override and `--model` falls back to `model` from config when omitted. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. Then it prepends `.sandman/handoff.md` to `.sandman/handoff-prompt.md` when present.
+Reuses the previously created branch and recorded agent and review command from the prior run, though `--agent` can override and `--model` falls back to `model` from config when omitted. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. When no handoff document exists, an empty handoff template is used as the resume prompt (with a warning on stderr).
 
 | Flag | Default | Description |
 |------|---------|-------------|
