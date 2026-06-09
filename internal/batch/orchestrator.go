@@ -76,6 +76,16 @@ func readTailLines(path string, n int) []string {
 	return parts[len(parts)-n:]
 }
 
+// agentLogPath returns the canonical absolute log path for the given filename
+// under <repoRoot>/.sandman/logs/. The repo root is resolved from the current
+// working directory via filepath.Abs.
+func agentLogPath(filename string) string {
+	root, err := filepath.Abs(".")
+	if err != nil {
+		panic("agentLogPath: " + err.Error())
+	}
+	return filepath.Join(root, ".sandman", "logs", filename)
+}
 func gitTopLevel(repoPath string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = repoPath
