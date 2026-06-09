@@ -301,12 +301,11 @@ func TestRecoverStaleRuns_RecoversOrphanActiveRun(t *testing.T) {
 	}
 }
 
-func TestRecoverStaleRuns_QueuedRunWithoutBatchDir_Skipped(t *testing.T) {
+func TestRecoverStaleRuns_QueuedRunWithoutBatchDir_Recovered(t *testing.T) {
 	baseDir := t.TempDir()
 	queuedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 
-	// No batch directories — the orphan pass skips queued runs because it
-	// cannot distinguish this from a completed batch whose dir was cleaned up.
+	// No batch directories — the queued run is orphaned and should be recovered.
 	eventLog := &recordingEventLog{}
 	existing := []events.Event{
 		{Type: "run.queued", RunID: "run-42", Issue: 42, Timestamp: queuedAt},
@@ -316,23 +315,29 @@ func TestRecoverStaleRuns_QueuedRunWithoutBatchDir_Skipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecoverStaleRuns: %v", err)
 	}
-	if recovered != 0 {
-		t.Errorf("expected 0 recovered (queued run not orphan-recoverable), got %d", recovered)
+	if recovered != 1 {
+		t.Errorf("expected 1 recovered, got %d", recovered)
 	}
 	if dirs != 0 {
 		t.Errorf("expected 0 dead dirs, got %d", dirs)
 	}
-	if len(eventLog.logged) != 0 {
-		t.Errorf("expected 0 logged events, got %d", len(eventLog.logged))
+	if len(eventLog.logged) != 1 {
+		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
+	}
+	e := eventLog.logged[0]
+	if e.Type != "run.aborted" {
+		t.Errorf("expected run.aborted, got %q", e.Type)
+	}
+	if e.IssueRef == nil || *e.IssueRef != 42 {
+		t.Errorf("expected IssueRef=42, got %v", e.IssueRef)
 	}
 }
 
-func TestRecoverStaleRuns_BlockedRunWithoutBatchDir_Skipped(t *testing.T) {
+func TestRecoverStaleRuns_BlockedRunWithoutBatchDir_Recovered(t *testing.T) {
 	baseDir := t.TempDir()
 	blockedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 
-	// No batch directories — the orphan pass skips blocked runs because it
-	// cannot distinguish this from a completed batch whose dir was cleaned up.
+	// No batch directories — the blocked run is orphaned and should be recovered.
 	eventLog := &recordingEventLog{}
 	existing := []events.Event{
 		{Type: "run.blocked", RunID: "run-42", Issue: 42, Timestamp: blockedAt, Payload: map[string]any{"blocked_by": []int{1}}},
@@ -342,14 +347,21 @@ func TestRecoverStaleRuns_BlockedRunWithoutBatchDir_Skipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecoverStaleRuns: %v", err)
 	}
-	if recovered != 0 {
-		t.Errorf("expected 0 recovered (blocked run not orphan-recoverable), got %d", recovered)
+	if recovered != 1 {
+		t.Errorf("expected 1 recovered, got %d", recovered)
 	}
 	if dirs != 0 {
 		t.Errorf("expected 0 dead dirs, got %d", dirs)
 	}
-	if len(eventLog.logged) != 0 {
-		t.Errorf("expected 0 logged events, got %d", len(eventLog.logged))
+	if len(eventLog.logged) != 1 {
+		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
+	}
+	e := eventLog.logged[0]
+	if e.Type != "run.aborted" {
+		t.Errorf("expected run.aborted, got %q", e.Type)
+	}
+	if e.IssueRef == nil || *e.IssueRef != 42 {
+		t.Errorf("expected IssueRef=42, got %v", e.IssueRef)
 	}
 }
 
@@ -443,5 +455,65 @@ func TestRecoverStaleRuns_ManifestIssueWithoutRunIsSkipped(t *testing.T) {
 	}
 	if dirs != 1 {
 		t.Errorf("expected 1 dead dir to be processed, got %d", dirs)
+	}
+}
+
+func TestRecoverStaleRuns_QueuedRunSupersededByLaterRun_Skipped(t *testing.T) {
+	baseDir := t.TempDir()
+	queuedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	startedAt := queuedAt.Add(5 * time.Minute)
+	finishedAt := startedAt.Add(10 * time.Minute)
+
+	// No batch directories — but the queued placeholder was superseded by
+	// a later actual run for the same issue (completed normally).
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.queued", RunID: "placeholder-42", Issue: 42, Timestamp: queuedAt, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.started", RunID: "actual-run-42", Issue: 42, Timestamp: startedAt},
+		{Type: "run.finished", RunID: "actual-run-42", Issue: 42, Timestamp: finishedAt, Payload: map[string]any{"status": "success"}},
+	}
+
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered (superseded by actual run), got %d", recovered)
+	}
+	if dirs != 0 {
+		t.Errorf("expected 0 dead dirs, got %d", dirs)
+	}
+	if len(eventLog.logged) != 0 {
+		t.Errorf("expected 0 logged events, got %d", len(eventLog.logged))
+	}
+}
+
+func TestRecoverStaleRuns_BlockedRunSupersededByLaterRun_Skipped(t *testing.T) {
+	baseDir := t.TempDir()
+	blockedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	startedAt := blockedAt.Add(5 * time.Minute)
+	finishedAt := startedAt.Add(10 * time.Minute)
+
+	// No batch directories — but the blocked placeholder was superseded by
+	// a later actual run for the same issue (completed normally).
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.blocked", RunID: "placeholder-42", Issue: 42, Timestamp: blockedAt, Payload: map[string]any{"blocked_by": []int{1}}},
+		{Type: "run.started", RunID: "actual-run-42", Issue: 42, Timestamp: startedAt},
+		{Type: "run.finished", RunID: "actual-run-42", Issue: 42, Timestamp: finishedAt, Payload: map[string]any{"status": "success"}},
+	}
+
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered (superseded by actual run), got %d", recovered)
+	}
+	if dirs != 0 {
+		t.Errorf("expected 0 dead dirs, got %d", dirs)
+	}
+	if len(eventLog.logged) != 0 {
+		t.Errorf("expected 0 logged events, got %d", len(eventLog.logged))
 	}
 }
