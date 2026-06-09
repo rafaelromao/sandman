@@ -458,13 +458,88 @@ func TestRecoverStaleRuns_ManifestIssueWithoutRunIsSkipped(t *testing.T) {
 	}
 }
 
-func TestRecoverStaleRuns_QueuedRunSupersededByLaterRun_Skipped(t *testing.T) {
+func TestRecoverStaleRuns_TwoQueuedRunsSameIssue_DeadBatch_RecoversBoth(t *testing.T) {
+	baseDir := t.TempDir()
+	createdAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	queuedA := createdAt.Add(1 * time.Minute)
+	queuedB := createdAt.Add(5 * time.Minute)
+
+	// One dead batch dir with issue 42. Two queued runs for the same issue
+	// (from different batches/batch dead+re-queue). The dead batch loop
+	// should recover both — earlier queued runs are not superseded by
+	// later queued/blocked placeholders, only by actual run.started.
+	runDir := filepath.Join(baseDir, "runs", "batch-1")
+	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
+
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.queued", RunID: "first-queue", Issue: 42, Timestamp: queuedA, Payload: map[string]any{"blocked_by": []int{1}}},
+		{Type: "run.queued", RunID: "second-queue", Issue: 42, Timestamp: queuedB, Payload: map[string]any{"blocked_by": []int{1}}},
+	}
+
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 2 {
+		t.Errorf("expected 2 recovered, got %d", recovered)
+	}
+	if dirs != 1 {
+		t.Errorf("expected 1 dead dir, got %d", dirs)
+	}
+	if len(eventLog.logged) != 2 {
+		t.Fatalf("expected 2 logged events, got %d", len(eventLog.logged))
+	}
+	for _, e := range eventLog.logged {
+		if e.Type != "run.aborted" {
+			t.Errorf("expected run.aborted, got %q", e.Type)
+		}
+		if e.IssueRef == nil || *e.IssueRef != 42 {
+			t.Errorf("expected IssueRef=42, got %v", e.IssueRef)
+		}
+	}
+}
+
+func TestRecoverStaleRuns_TwoQueuedRunsSameIssue_NoBatchDirs_RecoversBoth(t *testing.T) {
+	baseDir := t.TempDir()
+	queuedA := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	queuedB := queuedA.Add(5 * time.Minute)
+
+	// No batch directories. Two queued runs for the same issue — neither
+	// is superseded because the later run is also queued, not started.
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.queued", RunID: "first-queue", Issue: 42, Timestamp: queuedA, Payload: map[string]any{"blocked_by": []int{1}}},
+		{Type: "run.queued", RunID: "second-queue", Issue: 42, Timestamp: queuedB, Payload: map[string]any{"blocked_by": []int{99}}},
+	}
+
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 2 {
+		t.Errorf("expected 2 recovered, got %d", recovered)
+	}
+	if dirs != 0 {
+		t.Errorf("expected 0 dead dirs, got %d", dirs)
+	}
+	if len(eventLog.logged) != 2 {
+		t.Fatalf("expected 2 logged events, got %d", len(eventLog.logged))
+	}
+	for _, e := range eventLog.logged {
+		if e.Type != "run.aborted" {
+			t.Errorf("expected run.aborted, got %q", e.Type)
+		}
+	}
+}
+
+func TestRecoverStaleRuns_QueuedSupersededByLaterStarted_Skipped(t *testing.T) {
 	baseDir := t.TempDir()
 	queuedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 	startedAt := queuedAt.Add(5 * time.Minute)
 	finishedAt := startedAt.Add(10 * time.Minute)
 
-	// No batch directories — but the queued placeholder was superseded by
+	// No batch directories — the queued placeholder was superseded by
 	// a later actual run for the same issue (completed normally).
 	eventLog := &recordingEventLog{}
 	existing := []events.Event{
@@ -488,13 +563,13 @@ func TestRecoverStaleRuns_QueuedRunSupersededByLaterRun_Skipped(t *testing.T) {
 	}
 }
 
-func TestRecoverStaleRuns_BlockedRunSupersededByLaterRun_Skipped(t *testing.T) {
+func TestRecoverStaleRuns_BlockedSupersededByLaterStarted_Skipped(t *testing.T) {
 	baseDir := t.TempDir()
 	blockedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 	startedAt := blockedAt.Add(5 * time.Minute)
 	finishedAt := startedAt.Add(10 * time.Minute)
 
-	// No batch directories — but the blocked placeholder was superseded by
+	// No batch directories — the blocked placeholder was superseded by
 	// a later actual run for the same issue (completed normally).
 	eventLog := &recordingEventLog{}
 	existing := []events.Event{
