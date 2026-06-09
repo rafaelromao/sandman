@@ -151,6 +151,9 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 				t.Fatalf("expected scaffolded %s: %v", rel, err)
 			}
 		}
+		if _, err := runSandmanBinary(t, binPath, repoDir, "config", "set", "review_command", "/oc review"); err != nil {
+			t.Fatalf("sandman config set failed: %v", err)
+		}
 		if tc.name == "pi" {
 			writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
 			appendPiTestShimToDockerfile(t, repoDir)
@@ -277,6 +280,7 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 				t.Fatalf("expected scaffolded %s: %v", rel, err)
 			}
 		}
+		runRootCommand(t, prFlowDeps(repoDir), "config", "set", "review_command", "/oc review")
 		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
 		ghShimDir := t.TempDir()
@@ -393,6 +397,7 @@ func TestPRFlow_WorktreeSandboxCommitsAndPushes(t *testing.T) {
 			}
 		}
 
+		runRootCommand(t, deps, "config", "set", "review_command", "/oc review")
 		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{})
 		writePRFlowPrompt(t, repoDir)
 
@@ -1127,6 +1132,9 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 				t.Fatalf("expected scaffolded %s: %v", rel, err)
 			}
 		}
+		if _, err := runSandmanBinary(t, binPath, repoDir, "config", "set", "review_command", "/oc review"); err != nil {
+			t.Fatalf("sandman config set failed: %v", err)
+		}
 		if tc.name == "pi" {
 			writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
 			appendPiTestShimToDockerfile(t, repoDir)
@@ -1351,6 +1359,9 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
 				t.Fatalf("expected scaffolded %s: %v", rel, err)
 			}
+		}
+		if _, err := runSandmanBinary(t, binPath, repoDir, "config", "set", "review_command", "/oc review"); err != nil {
+			t.Fatalf("sandman config set failed: %v", err)
 		}
 		if tc.name == "pi" {
 			writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
@@ -1629,6 +1640,10 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", tc.name)
 		if err != nil {
 			t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
+		}
+
+		if _, err := runSandmanBinary(t, binPath, repoDir, "config", "set", "review_command", "/oc review"); err != nil {
+			t.Fatalf("sandman config set failed: %v", err)
 		}
 
 		ghShimDir := t.TempDir()
