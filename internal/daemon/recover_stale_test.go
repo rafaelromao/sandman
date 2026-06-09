@@ -592,3 +592,36 @@ func TestRecoverStaleRuns_BlockedSupersededByLaterStarted_Skipped(t *testing.T) 
 		t.Errorf("expected 0 logged events, got %d", len(eventLog.logged))
 	}
 }
+
+func TestRecoverStaleRuns_QueuedNotSupersededByAbortedStarted_Recovered(t *testing.T) {
+	baseDir := t.TempDir()
+	queuedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	startedAt := queuedAt.Add(5 * time.Minute)
+	abortedAt := startedAt.Add(2 * time.Minute)
+
+	// No batch directories. The earlier queued placeholder was followed
+	// by a run.started (real work began) but the daemon died — emitting
+	// run.aborted. The issue was never actually completed, so the queued
+	// placeholder is still an orphan that should be recovered.
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.queued", RunID: "placeholder-42", Issue: 42, Timestamp: queuedAt, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.started", RunID: "actual-run-42", Issue: 42, Timestamp: startedAt},
+		{Type: "run.aborted", RunID: "actual-run-42", Issue: 42, Timestamp: abortedAt, Payload: map[string]any{"recovered": true}},
+	}
+
+	recovered, _, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 1 {
+		t.Errorf("expected 1 recovered (aborted started run does not supersede), got %d", recovered)
+	}
+	if len(eventLog.logged) != 1 {
+		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
+	}
+	e := eventLog.logged[0]
+	if e.RunID != "placeholder-42" {
+		t.Errorf("expected run.aborted for placeholder-42, got RunID=%q", e.RunID)
+	}
+}
