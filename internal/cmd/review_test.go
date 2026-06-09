@@ -511,6 +511,35 @@ func TestReviewCmd_OneShotErrorsOnMissingModel(t *testing.T) {
 	}
 }
 
+func TestReviewCmd_OneShotErrorsOnInvalidAgent(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultReviewAgent: "nonexistent-agent",
+		DefaultReviewModel: "m",
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr:               &github.PR{Number: 1, Title: "T", Body: "B"},
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"--pr", "1"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid review agent")
+	}
+	if !strings.Contains(err.Error(), "nonexistent-agent") {
+		t.Errorf("expected error to mention agent name, got: %v", err)
+	}
+}
+
 type testError struct{ msg string }
 
 func (e *testError) Error() string { return e.msg }

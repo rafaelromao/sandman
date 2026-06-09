@@ -413,3 +413,37 @@ func TestDaemon_RunFailsFastOnMissingReviewModel(t *testing.T) {
 
 	cancel()
 }
+
+func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
+	gh := &fakeGH{
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "",
+		DefaultModel:       "",
+	})
+
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "",
+		DefaultModel:       "",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"opencode": {Preset: "opencode", Command: "opencode"},
+	}
+	d.Config = cfg
+
+	prDir := d.PRDir(1)
+	if err := os.MkdirAll(prDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	err := d.launchReview(context.Background(), 1, prDir, "", "c1")
+	if err == nil {
+		t.Fatal("expected error from launchReview when model is empty")
+	}
+	if !strings.Contains(err.Error(), "review model is not set") {
+		t.Errorf("expected error about missing review model, got: %v", err)
+	}
+}
