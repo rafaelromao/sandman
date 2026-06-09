@@ -62,7 +62,7 @@ func TestContinue_NoArgsReturnsUsageError(t *testing.T) {
 	}
 }
 
-func TestContinue_OneArgReturnsUsageError(t *testing.T) {
+func TestContinue_OneArgIsValid(t *testing.T) {
 	deps := newTestDeps()
 	var buf bytes.Buffer
 	cmd := NewContinueCmd(deps)
@@ -72,11 +72,11 @@ func TestContinue_OneArgReturnsUsageError(t *testing.T) {
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when only one arg provided")
+		t.Fatal("expected error when no previous run for issue")
 	}
 	var target *UsageError
-	if !errors.As(err, &target) {
-		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	if errors.As(err, &target) {
+		t.Fatalf("expected runtime error, not *UsageError: %T: %v", err, err)
 	}
 }
 
@@ -86,7 +86,7 @@ func TestContinue_InvalidIssueReturnsError(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"abc", "finish the tests"})
+	cmd.SetArgs([]string{"abc"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -108,7 +108,7 @@ func TestContinue_RuntimeErrorNotUsageError(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -152,7 +152,7 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -171,8 +171,8 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if spy.req.BaseBranches[42] != "main" {
 		t.Fatalf("expected base branch main, got %q", spy.req.BaseBranches[42])
 	}
-	if spy.req.PromptConfig.HandoffPrompt != "finish the tests" {
-		t.Fatalf("expected shared bare prompt, got %q", spy.req.PromptConfig.HandoffPrompt)
+	if spy.req.PromptConfig.HandoffPrompt != "" {
+		t.Fatalf("expected no bare prompt, got %q", spy.req.PromptConfig.HandoffPrompt)
 	}
 	if !spy.req.Continuation {
 		t.Fatal("expected continuation request")
@@ -219,17 +219,17 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if !spy.req.MaxContainersSet {
 		t.Fatal("expected max containers flag to be preserved")
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[42], "## Prior Context") {
-		t.Fatalf("expected prior context section, got %q", spy.req.HandoffPrompts[42])
+	if !strings.Contains(spy.req.HandoffPrompts[42], "# Handoff Context") {
+		t.Fatalf("expected verbatim handoff content with header, got %q", spy.req.HandoffPrompts[42])
 	}
-	if strings.Contains(spy.req.HandoffPrompts[42], "# Handoff Context") {
-		t.Fatalf("expected header stripped, got %q", spy.req.HandoffPrompts[42])
+	if strings.Contains(spy.req.HandoffPrompts[42], "## Prior Context") {
+		t.Fatalf("expected no prior context wrapper, got %q", spy.req.HandoffPrompts[42])
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[42], "Continue the work.") {
-		t.Fatalf("expected new instruction, got %q", spy.req.HandoffPrompts[42])
+	if strings.Contains(spy.req.HandoffPrompts[42], "## New Instruction") {
+		t.Fatalf("expected no new instruction section, got %q", spy.req.HandoffPrompts[42])
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[42], ".sandman/handoff.md") {
-		t.Fatalf("expected update instruction, got %q", spy.req.HandoffPrompts[42])
+	if strings.Contains(spy.req.HandoffPrompts[42], "## Update Handoff Context") {
+		t.Fatalf("expected no update handoff context section, got %q", spy.req.HandoffPrompts[42])
 	}
 	if spy.req.PromptConfig.ReviewCommand != "/custom review 2" {
 		t.Fatalf("expected review command replay, got %q", spy.req.PromptConfig.ReviewCommand)
@@ -260,7 +260,7 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--model", "gpt-override", "--agent", "pi", "--parallel", "9", "--start-delay", "12", "--retries", "5", "--sandbox", "worktree", "--container-capacity", "8", "--max-containers", "6", "42", "finish the tests"})
+	cmd.SetArgs([]string{"--model", "gpt-override", "--agent", "pi", "--parallel", "9", "--start-delay", "12", "--retries", "5", "--sandbox", "worktree", "--container-capacity", "8", "--max-containers", "6", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -323,7 +323,7 @@ func TestContinue_RunIdleTimeoutFlagPassedToBatchRunner(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--run-idle-timeout", "600", "42", "finish the tests"})
+	cmd.SetArgs([]string{"--run-idle-timeout", "600", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -359,7 +359,7 @@ func TestContinue_RunIdleTimeoutZeroAccepted(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--run-idle-timeout=0", "42", "finish the tests"})
+	cmd.SetArgs([]string{"--run-idle-timeout=0", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -395,7 +395,7 @@ func TestContinue_RunIdleTimeoutNegativeValueRejected(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--run-idle-timeout", "-1", "42", "finish the tests"})
+	cmd.SetArgs([]string{"--run-idle-timeout", "-1", "42"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -436,7 +436,7 @@ func TestContinue_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -467,18 +467,21 @@ func TestContinue_WarnsAndUsesBarePromptWhenContinuationContextMissing(t *testin
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.req.PromptConfig.HandoffPrompt != "finish the tests" {
-		t.Fatalf("expected bare prompt, got %q", spy.req.PromptConfig.HandoffPrompt)
+	if spy.req.PromptConfig.HandoffPrompt != "" {
+		t.Fatalf("expected empty HandoffPrompt, got %q", spy.req.PromptConfig.HandoffPrompt)
 	}
-	if !strings.Contains(buf.String(), "missing handoff context") {
-		t.Fatalf("expected warning about missing context, got %q", buf.String())
+	if !strings.Contains(spy.req.HandoffPrompts[42], "## Next Step") {
+		t.Fatalf("expected handoff prompt to have Next Step section, got %q", spy.req.HandoffPrompts[42])
+	}
+	if !strings.Contains(spy.req.HandoffPrompts[42], "Continue the work.") {
+		t.Fatalf("expected handoff prompt to have Continue the work., got %q", spy.req.HandoffPrompts[42])
 	}
 }
 
@@ -504,7 +507,7 @@ func TestContinue_FailsWhenPRMerged(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -549,7 +552,7 @@ func TestContinue_DoesNotBlockWhenPRNotMerged(t *testing.T) {
 			cmd := NewContinueCmd(deps)
 			cmd.SetOut(&buf)
 			cmd.SetErr(&buf)
-			cmd.SetArgs([]string{"42", "finish the tests"})
+			cmd.SetArgs([]string{"42"})
 
 			err := cmd.Execute()
 			if err != nil {
@@ -651,7 +654,7 @@ func TestContinue_ChainedContinuationFlow(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
@@ -667,7 +670,7 @@ func TestContinue_ChainedContinuationFlow(t *testing.T) {
 	cmd = NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "push the PR"})
+	cmd.SetArgs([]string{"42"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("second continue failed: %v", err)
 	}
@@ -716,7 +719,7 @@ func TestContinue_FailsWhenWorktreeMissing(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -762,7 +765,7 @@ func TestContinue_MultipleIssuesBuildsBranchesAndPreviousRunIDsMaps(t *testing.T
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"1", "2", "fix tests"})
+	cmd.SetArgs([]string{"1", "2"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -780,11 +783,11 @@ func TestContinue_MultipleIssuesBuildsBranchesAndPreviousRunIDsMaps(t *testing.T
 	if spy.req.BaseBranches[1] != "main" || spy.req.BaseBranches[2] != "main" {
 		t.Fatalf("expected base branches to replay main, got %#v", spy.req.BaseBranches)
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[1], "First issue.") {
-		t.Fatalf("expected issue 1 prompt to include its own context, got %q", spy.req.HandoffPrompts[1])
+	if !strings.Contains(spy.req.HandoffPrompts[1], "## Completed\nFirst issue.\n") {
+		t.Fatalf("expected issue 1 prompt to include its own verbatim context, got %q", spy.req.HandoffPrompts[1])
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[2], "Second issue.") {
-		t.Fatalf("expected issue 2 prompt to include its own context, got %q", spy.req.HandoffPrompts[2])
+	if !strings.Contains(spy.req.HandoffPrompts[2], "## Completed\nSecond issue.\n") {
+		t.Fatalf("expected issue 2 prompt to include its own verbatim context, got %q", spy.req.HandoffPrompts[2])
 	}
 	if spy.req.HandoffPrompts[1] == spy.req.HandoffPrompts[2] {
 		t.Fatal("expected different prompts per issue")
@@ -830,7 +833,7 @@ func TestContinue_FailsFastWhenAnyWorktreeMissingForMultipleIssues(t *testing.T)
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"1", "2", "fix tests"})
+	cmd.SetArgs([]string{"1", "2"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -866,7 +869,7 @@ func TestContinue_FailsWhenAnyIssueHasNoPreviousRun(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"1", "2", "fix tests"})
+	cmd.SetArgs([]string{"1", "2"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -882,7 +885,7 @@ func TestContinue_FailsWhenAnyIssueHasNoPreviousRun(t *testing.T) {
 
 func TestContinue_UsesVariadicSyntaxInUseString(t *testing.T) {
 	cmd := NewContinueCmd(newTestDeps())
-	if !strings.Contains(cmd.Use, "[issue-number...]") {
+	if !strings.Contains(cmd.Use, "<issue-number>...") {
 		t.Fatalf("expected Use to indicate variadic issue numbers, got %q", cmd.Use)
 	}
 }
@@ -916,7 +919,7 @@ func TestContinue_ExitsWithCode130OnAbort(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SilenceUsage = true
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -971,7 +974,7 @@ func TestContinue_PreservesRunBatchErrorMessage(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SilenceUsage = true
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -988,130 +991,6 @@ func TestContinue_PreservesRunBatchErrorMessage(t *testing.T) {
 	}
 }
 
-func TestParseStage_ExtractsStage(t *testing.T) {
-	content := "## Stage: plan-approved\n\n## Completed\nFixed the bug.\n"
-	stage, rest := parseStage(content)
-	if stage != "plan-approved" {
-		t.Fatalf("expected stage plan-approved, got %q", stage)
-	}
-	if strings.Contains(rest, "## Stage:") {
-		t.Fatalf("expected stage line stripped from rest, got %q", rest)
-	}
-	if !strings.Contains(rest, "## Completed") {
-		t.Fatalf("expected rest to contain remaining content, got %q", rest)
-	}
-}
-
-func TestParseStage_EmptyWhenNoStage(t *testing.T) {
-	content := "## Completed\nFixed the bug.\n"
-	stage, rest := parseStage(content)
-	if stage != "" {
-		t.Fatalf("expected empty stage, got %q", stage)
-	}
-	if rest != content {
-		t.Fatalf("expected unchanged content, got %q", rest)
-	}
-}
-
-func TestParseStage_FirstStageLineWins(t *testing.T) {
-	content := "## Stage: plan-approved\n\n## Stage: implementation-committed\n"
-	stage, rest := parseStage(content)
-	if stage != "plan-approved" {
-		t.Fatalf("expected first stage plan-approved, got %q", stage)
-	}
-	if strings.Contains(rest, "## Stage: plan-approved") {
-		t.Fatalf("expected first stage line stripped, got %q", rest)
-	}
-}
-
-func TestParseStage_StripsStageWithExtraWhitespace(t *testing.T) {
-	content := "## Stage:   plan-approved   \n\n## Completed\n"
-	stage, rest := parseStage(content)
-	if stage != "plan-approved" {
-		t.Fatalf("expected stage plan-approved, got %q", stage)
-	}
-	if strings.Contains(rest, "## Stage:") {
-		t.Fatalf("expected stage line stripped, got %q", rest)
-	}
-}
-
-func TestParseStage_HandlesStageWithNoValue(t *testing.T) {
-	content := "## Stage: \n\n## Completed\n"
-	stage, rest := parseStage(content)
-	if stage != "" {
-		t.Fatalf("expected empty stage value, got %q", stage)
-	}
-	if strings.Contains(rest, "## Stage:") {
-		t.Fatalf("expected stage line stripped, got %q", rest)
-	}
-}
-
-func TestStageInstruction_ReturnsPlanApproved(t *testing.T) {
-	got := stageInstruction("plan-approved")
-	want := "Resume from self-review. Load sandman-review and re-evaluate the committed changes."
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestStageInstruction_ReturnsImplementationCommitted(t *testing.T) {
-	got := stageInstruction("implementation-committed")
-	want := "Resume from merging the base branch and creating the PR. Load sandman-merge, then push and create PR."
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestStageInstruction_ReturnsPRCreated(t *testing.T) {
-	got := stageInstruction("pr-created")
-	want := "Resume from delegated PR review. Load sandman-pr-review and run the review loop."
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestStageInstruction_ReturnsPRReviewFinished(t *testing.T) {
-	got := stageInstruction("pr-review-finished")
-	want := "Run sandman-pr-merge if all merge gates pass."
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestStageInstruction_FallsBackToContinueTheWork(t *testing.T) {
-	got := stageInstruction("")
-	if got != "Continue the work." {
-		t.Fatalf("expected 'Continue the work.', got %q", got)
-	}
-	got = stageInstruction("unknown-stage")
-	if got != "Continue the work." {
-		t.Fatalf("expected 'Continue the work.' for unknown stage, got %q", got)
-	}
-}
-
-func TestBuildHandoffPrompt_ReturnsStageInstructionWhenStageGiven(t *testing.T) {
-	result := buildHandoffPrompt("## Completed\nDone.\n", "plan-approved")
-	if !strings.Contains(result, "Resume from self-review") {
-		t.Fatalf("expected stage instruction, got %q", result)
-	}
-	if !strings.Contains(result, "## Prior Context") {
-		t.Fatalf("expected prior context section, got %q", result)
-	}
-	if !strings.Contains(result, "Done.") {
-		t.Fatalf("expected prior context content, got %q", result)
-	}
-	if !strings.Contains(result, "overwrite `.sandman/handoff.md`") {
-		t.Fatalf("expected update instruction, got %q", result)
-	}
-}
-
-func TestBuildHandoffPrompt_FallsBackToContinueTheWork(t *testing.T) {
-	result := buildHandoffPrompt("## Completed\nDone.\n", "")
-	if !strings.Contains(result, "Continue the work.") {
-		t.Fatalf("expected 'Continue the work.', got %q", result)
-	}
-}
-
 func TestContinue_StageAwarePrompt(t *testing.T) {
 	dir := t.TempDir()
 	branch := "sandman/42-fix-bug"
@@ -1122,7 +1001,7 @@ func TestContinue_StageAwarePrompt(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err != nil {
 		t.Fatalf("mkdir handoff dir: %v", err)
 	}
-	handoffContent := "## Stage: plan-approved\n\n## Completed\nInitial implementation done.\n"
+	handoffContent := "## Stage: plan-approved\n\n## Completed\nInitial implementation done.\n\n## Next Step\nContinue the work.\n"
 	if err := os.WriteFile(contextPath, []byte(handoffContent), 0644); err != nil {
 		t.Fatalf("write handoff context: %v", err)
 	}
@@ -1141,7 +1020,7 @@ func TestContinue_StageAwarePrompt(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -1154,20 +1033,23 @@ func TestContinue_StageAwarePrompt(t *testing.T) {
 
 	prompt := spy.req.HandoffPrompts[42]
 
-	if !strings.Contains(prompt, "Resume from self-review") {
-		t.Fatalf("expected stage-specific instruction, got %q", prompt)
-	}
-	if strings.Contains(prompt, "## Stage:") {
-		t.Fatalf("expected stage line stripped from prior context, got %q", prompt)
+	if !strings.Contains(prompt, "## Stage: plan-approved") {
+		t.Fatalf("expected stage line preserved verbatim, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "Initial implementation done.") {
-		t.Fatalf("expected prior context content, got %q", prompt)
+		t.Fatalf("expected verbatim context content, got %q", prompt)
 	}
-	if strings.Contains(strings.ToLower(prompt), "finish the tests") {
-		t.Fatalf("expected user prompt text not to appear in rendered prompt, got %q", prompt)
+	if strings.Contains(prompt, "## Prior Context") {
+		t.Fatalf("expected no prior context wrapper, got %q", prompt)
 	}
-	if spy.req.PromptConfig.HandoffPrompt != "finish the tests" {
-		t.Fatalf("expected raw prompt preserved, got %q", spy.req.PromptConfig.HandoffPrompt)
+	if strings.Contains(prompt, "## New Instruction") {
+		t.Fatalf("expected no new instruction section, got %q", prompt)
+	}
+	if strings.Contains(prompt, "## Update Handoff Context") {
+		t.Fatalf("expected no update handoff context section, got %q", prompt)
+	}
+	if spy.req.PromptConfig.HandoffPrompt != "" {
+		t.Fatalf("expected no bare prompt, got %q", spy.req.PromptConfig.HandoffPrompt)
 	}
 }
 
@@ -1210,7 +1092,7 @@ func TestContinue_GuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testi
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -1232,7 +1114,7 @@ func TestContinue_GuardBypassedWhenReviewCommandHasNoSandmanSubstring(t *testing
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42", "finish the tests"})
+	cmd.SetArgs([]string{"42"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)

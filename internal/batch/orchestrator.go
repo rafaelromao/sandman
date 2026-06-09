@@ -1642,29 +1642,10 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
-			contCtxPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
-			if content, err := os.ReadFile(contCtxPath); err == nil {
-				if openPR != nil {
-					attemptRenderCfg.HandoffPrompt = buildPRReviewHandoffPrompt(string(content))
-					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
-				} else {
-					stage, contextWithoutStage := parseStage(string(content))
-					if stage != "" {
-						priorContext := strings.TrimSpace(stripHandoffHeader(contextWithoutStage))
-						attemptRenderCfg.HandoffPrompt = buildHandoffPrompt(priorContext, stage)
-					} else {
-						attemptRenderCfg.HandoffPrompt = buildRetryHandoffPrompt(string(content))
-					}
-					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
-				}
-			} else {
-				prFound := false
-				if openPR != nil {
-					attemptRenderCfg.HandoffPrompt = "Continue with sandman-pr-review until the PR is merged"
-					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
-					prFound = true
-				}
-				if !prFound {
+			attemptRenderCfg.HandoffPrompt = ReadHandoffContent(filepath.Join(wt.WorkDir(), ".sandman", "handoff.md"))
+			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
+			if _, err := os.Stat(filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")); err != nil && os.IsNotExist(err) {
+				if openPR == nil {
 					if prLookupErr != nil {
 						fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
 						return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
