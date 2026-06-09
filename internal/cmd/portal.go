@@ -25,10 +25,11 @@ import (
 )
 
 const (
-	portalPollInterval = 2 * time.Second
-	portalReadLimit    = 64 * 1024
-	portalReadTimeout  = 250 * time.Millisecond
-	portalAbortTimeout = 5 * time.Second
+	portalPollInterval       = 2 * time.Second
+	portalReadLimit          = 64 * 1024
+	portalReadTimeout        = 250 * time.Millisecond
+	portalAbortTimeout       = 5 * time.Second
+	portalSocketProbeTimeout = 100 * time.Millisecond
 )
 
 var portalANSISequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)

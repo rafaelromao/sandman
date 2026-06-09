@@ -605,10 +605,8 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 	} else if portalRun.Kind == "active" {
 		sockPath := filepath.Join(repoRoot, ".sandman", "runs", runState.RunID, "run.sock")
-		if _, err := os.Lstat(sockPath); err == nil {
-			portalRun.SocketPath = sockPath
-			v.markCompletedIfSocketDead(&portalRun, sockPath)
-		}
+		portalRun.SocketPath = sockPath
+		v.markCompletedIfSocketDead(&portalRun, sockPath)
 	}
 	return portalRun
 }
@@ -724,7 +722,7 @@ func (v *portalRunsView) isSocketAlive(socketPath string) bool {
 	if socketPath == "" {
 		return false
 	}
-	conn, err := net.DialTimeout("unix", socketPath, 100*time.Millisecond)
+	conn, err := net.DialTimeout("unix", socketPath, portalSocketProbeTimeout)
 	if err != nil {
 		return false
 	}

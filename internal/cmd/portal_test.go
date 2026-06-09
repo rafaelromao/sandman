@@ -339,6 +339,31 @@ func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
 	}
 }
 
+func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasNoSocket(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "run-gone-1",
+		Started: events.Event{
+			Timestamp: started,
+			Payload:   map[string]any{},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+
+	if run.Kind != "completed" {
+		t.Fatalf("expected kind 'completed' for unmatched active state with missing socket, got %q", run.Kind)
+	}
+}
+
 func TestPortal_DefaultPortFlag(t *testing.T) {
 	cmd := NewPortalCmd(Dependencies{})
 	port, err := cmd.Flags().GetInt("port")
