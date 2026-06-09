@@ -47,6 +47,15 @@ func (s *WorktreeSandbox) Start() error {
 		}
 	}
 	if s.workDirIsValidWorktree() {
+		currentRef, err := currentBranchRef(s.workDir)
+		if err != nil {
+			return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --force to reconcile", s.workDir, err)
+		}
+		expectedRef := "refs/heads/" + s.branch
+		if currentRef != expectedRef {
+			return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --force to reconcile",
+				s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
+		}
 		return s.configureGitIdentity()
 	}
 	if s.workDirExists() {
@@ -97,6 +106,15 @@ func (s *WorktreeSandbox) workDirIsValidWorktree() bool {
 	// parent), but the subsequent `git worktree add` would fail anyway, so
 	// treat both the same and let the caller re-add.
 	return !info.IsDir()
+}
+
+// currentBranchRef returns the full ref that HEAD points to in the given worktree.
+func currentBranchRef(workDir string) (string, error) {
+	out, err := runGitCommand(workDir, "symbolic-ref", "--quiet", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("resolve HEAD symbolic-ref: %w\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // workDirExists reports whether s.workDir is an existing directory.

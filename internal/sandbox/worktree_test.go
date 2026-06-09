@@ -447,9 +447,87 @@ func TestWorktreeSandbox_Start_RecreatesOrphanWorktreeDirectory(t *testing.T) {
 	}
 }
 
-func TestWorktreeSandbox_Start_LeavesExistingWorktreeDirectoryWithoutForce(t *testing.T) {
-	// Without --force, Sandman should reuse an existing worktree directory.
-	// This mirrors the valid-worktree fast path in Start().
+func TestWorktreeSandbox_StartErrorsOnWrongBranch(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error on first start: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
+
+	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
+
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	err := s2.Start()
+	if err == nil {
+		t.Fatal("expected error when worktree is on wrong branch")
+	}
+	if !strings.Contains(err.Error(), "wrong-branch") {
+		t.Errorf("expected error to contain actual branch name 'wrong-branch', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "sandman/42-fix-bug") {
+		t.Errorf("expected error to contain expected branch name 'sandman/42-fix-bug', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), s.WorkDir()) {
+		t.Errorf("expected error to contain worktree path %q, got: %v", s.WorkDir(), err)
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Errorf("expected error to contain '--force' hint, got: %v", err)
+	}
+
+	headRef := runGit(t, s.WorkDir(), "symbolic-ref", "HEAD")
+	if !strings.Contains(headRef, "wrong-branch") {
+		t.Errorf("expected worktree HEAD to remain on wrong-branch, got %q", headRef)
+	}
+}
+
+func TestWorktreeSandbox_StartErrorsOnDetachedHead(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error on first start: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
+
+	runGit(t, s.WorkDir(), "checkout", "--detach", "HEAD")
+
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	err := s2.Start()
+	if err == nil {
+		t.Fatal("expected error when worktree HEAD is detached")
+	}
+	if !strings.Contains(err.Error(), "not on a branch") {
+		t.Errorf("expected error to mention detached HEAD, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), s.WorkDir()) {
+		t.Errorf("expected error to contain worktree path %q, got: %v", s.WorkDir(), err)
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Errorf("expected error to contain '--force' hint, got: %v", err)
+	}
+
+	headRef := runGit(t, s.WorkDir(), "rev-parse", "--short", "HEAD")
+	if headRef == "" {
+		t.Error("expected HEAD to still point to a commit after error")
+	}
+}
+
+func TestWorktreeSandbox_StartRejectsBrokenWorktreeWithStaleDotGitFile(t *testing.T) {
+	// A directory with a .git file pointing to a non-existent gitdir is not a
+	// valid worktree. Start() should reject it because currentBranchRef cannot
+	// resolve HEAD in a broken worktree.
 	dir := t.TempDir()
 	initGitRepoWithRemote(t, dir)
 	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
@@ -469,10 +547,14 @@ func TestWorktreeSandbox_Start_LeavesExistingWorktreeDirectoryWithoutForce(t *te
 	}
 
 	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	if err := s.Start(); err != nil {
-		t.Fatalf("expected Start() to succeed without force: %v", err)
+	err := s.Start()
+	if err == nil {
+		t.Fatal("expected error when worktree .git points to non-existent gitdir")
 	}
-	if _, err := os.Stat(filepath.Join(worktreePath, "stale.txt")); err != nil {
-		t.Fatalf("expected existing worktree content to remain without force: %v", err)
+	if !strings.Contains(err.Error(), "not on a branch") {
+		t.Errorf("expected error to mention HEAD not on a branch, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Errorf("expected error to contain '--force' hint, got: %v", err)
 	}
 }
