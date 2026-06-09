@@ -1,8 +1,10 @@
 package github
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -281,14 +283,21 @@ func (c *CLIClient) ListPRComments(number int) ([]PRComment, error) {
 		return nil, fmt.Errorf("gh api pr comments: %w\n%s", err, out)
 	}
 
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" {
+	if len(bytes.TrimSpace(out)) == 0 {
 		return nil, nil
 	}
 
 	var payloads []prCommentPayload
-	if err := json.Unmarshal([]byte(trimmed), &payloads); err != nil {
-		return nil, fmt.Errorf("parse pr comments: %w", err)
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for {
+		var page []prCommentPayload
+		if err := dec.Decode(&page); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("parse pr comments: %w", err)
+		}
+		payloads = append(payloads, page...)
 	}
 
 	comments := make([]PRComment, 0, len(payloads))

@@ -651,3 +651,28 @@ func TestCLIClient_ListPRComments_Error(t *testing.T) {
 		t.Fatal("expected error when gh api fails")
 	}
 }
+
+func TestCLIClient_ListPRComments_Paginated(t *testing.T) {
+	// `gh api --paginate` concatenates raw JSON array pages. The decoder
+	// must parse each page independently rather than treating the joined
+	// body as a single JSON document.
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `[{"id":1,"body":"first","user":{"login":"a"}},{"id":2,"body":"second","user":{"login":"b"}}][{"id":3,"body":"third","user":{"login":"c"}}]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	comments, err := client.ListPRComments(42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(comments) != 3 {
+		t.Fatalf("expected 3 comments across two pages, got %d", len(comments))
+	}
+	wantBodies := []string{"first", "second", "third"}
+	for i, want := range wantBodies {
+		if comments[i].Body != want {
+			t.Errorf("comment %d body = %q, want %q", i, comments[i].Body, want)
+		}
+	}
+}

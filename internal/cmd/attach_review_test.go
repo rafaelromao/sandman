@@ -46,9 +46,7 @@ func TestAttach_FindsReviewSock(t *testing.T) {
 	}
 }
 
-func TestAttach_PrefersReviewSockWhenBothExist(t *testing.T) {
-	// When only the review.sock is live, the attach command should pick
-	// it up rather than erroring on multiple sockets.
+func TestAttach_MultipleSocketsReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -57,31 +55,34 @@ func TestAttach_PrefersReviewSockWhenBothExist(t *testing.T) {
 		t.Fatal(err)
 	}
 	reviewSock := filepath.Join(sandmanDir, "review.sock")
-	listener, err := net.Listen("unix", reviewSock)
+	reviewListener, err := net.Listen("unix", reviewSock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer reviewListener.Close()
 
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		conn.Write([]byte("from review"))
-		conn.Close()
-	}()
+	runDir := filepath.Join(sandmanDir, "runs", "test-run-1")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runSock := filepath.Join(runDir, "run.sock")
+	runListener, err := net.Listen("unix", runSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runListener.Close()
 
 	var buf bytes.Buffer
 	cmd := NewAttachCmd()
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err = cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when both review.sock and run.sock exist")
 	}
-	if !strings.Contains(buf.String(), "from review") {
-		t.Fatalf("expected review payload, got %q", buf.String())
+	if !strings.Contains(err.Error(), "multiple sandman daemons") {
+		t.Fatalf("expected multiple-daemon error, got: %v", err)
 	}
 }
 
