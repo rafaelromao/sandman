@@ -1033,8 +1033,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	}
 }
 
-// This test verifies the design decision documented in orchestrator.go:183-187:
-// when a retry happens with an open PR and the handoff file is missing, the
+// When a retry happens with an open PR and the handoff file is missing, the
 // agent receives the EmptyHandoffTemplate (no branch reset) so the open PR is
 // preserved and the agent continues working on it without prior context.
 func TestRunSingle_RetryWithOpenPRFallsBackToEmptyHandoffTemplate(t *testing.T) {

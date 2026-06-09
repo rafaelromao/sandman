@@ -155,6 +155,33 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 		t.Fatalf("expected second continue context contents, got:\n%s", secondHandoffContext)
 	}
 
+	out, err = runSandmanBinary(t, binPath, repoDir, "continue", "1")
+	if err != nil {
+		t.Fatalf("third continue failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Summary: 1 succeeded") {
+		t.Fatalf("expected third continue success summary, got:\n%s", out)
+	}
+
+	thirdHandoffPrompt, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "handoff-prompt.md"))
+	if err != nil {
+		t.Fatalf("read third continue prompt: %v", err)
+	}
+	if !strings.Contains(string(thirdHandoffPrompt), "Third continue for "+continueE2EBranch+".") {
+		t.Fatalf("expected updated context in third continue prompt, got:\n%s", thirdHandoffPrompt)
+	}
+	if !strings.Contains(string(thirdHandoffPrompt), "## Stage: pr-review-finished") {
+		t.Fatalf("expected stage line preserved verbatim in third prompt, got:\n%s", thirdHandoffPrompt)
+	}
+
+	thirdHandoffContext, err := os.ReadFile(contextPath)
+	if err != nil {
+		t.Fatalf("read third continue context: %v", err)
+	}
+	if !strings.Contains(string(thirdHandoffContext), "Third continue for "+continueE2EBranch+".") {
+		t.Fatalf("expected third continue context contents, got:\n%s", thirdHandoffContext)
+	}
+
 	log := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 	loggedEvents, err := log.Read()
 	if err != nil {
@@ -167,11 +194,11 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 			runEvents = append(runEvents, event)
 		}
 	}
-	if len(runEvents) != 3 {
-		t.Fatalf("expected 3 run events, got %#v", runEvents)
+	if len(runEvents) != 4 {
+		t.Fatalf("expected 4 run events, got %#v", runEvents)
 	}
-	if runEvents[0].Type != "run.started" || runEvents[1].Type != "run.continued" || runEvents[2].Type != "run.continued" {
-		t.Fatalf("unexpected run event sequence: %#v", []string{runEvents[0].Type, runEvents[1].Type, runEvents[2].Type})
+	if runEvents[0].Type != "run.started" || runEvents[1].Type != "run.continued" || runEvents[2].Type != "run.continued" || runEvents[3].Type != "run.continued" {
+		t.Fatalf("unexpected run event sequence: %#v", []string{runEvents[0].Type, runEvents[1].Type, runEvents[2].Type, runEvents[3].Type})
 	}
 	if got, ok := payloadString(runEvents[1].Payload, "previous_run_id"); !ok || got != runEvents[0].RunID {
 		t.Fatalf("expected first continue previous_run_id %q, got %#v", runEvents[0].RunID, runEvents[1].Payload["previous_run_id"])
@@ -416,6 +443,9 @@ case "$step" in
     ;;
   2)
     write_context "Second continue for $branch." "pr-created"
+    ;;
+  3)
+    write_context "Third continue for $branch." "pr-review-finished"
     ;;
   *)
     printf 'unexpected fake opencode step %s for %s\n' "$step" "$branch" >&2
