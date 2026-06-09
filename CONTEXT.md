@@ -171,12 +171,16 @@ A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the 
 _Avoid_: dashboard, monitor, control panel.
 
 **Continue**:
-Re-run the latest AgentRun for one or more issues with a new raw prompt while reusing each issue's prior branch, base branch, agent, and review command. Multi-issue `sandman continue <issue>... <prompt>` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. Continuation keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. Invoked via `sandman continue`.
+Re-run the latest AgentRun for one or more issues with a new raw prompt while reusing each issue's prior branch, base branch, agent, and review command. Multi-issue `sandman continue <issue>... <prompt>` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. Continuation keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. Invoked via `sandman continue`. When `.sandman/handoff.md` and `.sandman/handoff-prompt.md` are present in the worktree, the resumed run consumes them instead of starting from a blank prompt.
 _Avoid_: Retry.
 
 **Continuation**:
-An AgentRun or Batch request mode that skips prompt template rendering and writes raw prompt text to `continue-prompt.md` inside the worktree.
+An AgentRun or Batch request mode that skips prompt template rendering and writes raw prompt text to `handoff-prompt.md` inside the worktree.
 _Avoid_: Replay mode.
+
+**Handoff**:
+The persisted state written by `sandman-handoff` to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, and key decisions so that a `Continue` or retry can resume from the right checkpoint.
+_Avoid_: Continuation context (legacy filename), continuation file.
 
 ## Relationships
 
