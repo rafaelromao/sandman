@@ -203,11 +203,11 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	}
 
 	runs := events.ProjectRunStates(eventsList)
-	byIssue := make(map[int]events.RunState, len(runs))
+	byIssue := make(map[int][]events.RunState)
 	for _, run := range runs {
 		issue := run.IssueNumber()
 		if issue > 0 {
-			byIssue[issue] = run
+			byIssue[issue] = append(byIssue[issue], run)
 		}
 	}
 
@@ -215,29 +215,30 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	recoveredRunIDs := make(map[string]struct{})
 	for _, batch := range dead {
 		for _, issueNumber := range batch.Manifest.Issues {
-			run, ok := byIssue[issueNumber]
-			if !ok {
-				continue
+			for _, run := range byIssue[issueNumber] {
+				if _, ok := recoveredRunIDs[run.RunID]; ok {
+					continue
+				}
+				if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
+					continue
+				}
+				if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
+					continue
+				}
+				issueRef := issueNumber
+				event := events.Event{
+					Type:     "run.aborted",
+					RunID:    run.RunID,
+					Issue:    issueNumber,
+					IssueRef: &issueRef,
+					Payload:  map[string]any{"recovered": true},
+				}
+				if err := log.Log(event); err != nil {
+					return recovered, len(dead), fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
+				}
+				recovered++
+				recoveredRunIDs[run.RunID] = struct{}{}
 			}
-			if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
-				continue
-			}
-			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
-				continue
-			}
-			issueRef := issueNumber
-			event := events.Event{
-				Type:     "run.aborted",
-				RunID:    run.RunID,
-				Issue:    issueNumber,
-				IssueRef: &issueRef,
-				Payload:  map[string]any{"recovered": true},
-			}
-			if err := log.Log(event); err != nil {
-				return recovered, len(dead), fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
-			}
-			recovered++
-			recoveredRunIDs[run.RunID] = struct{}{}
 		}
 	}
 
@@ -250,10 +251,19 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	return recovered, len(dead), nil
 }
 
+// isStartedRun reports whether the RunState was created by a run.started or
+// run.continued event, indicating the agent actually began processing. Queued
+// and blocked placeholders are not started runs.
+func isStartedRun(r events.RunState) bool {
+	return r.Started.Type == "run.started" || r.Started.Type == "run.continued"
+}
+
 // buildSupersededIssues returns a set of issue numbers for which a queued or
-// blocked run placeholder was superseded by a later run (different RunID)
-// for the same issue. These are historical artifacts from a completed batch,
-// not orphans from a dead daemon, and should not be recovered.
+// blocked run placeholder was superseded by a later started run (different
+// RunID) for the same issue. These are historical artifacts from a completed
+// batch, not orphans from a dead daemon, and should not be recovered. A
+// queued/blocked placeholder that was re-queued by a subsequent failed batch
+// does NOT count as superseded — only actual work (run.started) does.
 func buildSupersededIssues(runs []events.RunState) map[int]bool {
 	byIssue := make(map[int][]events.RunState)
 	for _, r := range runs {
@@ -270,6 +280,9 @@ func buildSupersededIssues(runs []events.RunState) map[int]bool {
 			if !s.IsActive() && (s.Status() == "queued" || s.Status() == "blocked") {
 				for _, other := range sameIssue {
 					if other.RunID == s.RunID {
+						continue
+					}
+					if !isStartedRun(other) {
 						continue
 					}
 					if other.Started.Timestamp.After(s.Started.Timestamp) {
