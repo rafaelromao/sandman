@@ -722,7 +722,7 @@ func (v *portalRunsView) isSocketAlive(socketPath string) bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 
