@@ -132,22 +132,9 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	}()
 
 	socketDir := ".sandman"
-	if err := ensureDir(socketDir); err != nil {
-		return err
-	}
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
 	d := review.New(socketDir, deps.GitHubClient, deps.PromptRenderer, deps.BatchRunner, cfg, broadcaster)
 	d.SetSocket(ctlSocket)
-	if err := d.StartSocket(); err != nil {
-		return fmt.Errorf("start review socket: %w", err)
-	}
-	defer d.Stop()
-
 	return d.Run(ctx)
-}
-
-// ensureDir creates dir if missing.
-func ensureDir(dir string) error {
-	return os.MkdirAll(dir, 0755)
 }

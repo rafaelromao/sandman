@@ -227,8 +227,8 @@ func TestDaemon_RunRespondsToTrigger(t *testing.T) {
 	gh.mu.Lock()
 	calls := gh.listCalls
 	gh.mu.Unlock()
-	if calls < 1 {
-		t.Fatalf("expected at least 1 list call, got %d", calls)
+	if calls != 1 {
+		t.Fatalf("expected exactly 1 list call, got %d", calls)
 	}
 
 	cancel()

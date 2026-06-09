@@ -121,15 +121,18 @@ func (d *Daemon) Stop() error {
 
 // Run drives the polling loop. It blocks until ctx is cancelled, then
 // closes the control socket and returns. ctx cancellation also cancels
-// any in-flight RunBatch call.
+// any in-flight RunBatch call. When a Trigger channel is wired, the
+// initial scan is skipped so tests can drive ticks explicitly.
 func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.StartSocket(); err != nil {
 		return err
 	}
 	defer d.Stop()
 
-	if err := d.tick(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		d.logf("initial scan: %v", err)
+	if d.Trigger == nil {
+		if err := d.tick(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			d.logf("initial scan: %v", err)
+		}
 	}
 
 	interval := d.PollInterval

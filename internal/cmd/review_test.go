@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,6 +161,56 @@ func TestReviewCmd_DaemonModeCreatesReviewSock(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("cmd did not return after cancel")
+	}
+}
+
+func TestReviewCmd_DaemonSocketAcceptsConnections(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- runReviewDaemon(ctx, deps, cfg) }()
+
+	sockPath := filepath.Join(dir, ".sandman", "review.sock")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(sockPath); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := os.Stat(sockPath); err != nil {
+		t.Fatalf("review.sock not created: %v", err)
+	}
+
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatalf("connect to review.sock: %v", err)
+	}
+	defer conn.Close()
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("unexpected error from runReviewDaemon: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runReviewDaemon did not return after cancel")
 	}
 }
 
