@@ -2314,6 +2314,78 @@ func TestPortal_QueuedThenFailureShowsFailureAfterBatchEnds(t *testing.T) {
 	}
 }
 
+// TestPortal_BlockedThenSuccessShowsSuccessAfterBatchEnds locks in that a
+// blocked placeholder for an issue (different RunID from the eventual
+// run.started) must not linger as "blocked" once the issue's actual work has
+// completed. The blocked event describes the wait state; the later started+
+// finished events describe the real work. Production scenario: issue was
+// queued then re-queued as blocked, then picked up by the batch and finished.
+func TestPortal_BlockedThenSuccessShowsSuccessAfterBatchEnds(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.blocked", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "blocked-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.started", Timestamp: batchStartedAt.Add(3 * time.Minute), RunID: "started-run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: batchStartedAt.Add(8 * time.Minute), RunID: "started-run-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var issue42Runs []portalRun
+	for _, run := range runs {
+		if run.IssueNumber == 42 {
+			issue42Runs = append(issue42Runs, run)
+		}
+	}
+	if len(issue42Runs) != 1 {
+		t.Fatalf("expected 1 run for issue 42 after dedup, got %d: %#v", len(issue42Runs), issue42Runs)
+	}
+	if issue42Runs[0].Status != "success" {
+		t.Fatalf("expected status 'success' (blocked event should not linger), got %q", issue42Runs[0].Status)
+	}
+}
+
+// TestPortal_BlockedThenFailureShowsFailureAfterBatchEnds mirrors the success
+// variant for failure terminal status.
+func TestPortal_BlockedThenFailureShowsFailureAfterBatchEnds(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.blocked", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "blocked-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
+		{Type: "run.started", Timestamp: batchStartedAt.Add(3 * time.Minute), RunID: "started-run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: batchStartedAt.Add(8 * time.Minute), RunID: "started-run-42", Issue: 42, Payload: map[string]any{"status": "failure", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var issue42Runs []portalRun
+	for _, run := range runs {
+		if run.IssueNumber == 42 {
+			issue42Runs = append(issue42Runs, run)
+		}
+	}
+	if len(issue42Runs) != 1 {
+		t.Fatalf("expected 1 run for issue 42 after dedup, got %d: %#v", len(issue42Runs), issue42Runs)
+	}
+	if issue42Runs[0].Status != "failure" {
+		t.Fatalf("expected status 'failure' (blocked event should not linger), got %q", issue42Runs[0].Status)
+	}
+}
+
 func TestPortal_StaleCleanerRunsOnceOnStartupAndNotOnPoll(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
