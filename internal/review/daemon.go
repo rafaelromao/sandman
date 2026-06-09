@@ -266,6 +266,18 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		agentName = strings.TrimSpace(d.Config.EffectiveReviewAgent())
 		modelName = strings.TrimSpace(d.Config.EffectiveReviewModel())
 	}
+	if agentName == "" {
+		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
+	}
+	if modelName == "" {
+		return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
+	}
+
+	repoName, err := d.GitHub.RepoName()
+	if err != nil {
+		return fmt.Errorf("get repo name: %w", err)
+	}
+	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
 	req := batch.Request{
 		Agent:   agentName,
