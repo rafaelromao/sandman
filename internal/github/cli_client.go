@@ -220,6 +220,79 @@ func (c *CLIClient) FindPRByBranch(branch string) (*PR, error) {
 	return &PR{Number: payload.Number, State: payload.State, Merged: strings.TrimSpace(payload.MergedAt) != "", HeadRefName: payload.HeadRefName, HeadRefOid: payload.HeadRefOid}, nil
 }
 
+// ListOpenPRs lists all open pull requests in the current repo via gh CLI.
+func (c *CLIClient) ListOpenPRs() ([]PR, error) {
+	cmd := c.command("gh", "pr", "list", "--state", "open", "--json", "number,state,title,body,mergedAt,headRefName,headRefOid", "--limit", "1000")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh pr list: %w\n%s", err, out)
+	}
+
+	var payloads []prPayload
+	if err := json.Unmarshal(out, &payloads); err != nil {
+		return nil, fmt.Errorf("parse prs: %w", err)
+	}
+
+	prs := make([]PR, 0, len(payloads))
+	for _, payload := range payloads {
+		prs = append(prs, PR{
+			Number:      payload.Number,
+			State:       payload.State,
+			Title:       payload.Title,
+			Body:        payload.Body,
+			Merged:      strings.TrimSpace(payload.MergedAt) != "",
+			HeadRefName: payload.HeadRefName,
+			HeadRefOid:  payload.HeadRefOid,
+		})
+	}
+	return prs, nil
+}
+
+type prCommentPayload struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+// ListPRComments fetches PR conversation (issue-style) comments for the given
+// PR number via the GitHub REST API. These are the comments that appear in
+// the PR's "Conversation" tab, where `/sandman review` is typically posted.
+func (c *CLIClient) ListPRComments(number int) ([]PRComment, error) {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=100", owner, repo, number)
+	cmd := c.command("gh", "api", path, "--paginate")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh api pr comments: %w\n%s", err, out)
+	}
+
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	var payloads []prCommentPayload
+	if err := json.Unmarshal([]byte(trimmed), &payloads); err != nil {
+		return nil, fmt.Errorf("parse pr comments: %w", err)
+	}
+
+	comments := make([]PRComment, 0, len(payloads))
+	for _, payload := range payloads {
+		comments = append(comments, PRComment{
+			ID:     strconv.FormatInt(payload.ID, 10),
+			Author: payload.User.Login,
+			Body:   payload.Body,
+		})
+	}
+	return comments, nil
+}
+
 func (c *CLIClient) fetchIssuePayload(owner, repo string, number int) (issuePayload, error) {
 	cmd := c.command("gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number))
 	out, err := cmd.CombinedOutput()

@@ -23,6 +23,26 @@ func TestControlSocket_StartCreatesSocket(t *testing.T) {
 	info.Close()
 }
 
+func TestControlSocket_CustomFilename(t *testing.T) {
+	dir := t.TempDir()
+	sock := NewControlSocketWithName(dir, "review.sock", NewBroadcaster())
+
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	defer sock.Stop()
+
+	info, err := net.Dial("unix", filepath.Join(dir, "review.sock"))
+	if err != nil {
+		t.Fatalf("connect to review.sock: %v", err)
+	}
+	info.Close()
+
+	if _, err := os.Stat(filepath.Join(dir, "run.sock")); err == nil {
+		t.Fatalf("default run.sock should not exist when custom name is used")
+	}
+}
+
 func TestControlSocket_StopsAcceptingAfterClose(t *testing.T) {
 	dir := t.TempDir()
 	sock := NewControlSocket(dir, NewBroadcaster())

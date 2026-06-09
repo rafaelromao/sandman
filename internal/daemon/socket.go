@@ -9,16 +9,25 @@ import (
 
 type ControlSocket struct {
 	dir         string
+	name        string
 	listener    net.Listener
 	broadcaster *Broadcaster
 }
 
 func NewControlSocket(dir string, broadcaster *Broadcaster) *ControlSocket {
-	return &ControlSocket{dir: dir, broadcaster: broadcaster}
+	return NewControlSocketWithName(dir, "run.sock", broadcaster)
+}
+
+func NewControlSocketWithName(dir, name string, broadcaster *Broadcaster) *ControlSocket {
+	return &ControlSocket{dir: dir, name: name, broadcaster: broadcaster}
 }
 
 func (s *ControlSocket) Broadcaster() *Broadcaster {
 	return s.broadcaster
+}
+
+func (s *ControlSocket) Path() string {
+	return filepath.Join(s.dir, s.name)
 }
 
 func (s *ControlSocket) Start() error {
@@ -26,7 +35,7 @@ func (s *ControlSocket) Start() error {
 		return err
 	}
 
-	sockPath := filepath.Join(s.dir, "run.sock")
+	sockPath := s.Path()
 	os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {

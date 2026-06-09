@@ -101,6 +101,14 @@ func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
 	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}, nil
 }
 
+func (f *fakeGitHubClient) ListOpenPRs() ([]github.PR, error) {
+	return nil, nil
+}
+
+func (f *fakeGitHubClient) ListPRComments(number int) ([]github.PRComment, error) {
+	return nil, nil
+}
+
 func newRunDeps(runner batch.Runner) Dependencies {
 	return Dependencies{
 		BatchRunner:  runner,

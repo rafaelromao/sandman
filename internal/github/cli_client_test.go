@@ -578,3 +578,79 @@ func TestCLIClient_FetchPR_Error(t *testing.T) {
 		t.Fatal("expected error when gh pr view fails")
 	}
 }
+
+func TestCLIClient_ListOpenPRs_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":7,"state":"open","title":"Fix login","body":"x","mergedAt":null,"headRefName":"fix/login","headRefOid":"abc"},{"number":8,"state":"open","title":"Add feature","body":"y","mergedAt":null,"headRefName":"feat/x","headRefOid":"def"}]`}}}
+	client := &CLIClient{runner: runner}
+
+	prs, err := client.ListOpenPRs()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prs) != 2 {
+		t.Fatalf("expected 2 PRs, got %d", len(prs))
+	}
+	if prs[0].Number != 7 {
+		t.Errorf("expected PR 7, got %d", prs[0].Number)
+	}
+	if prs[1].Number != 8 {
+		t.Errorf("expected PR 8, got %d", prs[1].Number)
+	}
+	if runner.calls[0].name != "gh" {
+		t.Errorf("expected command gh, got %q", runner.calls[0].name)
+	}
+	if len(runner.calls[0].args) < 4 || runner.calls[0].args[0] != "pr" || runner.calls[0].args[1] != "list" {
+		t.Errorf("expected args starting with 'pr list', got %v", runner.calls[0].args)
+	}
+}
+
+func TestCLIClient_ListOpenPRs_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{err: exec.ErrNotFound}}}
+	client := &CLIClient{runner: runner}
+
+	_, err := client.ListOpenPRs()
+	if err == nil {
+		t.Fatal("expected error when gh pr list fails")
+	}
+}
+
+func TestCLIClient_ListPRComments_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `[{"id":123,"body":"/sandman review focus on tests","user":{"login":"alice"}},{"id":124,"body":"unrelated","user":{"login":"bob"}}]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	comments, err := client.ListPRComments(42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 comments, got %d", len(comments))
+	}
+	if comments[0].ID != "123" {
+		t.Errorf("expected ID 123, got %q", comments[0].ID)
+	}
+	if comments[0].Author != "alice" {
+		t.Errorf("expected author alice, got %q", comments[0].Author)
+	}
+	if comments[0].Body != "/sandman review focus on tests" {
+		t.Errorf("unexpected body: %q", comments[0].Body)
+	}
+	if runner.calls[1].name != "gh" {
+		t.Errorf("expected second call to gh, got %q", runner.calls[1].name)
+	}
+}
+
+func TestCLIClient_ListPRComments_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	_, err := client.ListPRComments(42)
+	if err == nil {
+		t.Fatal("expected error when gh api fails")
+	}
+}

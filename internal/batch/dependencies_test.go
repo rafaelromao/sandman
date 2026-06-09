@@ -244,6 +244,14 @@ func (c *fetchIssueErrorClient) FindPRByBranch(branch string) (*github.PR, error
 	return nil, nil
 }
 
+func (c *fetchIssueErrorClient) ListOpenPRs() ([]github.PR, error) {
+	return nil, nil
+}
+
+func (c *fetchIssueErrorClient) ListPRComments(number int) ([]github.PRComment, error) {
+	return nil, nil
+}
+
 func TestDependencyResolverResolve_IgnoresClosedBlockers(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
