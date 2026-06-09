@@ -1637,7 +1637,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		})
 	}
 
-	logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%d.log", s.issueNumber))
+	logPath := agentLogPath(fmt.Sprintf("%d.log", s.issueNumber))
 	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, true, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
@@ -1865,7 +1865,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		_ = o.eventLog.Log(events.Event{Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}
 
-	logPath := filepath.Join(wt.WorkDir(), ".sandman", "logs", fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
+	logPath := agentLogPath(fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
 	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
 			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {

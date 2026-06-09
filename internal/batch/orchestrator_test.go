@@ -865,7 +865,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if resetCalls[0].worktreePath != rtSandbox.WorkDir() {
 		t.Fatalf("reset worktree path = %q, want %q", resetCalls[0].worktreePath, rtSandbox.WorkDir())
 	}
-	logPath := filepath.Join(rtSandbox.WorkDir(), ".sandman", "logs", "42.log")
+	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -1376,7 +1376,7 @@ func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success", result.Status)
 	}
-	wantLogPath := filepath.Join(rtSandbox.WorkDir(), ".sandman", "logs", "42.log")
+	wantLogPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
 	if markerPath != wantLogPath {
 		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
 	}
@@ -1419,7 +1419,7 @@ func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success", result.Status)
 	}
-	wantLogPath := filepath.Join(rtSandbox.WorkDir(), ".sandman", "logs", "prompt-only.log")
+	wantLogPath := filepath.Join(workDir, ".sandman", "logs", "prompt-only.log")
 	if markerPath != wantLogPath {
 		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
 	}
