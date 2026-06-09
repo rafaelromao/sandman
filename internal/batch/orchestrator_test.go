@@ -7414,3 +7414,96 @@ func TestOrchestrator_ResetRetryBranch_Command(t *testing.T) {
 		t.Errorf("expected exec command %q, got %q", expected, sb.execCommand)
 	}
 }
+
+// strandRunnable switches the worktree to main when Run is called,
+// simulating what a real agent does during PR merge.
+type strandRunnable struct {
+	sb sandbox.Sandbox
+}
+
+func (r *strandRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	// Create a branch in the main repo (not checked out in any worktree) and
+	// switch the worktree to it, stranding it on the wrong branch.
+	if err := r.sb.Exec(ctx, "git branch wrong-branch main && git checkout -f wrong-branch", io.Discard, io.Discard); err != nil {
+		return AgentRunResult{IssueNumber: 42, Status: "failure"}
+	}
+	return AgentRunResult{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"}
+}
+
+type strandRunnableFactory struct{}
+
+func (f *strandRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return &strandRunnable{sb: sb}
+}
+
+func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	initGitRepo(t, workDir)
+
+	branch := "sandman/42-fix-bug"
+	pr := mergedPR(branch, "")
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: pr},
+		},
+		renderer:        &noopRenderer{},
+		errorLog:        io.Discard,
+		runnableFactory: &strandRunnableFactory{},
+	}
+
+	cfg := &config.Config{
+		WorktreeDir: "worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+	}
+
+	// Step 1: Create worktree and strand it on main via the strand runnable.
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
+	if !started {
+		t.Fatal("expected strand run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("strand run status = %q, want success", result.Status)
+	}
+
+	// Remove the strand factory so subsequent runs use the default runnable.
+	o.runnableFactory = nil
+
+	t.Run("no force fails on branch mismatch", func(t *testing.T) {
+		result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
+		if started {
+			t.Fatal("expected run not to start when worktree is on wrong branch")
+		}
+		if result.Status != "failure" {
+			t.Fatalf("status = %q, want failure", result.Status)
+		}
+	})
+
+	t.Run("force reconciles branch mismatch", func(t *testing.T) {
+		result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &defaultSandboxFactory{}, nil, true, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
+		if !started {
+			t.Fatal("expected force run to start")
+		}
+		if result.Status != "success" {
+			t.Fatalf("force status = %q, want success", result.Status)
+		}
+		worktreePath := filepath.Join(workDir, "worktrees", branch)
+		cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+		cmd.Dir = worktreePath
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git rev-parse HEAD in worktree: %v\n%s", err, out)
+		}
+		if got := strings.TrimSpace(string(out)); got != branch {
+			t.Fatalf("worktree HEAD on %q, want %q", got, branch)
+		}
+	})
+}
