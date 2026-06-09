@@ -179,7 +179,7 @@ An AgentRun or Batch request mode that skips prompt template rendering and write
 _Avoid_: Replay mode.
 
 **Handoff**:
-The persisted state written by `sandman-handoff` to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, and key decisions so that a `Continue` or retry can resume from the right checkpoint.
+The persisted state written by `sandman-handoff` to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, and key decisions so that a `Continue` or retry can resume from the right checkpoint. Removed by the orchestrator once the PR is merged.
 _Avoid_: Continuation context (legacy filename), continuation file.
 
 ## Relationships

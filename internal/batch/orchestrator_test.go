@@ -540,6 +540,7 @@ type handoffFlowState struct {
 	prompts  []string
 	contexts []string
 	step     int
+	writes   int
 }
 
 func (s *handoffFlowState) recordPrompt(promptText string) {
@@ -574,6 +575,7 @@ func (r *handoffFlowRunnable) Run(ctx context.Context, renderer prompt.Renderer,
 	}
 	contextPath := filepath.Join(r.sb.WorkDir(), ".sandman", "handoff.md")
 	if content := r.state.nextContext(); content != "" {
+		r.state.writes++
 		if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err == nil {
 			_ = os.WriteFile(contextPath, []byte(content), 0644)
 		}
@@ -1212,6 +1214,53 @@ func TestRunSingle_RemovesHandoffOnMergedPR(t *testing.T) {
 	}
 	if _, err := os.Stat(handoffPath); !os.IsNotExist(err) {
 		t.Fatalf("expected handoff.md to be removed, but it still exists (err=%v)", err)
+	}
+}
+
+func TestRunSingle_RetryRemovesHandoffOnMergedPR(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+	if err := os.MkdirAll(filepath.Dir(handoffPath), 0755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	if err := os.WriteFile(handoffPath, []byte("## Stage: running\n\nSome content.\n"), 0644); err != nil {
+		t.Fatalf("write handoff.md: %v", err)
+	}
+
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "failure", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: true, HeadRefName: branch}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}},
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}, nil, false, "main", nil, 0, 0, 2, 0, "", 0, false, 0, false, false)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if result.RetriesTotal != 2 {
+		t.Fatalf("retries total = %d, want 2", result.RetriesTotal)
+	}
+	if _, err := os.Stat(handoffPath); !os.IsNotExist(err) {
+		t.Fatalf("expected handoff.md to be removed after merged PR on retry, err=%v", err)
 	}
 }
 
@@ -4051,7 +4100,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	state := &handoffFlowState{contexts: []string{
+	state := &handoffFlowState{writes: 0, contexts: []string{
 		"## Completed\nInitial run.\n",
 		"## Completed\nFirst continue.\n",
 		"## Completed\nSecond continue.\n",
@@ -4094,6 +4143,9 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected handoff.md to be removed after merged PR on second continue, err=%v", err)
 	}
 
+	if state.writes != 3 {
+		t.Fatalf("expected 3 handoff writes, got %d", state.writes)
+	}
 	if len(state.prompts) != 2 {
 		t.Fatalf("expected 2 continue prompts, got %#v", state.prompts)
 	}
