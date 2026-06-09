@@ -7,7 +7,7 @@ description: Writes Sandman handoff context before exit so the next run can resu
 
 ## Goal
 
-Write `.sandman/handoff.md` in the current worktree before exiting.
+Write `.sandman/continuation-context.md` in the current worktree before exiting.
 
 ## Template
 
@@ -36,7 +36,7 @@ Write `.sandman/handoff.md` in the current worktree before exiting.
 3. Note blockers.
 4. Capture key decisions.
 5. State one next step.
-6. Write the file to `.sandman/handoff.md`.
+6. Write the file to `.sandman/continuation-context.md`.
 
 ## Stop conditions
 
