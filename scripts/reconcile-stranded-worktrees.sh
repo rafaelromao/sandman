@@ -3,7 +3,6 @@ set -euo pipefail
 
 git worktree list --porcelain | awk '
 /^worktree / { path = substr($0, 10); next }
-/^HEAD /    { head = substr($0, 6); next }
 /^branch /  { branch = substr($0, 8); next }
 /^detached$/ { detached = 1; next }
 /^prunable/  { prunable = 1; next }
@@ -19,6 +18,6 @@ git worktree list --porcelain | awk '
             }
         }
     }
-    path = ""; head = ""; branch = ""; detached = 0; prunable = 0; next
+    path = ""; branch = ""; detached = 0; prunable = 0; next
 }
 '
