@@ -49,7 +49,7 @@ var portalStaleCleaner = func(repoRoot string) error {
 	if err != nil {
 		return fmt.Errorf("read event log: %w", err)
 	}
-	recovered, deadDirs, err := runCleanStale(eventsList, logPathLogger)
+	recovered, deadDirs, err := runCleanStale(filepath.Join(repoRoot, ".sandman"), eventsList, logPathLogger)
 	if err != nil {
 		return err
 	}

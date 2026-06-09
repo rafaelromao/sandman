@@ -18,13 +18,13 @@ The portal is the first surface operators open after a crash. Having to remember
 
 Concretely:
 
-- A package-level `portalStaleCleaner func(string) error` variable (mirrors the existing `portalRunAborter` / `portalPeerPID` / `portalSignalProcess` seams in `internal/cmd/portal.go`) wraps the body of the `--stale` flag. The default closure reads the events log under `repoRoot` and calls the new `runCleanStale(eventsList, log)` helper, which in turn calls `daemon.RecoverStaleRuns`. Tests swap the closure for a stub; production never needs to.
+- A package-level `portalStaleCleaner func(string) error` variable (mirrors the existing `portalRunAborter` / `portalPeerPID` / `portalSignalProcess` seams in `internal/cmd/portal.go`) wraps the body of the `--stale` flag. The default closure reads the events log under `repoRoot` and calls the new `runCleanStale(baseDir, eventsList, log)` helper, which in turn calls `daemon.RecoverStaleRuns`. Tests swap the closure for a stub; production never needs to.
 - The goroutine is spawned as the last step of `newPortalHandler`, after all `mux.HandleFunc` registrations and before `return mux`. `runPortalServer` calls `newPortalHandler` once, so the cleaner is invoked exactly once per server lifetime — never on a poll, never on a `clean` HTTP request.
 - The body is shared with the CLI flag. The `--stale` branch in `internal/cmd/clean.go` is rewritten to call `runCleanStale`, so there is exactly one code path that calls `daemon.RecoverStaleRuns`. Duplication across the CLI and the portal is not introduced.
 - Errors are logged via `log.Printf` and never block portal startup or serving. A panic in the helper is recovered inside the goroutine so a malformed events log cannot tear down the HTTP server.
 - The default closure logs the recovered count on success (matching the CLI's stdout summary line) so operators can tell that the sweep ran.
 
-The `baseDir` for the recovery stays hardcoded as `".sandman"` in the helper, matching the CLI flag's existing assumption. The portal passes `repoRoot` to the events log path (which is resolved up front by `runPortalServer`) so the goroutine reads the right file even when the user launched `sandman portal` from a subdirectory of the worktree.
+The helper takes `baseDir` as a parameter so the portal can pass `filepath.Join(repoRoot, ".sandman")` while the CLI continues to pass `".sandman"`. The portal passes `repoRoot` (resolved up front by `runPortalServer`) so the goroutine scans the correct runs directory and reads the right events file even when the user launched `sandman portal` from a subdirectory of the worktree.
 
 ## Consequences
 

@@ -2408,7 +2408,6 @@ func TestPortal_StaleCleanerErrorDoesNotBlockServing(t *testing.T) {
 
 func TestPortal_StaleCleanerRecoversDeadBatchBeforeFirstPoll(t *testing.T) {
 	repoRoot := t.TempDir()
-	t.Chdir(repoRoot)
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

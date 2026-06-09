@@ -128,7 +128,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("read event log: %w", err)
 				}
-				recovered, deadDirs, err := runCleanStale(eventsList, deps.EventLog)
+				recovered, deadDirs, err := runCleanStale(".sandman", eventsList, deps.EventLog)
 				if err != nil {
 					return fmt.Errorf("recover stale runs: %w", err)
 				}
@@ -210,6 +210,6 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 // This is the same code path the `--stale` CLI flag executes, factored out
 // so other long-lived commands (the portal) can invoke the same logic
 // in-process without shelling out.
-func runCleanStale(eventsList []events.Event, log events.EventLog) (recovered, deadDirs int, err error) {
-	return daemon.RecoverStaleRuns(".sandman", eventsList, log)
+func runCleanStale(baseDir string, eventsList []events.Event, log events.EventLog) (recovered, deadDirs int, err error) {
+	return daemon.RecoverStaleRuns(baseDir, eventsList, log)
 }
