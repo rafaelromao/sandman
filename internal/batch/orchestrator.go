@@ -59,9 +59,6 @@ func resolveRunIdleTimeout(req Request, cfg *config.Config) int {
 }
 
 func readTailLines(path string, n int) []string {
-	if n <= 0 {
-		return nil
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return []string{}
