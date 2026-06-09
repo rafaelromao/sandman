@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/events"
 )
 
 // IsRunActive reports whether a run directory is currently owned by a live
@@ -163,4 +165,60 @@ func ReadManifest(runDir string) (BatchManifest, error) {
 		return BatchManifest{}, fmt.Errorf("decode batch manifest: %w", err)
 	}
 	return manifest, nil
+}
+
+// RecoverStaleRuns scans dead run batches under baseDir and emits a
+// run.aborted event (with payload {"recovered": true}) via the supplied
+// event log for each manifest issue whose RunState in the event log has
+// not reached a terminal event and whose most-recent run.started /
+// run.continued timestamp falls within the batch's time window
+// (Started.Timestamp >= manifest.CreatedAt). Returns the number of runs
+// recovered and the number of dead directories processed. Runs whose
+// manifest has no CreatedAt are recovered regardless of the start time.
+func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.EventLog) (int, int, error) {
+	dead, err := FindDeadRunBatches(baseDir)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(dead) == 0 {
+		return 0, 0, nil
+	}
+
+	runs := events.ProjectRunStates(eventsList)
+	byIssue := make(map[int]events.RunState, len(runs))
+	for _, run := range runs {
+		issue := run.IssueNumber()
+		if issue > 0 {
+			byIssue[issue] = run
+		}
+	}
+
+	var recovered int
+	for _, batch := range dead {
+		for _, issueNumber := range batch.Manifest.Issues {
+			run, ok := byIssue[issueNumber]
+			if !ok {
+				continue
+			}
+			if !run.IsActive() {
+				continue
+			}
+			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
+				continue
+			}
+			issueRef := issueNumber
+			event := events.Event{
+				Type:     "run.aborted",
+				RunID:    run.RunID,
+				Issue:    issueNumber,
+				IssueRef: &issueRef,
+				Payload:  map[string]any{"recovered": true},
+			}
+			if err := log.Log(event); err != nil {
+				return recovered, len(dead), fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
+			}
+			recovered++
+		}
+	}
+	return recovered, len(dead), nil
 }

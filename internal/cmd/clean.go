@@ -83,67 +83,6 @@ func (r *realGitRunner) removeOrphanBranches() (int, error) {
 	return removed, nil
 }
 
-// recoverStaleRuns scans dead run batches under baseDir and emits a
-// run.aborted event (with payload {"recovered": true}) for each manifest
-// issue whose RunState in the event log has not reached a terminal event
-// and whose Started.Timestamp falls within the batch's time window
-// (Started.Timestamp >= manifest.CreatedAt). Returns the number of runs
-// recovered and the number of dead directories processed.
-func recoverStaleRuns(baseDir string, eventsList []events.Event, log events.EventLog) (int, int, error) {
-	dead, err := daemon.FindDeadRunBatches(baseDir)
-	if err != nil {
-		return 0, 0, err
-	}
-	if len(dead) == 0 {
-		return 0, 0, nil
-	}
-
-	runs := events.ProjectRunStates(eventsList)
-	byIssue := make(map[int]events.RunState, len(runs))
-	for _, run := range runs {
-		issue := run.IssueNumber()
-		if issue > 0 {
-			byIssue[issue] = run
-		}
-	}
-
-	var recovered int
-	for _, batch := range dead {
-		for _, issueNumber := range batch.Manifest.Issues {
-			run, ok := byIssue[issueNumber]
-			if !ok {
-				continue
-			}
-			if !run.IsActive() {
-				continue
-			}
-			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
-				continue
-			}
-			issueRef := issueNumber
-			payload := map[string]any{
-				"recovered": true,
-				"status":    "aborted",
-			}
-			if branch := run.Branch(); branch != "" {
-				payload["branch"] = branch
-			}
-			event := events.Event{
-				Type:     "run.aborted",
-				RunID:    run.RunID,
-				Issue:    issueNumber,
-				IssueRef: &issueRef,
-				Payload:  payload,
-			}
-			if err := log.Log(event); err != nil {
-				return recovered, len(dead), fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
-			}
-			recovered++
-		}
-	}
-	return recovered, len(dead), nil
-}
-
 // NewCleanCmd creates the clean command.
 func NewCleanCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
@@ -189,7 +128,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("read event log: %w", err)
 				}
-				recovered, deadDirs, err := recoverStaleRuns(".sandman", eventsList, deps.EventLog)
+				recovered, deadDirs, err := daemon.RecoverStaleRuns(".sandman", eventsList, deps.EventLog)
 				if err != nil {
 					return fmt.Errorf("recover stale runs: %w", err)
 				}
