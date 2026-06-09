@@ -17,7 +17,7 @@ func TestArchiveBatch_NonexistentBatchReturnsError(t *testing.T) {
 	cmd := NewArchiveCmd(newTestDeps())
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"batch", "missing-batch-1"})
+	cmd.SetArgs([]string{"batch", "missing-1"})
 
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected error for nonexistent batch, got nil")
@@ -27,8 +27,8 @@ func TestArchiveBatch_NonexistentBatchReturnsError(t *testing.T) {
 	if _, err := os.Stat(archiveDir); !os.IsNotExist(err) {
 		t.Errorf("expected archive dir to NOT be created when source does not exist, got stat err: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(archiveDir, "missing-batch-1")); !os.IsNotExist(err) {
-		t.Errorf("expected no archive/missing-batch-1, got stat err: %v", err)
+	if _, err := os.Stat(filepath.Join(archiveDir, "missing-1")); !os.IsNotExist(err) {
+		t.Errorf("expected no archive/missing-1, got stat err: %v", err)
 	}
 }
 
@@ -136,15 +136,15 @@ func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	batchDir := filepath.Join(dir, ".sandman", "runs", "live-batch-1")
-	if err := os.MkdirAll(batchDir, 0755); err != nil {
-		t.Fatalf("mkdir batch dir: %v", err)
+	runDir := filepath.Join(dir, ".sandman", "runs", "live-1")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(batchDir, "batch.json"), []byte("{}"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte("{}"), 0644); err != nil {
 		t.Fatalf("write batch.json: %v", err)
 	}
 
-	cmdServer := daemon.NewCommandServer(batchDir, nil)
+	cmdServer := daemon.NewCommandServer(runDir, nil)
 	if err := cmdServer.Start(); err != nil {
 		t.Fatalf("start command server: %v", err)
 	}
@@ -154,17 +154,17 @@ func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
 	cmd := NewArchiveCmd(newTestDeps())
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"batch", "live-batch-1"})
+	cmd.SetArgs([]string{"batch", "live-1"})
 
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected error for live batch, got nil")
 	}
 
-	if _, err := os.Stat(batchDir); err != nil {
-		t.Errorf("expected live batch dir to be preserved on rejection, got: %v", err)
+	if _, err := os.Stat(runDir); err != nil {
+		t.Errorf("expected live run dir to be preserved on rejection, got: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "live-batch-1")); !os.IsNotExist(err) {
-		t.Errorf("expected no archive/live-batch-1 after rejection, got: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "live-1")); !os.IsNotExist(err) {
+		t.Errorf("expected no archive/live-1 after rejection, got: %v", err)
 	}
 }
 
@@ -172,11 +172,11 @@ func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	batchDir := filepath.Join(dir, ".sandman", "runs", "dead-batch-1")
-	if err := os.MkdirAll(batchDir, 0755); err != nil {
-		t.Fatalf("mkdir batch dir: %v", err)
+	runDir := filepath.Join(dir, ".sandman", "runs", "dead-1")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(batchDir, "batch.json"), []byte(`{"issues":[42]}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte(`{"issues":[42]}`), 0644); err != nil {
 		t.Fatalf("write batch.json: %v", err)
 	}
 
@@ -184,20 +184,20 @@ func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
 	cmd := NewArchiveCmd(newTestDeps())
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"batch", "dead-batch-1"})
+	cmd.SetArgs([]string{"batch", "dead-1"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	archiveBatchDir := filepath.Join(dir, ".sandman", "archive", "dead-batch-1")
-	if _, err := os.Stat(archiveBatchDir); err != nil {
-		t.Fatalf("expected archived batch dir to exist: %v", err)
+	archiveRunDir := filepath.Join(dir, ".sandman", "archive", "dead-1")
+	if _, err := os.Stat(archiveRunDir); err != nil {
+		t.Fatalf("expected archived run dir to exist: %v", err)
 	}
-	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
-		t.Errorf("expected source batch dir to be gone after archive, got: %v", err)
+	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
+		t.Errorf("expected source run dir to be gone after archive, got: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(archiveBatchDir, "batch.json"))
+	data, err := os.ReadFile(filepath.Join(archiveRunDir, "batch.json"))
 	if err != nil {
 		t.Fatalf("read archived batch.json: %v", err)
 	}
@@ -213,15 +213,15 @@ func TestArchiveBatch_CollisionWithExistingArchiveDirReturnsError(t *testing.T) 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	batchDir := filepath.Join(dir, ".sandman", "runs", "dead-batch-2")
-	if err := os.MkdirAll(batchDir, 0755); err != nil {
-		t.Fatalf("mkdir batch dir: %v", err)
+	runDir := filepath.Join(dir, ".sandman", "runs", "dead-2")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(batchDir, "batch.json"), []byte("source"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte("source"), 0644); err != nil {
 		t.Fatalf("write batch.json: %v", err)
 	}
 
-	existingArchive := filepath.Join(dir, ".sandman", "archive", "dead-batch-2")
+	existingArchive := filepath.Join(dir, ".sandman", "archive", "dead-2")
 	if err := os.MkdirAll(existingArchive, 0755); err != nil {
 		t.Fatalf("mkdir existing archive: %v", err)
 	}
@@ -233,14 +233,14 @@ func TestArchiveBatch_CollisionWithExistingArchiveDirReturnsError(t *testing.T) 
 	cmd := NewArchiveCmd(newTestDeps())
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"batch", "dead-batch-2"})
+	cmd.SetArgs([]string{"batch", "dead-2"})
 
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected error when destination already exists, got nil")
 	}
 
-	if _, err := os.Stat(batchDir); err != nil {
-		t.Errorf("expected source batch dir preserved on collision, got: %v", err)
+	if _, err := os.Stat(runDir); err != nil {
+		t.Errorf("expected source run dir preserved on collision, got: %v", err)
 	}
 	sentinel, err := os.ReadFile(filepath.Join(existingArchive, "sentinel.txt"))
 	if err != nil {

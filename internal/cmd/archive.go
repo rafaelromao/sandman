@@ -24,7 +24,6 @@ func NewArchiveCmd(deps Dependencies) *cobra.Command {
 		Long:  "Move a run directory from .sandman/runs/<id> to .sandman/archive/<id> after confirming the run's daemon is no longer live.",
 	}
 	cmd.AddCommand(newArchiveRunCmd(deps))
-	cmd.AddCommand(newArchiveBatchCmd(deps))
 	return cmd
 }
 
@@ -34,45 +33,27 @@ func newArchiveRunCmd(deps Dependencies) *cobra.Command {
 		probe = daemon.IsRunActive
 	}
 	return &cobra.Command{
-		Use:   "run <id>",
-		Short: "Archive a single run directory",
-		Args:  cobra.ExactArgs(1),
+		Use:     "run <id>",
+		Aliases: []string{"batch"},
+		Short:   "Archive a single run directory",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return archiveBatchDir(cmd, args[0], "run", probe)
+			return runArchiveRun(cmd, args[0], probe)
 		},
 	}
 }
 
-func newArchiveBatchCmd(deps Dependencies) *cobra.Command {
-	probe := deps.RunActivityProbe
-	if probe == nil {
-		probe = daemon.IsRunActive
-	}
-	return &cobra.Command{
-		Use:   "batch <id>",
-		Short: "Archive a single batch directory",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return archiveBatchDir(cmd, args[0], "batch", probe)
-		},
-	}
-}
-
-// archiveBatchDir moves .sandman/runs/<id> to .sandman/archive/<id> after
-// confirming the run's daemon is no longer live. The on-disk target is
-// the same for both the run and batch subcommands; kind only changes the
-// user-facing success label and the not-found error wording.
-func archiveBatchDir(cmd *cobra.Command, id, kind string, probe runActivityProbe) error {
+func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe) error {
 	runDir := filepath.Join(".sandman", "runs", id)
 	if _, err := os.Stat(runDir); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("%s %q not found in .sandman/runs/", kind, id)
+			return fmt.Errorf("run %q not found in .sandman/runs/", id)
 		}
 		return fmt.Errorf("stat run dir: %w", err)
 	}
 
 	if probe(runDir) {
-		return fmt.Errorf("%s %q is still active; stop the daemon before archiving", kind, id)
+		return fmt.Errorf("run %q is still active; stop the daemon before archiving", id)
 	}
 
 	archiveDir := filepath.Join(".sandman", "archive")
@@ -91,6 +72,6 @@ func archiveBatchDir(cmd *cobra.Command, id, kind string, probe runActivityProbe
 		return fmt.Errorf("move run dir: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Archived %s %q\n", kind, id)
+	fmt.Fprintf(cmd.OutOrStdout(), "Archived run %q\n", id)
 	return nil
 }
