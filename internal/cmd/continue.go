@@ -44,6 +44,10 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("load config: %w", err)
 			}
 
+			if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), ".sandman"); err != nil {
+				return err
+			}
+
 			worktreeBase := cfg.WorktreeDir
 			if strings.TrimSpace(worktreeBase) == "" {
 				worktreeBase = ".sandman/worktrees"

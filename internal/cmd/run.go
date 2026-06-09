@@ -92,6 +92,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
+			if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), ".sandman"); err != nil {
+				return err
+			}
 			githubClient := newCachedGitHubClient(deps.GitHubClient)
 
 			promptFlag, _ := cmd.Flags().GetString("prompt")

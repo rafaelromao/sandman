@@ -465,8 +465,8 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	if cfg.Git.BaseBranch != "main" {
 		t.Errorf("git.base_branch: got %q, want %q", cfg.Git.BaseBranch, "main")
 	}
-	if cfg.ReviewCommand != "/oc review" {
-		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/oc review")
+	if cfg.ReviewCommand != "/sandman review" {
+		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/sandman review")
 	}
 	if cfg.Retries != DefaultRetries {
 		t.Errorf("retries: got %d, want %d", cfg.Retries, DefaultRetries)

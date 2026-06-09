@@ -12,7 +12,49 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/config"
 )
+
+// chdirToSandmanDir creates a temp dir with .sandman/review.sock
+// listening, chdirs into it, and returns the dir. Tests that need
+// to inspect the dir (e.g. for run subdirs) should use this so the
+// review daemon guard (issue #383) is satisfied for the default
+// review command.
+func chdirToSandmanDir(t testing.TB) string {
+	t.Helper()
+	dir := t.TempDir()
+	sandmanDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			c, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	t.Chdir(dir)
+	return dir
+}
+
+// depsWithSocket returns Dependencies for tests that have already
+// chdir'd into a directory with a live .sandman/review.sock.
+func depsWithSocket(runner batch.Runner) Dependencies {
+	return Dependencies{
+		BatchRunner:  runner,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: &fakeGitHubClient{},
+	}
+}
 
 // blockedBatchRunner blocks RunBatch until released.
 type blockedBatchRunner struct {
@@ -29,19 +71,13 @@ func (b *blockedBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*
 }
 
 func TestRun_CreatesControlSocketInRunDir(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	blocked := &blockedBatchRunner{
+	dir := chdirToSandmanDir(t)
+	deps := depsWithSocket(&blockedBatchRunner{
 		started: make(chan struct{}),
 		release: make(chan struct{}),
 		result:  &batch.Result{},
-	}
-	deps := newRunDeps(blocked)
+	})
+	sandmanDir := filepath.Join(dir, ".sandman")
 
 	done := make(chan error, 1)
 	go func() {
@@ -53,7 +89,7 @@ func TestRun_CreatesControlSocketInRunDir(t *testing.T) {
 		done <- cmd.Execute()
 	}()
 
-	<-blocked.started
+	<-deps.BatchRunner.(*blockedBatchRunner).started
 
 	runsDir := filepath.Join(sandmanDir, "runs")
 	entries, err := os.ReadDir(runsDir)
@@ -71,7 +107,7 @@ func TestRun_CreatesControlSocketInRunDir(t *testing.T) {
 	}
 	conn.Close()
 
-	close(blocked.release)
+	close(deps.BatchRunner.(*blockedBatchRunner).release)
 
 	select {
 	case err := <-done:
@@ -84,15 +120,9 @@ func TestRun_CreatesControlSocketInRunDir(t *testing.T) {
 }
 
 func TestRun_RemovesRunDirOnCompletion(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
+	dir := chdirToSandmanDir(t)
+	deps := depsWithSocket(&spyBatchRunner{result: &batch.Result{}})
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -141,19 +171,14 @@ func (c *commanderBatchRunner) AbortIssue(issueNumber int) error {
 }
 
 func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	runner := &commanderBatchRunner{
+	dir := chdirToSandmanDir(t)
+	deps := depsWithSocket(&commanderBatchRunner{
 		started:    make(chan struct{}),
 		release:    make(chan struct{}),
 		abortCalls: make(chan int, 1),
-	}
-	deps := newRunDeps(runner)
+	})
+	sandmanDir := filepath.Join(dir, ".sandman")
+	runner := deps.BatchRunner.(*commanderBatchRunner)
 
 	done := make(chan error, 1)
 	go func() {
@@ -217,19 +242,14 @@ func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
 }
 
 func TestRun_RemovesCommandSocketOnCompletion(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	runner := &commanderBatchRunner{
+	dir := chdirToSandmanDir(t)
+	deps := depsWithSocket(&commanderBatchRunner{
 		started:    make(chan struct{}),
 		release:    make(chan struct{}),
 		abortCalls: make(chan int, 1),
-	}
-	deps := newRunDeps(runner)
+	})
+	sandmanDir := filepath.Join(dir, ".sandman")
+	runner := deps.BatchRunner.(*commanderBatchRunner)
 
 	started := make(chan struct{})
 	go func() {
@@ -266,6 +286,11 @@ func TestRun_AllowsConcurrentRuns(t *testing.T) {
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
 
 	release := make(chan struct{})
 	runner1 := &blockedBatchRunner{
@@ -291,10 +316,10 @@ func TestRun_AllowsConcurrentRuns(t *testing.T) {
 		}()
 	}
 
-	startRun("42", newRunDeps(runner1))
+	startRun("42", depsWithSocket(runner1))
 	<-runner1.started
 
-	startRun("43", newRunDeps(runner2))
+	startRun("43", depsWithSocket(runner2))
 	<-runner2.started
 
 	runsDir := filepath.Join(sandmanDir, "runs")
@@ -321,15 +346,9 @@ func TestRun_AllowsConcurrentRuns(t *testing.T) {
 }
 
 func TestRun_RemovesSocketAndRunDirOnError(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
+	dir := chdirToSandmanDir(t)
+	deps := depsWithSocket(&spyBatchRunner{result: nil, err: os.ErrClosed})
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	spy := &spyBatchRunner{result: nil, err: os.ErrClosed}
-	deps := newRunDeps(spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -353,15 +372,9 @@ func TestRun_RemovesSocketAndRunDirOnError(t *testing.T) {
 }
 
 func TestRun_SetsRunDirOnBatchRequest(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	_ = chdirToSandmanDir(t)
+	deps := depsWithSocket(&spyBatchRunner{result: &batch.Result{}})
+	spy := deps.BatchRunner.(*spyBatchRunner)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
