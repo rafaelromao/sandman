@@ -336,6 +336,42 @@ func TestRecoverStaleRuns_RecoversOrphanPromptOnlyRun(t *testing.T) {
 	}
 }
 
+func TestRecoverStaleRuns_RecoversPromptOnlyRunWithDeadBatchDir(t *testing.T) {
+	baseDir := t.TempDir()
+	createdAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	startedAt := createdAt.Add(5 * time.Minute)
+
+	// Create a dead 0-issue batch dir (no sockets — IsRunActive returns false).
+	runDir := filepath.Join(baseDir, "runs", "prompt-dead")
+	writeManifestFile(t, runDir, BatchManifest{Issues: nil, CreatedAt: createdAt})
+
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.started", RunID: "run-prompt", Timestamp: startedAt},
+	}
+
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 1 {
+		t.Errorf("expected 1 recovered (dead prompt-only dir), got %d", recovered)
+	}
+	if dirs != 1 {
+		t.Errorf("expected 1 dead dir, got %d", dirs)
+	}
+	if len(eventLog.logged) != 1 {
+		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
+	}
+	e := eventLog.logged[0]
+	if e.Type != "run.aborted" {
+		t.Errorf("expected run.aborted, got %q", e.Type)
+	}
+	if v, _ := e.Payload["recovered"].(bool); !v {
+		t.Errorf("expected payload.recovered=true, got %v", e.Payload)
+	}
+}
+
 func TestRecoverStaleRuns_ManifestIssueWithoutRunIsSkipped(t *testing.T) {
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)

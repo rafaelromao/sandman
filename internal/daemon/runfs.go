@@ -241,7 +241,10 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		}
 	}
 
-	orphanRecovered := recoverOrphanActiveRuns(baseDir, eventsList, log, recoveredRunIDs)
+	orphanRecovered, orphanErr := recoverOrphanActiveRuns(baseDir, eventsList, log, recoveredRunIDs)
+	if orphanErr != nil {
+		return recovered, len(dead), orphanErr
+	}
 	recovered += orphanRecovered
 
 	return recovered, len(dead), nil
@@ -252,29 +255,36 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 // manifest mentions its issue number (or, for prompt-only runs, has zero
 // issues) AND the run's StartedAt falls outside any matching batch's time
 // window. Runs whose RunID appears in skipRunIDs are not processed.
-func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}) int {
+func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}) (int, error) {
 	runs := events.ProjectRunStates(eventsList)
 
 	// Collect all batch manifests under runs/ (both live and dead dirs).
 	type batchInfo struct {
+		dir      string
 		manifest BatchManifest
 	}
 	var batches []batchInfo
 	runsDir := filepath.Join(baseDir, "runs")
-	if entries, err := os.ReadDir(runsDir); err == nil {
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return 0, fmt.Errorf("read runs dir for orphan scan: %w", err)
+		}
+	} else {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
 			}
-			manifest, err := ReadManifest(filepath.Join(runsDir, entry.Name()))
+			runPath := filepath.Join(runsDir, entry.Name())
+			manifest, err := ReadManifest(runPath)
 			if err != nil {
 				if os.IsNotExist(err) {
 					manifest = BatchManifest{}
 				} else {
-					continue
+					return 0, fmt.Errorf("read manifest for orphan scan %s: %w", runPath, err)
 				}
 			}
-			batches = append(batches, batchInfo{manifest: manifest})
+			batches = append(batches, batchInfo{dir: runPath, manifest: manifest})
 		}
 	}
 
@@ -288,11 +298,16 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 		}
 
 		issueNum := run.IssueNumber()
-		isPromptOnly := issueNum == 0 && run.IsPromptOnly()
+		isPromptOnly := run.IsPromptOnly()
 		hasBatch := false
 		for _, b := range batches {
 			if isPromptOnly {
 				if len(b.manifest.Issues) > 0 {
+					continue
+				}
+				// A 0-issue batch that exists on disk but is dead means
+				// the prompt-only daemon died — the run is orphaned.
+				if !IsRunActive(b.dir) {
 					continue
 				}
 			} else {
@@ -330,9 +345,9 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 			Payload:  map[string]any{"recovered": true},
 		}
 		if err := log.Log(event); err != nil {
-			return recovered
+			return recovered, fmt.Errorf("log run.aborted for orphan %q: %w", run.RunID, err)
 		}
 		recovered++
 	}
-	return recovered
+	return recovered, nil
 }
