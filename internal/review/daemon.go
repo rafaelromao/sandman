@@ -231,12 +231,12 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		}
 
 		// Signal that this trigger comment is being processed.
-		if err := d.GitHub.EditComment(comment.ID, "👁️ "+comment.Body); err != nil {
+		if err := d.GitHub.EditComment(comment.ID, eyePrefix+comment.Body); err != nil {
 			d.logf("add emoji to comment %s: %v", comment.ID, err)
 		}
 		pr, fetchErr := d.GitHub.FetchPR(prNumber)
 		if fetchErr == nil {
-			if err := d.GitHub.EditPRBody(prNumber, "👁️ "+pr.Body); err != nil {
+			if err := d.GitHub.EditPRBody(prNumber, eyePrefix+pr.Body); err != nil {
 				d.logf("add emoji to PR #%d body: %v", prNumber, err)
 			}
 		} else {
