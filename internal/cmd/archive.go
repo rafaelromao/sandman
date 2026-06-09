@@ -61,6 +61,12 @@ func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe) error 
 	}
 
 	dest := filepath.Join(archiveDir, id)
+	if _, err := os.Stat(dest); err == nil {
+		return fmt.Errorf("archive %q already exists", id)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat archive target: %w", err)
+	}
+
 	if err := os.Rename(runDir, dest); err != nil {
 		return fmt.Errorf("move run dir: %w", err)
 	}
