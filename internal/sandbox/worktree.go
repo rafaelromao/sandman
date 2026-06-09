@@ -41,7 +41,7 @@ func (s *WorktreeSandbox) SetForce(force bool) {
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
-	if s.force && s.workDirExists() {
+	if s.force && s.workDirExists() && !s.workDirIsValidWorktree() {
 		if err := os.RemoveAll(s.workDir); err != nil {
 			return fmt.Errorf("clean forced worktree dir: %w", err)
 		}
@@ -49,12 +49,33 @@ func (s *WorktreeSandbox) Start() error {
 	if s.workDirIsValidWorktree() {
 		currentRef, err := currentBranchRef(s.workDir)
 		if err != nil {
-			return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --force to reconcile", s.workDir, err)
+			if !s.force {
+				return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --force to reconcile", s.workDir, err)
+			}
+			if !BranchExists(s.repoPath, s.branch) {
+				return fmt.Errorf("cannot force-reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
+			}
+			fmt.Fprintf(os.Stderr, "warning: worktree %q has detached HEAD, force-checking out %q\n", s.workDir, s.branch)
+			if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
+				return fmt.Errorf("force-checkout branch %q in worktree %q: %w", s.branch, s.workDir, err)
+			}
+			return s.configureGitIdentity()
 		}
 		expectedRef := "refs/heads/" + s.branch
-		if currentRef != expectedRef {
+		if currentRef == expectedRef {
+			return s.configureGitIdentity()
+		}
+		if !s.force {
 			return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --force to reconcile",
 				s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
+		}
+		if !BranchExists(s.repoPath, s.branch) {
+			return fmt.Errorf("cannot force-reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
+		}
+		oldBranch := strings.TrimPrefix(currentRef, "refs/heads/")
+		fmt.Fprintf(os.Stderr, "warning: worktree %q on branch %q, force-checking out %q\n", s.workDir, oldBranch, s.branch)
+		if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
+			return fmt.Errorf("force-checkout branch %q in worktree %q: %w", s.branch, s.workDir, err)
 		}
 		return s.configureGitIdentity()
 	}
@@ -115,6 +136,15 @@ func currentBranchRef(workDir string) (string, error) {
 		return "", fmt.Errorf("resolve HEAD symbolic-ref: %w\n%s", err, out)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// forceCheckoutBranch runs git checkout -f in the given workdir to switch to branch.
+func forceCheckoutBranch(workDir, branch string) error {
+	out, err := runGitCommand(workDir, "checkout", "-f", branch)
+	if err != nil {
+		return fmt.Errorf("git checkout -f %s: %w\n%s", branch, err, out)
+	}
+	return nil
 }
 
 // workDirExists reports whether s.workDir is an existing directory.
