@@ -26,7 +26,7 @@
       nameText: run.issueLabel || run.key,
       metaText: h.renderRunMeta(run),
       badgeClass: h.statusClass(run),
-      badgeLabel: run.status || (run.kind === 'active' ? 'active' : 'completed'),
+      badgeLabel: run.status || (run.kind === 'active' ? 'running' : 'completed'),
       startedText: h.formatTime(run.startedAt),
       durationText: h.formatDuration(run.duration),
       branchText: h.formatBranch(run),
@@ -83,7 +83,7 @@
 
   function buildBadgeCell(td, run, helpers) {
     const klass = helpers.statusClass(run);
-    const label = run.status || (run.kind === 'active' ? 'active' : 'completed');
+    const label = run.status || (run.kind === 'active' ? 'running' : 'completed');
     const badge = global.document.createElement('span');
     badge.classList.add('badge', klass);
     const dot = global.document.createElement('span');
