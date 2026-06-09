@@ -1642,29 +1642,21 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
-			contCtxPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
-			if content, err := os.ReadFile(contCtxPath); err == nil {
-				if openPR != nil {
-					attemptRenderCfg.HandoffPrompt = buildPRReviewHandoffPrompt(string(content))
-					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
-				} else {
-					stage, contextWithoutStage := parseStage(string(content))
-					if stage != "" {
-						priorContext := strings.TrimSpace(stripHandoffHeader(contextWithoutStage))
-						attemptRenderCfg.HandoffPrompt = buildHandoffPrompt(priorContext, stage)
-					} else {
-						attemptRenderCfg.HandoffPrompt = buildRetryHandoffPrompt(string(content))
-					}
-					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
-				}
-			} else {
-				prFound := false
-				if openPR != nil {
-					attemptRenderCfg.HandoffPrompt = "Continue with sandman-pr-review until the PR is merged"
-					attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
-					prFound = true
-				}
-				if !prFound {
+			// Always pass the handoff content verbatim (or empty template if
+			// missing). The agent reads its next instruction from the handoff
+			// document's ## Next Step field directly. The openPR value is only
+			// used below to decide whether to reset the branch — the agent
+			// receives the same handoff content regardless of open-PR state.
+			handoffPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
+			handoffContent, handoffExists, err := ReadHandoffContent(handoffPath)
+			if err != nil {
+				fmt.Fprintf(o.errorLog, "error: read handoff for issue %d: %v\n", s.issueNumber, err)
+				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
+			}
+			attemptRenderCfg.HandoffPrompt = handoffContent
+			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
+			if !handoffExists {
+				if openPR == nil {
 					if prLookupErr != nil {
 						fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
 						return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}

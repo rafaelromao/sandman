@@ -66,6 +66,322 @@ func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
 	}
 }
 
+func TestPortal_IsSocketAliveReturnsTrueWhenSocketListening(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	if !(&portalRunsView{}).isSocketAlive(sockPath) {
+		t.Fatal("expected isSocketAlive to return true for listening socket")
+	}
+}
+
+func TestPortal_IsSocketAliveReturnsFalseWhenSocketMissing(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+
+	if (&portalRunsView{}).isSocketAlive(sockPath) {
+		t.Fatal("expected isSocketAlive to return false for missing socket")
+	}
+}
+
+func TestPortal_IsSocketAliveReturnsFalseWhenSocketDead(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "dead.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+
+	if (&portalRunsView{}).isSocketAlive(sockPath) {
+		t.Fatal("expected isSocketAlive to return false for dead socket")
+	}
+}
+
+func TestPortal_IsSocketAliveReturnsFalseForEmptyPath(t *testing.T) {
+	if (&portalRunsView{}).isSocketAlive("") {
+		t.Fatal("expected isSocketAlive to return false for empty path")
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+
+	active := portalActiveRun{
+		Key:          "run-42-1",
+		Dir:          sockDir,
+		SocketPath:   sockPath,
+		IssueNumbers: []int{42},
+		StartedAt:    time.Now().Add(-1 * time.Minute),
+	}
+
+	started := time.Now().Add(-1 * time.Minute)
+	state := &events.RunState{
+		RunID: "run-42-1",
+		Started: events.Event{
+			Timestamp: started,
+			Payload:   map[string]any{},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, "", nil)
+
+	if run.Kind != "completed" {
+		t.Fatalf("expected kind 'completed' for run with dead socket, got %q", run.Kind)
+	}
+}
+
+func TestPortal_RunFromActiveMatchSetsCompletedWhenSocketDead(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+
+	match := portalRunMatch{
+		instance: portalActiveRun{
+			Key:         "run-prompt-1",
+			SocketPath:  sockPath,
+			IssueNumber: 0,
+			ModTime:     time.Now().Add(-1 * time.Minute),
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil)
+
+	if run.Kind != "completed" {
+		t.Fatalf("expected kind 'completed' for match with dead socket, got %q", run.Kind)
+	}
+}
+
+func TestPortal_RunFromStateSetsCompletedWhenActiveButSocketDead(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+
+	started := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "run-active-1",
+		Started: events.Event{
+			Timestamp: started,
+			Payload:   map[string]any{},
+		},
+	}
+
+	active := &portalActiveRun{
+		Key:        "run-active-1",
+		SocketPath: sockPath,
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil)
+
+	if run.Kind != "completed" {
+		t.Fatalf("expected kind 'completed' for active run with dead socket, got %q", run.Kind)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	active := portalActiveRun{
+		Key:          "run-42-1",
+		Dir:          sockDir,
+		SocketPath:   sockPath,
+		IssueNumbers: []int{42},
+		StartedAt:    time.Now().Add(-1 * time.Minute),
+	}
+
+	started := time.Now().Add(-1 * time.Minute)
+	state := &events.RunState{
+		RunID: "run-42-1",
+		Started: events.Event{
+			Timestamp: started,
+			Payload:   map[string]any{},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, "", nil)
+
+	if run.Kind != "active" {
+		t.Fatalf("expected kind 'active' for run with live socket, got %q", run.Kind)
+	}
+}
+
+func TestPortal_RunFromActiveMatchKeepsActiveWhenSocketAlive(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	match := portalRunMatch{
+		instance: portalActiveRun{
+			Key:         "run-prompt-1",
+			SocketPath:  sockPath,
+			IssueNumber: 0,
+			ModTime:     time.Now().Add(-1 * time.Minute),
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil)
+
+	if run.Kind != "active" {
+		t.Fatalf("expected kind 'active' for match with live socket, got %q", run.Kind)
+	}
+}
+
+func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	started := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "run-active-1",
+		Started: events.Event{
+			Timestamp: started,
+			Payload:   map[string]any{},
+		},
+	}
+
+	active := &portalActiveRun{
+		Key:        "run-active-1",
+		SocketPath: sockPath,
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil)
+
+	if run.Kind != "active" {
+		t.Fatalf("expected kind 'active' for active run with live socket, got %q", run.Kind)
+	}
+}
+
+func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *testing.T) {
+	sockDir := t.TempDir()
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runsDir := filepath.Join(repoRoot, ".sandman", "runs", "run-gone-1")
+	if err := os.MkdirAll(runsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sockPath, filepath.Join(runsDir, "run.sock")); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "run-gone-1",
+		Started: events.Event{
+			Timestamp: started,
+			Payload:   map[string]any{},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+
+	if run.Kind != "completed" {
+		t.Fatalf("expected kind 'completed' for unmatched active state with dead socket, got %q", run.Kind)
+	}
+}
+
 func TestPortal_DefaultPortFlag(t *testing.T) {
 	cmd := NewPortalCmd(Dependencies{})
 	port, err := cmd.Flags().GetInt("port")

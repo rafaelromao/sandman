@@ -24,14 +24,10 @@ func buildPortalCommandArgs(req portalCommandLaunchRequest) ([]string, error) {
 		if len(req.Issues) == 0 {
 			return nil, fmt.Errorf("continue preset requires issue numbers")
 		}
-		if strings.TrimSpace(req.Prompt) == "" {
-			return nil, fmt.Errorf("continue preset requires a prompt")
-		}
 		args := []string{"continue"}
 		for _, issue := range req.Issues {
 			args = append(args, strconv.Itoa(issue))
 		}
-		args = append(args, strings.TrimSpace(req.Prompt))
 		return args, nil
 	case "status":
 		return []string{"status"}, nil

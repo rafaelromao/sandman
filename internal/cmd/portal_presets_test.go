@@ -6,13 +6,12 @@ func TestBuildPortalCommandArgsContinuePresetSingleIssue(t *testing.T) {
 	args, err := buildPortalCommandArgs(portalCommandLaunchRequest{
 		Preset: "continue",
 		Issues: []int{42},
-		Prompt: "finish the tests",
 	})
 	if err != nil {
 		t.Fatalf("build command args: %v", err)
 	}
 
-	want := []string{"continue", "42", "finish the tests"}
+	want := []string{"continue", "42"}
 	if len(args) != len(want) {
 		t.Fatalf("expected %d args, got %#v", len(want), args)
 	}
@@ -27,13 +26,12 @@ func TestBuildPortalCommandArgsContinuePresetMultipleIssues(t *testing.T) {
 	args, err := buildPortalCommandArgs(portalCommandLaunchRequest{
 		Preset: "continue",
 		Issues: []int{1, 42},
-		Prompt: "finish the tests",
 	})
 	if err != nil {
 		t.Fatalf("build command args: %v", err)
 	}
 
-	want := []string{"continue", "1", "42", "finish the tests"}
+	want := []string{"continue", "1", "42"}
 	if len(args) != len(want) {
 		t.Fatalf("expected %d args, got %#v", len(want), args)
 	}
@@ -44,11 +42,26 @@ func TestBuildPortalCommandArgsContinuePresetMultipleIssues(t *testing.T) {
 	}
 }
 
+func TestBuildPortalCommandArgsContinuePresetIgnoresPrompt(t *testing.T) {
+	args, err := buildPortalCommandArgs(portalCommandLaunchRequest{
+		Preset: "continue",
+		Issues: []int{42},
+		Prompt: "finish the tests",
+	})
+	if err != nil {
+		t.Fatalf("build command args: %v", err)
+	}
+
+	want := []string{"continue", "42"}
+	if len(args) != len(want) {
+		t.Fatalf("expected %d args, got %#v", len(want), args)
+	}
+}
+
 func TestBuildPortalCommandArgsContinuePresetRequiresIssues(t *testing.T) {
 	_, err := buildPortalCommandArgs(portalCommandLaunchRequest{
 		Preset: "continue",
 		Issues: []int{},
-		Prompt: "finish the tests",
 	})
 	if err == nil {
 		t.Fatal("expected error when no issues provided")

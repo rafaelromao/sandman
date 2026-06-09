@@ -23,9 +23,9 @@ Replace the `sandman-continuation` skill and `.sandman/continuation-context.md` 
 3. `pr-created` — after the pull request is opened against the base branch.
 4. `pr-review-finished` — after the delegated PR review returns approval or a hard blocker.
 
-Each stage records the same five fields: completed work, pending items, blockers, key decisions, and the single most important next step. The `## Stage:` line at the top of the file is machine-readable so the Go code can tell which checkpoint the next run is resuming from.
+Each stage records the same five fields: completed work, pending items, blockers, key decisions, and the single most important next step. The `## Stage:` line at the top of the file is informational only — the agent reads its next instruction from the `## Next Step` field directly. The Go orchestrator and `sandman continue` no longer parse the stage name.
 
-The Go orchestrator and `sandman continue` command now read `handoff.md` and use its `## Stage:` value to build a stage-aware resume prompt. If `handoff.md` is missing, the resume falls back to a generic "continue from the prior context" instruction so that a run that was never checkpointed still resumes sensibly.
+The Go orchestrator and `sandman continue` pass the verbatim handoff document content (or an empty handoff template if the file is missing) as the resume prompt. The agent reads the `## Next Step` field and follows it directly, without any meta-prompt wrapping from the orchestrator. If `handoff.md` is missing, the empty template instructs the agent to "Continue the work."
 
 The four checkpoints replace the single end-of-session summary. Every workflow mode that ends — `sandman-implement`, the orchestrator's retry path, and `sandman continue` itself — writes the same file at the relevant stage, so a single handoff file per worktree captures the full state of the run.
 
@@ -33,18 +33,18 @@ The four checkpoints replace the single end-of-session summary. Every workflow m
 
 ### Positive
 
-- An interrupted run can resume from the last completed checkpoint instead of redoing finished work. The orchestrator and the continue command both consume the same `handoff.md` and apply the same stage-aware resume logic.
-- The four explicit stages are a closed vocabulary. The Go code does not need to interpret free-form summary text; it only needs to recognise the four stage names.
+- An interrupted run can resume from the last completed checkpoint instead of redoing finished work. The orchestrator and the continue command both consume the same `handoff.md` and apply the same verbatim-handoff resume logic.
 - One file per worktree (`.sandman/handoff.md`) replaces the previous one-file-per-run model. There is no need to track separate context and prompt files in the worktree state.
 - The naming no longer collides with the `sandman continue` CLI command. `Handoff` is the persisted state; `Continue` is the action that reads it.
 
 ### Negative
 
-- Existing `.sandman/continuation-context.md` files from in-flight runs are orphaned. There is no backward-compatibility shim: a run that wrote the old filename but never wrote the new one will fall through to the "missing handoff" branch and start from a generic resume prompt. The agents that produced those files were running on a developer worktree, so the cost is low; production runs do not persist worktree state across restarts.
-- The handoff file becomes mandatory infrastructure. Every `sandman-implement` step that previously wrote a continuation context now has to remember to call `sandman-handoff`. A missed checkpoint reverts to the pre-rename behaviour of starting from scratch on resume. Mitigation: the `sandman-implement` skill's checklist and the four explicit stage names make the checkpoints hard to skip silently.
+- Existing `.sandman/continuation-context.md` files from in-flight runs are orphaned. There is no backward-compatibility shim: a run that wrote the old filename but never wrote the new one will fall through to the "missing handoff" branch and start from the empty handoff template. The agents that produced those files were running on a developer worktree, so the cost is low; production runs do not persist worktree state across restarts.
+- The handoff file becomes mandatory infrastructure. Every `sandman-implement` step that previously wrote a continuation context now has to remember to call `sandman-handoff`. A missed checkpoint reverts to starting from scratch on resume. Mitigation: the `sandman-implement` skill's checklist and the four explicit stage names make the checkpoints hard to skip silently.
 - A single end-of-session summary is replaced by multiple intermediate checkpoints. Readers following a run have to consult the `## Stage:` line to know where in the workflow the snapshot was taken. Mitigation: the stage name is the first heading in the file, so it is the first thing a reader sees.
+- The `## Stage:` line is no longer parsed by the Go orchestrator. The agent reads its next instruction from the `## Next Step` field directly. The four stage names remain for human readability but are not a closed vocabulary enforced by Go code.
 
 ### Neutral
 
-- The Go rename (#681) and the `sandman continue` stage-aware resume (#675) and orchestrator retry path (#676) shipped the file-path and resume-prompt changes before this ADR was written. This ADR records the decision those changes implemented; it does not introduce the file format itself.
+- The Go rename (#681), the verbatim-handoff resume (#735), and the orchestrator retry path (#676) shipped the file-path and resume-prompt changes incrementally. This ADR records the decisions those changes implemented.
 - The `Continuation` glossary term in `CONTEXT.md` retains its original meaning (the AgentRun request mode that skips prompt template rendering) and is updated only to point at the new filename. It is not removed.
