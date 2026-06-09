@@ -448,7 +448,7 @@ func TestContinue_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
 	}
 }
 
-func TestContinue_WarnsAndUsesBarePromptWhenContinuationContextMissing(t *testing.T) {
+func TestContinue_UsesEmptyHandoffTemplateWhenContextMissing(t *testing.T) {
 	dir := t.TempDir()
 	branch := "sandman/42-fix-bug"
 	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {

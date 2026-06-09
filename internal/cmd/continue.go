@@ -91,7 +91,8 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				baseBranches[num] = strings.TrimSpace(baseBranch)
 				previousRunIDs[num] = lastRun.RunID
 
-				handoffPrompts[num] = batch.ReadHandoffContent(filepath.Join(worktreePath, ".sandman", "handoff.md"))
+				content, _ := batch.ReadHandoffContent(filepath.Join(worktreePath, ".sandman", "handoff.md"))
+				handoffPrompts[num] = content
 			}
 
 			// Replay agent/model/review settings from the first issue's last run.

@@ -1642,9 +1642,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
-			attemptRenderCfg.HandoffPrompt = ReadHandoffContent(filepath.Join(wt.WorkDir(), ".sandman", "handoff.md"))
+			handoffPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
+			handoffContent, handoffExists := ReadHandoffContent(handoffPath)
+			attemptRenderCfg.HandoffPrompt = handoffContent
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
-			if _, err := os.Stat(filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")); err != nil && os.IsNotExist(err) {
+			if !handoffExists {
 				if openPR == nil {
 					if prLookupErr != nil {
 						fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)

@@ -1033,7 +1033,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
+func TestRunSingle_RetryWithOpenPRFallsBackToEmptyHandoffTemplate(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
