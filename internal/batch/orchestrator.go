@@ -1681,7 +1681,7 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 	}
 
 	var output bytes.Buffer
-	command := fmt.Sprintf("git reset --hard && git checkout -B --force %s %s && git clean -fd", shellQuote(branch), shellQuote(baseBranch))
+	command := fmt.Sprintf("git reset --hard && git checkout -f -B %s %s && git clean -fd", shellQuote(branch), shellQuote(baseBranch))
 	if err := sb.Exec(ctx, command, &output, &output); err != nil {
 		return fmt.Errorf("reset retry branch: %w\n%s", err, output.String())
 	}

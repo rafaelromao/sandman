@@ -7177,7 +7177,7 @@ func TestOrchestrator_ResetRetryBranch_Command(t *testing.T) {
 		t.Fatalf("resetRetryBranch returned error: %v", err)
 	}
 
-	expected := fmt.Sprintf("git reset --hard && git checkout -B --force %s %s && git clean -fd",
+	expected := fmt.Sprintf("git reset --hard && git checkout -f -B %s %s && git clean -fd",
 		shellQuote("sandman/42-fix-bug"), shellQuote("main"))
 	if sb.execCommand != expected {
 		t.Errorf("expected exec command %q, got %q", expected, sb.execCommand)
