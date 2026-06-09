@@ -186,41 +186,42 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 }
 
 // dedupRunGroup collapses duplicate rows for one issue within one batch.
-// It first strips queued rows when any non-queued row exists in the group, then
+// It first strips queued and blocked rows when any other row exists, then
 // applies runPriority (aborted > active > blocked > queued > other) and
 // breaks ties by latest StartedAt.
 func (v *portalRunsView) dedupRunGroup(runs []portalRun) []portalRun {
 	if len(runs) <= 1 {
 		return runs
 	}
-	// A queued row only describes the wait state of an AgentRun and is
-	// superseded by any later non-queued row for the same AgentRun. When the
-	// group mixes queued with non-queued rows (e.g. a queued event followed by
-	// run.started + run.finished events that the same AgentRun emits with a
-	// different RunID once it leaves the wait state), strip the queued rows
-	// so the terminal status wins regardless of the other priorities.
-	nonQueued := make([]portalRun, 0, len(runs))
-	queuedOnly := make([]portalRun, 0, len(runs))
+	// A queued or blocked row only describes the wait state of an AgentRun
+	// and is superseded by any later non-waiting row for the same AgentRun.
+	// When the group mixes waiting rows with terminal/active rows (e.g. a
+	// queued or blocked event followed by run.started + run.finished events
+	// that the same AgentRun emits with a different RunID once it leaves the
+	// wait state), strip the waiting rows so the terminal status wins
+	// regardless of the other priorities.
+	terminal := make([]portalRun, 0, len(runs))
+	waiting := make([]portalRun, 0, len(runs))
 	for _, run := range runs {
-		if run.Status == "queued" {
-			queuedOnly = append(queuedOnly, run)
+		if run.Status == "queued" || run.Status == "blocked" {
+			waiting = append(waiting, run)
 		} else {
-			nonQueued = append(nonQueued, run)
+			terminal = append(terminal, run)
 		}
 	}
-	if len(nonQueued) == 0 {
-		if len(queuedOnly) <= 1 {
-			return queuedOnly
+	if len(terminal) == 0 {
+		if len(waiting) <= 1 {
+			return waiting
 		}
 		bestIdx := 0
-		for i := 1; i < len(queuedOnly); i++ {
-			if queuedOnly[i].StartedAt.After(queuedOnly[bestIdx].StartedAt) {
+		for i := 1; i < len(waiting); i++ {
+			if waiting[i].StartedAt.After(waiting[bestIdx].StartedAt) {
 				bestIdx = i
 			}
 		}
-		return []portalRun{queuedOnly[bestIdx]}
+		return []portalRun{waiting[bestIdx]}
 	}
-	runs = nonQueued
+	runs = terminal
 	bestIdx := 0
 	bestPriority := v.runPriority(runs[0])
 	for i := 1; i < len(runs); i++ {
@@ -243,10 +244,11 @@ func (v *portalRunsView) dedupRunGroup(runs []portalRun) []portalRun {
 // runPriority encodes the per-issue dedup priority order:
 // aborted > active > blocked > queued > other.
 //
-// Note: dedupRunGroup strips queued rows when any non-queued row exists,
-// so the "queued" case here is unreachable for mixed groups. It is kept as a
-// guard for queued-only groups (e.g., genuinely-waiting runs with no terminal
-// event) and to make the priority order self-documenting.
+// Note: dedupRunGroup strips queued and blocked rows when any other row
+// exists, so the "queued" and "blocked" cases here are unreachable for mixed
+// groups. They are kept as guards for waiting-only groups (e.g., genuinely-
+// waiting runs with no terminal event) and to make the priority order
+// self-documenting.
 func (v *portalRunsView) runPriority(run portalRun) int {
 	if run.Status == "aborted" {
 		return 4
