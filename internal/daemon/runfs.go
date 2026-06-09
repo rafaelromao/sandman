@@ -250,47 +250,12 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	return recovered, len(dead), nil
 }
 
-// buildSupersededIssues returns a set of issue numbers for which a queued or
-// blocked run placeholder was superseded by a later run (different RunID)
-// for the same issue. These are historical artifacts from a completed batch,
-// not orphans from a dead daemon, and should not be recovered.
-func buildSupersededIssues(runs []events.RunState) map[int]bool {
-	byIssue := make(map[int][]events.RunState)
-	for _, r := range runs {
-		if issue := r.IssueNumber(); issue > 0 {
-			byIssue[issue] = append(byIssue[issue], r)
-		}
-	}
-	superseded := make(map[int]bool)
-	for issue, sameIssue := range byIssue {
-		if len(sameIssue) < 2 {
-			continue
-		}
-		for _, s := range sameIssue {
-			if !s.IsActive() && (s.Status() == "queued" || s.Status() == "blocked") {
-				for _, other := range sameIssue {
-					if other.RunID == s.RunID {
-						continue
-					}
-					if other.Started.Timestamp.After(s.Started.Timestamp) {
-						superseded[issue] = true
-						break
-					}
-				}
-			}
-			if superseded[issue] {
-				break
-			}
-		}
-	}
-	return superseded
-}
-
 // recoverOrphanActiveRuns recovers active RunStates that have no matching
-// batch directory under <baseDir>/runs/. A run is orphaned when no directory
-// manifest mentions its issue number (or, for prompt-only runs, has zero
-// issues) AND the run's StartedAt falls outside any matching batch's time
-// window. Runs whose RunID appears in skipRunIDs are not processed.
+// batch directory under <baseDir>/runs/. Only truly active runs (no
+// Finished event) are considered — queued/blocked runs are not recovered here
+// because the dead batch loop already handles them when the directory exists,
+// and the orphan pass cannot distinguish a queued/blocked run from a completed
+// batch (dir cleaned up normally) from a true orphan.
 func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}) (int, error) {
 	runs := events.ProjectRunStates(eventsList)
 
@@ -324,25 +289,13 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 		}
 	}
 
-	// Build a set of issue numbers that have a subsequent run (different RunID
-	// or within the same RunState via run.continued). If a queued or blocked
-	// run was superseded by a later run for the same issue, it is a historical
-	// placeholder from a completed batch — not an orphan from a dead daemon.
-	supersededIssues := buildSupersededIssues(runs)
-
 	var recovered int
 	for _, run := range runs {
-		if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
+		if !run.IsActive() {
 			continue
 		}
 		if _, ok := skipRunIDs[run.RunID]; ok {
 			continue
-		}
-		if !run.IsActive() {
-			issueNum := run.IssueNumber()
-			if issueNum > 0 && supersededIssues[issueNum] {
-				continue
-			}
 		}
 
 		issueNum := run.IssueNumber()
