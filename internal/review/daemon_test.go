@@ -317,3 +317,37 @@ var errList = jsonError("list failed")
 type jsonError string
 
 func (e jsonError) Error() string { return string(e) }
+
+func TestDaemon_RunFailsFastOnInvalidReviewAgent(t *testing.T) {
+	gh := &fakeGH{}
+	runner := &capturedRequest{}
+	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "nonexistent-agent",
+	})
+
+	trigger := make(chan struct{}, 1)
+	d.Trigger = trigger
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- d.Run(ctx)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected Run to return an error for invalid review agent")
+		}
+		if !strings.Contains(err.Error(), "nonexistent-agent") {
+			t.Errorf("expected error to mention agent name, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("Run did not return for invalid review agent")
+	}
+
+	cancel()
+	if !strings.Contains(buf.String(), "review agent validation failed") {
+		t.Errorf("expected validation log, got %q", buf.String())
+	}
+}
