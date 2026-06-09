@@ -110,7 +110,7 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(string(configData), "build_tools: generic") {
 		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
 	}
-	if !strings.Contains(string(configData), "review_command: /oc review") {
+	if !strings.Contains(string(configData), "review_command: /sandman review") {
 		t.Fatalf("config missing review_command default, got:\n%s", configData)
 	}
 

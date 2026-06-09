@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -109,8 +110,52 @@ func (f *fakeGitHubClient) ListPRComments(number int) ([]github.PRComment, error
 	return nil, nil
 }
 
+// newRunDeps returns Dependencies for a run command test. The
+// default review command is overridden to "/oc review" so the
+// review daemon guard (issue #383) is bypassed by default. Tests
+// that need to exercise the guard must build their own
+// Dependencies and chdir into a temp dir without a live socket.
 func newRunDeps(runner batch.Runner) Dependencies {
 	return Dependencies{
+		BatchRunner:  runner,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: &fakeGitHubClient{},
+	}
+}
+
+// newRunDepsInDir creates a fresh temp dir containing .sandman/
+// with a live .sandman/review.sock listener, chdirs the test
+// into it, and returns the dir and Dependencies wired to the
+// supplied runner. Used by tests that need a live socket AND a
+// chdir into a fresh dir to inspect run/control socket state.
+func newRunDepsInDir(t testing.TB, runner batch.Runner) (string, Dependencies) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sm-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sandmanDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			c, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	t.Chdir(dir)
+	return dir, Dependencies{
 		BatchRunner:  runner,
 		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
 		EventLog:     &fakeEventLog{},
@@ -371,7 +416,7 @@ func TestRun_ModelFlagPassedToBatchRunner(t *testing.T) {
 func TestRun_UsesDefaultModelWhenModelFlagOmitted(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
-	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultModel: "openai/gpt-4.1"}}
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultModel: "openai/gpt-4.1", ReviewCommand: "/oc review"}}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -393,8 +438,9 @@ func TestRun_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{
-		Agent:        "custom",
-		DefaultModel: "openai/gpt-4.1",
+		Agent:         "custom",
+		DefaultModel:  "openai/gpt-4.1",
+		ReviewCommand: "/oc review",
 		AgentProviders: map[string]config.Agent{
 			"custom": {Command: "true"},
 		},
@@ -1047,7 +1093,7 @@ func TestRun_PrintsPromptOnlySummaryLabel(t *testing.T) {
 func TestRun_ExplicitZeroParallelPassesThroughToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
-	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultParallel: 8}}
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultParallel: 8, ReviewCommand: "/oc review"}}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1068,7 +1114,7 @@ func TestRun_ExplicitZeroParallelPassesThroughToBatchRunner(t *testing.T) {
 func TestRun_ConfigParallelDefault(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
-	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultParallel: 8}}
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultParallel: 8, ReviewCommand: "/oc review"}}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1109,7 +1155,7 @@ func TestRun_SandboxFlagPassedToBatchRunner(t *testing.T) {
 func TestRun_BaseBranchFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
-	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Git: config.GitConfig{BaseBranch: "trunk"}}}
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", Git: config.GitConfig{BaseBranch: "trunk"}}}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1130,7 +1176,7 @@ func TestRun_BaseBranchFlagPassedToBatchRunner(t *testing.T) {
 func TestRun_BaseBranchDefaultsToConfig(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
-	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Git: config.GitConfig{BaseBranch: "trunk"}}}
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", Git: config.GitConfig{BaseBranch: "trunk"}}}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1277,7 +1323,7 @@ func TestRun_LabelFlagResolvesIssues(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1322,7 +1368,7 @@ func TestRun_TTYPickerSelectsIssues(t *testing.T) {
 	picker := &fakeIssuePicker{issues: []int{10, 20}}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IssuePicker:  picker,
@@ -1353,7 +1399,7 @@ func TestRun_NoArgsNoTTYReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:    &fakeEventLog{},
 		IsTTY:       func() bool { return false },
 	}
@@ -1382,7 +1428,7 @@ func TestRun_CombinePlainArgsWithLabelUsesCombinedQuery(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1427,7 +1473,7 @@ func TestRun_CombinePlainArgsWithLabelSkipsClosedIssue(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1463,7 +1509,7 @@ func TestRun_CombinePlainArgsWithLabelIsCaseInsensitive(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1505,7 +1551,7 @@ func TestRun_CombinePlainArgsWithQueryUsesCombinedQuery(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1540,7 +1586,7 @@ func TestRun_RangeArgUsesCombinedQuery(t *testing.T) {
 	gh := &fakeGitHubClient{}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1585,7 +1631,7 @@ func TestRun_RangeArgWithLabelUsesCombinedQuery(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1635,7 +1681,7 @@ func TestRun_RangeArgWithQueryUsesCombinedQuery(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1683,7 +1729,7 @@ func TestRun_MixedArgsWithLabelUsesCombinedQuery(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1730,7 +1776,7 @@ func TestRun_UnboundedEndRangeUsesQuery(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1767,7 +1813,7 @@ func TestRun_UnboundedEndRangeWithStateQueryUsesIssueState(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1810,7 +1856,7 @@ func TestRun_UnboundedStartRangeUsesQuery(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1861,7 +1907,7 @@ func TestRun_MixedExactAndUnboundedRangePreservesExplicitIssues(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1898,7 +1944,7 @@ func TestRun_LargeRangeRejectedBeforeExpansion(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: &fakeGitHubClient{},
 		IsTTY:        func() bool { return false },
@@ -1931,7 +1977,7 @@ func TestRun_PositionalSelectionWithUnsupportedQueryRejectsTruncatedSearchResult
 	gh := &fakeGitHubClient{searchIssuesResult: results}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -1966,7 +2012,7 @@ func TestRun_RalphFlagDelegatesLowestIssue(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2010,7 +2056,7 @@ func TestRun_RalphFlagWithCountDelegatesN(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2051,7 +2097,7 @@ func TestRun_RalphFlagWithFewerAvailableDelegatesAll(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2089,7 +2135,7 @@ func TestRun_RalphFlagNoIssuesReturnsError(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2117,7 +2163,7 @@ func TestRun_RalphFlagZeroCountReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:    &fakeEventLog{},
 		IsTTY:       func() bool { return false },
 	}
@@ -2144,7 +2190,7 @@ func TestRun_RalphFlagWithArgsReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:    &fakeEventLog{},
 		IsTTY:       func() bool { return false },
 	}
@@ -2176,7 +2222,7 @@ func TestRun_RalphFlagWithLabelUsesLabelSearch(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2210,7 +2256,7 @@ func TestRun_RalphFlagWithQueryUsesRawQuery(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2239,7 +2285,7 @@ func TestRun_RalphFlagWithLabelAndQueryReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:    &fakeEventLog{},
 		IsTTY:       func() bool { return false },
 	}
@@ -2504,7 +2550,7 @@ func TestRun_RalphFlagNegativeCountReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:    &fakeEventLog{},
 		IsTTY:       func() bool { return false },
 	}
@@ -2537,7 +2583,7 @@ func TestRun_RalphFlagSetsConservativeDefaults(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2581,7 +2627,7 @@ func TestRun_RalphFlagParallelOverride(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2631,7 +2677,7 @@ func TestRun_RalphFlagRetriesZeroOverride(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2669,7 +2715,7 @@ func TestRun_RalphFlagMaxContainersOverride(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2712,7 +2758,7 @@ func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2747,7 +2793,7 @@ func TestRun_LabelAndQueryFlagsUseCombinedQuery(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -2778,7 +2824,7 @@ func TestRun_QueryCommaSeparatedLabelUsesSearch(t *testing.T) {
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
@@ -3050,7 +3096,11 @@ func TestRun_PromptArgValidationHappensBeforeDependencyResolution(t *testing.T) 
 
 func TestRun_PromptConfigDefaultsEmpty(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	// newRunDepsInDir provides a live review.sock and a config
+	// with no ReviewCommand. This test asserts the new default
+	// review command value, so we use the config-default
+	// ReviewCommand (not the socket-bypass value).
+	_, deps := newRunDepsInDir(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3072,7 +3122,7 @@ func TestRun_PromptConfigDefaultsEmpty(t *testing.T) {
 	if len(spy.req.PromptConfig.PromptArgs) != 0 {
 		t.Errorf("expected empty PromptArgs, got %v", spy.req.PromptConfig.PromptArgs)
 	}
-	if spy.req.PromptConfig.ReviewCommand != "/oc review" {
+	if spy.req.PromptConfig.ReviewCommand != "/sandman review" {
 		t.Errorf("expected default ReviewCommand, got %q", spy.req.PromptConfig.ReviewCommand)
 	}
 }

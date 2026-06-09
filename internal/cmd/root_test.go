@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,58 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
+
+// newTestDeps returns Dependencies wired with test doubles. The
+// default review command is overridden to "/oc review" so the
+// review daemon guard (issue #383) is bypassed by default. Tests
+// that need to exercise the guard must build their own
+// Dependencies. Tests that need a live .sandman/review.sock
+// (e.g. the run-guard-bypass tests) should also build their own
+// Dependencies or set ReviewCommand: "/oc review" explicitly.
+func newTestDeps() Dependencies {
+	return Dependencies{
+		BatchRunner:    &fakeBatchRunner{},
+		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:       &fakeEventLog{},
+		GitHubClient:   &fakeGitHubClient{},
+		PromptRenderer: &prompt.Engine{},
+		IssuePicker:    &fakeIssuePicker{},
+		IsTTY:          func() bool { return false },
+	}
+}
+
+// newSandmanDir creates a temp dir with a live
+// .sandman/review.sock listener. The caller must t.Chdir(dir)
+// before invoking a command whose default review command is
+// "/sandman review" so the run/continue/ralph guard finds the
+// live socket. Returns the dir for tests that need to inspect it.
+func newSandmanDir(t testing.TB) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sm-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sandmanDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			c, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	return dir
+}
 
 // fakeStore is a test double for config.Store.
 type fakeStore struct {
@@ -94,19 +147,6 @@ func (f *fakeGitRunner) pruneAndDeleteBranch(branch string) error {
 func (f *fakeGitRunner) removeOrphanBranches() (int, error) {
 	f.removeOrphanBranchesCalled = true
 	return f.removeOrphanBranchesCount, f.removeOrphanBranchesErr
-}
-
-// newTestDeps returns Dependencies wired with test doubles.
-func newTestDeps() Dependencies {
-	return Dependencies{
-		BatchRunner:    &fakeBatchRunner{},
-		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode"}},
-		EventLog:       &fakeEventLog{},
-		GitHubClient:   &fakeGitHubClient{},
-		PromptRenderer: &prompt.Engine{},
-		IssuePicker:    &fakeIssuePicker{},
-		IsTTY:          func() bool { return false },
-	}
 }
 
 func TestRootHelpListsAllCommands(t *testing.T) {

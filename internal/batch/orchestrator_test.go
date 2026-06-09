@@ -2405,7 +2405,7 @@ sandbox: worktree
 	if !strings.Contains(got, "Current branch: `sandman/42-fix-login-bug`") {
 		t.Errorf("prompt missing branch info, got:\n%s", got)
 	}
-	if !strings.Contains(got, "Review command: `/oc review`") {
+	if !strings.Contains(got, "Review command: `/sandman review`") {
 		t.Errorf("prompt missing review command, got:\n%s", got)
 	}
 
