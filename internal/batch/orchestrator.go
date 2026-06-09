@@ -1642,6 +1642,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
+			// Always pass the handoff content verbatim (or empty template if
+			// missing). The agent reads its next instruction from the handoff
+			// document's ## Next Step field directly. The openPR value is only
+			// used below to decide whether to reset the branch — the agent
+			// receives the same handoff content regardless of open-PR state.
 			handoffPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
 			handoffContent, handoffExists := ReadHandoffContent(handoffPath)
 			attemptRenderCfg.HandoffPrompt = handoffContent

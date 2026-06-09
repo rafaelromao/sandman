@@ -483,6 +483,9 @@ func TestContinue_UsesEmptyHandoffTemplateWhenContextMissing(t *testing.T) {
 	if !strings.Contains(spy.req.HandoffPrompts[42], "Continue the work.") {
 		t.Fatalf("expected handoff prompt to have Continue the work., got %q", spy.req.HandoffPrompts[42])
 	}
+	if !strings.Contains(buf.String(), "warning: no handoff found") {
+		t.Fatalf("expected warning about missing handoff, got %q", buf.String())
+	}
 }
 
 func TestContinue_FailsWhenPRMerged(t *testing.T) {

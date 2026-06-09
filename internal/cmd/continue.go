@@ -91,7 +91,11 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				baseBranches[num] = strings.TrimSpace(baseBranch)
 				previousRunIDs[num] = lastRun.RunID
 
-				content, _ := batch.ReadHandoffContent(filepath.Join(worktreePath, ".sandman", "handoff.md"))
+				handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+				content, exists := batch.ReadHandoffContent(handoffPath)
+				if !exists {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found at %q; using empty template\n", handoffPath)
+				}
 				handoffPrompts[num] = content
 			}
 
