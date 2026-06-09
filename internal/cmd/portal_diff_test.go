@@ -12,7 +12,7 @@ import (
 
 func TestPortalDiffUpdateCells_StatusChangeUpdatesOnlyBadge(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1', branch: 'main' };
+const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1', branch: 'main' };
 const runNew = Object.assign({}, runOld, { status: 'success' });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -39,7 +39,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateCells_DurationChangeUpdatesOnlyDuration(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1', branch: 'main', duration: '5s' };
+const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1', branch: 'main', duration: '5s' };
 const runNew = Object.assign({}, runOld, { duration: '12s' });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -62,7 +62,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateCells_TitleChangeUpdatesOnlyTitle(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1', branch: 'main' };
+const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1', branch: 'main' };
 const runNew = Object.assign({}, runOld, { issueLabel: 'Issue 1 updated' });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -85,7 +85,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateCells_KindChangeUpdatesRowClass(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1' };
+const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
 const runNew = Object.assign({}, runOld, { kind: 'completed' });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -103,7 +103,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateCells_AriaExpandedChangeUpdatesRowAttr(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1' };
+const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
 const runNew = runOld;
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: null };
@@ -122,7 +122,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateCells_ZeroMutationsOnUnchangedRun(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1', branch: 'main' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1', branch: 'main' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -139,7 +139,7 @@ console.log('PASS');
 
 func TestPortalDiffCreateRunRow_DetailRowWhenExpanded(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a' };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -160,7 +160,7 @@ console.log('PASS');
 
 func TestPortalDiffCreateRunRow_NoDetailRowWhenNotExpanded(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'b' };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -174,7 +174,7 @@ console.log('PASS');
 
 func TestPortalDiffCreateRunRow_NoInnerHTMLOnBody(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a' };
 SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -187,7 +187,7 @@ console.log('PASS');
 
 func TestPortalDiffRemoveRunRow_RemovesDataAndDetail(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a' };
 SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -203,7 +203,7 @@ console.log('PASS');
 
 func TestPortalDiffRemoveRunRow_RemovesDataRowOnlyWhenNoDetail(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -218,7 +218,7 @@ console.log('PASS');
 
 func TestPortalDiffDiffRuns_MatchesExistingRow(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1', branch: 'main' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1', branch: 'main' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -237,8 +237,8 @@ console.log('PASS');
 
 func TestPortalDiffDiffRuns_InsertsNewRun(t *testing.T) {
 	js := `const body = makeMockBody();
-const runA = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1' };
-const runB = { key: 'b', kind: 'active', status: 'active', issueLabel: 'B', runId: 'r2' };
+const runA = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' };
+const runB = { key: 'b', kind: 'active', status: 'running', issueLabel: 'B', runId: 'r2' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.insertRunRow(body, runA, opts);
@@ -256,8 +256,8 @@ console.log('PASS');
 
 func TestPortalDiffDiffRuns_RemovesGoneRun(t *testing.T) {
 	js := `const body = makeMockBody();
-const runA = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1' };
-const runB = { key: 'b', kind: 'active', status: 'active', issueLabel: 'B', runId: 'r2' };
+const runA = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' };
+const runB = { key: 'b', kind: 'active', status: 'running', issueLabel: 'B', runId: 'r2' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a' };
 SandmanPortalDiff.insertRunRow(body, runA, opts);
@@ -277,9 +277,9 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_PreservesRowIdentityForUnchanged(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
-  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1' },
-  { key: 'b', kind: 'active', status: 'active', issueLabel: 'B', runId: 'r2' },
-  { key: 'c', kind: 'active', status: 'active', issueLabel: 'C', runId: 'r3' },
+  { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' },
+  { key: 'b', kind: 'active', status: 'running', issueLabel: 'B', runId: 'r2' },
+  { key: 'c', kind: 'active', status: 'running', issueLabel: 'C', runId: 'r3' },
 ];
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -301,9 +301,9 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_ReordersRows(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
-  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1' },
-  { key: 'b', kind: 'active', status: 'active', issueLabel: 'B', runId: 'r2' },
-  { key: 'c', kind: 'active', status: 'active', issueLabel: 'C', runId: 'r3' },
+  { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' },
+  { key: 'b', kind: 'active', status: 'running', issueLabel: 'B', runId: 'r2' },
+  { key: 'c', kind: 'active', status: 'running', issueLabel: 'C', runId: 'r3' },
 ];
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -325,7 +325,7 @@ console.log('PASS');
 
 func TestPortalDiffDiffRuns_InsertsDetailRowWhenExpanded(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' };
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, [run], opts1);
@@ -343,7 +343,7 @@ console.log('PASS');
 
 func TestPortalDiffDiffRuns_RemovesDetailRowWhenCollapsed(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' };
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: 'a' };
 SandmanPortalDiff.diffRuns(body, [run], opts1);
@@ -361,7 +361,7 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_AbortButtonsAllowedOnSharedSocketRows(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
-  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', issueNumber: 41, socketPath: '/tmp/sock', batchKey: 'run-41-1' },
+  { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', issueNumber: 41, socketPath: '/tmp/sock', batchKey: 'run-41-1' },
   { key: 'b', kind: 'active', status: 'queued', issueLabel: 'B', runId: 'r2', issueNumber: 42, socketPath: '/tmp/sock', batchKey: 'run-42-1' },
 ];
 const abortReservations = new Set();
@@ -409,7 +409,7 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_StopButtonsHiddenWhenPlatformUnsupported(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
-  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', socketPath: '/tmp/sock', batchKey: 'run-1' },
+  { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', socketPath: '/tmp/sock', batchKey: 'run-1' },
 ];
 const abortReservations = new Set();
 const opts = { helpers, abortReservations, abortSupported: false, expandedKey: null };
@@ -426,7 +426,7 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_AbortButtonHiddenForRowsFromFinishedBatch(t *testing.T) {
 	js := `const body = makeMockBody();
 const abortReservations = new Set();
-const activeRun = { key: 'run-42-1-issue-42', kind: 'active', status: 'active', issueLabel: '#42', runId: 'r1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: 'run-42-1' };
+const activeRun = { key: 'run-42-1-issue-42', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: 'run-42-1' };
 const historicalBlocked = { key: 'run-old-1', kind: 'active', status: 'blocked', issueLabel: '#42', runId: 'r-old', issueNumber: 42, socketPath: '/tmp/sock', batchKey: '' };
 if (!helpers.isRunAbortable(activeRun, abortReservations)) throw new Error('active run with batchKey should be abortable');
 if (helpers.isRunAbortable(historicalBlocked, abortReservations)) throw new Error('historical blocked row with empty batchKey should NOT be abortable');
@@ -447,7 +447,7 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_AbortButtonHiddenWhenRunDirSocketVanishes(t *testing.T) {
 	js := `const body = makeMockBody();
 const abortReservations = new Set();
-const deadDaemonRun = { key: 'run-42-1-issue-42', kind: 'active', status: 'active', issueLabel: '#42', runId: 'r1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: '' };
+const deadDaemonRun = { key: 'run-42-1-issue-42', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: '' };
 if (helpers.isRunAbortable(deadDaemonRun, abortReservations)) throw new Error('run with empty batchKey (vanished socket) should NOT be abortable');
 
 const opts = { helpers, abortReservations, expandedKey: null };
@@ -462,7 +462,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailLog_LogPreUpdatedInPlace(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -485,7 +485,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailLog_UnchangedLogSkipsRefill(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
@@ -508,7 +508,7 @@ console.log('PASS');
 
 func TestPortalDiffFillTerminalPre_PreservesTextNodes(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'first\nsecond' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'first\nsecond' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
@@ -524,7 +524,7 @@ console.log('PASS');
 
 func TestPortalDiffFillTerminalPre_ApostropheNotMishandled(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: "don't worry\nI'll fix it" };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: "don't worry\nI'll fix it" };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
@@ -539,7 +539,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailLog_AppendPreservesExistingNodes(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -564,7 +564,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailLog_AppendRehighlightsTrailingToken(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'http://example/' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'http://example/' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -591,7 +591,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailLog_AppendAfterNewlineIsTreatedAsBoundary(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\n' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\n' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -615,7 +615,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailLog_AppendRebuildsOnInlineTokenExtension(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'foo running' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'foo running' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -638,7 +638,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailLog_InlineAppendPreservesEarlierLines(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nfoo running' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\nfoo running' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -660,7 +660,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailLog_RewriteReplacesNodes(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -686,7 +686,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailPanelLog_AppendExtendsLog(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -707,7 +707,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailPanelLog_TruncationFallsBackToReload(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2\nline 3' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2\nline 3' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -731,7 +731,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailPanelLog_NoOpWhenDetailNotOpen(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -746,7 +746,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailPanelLog_PlaceholderFollowedByRealLog(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: '' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: '' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -765,7 +765,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailPanelLog_PreservesScrollPosition(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'line 1' };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -792,7 +792,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailEvents_SkipsRebuildWhenUnchanged(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'log text', events: [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }] };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'log text', events: [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }] };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
@@ -883,7 +883,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailEvents_RebuildsWhenEventsChange(t *testing.T) {
 	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', events: [{ type: 'start', timestamp: 1, payload: { ok: true } }] };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [{ type: 'start', timestamp: 1, payload: { ok: true } }] };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
 SandmanPortalDiff.diffRuns(body, [run1], opts);
@@ -911,7 +911,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_RebuildsAfterTabRoundTrip(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1', log: 'log text', events: [{ type: 'start', timestamp: 1, payload: { ok: true } }] };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'log text', events: [{ type: 'start', timestamp: 1, payload: { ok: true } }] };
 const stopGroups = new Set();
 const optsLog = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 const optsEvents = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
@@ -994,7 +994,7 @@ console.log('PASS');
 
 func TestPortalDiffSetEmpty_UsesReplaceChildren(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'Issue 1', runId: 'r1' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -1016,7 +1016,7 @@ const placeholder = makeMockRow();
 placeholder.tagName = 'TR';
 placeholder.setAttribute('data-empty', 'true');
 body.appendChild(placeholder);
-const run = { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1' };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const result = SandmanPortalDiff.diffRuns(body, [run], opts);
@@ -1030,8 +1030,8 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_ReorderAccountsForDetailRows(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
-  { key: 'a', kind: 'active', status: 'active', issueLabel: 'A', runId: 'r1' },
-  { key: 'b', kind: 'active', status: 'active', issueLabel: 'B', runId: 'r2' },
+  { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' },
+  { key: 'b', kind: 'active', status: 'running', issueLabel: 'B', runId: 'r2' },
 ];
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a' };
@@ -1114,6 +1114,7 @@ const formatSource = (run) => {
 };
 const statusClass = (run) => {
   const s = String(run.status || '').toLowerCase();
+  if (s === 'running') return 'running';
   if (s === 'active') return 'active';
   if (s === 'success') return 'success';
   if (s === 'failure' || s === 'failed' || s === 'error') return 'failure';
@@ -1123,7 +1124,7 @@ const statusClass = (run) => {
 };
 const renderStatusBadge = (run) => {
   const k = statusClass(run);
-  const label = run.status || (run.kind === 'active' ? 'active' : 'completed');
+  const label = run.status || (run.kind === 'active' ? 'running' : 'completed');
   return '<span class="badge ' + escapeHTML(k) + '"><span class="dot"></span>' + escapeHTML(label) + '</span>';
 };
 const renderRunMeta = (run) => {
@@ -1139,7 +1140,7 @@ const renderTerminalContent = (text) => {
 };
 const isRunAbortable = (run, abortReservations) => {
   if (!run || run.kind !== 'active') return false;
-  if (run.status !== 'active' && run.status !== 'queued' && run.status !== 'blocked') return false;
+  if (run.status !== 'running' && run.status !== 'queued' && run.status !== 'blocked') return false;
   if (!run.batchKey) return false;
   const reservationKey = run.key + ':' + String(run.issueNumber != null ? run.issueNumber : '');
   if (abortReservations && abortReservations.has && abortReservations.has(reservationKey)) return false;

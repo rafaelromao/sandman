@@ -179,7 +179,7 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	for _, run := range runs {
 		byIssue[run.IssueNumber] = run
 	}
-	if run := byIssue[1]; run.Kind != "active" || run.IssueLabel != "#1" || run.Status != "active" {
+	if run := byIssue[1]; run.Kind != "active" || run.IssueLabel != "#1" || run.Status != "running" {
 		t.Fatalf("unexpected active run: %#v", run)
 	}
 	if run := byIssue[1]; !strings.Contains(run.Log, "live output") || strings.Contains(run.Log, "hidden output") || strings.Contains(run.Log, "\x1b[") {
@@ -196,6 +196,90 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	}
 	if run := byIssue[9]; run.Status != "success" || run.Kind != "completed" || !strings.Contains(run.Log, "issue nine log") {
 		t.Fatalf("unexpected historical completed run: %#v", run)
+	}
+}
+
+func TestPortal_ReviewRunShowsReviewingStatus(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-review-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "review": true, "pr_number": 42}},
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-normal-1", Issue: 2, Payload: map[string]any{"branch": "sandman/2-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d: %#v", len(runs), runs)
+	}
+	byIssue := map[int]portalRun{}
+	for _, run := range runs {
+		byIssue[run.IssueNumber] = run
+	}
+
+	reviewRun, ok := byIssue[1]
+	if !ok {
+		t.Fatal("expected review run for issue 1")
+	}
+	if reviewRun.Status != "reviewing" {
+		t.Fatalf("expected status 'reviewing' for active review run, got %q", reviewRun.Status)
+	}
+	if !reviewRun.Review {
+		t.Fatal("expected Review=true for review run")
+	}
+	if reviewRun.PRNumber != 42 {
+		t.Fatalf("expected PRNumber=42 for review run, got %d", reviewRun.PRNumber)
+	}
+	if reviewRun.Kind != "active" {
+		t.Fatalf("expected kind 'active' for reviewing run, got %q", reviewRun.Kind)
+	}
+
+	normalRun, ok := byIssue[2]
+	if !ok {
+		t.Fatal("expected normal run for issue 2")
+	}
+	if normalRun.Status != "running" {
+		t.Fatalf("expected status 'running' for normal active run, got %q", normalRun.Status)
+	}
+	if normalRun.Review {
+		t.Fatal("expected Review=false for normal run")
+	}
+}
+
+func TestPortal_CompletedReviewRunShowsTerminalStatus(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-review-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "review": true, "pr_number": 42}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-review-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix", "review": true}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d: %#v", len(runs), runs)
+	}
+	run := runs[0]
+	if run.Status != "success" {
+		t.Fatalf("expected status 'success' for completed review run, got %q", run.Status)
+	}
+	if !run.Review {
+		t.Fatal("expected Review=true for completed review run")
+	}
+	if run.Kind != "completed" {
+		t.Fatalf("expected kind 'completed' for finished review run, got %q", run.Kind)
 	}
 }
 
@@ -1972,7 +2056,7 @@ func TestPortalRunFromActiveBatchIssue_AbortedRunHasAbortedByOperatorLog(t *test
 func TestDedupPortalRunGroup_AbortedWinsOverActiveBlockedQueued(t *testing.T) {
 	base := time.Now().Add(-10 * time.Minute)
 	group := []portalRun{
-		{Key: "active-row", Kind: "active", Status: "active", IssueNumber: 42, StartedAt: base.Add(1 * time.Minute)},
+		{Key: "active-row", Kind: "active", Status: "running", IssueNumber: 42, StartedAt: base.Add(1 * time.Minute)},
 		{Key: "blocked-row", Kind: "completed", Status: "blocked", IssueNumber: 42, StartedAt: base.Add(2 * time.Minute)},
 		{Key: "queued-row", Kind: "completed", Status: "queued", IssueNumber: 42, StartedAt: base.Add(3 * time.Minute)},
 		{Key: "aborted-row", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base},
