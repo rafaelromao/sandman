@@ -146,6 +146,7 @@ Move a completed run directory from `.sandman/runs/<id>` to `.sandman/archive/<i
 
 ```bash
 sandman archive run <id>
+sandman archive older-than <days>
 ```
 
 `batch` is registered as an alias of `run` (they share the same handler) and is interchangeable from the command line.
@@ -153,8 +154,11 @@ sandman archive run <id>
 | Subcommand | Description |
 |------------|-------------|
 | `run <id>` | Move `.sandman/runs/<id>` to `.sandman/archive/<id>` |
+| `older-than <days>` | Move every dead run whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than `<days>` days to `.sandman/archive/<id>` |
 
 The run's daemon must not be live. `sandman archive run` calls `daemon.IsRunActive` on the run directory and returns an error if either `cmd.sock` or `run.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
+
+`sandman archive older-than <days>` scans every run directory under `.sandman/runs/`, archives those whose daemon is dead and whose timestamp is at or before the `<days>`-day cutoff, and skips the rest. A run whose daemon is still live is never archived regardless of its age. If the destination `.sandman/archive/<id>` already exists, the run is skipped (with a `skip` message on stderr) and the existing archive entry is left untouched. `<days>` must be a non-negative integer; `0` archives every dead run.
 
 ## `sandman attach`
 

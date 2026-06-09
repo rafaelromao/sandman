@@ -43,6 +43,22 @@ type DeadBatch struct {
 	Manifest BatchManifest
 }
 
+// RunTimestamp returns the timestamp callers should use to age-sort a
+// dead batch. The manifest's CreatedAt is preferred when present; the
+// run directory's modification time is used as a fallback so unmanif-
+// ested runs can still be archived by age. Returns the zero time when
+// neither source is available.
+func (d DeadBatch) RunTimestamp() time.Time {
+	if !d.Manifest.CreatedAt.IsZero() {
+		return d.Manifest.CreatedAt
+	}
+	info, err := os.Stat(d.RunDir)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
+}
+
 // FindDeadRunBatches scans <baseDir>/runs/ for run directories that are
 // not currently owned by a live daemon and returns their parsed
 // manifests. Results are sorted lexicographically by RunDir for stable
