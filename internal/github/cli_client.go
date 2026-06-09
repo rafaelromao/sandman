@@ -1,8 +1,10 @@
 package github
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -218,6 +220,94 @@ func (c *CLIClient) FindPRByBranch(branch string) (*PR, error) {
 	}
 	payload := payloads[0]
 	return &PR{Number: payload.Number, State: payload.State, Merged: strings.TrimSpace(payload.MergedAt) != "", HeadRefName: payload.HeadRefName, HeadRefOid: payload.HeadRefOid}, nil
+}
+
+// prListPageLimit caps the number of PRs fetched in a single `gh pr list`
+// invocation. The review daemon scans all open PRs but is not a real-time
+// system; a high cap is appropriate.
+const prListPageLimit = "1000"
+
+// ListOpenPRs lists all open pull requests in the current repo via gh CLI.
+func (c *CLIClient) ListOpenPRs() ([]PR, error) {
+	cmd := c.command("gh", "pr", "list", "--state", "open", "--json", "number,state,title,body,mergedAt,headRefName,headRefOid", "--limit", prListPageLimit)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh pr list: %w\n%s", err, out)
+	}
+
+	var payloads []prPayload
+	if err := json.Unmarshal(out, &payloads); err != nil {
+		return nil, fmt.Errorf("parse prs: %w", err)
+	}
+
+	prs := make([]PR, 0, len(payloads))
+	for _, payload := range payloads {
+		prs = append(prs, PR{
+			Number:      payload.Number,
+			State:       payload.State,
+			Title:       payload.Title,
+			Body:        payload.Body,
+			Merged:      strings.TrimSpace(payload.MergedAt) != "",
+			HeadRefName: payload.HeadRefName,
+			HeadRefOid:  payload.HeadRefOid,
+		})
+	}
+	return prs, nil
+}
+
+type prCommentPayload struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+// prCommentPageSize is the per-page count for `gh api` paginated calls.
+// 100 is the largest value GitHub accepts.
+const prCommentPageSize = "100"
+
+// ListPRComments fetches PR conversation (issue-style) comments for the given
+// PR number via the GitHub REST API. These are the comments that appear in
+// the PR's "Conversation" tab, where `/sandman review` is typically posted.
+func (c *CLIClient) ListPRComments(number int) ([]PRComment, error) {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=%s", owner, repo, number, prCommentPageSize)
+	cmd := c.command("gh", "api", path, "--paginate")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh api pr comments: %w\n%s", err, out)
+	}
+
+	if len(bytes.TrimSpace(out)) == 0 {
+		return nil, nil
+	}
+
+	var payloads []prCommentPayload
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for {
+		var page []prCommentPayload
+		if err := dec.Decode(&page); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("parse pr comments: %w", err)
+		}
+		payloads = append(payloads, page...)
+	}
+
+	comments := make([]PRComment, 0, len(payloads))
+	for _, payload := range payloads {
+		comments = append(comments, PRComment{
+			ID:   strconv.FormatInt(payload.ID, 10),
+			Body: payload.Body,
+		})
+	}
+	return comments, nil
 }
 
 func (c *CLIClient) fetchIssuePayload(owner, repo string, number int) (issuePayload, error) {

@@ -22,6 +22,12 @@ type PR struct {
 	HeadRefOid  string
 }
 
+// PRComment holds a PR conversation comment fetched from the GitHub REST API.
+type PRComment struct {
+	ID   string
+	Body string
+}
+
 // Client wraps gh CLI for GitHub operations.
 type Client interface {
 	FetchIssue(number int) (*Issue, error)
@@ -29,4 +35,6 @@ type Client interface {
 	FetchPR(number int) (*PR, error)
 	FindPRByBranch(branch string) (*PR, error)
 	SearchIssues(query string) ([]Issue, error)
+	ListOpenPRs() ([]PR, error)
+	ListPRComments(number int) ([]PRComment, error)
 }

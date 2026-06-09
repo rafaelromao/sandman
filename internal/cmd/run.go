@@ -65,6 +65,14 @@ func (c *cachedGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
 	return c.client.FindPRByBranch(branch)
 }
 
+func (c *cachedGitHubClient) ListOpenPRs() ([]github.PR, error) {
+	return c.client.ListOpenPRs()
+}
+
+func (c *cachedGitHubClient) ListPRComments(number int) ([]github.PRComment, error) {
+	return c.client.ListPRComments(number)
+}
+
 // NewRunCmd creates the run command.
 func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
