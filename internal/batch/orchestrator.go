@@ -1448,6 +1448,7 @@ func (s *runSession) runOnce(
 				continue
 			}
 			if mergeRequired {
+				// Remove handoff left by the previous run; nonexistence is fine.
 				handoffPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
 				os.Remove(handoffPath)
 			}

@@ -1115,6 +1115,13 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
+	handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+	if err := os.MkdirAll(filepath.Dir(handoffPath), 0755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	if err := os.WriteFile(handoffPath, []byte("## Stage: running\n\n## Completed\nSome work.\n"), 0644); err != nil {
+		t.Fatalf("write handoff.md: %v", err)
+	}
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: branch},
@@ -1157,18 +1164,15 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 	if status, _ := events[1].Payload["status"].(string); status != "failure" {
 		t.Fatalf("expected terminal status failure, got %q", status)
 	}
+	// Negative case: unmerged PR must NOT remove an existing handoff.
+	if _, err := os.Stat(handoffPath); err != nil {
+		t.Fatalf("expected handoff.md to be preserved when PR is not merged, err=%v", err)
+	}
 }
 
 func TestRunSingle_RemovesHandoffOnMergedPR(t *testing.T) {
 	workDir := t.TempDir()
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get wd: %v", err)
-	}
-	if err := os.Chdir(workDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	t.Chdir(workDir)
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
@@ -4053,7 +4057,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		"## Completed\nSecond continue.\n",
 	}}
 	log := &spyEventLog{}
-	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log)
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: {Merged: true, HeadRefName: branch}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log)
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	o.runnableFactory = &handoffFlowRunnableFactory{state: state}
 
@@ -4061,8 +4065,12 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial run failed: %v", err)
 	}
-	// After a successful run on a merged PR, handoff.md is cleaned up by the orchestrator.
-	_, err = os.Stat(filepath.Join(worktreePath, ".sandman", "handoff.md"))
+	// Verify the runnable wrote the handoff (write-side assertion) before the orchestrator removed it.
+	sandmanDir := filepath.Join(worktreePath, ".sandman")
+	if _, err := os.Stat(sandmanDir); err != nil {
+		t.Fatalf("expected .sandman dir to exist (runnable should have created it), err=%v", err)
+	}
+	_, err = os.Stat(filepath.Join(sandmanDir, "handoff.md"))
 	if !os.IsNotExist(err) {
 		t.Fatalf("expected handoff.md to be removed after merged PR, err=%v", err)
 	}
@@ -4072,7 +4080,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("first continue failed: %v", err)
 	}
 	// Continuation writes a new handoff, but after the merged-PR check it is also cleaned up.
-	_, err = os.Stat(filepath.Join(worktreePath, ".sandman", "handoff.md"))
+	_, err = os.Stat(filepath.Join(sandmanDir, "handoff.md"))
 	if !os.IsNotExist(err) {
 		t.Fatalf("expected handoff.md to be removed after merged PR on continue, err=%v", err)
 	}
@@ -4081,7 +4089,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second continue failed: %v", err)
 	}
-	_, err = os.Stat(filepath.Join(worktreePath, ".sandman", "handoff.md"))
+	_, err = os.Stat(filepath.Join(sandmanDir, "handoff.md"))
 	if !os.IsNotExist(err) {
 		t.Fatalf("expected handoff.md to be removed after merged PR on second continue, err=%v", err)
 	}

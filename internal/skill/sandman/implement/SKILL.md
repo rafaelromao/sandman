@@ -138,9 +138,7 @@ When the delegated review result is either PR approval or a hard blocker:
 - Write the result to `.sandman/handoff.md` in the current worktree
 - If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
 
-> **Hard rule**: If the PR was already merged (e.g. `sandman-pr-merge` already ran and succeeded), do NOT write a handoff document. Skip step 12 entirely. A post-merge handoff is misleading — it suggests work remains, but there is none.
-
-After the PR is merged, do NOT write a new handoff. The file naturally disappears on worktree cleanup or the next `sandman run`. The orchestrator also enforces this by deleting `.sandman/handoff.md` from the worktree when the PR merge gate passes.
+> **Hard rule**: If the PR was already merged (e.g. `sandman-pr-merge` already ran and succeeded), do NOT write a handoff document. Skip step 12 entirely. A post-merge handoff is misleading — it suggests work remains, but there is none. The orchestrator also enforces this by deleting `.sandman/handoff.md` from the worktree when the PR merge gate passes.
 
 ## Checklist
 
