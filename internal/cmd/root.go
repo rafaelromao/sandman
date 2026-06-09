@@ -16,14 +16,15 @@ type IssuePicker interface {
 
 // Dependencies holds the domain adapters injected into CLI commands.
 type Dependencies struct {
-	BatchRunner    batch.Runner
-	ConfigStore    config.Store
-	EventLog       events.EventLog
-	GitHubClient   github.Client
-	PromptRenderer prompt.Renderer
-	IssuePicker    IssuePicker
-	IsTTY          func() bool
-	GitRunner      gitRunner
+	BatchRunner      batch.Runner
+	ConfigStore      config.Store
+	EventLog         events.EventLog
+	GitHubClient     github.Client
+	PromptRenderer   prompt.Renderer
+	IssuePicker      IssuePicker
+	IsTTY            func() bool
+	GitRunner        gitRunner
+	RunActivityProbe runActivityProbe
 }
 
 // NewRootCmd constructs the command tree with injected dependencies.
@@ -46,6 +47,7 @@ execution, and event logging for automated coding workflows.`,
 	root.AddCommand(NewAttachCmd())
 	root.AddCommand(NewPortalCmd(deps))
 	root.AddCommand(NewReviewCmd(deps))
+	root.AddCommand(NewArchiveCmd(deps))
 
 	return root
 }

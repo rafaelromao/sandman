@@ -119,7 +119,7 @@ func TestRootHelpListsAllCommands(t *testing.T) {
 	}
 
 	out := buf.String()
-	commands := []string{"init", "run", "status", "history", "continue", "clean", "config", "attach", "portal"}
+	commands := []string{"init", "run", "status", "history", "continue", "clean", "config", "attach", "portal", "archive"}
 	for _, cmd := range commands {
 		if !strings.Contains(out, cmd) {
 			t.Errorf("help output missing command %q", cmd)
