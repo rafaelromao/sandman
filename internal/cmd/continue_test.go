@@ -190,7 +190,7 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -253,7 +253,7 @@ func TestContinue_RunIdleTimeoutFlagPassedToBatchRunner(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -289,7 +289,7 @@ func TestContinue_RunIdleTimeoutZeroAccepted(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -325,7 +325,7 @@ func TestContinue_RunIdleTimeoutNegativeValueRejected(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -359,9 +359,10 @@ func TestContinue_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
 	deps := Dependencies{
 		BatchRunner: spy,
 		ConfigStore: &fakeStore{config: &config.Config{
-			Agent:        "custom",
-			DefaultModel: "openai/gpt-4.1",
-			WorktreeDir:  dir,
+			Agent:         "custom",
+			DefaultModel:  "openai/gpt-4.1",
+			WorktreeDir:   dir,
+			ReviewCommand: "/oc review",
 			AgentProviders: map[string]config.Agent{
 				"custom": {Command: "true"},
 			},
@@ -396,7 +397,7 @@ func TestContinue_WarnsAndUsesBarePromptWhenContinuationContextMissing(t *testin
 	log := &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -430,7 +431,7 @@ func TestContinue_FailsWhenPRMerged(t *testing.T) {
 	log := &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 		GitHubClient: &fakeGitHubClient{prs: map[string]*github.PR{
 			branch: {Number: 42, State: "closed", Merged: true, HeadRefName: branch},
@@ -475,7 +476,7 @@ func TestContinue_DoesNotBlockWhenPRNotMerged(t *testing.T) {
 			log := &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
 			deps := Dependencies{
 				BatchRunner: spy,
-				ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+				ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 				EventLog:    log,
 				GitHubClient: &fakeGitHubClient{prs: map[string]*github.PR{
 					branch: tc.pr,
@@ -568,7 +569,7 @@ func TestContinue_ChainedContinuationFlow(t *testing.T) {
 	runner := &handoffFlowBatchRunner{log: log, state: state, worktreeDir: dir}
 	deps := Dependencies{
 		BatchRunner: runner,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -645,7 +646,7 @@ func TestContinue_FailsWhenWorktreeMissing(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: &spyContinueBatchRunner{result: &batch.Result{}},
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: t.TempDir(), AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: t.TempDir(), ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -691,7 +692,7 @@ func TestContinue_MultipleIssuesBuildsBranchesAndPreviousRunIDsMaps(t *testing.T
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -759,7 +760,7 @@ func TestContinue_FailsFastWhenAnyWorktreeMissingForMultipleIssues(t *testing.T)
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -795,7 +796,7 @@ func TestContinue_FailsWhenAnyIssueHasNoPreviousRun(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -844,7 +845,7 @@ func TestContinue_ExitsWithCode130OnAbort(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -899,7 +900,7 @@ func TestContinue_PreservesRunBatchErrorMessage(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -1070,7 +1071,7 @@ func TestContinue_StageAwarePrompt(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -1105,5 +1106,76 @@ func TestContinue_StageAwarePrompt(t *testing.T) {
 	}
 	if spy.req.PromptConfig.HandoffPrompt != "finish the tests" {
 		t.Fatalf("expected raw prompt preserved, got %q", spy.req.PromptConfig.HandoffPrompt)
+	}
+}
+
+// continueGuardDeps returns Dependencies for continue-guard tests,
+// with a chdir into a temp dir that does NOT have a
+// .sandman/review.sock. The provided cfg is the config the test
+// wants the command to load.
+func continueGuardDeps(t testing.TB, cfg *config.Config) (Dependencies, *spyContinueBatchRunner) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sm-continue-guard-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatal(err)
+	}
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: cfg},
+		EventLog:    log,
+	}
+	t.Chdir(dir)
+	return deps, spy
+}
+
+func TestContinue_GuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testing.T) {
+	cfg := &config.Config{Agent: "opencode", WorktreeDir: ".", ReviewCommand: "/sandman review"}
+	deps, spy := continueGuardDeps(t, cfg)
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error from review guard, got nil")
+	}
+	if err.Error() != reviewGuardMessage {
+		t.Errorf("unexpected error message\nwant:\n%s\ngot:\n%s", reviewGuardMessage, err.Error())
+	}
+	if spy.called {
+		t.Errorf("expected batch runner NOT to be called, but it was")
+	}
+}
+
+func TestContinue_GuardBypassedWhenReviewCommandHasNoSandmanSubstring(t *testing.T) {
+	cfg := &config.Config{Agent: "opencode", WorktreeDir: ".", ReviewCommand: "/oc review"}
+	deps, spy := continueGuardDeps(t, cfg)
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "finish the tests"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Errorf("expected batch runner to be called")
 	}
 }

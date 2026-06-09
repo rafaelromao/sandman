@@ -198,11 +198,12 @@ func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode stri
 	}
 
 	store := &fakeStore{config: &config.Config{
-		DefaultAgent: "opencode",
-		Agent:        "opencode",
-		WorktreeDir:  ".sandman/worktrees",
-		Sandbox:      sandboxMode,
-		Git:          gitCfg,
+		DefaultAgent:  "opencode",
+		Agent:         "opencode",
+		ReviewCommand: "/oc review",
+		WorktreeDir:   ".sandman/worktrees",
+		Sandbox:       sandboxMode,
+		Git:           gitCfg,
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Command: agent.Command, Env: agent.Env},
 			"pi":       {Command: agent.Command, Env: agent.Env},
@@ -252,6 +253,7 @@ func TestRun_ExplicitZeroParallelRunsThroughOrchestratorEndToEnd(t *testing.T) {
 		DefaultAgent:    "opencode",
 		Agent:           "opencode",
 		DefaultParallel: 8,
+		ReviewCommand:   "/oc review",
 		WorktreeDir:     ".sandman/worktrees",
 		Sandbox:         "worktree",
 		Git:             config.GitConfig{BaseBranch: "main"},

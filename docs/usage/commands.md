@@ -17,7 +17,7 @@ sandman init [flags]
 | `--agent` | `""` | Default built-in agent preset for `init` (`opencode` or `pi`) |
 | `--model` | `""` | Default model for the agent |
 | `--parallel` | `-1` | Default parallel container count (`-1` = use config default 4) |
-| `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/oc review` |
+| `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/sandman review` (requires `sandman review` to be running) |
 | `--retries` | `-1` | Persist `retries` in scaffolded config. `-1` keeps the built-in default of `3`; `0` disables retries |
 | `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `1800`; `0` disables the heartbeat watchdog |
 
@@ -206,7 +206,7 @@ sandman config set <key> <value>
 | `build_tools` | string | `node` |
 | `parallel` | int | `4` |
 | `start_delay` | int | `0` |
-| `review_command` | string | `/oc review` |
+| `review_command` | string | `/sandman review` |
 | `container_capacity` | int | `4` |
 | `max_containers` | int | `0` |
 | `worktree_dir` | string | `.sandman/worktrees` |

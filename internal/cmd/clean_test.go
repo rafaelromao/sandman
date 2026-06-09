@@ -30,7 +30,7 @@ func TestClean_NoFlagsReturnsError(t *testing.T) {
 }
 
 func TestClean_Stale_AloneAccepted(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	deps := Dependencies{
@@ -96,7 +96,7 @@ func TestClean_Stale_MutuallyExclusiveWithFailed(t *testing.T) {
 }
 
 func TestClean_AllRemovesEverything(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
@@ -137,7 +137,7 @@ func TestClean_AllRemovesEverything(t *testing.T) {
 }
 
 func TestClean_SuccessRemovesOnlySuccessfulRuns(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
@@ -180,7 +180,7 @@ func TestClean_SuccessRemovesOnlySuccessfulRuns(t *testing.T) {
 }
 
 func TestClean_FailedRemovesOnlyFailedRuns(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
@@ -239,7 +239,7 @@ func TestClean_FailedRemovesOnlyFailedRuns(t *testing.T) {
 }
 
 func TestClean_FailedIncludesAbortedRuns(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
@@ -286,7 +286,7 @@ func TestClean_FailedIncludesAbortedRuns(t *testing.T) {
 }
 
 func TestClean_Success_CallsGitRemoveWorktree(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
@@ -334,7 +334,7 @@ func TestClean_Success_CallsGitRemoveWorktree(t *testing.T) {
 }
 
 func TestClean_Failed_CallsGitRemoveWorktree(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
@@ -382,7 +382,7 @@ func TestClean_Failed_CallsGitRemoveWorktree(t *testing.T) {
 }
 
 func TestClean_FallbackCallsPruneAndDelete(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
@@ -421,7 +421,7 @@ func TestClean_FallbackCallsPruneAndDelete(t *testing.T) {
 }
 
 func TestClean_All_CallsRemoveOrphanBranches(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	logDir := filepath.Join(dir, ".sandman", "logs")
@@ -462,7 +462,7 @@ func TestClean_All_CallsRemoveOrphanBranches(t *testing.T) {
 }
 
 func TestClean_Success_CleansPromptOnlyRun(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
@@ -497,7 +497,7 @@ func TestClean_Success_CleansPromptOnlyRun(t *testing.T) {
 }
 
 func TestClean_All_RemovesStaleRunOwnedSnapshots(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	inactive := filepath.Join(dir, ".sandman", "runs", "run-99-1")
@@ -539,7 +539,7 @@ func TestClean_All_RemovesStaleRunOwnedSnapshots(t *testing.T) {
 }
 
 func TestClean_Success_PreservesActiveRunSnapshots(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	active := filepath.Join(dir, ".sandman", "runs", "active-1")
@@ -602,7 +602,7 @@ func writeBatchManifest(t *testing.T, baseDir, runID string, issues []int, creat
 }
 
 func TestRecoverStaleRuns_DeadBatchUnterminated_EmitsAborted(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
@@ -649,7 +649,7 @@ func TestRecoverStaleRuns_DeadBatchUnterminated_EmitsAborted(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_LiveBatch_NoEventEmitted(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
@@ -697,7 +697,7 @@ func TestRecoverStaleRuns_LiveBatch_NoEventEmitted(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_RunStartedBeforeManifestCreatedAt_Skipped(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
@@ -728,7 +728,7 @@ func TestRecoverStaleRuns_RunStartedBeforeManifestCreatedAt_Skipped(t *testing.T
 }
 
 func TestRecoverStaleRuns_AlreadyTerminated_NoEventEmitted(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
@@ -760,7 +760,7 @@ func TestRecoverStaleRuns_AlreadyTerminated_NoEventEmitted(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
@@ -796,7 +796,7 @@ func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_MultipleDeadBatches(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdA := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
@@ -832,7 +832,7 @@ func TestRecoverStaleRuns_MultipleDeadBatches(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_JSONRoundTripPreservesIssue(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)

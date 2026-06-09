@@ -40,7 +40,7 @@ func NewAttachCmd() *cobra.Command {
 func findDaemonSocket(baseDir string) (string, error) {
 	candidates := []string{}
 
-	reviewSock := filepath.Join(baseDir, "review.sock")
+	reviewSock := ReviewSocketPath(baseDir)
 	if _, err := os.Stat(reviewSock); err == nil {
 		candidates = append(candidates, reviewSock)
 	}

@@ -14,7 +14,7 @@ import (
 )
 
 func TestArchiveBatch_NonexistentBatchReturnsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	var buf bytes.Buffer
@@ -37,7 +37,7 @@ func TestArchiveBatch_NonexistentBatchReturnsError(t *testing.T) {
 }
 
 func TestArchiveRun_NonexistentRunReturnsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	var buf bytes.Buffer
@@ -60,7 +60,7 @@ func TestArchiveRun_NonexistentRunReturnsError(t *testing.T) {
 }
 
 func TestArchiveRun_LiveRunReturnsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	runDir := filepath.Join(dir, ".sandman", "runs", "live-1")
@@ -96,7 +96,7 @@ func TestArchiveRun_LiveRunReturnsError(t *testing.T) {
 }
 
 func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	runDir := filepath.Join(dir, ".sandman", "runs", "dead-1")
@@ -137,7 +137,7 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 }
 
 func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	runDir := filepath.Join(dir, ".sandman", "runs", "live-1")
@@ -173,7 +173,7 @@ func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
 }
 
 func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	runDir := filepath.Join(dir, ".sandman", "runs", "dead-1")
@@ -214,7 +214,7 @@ func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
 }
 
 func TestArchiveBatch_CollisionWithExistingArchiveDirReturnsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	runDir := filepath.Join(dir, ".sandman", "runs", "dead-2")
@@ -256,7 +256,7 @@ func TestArchiveBatch_CollisionWithExistingArchiveDirReturnsError(t *testing.T) 
 }
 
 func TestArchiveRun_CollisionWithExistingArchiveDirReturnsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	runDir := filepath.Join(dir, ".sandman", "runs", "dead-2")
@@ -298,7 +298,7 @@ func TestArchiveRun_CollisionWithExistingArchiveDirReturnsError(t *testing.T) {
 }
 
 func TestArchiveOlderThan_NoRunsLeavesEmptyArchiveDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	var buf bytes.Buffer
@@ -322,7 +322,7 @@ func TestArchiveOlderThan_NoRunsLeavesEmptyArchiveDir(t *testing.T) {
 }
 
 func TestArchiveOlderThan_ArchivesOldDeadRun(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	old := time.Now().Add(-40 * 24 * time.Hour).UTC().Round(time.Second)
@@ -366,7 +366,7 @@ func TestArchiveOlderThan_ArchivesOldDeadRun(t *testing.T) {
 }
 
 func TestArchiveOlderThan_SkipsYoungDeadRun(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	young := time.Now().Add(-5 * 24 * time.Hour).UTC().Round(time.Second)
@@ -402,7 +402,7 @@ func TestArchiveOlderThan_SkipsYoungDeadRun(t *testing.T) {
 }
 
 func TestArchiveOlderThan_SkipsLiveRun(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	old := time.Now().Add(-100 * 24 * time.Hour).UTC().Round(time.Second)
@@ -444,7 +444,7 @@ func TestArchiveOlderThan_SkipsLiveRun(t *testing.T) {
 }
 
 func TestArchiveOlderThan_MixedBatchArchivesOnlyEligible(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	oldTs := time.Now().Add(-40 * 24 * time.Hour).UTC().Round(time.Second)
@@ -541,7 +541,7 @@ func TestArchiveOlderThan_MixedBatchArchivesOnlyEligible(t *testing.T) {
 }
 
 func TestArchiveOlderThan_NonIntegerDaysReturnsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	var buf bytes.Buffer
@@ -560,7 +560,7 @@ func TestArchiveOlderThan_NonIntegerDaysReturnsError(t *testing.T) {
 }
 
 func TestArchiveOlderThan_NegativeDaysReturnsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	var buf bytes.Buffer
@@ -579,7 +579,7 @@ func TestArchiveOlderThan_NegativeDaysReturnsError(t *testing.T) {
 }
 
 func TestArchiveOlderThan_MissingArgReturnsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	var buf bytes.Buffer
@@ -594,7 +594,7 @@ func TestArchiveOlderThan_MissingArgReturnsError(t *testing.T) {
 }
 
 func TestArchiveOlderThan_ZeroDaysArchivesAllDead(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	oneSecAgo := time.Now().UTC().Add(-1 * time.Second)
@@ -626,7 +626,7 @@ func TestArchiveOlderThan_ZeroDaysArchivesAllDead(t *testing.T) {
 }
 
 func TestArchiveOlderThan_FallsBackToDirectoryMtimeWhenManifestMissing(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	runDir := filepath.Join(dir, ".sandman", "runs", "no-manifest")
@@ -654,7 +654,7 @@ func TestArchiveOlderThan_FallsBackToDirectoryMtimeWhenManifestMissing(t *testin
 }
 
 func TestArchiveHelpListsStaleSubcommand(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	var buf bytes.Buffer
@@ -673,7 +673,7 @@ func TestArchiveHelpListsStaleSubcommand(t *testing.T) {
 }
 
 func TestArchiveStale_CollisionWithExistingArchivePreservesBoth(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
@@ -727,7 +727,7 @@ func TestArchiveStale_CollisionWithExistingArchivePreservesBoth(t *testing.T) {
 }
 
 func TestArchiveStale_MixedStatusDeadBatchEmitsAbortedAndArchives(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
@@ -791,7 +791,7 @@ func TestArchiveStale_MixedStatusDeadBatchEmitsAbortedAndArchives(t *testing.T) 
 }
 
 func TestArchiveStale_AllTerminatedDeadBatchIsArchived(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
@@ -839,7 +839,7 @@ func TestArchiveStale_AllTerminatedDeadBatchIsArchived(t *testing.T) {
 }
 
 func TestArchiveStale_LiveBatchIsNoop(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	runDir := filepath.Join(dir, ".sandman", "runs", "live-1")
@@ -889,7 +889,7 @@ func TestArchiveStale_LiveBatchIsNoop(t *testing.T) {
 }
 
 func TestArchiveOlderThan_YoungMtimeKeepsUnmanifestedRun(t *testing.T) {
-	dir := t.TempDir()
+	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	runDir := filepath.Join(dir, ".sandman", "runs", "no-manifest-young")

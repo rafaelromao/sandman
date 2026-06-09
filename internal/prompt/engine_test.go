@@ -31,7 +31,7 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 	want = strings.ReplaceAll(want, "{{SOURCE_BRANCH}}", data.SourceBranch)
 	want = strings.ReplaceAll(want, "{{BASE_BRANCH}}", data.BaseBranch)
 	want = strings.ReplaceAll(want, "{{BRANCH}}", data.SourceBranch)
-	want = strings.ReplaceAll(want, "{{REVIEW_COMMAND}}", "/oc review")
+	want = strings.ReplaceAll(want, "{{REVIEW_COMMAND}}", "/sandman review")
 
 	if result != want {
 		t.Errorf("unexpected rendered prompt\nwant:\n%s\ngot:\n%s", want, result)

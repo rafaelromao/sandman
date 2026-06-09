@@ -14,7 +14,7 @@ const (
 	DefaultAgent             = "opencode"
 	DefaultModel             = "opencode/big-pickle"
 	DefaultBuildToolsPreset  = "generic"
-	DefaultReviewCommand     = "/oc review"
+	DefaultReviewCommand     = "/sandman review"
 	DefaultParallel          = 4
 	DefaultStartDelay        = 0
 	DefaultRunIdleTimeout    = 1800
@@ -569,7 +569,7 @@ func (c *Config) EffectiveBuildTools() string {
 	return c.BuildTools
 }
 
-// EffectiveReviewCommand returns the configured review command, defaulting to /oc review.
+// EffectiveReviewCommand returns the configured review command, defaulting to /sandman review.
 func (c *Config) EffectiveReviewCommand() string {
 	if c == nil || strings.TrimSpace(c.ReviewCommand) == "" {
 		return DefaultReviewCommand

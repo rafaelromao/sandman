@@ -32,6 +32,9 @@ func resolveRalphQuery(label, query string) string {
 }
 
 func runSelectionPhase(ctx context.Context, client github.Client, count int, label, query, sandmanDir, agentName, modelFlag string, cfg *config.Config) ([]int, error) {
+	if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
+		return nil, err
+	}
 	searchQuery := resolveRalphQuery(label, query)
 	ghIssues, err := client.SearchIssues(searchQuery)
 	if err != nil {
