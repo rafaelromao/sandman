@@ -696,7 +696,6 @@ func TestAgentLogPath(t *testing.T) {
 	}
 }
 
->>>>>>> origin/main
 func TestResolveRetries(t *testing.T) {
 	cfg := &config.Config{Retries: 3}
 
