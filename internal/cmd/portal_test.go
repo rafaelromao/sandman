@@ -342,12 +342,27 @@ func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
 	}
 }
 
-func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasNoSocket(t *testing.T) {
+func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *testing.T) {
+	sockDir := t.TempDir()
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runsDir := filepath.Join(repoRoot, ".sandman", "runs", "run-gone-1")
+	if err := os.MkdirAll(runsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sockPath, filepath.Join(runsDir, "run.sock")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -363,7 +378,7 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasNoSocket(t *testi
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
 
 	if run.Kind != "completed" {
-		t.Fatalf("expected kind 'completed' for unmatched active state with missing socket, got %q", run.Kind)
+		t.Fatalf("expected kind 'completed' for unmatched active state with dead socket, got %q", run.Kind)
 	}
 }
 
