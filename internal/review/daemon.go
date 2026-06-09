@@ -275,6 +275,9 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 			Branch:     fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID),
 		},
 		OutputWriter: d.Broadcaster,
+		Review:       true,
+		PRNumber:     prNumber,
+		ReviewFocus:  focus,
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return fmt.Errorf("run batch: %w", err)

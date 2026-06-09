@@ -107,6 +107,8 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 			PromptFlag: rendered,
 			Branch:     fmt.Sprintf("sandman/review-%d-%d", pr.Number, time.Now().UnixNano()),
 		},
+		Review:   true,
+		PRNumber: pr.Number,
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
 	}

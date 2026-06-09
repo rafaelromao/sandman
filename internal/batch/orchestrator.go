@@ -1221,6 +1221,16 @@ type runSession struct {
 	maxContainersSet           bool
 	dangerouslySkipPermissions bool
 
+	// review, prNumber and reviewFocus mark the session as a review-agent
+	// run. They are sourced from batch.Request and propagated into the
+	// run.started and run.finished event payloads so the event log and
+	// portal can distinguish review runs from implementation runs. They
+	// are only set on prompt-only sessions; issue-driven sessions always
+	// leave them at zero values.
+	review      bool
+	prNumber    int
+	reviewFocus string
+
 	// opts carries the test-injection hooks copied from
 	// Orchestrator.runSessionOpts at session construction. Zero-valued in
 	// production; populated by tests to drive the per-session behaviour.
@@ -1329,6 +1339,11 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 	}
 	if s.issueNumber > 0 {
 		event.IssueRef = issueRef(s.issueNumber)
+	}
+	if s.review {
+		event.Payload["review"] = true
+		event.Payload["pr_number"] = s.prNumber
+		event.Payload["review_focus"] = s.reviewFocus
 	}
 	_ = o.eventLog.Log(event)
 	return terminalStatus
@@ -1690,7 +1705,7 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
-	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Force, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions)
+	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Force, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, req.Review, req.PRNumber, req.ReviewFocus)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -1705,7 +1720,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 
 // runPromptOnlySingle runs a single prompt-only AgentRun. It builds a
 // runSession and delegates to (*runSession).executePromptOnly.
-func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
+func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, review bool, prNumber int, reviewFocus string) (AgentRunResult, bool) {
 	s := &runSession{
 		o:                          o,
 		cfg:                        cfg,
@@ -1728,6 +1743,9 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		maxContainers:              maxContainers,
 		maxContainersSet:           maxContainersSet,
 		dangerouslySkipPermissions: dangerouslySkipPermissions,
+		review:                     review,
+		prNumber:                   prNumber,
+		reviewFocus:                reviewFocus,
 		opts:                       o.runSessionOpts,
 	}
 	return s.executePromptOnly(ctx)
@@ -1808,6 +1826,11 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		}
 		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
 			payload["model"] = model
+		}
+		if s.review {
+			payload["review"] = true
+			payload["pr_number"] = s.prNumber
+			payload["review_focus"] = s.reviewFocus
 		}
 		_ = o.eventLog.Log(events.Event{Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}

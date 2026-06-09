@@ -2446,3 +2446,74 @@ func TestPortal_StaleCleanerRecoversDeadBatchBeforeFirstPoll(t *testing.T) {
 		t.Fatalf("expected recovered run for issue 42, got %d", runs[0].IssueNumber)
 	}
 }
+
+func TestPortal_LoadPortalRunsMarksReviewRows(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().Add(-5 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: started, RunID: "run-review-17", Issue: 0, IssueRef: nil, Payload: map[string]any{"branch": "sandman/review-17-100", "review": true, "pr_number": float64(17), "review_focus": "focus on tests"}},
+		{Type: "run.finished", Timestamp: started.Add(2 * time.Minute), RunID: "run-review-17", Issue: 0, IssueRef: nil, Payload: map[string]any{"status": "success", "branch": "sandman/review-17-100"}},
+		{Type: "run.started", Timestamp: started.Add(1 * time.Minute), RunID: "run-impl-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "run-impl-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 runs, got %#v", runs)
+	}
+	var review, impl *portalRun
+	for i := range runs {
+		if runs[i].RunID == "run-review-17" {
+			review = &runs[i]
+		} else if runs[i].RunID == "run-impl-42" {
+			impl = &runs[i]
+		}
+	}
+	if review == nil {
+		t.Fatal("expected review run in portal output")
+	}
+	if !review.Review {
+		t.Errorf("expected review run to have Review=true, got %#v", review)
+	}
+	if review.PRNumber != 17 {
+		t.Errorf("expected review run PRNumber=17, got %d", review.PRNumber)
+	}
+	if impl == nil {
+		t.Fatal("expected implementation run in portal output")
+	}
+	if impl.Review {
+		t.Errorf("expected implementation run to have Review=false, got %#v", impl)
+	}
+	if impl.PRNumber != 0 {
+		t.Errorf("expected implementation run PRNumber=0, got %d", impl.PRNumber)
+	}
+}
+
+func TestPortal_LoadPortalRunsReviewKindStaysActiveOrCompleted(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().Add(-5 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: started, RunID: "run-review-9", Issue: 0, IssueRef: nil, Payload: map[string]any{"branch": "sandman/review-9-1", "review": true, "pr_number": float64(9), "review_focus": ""}},
+		{Type: "run.finished", Timestamp: started.Add(2 * time.Minute), RunID: "run-review-9", Issue: 0, IssueRef: nil, Payload: map[string]any{"status": "success", "branch": "sandman/review-9-1"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+	if runs[0].Kind != "active" && runs[0].Kind != "completed" {
+		t.Errorf("Kind must remain in {active, completed}; got %q", runs[0].Kind)
+	}
+}
