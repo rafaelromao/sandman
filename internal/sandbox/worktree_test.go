@@ -558,3 +558,87 @@ func TestWorktreeSandbox_StartRejectsBrokenWorktreeWithStaleDotGitFile(t *testin
 		t.Errorf("expected error to contain '--force' hint, got: %v", err)
 	}
 }
+
+func TestWorktreeSandbox_ForceReconcileWrongBranch(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error on first start: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
+
+	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
+
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2.SetForce(true)
+	if err := s2.Start(); err != nil {
+		t.Fatalf("expected no error with --force, got: %v", err)
+	}
+
+	headRef := runGit(t, s2.WorkDir(), "symbolic-ref", "HEAD")
+	if !strings.Contains(headRef, "sandman/42-fix-bug") {
+		t.Errorf("expected HEAD to be on sandman/42-fix-bug after force-checkout, got %q", headRef)
+	}
+}
+
+func TestWorktreeSandbox_ForceReconcileMissingBranch(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error on first start: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+	})
+
+	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
+
+	runGit(t, dir, "branch", "-D", "sandman/42-fix-bug")
+
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2.SetForce(true)
+	err := s2.Start()
+	if err == nil {
+		t.Fatal("expected error when branch does not exist locally")
+	}
+	if !strings.Contains(err.Error(), "does not exist locally") {
+		t.Errorf("expected error to mention branch not existing, got: %v", err)
+	}
+}
+
+func TestWorktreeSandbox_ForceReconcileDetachedHead(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error on first start: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
+
+	runGit(t, s.WorkDir(), "checkout", "--detach", "HEAD")
+
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2.SetForce(true)
+	if err := s2.Start(); err != nil {
+		t.Fatalf("expected no error with --force on detached HEAD, got: %v", err)
+	}
+
+	headRef := runGit(t, s2.WorkDir(), "symbolic-ref", "HEAD")
+	if !strings.Contains(headRef, "sandman/42-fix-bug") {
+		t.Errorf("expected HEAD to be on sandman/42-fix-bug after force-checkout, got %q", headRef)
+	}
+}
