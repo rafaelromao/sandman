@@ -146,13 +146,15 @@ Move a completed run directory from `.sandman/runs/<id>` to `.sandman/archive/<i
 
 ```bash
 sandman archive run <id>
+sandman archive batch <id>
 ```
 
 | Subcommand | Description |
 |------------|-------------|
 | `run <id>` | Move `.sandman/runs/<id>` to `.sandman/archive/<id>` |
+| `batch <id>` | Same as `run <id>`; targets the run directory (the batch's on-disk home containing `batch.json`) |
 
-The run's daemon must not be live. `sandman archive run` calls `daemon.IsRunActive` on the run directory and returns an error if either `cmd.sock` or `run.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
+The run's daemon must not be live. `sandman archive` calls `daemon.IsRunActive` on the run directory and returns an error if either `cmd.sock` or `run.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
 
 ## `sandman attach`
 
