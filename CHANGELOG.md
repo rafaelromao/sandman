@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Portal "Active Batches" filter now checks daemon control socket liveness (100ms `net.DialTimeout`) instead of relying solely on event-log state. Runs whose socket is dead are downgraded from `kind: "active"` to `kind: "completed"`. Covers both live-batch and historical-run paths. (#726, #740)
+
 ### Added
 
 - `SANDMAN_TEST_MODEL_<AGENT>` env vars (e.g. `SANDMAN_TEST_MODEL_OPENCODE`, `SANDMAN_TEST_MODEL_PI`) override the model the smoke and prflow e2e tests target per agent. When unset, the tests use the literal model baked into their case lists. Resolved through `testenv.ResolveTestModel` (testenv_test.go covers empty/set/trim/agent-scoped paths).
