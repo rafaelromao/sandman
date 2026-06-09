@@ -41,6 +41,8 @@ func (r *heartbeatStallRunnable) Run(ctx context.Context, _ prompt.Renderer, _ s
 		if err := os.MkdirAll(filepath.Dir(r.logPath), 0755); err == nil {
 			if f, err := os.OpenFile(r.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
 				_, _ = f.WriteString("agent started\n")
+				_, _ = f.WriteString("processing step 1\n")
+				_, _ = f.WriteString("processing step 2\n")
 				_ = f.Close()
 			}
 		}
@@ -183,6 +185,13 @@ func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
 		}
 		if _, ok := got.Payload["idle_seconds"]; !ok {
 			t.Error("expected idle_seconds in payload")
+		}
+		if reason, _ := got.Payload["reason"].(string); reason != "run_idle_timeout" {
+			t.Errorf("reason = %q, want \"run_idle_timeout\"", reason)
+		}
+		lastLines, _ := got.Payload["last_log_lines"].([]string)
+		if len(lastLines) != 3 {
+			t.Errorf("last_log_lines = %v (len=%d), want 3 lines", lastLines, len(lastLines))
 		}
 	}
 }

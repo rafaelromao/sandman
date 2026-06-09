@@ -58,6 +58,27 @@ func resolveRunIdleTimeout(req Request, cfg *config.Config) int {
 	return 0
 }
 
+func readTailLines(path string, n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []string{}
+	}
+	parts := strings.Split(string(data), "\n")
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	if len(parts) == 0 {
+		return []string{}
+	}
+	if len(parts) <= n {
+		return parts
+	}
+	return parts[len(parts)-n:]
+}
+
 func gitTopLevel(repoPath string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = repoPath
@@ -1287,6 +1308,8 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 					"idle_seconds":         idle.Seconds(),
 					"idle_timeout_seconds": s.runIdleTimeout,
 					"attempt":              attempt + 1,
+					"reason":               "run_idle_timeout",
+					"last_log_lines":       readTailLines(logPath, 3),
 				},
 			})
 		}
