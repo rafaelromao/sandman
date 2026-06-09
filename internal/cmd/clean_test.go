@@ -696,12 +696,12 @@ func TestRecoverStaleRuns_LiveBatch_NoEventEmitted(t *testing.T) {
 	}
 }
 
-func TestRecoverStaleRuns_RunStartedBeforeManifestCreatedAt_Skipped(t *testing.T) {
+func TestRecoverStaleRuns_RunStartedBeforeManifestCreatedAt_RecoveredAsOrphan(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
-	started := createdAt.Add(-1 * time.Hour) // before CreatedAt
+	started := createdAt.Add(-1 * time.Hour) // before CreatedAt — orphaned old run
 	writeBatchManifest(t, dir, "run-old", []int{42}, createdAt)
 
 	log := &fakeEventLog{events: []events.Event{
@@ -722,8 +722,11 @@ func TestRecoverStaleRuns_RunStartedBeforeManifestCreatedAt_Skipped(t *testing.T
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if got := len(log.logged); got != 0 {
-		t.Errorf("expected 0 logged events for stale-started run, got %d: %+v", got, log.logged)
+	if got := len(log.logged); got != 1 {
+		t.Errorf("expected 1 logged event for orphaned run, got %d: %+v", got, log.logged)
+	}
+	if got := log.logged[0].Type; got != "run.aborted" {
+		t.Errorf("expected run.aborted, got %s", got)
 	}
 }
 

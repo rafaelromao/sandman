@@ -1853,6 +1853,9 @@ func TestPortal_BatchWithBlockedIssue_ShowsOneRow(t *testing.T) {
 		{Type: "run.blocked", Timestamp: batchStartedAt.Add(2 * time.Minute), RunID: "blocked-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
 	})
 
+	prev := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = prev })
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
@@ -1899,6 +1902,9 @@ func TestPortal_BatchWithMixedBlockedAndQueued_ShowsBlockedAndQueuedSeparately(t
 		{Type: "run.blocked", Timestamp: batchStartedAt.Add(2 * time.Minute), RunID: "blocked-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
 	})
 
+	prev := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = prev })
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 
