@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"fmt"
+	"errors"
 	"net"
 	"path/filepath"
 	"strings"
@@ -39,7 +39,7 @@ func requireReviewDaemon(reviewCommand, sandmanDir string) error {
 	}
 	conn, err := net.DialTimeout("unix", ReviewSocketPath(sandmanDir), reviewDaemonDialTimeout)
 	if err != nil {
-		return fmt.Errorf("%s", reviewGuardMessage)
+		return errors.New(reviewGuardMessage)
 	}
 	_ = conn.Close()
 	return nil

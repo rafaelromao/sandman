@@ -2321,7 +2321,8 @@ func TestResolveRalphIssues_PriorityPromptFileSelectsSelectionPhase(t *testing.T
 		},
 	}
 
-	_, err := resolveRalphIssues(context.Background(), gh, 1, "", "", sandmanDir, "", "", &config.Config{})
+	// Use /oc review so the review daemon guard is bypassed.
+	_, err := resolveRalphIssues(context.Background(), gh, 1, "", "", sandmanDir, "", "", &config.Config{ReviewCommand: "/oc review"})
 	if err == nil {
 		t.Fatal("expected selection phase error")
 	}
@@ -2475,7 +2476,8 @@ func TestRunSelectionPhase_AgentWritesSelectedIssuesAndReturnsNumbers(t *testing
 	}
 
 	cfg := &config.Config{
-		Agent: "test-agent",
+		Agent:         "test-agent",
+		ReviewCommand: "/oc review",
 	}
 	cfg.AgentProviders = map[string]config.Agent{
 		"test-agent": {
@@ -2508,7 +2510,8 @@ func TestRunSelectionPhase_AgentFailureReturnsError(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Agent: "test-agent",
+		Agent:         "test-agent",
+		ReviewCommand: "/oc review",
 	}
 	cfg.AgentProviders = map[string]config.Agent{
 		"test-agent": {
@@ -2522,6 +2525,27 @@ func TestRunSelectionPhase_AgentFailureReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "selection agent failed") {
 		t.Errorf("expected agent failure error, got: %v", err)
+	}
+}
+
+func TestRunSelectionPhase_GuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testing.T) {
+	sandmanDir := t.TempDir()
+	gh := &fakeGitHubClient{searchIssuesResult: []github.Issue{{Number: 1}}}
+
+	cfg := &config.Config{
+		Agent:         "test-agent",
+		ReviewCommand: "/sandman review",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"test-agent": {Command: "true"},
+	}
+
+	_, err := runSelectionPhase(context.Background(), gh, 5, "", "", sandmanDir, "test-agent", "", cfg)
+	if err == nil {
+		t.Fatal("expected error from review guard, got nil")
+	}
+	if err.Error() != reviewGuardMessage {
+		t.Errorf("unexpected error message\nwant:\n%s\ngot:\n%s", reviewGuardMessage, err.Error())
 	}
 }
 
