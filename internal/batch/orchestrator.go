@@ -62,7 +62,10 @@ func resolveRunIdleTimeout(req Request, cfg *config.Config) int {
 // under <repoRoot>/.sandman/logs/. The repo root is resolved from the current
 // working directory via filepath.Abs.
 func agentLogPath(filename string) string {
-	root, _ := filepath.Abs(".")
+	root, err := filepath.Abs(".")
+	if err != nil {
+		panic("agentLogPath: " + err.Error())
+	}
 	return filepath.Join(root, ".sandman", "logs", filename)
 }
 
