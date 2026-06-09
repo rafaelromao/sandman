@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,19 +8,13 @@ import (
 )
 
 func TestDeadBatch_RunTimestamp_PrefersManifestCreatedAt(t *testing.T) {
-	dir := t.TempDir()
-	manifestTime := time.Now().Add(-10 * 24 * time.Hour).UTC().Round(time.Second)
+	manifestTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	batch := DeadBatch{
-		RunDir: dir,
-		Manifest: BatchManifest{
-			Issues:    []int{42},
-			CreatedAt: manifestTime,
-		},
+		RunDir:   t.TempDir(),
+		Manifest: BatchManifest{Issues: []int{42}, CreatedAt: manifestTime},
 	}
-	if err := os.WriteFile(filepath.Join(dir, "batch.json"), mustMarshal(BatchManifest{Issues: []int{42}, CreatedAt: manifestTime}), 0644); err != nil {
-		t.Fatalf("write manifest: %v", err)
-	}
-	if err := os.Chtimes(dir, time.Now(), time.Now()); err != nil {
+
+	if err := os.Chtimes(batch.RunDir, time.Now(), time.Now()); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
 
@@ -49,12 +42,4 @@ func TestDeadBatch_RunTimestamp_ZeroWhenNoSource(t *testing.T) {
 	if got := batch.RunTimestamp(); !got.IsZero() {
 		t.Errorf("RunTimestamp = %v, want zero", got)
 	}
-}
-
-func mustMarshal(v any) []byte {
-	data, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return data
 }

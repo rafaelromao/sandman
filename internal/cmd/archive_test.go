@@ -549,8 +549,12 @@ func TestArchiveOlderThan_NonIntegerDaysReturnsError(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "abc"})
 
-	if err := cmd.Execute(); err == nil {
+	err := cmd.Execute()
+	if err == nil {
 		t.Fatal("expected error for non-integer days, got nil")
+	}
+	if !strings.Contains(err.Error(), "non-negative integer") {
+		t.Errorf("expected error to mention 'non-negative integer', got: %v", err)
 	}
 }
 
@@ -562,10 +566,14 @@ func TestArchiveOlderThan_NegativeDaysReturnsError(t *testing.T) {
 	cmd := NewArchiveCmd(newTestDeps())
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"older-than", "-5"})
+	cmd.SetArgs([]string{"older-than", "--", "-5"})
 
-	if err := cmd.Execute(); err == nil {
+	err := cmd.Execute()
+	if err == nil {
 		t.Fatal("expected error for negative days, got nil")
+	}
+	if !strings.Contains(err.Error(), "negative") {
+		t.Errorf("expected error to mention 'negative', got: %v", err)
 	}
 }
 

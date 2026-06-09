@@ -23,7 +23,7 @@ func NewArchiveCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "archive",
 		Short: "Archive completed run directories",
-		Long:  "Move a run directory from .sandman/runs/<id> to .sandman/archive/<id> after confirming the run's daemon is no longer live.",
+		Long:  "Move a run directory from .sandman/runs/<id> to .sandman/archive/<id> after confirming the run's daemon is no longer live. Use 'archive run' to move a single run by id, or 'archive older-than <days>' to bulk-archive every dead run older than the given age.",
 	}
 	cmd.AddCommand(newArchiveRunCmd(deps))
 	cmd.AddCommand(newArchiveOlderThanCmd(deps))
@@ -94,10 +94,10 @@ func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe) error 
 func runArchiveOlderThan(cmd *cobra.Command, daysArg string) error {
 	days, err := strconv.Atoi(daysArg)
 	if err != nil {
-		return fmt.Errorf("invalid days %q: must be a non-negative integer", daysArg)
+		return fmt.Errorf("days %q is not a non-negative integer", daysArg)
 	}
 	if days < 0 {
-		return fmt.Errorf("invalid days %d: must be non-negative", days)
+		return fmt.Errorf("days %d is negative; must be non-negative", days)
 	}
 
 	cutoff := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
