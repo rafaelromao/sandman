@@ -110,7 +110,7 @@ func (s *WorktreeSandbox) workDirIsValidWorktree() bool {
 func currentBranchRef(workDir string) (string, error) {
 	out, err := runGitCommand(workDir, "symbolic-ref", "--quiet", "HEAD")
 	if err != nil {
-		return "", fmt.Errorf("%w\n%s", err, out)
+		return "", fmt.Errorf("resolve HEAD symbolic-ref: %w\n%s", err, out)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
