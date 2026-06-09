@@ -602,12 +602,8 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	if active != nil {
 		portalRun.SocketPath = active.SocketPath
+		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 	}
-	socketPath := ""
-	if active != nil {
-		socketPath = active.SocketPath
-	}
-	v.markCompletedIfSocketDead(&portalRun, socketPath)
 	return portalRun
 }
 
@@ -722,7 +718,7 @@ func (v *portalRunsView) isSocketAlive(socketPath string) bool {
 	if socketPath == "" {
 		return false
 	}
-	conn, err := net.DialTimeout("unix", socketPath, portalReadTimeout)
+	conn, err := net.DialTimeout("unix", socketPath, 100*time.Millisecond)
 	if err != nil {
 		return false
 	}
