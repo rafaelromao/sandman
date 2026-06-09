@@ -38,4 +38,6 @@ type Client interface {
 	ListOpenPRs() ([]PR, error)
 	ListPRComments(number int) ([]PRComment, error)
 	RepoName() (string, error)
+	EditComment(commentID, body string) error
+	EditPRBody(prNumber int, body string) error
 }

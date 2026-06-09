@@ -38,6 +38,8 @@ type GitHubClient interface {
 	ListPRComments(number int) ([]github.PRComment, error)
 	FetchPR(number int) (*github.PR, error)
 	RepoName() (string, error)
+	EditComment(commentID, body string) error
+	EditPRBody(prNumber int, body string) error
 }
 
 // BatchRunner is the subset of batch.Runner used by the review daemon.
@@ -227,6 +229,20 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		if store.Has(comment.ID) {
 			continue
 		}
+
+		// Signal that this trigger comment is being processed.
+		if err := d.GitHub.EditComment(comment.ID, eyePrefix+comment.Body); err != nil {
+			d.logf("add emoji to comment %s: %v", comment.ID, err)
+		}
+		pr, fetchErr := d.GitHub.FetchPR(prNumber)
+		if fetchErr == nil {
+			if err := d.GitHub.EditPRBody(prNumber, eyePrefix+pr.Body); err != nil {
+				d.logf("add emoji to PR #%d body: %v", prNumber, err)
+			}
+		} else {
+			d.logf("fetch PR #%d for emoji prepend: %v", prNumber, fetchErr)
+		}
+
 		if err := d.launchReview(ctx, prNumber, prDir, focus, comment.ID); err != nil {
 			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, err)
 			continue
@@ -238,10 +254,50 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	return nil
 }
 
+// eyePrefix is the emoji prefix added to trigger comments and PR bodies
+// to signal that a review is in progress.
+const eyePrefix = "👁️ "
+
+// stripEye removes the eyePrefix prefix from s, returning the original
+// string if the prefix is not present.
+func stripEye(s string) string {
+	cleaned, _ := strings.CutPrefix(s, eyePrefix)
+	return cleaned
+}
+
 // launchReview renders the review prompt and runs the batch. The PR
 // metadata is re-fetched via the GitHub client so the prompt reflects
 // the current title and body.
 func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, commentID string) error {
+	defer func() {
+		// Strip the eye signal from the PR body after the review
+		// finishes, unconditionally.
+		if pr, err := d.GitHub.FetchPR(prNumber); err == nil {
+			if cleaned := stripEye(pr.Body); cleaned != pr.Body {
+				if err := d.GitHub.EditPRBody(prNumber, cleaned); err != nil {
+					d.logf("remove emoji from PR #%d body: %v", prNumber, err)
+				}
+			}
+		} else {
+			d.logf("fetch PR #%d for emoji cleanup: %v", prNumber, err)
+		}
+		// Strip the eye signal from the trigger comment body.
+		if comments, err := d.GitHub.ListPRComments(prNumber); err == nil {
+			for _, c := range comments {
+				if c.ID == commentID {
+					if cleaned := stripEye(c.Body); cleaned != c.Body {
+						if err := d.GitHub.EditComment(commentID, cleaned); err != nil {
+							d.logf("remove emoji from comment %s: %v", commentID, err)
+						}
+					}
+					break
+				}
+			}
+		} else {
+			d.logf("list comments for emoji cleanup: %v", err)
+		}
+	}()
+
 	pr, err := d.GitHub.FetchPR(prNumber)
 	if err != nil {
 		return fmt.Errorf("fetch PR: %w", err)
@@ -250,7 +306,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
 		Number:      pr.Number,
 		Title:       pr.Title,
-		Body:        pr.Body,
+		Body:        stripEye(pr.Body),
 		ReviewFocus: focus,
 	})
 	if err != nil {

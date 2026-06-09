@@ -256,6 +256,14 @@ func (c *fetchIssueErrorClient) RepoName() (string, error) {
 	return "owner/repo", nil
 }
 
+func (c *fetchIssueErrorClient) EditComment(commentID, body string) error {
+	return nil
+}
+
+func (c *fetchIssueErrorClient) EditPRBody(prNumber int, body string) error {
+	return nil
+}
+
 func TestDependencyResolverResolve_IgnoresClosedBlockers(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

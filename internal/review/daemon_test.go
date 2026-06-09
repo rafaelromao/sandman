@@ -3,6 +3,7 @@ package review
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,6 +18,14 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
+// editCall records a single EditComment or EditPRBody invocation.
+type editCall struct {
+	kind   string // "comment" or "prbody"
+	id     string // comment ID (for comments) or empty
+	number int    // PR number (for PR body)
+	body   string
+}
+
 // fakeGH is a test double for the GitHubClient surface area used by the
 // review daemon.
 type fakeGH struct {
@@ -28,6 +37,13 @@ type fakeGH struct {
 	commentErr map[int]error
 	fetchErr   map[int]error
 	listCalls  int
+	editCalls  []editCall
+	// persistedEdits stores the body as last written by EditPRBody /
+	// EditComment so that subsequent FetchPR / ListPRComments return the
+	// updated content. This lets the deferred cleanup in launchReview
+	// detect and strip the eye prefix.
+	persistedPRBody  map[int]string
+	persistedComment map[string]string
 }
 
 func (f *fakeGH) ListOpenPRs() ([]github.PR, error) {
@@ -45,7 +61,15 @@ func (f *fakeGH) ListPRComments(number int) ([]github.PRComment, error) {
 			return nil, err
 		}
 	}
-	return f.comments[number], nil
+	comments := f.comments[number]
+	result := make([]github.PRComment, len(comments))
+	copy(result, comments)
+	for i, c := range result {
+		if edited, ok := f.persistedComment[c.ID]; ok {
+			result[i].Body = edited
+		}
+	}
+	return result, nil
 }
 
 func (f *fakeGH) FetchPR(number int) (*github.PR, error) {
@@ -56,14 +80,43 @@ func (f *fakeGH) FetchPR(number int) (*github.PR, error) {
 			return nil, err
 		}
 	}
+	body := "B"
 	if pr, ok := f.prFetch[number]; ok {
-		return pr, nil
+		body = pr.Body
 	}
-	return &github.PR{Number: number, Title: "T", Body: "B"}, nil
+	if edited, ok := f.persistedPRBody[number]; ok {
+		body = edited
+	}
+	if pr, ok := f.prFetch[number]; ok {
+		return &github.PR{Number: pr.Number, Title: pr.Title, Body: body}, nil
+	}
+	return &github.PR{Number: number, Title: "T", Body: body}, nil
 }
 
 func (f *fakeGH) RepoName() (string, error) {
 	return "owner/repo", nil
+}
+
+func (f *fakeGH) EditComment(commentID, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.editCalls = append(f.editCalls, editCall{kind: "comment", id: commentID, body: body})
+	if f.persistedComment == nil {
+		f.persistedComment = make(map[string]string)
+	}
+	f.persistedComment[commentID] = body
+	return nil
+}
+
+func (f *fakeGH) EditPRBody(prNumber int, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.editCalls = append(f.editCalls, editCall{kind: "prbody", number: prNumber, body: body})
+	if f.persistedPRBody == nil {
+		f.persistedPRBody = make(map[int]string)
+	}
+	f.persistedPRBody[prNumber] = body
+	return nil
 }
 
 type capturedRequest struct {
@@ -144,6 +197,106 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "100") {
 		t.Errorf("seen file should contain 100, got %q", string(data))
+	}
+}
+
+func TestDaemon_TickAddsEyeEmojiAndRemovesAfterReview(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {
+				{ID: "100", Body: "/sandman review focus on tests"},
+			},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "Body of 42"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// EYE ADDED: EditComment should have been called with 👁️  prefix.
+	foundEyeComment := false
+	foundEyePR := false
+	// EYE REMOVED: The deferred cleanup should strip the prefix.
+	foundCleanComment := false
+	foundCleanPR := false
+	for _, c := range gh.editCalls {
+		if c.kind == "comment" && c.id == "100" && c.body == "👁️ /sandman review focus on tests" {
+			foundEyeComment = true
+		}
+		if c.kind == "comment" && c.id == "100" && c.body == "/sandman review focus on tests" {
+			foundCleanComment = true
+		}
+		if c.kind == "prbody" && c.number == 42 && c.body == "👁️ Body of 42" {
+			foundEyePR = true
+		}
+		if c.kind == "prbody" && c.number == 42 && c.body == "Body of 42" {
+			foundCleanPR = true
+		}
+	}
+	if !foundEyeComment {
+		t.Error("expected EditComment call with 👁️  prefix, not found. Calls:", gh.editCalls)
+	}
+	if !foundEyePR {
+		t.Error("expected EditPRBody call with 👁️  prefix, not found. Calls:", gh.editCalls)
+	}
+	if !foundCleanPR {
+		t.Error("expected EditPRBody cleanup to strip 👁️  prefix, not found. Calls:", gh.editCalls)
+	}
+	if !foundCleanComment {
+		t.Error("expected EditComment cleanup to strip 👁️  prefix, not found. Calls:", gh.editCalls)
+	}
+
+	// Verify the review was launched.
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+}
+
+func TestDaemon_EyeEmojiRemovedOnRunBatchError(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "x", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "Body"}},
+	}
+
+	errRunner := func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		return nil, errors.New("batch exploded")
+	}
+
+	d, _, _ := newDaemonForTest(t, gh, batchFunc(errRunner), &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// The eye prefix should still be stripped even though RunBatch failed.
+	foundCleanPR := false
+	foundCleanComment := false
+	for _, c := range gh.editCalls {
+		if c.kind == "prbody" && c.number == 1 && c.body == "Body" {
+			foundCleanPR = true
+		}
+		if c.kind == "comment" && c.id == "x" && c.body == "/sandman review" {
+			foundCleanComment = true
+		}
+	}
+	if !foundCleanPR {
+		t.Error("expected PR body cleanup after RunBatch error, got calls:", gh.editCalls)
+	}
+	if !foundCleanComment {
+		t.Error("expected comment cleanup after RunBatch error, got calls:", gh.editCalls)
 	}
 }
 

@@ -572,5 +572,33 @@ func labelNames(labels []struct {
 	return names
 }
 
+// EditComment overwrites a PR conversation comment body via the GitHub REST API.
+func (c *CLIClient) EditComment(commentID, body string) error {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return err
+	}
+	cmd := c.command("gh", "api", "-X", "PATCH", fmt.Sprintf("repos/%s/%s/issues/comments/%s", owner, repo, commentID), "-f", fmt.Sprintf("body=%s", body))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh api edit comment: %w\n%s", err, out)
+	}
+	return nil
+}
+
+// EditPRBody overwrites the PR description via the GitHub REST API.
+func (c *CLIClient) EditPRBody(prNumber int, body string) error {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return err
+	}
+	cmd := c.command("gh", "api", "-X", "PATCH", fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, prNumber), "-f", fmt.Sprintf("body=%s", body))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh api edit pr: %w\n%s", err, out)
+	}
+	return nil
+}
+
 // Ensure CLIClient implements Client.
 var _ Client = (*CLIClient)(nil)
