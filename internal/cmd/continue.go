@@ -29,7 +29,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			issues, promptText, err := parseContinueArgs(args)
 			if err != nil {
-				return err
+				return MarkUsage(err)
 			}
 
 			eventsList, err := deps.EventLog.Read()

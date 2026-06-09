@@ -183,7 +183,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				} else if len(args) > 0 {
 					selection, orderedIssues, _, hasUnboundedEnd, err := parseIssueSelection(args)
 					if err != nil {
-						return err
+						return MarkUsage(err)
 					}
 
 					if label == "" && query == "" && !hasUnboundedEnd {

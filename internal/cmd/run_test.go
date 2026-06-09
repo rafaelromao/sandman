@@ -328,6 +328,10 @@ func TestRun_StartDelayNegativeValueRejected(t *testing.T) {
 	if !strings.Contains(err.Error(), "start_delay must be 0 or greater") {
 		t.Fatalf("expected validation error, got %v", err)
 	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
 	if spy.called {
 		t.Fatal("expected batch runner not to be called")
 	}
@@ -395,6 +399,10 @@ func TestRun_RunIdleTimeoutNegativeValueRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "run_idle_timeout must be 0 or greater") {
 		t.Fatalf("expected validation error, got %v", err)
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
 	}
 	if spy.called {
 		t.Fatal("expected batch runner not to be called")
@@ -2219,6 +2227,10 @@ func TestRun_RalphFlagWithArgsReturnsError(t *testing.T) {
 	if !strings.Contains(err.Error(), "cannot combine --ralph with issue arguments") {
 		t.Errorf("expected mutual exclusivity error, got: %v", err)
 	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
 }
 
 func TestRun_RalphFlagWithLabelUsesLabelSearch(t *testing.T) {
@@ -3002,6 +3014,10 @@ func TestRun_InvalidContainerFlagsReturnError(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+			var target *UsageError
+			if !errors.As(err, &target) {
+				t.Fatalf("expected *UsageError, got %T: %v", err, err)
 			}
 			if spy.called {
 				t.Fatal("expected batch runner not to be called")

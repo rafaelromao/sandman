@@ -70,6 +70,29 @@ func TestExecuteRoot_PrintsUsageForUsageError(t *testing.T) {
 	}
 }
 
+func TestExecuteRoot_PrintsSubcommandUsage(t *testing.T) {
+	root := &cobra.Command{Use: "sandman", Short: "root", SilenceUsage: true, SilenceErrors: true}
+	sub := &cobra.Command{
+		Use:   "thing",
+		Short: "sub",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return sandmancmd.MarkUsage(errors.New("bad arg"))
+		},
+	}
+	root.AddCommand(sub)
+	var stderr bytes.Buffer
+	calls := 0
+	exit := func(code int) { calls = code }
+	root.SetArgs([]string{"thing"})
+	executeRoot(root, &stderr, exit)
+	if calls != 1 {
+		t.Errorf("exit code = %d, want 1", calls)
+	}
+	if !strings.Contains(stderr.String(), "thing") {
+		t.Errorf("expected subcommand usage mentioning 'thing', got %q", stderr.String())
+	}
+}
+
 func TestExecuteRoot_ExitCodeForExitCodedError(t *testing.T) {
 	root := &cobra.Command{Use: "sandman", SilenceUsage: true, SilenceErrors: true, RunE: func(cmd *cobra.Command, args []string) error {
 		return &sandmancmd.ExitCodedError{Code: 130, Msg: "aborted"}

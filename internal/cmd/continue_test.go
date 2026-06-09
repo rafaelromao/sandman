@@ -92,6 +92,10 @@ func TestContinue_InvalidIssueReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when invalid issue provided")
 	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
 }
 
 func TestContinue_RuntimeErrorNotUsageError(t *testing.T) {

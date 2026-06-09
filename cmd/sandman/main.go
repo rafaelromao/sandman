@@ -26,10 +26,12 @@ func isStdoutTTY() bool {
 
 // executeRoot runs the cobra command tree, routing returned errors to
 // the right sink: ExitCodedError → exit code, UsageError → error + usage
-// on stderr, anything else → plain error on stderr. Extracted from main
-// so the behavior is testable without spawning a subprocess.
+// on stderr (using the failing subcommand's usage), anything else → plain
+// error on stderr. Extracted from main so the behavior is testable without
+// spawning a subprocess.
 func executeRoot(rootCmd *cobra.Command, stderr io.Writer, exit func(int)) {
-	if err := rootCmd.Execute(); err != nil {
+	failed, err := rootCmd.ExecuteC()
+	if err != nil {
 		var coded *cmd.ExitCodedError
 		if errors.As(err, &coded) {
 			exit(coded.Code)
@@ -38,7 +40,11 @@ func executeRoot(rootCmd *cobra.Command, stderr io.Writer, exit func(int)) {
 		var ue *cmd.UsageError
 		if errors.As(err, &ue) {
 			fmt.Fprintln(stderr, "Error:", err)
-			fmt.Fprintln(stderr, rootCmd.UsageString())
+			if failed != nil {
+				fmt.Fprintln(stderr, failed.UsageString())
+			} else {
+				fmt.Fprintln(stderr, rootCmd.UsageString())
+			}
 			exit(1)
 			return
 		}
