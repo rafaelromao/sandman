@@ -66,6 +66,8 @@ Emitted when the heartbeat watchdog detects that the agent has produced no log o
 | `idle_seconds` | How long the agent was idle before the watchdog fired |
 | `idle_timeout_seconds` | The configured idle timeout threshold |
 | `attempt` | Which retry attempt this was (1-indexed) |
+| `reason` | `"run_idle_timeout"` | Constant string identifying the trigger |
+| `last_log_lines` | `["line 1", "line 2", "line 3"]` | Up to 3 trailing lines from the agent log at timeout |
 
 #### `run.warning`
 Emitted for non-fatal issues during sandbox cleanup.
@@ -133,7 +135,7 @@ The heartbeat watchdog monitors agent log output. If no new output appears for `
 - Any situation where the agent process is alive but not producing output
 
 **What the user sees:**
-1. A `run.idle_timeout` event is written to `.sandman/events.jsonl` with diagnostic payload (`idle_seconds`, `idle_timeout_seconds`, `attempt`)
+1. A `run.idle_timeout` event is written to `.sandman/events.jsonl` with diagnostic payload (`idle_seconds`, `idle_timeout_seconds`, `attempt`, `reason`, `last_log_lines`)
 2. The agent process is killed
 3. The run is emitted as `run.aborted` with status `aborted`
 4. The batch summary shows the run in the `aborted` bucket
