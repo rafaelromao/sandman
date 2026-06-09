@@ -481,6 +481,7 @@ func customizeSmokeConfig(repoDir, provider, model string) (*config.Config, erro
 		cfg.Agents = map[string]config.Agent{}
 	}
 	cfg.Agents[provider] = resolved
+	cfg.ReviewCommand = "/oc review"
 	return cfg, nil
 }
 
