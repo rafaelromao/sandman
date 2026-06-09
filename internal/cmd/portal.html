@@ -631,6 +631,8 @@
     }
     .badge.running { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 30%, var(--border)); }
     .badge.running .dot { background: var(--accent); }
+    .badge.reviewing { background: color-mix(in oklch, oklch(0.65 0.16 285) 18%, var(--surface)); border-color: color-mix(in oklch, oklch(0.65 0.16 285) 30%, var(--border)); }
+    .badge.reviewing .dot { background: oklch(0.65 0.16 285); }
     .badge.active { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 30%, var(--border)); }
     .badge.active .dot { background: var(--accent); }
     .badge.success { background: color-mix(in oklch, var(--success) 12%, var(--surface)); border-color: color-mix(in oklch, var(--success) 24%, var(--border)); }
@@ -2423,6 +2425,8 @@
       return Array.from(values).sort((a, b) => {
         if (a === 'running') return -1;
         if (b === 'running') return 1;
+        if (a === 'reviewing') return -1;
+        if (b === 'reviewing') return 1;
         return a.localeCompare(b);
       });
     }
@@ -2464,6 +2468,7 @@
     function statusClass(item) {
       const status = (item.status || '').toLowerCase();
       if (status === 'running') return 'running';
+      if (status === 'reviewing') return 'reviewing';
       if (status === 'active') return 'active';
       if (status === 'success') return 'success';
       if (status === 'failure' || status === 'failed' || status === 'error') return 'failure';
@@ -2507,7 +2512,7 @@
 
     function isRunAbortable(run, abortReservations) {
       if (!run || run.kind !== 'active') return false;
-      if (run.status !== 'running' && run.status !== 'queued' && run.status !== 'blocked') return false;
+      if (run.status !== 'running' && run.status !== 'reviewing' && run.status !== 'queued' && run.status !== 'blocked') return false;
       if (!run.batchKey) return false;
       const reservationKey = run.key + ':' + String(run.issueNumber != null ? run.issueNumber : '');
       if (abortReservations && abortReservations.has && abortReservations.has(reservationKey)) return false;

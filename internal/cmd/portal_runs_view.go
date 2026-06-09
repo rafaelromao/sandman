@@ -400,7 +400,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	if state != nil {
 		run.Key = state.RunID
 		run.RunID = state.RunID
-		run.Status = v.statusOrDefault(state.Status(), state.IsActive())
+		run.Status = v.statusOrDefault(state.Status(), state.IsActive(), state.IsReview())
 		if run.Status == "aborted" {
 			run.Kind = "completed"
 		}
@@ -573,7 +573,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Key:         runID,
 		RunID:       runID,
 		Kind:        v.kindForRun(runState),
-		Status:      v.statusOrDefault(status, runState.IsActive()),
+		Status:      v.statusOrDefault(status, runState.IsActive(), runState.IsReview()),
 		IssueLabel:  issueLabel,
 		IssueNumber: issueNumber,
 		Branch:      branch,
@@ -609,8 +609,11 @@ func (v *portalRunsView) kindForRun(runState events.RunState) string {
 	return "completed"
 }
 
-func (v *portalRunsView) statusOrDefault(status string, active bool) string {
+func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bool) string {
 	status = strings.TrimSpace(status)
+	if active && isReview {
+		return "reviewing"
+	}
 	if active {
 		return "running"
 	}
