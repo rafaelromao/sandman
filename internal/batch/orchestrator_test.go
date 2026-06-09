@@ -198,6 +198,10 @@ func (f *fakeGitHubClient) ListPRComments(number int) ([]github.PRComment, error
 	return nil, nil
 }
 
+func (f *fakeGitHubClient) RepoName() (string, error) {
+	return "owner/repo", nil
+}
+
 func mergedPR(branch, sha string) *github.PR {
 	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}
 }
