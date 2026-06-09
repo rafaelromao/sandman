@@ -472,7 +472,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
-	cmd.Flags().Bool("force", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout existing worktree on wrong branch")
+	cmd.Flags().Bool("force", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch")
 
 	return cmd
 }
