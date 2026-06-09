@@ -77,6 +77,14 @@ func (c *cachedGitHubClient) RepoName() (string, error) {
 	return c.client.RepoName()
 }
 
+func (c *cachedGitHubClient) EditComment(commentID, body string) error {
+	return c.client.EditComment(commentID, body)
+}
+
+func (c *cachedGitHubClient) EditPRBody(prNumber int, body string) error {
+	return c.client.EditPRBody(prNumber, body)
+}
+
 // NewRunCmd creates the run command.
 func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{

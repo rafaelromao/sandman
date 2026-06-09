@@ -202,6 +202,14 @@ func (f *fakeGitHubClient) RepoName() (string, error) {
 	return "owner/repo", nil
 }
 
+func (f *fakeGitHubClient) EditComment(commentID, body string) error {
+	return nil
+}
+
+func (f *fakeGitHubClient) EditPRBody(prNumber int, body string) error {
+	return nil
+}
+
 func mergedPR(branch, sha string) *github.PR {
 	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}
 }

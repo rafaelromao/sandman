@@ -114,6 +114,14 @@ func (f *fakeGitHubClient) RepoName() (string, error) {
 	return "owner/repo", nil
 }
 
+func (f *fakeGitHubClient) EditComment(commentID, body string) error {
+	return nil
+}
+
+func (f *fakeGitHubClient) EditPRBody(prNumber int, body string) error {
+	return nil
+}
+
 // newRunDeps returns Dependencies for a run command test. The
 // default review command is overridden to "/oc review" so the
 // review daemon guard (issue #383) is bypassed by default. Tests
