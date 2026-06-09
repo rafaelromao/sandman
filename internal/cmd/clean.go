@@ -128,7 +128,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("read event log: %w", err)
 				}
-				recovered, deadDirs, err := daemon.RecoverStaleRuns(".sandman", eventsList, deps.EventLog)
+				recovered, deadDirs, err := runCleanStale(eventsList, deps.EventLog)
 				if err != nil {
 					return fmt.Errorf("recover stale runs: %w", err)
 				}
@@ -199,4 +199,17 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("failed", false, "Remove failed runs only")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
 	return cmd
+}
+
+// runCleanStale performs the body of `sandman clean --stale` against the
+// supplied event log. It reads the events, scans `.sandman/runs/` for dead
+// batches, and emits a `run.aborted` event for every manifest issue whose
+// RunState has not reached a terminal event. Returns the number of runs
+// recovered and the number of dead directories processed.
+//
+// This is the same code path the `--stale` CLI flag executes, factored out
+// so other long-lived commands (the portal) can invoke the same logic
+// in-process without shelling out.
+func runCleanStale(eventsList []events.Event, log events.EventLog) (recovered, deadDirs int, err error) {
+	return daemon.RecoverStaleRuns(".sandman", eventsList, log)
 }
