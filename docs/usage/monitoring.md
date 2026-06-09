@@ -66,8 +66,8 @@ Emitted when the heartbeat watchdog detects that the agent has produced no log o
 | `idle_seconds` | How long the agent was idle before the watchdog fired |
 | `idle_timeout_seconds` | The configured idle timeout threshold |
 | `attempt` | Which retry attempt this was (1-indexed) |
-| `reason` | `"run_idle_timeout"` | Constant string identifying the trigger |
-| `last_log_lines` | `["line 1", "line 2", "line 3"]` | Up to 3 trailing lines from the agent log at timeout |
+| `reason` | `"run_idle_timeout"` — Constant string identifying the trigger |
+| `last_log_lines` | `["line 1", "line 2", "line 3"]` — Up to 3 trailing lines from the agent log at timeout |
 
 #### `run.warning`
 Emitted for non-fatal issues during sandbox cleanup.
