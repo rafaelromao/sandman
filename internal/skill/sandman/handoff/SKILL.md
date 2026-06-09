@@ -42,3 +42,4 @@ Write `.sandman/continuation-context.md` in the current worktree before exiting.
 
 - Do not invent completion.
 - Keep next step singular and specific.
+- If uncertain about original intent, consult `.sandman/rendered-prompt.md` before continuing.
