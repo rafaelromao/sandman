@@ -115,9 +115,9 @@ func parseStage(content string) (stage string, rest string) {
 func stageInstruction(stage string) string {
 	switch stage {
 	case "plan-approved":
-		return "Resume from self-review. Load sandman-review and re-evaluate the committed changes."
+		return "Resume from self-review. Load sandman-self-review and re-evaluate the committed changes."
 	case "implementation-committed":
-		return "Resume from merging the base branch and creating the PR. Load sandman-merge, then push and create PR."
+		return "Resume from merging the base branch and creating the PR. Load sandman-back-merge, then push and create PR."
 	case "pr-created":
 		return "Resume from delegated PR review. Load sandman-pr-review and run the review loop."
 	case "pr-review-finished":

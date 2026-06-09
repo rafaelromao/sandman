@@ -1048,7 +1048,7 @@ func TestParseStage_HandlesStageWithNoValue(t *testing.T) {
 
 func TestStageInstruction_ReturnsPlanApproved(t *testing.T) {
 	got := stageInstruction("plan-approved")
-	want := "Resume from self-review. Load sandman-review and re-evaluate the committed changes."
+	want := "Resume from self-review. Load sandman-self-review and re-evaluate the committed changes."
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -1056,7 +1056,7 @@ func TestStageInstruction_ReturnsPlanApproved(t *testing.T) {
 
 func TestStageInstruction_ReturnsImplementationCommitted(t *testing.T) {
 	got := stageInstruction("implementation-committed")
-	want := "Resume from merging the base branch and creating the PR. Load sandman-merge, then push and create PR."
+	want := "Resume from merging the base branch and creating the PR. Load sandman-back-merge, then push and create PR."
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}

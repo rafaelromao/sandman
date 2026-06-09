@@ -1,6 +1,6 @@
 ---
-name: sandman-merge
-description: Safely merges a base branch into the current branch and resolves merge conflicts with a disciplined 3-way workflow that avoids history rewrites. Use when user says sandman merge, when preparing a branch to catch up with its base branch, when the user asks to merge main/master/develop into the current branch, or when avoiding force-push is a hard rule.
+name: sandman-back-merge
+description: Safely merges a base branch into the current branch and resolves merge conflicts with a disciplined 3-way workflow that avoids history rewrites. Use when user says sandman back-merge, when preparing a branch to catch up with its base branch, when the user asks to merge main/master/develop into the current branch, or when avoiding force-push is a hard rule.
 ---
 
 # Merge

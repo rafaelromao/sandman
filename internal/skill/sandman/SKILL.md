@@ -1,6 +1,6 @@
 ---
 name: sandman
-description: Routes to Sandman modes for issue implementation, test-driven development, review, PR review, merge, PR merge, and handoff workflows. Use when user mentions sandman or asks for implement, tdd, review, pr-review, merge, pr-merge, or handoff modes.
+description: Routes to Sandman modes for issue implementation, test-driven development, self-review, PR review, back-merge, PR merge, and handoff workflows. Use when user mentions sandman or asks for implement, tdd, self-review, pr-review, back-merge, pr-merge, or handoff modes.
 ---
 
 # Sandman
@@ -12,9 +12,9 @@ Use one mode explicitly:
 ```text
 sandman implement
 sandman tdd
-sandman review
+sandman self-review
 sandman pr-review
-sandman merge
+sandman back-merge
 sandman pr-merge
 sandman handoff
 ```
@@ -23,9 +23,9 @@ sandman handoff
 
 - `implement` -> `sandman-implement`
 - `tdd` -> `sandman-tdd`
-- `review` -> `sandman-review`
+- `self-review` -> `sandman-self-review`
 - `pr-review` -> `sandman-pr-review`
-- `merge` -> `sandman-merge`
+- `back-merge` -> `sandman-back-merge`
 - `pr-merge` -> `sandman-pr-merge`
 - `handoff` -> `sandman-handoff`
 
