@@ -95,7 +95,7 @@ Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on 
 
 See [Sandman Skills](skills.md) for the shared workflow details.
 
-`sandman continue` replays the stored branch, base branch, agent, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, resolves the model from `--model` or `model`, then prepends `.sandman/continuation-context.md` to `.sandman/continue-prompt.md` when present.
+`sandman continue` replays the stored branch, base branch, agent, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, resolves the model from `--model` or `model`, then prepends `.sandman/handoff.md` to `.sandman/handoff-prompt.md` when present.
 
 ## Container scheduling configuration
 
