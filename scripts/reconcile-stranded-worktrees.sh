@@ -6,7 +6,13 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
     exit 1
 fi
 
-repo_root=$(git rev-parse --show-toplevel)
+# Resolve repo root from git-common-dir (works from linked worktrees too)
+git_common_dir=$(git rev-parse --git-common-dir)
+case "$git_common_dir" in
+  /*) repo_root=$(dirname "$git_common_dir") ;;
+  *)  repo_root=$(git rev-parse --show-toplevel) ;;
+esac
+
 worktree_dir_default=".sandman/worktrees"
 
 # Read worktree_dir from .sandman/config.yaml, fall back to default
@@ -14,7 +20,12 @@ worktree_dir=$worktree_dir_default
 if [[ -f "$repo_root/.sandman/config.yaml" ]]; then
     cfg_val=$(awk -F': ' '/^worktree_dir:/ {print $2; exit}' "$repo_root/.sandman/config.yaml")
     if [[ -n "$cfg_val" ]]; then
-        worktree_dir=$cfg_val
+        # Strip surrounding quotes and trailing slashes
+        cfg_val="${cfg_val%\"}"
+        cfg_val="${cfg_val#\"}"
+        cfg_val="${cfg_val%\'}"
+        cfg_val="${cfg_val#\'}"
+        worktree_dir="${cfg_val%%/}"
     fi
 fi
 
