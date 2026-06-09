@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -35,6 +36,28 @@ var portalANSISequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 var portalRunAborter = abortPortalRun
 var portalPeerPID = resolvePortalPeerPID
 var portalSignalProcess = signalPortalProcess
+
+// portalStaleCleaner is the function invoked once per portal server
+// lifetime to recover stale runs in dead batches (the same logic as
+// `sandman clean --stale`). It is a package variable so tests can swap it
+// for a stub that records invocation; production code reaches the real
+// helper through the default closure below.
+var portalStaleCleaner = func(repoRoot string) error {
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	logPathLogger := &events.JSONLLogger{Path: logPath}
+	eventsList, err := logPathLogger.Read()
+	if err != nil {
+		return fmt.Errorf("read event log: %w", err)
+	}
+	recovered, deadDirs, err := runCleanStale(eventsList, logPathLogger)
+	if err != nil {
+		return err
+	}
+	if recovered > 0 || deadDirs > 0 {
+		log.Printf("portal: recovered %d stale runs as aborted across %d dead directories.", recovered, deadDirs)
+	}
+	return nil
+}
 
 type portalInstance struct {
 	Name       string `json:"name"`
@@ -361,6 +384,16 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("portal: stale cleanup panicked: %v", r)
+			}
+		}()
+		if err := portalStaleCleaner(repoRoot); err != nil {
+			log.Printf("portal: stale cleanup failed: %v", err)
+		}
+	}()
 	return mux
 }
 

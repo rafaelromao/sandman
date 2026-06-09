@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2304,5 +2305,144 @@ func TestPortal_QueuedThenFailureShowsFailureAfterBatchEnds(t *testing.T) {
 	}
 	if issue42Runs[0].Status != "failure" {
 		t.Fatalf("expected status 'failure' (queued event should not linger), got %q", issue42Runs[0].Status)
+	}
+}
+
+func TestPortal_StaleCleanerRunsOnceOnStartupAndNotOnPoll(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	var calls atomic.Int64
+	prev := portalStaleCleaner
+	t.Cleanup(func() { portalStaleCleaner = prev })
+	portalStaleCleaner = func(string) error {
+		calls.Add(1)
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-release
+		close(finished)
+		return nil
+	}
+
+	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stale cleaner was not invoked on portal startup")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("expected stub to be inside its first call, got calls=%d", got)
+	}
+
+	close(release)
+	<-finished
+
+	runs := readPortalRuns(t, server.URL)
+	if len(runs) != 0 {
+		t.Fatalf("expected 0 runs in fresh repo, got %d: %#v", len(runs), runs)
+	}
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("expected stale cleaner to have been called exactly once after one poll, got %d", got)
+	}
+
+	for i := 0; i < 5; i++ {
+		_ = readPortalRuns(t, server.URL)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("expected stale cleaner to remain at 1 call after extra polls, got %d", got)
+	}
+}
+
+func TestPortal_StaleCleanerErrorDoesNotBlockServing(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	prev := portalStaleCleaner
+	t.Cleanup(func() { portalStaleCleaner = prev })
+	portalStaleCleaner = func(string) error {
+		<-release
+		close(finished)
+		return errors.New("boom")
+	}
+
+	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs")
+	if err != nil {
+		t.Fatalf("poll /api/runs: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 even when stale cleaner is mid-failure, got %d", resp.StatusCode)
+	}
+	close(release)
+	<-finished
+
+	resp, err = http.Get(server.URL + "/api/runs")
+	if err != nil {
+		t.Fatalf("poll /api/runs after error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after stale cleaner errored, got %d", resp.StatusCode)
+	}
+}
+
+func TestPortal_StaleCleanerRecoversDeadBatchBeforeFirstPoll(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	createdAt := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
+	started := createdAt.Add(2 * time.Minute)
+	writeBatchManifest(t, repoRoot, "dead-batch", []int{42}, createdAt)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", RunID: "run-42-dead", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	prev := portalStaleCleaner
+	t.Cleanup(func() { portalStaleCleaner = prev })
+
+	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	deadline := time.Now().Add(3 * time.Second)
+	var runs []portalRun
+	for time.Now().Before(deadline) {
+		runs = readPortalRuns(t, server.URL)
+		if len(runs) == 1 && runs[0].Status == "aborted" {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run after cleanup, got %d: %#v", len(runs), runs)
+	}
+	if runs[0].Status != "aborted" {
+		t.Fatalf("expected recovered run status 'aborted', got %q", runs[0].Status)
+	}
+	if runs[0].IssueNumber != 42 {
+		t.Fatalf("expected recovered run for issue 42, got %d", runs[0].IssueNumber)
 	}
 }
