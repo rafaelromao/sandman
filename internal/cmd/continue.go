@@ -23,11 +23,11 @@ import (
 // NewContinueCmd creates the continue command.
 func NewContinueCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "continue [issue-number...] <prompt-text>",
+		Use:   "continue <issue-number>...",
 		Short: "Continue the last agent run for one or more issues in a batch",
-		Args:  wrapArgs(cobra.MinimumNArgs(2)),
+		Args:  wrapArgs(cobra.MinimumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			issues, promptText, err := parseContinueArgs(args)
+			issues, err := parseContinueArgs(args)
 			if err != nil {
 				return MarkUsage(err)
 			}
@@ -91,19 +91,15 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				baseBranches[num] = strings.TrimSpace(baseBranch)
 				previousRunIDs[num] = lastRun.RunID
 
-				handoffPrompt := promptText
-				contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-				if content, err := os.ReadFile(contextPath); err != nil {
-					if !os.IsNotExist(err) {
-						return fmt.Errorf("read handoff context %q: %w", contextPath, err)
-					}
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: missing handoff context %q; continuing with bare prompt\n", contextPath)
-				} else {
-					stage, contextWithoutStage := parseStage(string(content))
-					priorContext := strings.TrimSpace(stripHandoffHeader(contextWithoutStage))
-					handoffPrompt = buildHandoffPrompt(priorContext, stage)
+				handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+				content, exists, err := batch.ReadHandoffContent(handoffPath)
+				if err != nil {
+					return fmt.Errorf("read handoff %q for issue #%d: %w", handoffPath, num, err)
 				}
-				handoffPrompts[num] = handoffPrompt
+				if !exists {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
+				}
+				handoffPrompts[num] = content
 			}
 
 			// Replay agent/model/review settings from the first issue's last run.
@@ -240,7 +236,6 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				HandoffPrompts:             handoffPrompts,
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				PromptConfig: prompt.RenderConfig{
-					HandoffPrompt:    promptText,
 					ReviewCommand:    reviewCommand,
 					ReviewCommandSet: true,
 				},
@@ -412,59 +407,4 @@ func payloadBool(payload map[string]any, key string) (bool, bool) {
 		}
 	}
 	return false, false
-}
-
-func stripHandoffHeader(content string) string {
-	lines := strings.Split(content, "\n")
-	i := 0
-	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
-		i++
-	}
-	if i < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i]), "# ") {
-		i++
-		for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
-			i++
-		}
-	}
-	return strings.Join(lines[i:], "\n")
-}
-
-func parseStage(content string) (stage string, rest string) {
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "## Stage:") {
-			stage = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Stage:"))
-			rest = strings.Join(append(lines[:i], lines[i+1:]...), "\n")
-			return
-		}
-	}
-	return "", content
-}
-
-func stageInstruction(stage string) string {
-	switch stage {
-	case "plan-approved":
-		return "Resume from self-review. Load sandman-review and re-evaluate the committed changes."
-	case "implementation-committed":
-		return "Resume from merging the base branch and creating the PR. Load sandman-merge, then push and create PR."
-	case "pr-created":
-		return "Resume from delegated PR review. Load sandman-pr-review and run the review loop."
-	case "pr-review-finished":
-		return "Run sandman-pr-merge if all merge gates pass."
-	default:
-		return "Continue the work."
-	}
-}
-
-func buildHandoffPrompt(priorContext, stage string) string {
-	var b strings.Builder
-	b.WriteString("## Prior Context\n\n")
-	b.WriteString(strings.TrimSpace(priorContext))
-	b.WriteString("\n\n## New Instruction\n\n")
-	b.WriteString(stageInstruction(stage))
-	b.WriteString("\n\n## Update Handoff Context\n\n")
-	b.WriteString("Before exiting, overwrite `.sandman/handoff.md` with an updated summary using this template:\n\n")
-	b.WriteString("```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n")
-	return b.String()
 }

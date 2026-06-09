@@ -851,14 +851,14 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if result.RetriesTotal != 3 {
 		t.Fatalf("RetriesTotal = %d, want 3", result.RetriesTotal)
 	}
-	if renderer.renderCalls != 3 {
-		t.Fatalf("render calls = %d, want 3", renderer.renderCalls)
+	if renderer.renderCalls != 1 {
+		t.Fatalf("render calls = %d, want 1 (handoff prompt bypasses renderer)", renderer.renderCalls)
 	}
 	if rtSandbox.execCount != 3 {
 		t.Fatalf("exec calls = %d, want 3", rtSandbox.execCount)
 	}
-	if rtSandbox.writePromptCount != 3 {
-		t.Fatalf("prompt writes = %d, want 3", rtSandbox.writePromptCount)
+	if rtSandbox.writePromptCount != 1 {
+		t.Fatalf("prompt writes = %d, want 1 (handoff prompt bypasses sandbox WritePrompt)", rtSandbox.writePromptCount)
 	}
 	if len(resetCalls) != 2 {
 		t.Fatalf("reset calls = %d, want 2", len(resetCalls))
@@ -1027,13 +1027,16 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
-	wantPrompt := "## Prior Context\n\n## Completed\nKeep going.\n\n## New Instruction\n\nContinue the work. Resume from the prior context and finish the remaining implementation steps.\n\n## Update Handoff Context\n\nBefore exiting, overwrite `.sandman/handoff.md` with an updated summary using this template:\n\n```markdown\n## Completed\n(what was implemented, committed, or merged)\n\n## Pending\n(what remains unfinished)\n\n## Blockers\n(anything preventing completion)\n\n## Key Decisions\n(significant design choices made)\n\n## Next Step\n(single most important next action)\n```\n"
+	wantPrompt := "## Completed\nKeep going.\n"
 	if string(data) != wantPrompt {
 		t.Fatalf("unexpected continue prompt content: %q", string(data))
 	}
 }
 
-func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
+// When a retry happens with an open PR and the handoff file is missing, the
+// agent receives the EmptyHandoffTemplate (no branch reset) so the open PR is
+// preserved and the agent continues working on it without prior context.
+func TestRunSingle_RetryWithOpenPRFallsBackToEmptyHandoffTemplate(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1094,8 +1097,8 @@ func TestRunSingle_RetryUsesPRReviewPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
-	if string(data) != "Continue with sandman-pr-review until the PR is merged" {
-		t.Fatalf("unexpected continue prompt content: %q", string(data))
+	if !strings.Contains(string(data), "Continue the work.") {
+		t.Fatalf("expected empty handoff template, got %q", string(data))
 	}
 }
 
@@ -1206,8 +1209,17 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	if resetCalls != 1 {
 		t.Fatalf("reset calls = %d, want 1", resetCalls)
 	}
-	if rtSandbox.execCommand == "opencode run .sandman/handoff-prompt.md" {
-		t.Fatal("expected closed PR to skip review continuation")
+	if rtSandbox.execCommand != "opencode run .sandman/handoff-prompt.md" {
+		t.Fatalf("expected handoff-prompt.md to be used, got %q", rtSandbox.execCommand)
+	}
+	// Verify the handoff prompt is the empty template (no handoff doc existed)
+	promptPath := filepath.Join(worktreePath, ".sandman", "handoff-prompt.md")
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read handoff-prompt.md: %v", err)
+	}
+	if !strings.Contains(string(data), "Continue the work.") {
+		t.Fatalf("expected empty handoff template, got %q", string(data))
 	}
 }
 
@@ -1273,11 +1285,11 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
-	if !strings.Contains(string(data), "Resume from self-review.") {
-		t.Fatalf("expected stage-specific instruction in retry prompt, got:\n%s", data)
+	if !strings.Contains(string(data), "## Stage: plan-approved") {
+		t.Fatalf("expected stage line preserved verbatim, got:\n%s", data)
 	}
-	if strings.Contains(string(data), "## Stage:") {
-		t.Fatalf("expected stage line stripped from prior context, got:\n%s", data)
+	if !strings.Contains(string(data), "Initial implementation done.") {
+		t.Fatalf("expected verbatim context content, got:\n%s", data)
 	}
 }
 
