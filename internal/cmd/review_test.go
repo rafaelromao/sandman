@@ -274,6 +274,15 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if runner.captured.Sandbox != "worktree" {
 		t.Errorf("expected default sandbox 'worktree' for reviews, got %q", runner.captured.Sandbox)
 	}
+	if !runner.captured.Review {
+		t.Errorf("expected Review=true on one-shot review batch request, got false")
+	}
+	if runner.captured.PRNumber != 17 {
+		t.Errorf("expected PRNumber=17 on one-shot review batch request, got %d", runner.captured.PRNumber)
+	}
+	if runner.captured.ReviewFocus != "" {
+		t.Errorf("expected empty ReviewFocus on one-shot review batch request, got %q", runner.captured.ReviewFocus)
+	}
 }
 
 func TestReviewCmd_AgentFlagOverridesReviewAgent(t *testing.T) {

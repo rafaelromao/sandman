@@ -1328,7 +1328,7 @@ func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", 0, 0, 0, "", 0, false, 0, false, false)
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", 0, 0, 0, "", 0, false, 0, false, false, false, 0, "")
 	if !started {
 		t.Fatal("expected prompt-only run to start")
 	}
@@ -3484,6 +3484,149 @@ func TestRunBatch_PromptOnlyRunSkipsIssueLookupAndUsesNullIssue(t *testing.T) {
 			t.Fatalf("expected null issue in event %q, got %d", evt.Type, *evt.IssueRef)
 		}
 	}
+}
+
+func TestRunBatch_PromptOnlyReviewRunEmitsReviewTag(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1")}}
+	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+	}}
+
+	_, err := o.RunBatch(context.Background(), Request{
+		PromptConfig: prompt.RenderConfig{PromptFlag: "Review the PR."},
+		Review:       true,
+		PRNumber:     17,
+		ReviewFocus:  "focus on tests",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	for _, evt := range spyLog.events {
+		if evt.Payload["review"] != true {
+			t.Errorf("event %q missing review=true in payload, got %#v", evt.Type, evt.Payload["review"])
+		}
+		if evt.Payload["pr_number"] != 17 {
+			t.Errorf("event %q missing pr_number=17 in payload, got %#v", evt.Type, evt.Payload["pr_number"])
+		}
+		if evt.Payload["review_focus"] != "focus on tests" {
+			t.Errorf("event %q missing review_focus in payload, got %#v", evt.Type, evt.Payload["review_focus"])
+		}
+	}
+}
+
+func TestRunBatch_PromptOnlyReviewRunWithEmptyFocus(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-3-1")}}
+	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+	}}
+
+	_, err := o.RunBatch(context.Background(), Request{
+		PromptConfig: prompt.RenderConfig{PromptFlag: "Review."},
+		Review:       true,
+		PRNumber:     3,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	for _, evt := range spyLog.events {
+		if evt.Payload["review"] != true {
+			t.Errorf("event %q missing review=true, got %#v", evt.Type, evt.Payload["review"])
+		}
+		if _, ok := evt.Payload["review_focus"]; !ok {
+			t.Errorf("event %q missing review_focus key (should be present with empty value), payload keys: %v", evt.Type, payloadKeys(evt.Payload))
+		}
+		if evt.Payload["review_focus"] != "" {
+			t.Errorf("event %q review_focus should be empty string, got %#v", evt.Type, evt.Payload["review_focus"])
+		}
+	}
+}
+
+func TestRunBatch_PromptOnlyImplementationRunOmitsReviewKey(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "p-1")}}
+	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+	}}
+
+	_, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{PromptFlag: "Implement X."}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	for _, evt := range spyLog.events {
+		for _, key := range []string{"review", "pr_number", "review_focus"} {
+			if _, ok := evt.Payload[key]; ok {
+				t.Errorf("implementation event %q should not include %q key, payload: %#v", evt.Type, key, evt.Payload)
+			}
+		}
+	}
+}
+
+func TestRunBatch_IssueDrivenImplementationRunOmitsReviewKey(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(spyLog.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
+	}
+	for _, evt := range spyLog.events {
+		for _, key := range []string{"review", "pr_number", "review_focus"} {
+			if _, ok := evt.Payload[key]; ok {
+				t.Errorf("issue-driven event %q should not include %q key, payload: %#v", evt.Type, key, evt.Payload)
+			}
+		}
+	}
+}
+
+func payloadKeys(payload map[string]any) []string {
+	keys := make([]string, 0, len(payload))
+	for k := range payload {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {

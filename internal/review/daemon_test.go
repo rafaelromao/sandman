@@ -122,6 +122,15 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	if !strings.Contains(runner.last.PromptConfig.PromptFlag, "focus on tests") {
 		t.Errorf("rendered prompt should contain focus, got: %q", runner.last.PromptConfig.PromptFlag)
 	}
+	if !runner.last.Review {
+		t.Errorf("expected Review=true on daemon review batch request, got false")
+	}
+	if runner.last.PRNumber != 42 {
+		t.Errorf("expected PRNumber=42 on daemon review batch request, got %d", runner.last.PRNumber)
+	}
+	if runner.last.ReviewFocus != "focus on tests" {
+		t.Errorf("expected ReviewFocus='focus on tests', got %q", runner.last.ReviewFocus)
+	}
 
 	dir := d.PRDir(42)
 	seenPath := filepath.Join(dir, "seen-comments.jsonl")

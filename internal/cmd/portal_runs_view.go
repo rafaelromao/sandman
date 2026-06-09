@@ -38,6 +38,15 @@ type portalRun struct {
 	LogURL      string        `json:"logUrl,omitempty"`
 	Log         string        `json:"log,omitempty"`
 	Events      []portalEvent `json:"events,omitempty"`
+	// Review flags runs whose run.started event carried payload.review = true.
+	// The portal UI uses it to render a REVIEW badge next to the issue label
+	// so review-agent runs are distinguishable from implementation runs. The
+	// field is omitted from JSON when false to preserve the existing /api/runs
+	// contract for implementation runs.
+	Review bool `json:"review,omitempty"`
+	// PRNumber mirrors payload.pr_number from the run.started event. Only
+	// meaningful when Review is true; omitted from JSON otherwise.
+	PRNumber int `json:"prNumber,omitempty"`
 	// BatchKey ties a row to the batch (active runDir) that produced it.
 	// Active-batch derived rows carry the active runDir's name; historical
 	// rows from the event log carry "". Dedup only collapses rows that share
@@ -573,6 +582,11 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, branch),
 		Log:         logContent,
 		Events:      eventsByRun[runID],
+		Review:      runState.IsReview(),
+	}
+	if review, pr := v.reviewContext(runState); review {
+		portalRun.Review = true
+		portalRun.PRNumber = pr
 	}
 	if status == "blocked" {
 		portalRun.Log = v.portalBlockedMessage(runState.Finished.Payload)
@@ -660,6 +674,37 @@ func (v *portalRunsView) portalBlockedByIssues(payload map[string]any) []int {
 	default:
 		return nil
 	}
+}
+
+// reviewContext reports whether the run is a review run and, if so, the PR
+// number it targeted. The flag is read from the run.started payload so the
+// answer matches the value the orchestrator wrote when the run began.
+func (v *portalRunsView) reviewContext(runState events.RunState) (bool, int) {
+	if !runState.IsReview() {
+		return false, 0
+	}
+	return true, v.reviewPRNumber(runState.Started.Payload)
+}
+
+// reviewPRNumber reads the pr_number field from a payload, tolerating the
+// JSON-decoded float64 representation that the event log uses.
+func (v *portalRunsView) reviewPRNumber(payload map[string]any) int {
+	if payload == nil {
+		return 0
+	}
+	raw, ok := payload["pr_number"]
+	if !ok {
+		return 0
+	}
+	switch n := raw.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
 }
 
 func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {

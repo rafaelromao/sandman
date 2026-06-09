@@ -61,10 +61,22 @@
     const name = global.document.createElement('span');
     name.classList.add('name');
     name.textContent = run.issueLabel || run.key;
+    wrap.appendChild(name);
+    if (run.review) {
+      const reviewBadge = global.document.createElement('span');
+      reviewBadge.classList.add('badge', 'review');
+      const dot = global.document.createElement('span');
+      dot.classList.add('dot');
+      reviewBadge.appendChild(dot);
+      const labelSpan = global.document.createElement('span');
+      labelSpan.classList.add('badge-label');
+      labelSpan.textContent = 'REVIEW';
+      reviewBadge.appendChild(labelSpan);
+      wrap.appendChild(reviewBadge);
+    }
     const meta = global.document.createElement('span');
     meta.classList.add('meta-line', 'mono');
     meta.textContent = helpers.renderRunMeta(run);
-    wrap.appendChild(name);
     wrap.appendChild(meta);
     td.appendChild(wrap);
   }

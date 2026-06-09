@@ -57,6 +57,18 @@ type Request struct {
 	// under which container config snapshots are stored for the lifetime of
 	// the batch. When empty, snapshots fall back to a temp directory.
 	RunDir string
+	// Review marks this batch as a review-agent run (one-shot or daemon).
+	// The orchestrator surfaces it as `payload.review = true` on
+	// `run.started` and `run.finished` events so the event log and portal
+	// can distinguish review runs from implementation runs.
+	Review bool
+	// PRNumber is the GitHub PR number being reviewed. Only meaningful
+	// when Review is true. Implementation runs leave it zero.
+	PRNumber int
+	// ReviewFocus is the free-form text that followed `/sandman review`
+	// in the trigger comment. May be empty. Only meaningful when Review
+	// is true.
+	ReviewFocus string
 }
 
 // Result describes the outcome of a batch.

@@ -89,6 +89,22 @@ func (r RunState) IsPromptOnly() bool {
 	return r.IssueNumber() == 0 && r.Started.IssueRef == nil && (r.Finished == nil || r.Finished.IssueRef == nil)
 }
 
+// IsReview reports whether the run was tagged as a review-agent run. The
+// orchestrator sets payload["review"] = true on the run.started (and
+// run.finished) event when the batch was issued by `sandman review`
+// (one-shot or daemon). Implementation runs leave the key absent.
+func (r RunState) IsReview() bool {
+	if flag, ok := payloadBool(r.Started.Payload, "review"); ok && flag {
+		return true
+	}
+	if r.Finished != nil {
+		if flag, ok := payloadBool(r.Finished.Payload, "review"); ok && flag {
+			return true
+		}
+	}
+	return false
+}
+
 // IsActive reports whether the run has not finished yet.
 func (r RunState) IsActive() bool {
 	return r.Finished == nil
@@ -143,4 +159,21 @@ func payloadString(payload map[string]any, key string) (string, bool) {
 	}
 	str, ok := v.(string)
 	return str, ok
+}
+
+func payloadBool(payload map[string]any, key string) (bool, bool) {
+	if payload == nil {
+		return false, false
+	}
+	v, ok := payload[key]
+	if !ok {
+		return false, false
+	}
+	switch b := v.(type) {
+	case bool:
+		return b, true
+	case string:
+		return b == "true", true
+	}
+	return false, false
 }
