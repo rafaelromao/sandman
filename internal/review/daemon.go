@@ -135,6 +135,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.logf("review agent validation failed: %v", err)
 			return err
 		}
+		if strings.TrimSpace(d.Config.EffectiveReviewModel()) == "" {
+			return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
+		}
 	}
 
 	if d.Trigger == nil {

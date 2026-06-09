@@ -477,6 +477,40 @@ func TestReviewCmd_FallsBackToDefaultAgent(t *testing.T) {
 	}
 }
 
+func TestReviewCmd_OneShotErrorsOnMissingModel(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultModel:       "",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr:               &github.PR{Number: 1, Title: "T", Body: "B"},
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"--pr", "1"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when review model is not set")
+	}
+	if !strings.Contains(err.Error(), "review model is not set") {
+		t.Errorf("expected error about missing review model, got: %v", err)
+	}
+}
+
 type testError struct{ msg string }
 
 func (e *testError) Error() string { return e.msg }

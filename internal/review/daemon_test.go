@@ -216,7 +216,10 @@ func TestDaemon_RunRespondsToTrigger(t *testing.T) {
 		prs: []github.PR{{Number: 1, State: "open"}},
 	}
 	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{})
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	})
 
 	trigger := make(chan struct{}, 4)
 	d.Trigger = trigger
@@ -304,7 +307,10 @@ func (f batchFunc) RunBatch(ctx context.Context, req batch.Request) (*batch.Resu
 func TestDaemon_ListOpenPRsErrorIsLogged(t *testing.T) {
 	gh := &fakeGH{listErr: errList}
 	runner := &capturedRequest{}
-	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{})
+	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	})
 
 	trigger := make(chan struct{}, 1)
 	d.Trigger = trigger
@@ -369,4 +375,41 @@ func TestDaemon_RunFailsFastOnInvalidReviewAgent(t *testing.T) {
 	if !strings.Contains(buf.String(), "review agent validation failed") {
 		t.Errorf("expected validation log, got %q", buf.String())
 	}
+}
+
+func TestDaemon_RunFailsFastOnMissingReviewModel(t *testing.T) {
+	gh := &fakeGH{}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "",
+		DefaultModel:       "",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"opencode": {Preset: "opencode", Command: "opencode"},
+	}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+
+	trigger := make(chan struct{}, 1)
+	d.Trigger = trigger
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- d.Run(ctx)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected Run to return an error for missing review model")
+		}
+		if !strings.Contains(err.Error(), "review model is not set") {
+			t.Errorf("expected error about missing review model, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("Run did not return for missing review model")
+	}
+
+	cancel()
 }
