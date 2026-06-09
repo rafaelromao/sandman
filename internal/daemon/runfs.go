@@ -191,13 +191,15 @@ func ReadManifest(runDir string) (BatchManifest, error) {
 // (Started.Timestamp >= manifest.CreatedAt). Returns the number of runs
 // recovered and the number of dead directories processed. Runs whose
 // manifest has no CreatedAt are recovered regardless of the start time.
+//
+// After processing dead batches, RecoverStaleRuns also recovers orphaned
+// active runs whose batch directory has been cleaned up (no directory
+// under <baseDir>/runs/ mentions the run's issue or, for prompt-only runs,
+// has zero issues in its manifest).
 func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.EventLog) (int, int, error) {
 	dead, err := FindDeadRunBatches(baseDir)
 	if err != nil {
 		return 0, 0, err
-	}
-	if len(dead) == 0 {
-		return 0, 0, nil
 	}
 
 	runs := events.ProjectRunStates(eventsList)
@@ -210,13 +212,14 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	}
 
 	var recovered int
+	recoveredRunIDs := make(map[string]struct{})
 	for _, batch := range dead {
 		for _, issueNumber := range batch.Manifest.Issues {
 			run, ok := byIssue[issueNumber]
 			if !ok {
 				continue
 			}
-			if !run.IsActive() {
+			if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
 				continue
 			}
 			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
@@ -234,7 +237,102 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				return recovered, len(dead), fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
 			}
 			recovered++
+			recoveredRunIDs[run.RunID] = struct{}{}
 		}
 	}
+
+	orphanRecovered := recoverOrphanActiveRuns(baseDir, eventsList, log, recoveredRunIDs)
+	recovered += orphanRecovered
+
 	return recovered, len(dead), nil
+}
+
+// recoverOrphanActiveRuns recovers active RunStates that have no matching
+// batch directory under <baseDir>/runs/. A run is orphaned when no directory
+// manifest mentions its issue number (or, for prompt-only runs, has zero
+// issues) AND the run's StartedAt falls outside any matching batch's time
+// window. Runs whose RunID appears in skipRunIDs are not processed.
+func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}) int {
+	runs := events.ProjectRunStates(eventsList)
+
+	// Collect all batch manifests under runs/ (both live and dead dirs).
+	type batchInfo struct {
+		manifest BatchManifest
+	}
+	var batches []batchInfo
+	runsDir := filepath.Join(baseDir, "runs")
+	if entries, err := os.ReadDir(runsDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			manifest, err := ReadManifest(filepath.Join(runsDir, entry.Name()))
+			if err != nil {
+				if os.IsNotExist(err) {
+					manifest = BatchManifest{}
+				} else {
+					continue
+				}
+			}
+			batches = append(batches, batchInfo{manifest: manifest})
+		}
+	}
+
+	var recovered int
+	for _, run := range runs {
+		if !run.IsActive() {
+			continue
+		}
+		if _, ok := skipRunIDs[run.RunID]; ok {
+			continue
+		}
+
+		issueNum := run.IssueNumber()
+		isPromptOnly := issueNum == 0 && run.IsPromptOnly()
+		hasBatch := false
+		for _, b := range batches {
+			if isPromptOnly {
+				if len(b.manifest.Issues) > 0 {
+					continue
+				}
+			} else {
+				hasIssue := false
+				for _, issue := range b.manifest.Issues {
+					if issue == issueNum {
+						hasIssue = true
+						break
+					}
+				}
+				if !hasIssue {
+					continue
+				}
+			}
+			// Zero CreatedAt means we can't determine the window —
+			// conservatively assume this batch might cover the run.
+			if b.manifest.CreatedAt.IsZero() || !run.Started.Timestamp.Before(b.manifest.CreatedAt) {
+				hasBatch = true
+				break
+			}
+		}
+		if hasBatch {
+			continue
+		}
+
+		var issueRef *int
+		if issueNum > 0 {
+			issueRef = &issueNum
+		}
+		event := events.Event{
+			Type:     "run.aborted",
+			RunID:    run.RunID,
+			Issue:    issueNum,
+			IssueRef: issueRef,
+			Payload:  map[string]any{"recovered": true},
+		}
+		if err := log.Log(event); err != nil {
+			return recovered
+		}
+		recovered++
+	}
+	return recovered
 }
