@@ -301,7 +301,6 @@ func (c *CLIClient) ListPRComments(number int) ([]PRComment, error) {
 	return comments, nil
 }
 
-
 func (c *CLIClient) fetchIssuePayload(owner, repo string, number int) (issuePayload, error) {
 	cmd := c.command("gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number))
 	out, err := cmd.CombinedOutput()
