@@ -43,3 +43,4 @@ Write `.sandman/handoff.md` in the current worktree before exiting.
 - Do not invent completion.
 - Keep next step singular and specific.
 - If uncertain about original intent, consult `.sandman/rendered-prompt.md` before continuing.
+- **Do not write a handoff document if the PR is already merged.** A post-merge handoff is misleading — it suggests there is work to resume, but there is none. If the PR is merged, skip writing `.sandman/handoff.md` entirely.

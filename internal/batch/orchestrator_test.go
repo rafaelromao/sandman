@@ -1159,6 +1159,58 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 	}
 }
 
+func TestRunSingle_RemovesHandoffOnMergedPR(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	sandmanDir := filepath.Join(worktreePath, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	handoffPath := filepath.Join(sandmanDir, "handoff.md")
+	if err := os.WriteFile(handoffPath, []byte("## Stage: pr-created\n\n## Completed\nInitial implementation done.\n"), 0644); err != nil {
+		t.Fatalf("write handoff.md: %v", err)
+	}
+
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: true, HeadRefName: branch}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if _, err := os.Stat(handoffPath); !os.IsNotExist(err) {
+		t.Fatalf("expected handoff.md to be removed, but it still exists (err=%v)", err)
+	}
+}
+
 func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
@@ -4009,36 +4061,29 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial run failed: %v", err)
 	}
-	initialContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "handoff.md"))
-	if err != nil {
-		t.Fatalf("read initial handoff context: %v", err)
-	}
-	if !strings.Contains(string(initialContext), "Initial run.") {
-		t.Fatalf("expected initial context to be written, got %q", string(initialContext))
+	// After a successful run on a merged PR, handoff.md is cleaned up by the orchestrator.
+	_, err = os.Stat(filepath.Join(worktreePath, ".sandman", "handoff.md"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("expected handoff.md to be removed after merged PR, err=%v", err)
 	}
 
 	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[0].RunID}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
-	firstHandoffContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "handoff.md"))
-	if err != nil {
-		t.Fatalf("read first handoff context: %v", err)
-	}
-	if !strings.Contains(string(firstHandoffContext), "First continue.") {
-		t.Fatalf("expected first handoff context to be written, got %q", string(firstHandoffContext))
+	// Continuation writes a new handoff, but after the merged-PR check it is also cleaned up.
+	_, err = os.Stat(filepath.Join(worktreePath, ".sandman", "handoff.md"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("expected handoff.md to be removed after merged PR on continue, err=%v", err)
 	}
 
 	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[2].RunID}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "push the PR"}})
 	if err != nil {
 		t.Fatalf("second continue failed: %v", err)
 	}
-	secondHandoffContext, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "handoff.md"))
-	if err != nil {
-		t.Fatalf("read second handoff context: %v", err)
-	}
-	if !strings.Contains(string(secondHandoffContext), "Second continue.") {
-		t.Fatalf("expected second handoff context to be written, got %q", string(secondHandoffContext))
+	_, err = os.Stat(filepath.Join(worktreePath, ".sandman", "handoff.md"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("expected handoff.md to be removed after merged PR on second continue, err=%v", err)
 	}
 
 	if len(state.prompts) != 2 {

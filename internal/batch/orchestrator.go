@@ -1447,6 +1447,10 @@ func (s *runSession) runOnce(
 				result.Status = "failure"
 				continue
 			}
+			if mergeRequired {
+				handoffPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
+				os.Remove(handoffPath)
+			}
 			result.Status = "success"
 			break
 		}
