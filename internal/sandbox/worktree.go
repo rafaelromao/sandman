@@ -21,6 +21,7 @@ type WorktreeSandbox struct {
 	gitName      string
 	gitEmail     string
 	cmd          *exec.Cmd
+	errorLog     io.Writer
 }
 
 // NewWorktreeSandbox creates a WorktreeSandbox for the given repo and branch.
@@ -55,7 +56,7 @@ func (s *WorktreeSandbox) Start() error {
 			if !BranchExists(s.repoPath, s.branch) {
 				return fmt.Errorf("cannot force-reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
 			}
-			fmt.Fprintf(os.Stderr, "warning: worktree %q has detached HEAD, force-checking out %q\n", s.workDir, s.branch)
+			s.warn("worktree %q has detached HEAD, force-checking out %q\n", s.workDir, s.branch)
 			if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
 				return fmt.Errorf("force-checkout branch %q in worktree %q: %w", s.branch, s.workDir, err)
 			}
@@ -73,7 +74,7 @@ func (s *WorktreeSandbox) Start() error {
 			return fmt.Errorf("cannot force-reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
 		}
 		oldBranch := strings.TrimPrefix(currentRef, "refs/heads/")
-		fmt.Fprintf(os.Stderr, "warning: worktree %q on branch %q, force-checking out %q\n", s.workDir, oldBranch, s.branch)
+		s.warn("worktree %q on branch %q, force-checking out %q\n", s.workDir, oldBranch, s.branch)
 		if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
 			return fmt.Errorf("force-checkout branch %q in worktree %q: %w", s.branch, s.workDir, err)
 		}
@@ -145,6 +146,15 @@ func forceCheckoutBranch(workDir, branch string) error {
 		return fmt.Errorf("git checkout -f %s: %w\n%s", branch, err, out)
 	}
 	return nil
+}
+
+// warn writes a warning line to the operator log (s.errorLog or os.Stderr).
+func (s *WorktreeSandbox) warn(format string, args ...interface{}) {
+	w := s.errorLog
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, "warning: "+format, args...)
 }
 
 // workDirExists reports whether s.workDir is an existing directory.
