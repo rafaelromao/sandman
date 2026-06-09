@@ -208,6 +208,10 @@ func setupRalphE2ETest(t *testing.T, binPath, repoDir, remoteDir string) {
 		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 	}
 
+	if _, err := runSandmanBinary(t, binPath, repoDir, "config", "set", "review_command", "/oc review"); err != nil {
+		t.Fatalf("sandman config set failed: %v", err)
+	}
+
 	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md", ".sandman/priority-selection-prompt.md"} {
 		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
 			t.Fatalf("expected scaffolded %s: %v", rel, err)
