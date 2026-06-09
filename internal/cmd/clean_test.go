@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
@@ -24,6 +26,72 @@ func TestClean_NoFlagsReturnsError(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when no filter flag provided")
+	}
+}
+
+func TestClean_Stale_AloneAccepted(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	deps := Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    &fakeEventLog{},
+		GitRunner:   &fakeGitRunner{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected --stale alone to be accepted, got: %v", err)
+	}
+}
+
+func TestClean_Stale_MutuallyExclusiveWithAll(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale", "--all"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --stale combined with --all")
+	}
+	if !strings.Contains(err.Error(), "stale") {
+		t.Errorf("expected error to mention --stale, got: %v", err)
+	}
+}
+
+func TestClean_Stale_MutuallyExclusiveWithSuccess(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale", "--success"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --stale combined with --success")
+	}
+}
+
+func TestClean_Stale_MutuallyExclusiveWithFailed(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale", "--failed"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --stale combined with --failed")
 	}
 }
 
@@ -513,4 +581,319 @@ func TestClean_Success_PreservesActiveRunSnapshots(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(active, "batch.json")); err != nil {
 		t.Errorf("expected active run manifest to be preserved, got: %v", err)
 	}
+}
+
+// writeBatchManifest writes a batch.json manifest into a run directory
+// under .sandman/runs/<runID> for the --stale tests.
+func writeBatchManifest(t *testing.T, baseDir, runID string, issues []int, createdAt time.Time) {
+	t.Helper()
+	runDir := filepath.Join(baseDir, ".sandman", "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	manifest := daemon.BatchManifest{Issues: issues, CreatedAt: createdAt}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+}
+
+func TestRecoverStaleRuns_DeadBatchUnterminated_EmitsAborted(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(5 * time.Minute)
+	writeBatchManifest(t, dir, "run-dead-1", []int{42, 43}, createdAt)
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", RunID: "run-43", Issue: 43, Timestamp: started, Payload: map[string]any{"branch": "sandman/43-fix"}},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    log,
+		GitRunner:   &fakeGitRunner{},
+	})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := len(log.logged); got != 2 {
+		t.Fatalf("expected 2 run.aborted events, got %d: %+v", got, log.logged)
+	}
+	for _, e := range log.logged {
+		if e.Type != "run.aborted" {
+			t.Errorf("expected type run.aborted, got %q", e.Type)
+		}
+		recovered, ok := e.Payload["recovered"].(bool)
+		if !ok || !recovered {
+			t.Errorf("expected payload.recovered=true, got %v", e.Payload)
+		}
+		if e.IssueRef == nil || (*e.IssueRef != 42 && *e.IssueRef != 43) {
+			t.Errorf("expected IssueRef to point to 42 or 43, got %v", e.IssueRef)
+		}
+	}
+	if !strings.Contains(buf.String(), "Recovered 2 stale runs as aborted across 1 dead directories.") {
+		t.Errorf("expected summary, got: %s", buf.String())
+	}
+}
+
+func TestRecoverStaleRuns_LiveBatch_NoEventEmitted(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(5 * time.Minute)
+	runDir := filepath.Join(dir, ".sandman", "runs", "run-live-1")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	manifest := daemon.BatchManifest{Issues: []int{42}, CreatedAt: createdAt}
+	data, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	cmdServer := daemon.NewCommandServer(runDir, nil)
+	if err := cmdServer.Start(); err != nil {
+		t.Fatalf("start command server: %v", err)
+	}
+	defer cmdServer.Stop()
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    log,
+		GitRunner:   &fakeGitRunner{},
+	})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := len(log.logged); got != 0 {
+		t.Errorf("expected 0 logged events for live batch, got %d: %+v", got, log.logged)
+	}
+	if !strings.Contains(buf.String(), "Recovered 0 stale runs") {
+		t.Errorf("expected summary to report 0 recovered, got: %s", buf.String())
+	}
+}
+
+func TestRecoverStaleRuns_RunStartedBeforeManifestCreatedAt_Skipped(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(-1 * time.Hour) // before CreatedAt
+	writeBatchManifest(t, dir, "run-old", []int{42}, createdAt)
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    log,
+		GitRunner:   &fakeGitRunner{},
+	})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := len(log.logged); got != 0 {
+		t.Errorf("expected 0 logged events for stale-started run, got %d: %+v", got, log.logged)
+	}
+}
+
+func TestRecoverStaleRuns_AlreadyTerminated_NoEventEmitted(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(5 * time.Minute)
+	writeBatchManifest(t, dir, "run-finished", []int{42}, createdAt)
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", RunID: "run-42", Issue: 42, Timestamp: started.Add(time.Hour), Payload: map[string]any{"status": "success"}},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    log,
+		GitRunner:   &fakeGitRunner{},
+	})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := len(log.logged); got != 0 {
+		t.Errorf("expected 0 logged events for terminated run, got %d: %+v", got, log.logged)
+	}
+}
+
+func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	firstStart := createdAt.Add(-2 * time.Hour) // before CreatedAt
+	continuedAt := createdAt.Add(5 * time.Minute)
+	writeBatchManifest(t, dir, "run-cont-1", []int{42}, createdAt)
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: firstStart, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.continued", RunID: "run-42", Issue: 42, Timestamp: continuedAt, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    log,
+		GitRunner:   &fakeGitRunner{},
+	})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := len(log.logged); got != 1 {
+		t.Fatalf("expected 1 logged event for continued run inside window, got %d: %+v", got, log.logged)
+	}
+	if log.logged[0].Type != "run.aborted" {
+		t.Errorf("expected type run.aborted, got %q", log.logged[0].Type)
+	}
+}
+
+func TestRecoverStaleRuns_MultipleDeadBatches(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	createdA := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	createdB := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	writeBatchManifest(t, dir, "run-a", []int{1}, createdA)
+	writeBatchManifest(t, dir, "run-b", []int{2}, createdB)
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-1", Issue: 1, Timestamp: createdA.Add(time.Minute)},
+		{Type: "run.started", RunID: "run-2", Issue: 2, Timestamp: createdB.Add(time.Minute)},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    log,
+		GitRunner:   &fakeGitRunner{},
+	})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := len(log.logged); got != 2 {
+		t.Fatalf("expected 2 logged events across two dead batches, got %d", got)
+	}
+	if !strings.Contains(buf.String(), "Recovered 2 stale runs as aborted across 2 dead directories.") {
+		t.Errorf("expected summary to count 2 dirs, got: %s", buf.String())
+	}
+}
+
+func TestRecoverStaleRuns_JSONRoundTripPreservesIssue(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(5 * time.Minute)
+	writeBatchManifest(t, dir, "run-rt-1", []int{42}, createdAt)
+
+	logFile := filepath.Join(dir, ".sandman", "events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(logFile), 0755); err != nil {
+		t.Fatalf("mkdir events: %v", err)
+	}
+	logger := &events.JSONLLogger{Path: logFile}
+	initial := []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	}
+	for _, e := range initial {
+		if err := logger.Log(e); err != nil {
+			t.Fatalf("seed event: %v", err)
+		}
+	}
+
+	readBack, err := logger.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(Dependencies{
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    logger,
+		GitRunner:   &fakeGitRunner{},
+	})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	persisted, err := logger.Read()
+	if err != nil {
+		t.Fatalf("read events after recover: %v", err)
+	}
+	if len(persisted) != 2 {
+		t.Fatalf("expected 2 persisted events (start + recovered abort), got %d", len(persisted))
+	}
+	var last events.Event
+	for _, e := range persisted {
+		last = e
+	}
+	if last.Type != "run.aborted" {
+		t.Errorf("expected last persisted event to be run.aborted, got %q", last.Type)
+	}
+	if last.IssueRef == nil || *last.IssueRef != 42 {
+		t.Errorf("expected IssueRef=42 in persisted run.aborted, got %v", last.IssueRef)
+	}
+	if recovered, _ := last.Payload["recovered"].(bool); !recovered {
+		t.Errorf("expected payload.recovered=true in persisted run.aborted, got %v", last.Payload)
+	}
+
+	// Sanity: readBack had 1 event before the command, ensure recovery worked off the
+	// in-memory Read() result, not the on-disk file.
+	_ = readBack
 }

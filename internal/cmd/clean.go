@@ -92,9 +92,14 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			all, _ := cmd.Flags().GetBool("all")
 			success, _ := cmd.Flags().GetBool("success")
 			failed, _ := cmd.Flags().GetBool("failed")
+			stale, _ := cmd.Flags().GetBool("stale")
 
-			if !all && !success && !failed {
-				return fmt.Errorf("specify one of --all, --success, or --failed")
+			if !all && !success && !failed && !stale {
+				return fmt.Errorf("specify one of --all, --success, --failed, or --stale")
+			}
+
+			if stale && (all || success || failed) {
+				return fmt.Errorf("--stale is mutually exclusive with --all, --success, and --failed")
 			}
 
 			cfg, err := deps.ConfigStore.Load()
@@ -116,6 +121,19 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			staleRemoved, staleErr := daemon.CleanupStaleRunSnapshots(".sandman")
 			if staleErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", staleErr)
+			}
+
+			if stale {
+				eventsList, err := deps.EventLog.Read()
+				if err != nil {
+					return fmt.Errorf("read event log: %w", err)
+				}
+				recovered, deadDirs, err := daemon.RecoverStaleRuns(".sandman", eventsList, deps.EventLog)
+				if err != nil {
+					return fmt.Errorf("recover stale runs: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs as aborted across %d dead directories.\n", recovered, deadDirs)
+				return nil
 			}
 
 			if all {
@@ -179,5 +197,6 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("all", false, "Remove all worktrees and logs")
 	cmd.Flags().Bool("success", false, "Remove successful runs only")
 	cmd.Flags().Bool("failed", false, "Remove failed runs only")
+	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
 	return cmd
 }

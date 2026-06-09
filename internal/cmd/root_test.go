@@ -33,10 +33,14 @@ func (f *fakeStore) Save(cfg *config.Config) error {
 // fakeEventLog is a test double for events.EventLog.
 type fakeEventLog struct {
 	events []events.Event
+	logged []events.Event
 	err    error
 }
 
-func (f *fakeEventLog) Log(event events.Event) error { return f.err }
+func (f *fakeEventLog) Log(event events.Event) error {
+	f.logged = append(f.logged, event)
+	return f.err
+}
 func (f *fakeEventLog) Read() ([]events.Event, error) {
 	return f.events, f.err
 }
