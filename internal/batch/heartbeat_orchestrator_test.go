@@ -143,7 +143,7 @@ func findEvent(snapshot []events.Event, t string) *events.Event {
 func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
 	client, proc, sb, factory, workDir := heartbeatTestSetup(t)
 	_ = sb
-	logPath := filepath.Join(workDir, heartbeatTestWorktreeDir, "sandman", "42-fix-bug", ".sandman", "logs", "42.log")
+	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
 	runnable := &heartbeatStallRunnable{logPath: logPath, proc: proc}
 	runFactory := &heartbeatSingleRunnableFactory{runnable: runnable}
 	spyLog := &spyEventLog{}
@@ -189,7 +189,7 @@ func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
 
 func TestRunBatch_IdleTimeoutRetriesAndSucceeds(t *testing.T) {
 	client, proc, _, factory, workDir := heartbeatTestSetup(t)
-	logPath := filepath.Join(workDir, heartbeatTestWorktreeDir, "sandman", "42-fix-bug", ".sandman", "logs", "42.log")
+	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
 	stall := &heartbeatStallRunnable{logPath: logPath, proc: proc}
 	success := &fakeRunnable{result: AgentRunResult{IssueNumber: heartbeatTestIssueNum, Status: "success", Branch: heartbeatTestBranch}}
 	runFactory := &heartbeatDualRunnableFactory{first: stall, second: success}
@@ -262,7 +262,7 @@ func TestRunBatch_IdleTimeoutZeroDisables(t *testing.T) {
 
 func TestRunBatch_IdleTimeoutRequestOverridesConfig(t *testing.T) {
 	client, proc, _, factory, workDir := heartbeatTestSetup(t)
-	logPath := filepath.Join(workDir, heartbeatTestWorktreeDir, "sandman", "42-fix-bug", ".sandman", "logs", "42.log")
+	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
 	stall := &heartbeatStallRunnable{logPath: logPath, proc: proc}
 	runFactory := &heartbeatSingleRunnableFactory{runnable: stall}
 	spyLog := &spyEventLog{}
@@ -285,7 +285,7 @@ func TestRunBatch_IdleTimeoutRequestOverridesConfig(t *testing.T) {
 
 func TestRunBatch_IdleTimeoutConfigUsedWhenRequestUnset(t *testing.T) {
 	client, proc, _, factory, workDir := heartbeatTestSetup(t)
-	logPath := filepath.Join(workDir, heartbeatTestWorktreeDir, "sandman", "42-fix-bug", ".sandman", "logs", "42.log")
+	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
 	stall := &heartbeatStallRunnable{logPath: logPath, proc: proc}
 	runFactory := &heartbeatSingleRunnableFactory{runnable: stall}
 	spyLog := &spyEventLog{}
