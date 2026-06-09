@@ -41,6 +41,7 @@ Format the body as Markdown with the following sections:
 - `## Summary` — one paragraph describing what the PR does.
 - `## Findings` — bulleted list. Group by severity (`Blocking`, `Important`, `Nit`). If there are no findings in a group, omit it.
 - `## Suggested next steps` — the minimum set of follow-ups for the author.
+- `## Decision` — If there are zero `Blocking` or `Important` findings, place a single line: `**APPROVED**`. Otherwise, place `**CHANGES_REQUESTED**`.
 
 Keep the comment terse and actionable. Do not post review commentary outside the single `gh pr comment` invocation.
 
