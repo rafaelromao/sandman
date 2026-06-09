@@ -24,7 +24,7 @@ func NewConfigGetCmd(store config.Store) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <key>",
 		Short: "Get a config value",
-		Args:  cobra.ExactArgs(1),
+		Args:  wrapArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := store.Load()
 			if err != nil {
@@ -71,7 +71,7 @@ func NewConfigSetCmd(store config.Store) *cobra.Command {
 	return &cobra.Command{
 		Use:                "set <key> <value>",
 		Short:              "Set a config value",
-		Args:               cobra.ExactArgs(2),
+		Args:               wrapArgs(cobra.ExactArgs(2)),
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := store.Load()

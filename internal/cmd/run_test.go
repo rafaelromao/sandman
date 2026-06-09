@@ -259,6 +259,10 @@ func TestRun_ParallelNegativeValueRejected(t *testing.T) {
 	if !strings.Contains(err.Error(), "parallel must be 0 or greater") {
 		t.Fatalf("expected validation error, got %v", err)
 	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
 	if spy.called {
 		t.Fatal("expected batch runner not to be called")
 	}
@@ -3093,6 +3097,10 @@ func TestRun_PromptArgFlagInvalidFormat(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--prompt-arg") {
 		t.Errorf("expected error about --prompt-arg, got: %v", err)
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
 	}
 }
 

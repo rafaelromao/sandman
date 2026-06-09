@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"syscall"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/spf13/cobra"
 )
 
 func isStdoutTTY() bool {
@@ -22,8 +24,26 @@ func isStdoutTTY() bool {
 	return st.Mode&syscall.S_IFMT == syscall.S_IFCHR
 }
 
+func executeRoot(rootCmd *cobra.Command, stderr io.Writer, exit func(int)) {
+	if err := rootCmd.Execute(); err != nil {
+		var coded *cmd.ExitCodedError
+		if errors.As(err, &coded) {
+			exit(coded.Code)
+			return
+		}
+		var ue *cmd.UsageError
+		if errors.As(err, &ue) {
+			fmt.Fprintln(stderr, "Error:", err)
+			fmt.Fprintln(stderr, rootCmd.UsageString())
+			exit(1)
+			return
+		}
+		fmt.Fprintln(stderr, err)
+		exit(1)
+	}
+}
+
 func main() {
-	// Composition root: wire real adapters
 	cfgStore := &config.FileStore{Path: ".sandman/config.yaml"}
 	ghClient := &github.CLIClient{}
 	renderer := &prompt.Engine{}
@@ -40,12 +60,5 @@ func main() {
 	}
 
 	rootCmd := cmd.NewRootCmd(deps)
-	if err := rootCmd.Execute(); err != nil {
-		var coded *cmd.ExitCodedError
-		if errors.As(err, &coded) {
-			os.Exit(coded.Code)
-		}
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	executeRoot(rootCmd, os.Stderr, os.Exit)
 }

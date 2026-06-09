@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,37 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
+
+func TestArchiveRun_NoArgsReturnsUsageError(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := NewArchiveCmd(newTestDeps())
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"run"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when run has no id")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestArchiveStale_NoArgsAcceptsNone(t *testing.T) {
+	var buf bytes.Buffer
+	deps := newTestDeps()
+	deps.EventLog = &fakeEventLog{}
+	cmd := NewArchiveCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error from 'archive stale' with no args: %v", err)
+	}
+}
 
 func TestArchiveBatch_NonexistentBatchReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)

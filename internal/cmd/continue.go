@@ -25,7 +25,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "continue [issue-number...] <prompt-text>",
 		Short: "Continue the last agent run for one or more issues in a batch",
-		Args:  cobra.MinimumNArgs(2),
+		Args:  wrapArgs(cobra.MinimumNArgs(2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			issues, promptText, err := parseContinueArgs(args)
 			if err != nil {
@@ -185,7 +185,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 			if runIdleTimeoutFlag := cmd.Flags().Lookup("run-idle-timeout"); runIdleTimeoutFlag != nil && runIdleTimeoutFlag.Changed {
 				runIdleTimeoutSecs, _ := cmd.Flags().GetInt("run-idle-timeout")
 				if runIdleTimeoutSecs < 0 {
-					return fmt.Errorf("run_idle_timeout must be 0 or greater")
+					return MarkUsage(fmt.Errorf("run_idle_timeout must be 0 or greater"))
 				}
 				runIdleTimeout = runIdleTimeoutSecs
 				runIdleTimeoutSet = true
