@@ -142,6 +142,10 @@ _Avoid_: Working directory, checkout, clone.
 A sandbox adapter that uses only a git worktree for isolation, with no container. One worktree per AgentRun.
 _Avoid_: Local sandbox.
 
+**Archive**:
+The on-disk resting place for completed run directories at `.sandman/archive/<run-id>`, populated by `sandman archive run <run-id>`. Archiving relocates the run directory tree from `.sandman/runs/<run-id>` (its live-and-during-run home) to `.sandman/archive/<run-id>` so the runs directory stays scoped to currently-relevant batches. The daemon is forbidden from writing to an archived run; the run is treated as read-only historical state once moved.
+_Avoid_: trash, graveyard, old runs, retired runs.
+
 **Daemon Process**:
 A long-lived sandman process executing a Batch in the background. Listens on the control socket.
 _Avoid_: Background job, server.
@@ -184,6 +188,8 @@ _Avoid_: Replay mode.
 - An **Attach** client connects to the **Control Socket** and reads the daemon's output until EOF
 - A **Portal** is repo-scoped and can show multiple **Daemon Process** instances from the same repository at once
 - A **Portal** rescans the current repository's `.sandman/runs/` tree on each poll so newly started **Daemon Process** instances appear without restarting the portal
+- An **Archive** entry under `.sandman/archive/<run-id>` is the relocated home of a run directory whose **Daemon Process** is no longer live; `sandman archive run <run-id>` performs the move after the liveness check fails
+- The run directory under `.sandman/runs/<run-id>` is the **Daemon Process**'s home; once it has been moved to `.sandman/archive/<run-id>` the directory is no longer owned by any **Daemon Process**
 
 - A **Batch** contains zero or more **AgentRuns**
 - An **AgentRun** targets exactly one **Issue** and produces exactly one **Branch**

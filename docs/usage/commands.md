@@ -140,6 +140,20 @@ sandman clean [flags]
 
 Exactly one flag is required.
 
+## `sandman archive`
+
+Move a completed run directory from `.sandman/runs/<id>` to `.sandman/archive/<id>`.
+
+```bash
+sandman archive run <id>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `run <id>` | Move `.sandman/runs/<id>` to `.sandman/archive/<id>` |
+
+The run's daemon must not be live. `sandman archive run` calls `daemon.IsRunActive` on the run directory and returns an error if either `cmd.sock` or `run.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
+
 ## `sandman attach`
 
 Attach to a running sandman daemon and stream its output.
