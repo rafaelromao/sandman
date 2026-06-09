@@ -73,6 +73,10 @@ func (c *cachedGitHubClient) ListPRComments(number int) ([]github.PRComment, err
 	return c.client.ListPRComments(number)
 }
 
+func (c *cachedGitHubClient) RepoName() (string, error) {
+	return c.client.RepoName()
+}
+
 // NewRunCmd creates the run command.
 func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{

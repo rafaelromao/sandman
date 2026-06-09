@@ -248,6 +248,9 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	if !strings.Contains(buf.String(), "repo=owner/repo agent=pi model=openai/gpt-5") {
+		t.Errorf("expected repo/agent/model info line, got %q", buf.String())
+	}
 	if len(runner.captured.Issues) != 0 {
 		t.Errorf("expected empty Issues (prompt-only), got %v", runner.captured.Issues)
 	}
@@ -448,7 +451,7 @@ func TestReviewCmd_FallsBackToDefaultAgent(t *testing.T) {
 		DefaultAgent:       "opencode",
 		DefaultModel:       "opencode/big-pickle",
 		DefaultReviewAgent: "",
-		DefaultReviewModel: "",
+		DefaultReviewModel: "opencode/big-pickle",
 		Agent:              "opencode",
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Preset: "opencode", Command: "opencode"},

@@ -132,6 +132,15 @@ func (c *CLIClient) resolveRepo() (string, string, error) {
 	return c.repo.owner, c.repo.name, nil
 }
 
+// RepoName returns the current repo in owner/name format.
+func (c *CLIClient) RepoName() (string, error) {
+	owner, name, err := c.resolveRepo()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s/%s", owner, name), nil
+}
+
 // FetchIssue fetches issue metadata via gh CLI.
 func (c *CLIClient) FetchIssue(number int) (*Issue, error) {
 	owner, repo, err := c.resolveRepo()
