@@ -612,6 +612,29 @@ func containsInt(values []int, want int) bool {
 	return false
 }
 
+func TestAgentLogPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+	}{
+		{"numeric log", "42.log"},
+		{"prompt-only log", "prompt-only.log"},
+		{"bare filename", "foo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := agentLogPath(tt.filename)
+			if !filepath.IsAbs(path) {
+				t.Fatal("expected absolute path")
+			}
+			wantSuffix := filepath.Join(".sandman", "logs", tt.filename)
+			if !strings.HasSuffix(path, wantSuffix) {
+				t.Fatalf("unexpected path: %s (want suffix: %s)", path, wantSuffix)
+			}
+		})
+	}
+}
+
 func TestResolveRetries(t *testing.T) {
 	cfg := &config.Config{Retries: 3}
 
