@@ -47,12 +47,14 @@ func (s *WorktreeSandbox) Start() error {
 		}
 	}
 	if s.workDirIsValidWorktree() {
-		if currentRef, err := currentBranchRef(s.workDir); err == nil {
-			expectedRef := "refs/heads/" + s.branch
-			if currentRef != expectedRef {
-				return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --force to reconcile",
-					s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
-			}
+		currentRef, err := currentBranchRef(s.workDir)
+		if err != nil {
+			return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --force to reconcile", s.workDir, err)
+		}
+		expectedRef := "refs/heads/" + s.branch
+		if currentRef != expectedRef {
+			return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --force to reconcile",
+				s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
 		}
 		return s.configureGitIdentity()
 	}
