@@ -301,6 +301,76 @@ func TestRecoverStaleRuns_RecoversOrphanActiveRun(t *testing.T) {
 	}
 }
 
+func TestRecoverStaleRuns_RecoversOrphanQueuedRun(t *testing.T) {
+	baseDir := t.TempDir()
+	queuedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+
+	// No batch directories — the queued run is orphaned.
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.queued", RunID: "run-42", Issue: 42, Timestamp: queuedAt},
+	}
+
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 1 {
+		t.Errorf("expected 1 recovered, got %d", recovered)
+	}
+	if dirs != 0 {
+		t.Errorf("expected 0 dead dirs, got %d", dirs)
+	}
+	if len(eventLog.logged) != 1 {
+		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
+	}
+	e := eventLog.logged[0]
+	if e.Type != "run.aborted" {
+		t.Errorf("expected run.aborted, got %q", e.Type)
+	}
+	if e.IssueRef == nil || *e.IssueRef != 42 {
+		t.Errorf("expected IssueRef=42, got %v", e.IssueRef)
+	}
+	if v, _ := e.Payload["recovered"].(bool); !v {
+		t.Errorf("expected payload.recovered=true, got %v", e.Payload)
+	}
+}
+
+func TestRecoverStaleRuns_RecoversOrphanBlockedRun(t *testing.T) {
+	baseDir := t.TempDir()
+	blockedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+
+	// No batch directories — the blocked run is orphaned.
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.blocked", RunID: "run-42", Issue: 42, Timestamp: blockedAt, Payload: map[string]any{"blocked_by": []int{1}}},
+	}
+
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 1 {
+		t.Errorf("expected 1 recovered, got %d", recovered)
+	}
+	if dirs != 0 {
+		t.Errorf("expected 0 dead dirs, got %d", dirs)
+	}
+	if len(eventLog.logged) != 1 {
+		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
+	}
+	e := eventLog.logged[0]
+	if e.Type != "run.aborted" {
+		t.Errorf("expected run.aborted, got %q", e.Type)
+	}
+	if e.IssueRef == nil || *e.IssueRef != 42 {
+		t.Errorf("expected IssueRef=42, got %v", e.IssueRef)
+	}
+	if v, _ := e.Payload["recovered"].(bool); !v {
+		t.Errorf("expected payload.recovered=true, got %v", e.Payload)
+	}
+}
+
 func TestRecoverStaleRuns_RecoversOrphanPromptOnlyRun(t *testing.T) {
 	baseDir := t.TempDir()
 	startedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)

@@ -290,7 +290,7 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 
 	var recovered int
 	for _, run := range runs {
-		if !run.IsActive() {
+		if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
 			continue
 		}
 		if _, ok := skipRunIDs[run.RunID]; ok {
