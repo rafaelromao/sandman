@@ -251,11 +251,19 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	return recovered, len(dead), nil
 }
 
-// isStartedRun reports whether the RunState was created by a run.started or
-// run.continued event, indicating the agent actually began processing. Queued
-// and blocked placeholders are not started runs.
-func isStartedRun(r events.RunState) bool {
-	return r.Started.Type == "run.started" || r.Started.Type == "run.continued"
+// isSupersedingRun reports whether the RunState was created by a run.started
+// or run.continued event AND has not been subsequently aborted or cancelled.
+// A started run only truly supersedes an earlier placeholder when its work
+// actually completed; a started run that was aborted or cancelled left the
+// work undone, so the placeholder is still an orphan.
+func isSupersedingRun(r events.RunState) bool {
+	if r.Started.Type != "run.started" && r.Started.Type != "run.continued" {
+		return false
+	}
+	if r.Finished != nil && (r.Finished.Type == "run.aborted" || r.Finished.Type == "run.cancelled") {
+		return false
+	}
+	return true
 }
 
 // buildSupersededIssues returns a set of issue numbers for which a queued or
@@ -282,7 +290,7 @@ func buildSupersededIssues(runs []events.RunState) map[int]bool {
 					if other.RunID == s.RunID {
 						continue
 					}
-					if !isStartedRun(other) {
+					if !isSupersedingRun(other) {
 						continue
 					}
 					if other.Started.Timestamp.After(s.Started.Timestamp) {
