@@ -37,4 +37,5 @@ type Client interface {
 	SearchIssues(query string) ([]Issue, error)
 	ListOpenPRs() ([]PR, error)
 	ListPRComments(number int) ([]PRComment, error)
+	RepoName() (string, error)
 }

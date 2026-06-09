@@ -76,6 +76,9 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	if reviewAgentName == "" {
 		reviewAgentName = cfg.EffectiveReviewAgent()
 	}
+	if reviewAgentName == "" {
+		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
+	}
 	if _, err := cfg.ResolveAgentProvider(reviewAgentName); err != nil {
 		return err
 	}
@@ -84,6 +87,15 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	if reviewModel == "" {
 		reviewModel = cfg.EffectiveReviewModel()
 	}
+	if reviewModel == "" {
+		return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
+	}
+
+	repoName, err := deps.GitHubClient.RepoName()
+	if err != nil {
+		return fmt.Errorf("get repo name: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "repo=%s agent=%s model=%s\n", repoName, reviewAgentName, reviewModel)
 
 	rendered, err := deps.PromptRenderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
 		Number: pr.Number,

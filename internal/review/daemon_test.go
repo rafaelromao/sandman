@@ -62,6 +62,10 @@ func (f *fakeGH) FetchPR(number int) (*github.PR, error) {
 	return &github.PR{Number: number, Title: "T", Body: "B"}, nil
 }
 
+func (f *fakeGH) RepoName() (string, error) {
+	return "owner/repo", nil
+}
+
 type capturedRequest struct {
 	calls int
 	mu    sync.Mutex
@@ -177,7 +181,10 @@ func TestDaemon_TickCaseInsensitive(t *testing.T) {
 		},
 	}
 	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{})
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
 
 	if err := d.tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
@@ -209,7 +216,10 @@ func TestDaemon_RunRespondsToTrigger(t *testing.T) {
 		prs: []github.PR{{Number: 1, State: "open"}},
 	}
 	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{})
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	})
 
 	trigger := make(chan struct{}, 4)
 	d.Trigger = trigger
@@ -266,7 +276,10 @@ func TestDaemon_StopCancelsInflightBatch(t *testing.T) {
 	}
 
 	gh.prFetch = map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}}
-	d, _, _ := newDaemonForTest(t, gh, batchFunc(blockingRunner), &config.Config{})
+	d, _, _ := newDaemonForTest(t, gh, batchFunc(blockingRunner), &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -294,7 +307,10 @@ func (f batchFunc) RunBatch(ctx context.Context, req batch.Request) (*batch.Resu
 func TestDaemon_ListOpenPRsErrorIsLogged(t *testing.T) {
 	gh := &fakeGH{listErr: errList}
 	runner := &capturedRequest{}
-	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{})
+	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	})
 
 	trigger := make(chan struct{}, 1)
 	d.Trigger = trigger
@@ -358,5 +374,76 @@ func TestDaemon_RunFailsFastOnInvalidReviewAgent(t *testing.T) {
 	cancel()
 	if !strings.Contains(buf.String(), "review agent validation failed") {
 		t.Errorf("expected validation log, got %q", buf.String())
+	}
+}
+
+func TestDaemon_RunFailsFastOnMissingReviewModel(t *testing.T) {
+	gh := &fakeGH{}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "",
+		DefaultModel:       "",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"opencode": {Preset: "opencode", Command: "opencode"},
+	}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+
+	trigger := make(chan struct{}, 1)
+	d.Trigger = trigger
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- d.Run(ctx)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected Run to return an error for missing review model")
+		}
+		if !strings.Contains(err.Error(), "review model is not set") {
+			t.Errorf("expected error about missing review model, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("Run did not return for missing review model")
+	}
+
+	cancel()
+}
+
+func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
+	gh := &fakeGH{
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "",
+		DefaultModel:       "",
+	})
+
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "",
+		DefaultModel:       "",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"opencode": {Preset: "opencode", Command: "opencode"},
+	}
+	d.Config = cfg
+
+	prDir := d.PRDir(1)
+	if err := os.MkdirAll(prDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	err := d.launchReview(context.Background(), 1, prDir, "", "c1")
+	if err == nil {
+		t.Fatal("expected error from launchReview when model is empty")
+	}
+	if !strings.Contains(err.Error(), "review model is not set") {
+		t.Errorf("expected error about missing review model, got: %v", err)
 	}
 }

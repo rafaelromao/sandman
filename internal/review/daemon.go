@@ -37,6 +37,7 @@ type GitHubClient interface {
 	ListOpenPRs() ([]github.PR, error)
 	ListPRComments(number int) ([]github.PRComment, error)
 	FetchPR(number int) (*github.PR, error)
+	RepoName() (string, error)
 }
 
 // BatchRunner is the subset of batch.Runner used by the review daemon.
@@ -133,6 +134,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		if _, err := d.Config.ResolveAgentProvider(d.Config.EffectiveReviewAgent()); err != nil {
 			d.logf("review agent validation failed: %v", err)
 			return err
+		}
+		if strings.TrimSpace(d.Config.EffectiveReviewModel()) == "" {
+			return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
 		}
 	}
 
@@ -262,9 +266,21 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	modelName := ""
 	sandboxMode := "worktree"
 	if d.Config != nil {
-		agentName = strings.TrimSpace(d.Config.EffectiveReviewAgent())
-		modelName = strings.TrimSpace(d.Config.EffectiveReviewModel())
+		agentName = d.Config.EffectiveReviewAgent()
+		modelName = d.Config.EffectiveReviewModel()
 	}
+	if agentName == "" {
+		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
+	}
+	if modelName == "" {
+		return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
+	}
+
+	repoName, err := d.GitHub.RepoName()
+	if err != nil {
+		return fmt.Errorf("get repo name: %w", err)
+	}
+	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
 	req := batch.Request{
 		Agent:   agentName,
