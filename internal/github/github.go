@@ -24,9 +24,8 @@ type PR struct {
 
 // PRComment holds a PR conversation comment fetched from the GitHub REST API.
 type PRComment struct {
-	ID     string
-	Author string
-	Body   string
+	ID   string
+	Body string
 }
 
 // Client wraps gh CLI for GitHub operations.

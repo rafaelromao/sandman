@@ -63,10 +63,6 @@ func newReviewDeps(t *testing.T, gh github.Client, cfg *config.Config, runner ba
 }
 
 func TestReviewCmd_RequiresPRFlag(t *testing.T) {
-	// Ghost mode: omitting --pr starts the review daemon. The legacy test
-	// expected an error, but per the daemon-mode design the command should
-	// enter ghost mode. We override the daemon runner to fail fast so the
-	// test can assert it was reached.
 	var buf bytes.Buffer
 	cfg := &config.Config{
 		DefaultAgent:       "opencode",

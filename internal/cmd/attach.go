@@ -46,15 +46,17 @@ func findDaemonSocket(baseDir string) (string, error) {
 	}
 
 	runsDir := filepath.Join(baseDir, "runs")
-	if entries, err := os.ReadDir(runsDir); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			sockPath := filepath.Join(runsDir, entry.Name(), "run.sock")
-			if _, err := os.Stat(sockPath); err == nil {
-				candidates = append(candidates, sockPath)
-			}
+	entries, err := os.ReadDir(runsDir)
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("read runs dir: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sockPath := filepath.Join(runsDir, entry.Name(), "run.sock")
+		if _, err := os.Stat(sockPath); err == nil {
+			candidates = append(candidates, sockPath)
 		}
 	}
 

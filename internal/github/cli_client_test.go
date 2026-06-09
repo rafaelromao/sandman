@@ -631,9 +631,6 @@ func TestCLIClient_ListPRComments_Success(t *testing.T) {
 	if comments[0].ID != "123" {
 		t.Errorf("expected ID 123, got %q", comments[0].ID)
 	}
-	if comments[0].Author != "alice" {
-		t.Errorf("expected author alice, got %q", comments[0].Author)
-	}
 	if comments[0].Body != "/sandman review focus on tests" {
 		t.Errorf("unexpected body: %q", comments[0].Body)
 	}
