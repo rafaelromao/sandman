@@ -612,6 +612,67 @@ func containsInt(values []int, want int) bool {
 	return false
 }
 
+func TestReadTailLines_MoreThanN(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := readTailLines(path, 3)
+	want := []string{"line3", "line4", "line5"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestReadTailLines_EmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.log")
+	if err := os.WriteFile(path, []byte(""), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := readTailLines(path, 3)
+	if len(got) != 0 {
+		t.Fatalf("got %v, want empty", got)
+	}
+}
+
+func TestReadTailLines_FewerThanN(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "few.log")
+	content := "only1\nonly2\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := readTailLines(path, 3)
+	want := []string{"only1", "only2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestReadTailLines_NonexistentFile(t *testing.T) {
+	got := readTailLines("/nonexistent/path.log", 3)
+	if len(got) != 0 {
+		t.Fatalf("got %v, want empty", got)
+	}
+}
+
+func TestReadTailLines_TrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "trailing.log")
+	content := "line1\nline2\nline3\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := readTailLines(path, 3)
+	want := []string{"line1", "line2", "line3"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 func TestAgentLogPath(t *testing.T) {
 	tests := []struct {
 		name     string
