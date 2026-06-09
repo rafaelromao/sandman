@@ -44,6 +44,42 @@ func TestContinue_NoArgsReturnsError(t *testing.T) {
 	}
 }
 
+func TestContinue_NoArgsReturnsUsageError(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no issue provided")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestContinue_OneArgReturnsUsageError(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when only one arg provided")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+}
+
 func TestContinue_InvalidIssueReturnsError(t *testing.T) {
 	deps := newTestDeps()
 	var buf bytes.Buffer
@@ -55,6 +91,32 @@ func TestContinue_InvalidIssueReturnsError(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when invalid issue provided")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestContinue_RuntimeErrorNotUsageError(t *testing.T) {
+	deps := Dependencies{
+		BatchRunner: &spyContinueBatchRunner{},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    &fakeEventLog{err: errors.New("disk on fire")},
+	}
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "finish the tests"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error from event log read")
+	}
+	var target *UsageError
+	if errors.As(err, &target) {
+		t.Errorf("runtime error must not be *UsageError, got %T: %v", err, err)
 	}
 }
 

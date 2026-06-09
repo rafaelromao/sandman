@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,57 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/skill"
 )
+
+func TestConfigGet_NoArgsReturnsUsageError(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := NewConfigGetCmd(&fakeStore{config: &config.Config{}})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no key provided")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestConfigSet_NoArgsReturnsUsageError(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := NewConfigSetCmd(&fakeStore{config: &config.Config{}})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no key/value provided")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+}
+
+func TestConfigSet_OneArgReturnsUsageError(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := NewConfigSetCmd(&fakeStore{config: &config.Config{}})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"agent"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when only key provided")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+}
 
 func TestConfigGet_DefaultAgent(t *testing.T) {
 	var buf bytes.Buffer

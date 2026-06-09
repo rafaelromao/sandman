@@ -40,7 +40,7 @@ func newArchiveRunCmd(deps Dependencies) *cobra.Command {
 		Use:     "run <id>",
 		Aliases: []string{"batch"},
 		Short:   "Archive a single run directory",
-		Args:    cobra.ExactArgs(1),
+		Args:    wrapArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runArchiveRun(cmd, args[0], probe)
 		},
@@ -52,7 +52,7 @@ func newArchiveOlderThanCmd(deps Dependencies) *cobra.Command {
 		Use:   "older-than <days>",
 		Short: "Archive dead run directories older than N days",
 		Long:  "Move every dead run directory under .sandman/runs/ whose manifest CreatedAt (or directory mtime when the manifest is missing) is older than <days> days to .sandman/archive/. Live daemons are never archived regardless of age.",
-		Args:  cobra.ExactArgs(1),
+		Args:  wrapArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runArchiveOlderThan(cmd, args[0])
 		},
@@ -64,7 +64,7 @@ func newArchiveStaleCmd(deps Dependencies) *cobra.Command {
 		Use:   "stale",
 		Short: "Recover unterminated runs in dead batches and archive every dead-and-terminal run directory",
 		Long:  "Chain the same status-fix logic as 'clean --stale' to emit run.aborted events for unterminated runs in dead batches, then move every dead-and-terminal run directory to .sandman/archive/. Live batches are skipped entirely.",
-		Args:  cobra.NoArgs,
+		Args:  wrapArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runArchiveStale(cmd, deps)
 		},

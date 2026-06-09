@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"errors"
+
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // IssuePicker selects issues interactively from a list.
@@ -35,7 +38,16 @@ func NewRootCmd(deps Dependencies) *cobra.Command {
 		Long: `Sandman is a terminal-native CLI tool for orchestrating AFK coding agents
 in isolated sandboxes. It manages issue tracking, worktrees, containerized
 execution, and event logging for automated coding workflows.`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
+
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		if errors.Is(err, pflag.ErrHelp) {
+			return err
+		}
+		return MarkUsage(err)
+	})
 
 	root.AddCommand(NewInitCmd())
 	root.AddCommand(NewRunCmd(deps))

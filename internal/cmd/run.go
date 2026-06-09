@@ -110,7 +110,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			for _, arg := range promptArgsRaw {
 				parts := strings.SplitN(arg, "=", 2)
 				if len(parts) != 2 {
-					return fmt.Errorf("invalid --prompt-arg format %q: expected KEY=VALUE", arg)
+					return MarkUsage(fmt.Errorf("invalid --prompt-arg format %q: expected KEY=VALUE", arg))
 				}
 				promptArgs[parts[0]] = parts[1]
 			}
@@ -163,18 +163,18 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			var issues []int
 			if overridePrompt && !issueSelectionProvided {
 				if promptNeedsIssueSelection {
-					return fmt.Errorf("prompt requires issue selection but no issue selection was provided")
+					return MarkUsage(fmt.Errorf("prompt requires issue selection but no issue selection was provided"))
 				}
 			} else {
 				if ralphProvided {
 					if len(args) > 0 {
-						return fmt.Errorf("cannot combine --ralph with issue arguments")
+						return MarkUsage(fmt.Errorf("cannot combine --ralph with issue arguments"))
 					}
 					if label != "" && query != "" {
-						return fmt.Errorf("cannot combine --label with --query")
+						return MarkUsage(fmt.Errorf("cannot combine --label with --query"))
 					}
 					if ralphCount <= 0 {
-						return fmt.Errorf("--ralph count must be at least 1")
+						return MarkUsage(fmt.Errorf("--ralph count must be at least 1"))
 					}
 					issues, err = resolveRalphIssues(cmd.Context(), githubClient, ralphCount, label, query, ".sandman", agentName, modelFlag, cfg)
 					if err != nil {
@@ -183,7 +183,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				} else if len(args) > 0 {
 					selection, orderedIssues, _, hasUnboundedEnd, err := parseIssueSelection(args)
 					if err != nil {
-						return err
+						return MarkUsage(err)
 					}
 
 					if label == "" && query == "" && !hasUnboundedEnd {
@@ -199,7 +199,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 							return err
 						}
 						if len(searchResults) >= 1000 {
-							return fmt.Errorf("issue selection exceeds search result limit")
+							return MarkUsage(fmt.Errorf("issue selection exceeds search result limit"))
 						}
 						for _, issue := range searchResults {
 							if !selection.matches(issue.Number) {
@@ -223,7 +223,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 								return err
 							}
 							if len(searchResults) >= 1000 {
-								return fmt.Errorf("issue selection exceeds search result limit")
+								return MarkUsage(fmt.Errorf("issue selection exceeds search result limit"))
 							}
 							for _, issue := range searchResults {
 								if !selection.matches(issue.Number) || !issueMatchesFilters(&issue, label, query) {
@@ -244,7 +244,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 							return err
 						}
 						if len(searchResults) >= 1000 {
-							return fmt.Errorf("issue selection exceeds search result limit")
+							return MarkUsage(fmt.Errorf("issue selection exceeds search result limit"))
 						}
 						issues = filterIssuesBySelection(searchResults, selection, orderedIssues, hasUnboundedEnd)
 					}
@@ -262,13 +262,13 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 							return err
 						}
 					} else {
-						return fmt.Errorf("no issues provided")
+						return MarkUsage(fmt.Errorf("no issues provided"))
 					}
 				}
 			}
 
 			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) {
-				return fmt.Errorf("no issues selected")
+				return MarkUsage(fmt.Errorf("no issues selected"))
 			}
 
 			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
@@ -292,21 +292,21 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				parallel = cfg.DefaultParallel
 			}
 			if parallelSet && parallel < 0 {
-				return fmt.Errorf("parallel must be 0 or greater")
+				return MarkUsage(fmt.Errorf("parallel must be 0 or greater"))
 			}
 
 			startDelayFlag := cmd.Flags().Lookup("start-delay")
 			startDelaySet := startDelayFlag != nil && startDelayFlag.Changed
 			startDelay, _ := cmd.Flags().GetInt("start-delay")
 			if startDelaySet && startDelay < 0 {
-				return fmt.Errorf("start_delay must be 0 or greater")
+				return MarkUsage(fmt.Errorf("start_delay must be 0 or greater"))
 			}
 
 			runIdleTimeoutFlag := cmd.Flags().Lookup("run-idle-timeout")
 			runIdleTimeoutSet := runIdleTimeoutFlag != nil && runIdleTimeoutFlag.Changed
 			runIdleTimeout, _ := cmd.Flags().GetInt("run-idle-timeout")
 			if runIdleTimeoutSet && runIdleTimeout < 0 {
-				return fmt.Errorf("run_idle_timeout must be 0 or greater")
+				return MarkUsage(fmt.Errorf("run_idle_timeout must be 0 or greater"))
 			}
 
 			sandboxMode, _ := cmd.Flags().GetString("sandbox")
@@ -317,17 +317,17 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			maxContainersSet := maxContainersFlag != nil && maxContainersFlag.Changed
 			maxContainers, _ := cmd.Flags().GetInt("max-containers")
 			if containerCapacitySet && containerCapacity < 0 {
-				return fmt.Errorf("container_capacity must be 0 or greater")
+				return MarkUsage(fmt.Errorf("container_capacity must be 0 or greater"))
 			}
 			if maxContainersSet && maxContainers < 0 {
-				return fmt.Errorf("max_containers must be 0 or greater")
+				return MarkUsage(fmt.Errorf("max_containers must be 0 or greater"))
 			}
 
 			retriesFlag := cmd.Flags().Lookup("retries")
 			retriesSet := retriesFlag != nil && retriesFlag.Changed
 			retries, _ := cmd.Flags().GetInt("retries")
 			if retriesSet && retries < 0 {
-				return fmt.Errorf("retries must be 0 or greater")
+				return MarkUsage(fmt.Errorf("retries must be 0 or greater"))
 			}
 			if !retriesSet {
 				retries = -1
