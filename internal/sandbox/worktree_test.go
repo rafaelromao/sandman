@@ -447,6 +447,46 @@ func TestWorktreeSandbox_Start_RecreatesOrphanWorktreeDirectory(t *testing.T) {
 	}
 }
 
+func TestWorktreeSandbox_StartErrorsOnWrongBranch(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error on first start: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
+
+	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
+
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	err := s2.Start()
+	if err == nil {
+		t.Fatal("expected error when worktree is on wrong branch")
+	}
+	if !strings.Contains(err.Error(), "wrong-branch") {
+		t.Errorf("expected error to contain actual branch name 'wrong-branch', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "sandman/42-fix-bug") {
+		t.Errorf("expected error to contain expected branch name 'sandman/42-fix-bug', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), s.WorkDir()) {
+		t.Errorf("expected error to contain worktree path %q, got: %v", s.WorkDir(), err)
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Errorf("expected error to contain '--force' hint, got: %v", err)
+	}
+
+	headRef := runGit(t, s.WorkDir(), "symbolic-ref", "HEAD")
+	if !strings.Contains(headRef, "wrong-branch") {
+		t.Errorf("expected worktree HEAD to remain on wrong-branch, got %q", headRef)
+	}
+}
+
 func TestWorktreeSandbox_Start_LeavesExistingWorktreeDirectoryWithoutForce(t *testing.T) {
 	// Without --force, Sandman should reuse an existing worktree directory.
 	// This mirrors the valid-worktree fast path in Start().
