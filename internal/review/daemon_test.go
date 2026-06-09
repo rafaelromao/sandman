@@ -62,6 +62,10 @@ func (f *fakeGH) FetchPR(number int) (*github.PR, error) {
 	return &github.PR{Number: number, Title: "T", Body: "B"}, nil
 }
 
+func (f *fakeGH) RepoName() (string, error) {
+	return "owner/repo", nil
+}
+
 type capturedRequest struct {
 	calls int
 	mu    sync.Mutex
@@ -177,7 +181,10 @@ func TestDaemon_TickCaseInsensitive(t *testing.T) {
 		},
 	}
 	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{})
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
 
 	if err := d.tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
@@ -266,7 +273,10 @@ func TestDaemon_StopCancelsInflightBatch(t *testing.T) {
 	}
 
 	gh.prFetch = map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}}
-	d, _, _ := newDaemonForTest(t, gh, batchFunc(blockingRunner), &config.Config{})
+	d, _, _ := newDaemonForTest(t, gh, batchFunc(blockingRunner), &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
