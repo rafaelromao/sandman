@@ -524,10 +524,10 @@ func TestWorktreeSandbox_StartErrorsOnDetachedHead(t *testing.T) {
 	}
 }
 
-func TestWorktreeSandbox_Start_LeavesExistingWorktreeDirectoryWithoutForce(t *testing.T) {
-	// Without --force, an invalid worktree with a fake .git file pointing to a
-	// non-existent gitdir should be rejected by the branch check since
-	// currentBranchRef cannot resolve HEAD in a broken worktree.
+func TestWorktreeSandbox_StartRejectsBrokenWorktreeWithStaleDotGitFile(t *testing.T) {
+	// A directory with a .git file pointing to a non-existent gitdir is not a
+	// valid worktree. Start() should reject it because currentBranchRef cannot
+	// resolve HEAD in a broken worktree.
 	dir := t.TempDir()
 	initGitRepoWithRemote(t, dir)
 	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
