@@ -526,7 +526,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Key:         match.instance.Key,
 		RunID:       match.instance.Key,
 		Kind:        "active",
-		Status:      "active",
+		Status:      "running",
 		IssueLabel:  issueLabel,
 		IssueNumber: issueNumber,
 		StartedAt:   startedAt,
@@ -555,7 +555,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 
 	status := runState.Status()
 	if runState.IsActive() {
-		status = "active"
+		status = "running"
 	}
 	startedAt := runState.Started.Timestamp
 	var finishedAt *time.Time
@@ -612,7 +612,7 @@ func (v *portalRunsView) kindForRun(runState events.RunState) string {
 func (v *portalRunsView) statusOrDefault(status string, active bool) string {
 	status = strings.TrimSpace(status)
 	if active {
-		return "active"
+		return "running"
 	}
 	if status == "" {
 		return "completed"

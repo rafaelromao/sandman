@@ -179,7 +179,7 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	for _, run := range runs {
 		byIssue[run.IssueNumber] = run
 	}
-	if run := byIssue[1]; run.Kind != "active" || run.IssueLabel != "#1" || run.Status != "active" {
+	if run := byIssue[1]; run.Kind != "active" || run.IssueLabel != "#1" || run.Status != "running" {
 		t.Fatalf("unexpected active run: %#v", run)
 	}
 	if run := byIssue[1]; !strings.Contains(run.Log, "live output") || strings.Contains(run.Log, "hidden output") || strings.Contains(run.Log, "\x1b[") {
@@ -1972,7 +1972,7 @@ func TestPortalRunFromActiveBatchIssue_AbortedRunHasAbortedByOperatorLog(t *test
 func TestDedupPortalRunGroup_AbortedWinsOverActiveBlockedQueued(t *testing.T) {
 	base := time.Now().Add(-10 * time.Minute)
 	group := []portalRun{
-		{Key: "active-row", Kind: "active", Status: "active", IssueNumber: 42, StartedAt: base.Add(1 * time.Minute)},
+		{Key: "active-row", Kind: "active", Status: "running", IssueNumber: 42, StartedAt: base.Add(1 * time.Minute)},
 		{Key: "blocked-row", Kind: "completed", Status: "blocked", IssueNumber: 42, StartedAt: base.Add(2 * time.Minute)},
 		{Key: "queued-row", Kind: "completed", Status: "queued", IssueNumber: 42, StartedAt: base.Add(3 * time.Minute)},
 		{Key: "aborted-row", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base},
