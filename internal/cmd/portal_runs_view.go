@@ -430,9 +430,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 				run.Log = "No live output captured yet."
 			}
 		}
-		if run.Kind == "active" && run.SocketPath != "" && !v.isSocketAlive(run.SocketPath) {
-			run.Kind = "completed"
-		}
+		v.markCompletedIfSocketDead(&run, run.SocketPath)
 		return run
 	}
 	if blocked != nil {
@@ -443,9 +441,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.Events = []portalEvent{{Type: blocked.Type, Timestamp: blocked.Timestamp, Payload: blocked.Payload}}
 		run.Log = v.portalBlockedMessage(blocked.Payload)
 	}
-	if run.Kind == "active" && run.SocketPath != "" && !v.isSocketAlive(run.SocketPath) {
-		run.Kind = "completed"
-	}
+	v.markCompletedIfSocketDead(&run, run.SocketPath)
 	return run
 }
 
@@ -544,9 +540,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Events:      eventsByRun[match.instance.Key],
 		BatchKey:    match.instance.Key,
 	}
-	if run.SocketPath != "" && !v.isSocketAlive(run.SocketPath) {
-		run.Kind = "completed"
-	}
+	v.markCompletedIfSocketDead(&run, run.SocketPath)
 	return run
 }
 
@@ -609,9 +603,11 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	if active != nil {
 		portalRun.SocketPath = active.SocketPath
 	}
-	if portalRun.Kind == "active" && active != nil && active.SocketPath != "" && !v.isSocketAlive(active.SocketPath) {
-		portalRun.Kind = "completed"
+	socketPath := ""
+	if active != nil {
+		socketPath = active.SocketPath
 	}
+	v.markCompletedIfSocketDead(&portalRun, socketPath)
 	return portalRun
 }
 
@@ -726,12 +722,21 @@ func (v *portalRunsView) isSocketAlive(socketPath string) bool {
 	if socketPath == "" {
 		return false
 	}
-	conn, err := net.DialTimeout("unix", socketPath, 100*time.Millisecond)
+	conn, err := net.DialTimeout("unix", socketPath, portalReadTimeout)
 	if err != nil {
 		return false
 	}
 	conn.Close()
 	return true
+}
+
+func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath string) {
+	if run.Kind != "active" {
+		return
+	}
+	if socketPath != "" && !v.isSocketAlive(socketPath) {
+		run.Kind = "completed"
+	}
 }
 
 func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {
