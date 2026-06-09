@@ -430,7 +430,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 				run.Log = "No live output captured yet."
 			}
 		}
-		if run.Kind == "active" && !v.isSocketAlive(run.SocketPath) {
+		if run.Kind == "active" && run.SocketPath != "" && !v.isSocketAlive(run.SocketPath) {
 			run.Kind = "completed"
 		}
 		return run
@@ -443,7 +443,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.Events = []portalEvent{{Type: blocked.Type, Timestamp: blocked.Timestamp, Payload: blocked.Payload}}
 		run.Log = v.portalBlockedMessage(blocked.Payload)
 	}
-	if run.Kind == "active" && !v.isSocketAlive(run.SocketPath) {
+	if run.Kind == "active" && run.SocketPath != "" && !v.isSocketAlive(run.SocketPath) {
 		run.Kind = "completed"
 	}
 	return run
@@ -544,7 +544,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Events:      eventsByRun[match.instance.Key],
 		BatchKey:    match.instance.Key,
 	}
-	if !v.isSocketAlive(run.SocketPath) {
+	if run.SocketPath != "" && !v.isSocketAlive(run.SocketPath) {
 		run.Kind = "completed"
 	}
 	return run
