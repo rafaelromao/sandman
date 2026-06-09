@@ -1,11 +1,16 @@
 package cmd
 
 import (
+	"bytes"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/events"
 )
 
 func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
@@ -70,6 +75,66 @@ func TestPortal_DefaultPortFlag(t *testing.T) {
 	if port != 5000 {
 		t.Fatalf("expected default port 5000, got %d", port)
 	}
+}
+
+func TestPortalStaleCleaner_MessageSuppressedWhenNoRecoveredRuns(t *testing.T) {
+	prev := portalRunCleanStale
+	t.Cleanup(func() { portalRunCleanStale = prev })
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	t.Run("recovered>0 prints message", func(t *testing.T) {
+		buf.Reset()
+		portalRunCleanStale = func(_ []events.Event, _ events.EventLog) (int, int, error) {
+			return 1, 0, nil
+		}
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := portalStaleCleaner(repoRoot); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), "portal: recovered") {
+			t.Error("expected log message when recovered > 0")
+		}
+	})
+
+	t.Run("recovered==0, deadDirs>0 suppresses message", func(t *testing.T) {
+		buf.Reset()
+		portalRunCleanStale = func(_ []events.Event, _ events.EventLog) (int, int, error) {
+			return 0, 1, nil
+		}
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := portalStaleCleaner(repoRoot); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(buf.String(), "portal: recovered") {
+			t.Error("expected no log message when recovered == 0 even if deadDirs > 0")
+		}
+	})
+
+	t.Run("both zero suppresses message", func(t *testing.T) {
+		buf.Reset()
+		portalRunCleanStale = func(_ []events.Event, _ events.EventLog) (int, int, error) {
+			return 0, 0, nil
+		}
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := portalStaleCleaner(repoRoot); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(buf.String(), "portal: recovered") {
+			t.Error("expected no log message when both are zero")
+		}
+	})
 }
 
 func hasPrefix(s, prefix string) bool {
