@@ -10,7 +10,11 @@ import (
 )
 
 // SeenCommentsStore tracks comment IDs that have already been processed
-// for a single PR. State is persisted as a JSONL file at <baseDir>/<pr>/seen-comments.jsonl.
+// for a single PR. State is persisted as a newline-delimited file at
+// <baseDir>/<pr>/seen-comments.jsonl where each line is a single comment
+// ID (despite the .jsonl extension, the values are plain integers rather
+// than JSON objects — the extension is preserved for grep-ability and
+// forward compatibility should per-comment metadata be added later).
 //
 // The store is safe for concurrent use. Mark appends a single line and is
 // the only operation that mutates the file; Has reads the file when needed

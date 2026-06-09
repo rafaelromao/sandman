@@ -129,6 +129,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer d.Stop()
 
+	if d.Config != nil {
+		if _, err := d.Config.ResolveAgentProvider(d.Config.EffectiveReviewAgent()); err != nil {
+			d.logf("review agent validation failed: %v", err)
+			return err
+		}
+	}
+
 	if d.Trigger == nil {
 		if err := d.tick(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			d.logf("initial scan: %v", err)
