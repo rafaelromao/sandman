@@ -7471,3 +7471,102 @@ func TestOrchestrator_ResetRetryBranch_Command(t *testing.T) {
 		t.Errorf("expected exec command %q, got %q", expected, sb.execCommand)
 	}
 }
+
+// strandRunnable switches the worktree to an unexpected branch when Run is called,
+// simulating what a real agent does during PR merge (checking out a non-feature branch).
+type strandRunnable struct {
+	sb sandbox.Sandbox
+}
+
+func (r *strandRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	// Create a branch in the main repo (not checked out in any worktree) and
+	// switch the worktree to it, stranding it on the wrong branch.
+	// Note: we use "wrong-branch" instead of "main" because git prevents
+	// checking out a branch that is already active in the main worktree.
+	if err := r.sb.Exec(ctx, "git branch wrong-branch main && git checkout -f wrong-branch", io.Discard, io.Discard); err != nil {
+		return AgentRunResult{IssueNumber: 42, Status: "failure"}
+	}
+	return AgentRunResult{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"}
+}
+
+type strandRunnableFactory struct{}
+
+func (f *strandRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return &strandRunnable{sb: sb}
+}
+
+func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+	initGitRepo(t, workDir)
+
+	branch := "sandman/42-fix-bug"
+	pr := mergedPR(branch, "")
+	var errorBuf bytes.Buffer
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: pr},
+		},
+		renderer:        &noopRenderer{},
+		errorLog:        &errorBuf,
+		runnableFactory: &strandRunnableFactory{},
+	}
+
+	cfg := &config.Config{
+		WorktreeDir: "worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+	}
+
+	// Step 1: Create worktree and strand it on the wrong branch via the strand runnable.
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
+	if !started {
+		t.Fatal("expected strand run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("strand run status = %q, want success", result.Status)
+	}
+	t.Cleanup(func() {
+		worktreePath := filepath.Join(workDir, "worktrees", branch)
+		if _, err := os.Stat(worktreePath); err == nil {
+			exec.Command("git", "worktree", "remove", "-f", worktreePath).Run()
+		}
+	})
+
+	// Remove the strand factory so subsequent runs use the default runnable.
+	o.runnableFactory = nil
+
+	t.Run("no force fails on branch mismatch", func(t *testing.T) {
+		errorBuf.Reset()
+		result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
+		if started {
+			t.Fatal("expected run not to start when worktree is on wrong branch")
+		}
+		if result.Status != "failure" {
+			t.Fatalf("status = %q, want failure", result.Status)
+		}
+		if !strings.Contains(errorBuf.String(), `expected "sandman/42-fix-bug"; re-run with --force to reconcile`) {
+			t.Fatalf("error log does not contain branch mismatch message:\n%s", errorBuf.String())
+		}
+	})
+
+	t.Run("force reconciles branch mismatch", func(t *testing.T) {
+		result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &defaultSandboxFactory{}, nil, true, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
+		if !started {
+			t.Fatal("expected force run to start")
+		}
+		if result.Status != "success" {
+			t.Fatalf("force status = %q, want success", result.Status)
+		}
+		worktreePath := filepath.Join(workDir, "worktrees", branch)
+		cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+		cmd.Dir = worktreePath
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git rev-parse HEAD in worktree: %v\n%s", err, out)
+		}
+		if got := strings.TrimSpace(string(out)); got != branch {
+			t.Fatalf("worktree HEAD on %q, want %q", got, branch)
+		}
+	})
+}
