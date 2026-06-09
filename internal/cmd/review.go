@@ -76,11 +76,11 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	if reviewAgentName == "" {
 		reviewAgentName = cfg.EffectiveReviewAgent()
 	}
-	if _, err := cfg.ResolveAgentProvider(reviewAgentName); err != nil {
-		return err
-	}
 	if reviewAgentName == "" {
 		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
+	}
+	if _, err := cfg.ResolveAgentProvider(reviewAgentName); err != nil {
+		return err
 	}
 
 	reviewModel := strings.TrimSpace(modelFlag)

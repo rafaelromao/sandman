@@ -266,8 +266,8 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	modelName := ""
 	sandboxMode := "worktree"
 	if d.Config != nil {
-		agentName = strings.TrimSpace(d.Config.EffectiveReviewAgent())
-		modelName = strings.TrimSpace(d.Config.EffectiveReviewModel())
+		agentName = d.Config.EffectiveReviewAgent()
+		modelName = d.Config.EffectiveReviewModel()
 	}
 	if agentName == "" {
 		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
