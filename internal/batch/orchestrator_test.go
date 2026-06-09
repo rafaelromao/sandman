@@ -7415,8 +7415,8 @@ func TestOrchestrator_ResetRetryBranch_Command(t *testing.T) {
 	}
 }
 
-// strandRunnable switches the worktree to main when Run is called,
-// simulating what a real agent does during PR merge.
+// strandRunnable switches the worktree to an unexpected branch when Run is called,
+// simulating what a real agent does during PR merge (checking out a non-feature branch).
 type strandRunnable struct {
 	sb sandbox.Sandbox
 }
@@ -7424,6 +7424,8 @@ type strandRunnable struct {
 func (r *strandRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	// Create a branch in the main repo (not checked out in any worktree) and
 	// switch the worktree to it, stranding it on the wrong branch.
+	// Note: we use "wrong-branch" instead of "main" because git prevents
+	// checking out a branch that is already active in the main worktree.
 	if err := r.sb.Exec(ctx, "git branch wrong-branch main && git checkout -f wrong-branch", io.Discard, io.Discard); err != nil {
 		return AgentRunResult{IssueNumber: 42, Status: "failure"}
 	}
@@ -7465,7 +7467,7 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 		Git:         config.GitConfig{BaseBranch: "main"},
 	}
 
-	// Step 1: Create worktree and strand it on main via the strand runnable.
+	// Step 1: Create worktree and strand it on the wrong branch via the strand runnable.
 	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
 	if !started {
 		t.Fatal("expected strand run to start")
@@ -7473,6 +7475,12 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("strand run status = %q, want success", result.Status)
 	}
+	t.Cleanup(func() {
+		worktreePath := filepath.Join(workDir, "worktrees", branch)
+		if _, err := os.Stat(worktreePath); err == nil {
+			exec.Command("git", "worktree", "remove", "-f", worktreePath).Run()
+		}
+	})
 
 	// Remove the strand factory so subsequent runs use the default runnable.
 	o.runnableFactory = nil
