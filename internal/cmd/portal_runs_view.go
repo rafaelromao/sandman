@@ -430,6 +430,9 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 				run.Log = "No live output captured yet."
 			}
 		}
+		if run.Kind == "active" && !v.isSocketAlive(run.SocketPath) {
+			run.Kind = "completed"
+		}
 		return run
 	}
 	if blocked != nil {
@@ -439,6 +442,9 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.StartedAt = blocked.Timestamp
 		run.Events = []portalEvent{{Type: blocked.Type, Timestamp: blocked.Timestamp, Payload: blocked.Payload}}
 		run.Log = v.portalBlockedMessage(blocked.Payload)
+	}
+	if run.Kind == "active" && !v.isSocketAlive(run.SocketPath) {
+		run.Kind = "completed"
 	}
 	return run
 }
@@ -522,7 +528,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		issueLabel = fmt.Sprintf("#%d", issueNumber)
 	}
 	logPath := v.portalLogPath(repoRoot, issueNumber, "")
-	return portalRun{
+	run := portalRun{
 		Key:         match.instance.Key,
 		RunID:       match.instance.Key,
 		Kind:        "active",
@@ -538,6 +544,10 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Events:      eventsByRun[match.instance.Key],
 		BatchKey:    match.instance.Key,
 	}
+	if !v.isSocketAlive(run.SocketPath) {
+		run.Kind = "completed"
+	}
+	return run
 }
 
 func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState, active *portalActiveRun, eventsByRun map[string][]portalEvent) portalRun {
@@ -598,6 +608,9 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	if active != nil {
 		portalRun.SocketPath = active.SocketPath
+	}
+	if portalRun.Kind == "active" && active != nil && active.SocketPath != "" && !v.isSocketAlive(active.SocketPath) {
+		portalRun.Kind = "completed"
 	}
 	return portalRun
 }
@@ -707,6 +720,18 @@ func (v *portalRunsView) reviewPRNumber(payload map[string]any) int {
 		return int(n)
 	}
 	return 0
+}
+
+func (v *portalRunsView) isSocketAlive(socketPath string) bool {
+	if socketPath == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", socketPath, 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {

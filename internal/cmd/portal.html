@@ -1515,8 +1515,8 @@
           </select>
         </label>
         <label class="field">
-          <input id="active-only" type="checkbox">
-          Active only
+          <input id="active-batches" type="checkbox">
+          Active Batches
         </label>
       </div>
       <div id="summary-pill" class="status-pill"><span class="dot"></span><strong>0</strong> runs visible</div>
@@ -1556,7 +1556,7 @@
     const themeStorageKey = 'sandman.portal.theme';
     const supportedThemes = new Set({{.SupportedThemesJSON}});
     const statusFilter = document.getElementById('status-filter');
-    const activeOnlyToggle = document.getElementById('active-only');
+    const activeBatchesToggle = document.getElementById('active-batches');
     const runsBody = document.getElementById('runs-body');
     const commandsToggle = document.getElementById('commands-toggle');
     const commandsOverlay = document.getElementById('commands-overlay');
@@ -1711,7 +1711,7 @@
       expandedRunKey: persistedPortalState.expandedRunKey || null,
       tabs: persistedPortalState.tabs || {},
       selectedStatus: 'all',
-      activeOnly: false,
+      activeBatches: false,
       loading: true,
     };
 
@@ -2454,7 +2454,7 @@
     }
 
     function shouldShowRun(run) {
-      if (state.activeOnly && run.kind !== 'active') return false;
+      if (state.activeBatches && run.kind !== 'active') return false;
       if (state.selectedStatus !== 'all' && run.status !== state.selectedStatus) return false;
       return true;
     }
@@ -2767,8 +2767,8 @@
       render();
     });
 
-    activeOnlyToggle.addEventListener('change', () => {
-      state.activeOnly = activeOnlyToggle.checked;
+    activeBatchesToggle.addEventListener('change', () => {
+      state.activeBatches = activeBatchesToggle.checked;
       render();
     });
 
