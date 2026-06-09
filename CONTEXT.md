@@ -143,7 +143,7 @@ A sandbox adapter that uses only a git worktree for isolation, with no container
 _Avoid_: Local sandbox.
 
 **Archive**:
-The on-disk resting place for completed run directories at `.sandman/archive/<run-id>`, populated by `sandman archive run <run-id>` (which also accepts `batch <id>` as an alias since the run directory is the batch's on-disk home). Archiving relocates the run directory tree from `.sandman/runs/<run-id>` (its live-and-during-run home) to `.sandman/archive/<run-id>` so the runs directory stays scoped to currently-relevant batches. The daemon is forbidden from writing to an archived run; the run is treated as read-only historical state once moved.
+The on-disk resting place for completed run directories at `.sandman/archive/<run-id>`, populated by `sandman archive run <run-id>` (which also accepts `batch <id>` as an alias since the run directory is the batch's on-disk home) or by `sandman archive older-than <days>` for bulk archival of every dead run whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than the given cutoff. Archiving relocates the run directory tree from `.sandman/runs/<run-id>` (its live-and-during-run home) to `.sandman/archive/<run-id>` so the runs directory stays scoped to currently-relevant batches. The daemon is forbidden from writing to an archived run; the run is treated as read-only historical state once moved.
 _Avoid_: trash, graveyard, old runs, retired runs.
 
 **Daemon Process**:
