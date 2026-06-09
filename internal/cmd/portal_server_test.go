@@ -2395,6 +2395,15 @@ func TestPortal_StaleCleanerErrorDoesNotBlockServing(t *testing.T) {
 	}
 	close(release)
 	<-finished
+
+	resp, err = http.Get(server.URL + "/api/runs")
+	if err != nil {
+		t.Fatalf("poll /api/runs after error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after stale cleaner errored, got %d", resp.StatusCode)
+	}
 }
 
 func TestPortal_StaleCleanerRecoversDeadBatchBeforeFirstPoll(t *testing.T) {

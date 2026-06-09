@@ -44,12 +44,19 @@ var portalSignalProcess = signalPortalProcess
 // helper through the default closure below.
 var portalStaleCleaner = func(repoRoot string) error {
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
-	eventsList, err := (&events.JSONLLogger{Path: logPath}).Read()
+	logPathLogger := &events.JSONLLogger{Path: logPath}
+	eventsList, err := logPathLogger.Read()
 	if err != nil {
 		return fmt.Errorf("read event log: %w", err)
 	}
-	_, _, err = runCleanStale(eventsList, &events.JSONLLogger{Path: logPath})
-	return err
+	recovered, deadDirs, err := runCleanStale(eventsList, logPathLogger)
+	if err != nil {
+		return err
+	}
+	if recovered > 0 || deadDirs > 0 {
+		log.Printf("portal: recovered %d stale runs as aborted across %d dead directories.", recovered, deadDirs)
+	}
+	return nil
 }
 
 type portalInstance struct {
