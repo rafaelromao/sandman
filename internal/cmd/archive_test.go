@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/events"
 )
 
 func TestArchiveBatch_NonexistentBatchReturnsError(t *testing.T) {
@@ -649,6 +650,241 @@ func TestArchiveOlderThan_FallsBackToDirectoryMtimeWhenManifestMissing(t *testin
 
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "no-manifest")); err != nil {
 		t.Errorf("expected run archived by mtime fallback, got: %v", err)
+	}
+}
+
+func TestArchiveHelpListsStaleSubcommand(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var buf bytes.Buffer
+	cmd := NewArchiveCmd(newTestDeps())
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "stale") {
+		t.Errorf("expected `archive --help` output to list `stale` subcommand, got:\n%s", buf.String())
+	}
+}
+
+func TestArchiveStale_CollisionWithExistingArchivePreservesBoth(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	runDir := filepath.Join(dir, ".sandman", "runs", "dead-collision")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	manifest := daemon.BatchManifest{Issues: []int{42}, CreatedAt: createdAt}
+	data, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
+		t.Fatalf("write batch.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "source.txt"), []byte("source"), 0644); err != nil {
+		t.Fatalf("write source sentinel: %v", err)
+	}
+
+	existingArchive := filepath.Join(dir, ".sandman", "archive", "dead-collision")
+	if err := os.MkdirAll(existingArchive, 0755); err != nil {
+		t.Fatalf("mkdir existing archive: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(existingArchive, "preserved.txt"), []byte("preserved"), 0644); err != nil {
+		t.Fatalf("write preserved sentinel: %v", err)
+	}
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(5 * time.Minute)},
+		{Type: "run.finished", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(10 * time.Minute), Payload: map[string]any{"status": "success"}},
+	}}
+	deps := newTestDeps()
+	deps.EventLog = log
+
+	var buf bytes.Buffer
+	cmd := NewArchiveCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(runDir); err != nil {
+		t.Errorf("expected source run dir preserved on collision, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(existingArchive, "preserved.txt")); err != nil {
+		t.Errorf("expected existing archive sentinel preserved, got: %v", err)
+	}
+	if !strings.Contains(buf.String(), "skip") {
+		t.Errorf("expected output to mention skip on collision, got: %q", buf.String())
+	}
+}
+
+func TestArchiveStale_MixedStatusDeadBatchEmitsAbortedAndArchives(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	runDir := filepath.Join(dir, ".sandman", "runs", "dead-mixed")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	manifest := daemon.BatchManifest{Issues: []int{42, 43}, CreatedAt: createdAt}
+	data, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
+		t.Fatalf("write batch.json: %v", err)
+	}
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(5 * time.Minute)},
+		{Type: "run.started", RunID: "run-43", Issue: 43, Timestamp: createdAt.Add(5 * time.Minute)},
+		{Type: "run.finished", RunID: "run-43", Issue: 43, Timestamp: createdAt.Add(10 * time.Minute), Payload: map[string]any{"status": "success"}},
+	}}
+	deps := newTestDeps()
+	deps.EventLog = log
+
+	var buf bytes.Buffer
+	cmd := NewArchiveCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
+		t.Errorf("expected source run dir to be gone, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "dead-mixed")); err != nil {
+		t.Errorf("expected archived run dir to exist, got: %v", err)
+	}
+
+	var abortedFor42 bool
+	for _, e := range log.logged {
+		if e.Type == "run.aborted" && e.Issue == 42 {
+			abortedFor42 = true
+			if e.RunID != "run-42" {
+				t.Errorf("expected run.aborted RunID=run-42, got %q", e.RunID)
+			}
+			if v, _ := e.Payload["recovered"].(bool); !v {
+				t.Errorf("expected payload.recovered=true, got %v", e.Payload)
+			}
+		}
+		if e.Type == "run.aborted" && e.Issue == 43 {
+			t.Errorf("expected no run.aborted for already-terminated issue 43, got: %+v", e)
+		}
+	}
+	if !abortedFor42 {
+		t.Errorf("expected run.aborted event for unterminated issue 42, got events: %+v", log.logged)
+	}
+
+	if !strings.Contains(buf.String(), "Recovered 1 stale runs and archived 1 dead batches.") {
+		t.Errorf("expected summary, got: %q", buf.String())
+	}
+}
+
+func TestArchiveStale_AllTerminatedDeadBatchIsArchived(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	runDir := filepath.Join(dir, ".sandman", "runs", "dead-done")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	manifest := daemon.BatchManifest{Issues: []int{42}, CreatedAt: createdAt}
+	data, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
+		t.Fatalf("write batch.json: %v", err)
+	}
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(5 * time.Minute)},
+		{Type: "run.finished", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(10 * time.Minute), Payload: map[string]any{"status": "success"}},
+	}}
+	deps := newTestDeps()
+	deps.EventLog = log
+
+	var buf bytes.Buffer
+	cmd := NewArchiveCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
+		t.Errorf("expected source run dir to be gone, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "dead-done")); err != nil {
+		t.Errorf("expected archived run dir to exist, got: %v", err)
+	}
+	for _, e := range log.logged {
+		if e.Type == "run.aborted" {
+			t.Errorf("expected no run.aborted event for already-terminated run, got: %+v", e)
+		}
+	}
+	if !strings.Contains(buf.String(), "Recovered 0 stale runs and archived 1 dead batches.") {
+		t.Errorf("expected summary, got: %q", buf.String())
+	}
+}
+
+func TestArchiveStale_LiveBatchIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	runDir := filepath.Join(dir, ".sandman", "runs", "live-1")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	manifest := daemon.BatchManifest{Issues: []int{42}, CreatedAt: time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)}
+	data, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
+		t.Fatalf("write batch.json: %v", err)
+	}
+
+	cmdServer := daemon.NewCommandServer(runDir, nil)
+	if err := cmdServer.Start(); err != nil {
+		t.Fatalf("start command server: %v", err)
+	}
+	defer cmdServer.Stop()
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: manifest.CreatedAt.Add(5 * time.Minute)},
+	}}
+	deps := newTestDeps()
+	deps.EventLog = log
+
+	var buf bytes.Buffer
+	cmd := NewArchiveCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"stale"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(runDir); err != nil {
+		t.Errorf("expected live run dir to be preserved, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "live-1")); !os.IsNotExist(err) {
+		t.Errorf("expected no archive entry for live run, got: %v", err)
+	}
+	if len(log.logged) != 0 {
+		t.Errorf("expected no events logged for live batch, got %d: %+v", len(log.logged), log.logged)
+	}
+	if !strings.Contains(buf.String(), "Recovered 0 stale runs and archived 0 dead batches.") {
+		t.Errorf("expected summary, got: %q", buf.String())
 	}
 }
 
