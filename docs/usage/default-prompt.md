@@ -58,8 +58,8 @@ The long workflow now lives in the shared Sandman skill. This page describes the
     During `sandman implement`, follow all delegated subskills it calls:
 
     - `sandman-tdd` for planning, subagent-reviewed plan consensus, vertical red-green TDD, and refactor-after-green.
-    - `sandman-review` for self-review.
-    - `sandman-merge` before PR creation, with no rebase and no force-push.
+    - `sandman-self-review` for self-review.
+    - `sandman-back-merge` before PR creation, with no rebase and no force-push.
     - `sandman-pr-review` for delegated PR review. Do not review the PR yourself. Use the configured review command and collect all top-level, review-summary, and inline feedback.
     - `sandman-pr-merge` only if the PR is fully approved, required checks are green, and GitHub reports it mergeable.
 

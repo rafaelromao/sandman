@@ -15,7 +15,7 @@ This skill implements a GitHub issue by modifying the current repository's sourc
 
 - `gh` CLI authenticated
 - Working directory at repo root
-- `sandman-tdd`, `sandman-review`, `sandman-merge`, and `sandman-handoff` skills available
+- `sandman-tdd`, `sandman-self-review`, `sandman-back-merge`, and `sandman-handoff` skills available
 
 ## Workflow
 
@@ -75,7 +75,7 @@ git commit -m "feat: <issue title>"
 
 ### 7. Self-review
 
-- Load the `sandman-review` skill
+- Load the `sandman-self-review` skill
 - Perform a self-review of the changes
 - Apply fixes, format the code, run all tests, including smoke and e2e, and commit:
 
@@ -95,9 +95,9 @@ git commit -m "refactor: self-review fixes"
 
 ### 8. Merge base branch before PR
 
-- Load the `sandman-merge` skill
+- Load the `sandman-back-merge` skill
 - Use it to merge the base branch into the current branch before creating the PR
-- Resolve conflicts using the `sandman-merge` skill's 3-way workflow
+- Resolve conflicts using the `sandman-back-merge` skill's 3-way workflow
 - Run relevant tests and formatting after the merge
 - Do NOT rebase
 - Do NOT force-push
@@ -147,7 +147,7 @@ After the PR is merged, do NOT write a new handoff. The file naturally disappear
 - [ ] User confirmed plan before TDD
 - [ ] Implementation committed
 - [ ] Self-review performed and fixes committed
-- [ ] Base branch merged into current branch with `sandman-merge`
+- [ ] Base branch merged into current branch with `sandman-back-merge`
 - [ ] PR created with `Fixes #<ID>`
 - [ ] Delegate review completed
 - [ ] Handoff written after each checkpoint (4 stages: plan-approved, implementation-committed, pr-created, pr-review-finished)
