@@ -1585,8 +1585,10 @@ func TestContinue_StageAwarePrompt_AllStages(t *testing.T) {
 				t.Fatalf("expected %q in rendered prompt, got:\n%s", wantStatusLine, prompt)
 			}
 
-			if strings.Contains(prompt, "## Source Prompt: .sandman/rendered-prompt.md\n\nImplement") {
-				t.Fatalf("expected ## Source Prompt to be a file reference, not inline content, got:\n%s", prompt)
+			for _, line := range strings.Split(prompt, "\n") {
+				if strings.HasPrefix(line, "## Source Prompt: ") && !strings.Contains(line, ".sandman/rendered-prompt.md") {
+					t.Fatalf("expected ## Source Prompt to reference the file path, got %q", line)
+				}
 			}
 
 			uhcIdx := strings.Index(prompt, "## Update Handoff Context")
