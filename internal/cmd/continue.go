@@ -342,7 +342,11 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 			}
 			defer ctlSocket.Stop()
 			defer os.RemoveAll(runDir)
-			if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: issues, CreatedAt: time.Now()}); err != nil {
+			manifestIssues := issues
+			if runID != "" {
+				manifestIssues = []int{}
+			}
+			if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: manifestIssues, CreatedAt: time.Now()}); err != nil {
 				return err
 			}
 
