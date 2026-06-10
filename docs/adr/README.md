@@ -63,3 +63,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0020 | Per-agent env vars to parameterize the model used by smoke and e2e tests | accepted |
 | 0021 | Portal auto-runs `clean --stale` on startup | accepted |
 | 0022 | Replace end-of-session continuation with checkpointed handoffs | accepted |
+| 0023 | Handoff points to rendered prompt and tracks last skill | accepted |
