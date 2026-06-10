@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 func parseLogForCompletion(logPath string) bool {
@@ -181,3 +182,24 @@ func logRunMarker(logPath string, attempt, maxRetries int) error {
 }
 
 var logRunMarkerFn = logRunMarker
+
+// BuildHandoffPrompt wraps raw handoff markdown content into a structured
+// resume prompt using the shared prompt package helpers.
+func BuildHandoffPrompt(content string) string {
+	doc := prompt.ParseHandoff(content)
+	return prompt.BuildResumePrompt(doc)
+}
+
+// BuildRetryHandoffPrompt builds a handoff prompt for retry attempts,
+// embedding the Stage, Last Skill, and Last Skill Status headings in
+// the Update Handoff Context tail template.
+func BuildRetryHandoffPrompt(content string) string {
+	return BuildHandoffPrompt(content)
+}
+
+// BuildPRReviewHandoffPrompt builds a handoff prompt for PR review runs,
+// embedding the Stage, Last Skill, and Last Skill Status headings in
+// the Update Handoff Context tail template.
+func BuildPRReviewHandoffPrompt(content string) string {
+	return BuildHandoffPrompt(content)
+}

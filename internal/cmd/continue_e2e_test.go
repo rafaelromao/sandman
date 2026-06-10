@@ -107,17 +107,20 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if !strings.Contains(string(firstHandoffPrompt), "Initial run for "+continueE2EBranch+".") {
 		t.Fatalf("expected initial context in first continue prompt, got:\n%s", firstHandoffPrompt)
 	}
+	if !strings.Contains(string(firstHandoffPrompt), "## Prior Context") {
+		t.Fatalf("expected prior context wrapper, got:\n%s", firstHandoffPrompt)
+	}
+	if !strings.Contains(string(firstHandoffPrompt), "## Source Prompt") {
+		t.Fatalf("expected source prompt section, got:\n%s", firstHandoffPrompt)
+	}
+	if !strings.Contains(string(firstHandoffPrompt), "## Update Handoff Context") {
+		t.Fatalf("expected update handoff context section, got:\n%s", firstHandoffPrompt)
+	}
+	if !strings.Contains(string(firstHandoffPrompt), ".sandman/rendered-prompt.md") {
+		t.Fatalf("expected rendered-prompt.md reference, got:\n%s", firstHandoffPrompt)
+	}
 	if !strings.Contains(string(firstHandoffPrompt), "## Stage: plan-approved") {
-		t.Fatalf("expected stage line preserved verbatim, got:\n%s", firstHandoffPrompt)
-	}
-	if strings.Contains(string(firstHandoffPrompt), "## Prior Context") {
-		t.Fatalf("expected no prior context wrapper, got:\n%s", firstHandoffPrompt)
-	}
-	if strings.Contains(string(firstHandoffPrompt), "## New Instruction") {
-		t.Fatalf("expected no new instruction section, got:\n%s", firstHandoffPrompt)
-	}
-	if strings.Contains(string(firstHandoffPrompt), "## Update Handoff Context") {
-		t.Fatalf("expected no update handoff context section, got:\n%s", firstHandoffPrompt)
+		t.Fatalf("expected stage line preserved, got:\n%s", firstHandoffPrompt)
 	}
 
 	firstHandoffContext, err := os.ReadFile(contextPath)
@@ -299,11 +302,8 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	if !strings.Contains(string(handoffPrompt1), "Initial run for sandman/1-fix-failing-test.") {
 		t.Fatalf("expected issue 1 prompt to use its own verbatim context, got:\n%s", handoffPrompt1)
 	}
-	if !strings.Contains(string(handoffPrompt1), "## Stage: plan-approved") {
-		t.Fatalf("expected issue 1 prompt to include stage line, got:\n%s", handoffPrompt1)
-	}
-	if strings.Contains(string(handoffPrompt1), "## Prior Context") {
-		t.Fatalf("expected issue 1 prompt to not have prior context wrapper, got:\n%s", handoffPrompt1)
+	if !strings.Contains(string(handoffPrompt1), "## Prior Context") {
+		t.Fatalf("expected issue 1 prompt to have prior context wrapper, got:\n%s", handoffPrompt1)
 	}
 
 	handoffPrompt2, err := os.ReadFile(filepath.Join(issueTwoWorktree, ".sandman", "handoff-prompt.md"))
@@ -313,11 +313,8 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	if !strings.Contains(string(handoffPrompt2), "Initial run for sandman/2-fix-failing-test.") {
 		t.Fatalf("expected issue 2 prompt to use its own verbatim context, got:\n%s", handoffPrompt2)
 	}
-	if !strings.Contains(string(handoffPrompt2), "## Stage: plan-approved") {
-		t.Fatalf("expected issue 2 prompt to include stage line, got:\n%s", handoffPrompt2)
-	}
-	if strings.Contains(string(handoffPrompt2), "## Prior Context") {
-		t.Fatalf("expected issue 2 prompt to not have prior context wrapper, got:\n%s", handoffPrompt2)
+	if !strings.Contains(string(handoffPrompt2), "## Prior Context") {
+		t.Fatalf("expected issue 2 prompt to have prior context wrapper, got:\n%s", handoffPrompt2)
 	}
 
 	handoffContext1, err := os.ReadFile(filepath.Join(issueOneWorktree, ".sandman", "handoff.md"))
