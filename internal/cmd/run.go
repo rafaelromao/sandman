@@ -220,36 +220,33 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return MarkUsage(err)
 					}
 
-					if label == "" && query == "" && !hasUnboundedEnd {
+					if label == "" && query == "" {
 						issues, err = filterClosedIssues(orderedIssues, selection, githubClient.FetchIssue, cmd.ErrOrStderr())
 						if err != nil {
 							return err
 						}
-					} else if label == "" && query == "" {
-						issues, err = filterClosedIssues(orderedIssues, selection, githubClient.FetchIssue, cmd.ErrOrStderr())
-						if err != nil {
-							return err
-						}
-						seen := make(map[int]struct{}, len(issues))
-						for _, number := range issues {
-							seen[number] = struct{}{}
-						}
-						searchResults, err := searchIssues(cmd.Context(), githubClient, "is:open")
-						if err != nil {
-							return err
-						}
-						if len(searchResults) >= 1000 {
-							return MarkUsage(fmt.Errorf("issue selection exceeds search result limit"))
-						}
-						for _, issue := range searchResults {
-							if !selection.matches(issue.Number) {
-								continue
+						if hasUnboundedEnd {
+							seen := make(map[int]struct{}, len(issues))
+							for _, number := range issues {
+								seen[number] = struct{}{}
 							}
-							if _, ok := seen[issue.Number]; ok {
-								continue
+							searchResults, err := searchIssues(cmd.Context(), githubClient, "is:open")
+							if err != nil {
+								return err
 							}
-							seen[issue.Number] = struct{}{}
-							issues = append(issues, issue.Number)
+							if len(searchResults) >= 1000 {
+								return MarkUsage(fmt.Errorf("issue selection exceeds search result limit"))
+							}
+							for _, issue := range searchResults {
+								if !selection.matches(issue.Number) {
+									continue
+								}
+								if _, ok := seen[issue.Number]; ok {
+									continue
+								}
+								seen[issue.Number] = struct{}{}
+								issues = append(issues, issue.Number)
+							}
 						}
 					} else if querySupportsLocalFiltering(query) {
 						resolved, err := resolveIssuesLocally(githubClient, orderedIssues, label, query)
@@ -746,7 +743,7 @@ func filterClosedIssues(numbers []int, selection issueSelection, fetchFn func(in
 		if err != nil {
 			return nil, fmt.Errorf("fetch issue #%d: %w", n, err)
 		}
-		if issue.State == "closed" {
+		if strings.EqualFold(issue.State, "closed") {
 			if _, ok := selection.exact[n]; ok {
 				fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
 			}
