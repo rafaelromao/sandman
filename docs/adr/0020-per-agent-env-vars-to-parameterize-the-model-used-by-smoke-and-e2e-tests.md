@@ -10,7 +10,7 @@ The smoke tests in `internal/cmd/run_smoke_test.go` and the prflow e2e
 tests in `internal/cmd/prflow_e2e_test.go` drive a real agent CLI for
 every provider case. Each case baked a literal model string into its
 `smokeProviderCase` / `prFlowProviderCase` entry — `opencode/big-pickle`
-for the opencode agent. Pi had its own entry before it was removed (see ADR-0024).
+for the opencode agent and `kilo/kilo-auto/free` for the pi agent.
 
 That made the tests expensive to run: the operator could not steer
 either provider at a cheaper, faster, or simply different model without
@@ -29,7 +29,7 @@ var per concept, all parsed in one place" principle.
 
 Introduce one canonical env var per supported agent, all of the shape
 `SANDMAN_TEST_MODEL_<AGENT>` (e.g. `SANDMAN_TEST_MODEL_OPENCODE`,
-`SANDMAN_TEST_MODEL_PI` — that variable is no longer supported; see ADR-0024). The agent name is upper-cased by the helper.
+`SANDMAN_TEST_MODEL_PI`). The agent name is upper-cased by the helper.
 The vars are resolved through a new pair of helpers in
 `internal/testenv`:
 

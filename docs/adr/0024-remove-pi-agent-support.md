@@ -17,10 +17,9 @@ The project has converged on OpenCode as the single built-in agent. Removing Pi 
 Remove Pi agent support from Sandman. Specifically:
 
 1. Remove all Pi mentions from `CONTEXT.md`, user-facing documentation (`docs/usage/getting-started.md`, `docs/usage/configuration.md`, `docs/usage/commands.md`, `docs/usage/agent-compatibility.md`), `README.md`, `CHANGELOG.md`, and the issue template at `.github/ISSUE_TEMPLATE/agent_improvement.md`.
-2. Update ADR-0006 (built-in agent presets) to reflect that `opencode` is the sole built-in preset.
-3. Update ADR-0020 (test model env vars) to remove references to `SANDMAN_TEST_MODEL_PI`.
-4. Mark ADR-0017 (Pi config snapshot split) as superseded by this ADR.
-5. Remove the `pi` entry from `config.BuiltInAgentPresets` and all Pi-specific branches in Go source code. Go code changes are tracked separately (issue #782) and are out of scope for this ADR.
+2. ADR-0006 (built-in agent presets) and ADR-0020 (test model env vars) are left as immutable historical records; this ADR serves as the current decision that supersedes the Pi-specific context in those documents.
+3. Mark ADR-0017 (Pi config snapshot split) as superseded by this ADR.
+4. Remove the `pi` entry from `config.BuiltInAgentPresets` and all Pi-specific branches in Go source code. Go code changes are tracked separately (issue #782) and are out of scope for this ADR.
 
 No ADR files are deleted — superseded ADRs remain in the repository as historical records.
 

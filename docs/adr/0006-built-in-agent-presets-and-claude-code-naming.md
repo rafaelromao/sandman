@@ -12,7 +12,7 @@ This change affects multiple modules: config loading, batch execution, container
 
 ## Decision
 
-We will model built-in agent providers as first-class presets keyed by `opencode`.
+We will model built-in agent providers as first-class presets keyed by `opencode` and `pi`.
 
 1. Sandman will resolve a preset into provider metadata such as command, config source paths, and auth flags.
 2. Repo config selects the default built-in agent via `agent` and can choose a run-time agent via `sandman run --agent`.
