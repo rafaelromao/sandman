@@ -99,7 +99,8 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				if !exists {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
 				}
-				handoffPrompts[num] = content
+				doc := prompt.ParseHandoff(content)
+				handoffPrompts[num] = prompt.BuildResumePrompt(doc)
 			}
 
 			// Replay agent/model/review settings from the first issue's last run.
@@ -255,7 +256,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				}
 			}()
 
-			runDir := daemon.RunDir(".sandman", issues)
+			runDir := daemon.RunDir(".sandman", issues, "")
 			broadcaster := daemon.NewBroadcaster()
 			ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
 

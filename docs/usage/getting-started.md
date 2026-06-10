@@ -59,6 +59,7 @@ This scaffolds the `.sandman/` directory with:
 - **`.sandman/config.yaml`** — Sandman configuration with the selected default agent preset
 - **`.sandman/Dockerfile`** — Container image definition for container-backed sandboxing
 - **`.sandman/prompt.md`** — Project Prompt Template seeded from Sandman's Default Prompt
+- **`.sandman/priority-selection-prompt.md`** — Priority selection prompt for Ralph Loop issue prioritization
 
 Sandman also installs the shared `sandman` skill folder into `~/.agents/skills/sandman/` if it does not already exist.
 
@@ -128,7 +129,7 @@ Open a second terminal while a `sandman run` is in progress to stream its output
 sandman attach
 ```
 
-Attach reads from the daemon's control socket at `.sandman/run.sock` and exits with code 0 when the batch finishes and the socket closes.
+Attach reads from the daemon's control socket at `.sandman/runs/<run-id>/run.sock` (`sandman attach` discovers the socket automatically by scanning the runs directory) and exits with code 0 when the batch finishes and the socket closes.
 
 ## Next steps
 

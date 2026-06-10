@@ -2592,7 +2592,15 @@
           (child) => child.getAttribute('data-detail-for') === state.expandedRunKey
         );
         if (detailRow) {
-          detailRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          const parentRow = Array.from(runsBody.children).find(
+            (child) => child.getAttribute('data-run-key') === state.expandedRunKey
+          );
+          const rowHeight = parentRow ? parentRow.offsetHeight : 0;
+          const rect = detailRow.getBoundingClientRect();
+          window.scrollTo({
+            top: window.scrollY + rect.top - rowHeight,
+            behavior: 'smooth'
+          });
         }
       }
       if (prevExpandedRunKey !== null && state.expandedRunKey === null) {

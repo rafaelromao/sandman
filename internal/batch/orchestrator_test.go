@@ -1037,9 +1037,17 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
-	wantPrompt := "## Completed\nKeep going.\n"
-	if string(data) != wantPrompt {
-		t.Fatalf("unexpected continue prompt content: %q", string(data))
+	if !strings.Contains(string(data), "## Prior Context") {
+		t.Fatalf("expected Prior Context in retry prompt, got: %q", string(data))
+	}
+	if !strings.Contains(string(data), "Keep going.") {
+		t.Fatalf("expected body content in retry prompt, got: %q", string(data))
+	}
+	if !strings.Contains(string(data), "## Source Prompt") {
+		t.Fatalf("expected Source Prompt in retry prompt, got: %q", string(data))
+	}
+	if !strings.Contains(string(data), "## Update Handoff Context") {
+		t.Fatalf("expected Update Handoff Context in retry prompt, got: %q", string(data))
 	}
 }
 
@@ -1541,7 +1549,7 @@ func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", 0, 0, 0, "", 0, false, 0, false, false, false, 0, "")
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", 0, 0, 0, "", 0, false, 0, false, false, false, 0, "", "")
 	if !started {
 		t.Fatal("expected prompt-only run to start")
 	}

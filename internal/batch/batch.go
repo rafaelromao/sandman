@@ -69,6 +69,11 @@ type Request struct {
 	// in the trigger comment. May be empty. Only meaningful when Review
 	// is true.
 	ReviewFocus string
+	// RunID is an optional batch-level identifier for prompt-only runs.
+	// When set, it is used as the run directory name and as the RunID in
+	// run.started events instead of the auto-generated run-0-<timestamp>.
+	// Must be validated by the caller to match [a-zA-Z][a-zA-Z0-9_-]*.
+	RunID string
 }
 
 // Result describes the outcome of a batch.

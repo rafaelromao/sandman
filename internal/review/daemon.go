@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -55,17 +56,22 @@ type PromptRenderer interface {
 // Daemon polls the repo for /sandman review comments and launches review
 // agents serially.
 type Daemon struct {
-	BaseDir       string
-	GitHub        GitHubClient
-	Prompts       PromptRenderer
-	Runner        BatchRunner
-	Config        *config.Config
-	Broadcaster   io.Writer
-	Clock         Clock
-	Trigger       Trigger
-	PollInterval  time.Duration
-	controlSocket *daemon.ControlSocket
-	busy          chan struct{}
+	BaseDir              string
+	GitHub               GitHubClient
+	Prompts              PromptRenderer
+	Runner               BatchRunner
+	Config               *config.Config
+	Broadcaster          io.Writer
+	Clock                Clock
+	Trigger              Trigger
+	PollInterval         time.Duration
+	Sandbox              string
+	ContainerCapacity    int
+	ContainerCapacitySet bool
+	MaxContainers        int
+	MaxContainersSet     bool
+	controlSocket        *daemon.ControlSocket
+	busy                 chan struct{}
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -212,6 +218,10 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		return nil
 	}
 
+	sort.Slice(comments, func(i, j int) bool {
+		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
+	})
+
 	prDir := d.PRDir(prNumber)
 	if err := os.MkdirAll(prDir, 0755); err != nil {
 		return fmt.Errorf("create PR dir: %w", err)
@@ -320,7 +330,13 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 
 	agentName := ""
 	modelName := ""
-	sandboxMode := "worktree"
+	sandboxMode := d.Sandbox
+	if sandboxMode == "" && d.Config != nil {
+		sandboxMode = d.Config.Sandbox
+	}
+	if sandboxMode == "" {
+		sandboxMode = config.DefaultSandbox
+	}
 	if d.Config != nil {
 		agentName = d.Config.EffectiveReviewAgent()
 		modelName = d.Config.EffectiveReviewModel()
@@ -338,10 +354,15 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
+	runID := fmt.Sprintf("PR%d", prNumber)
 	req := batch.Request{
-		Agent:   agentName,
-		Model:   modelName,
-		Sandbox: sandboxMode,
+		Agent:                agentName,
+		Model:                modelName,
+		Sandbox:              sandboxMode,
+		ContainerCapacity:    d.ContainerCapacity,
+		ContainerCapacitySet: d.ContainerCapacitySet,
+		MaxContainers:        d.MaxContainers,
+		MaxContainersSet:     d.MaxContainersSet,
 		PromptConfig: prompt.RenderConfig{
 			PromptFlag: rendered,
 			Branch:     fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID),
@@ -350,6 +371,8 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		Review:       true,
 		PRNumber:     prNumber,
 		ReviewFocus:  focus,
+		RunID:        runID,
+		RunDir:       daemon.RunDir(d.BaseDir, nil, runID),
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return fmt.Errorf("run batch: %w", err)

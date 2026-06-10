@@ -125,6 +125,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			reviewCommand := cfg.EffectiveReviewCommand()
 
+			runID, _ := cmd.Flags().GetString("run-id")
+			if runID != "" && !isValidRunID(runID) {
+				return MarkUsage(fmt.Errorf("--run-id must start with a letter and contain only alphanumeric characters, hyphens, and underscores"))
+			}
+
 			selectedPrompt := ""
 			overridePrompt := false
 			switch {
@@ -151,6 +156,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			ralphProvided := ralphFlag != nil && ralphFlag.Changed
 			ralphCount, _ := cmd.Flags().GetInt("ralph")
 			issueSelectionProvided := len(args) > 0 || ralphProvided || label != "" || query != ""
+
+			if runID != "" && issueSelectionProvided {
+				return MarkUsage(fmt.Errorf("--run-id cannot be combined with issue selection, --ralph, --label, or --query"))
+			}
 
 			if ralphProvided {
 				includeDependencies = true
@@ -264,6 +273,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					}
 					issues = extractIssueNumbers(searchResults)
 				} else {
+					if runID != "" {
+						return MarkUsage(fmt.Errorf("--run-id requires --prompt or --template for prompt-only mode"))
+					}
 					if deps.IsTTY != nil && deps.IsTTY() {
 						issues, err = pickIssues(cmd.Context(), githubClient, deps.IssuePicker)
 						if err != nil {
@@ -379,7 +391,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}()
 
-			runDir := daemon.RunDir(".sandman", resolvedBatch.Issues)
+			runDir := daemon.RunDir(".sandman", resolvedBatch.Issues, runID)
 			broadcaster := daemon.NewBroadcaster()
 			ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
 
@@ -430,6 +442,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				OutputWriter:               broadcaster,
 				RunDir:                     runDir,
+				RunID:                      runID,
 				PromptConfig: prompt.RenderConfig{
 					PromptFlag:       promptFlag,
 					TemplateFlag:     templateFlag,
@@ -469,6 +482,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
+	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode)")
 	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
@@ -480,7 +494,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
-	cmd.Flags().Bool("force", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout existing worktree on wrong branch")
+	cmd.Flags().Bool("force", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
 
 	return cmd
 }
@@ -810,4 +824,29 @@ func formatIssueLabel(issueNumber int, issue *int) string {
 
 func promptRequiresIssueSelection(promptText string) bool {
 	return strings.Contains(promptText, "{{ISSUE_NUMBER}}") || strings.Contains(promptText, "{{ISSUE_TITLE}}") || strings.Contains(promptText, "{{ISSUE_BODY}}")
+}
+
+// isValidRunID validates that id starts with a letter and contains only
+// alphanumeric characters, hyphens, and underscores.
+func isValidRunID(id string) bool {
+	if len(id) == 0 {
+		return false
+	}
+	for i, r := range id {
+		switch {
+		case i == 0 && !isLetter(r):
+			return false
+		case i > 0 && !isLetter(r) && !isDigit(r) && r != '-' && r != '_':
+			return false
+		}
+	}
+	return true
+}
+
+func isLetter(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
+func isDigit(r rune) bool {
+	return r >= '0' && r <= '9'
 }

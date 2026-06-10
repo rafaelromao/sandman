@@ -45,10 +45,11 @@ After the TDD plan is approved via subagent consensus:
 - Load the `sandman-handoff` skill
 - Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
 - Substitute `<STAGE>` in the skill template's `## Stage:` line with `plan-approved`
+- Re-read `.sandman/rendered-prompt.md` and record `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
+- Set `## Last Skill` to `sandman-tdd`
+- Set `## Last Skill Status` to `complete — plan approved via subagent consensus`
 - Write the result to `.sandman/handoff.md` in the current worktree
 - If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
-
-> The `sandman-handoff` skill's prose still references `.sandman/continuation-context.md` from before the rename. The runtime file path is `.sandman/handoff.md` — write there.
 
 ### 4. Implement (TDD)
 
@@ -70,6 +71,9 @@ git commit -m "feat: <issue title>"
 - Load the `sandman-handoff` skill
 - Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
 - Substitute `<STAGE>` in the skill template's `## Stage:` line with `implementation-committed`
+- Re-read `.sandman/rendered-prompt.md` and record `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
+- Set `## Last Skill` to `sandman-tdd`
+- Set `## Last Skill Status` to `complete — implementation committed and tests pass`
 - Write the result to `.sandman/handoff.md` in the current worktree
 - If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
 
@@ -116,6 +120,9 @@ Capture the PR URL and number.
 - Load the `sandman-handoff` skill
 - Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
 - Substitute `<STAGE>` in the skill template's `## Stage:` line with `pr-created`
+- Set `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
+- Set `## Last Skill` to `sandman-implement`
+- Set `## Last Skill Status` to `complete — PR created and pushed`
 - Write the result to `.sandman/handoff.md` in the current worktree
 - If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
 
@@ -134,6 +141,9 @@ When the delegated review result is either PR approval or a hard blocker:
 - Load the `sandman-handoff` skill
 - Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
 - Substitute `<STAGE>` in the skill template's `## Stage:` line with `pr-review-finished`
+- Set `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
+- Set `## Last Skill` to `sandman-pr-review`
+- Set `## Last Skill Status` to `complete — PR approved and ready to merge` if the PR was approved, or `incomplete — hard blocker encountered` if a hard blocker was encountered
 - If the review returned a hard blocker, fill the `## Blockers` section with the blocker; otherwise leave `## Blockers` empty
 - Write the result to `.sandman/handoff.md` in the current worktree
 - If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)

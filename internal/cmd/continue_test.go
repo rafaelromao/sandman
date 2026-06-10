@@ -219,17 +219,20 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if !spy.req.MaxContainersSet {
 		t.Fatal("expected max containers flag to be preserved")
 	}
+	if !strings.Contains(spy.req.HandoffPrompts[42], "## Prior Context") {
+		t.Fatalf("expected Prior Context section in wrapped prompt, got %q", spy.req.HandoffPrompts[42])
+	}
+	if !strings.Contains(spy.req.HandoffPrompts[42], "## Source Prompt") {
+		t.Fatalf("expected Source Prompt section in wrapped prompt, got %q", spy.req.HandoffPrompts[42])
+	}
+	if !strings.Contains(spy.req.HandoffPrompts[42], "## Update Handoff Context") {
+		t.Fatalf("expected Update Handoff Context section in wrapped prompt, got %q", spy.req.HandoffPrompts[42])
+	}
 	if !strings.Contains(spy.req.HandoffPrompts[42], "# Handoff Context") {
-		t.Fatalf("expected verbatim handoff content with header, got %q", spy.req.HandoffPrompts[42])
+		t.Fatalf("expected handoff content preserved in Prior Context, got %q", spy.req.HandoffPrompts[42])
 	}
-	if strings.Contains(spy.req.HandoffPrompts[42], "## Prior Context") {
-		t.Fatalf("expected no prior context wrapper, got %q", spy.req.HandoffPrompts[42])
-	}
-	if strings.Contains(spy.req.HandoffPrompts[42], "## New Instruction") {
-		t.Fatalf("expected no new instruction section, got %q", spy.req.HandoffPrompts[42])
-	}
-	if strings.Contains(spy.req.HandoffPrompts[42], "## Update Handoff Context") {
-		t.Fatalf("expected no update handoff context section, got %q", spy.req.HandoffPrompts[42])
+	if !strings.Contains(spy.req.HandoffPrompts[42], "## Completed") {
+		t.Fatalf("expected Completed section in wrapped prompt, got %q", spy.req.HandoffPrompts[42])
 	}
 	if spy.req.PromptConfig.ReviewCommand != "/custom review 2" {
 		t.Fatalf("expected review command replay, got %q", spy.req.PromptConfig.ReviewCommand)
@@ -477,11 +480,17 @@ func TestContinue_UsesEmptyHandoffTemplateWhenContextMissing(t *testing.T) {
 	if spy.req.PromptConfig.HandoffPrompt != "" {
 		t.Fatalf("expected empty HandoffPrompt, got %q", spy.req.PromptConfig.HandoffPrompt)
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[42], "## Next Step") {
-		t.Fatalf("expected handoff prompt to have Next Step section, got %q", spy.req.HandoffPrompts[42])
+	if !strings.Contains(spy.req.HandoffPrompts[42], "## Prior Context") {
+		t.Fatalf("expected Prior Context section in wrapped empty prompt, got %q", spy.req.HandoffPrompts[42])
+	}
+	if !strings.Contains(spy.req.HandoffPrompts[42], "## Source Prompt") {
+		t.Fatalf("expected Source Prompt section in wrapped empty prompt, got %q", spy.req.HandoffPrompts[42])
+	}
+	if !strings.Contains(spy.req.HandoffPrompts[42], "## Update Handoff Context") {
+		t.Fatalf("expected Update Handoff Context in wrapped empty prompt, got %q", spy.req.HandoffPrompts[42])
 	}
 	if !strings.Contains(spy.req.HandoffPrompts[42], "Continue the work.") {
-		t.Fatalf("expected handoff prompt to have Continue the work., got %q", spy.req.HandoffPrompts[42])
+		t.Fatalf("expected Continue the work. in wrapped prompt, got %q", spy.req.HandoffPrompts[42])
 	}
 	if !strings.Contains(buf.String(), "warning: no handoff found") {
 		t.Fatalf("expected warning about missing handoff, got %q", buf.String())
@@ -786,14 +795,20 @@ func TestContinue_MultipleIssuesBuildsBranchesAndPreviousRunIDsMaps(t *testing.T
 	if spy.req.BaseBranches[1] != "main" || spy.req.BaseBranches[2] != "main" {
 		t.Fatalf("expected base branches to replay main, got %#v", spy.req.BaseBranches)
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[1], "## Completed\nFirst issue.\n") {
+	if !strings.Contains(spy.req.HandoffPrompts[1], "First issue.") {
 		t.Fatalf("expected issue 1 prompt to include its own verbatim context, got %q", spy.req.HandoffPrompts[1])
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[2], "## Completed\nSecond issue.\n") {
+	if !strings.Contains(spy.req.HandoffPrompts[2], "Second issue.") {
 		t.Fatalf("expected issue 2 prompt to include its own verbatim context, got %q", spy.req.HandoffPrompts[2])
 	}
 	if spy.req.HandoffPrompts[1] == spy.req.HandoffPrompts[2] {
 		t.Fatal("expected different prompts per issue")
+	}
+	if !strings.Contains(spy.req.HandoffPrompts[1], "## Prior Context") {
+		t.Fatalf("expected issue 1 prompt to have Prior Context wrapper, got %q", spy.req.HandoffPrompts[1])
+	}
+	if !strings.Contains(spy.req.HandoffPrompts[2], "## Prior Context") {
+		t.Fatalf("expected issue 2 prompt to have Prior Context wrapper, got %q", spy.req.HandoffPrompts[2])
 	}
 	if spy.req.Branches[1] != branchA {
 		t.Fatalf("expected Branches[1]=%q, got %q", branchA, spy.req.Branches[1])
@@ -1037,19 +1052,28 @@ func TestContinue_StageAwarePrompt(t *testing.T) {
 	prompt := spy.req.HandoffPrompts[42]
 
 	if !strings.Contains(prompt, "## Stage: plan-approved") {
-		t.Fatalf("expected stage line preserved verbatim, got %q", prompt)
+		t.Fatalf("expected stage line preserved, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "Initial implementation done.") {
 		t.Fatalf("expected verbatim context content, got %q", prompt)
 	}
-	if strings.Contains(prompt, "## Prior Context") {
-		t.Fatalf("expected no prior context wrapper, got %q", prompt)
+	if !strings.Contains(prompt, "## Prior Context") {
+		t.Fatalf("expected prior context wrapper, got %q", prompt)
 	}
-	if strings.Contains(prompt, "## New Instruction") {
-		t.Fatalf("expected no new instruction section, got %q", prompt)
+	if !strings.Contains(prompt, "## New Instruction") {
+		t.Fatalf("expected new instruction section, got %q", prompt)
 	}
-	if strings.Contains(prompt, "## Update Handoff Context") {
-		t.Fatalf("expected no update handoff context section, got %q", prompt)
+	if !strings.Contains(prompt, "## Update Handoff Context") {
+		t.Fatalf("expected update handoff context section, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Stage: plan-approved") {
+		t.Fatalf("expected New Instruction with Stage, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "## Last Skill:") {
+		t.Fatalf("expected ## Last Skill heading in New Instruction, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "## Last Skill Status:") {
+		t.Fatalf("expected ## Last Skill Status heading in New Instruction, got %q", prompt)
 	}
 	if spy.req.PromptConfig.HandoffPrompt != "" {
 		t.Fatalf("expected no bare prompt, got %q", spy.req.PromptConfig.HandoffPrompt)

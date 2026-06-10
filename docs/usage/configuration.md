@@ -46,7 +46,7 @@ container_capacity: 4
 start_delay: 0
 
 # Maximum number of ContainerSandbox instances.
-# 0 means auto mode: create the minimum needed for active runs.
+# 0 = no cap (unbounded pool growth — Sandman creates as many containers as needed for active runs).
 max_containers: 0
 
 # Directory for git worktrees.
@@ -99,16 +99,16 @@ Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on 
 
 See [Sandman Skills](skills.md) for the shared workflow details.
 
-`sandman continue` replays the stored branch, base branch, agent, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, resolves the model from `--model` or `model`, then prepends `.sandman/handoff.md` to `.sandman/handoff-prompt.md` when present.
+`sandman continue` replays the stored branch, base branch, agent, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, resolves the model from `--model` or `model`, reads the handoff document (`.sandman/handoff.md`) from the worktree, and passes its contents verbatim as the agent's resume prompt. When no handoff document exists, an empty handoff template is used with a warning on stderr.
 
 ## Container scheduling configuration
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `container_capacity` | `4` | Max concurrent agent runs per `ContainerSandbox`. `0` = unlimited (no per-container cap), `1` = one agent per container |
-| `max_containers` | `0` | Max `ContainerSandbox` instances. `0` = no cap (unbounded pool growth). An explicit positive value caps total container-backed concurrency |
+| `max_containers` | `0` | Max `ContainerSandbox` instances. `0` = no cap (unbounded pool growth — Sandman creates as many containers as needed for active runs). An explicit positive value caps total container-backed concurrency |
 
-When `max_containers=0` (unbounded pool growth) and `container_capacity=4` with 6 active runs, Sandman creates 2 containers (4 + 2). When a positive `max_containers` limit is reached and all containers are at capacity, additional runs queue until capacity frees up.
+When `max_containers=0` (no cap, unbounded pool growth — Sandman creates as many containers as needed for active runs) and `container_capacity=4` with 6 active runs, Sandman creates 2 containers (4 + 2). When a positive `max_containers` limit is reached and all containers are at capacity, additional runs queue until capacity frees up.
 
 See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 
