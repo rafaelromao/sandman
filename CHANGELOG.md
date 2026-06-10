@@ -13,9 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `SANDMAN_TEST_MODEL_<AGENT>` env vars (e.g. `SANDMAN_TEST_MODEL_OPENCODE`, `SANDMAN_TEST_MODEL_PI`) override the model the smoke and prflow e2e tests target per agent. When unset, the tests use the literal model baked into their case lists. Resolved through `testenv.ResolveTestModel` (testenv_test.go covers empty/set/trim/agent-scoped paths).
+- `SANDMAN_TEST_MODEL_<AGENT>` env vars (e.g. `SANDMAN_TEST_MODEL_OPENCODE`) override the model the smoke and prflow e2e tests target per agent. When unset, the tests use the literal model baked into their case lists. Resolved through `testenv.ResolveTestModel` (testenv_test.go covers empty/set/trim/agent-scoped paths).
 - `sandman init` gains `--retries` and `--run-idle-timeout` flags that persist `retries` and `run_idle_timeout` in the scaffolded `.sandman/config.yaml`. Sentinel `-1` keeps the built-in default (`3` for `retries`, `1800` for `run_idle_timeout`); `0` disables retries / the heartbeat watchdog respectively.
-- Pi preset now snapshots `~/.pi/` but keeps `~/.pi/agent/npm` (npm cache) and `~/.pi/agent/sessions` (mutable per-run sessions) mounted live. Mirrors the OpenCode split using the same mechanism; no new fields or code paths (ADR-0017).
+- Pi preset now snapshots `~/.pi/` but keeps `~/.pi/agent/npm` (npm cache) and `~/.pi/agent/sessions` (mutable per-run sessions) mounted live. Mirrors the OpenCode split using the same mechanism; no new fields or code paths (ADR-0017). **Note:** Pi agent support has since been removed (see ADR-0024).
 - `run.idle_timeout` event type: documented in `events.go`, `monitoring.md`, and `configuration.md`. The heartbeat watchdog emits this event when an agent produces no log output for `run_idle_timeout` seconds (default: 1800, configurable via `run_idle_timeout` in config or `--run-idle-timeout` on the CLI). `0` disables the watchdog.
 - CLI summary line for `sandman run` and `sandman continue` now includes a non-zero `aborted` bucket (`Summary: N succeeded, N failed, N aborted, N blocked`), and emits only the buckets whose count is non-zero. A new `cmd.ExitCodedError` carries the process exit code for the abort path: when `RunBatch` returns `batch.ErrAborted`, the CLI prints `batch aborted by operator` to stderr and the process exits with code 130 (the standard Unix code for SIGINT). Real run failures keep the existing `run batch: ...` message and non-zero exit.
 - Cascade abort: when an in-batch blocker finishes with status `"aborted"`, its dependents are emitted as `run.aborted` (not `run.blocked`) with an `aborted_by` payload naming the upstream blocker. The `RunID` on the cascade `run.aborted` matches the `RunID` on the prior `run.queued` event so projection collapses to a single `RunState`.
@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependency-aware batch execution with topological sort and cycle detection
 - `--include-dependencies` CLI flag for transitive blocker expansion
 - `run.blocked` event type and blocked status
-- Built-in agent presets (opencode, pi) with config resolver
+- Built-in agent presets (opencode) with config resolver
 - `--prompt`, `--template`, `--prompt-arg` CLI flags for prompt customization
 - BuildToolsPreset scaffold-time recipe with pinned versioning and mise
 - Node BuildToolsPreset with repo hint detection and pinned container scaffolding

@@ -14,7 +14,7 @@ sandman init [flags]
 |------|---------|-------------|
 | `--build-tools` | `""` | Build tools preset (`generic`, `dotnet`, `go`, `node`, `python`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
-| `--agent` | `""` | Default built-in agent preset for `init` (`opencode` or `pi`) |
+| `--agent` | `""` | Default built-in agent preset for `init` (`opencode`) |
 | `--model` | `""` | Default model for the agent |
 | `--parallel` | `-1` | Default parallel container count (`-1` = use config default 4) |
 | `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/sandman review` (requires `sandman review` to be running) |
@@ -85,7 +85,6 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means no cap (unbounded pool growth)
 - `--model` only applies to built-in presets; if omitted, Sandman uses `model` from config, falling back to the agent provider's configured model
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
-- Pi splits `provider/model` into separate provider and model flags, and errors if `/` is missing
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 
 ## `sandman status`

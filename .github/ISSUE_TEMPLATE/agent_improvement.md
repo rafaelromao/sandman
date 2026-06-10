@@ -8,7 +8,7 @@ assignees: ''
 ---
 
 **Which agent provider is affected?**
-E.g. opencode, pi, or both built-ins.
+E.g. opencode.
 
 **Describe the improvement**
 What aspect of agent behavior, prompt, or documentation are you improving?
