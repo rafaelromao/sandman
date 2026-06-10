@@ -37,14 +37,15 @@ const piNodeVersion = "22.19.0"
 
 // Options configures the scaffolding behavior.
 type Options struct {
-	BuildTools     string // --build-tools override
-	ToolVersion    string // --tool-version override
-	Agent          string // --agent override
-	Model          string // --model override
-	Parallel       int    // --parallel override (-1 = use config default)
-	ReviewCommand  string // --review-command override
-	Retries        *int   // --retries override; nil = use config.DefaultRetries
-	RunIdleTimeout *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
+	BuildTools      string // --build-tools override
+	ToolVersion     string // --tool-version override
+	Agent           string // --agent override
+	Model           string // --model override
+	Parallel        int    // --parallel override (-1 = use config default)
+	ParallelReviews int    // --parallel-reviews override (-1 = use config default)
+	ReviewCommand   string // --review-command override
+	Retries         *int   // --retries override; nil = use config.DefaultRetries
+	RunIdleTimeout  *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
 }
 
 // BuildToolsPreset describes a scaffold-time recipe for the container image.
@@ -254,6 +255,10 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if opts.Parallel > 0 {
 		parallel = opts.Parallel
 	}
+	reviewParallel := config.DefaultReviewParallel
+	if opts.ParallelReviews > 0 {
+		reviewParallel = opts.ParallelReviews
+	}
 	model := opts.Model
 
 	retries, err := resolveRetries(opts.Retries)
@@ -265,18 +270,19 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return err
 	}
 	cfg := &config.Config{
-		DefaultAgent:      defaultAgent,
-		DefaultModel:      model,
-		BuildTools:        preset.Name,
-		ReviewCommand:     effectiveReviewCommand(opts.ReviewCommand),
-		DefaultParallel:   parallel,
-		StartDelay:        config.DefaultStartDelay,
-		RunIdleTimeout:    runIdleTimeout,
-		Retries:           retries,
-		ContainerCapacity: config.DefaultContainerCapacity,
-		MaxContainers:     config.DefaultMaxContainers,
-		WorktreeDir:       config.DefaultWorktreeDir,
-		Sandbox:           config.DefaultSandbox,
+		DefaultAgent:          defaultAgent,
+		DefaultModel:          model,
+		BuildTools:            preset.Name,
+		ReviewCommand:         effectiveReviewCommand(opts.ReviewCommand),
+		DefaultParallel:       parallel,
+		DefaultReviewParallel: reviewParallel,
+		StartDelay:            config.DefaultStartDelay,
+		RunIdleTimeout:        runIdleTimeout,
+		Retries:               retries,
+		ContainerCapacity:     config.DefaultContainerCapacity,
+		MaxContainers:         config.DefaultMaxContainers,
+		WorktreeDir:           config.DefaultWorktreeDir,
+		Sandbox:               config.DefaultSandbox,
 		Git: config.GitConfig{
 			BaseBranch: "main",
 		},

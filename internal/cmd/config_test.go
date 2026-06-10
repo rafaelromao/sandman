@@ -261,6 +261,7 @@ git:
 		"build_tools: go",
 		"review_command: /review please",
 		"parallel: 3",
+		"parallel_reviews: 0",
 		"start_delay: 5",
 		"run_idle_timeout: 1800",
 		"retries: 3",
