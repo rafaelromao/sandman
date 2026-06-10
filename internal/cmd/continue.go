@@ -69,6 +69,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 
 			previousRunIDs := make(map[int]string, len(issues))
 			var promptFlagContent string
+			var handoffPromptContent string
 			var promptOnlyBaseBranch string
 			var promptOnlyBranch string
 			if runID != "" {
@@ -112,6 +113,8 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", promptOnlyBranch)
 				}
 				promptFlagContent = content
+				doc := prompt.ParseHandoff(content)
+				handoffPromptContent = prompt.BuildResumePrompt(doc)
 			}
 
 			branches := make(map[int]string, len(issues))
@@ -309,6 +312,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				PromptConfig: prompt.RenderConfig{
 					Branch:           promptOnlyBranch,
 					PromptFlag:       promptFlagContent,
+					HandoffPrompt:    handoffPromptContent,
 					ReviewCommand:    reviewCommand,
 					ReviewCommandSet: true,
 				},
