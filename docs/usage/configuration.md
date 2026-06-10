@@ -62,7 +62,7 @@ git:
 # Sandman installs the built-in agent in scaffolded Dockerfiles and mounts the shared skills directory.
 ```
 
-## Built-in agents
+## Built-in preset
 
 Sandman has one built-in preset: `opencode`. It is installed into scaffolded Dockerfiles and is the default `agent`.
 

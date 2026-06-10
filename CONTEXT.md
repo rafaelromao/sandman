@@ -65,7 +65,7 @@ Individual files resolved into a container sandbox via a temporary copy for agen
 _Avoid_: config paths, settings files.
 
 **SnapshotExcludes**:
-Paths (typically subtrees of a `ConfigDir`) skipped during the copy-resolve snapshot step (ADR-0008/ADR-0015). Used to keep large mutable runtime state out of the run-owned snapshot (ADR-0016/ADR-0017). Paths starting with `~` are expanded.
+Paths (typically subtrees of a `ConfigDir`) skipped during the copy-resolve snapshot step (ADR-0008/ADR-0015). Used to keep large mutable runtime state out of the run-owned snapshot (ADR-0016). Paths starting with `~` are expanded.
 _Avoid_: snapshot blocklist, copy excludes.
 
 **LiveMount**:
