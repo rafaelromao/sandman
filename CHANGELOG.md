@@ -7,15 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Portal "Active Batches" filter now checks daemon control socket liveness (100ms `net.DialTimeout`) instead of relying solely on event-log state. Runs whose socket is dead are downgraded from `kind: "active"` to `kind: "completed"`. Covers both live-batch and historical-run paths. (#726, #740)
-
 ### Added
 
 - `SANDMAN_TEST_MODEL_<AGENT>` env vars (e.g. `SANDMAN_TEST_MODEL_OPENCODE`) override the model the smoke and prflow e2e tests target per agent. When unset, the tests use the literal model baked into their case lists. Resolved through `testenv.ResolveTestModel` (testenv_test.go covers empty/set/trim/agent-scoped paths).
 - `sandman init` gains `--retries` and `--run-idle-timeout` flags that persist `retries` and `run_idle_timeout` in the scaffolded `.sandman/config.yaml`. Sentinel `-1` keeps the built-in default (`3` for `retries`, `1800` for `run_idle_timeout`); `0` disables retries / the heartbeat watchdog respectively.
-- Pi preset now snapshots `~/.pi/` but keeps `~/.pi/agent/npm` (npm cache) and `~/.pi/agent/sessions` (mutable per-run sessions) mounted live. Mirrors the OpenCode split using the same mechanism; no new fields or code paths (ADR-0017).
 - `run.idle_timeout` event type: documented in `events.go`, `monitoring.md`, and `configuration.md`. The heartbeat watchdog emits this event when an agent produces no log output for `run_idle_timeout` seconds (default: 1800, configurable via `run_idle_timeout` in config or `--run-idle-timeout` on the CLI). `0` disables the watchdog.
 - CLI summary line for `sandman run` and `sandman continue` now includes a non-zero `aborted` bucket (`Summary: N succeeded, N failed, N aborted, N blocked`), and emits only the buckets whose count is non-zero. A new `cmd.ExitCodedError` carries the process exit code for the abort path: when `RunBatch` returns `batch.ErrAborted`, the CLI prints `batch aborted by operator` to stderr and the process exits with code 130 (the standard Unix code for SIGINT). Real run failures keep the existing `run batch: ...` message and non-zero exit.
 - Cascade abort: when an in-batch blocker finishes with status `"aborted"`, its dependents are emitted as `run.aborted` (not `run.blocked`) with an `aborted_by` payload naming the upstream blocker. The `RunID` on the cascade `run.aborted` matches the `RunID` on the prior `run.queued` event so projection collapses to a single `RunState`.
@@ -38,17 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--sandbox`, `--container-capacity`, `--max-containers` CLI flags
 - Event log: `run.warning` event type
 
-### Removed
-
-- Pi agent preset and all Pi-specific branches; users must configure a custom provider or migrate to OpenCode. See ADR-0024.
-
 ### Changed
 
+- Portal "Active Batches" filter now checks daemon control socket liveness (100ms `net.DialTimeout`) instead of relying solely on event-log state. Runs whose socket is dead are downgraded from `kind: "active"` to `kind: "completed"`. Covers both live-batch and historical-run paths. (#726, #740)
 - **Breaking CLI change**: `sandman continue` no longer accepts a `<prompt-text>` trailing argument. The command now takes only issue numbers (`sandman continue <issue-number>...`). The resume prompt is read verbatim from `.sandman/handoff.md` in each issue's worktree, falling back to an empty handoff template when the file is missing. Portal continue preset updated accordingly.
 - Breaking schema rename (lands alongside #640): the legacy `default_` prefix is dropped from three config keys — `default_agent` → `agent`, `default_model` → `model`, `default_parallel` → `parallel`. Hard cutover with no shim; once #640 ships, repos that still use the old keys silently fall back to project defaults. Migrate existing `.sandman/config.yaml` files with `sed -i -e 's/^default_agent:/agent:/' -e 's/^default_model:/model:/' -e 's/^default_parallel:/parallel:/' .sandman/config.yaml` after upgrading to a release that contains both #640 and #641.
 - Breaking default change: `DefaultRetries = 3` is now applied by `Load()` when the YAML `retries:` key is absent (was implicitly `0`). This is the new ralph-style default and flows through `resolveRetries` to runtime behaviour. To preserve the prior no-retry behaviour, set `retries: 0` explicitly in `.sandman/config.yaml` (or pass `sandman init --retries 0` on first scaffold).
 - Renamed the `run.cancelled` event type to `run.aborted`. New runs emit `run.aborted` with `status: aborted`. The projected status for a cancellation event is now `"aborted"` (was `"failure"`), and `sandman clean --failed` now removes aborted runs. Legacy `run.cancelled` events in existing `events.jsonl` files continue to project as `"aborted"`, so the cut-over is lossless for the abort semantic.
 - Dependency resolution now treats in-batch success as sufficient to unblock dependents. When a blocker AgentRun in the same batch finishes with status `success`, its dependents start immediately without re-fetching the blocker's GitHub issue state. Only external blockers (issues not in the current batch) are still re-checked against GitHub closure right before a dependent starts, preserving the existing gate when an external blocker has not closed yet.
+
+### Removed
+
+- Pi agent preset, its `~/.pi/` snapshot split (see ADR-0017), and all Pi-specific branches; users must configure a custom provider or migrate to OpenCode. See ADR-0024.
 
 ## [0.1.0] - 2026-05-09
 

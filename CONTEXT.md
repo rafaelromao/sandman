@@ -21,11 +21,11 @@ An external AI coding tool (OpenCode) invoked by Sandman via `os/exec`. Sandman 
 _Avoid_: AI model, LLM, copilot.
 
 **AgentPreset**:
-A built-in command, config source, and auth profile for a known AI coding tool keyed by name (opencode). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
+A built-in command, config source, and auth profile for a known AI coding tool keyed by name (currently `opencode`). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
 _Avoid_: Provider template, agent type.
 
 **Agent Provider**:
-A configured agent preset or custom provider definition. Sandman supports built-in presets (`opencode`) and optional repo-local custom providers via the `agents` config map.
+A configured agent preset or custom provider definition. Sandman supports the built-in preset (`opencode`) and optional repo-local custom providers via the `agents` config map.
 _Avoid_: Agent type, runner.
 
 **AgentModel**:
