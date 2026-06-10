@@ -208,9 +208,9 @@ func (d *Daemon) tick(ctx context.Context) error {
 	return nil
 }
 
-// processPR scans one PR's comments and launches a review agent for each
-// unseen /sandman review trigger. Errors fetching comments or running
-// the batch are logged but not returned; the loop continues.
+// processPR scans one PR's comments and launches a review agent for the
+// newest unseen /sandman review trigger. Stale unseen triggers are marked
+// as seen and skipped. Errors are logged but not returned.
 func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	comments, err := d.GitHub.ListPRComments(prNumber)
 	if err != nil {
