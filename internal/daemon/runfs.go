@@ -140,12 +140,17 @@ type BatchManifest struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// RunDir returns a unique run directory path under baseDir/runs/.
-// The directory itself is not created; callers decide when to mkdir.
-func RunDir(baseDir string, issues []int) string {
-	id := fmt.Sprintf("run-%d", time.Now().UnixNano())
-	if len(issues) > 0 {
-		id = fmt.Sprintf("run-%d-%d", issues[0], time.Now().UnixNano())
+// RunDir returns a run directory path under baseDir/runs/.
+// When runID is non-empty, it is used as the directory name. Otherwise a
+// unique timestamp-based name is generated. The directory itself is not
+// created; callers decide when to mkdir.
+func RunDir(baseDir string, issues []int, runID string) string {
+	id := runID
+	if id == "" {
+		id = fmt.Sprintf("run-%d", time.Now().UnixNano())
+		if len(issues) > 0 {
+			id = fmt.Sprintf("run-%d-%d", issues[0], time.Now().UnixNano())
+		}
 	}
 	return filepath.Join(baseDir, "runs", id)
 }

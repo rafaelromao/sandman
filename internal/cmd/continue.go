@@ -255,7 +255,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				}
 			}()
 
-			runDir := daemon.RunDir(".sandman", issues)
+			runDir := daemon.RunDir(".sandman", issues, "")
 			broadcaster := daemon.NewBroadcaster()
 			ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
 
