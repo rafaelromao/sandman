@@ -19,14 +19,34 @@ Review pull request #{{PR_NUMBER}}: {{PR_TITLE}}
 ## Review Procedure
 
 1. Fetch the PR diff with `gh pr diff {{PR_NUMBER}}` and read it end to end.
-2. Read the repo's documented standards in `AGENTS.md` and `CONTEXT.md`, plus the ADRs in `docs/adr/` that overlap with the changed code.
-3. For every file in the diff, compare the change against those standards and the surrounding code. Look for:
+
+2. **Analyse previous review progress.** Fetch prior review comments and reviews on this PR:
+   ```bash
+   gh api "/repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/comments" --paginate
+   gh api "/repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/reviews" --paginate
+   ```
+   Compare the prior feedback against what has changed since the last review cycle. Report which items were addressed, partially resolved, or remain outstanding. If there are no prior reviews, skip this step gracefully and report that.
+
+3. **Cross-reference against the original task specification.** Look for an issue reference in the PR body (e.g. `Fixes #N`, `Closes #N`, `#N`, or `refs N`). If found, fetch the issue body:
+   ```bash
+   gh issue view <N> --json title,body
+   ```
+   Verify that the implementation matches the issue's requirements and acceptance criteria. If the issue body references a spec or design doc, check those too. If no issue reference is found, skip this step gracefully.
+
+4. Read the repo's documented coding standards in `CLAUDE.md` (or `AGENTS.md` if present) and domain vocabulary in `CONTEXT.md`, plus the ADRs in `docs/adr/` that overlap with the changed code. Check for:
+   - Coding style and conventions documented in `CLAUDE.md`.
+   - Domain terminology defined in `CONTEXT.md` — flag names, file paths, function names, and error messages should match.
+   - ADR decisions that constrain the area being modified.
+
+5. For every file in the diff, compare the change against those standards and the surrounding code. Look for:
    - Behaviour that breaks an ADR or a documented invariant in `CONTEXT.md`.
    - Bugs, race conditions, or error paths the diff did not cover.
    - Missing tests for new behaviour, edge cases, or failure modes.
    - Inconsistencies with the repo's language and naming (domain vocabulary, flag terms, file paths).
+   - Inconsistencies with existing patterns in the surrounding code — if neighbouring functions use a certain style or abstraction, the new code should follow suit.
    - Unsafe, destructive, or surprising operations (force pushes, hard deletes, broad `chmod`, unanchored curls, etc.).
-4. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.
+
+6. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.
 
 ## Posting the Review
 
@@ -39,6 +59,7 @@ gh pr comment {{PR_NUMBER}} --body "..."
 Format the body as Markdown with the following sections:
 
 - `## Summary` — one paragraph describing what the PR does.
+- `## Previous review progress` — if previous reviews exist, list each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**. If there were no prior reviews, include a single line: `No previous reviews found.`
 - `## Findings` — bulleted list. Group by severity (`Blocking`, `Important`, `Nit`). If there are no findings in a group, omit it.
 - `## Suggested next steps` — the minimum set of follow-ups for the author.
 - `## Decision` — If there are zero `Blocking` or `Important` findings, place a single line: `**APPROVED**`. Otherwise, place `**CHANGES_REQUESTED**`.
