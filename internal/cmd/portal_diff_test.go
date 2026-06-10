@@ -1158,6 +1158,16 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffHighlightJSON_ColonInKey(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"time:out": true}');
+if (result.indexOf('json-key') === -1) throw new Error('expected json-key span');
+if (result.indexOf('&quot;time:out&quot;') === -1) throw new Error('expected full key with colon');
+if (result.indexOf('json-boolean') === -1) throw new Error('expected json-boolean span for value');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffHighlightJSON_EscapedChars(t *testing.T) {
 	js := `const result = SandmanPortalDiff.highlightJSON('{"url": "a&b"}');
 if (result.indexOf('&amp;') === -1) throw new Error('expected &amp; for & in string value');

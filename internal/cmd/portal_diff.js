@@ -215,7 +215,7 @@
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     };
     return text.replace(
-      /("(?:[^"\\]|\\.)*?")(\s*):|("(?:[^"\\]|\\.)*?")|(\b(?:true|false)\b)|(\bnull\b)|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|([{}[\]:,])/g,
+      /("(?:[^"\\]|\\.)*")(\s*):|("(?:[^"\\]|\\.)*")|(\b(?:true|false)\b)|(\bnull\b)|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|([{}[\]:,])/g,
       function(match, keyStr, ws, strVal, boolVal, nullVal, numVal, punct) {
         if (keyStr) return '<span class="json-key">' + _e(keyStr) + '</span>' + (ws || '') + '<span class="json-punctuation">:</span>';
         if (strVal) return '<span class="json-string">' + _e(strVal) + '</span>';
