@@ -191,8 +191,9 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	if runner.last.RunID != "PR42" {
 		t.Errorf("expected RunID='PR42' on daemon review batch request, got %q", runner.last.RunID)
 	}
-	if !strings.Contains(runner.last.RunDir, "PR42") {
-		t.Errorf("expected RunDir to contain PR42, got %q", runner.last.RunDir)
+	wantRunDir := filepath.Join(d.BaseDir, "runs", "PR42")
+	if runner.last.RunDir != wantRunDir {
+		t.Errorf("expected RunDir=%q, got %q", wantRunDir, runner.last.RunDir)
 	}
 
 	dir := d.PRDir(42)
