@@ -1933,18 +1933,18 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			agent:    "opencode",
 			cfgModel: "config-model",
 			reqModel: "request-model",
-			wantCmd:  `opencode run -m request-model "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd:  `opencode run --title 'Sandman run-42-`,
 		},
 		{
 			name:     "config model is used",
 			agent:    "opencode",
 			cfgModel: "config-model",
-			wantCmd:  `opencode run -m config-model "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd:  `opencode run --title 'Sandman run-42-`,
 		},
 		{
 			name:    "default behavior leaves model out",
 			agent:   "opencode",
-			wantCmd: `opencode run "$(cat .sandman/rendered-prompt.md)"`,
+			wantCmd: `opencode run --title 'Sandman run-42-`,
 		},
 		{
 			name:     "pi splits provider and model",
@@ -1986,8 +1986,16 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if sb.execCommand != tt.wantCmd {
-				t.Errorf("expected command %q, got %q", tt.wantCmd, sb.execCommand)
+			if !strings.Contains(sb.execCommand, tt.wantCmd) {
+				t.Errorf("expected command containing %q, got %q", tt.wantCmd, sb.execCommand)
+			}
+			if tt.agent == "opencode" {
+				if !strings.Contains(sb.execCommand, `--title 'Sandman run-`) {
+					t.Errorf("expected --title flag in command, got %q", sb.execCommand)
+				}
+				if strings.Contains(sb.execCommand, `--title ''`) {
+					t.Errorf("expected non-empty --title, got %q", sb.execCommand)
+				}
 			}
 		})
 	}

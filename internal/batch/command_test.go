@@ -111,6 +111,29 @@ func TestRenderCommand_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 	}
 }
 
+func TestRenderCommand_BuiltInPreset_WithSessionName(t *testing.T) {
+	got, err := RenderCommand(config.BuiltInAgentPresets["opencode"].Command, CommandData{
+		PromptFile:  ".sandman/rendered-prompt.md",
+		SessionName: "Sandman run-42-1712345678901: ",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `opencode run --title 'Sandman run-42-1712345678901: ' "$(cat .sandman/rendered-prompt.md)"`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderCommand_SessionNameRejectsSingleQuote(t *testing.T) {
+	_, err := RenderCommand("oc run --title '{{.SessionName}}'", CommandData{
+		SessionName: "can't believe",
+	})
+	if err == nil {
+		t.Fatal("expected error for SessionName containing single quote")
+	}
+}
+
 func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 	got, err := RenderCommand("opencode", CommandData{})
 	if err != nil {

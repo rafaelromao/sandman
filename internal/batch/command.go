@@ -3,6 +3,7 @@ package batch
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"text/template"
 )
 
@@ -18,6 +19,9 @@ type CommandData struct {
 
 // RenderCommand renders an agent command template with the given data.
 func RenderCommand(command string, data CommandData) (string, error) {
+	if strings.Contains(data.SessionName, "'") {
+		return "", fmt.Errorf("SessionName must not contain single quotes")
+	}
 	tmpl, err := template.New("command").Option("missingkey=error").Parse(command)
 	if err != nil {
 		return "", fmt.Errorf("parse command template: %w", err)
