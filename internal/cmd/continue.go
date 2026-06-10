@@ -389,10 +389,12 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 }
 
 // lastPromptOnlyRun returns the most recent run.started or run.continued event
-// whose Issue is 0 and whose payload indicates a prompt-only run (not a review
-// run). A prompt-only run has prompt_source_type == "prompt" in its payload.
-// Review runs (review: true) are explicitly excluded so that --run-id picks
-// the correct prior prompt-only run even when a review event is more recent.
+// whose Issue is 0, whose RunID is non-empty, and whose payload identifies a
+// prompt-only run (not a review run). A non-review Issue-0 event with a
+// recorded branch is treated as a prompt-only run regardless of its prompt
+// source type (--prompt, --template, or default). Review runs (review: true)
+// are explicitly excluded so that --run-id picks the correct prior prompt-only
+// run even when a review event is more recent.
 func lastPromptOnlyRun(eventsList []events.Event) (events.Event, bool) {
 	var match events.Event
 	var found bool
@@ -403,10 +405,13 @@ func lastPromptOnlyRun(eventsList []events.Event) (events.Event, bool) {
 		if e.Issue != 0 {
 			continue
 		}
+		if e.RunID == "" {
+			continue
+		}
 		if review, _ := payloadBool(e.Payload, "review"); review {
 			continue
 		}
-		if pt, _ := payloadString(e.Payload, "prompt_source_type"); pt != "prompt" {
+		if branch, _ := payloadString(e.Payload, "branch"); branch == "" {
 			continue
 		}
 		match = e

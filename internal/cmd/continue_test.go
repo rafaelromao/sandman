@@ -400,8 +400,8 @@ func TestContinue_RunID_MissingBranchInPayloadReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when branch is missing in payload")
 	}
-	if !strings.Contains(err.Error(), "missing branch") {
-		t.Fatalf("expected error about missing branch, got %v", err)
+	if !strings.Contains(err.Error(), "no previous prompt-only run found") {
+		t.Fatalf("expected error about no previous prompt-only run (branch-less event skipped), got %v", err)
 	}
 	if spy.called {
 		t.Fatal("expected batch runner NOT to be called")
