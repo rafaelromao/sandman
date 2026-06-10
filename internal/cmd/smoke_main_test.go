@@ -26,18 +26,14 @@ var prebuiltSmokeImages sync.Map
 var prewarmOnce sync.Once
 
 // smokePrewarmVariants enumerates the (provider, buildTools) pairs whose
-// images the pre-warm builds. These are the cross-product of the two
-// smoke providers (opencode, pi) and the three buildTools variants
+// images the pre-warm builds. These are the cross-product of the
+// smoke provider (opencode) and the buildTools variants
 // (generic, go, python) that TestSmoke_RealAgentCLIs_* exercises via
-// buildTools overrides on smokeProviderCases. If smokeProviderCases
-// gains a new provider this list must be updated in parallel.
+// buildTools overrides on smokeProviderCases.
 var smokePrewarmVariants = []smokePrewarmVariant{
 	{provider: "opencode", buildTools: "generic"},
-	{provider: "pi", buildTools: "generic"},
 	{provider: "opencode", buildTools: "go"},
-	{provider: "pi", buildTools: "go"},
 	{provider: "opencode", buildTools: "python"},
-	{provider: "pi", buildTools: "python"},
 }
 
 type smokePrewarmVariant struct {
@@ -99,14 +95,6 @@ func prewarmSmokeImage(provider, buildTools string) (string, error) {
 	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: buildTools, Agent: provider}, smokePrompter{}); err != nil {
 		return "", fmt.Errorf("scaffold prewarm: %w", err)
 	}
-	if provider == "pi" {
-		binDir := filepath.Join(repoDir, ".sandman", "bin")
-		if err := os.MkdirAll(binDir, 0755); err != nil {
-			return "", fmt.Errorf("create pi shim dir: %w", err)
-		}
-		writePiShimForPrewarm(binDir)
-		appendPiShimToDockerfileForPrewarm(repoDir)
-	}
 	if err := addSmokeDockerDeps(repoDir, provider); err != nil {
 		return "", fmt.Errorf("add smoke docker deps: %w", err)
 	}
@@ -133,18 +121,6 @@ func resolvePrewarmRuntime() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no container runtime (podman or docker) found in PATH")
-}
-
-func writePiShimForPrewarm(dir string) {
-	if err := os.WriteFile(filepath.Join(dir, "pi"), []byte(piShimScriptLight), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "prewarm: write pi shim: %v\n", err)
-	}
-}
-
-func appendPiShimToDockerfileForPrewarm(repoDir string) {
-	if err := appendPiShimDirToDockerfile(repoDir); err != nil {
-		fmt.Fprintf(os.Stderr, "prewarm: append pi shim to Dockerfile: %v\n", err)
-	}
 }
 
 // smokePrewarmLookup returns the prebuilt image tag for the given

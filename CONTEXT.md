@@ -142,6 +142,11 @@ _Avoid_: Working directory, checkout, clone.
 A sandbox adapter that uses only a git worktree for isolation, with no container. One worktree per AgentRun.
 _Avoid_: Local sandbox.
 
+**Stranded worktree**:
+A sandman-managed git worktree whose HEAD points to a different branch than its directory name expects. Stranded worktrees can result from interrupted runs. `sandman run --force` reconciles them automatically; `scripts/reconcile-stranded-worktrees.sh` provides a standalone detection tool that prints remediation commands for the operator to run.
+_Avoid_: Orphaned worktree, lost worktree.
+_See_: Branch, Worktree.
+
 **Archive**:
 The on-disk resting place for completed run directories at `.sandman/archive/<run-id>`, populated by `sandman archive run <run-id>` (which also accepts `batch <id>` as an alias since the run directory is the batch's on-disk home) or by `sandman archive older-than <days>` for bulk archival of every dead run whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than the given cutoff. Archiving relocates the run directory tree from `.sandman/runs/<run-id>` (its live-and-during-run home) to `.sandman/archive/<run-id>` so the runs directory stays scoped to currently-relevant batches. The daemon is forbidden from writing to an archived run; the run is treated as read-only historical state once moved.
 _Avoid_: trash, graveyard, old runs, retired runs.
@@ -179,7 +184,7 @@ An AgentRun or Batch request mode that skips prompt template rendering and write
 _Avoid_: Replay mode.
 
 **Handoff**:
-The persisted state written by `sandman-handoff` to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, and key decisions so that a `Continue` or retry can resume from the right checkpoint. Removed by the orchestrator once the PR is merged.
+The persisted state written by `sandman-handoff` to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, key decisions, the originating rendered prompt (`## Source Prompt: .sandman/rendered-prompt.md`), the last executed sub-skill (`## Last Skill`), and its completion status (`## Last Skill Status`) so that a `Continue` or retry can resume from the right checkpoint. (ADR-0023). Removed by the orchestrator once the PR is merged.
 _Avoid_: Continuation context (legacy filename), continuation file.
 
 ## Relationships

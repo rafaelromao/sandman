@@ -221,14 +221,10 @@ func portalAgentOptions(cfg *config.Config, selected string) template.HTML {
 }
 
 func portalBuiltinAgentOrder(name string) int {
-	switch name {
-	case "opencode":
+	if name == "opencode" {
 		return 0
-	case "pi":
-		return 1
-	default:
-		return -1
 	}
+	return -1
 }
 
 func portalSelectOptionsHTML(options []portalOption, selected string) template.HTML {

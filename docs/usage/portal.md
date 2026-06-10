@@ -24,22 +24,22 @@ When the server starts, it prints the URL to open in your browser.
 
 The portal rescans the repository on each poll, so new `sandman run` processes appear without restarting it. It also provides a typed preset launcher for common repo-scoped Sandman commands.
 
-## Stop
+## Stop (Abort)
 
-Use the **Stop** button in the portal UI to halt a running batch. The portal calls:
+Use the **Stop** button in the portal UI to abort a running issue. The portal calls:
 
 ```
-POST /api/runs/stop
-{"runKey": "<run-key>"}
+POST /api/runs/abort
+{"runKey": "<run-key>", "issue": <N>}
 ```
 
-The endpoint signals the batch control socket and waits for the run to stop, returning:
+The endpoint signals the command server and waits for the AgentRun to abort, returning:
 
 ```json
-{"runKey": "...", "status": "stopped", "scope": "batch"}
+{"runKey": "...", "issue": <N>, "status": "aborted", "scope": "issue"}
 ```
 
-Because a batch uses a single control socket, stopping terminates the entire batch — not a single agent run. Stop is available on Linux; other platforms return `501 Not Implemented`. macOS support is planned.
+Abort is available on Linux; other platforms return `501 Not Implemented`. macOS support is planned.
 
 ## Log streaming
 
@@ -69,6 +69,14 @@ Returns the file as an attachment with the log filename in `Content-Disposition`
 ## Launch presets
 
 The portal's **Launcher** section provides quick commands for common `sandman` operations. Send a POST to `/api/commands` with a `command` field set to one of:
+
+### `run`
+
+Runs `sandman run` with full launch form parameters (issues, prompt, agent, model, parallel, etc.):
+
+```json
+{"command": "run", "launchMode": "issue-driven", "selectionMode": "issues", "issues": [123, 124]}
+```
 
 ### `continue`
 
@@ -146,7 +154,7 @@ Selection fields are only shown in `issue-driven` mode.
 | `model` | Model identifier | Config's `model` or resolved from agent |
 | `parallel` | Number of parallel worktrees | Config's `parallel` or `4` |
 | `startDelay` | Seconds to wait before starting | Config's `start-delay` or `0` |
-| `containerCapacity` | Container pool size | Config's `container-capacity` or `1` |
+| `containerCapacity` | Container pool size | Config's `container-capacity` or `4` |
 | `maxContainers` | Maximum containers | Config's `max-containers` or `0` |
 | `sandbox` | Sandbox mode | Config's `sandbox` or `podman` |
 

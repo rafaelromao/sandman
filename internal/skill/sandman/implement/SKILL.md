@@ -45,9 +45,9 @@ After the TDD plan is approved via subagent consensus:
 - Load the `sandman-handoff` skill
 - Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
 - Substitute `<STAGE>` in the skill template's `## Stage:` line with `plan-approved`
-- Set `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
-- Set `## Last Skill` to the name of the sub-skill that just completed (e.g. `sandman-tdd` or `sandman-implement`)
-- Set `## Last Skill Status` to `complete` or `incomplete — <one-line context>` describing what was achieved
+- Re-read `.sandman/rendered-prompt.md` and record `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
+- Set `## Last Skill` to `sandman-tdd`
+- Set `## Last Skill Status` to `complete — plan approved via subagent consensus`
 - Write the result to `.sandman/handoff.md` in the current worktree
 - If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
 
@@ -71,9 +71,9 @@ git commit -m "feat: <issue title>"
 - Load the `sandman-handoff` skill
 - Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
 - Substitute `<STAGE>` in the skill template's `## Stage:` line with `implementation-committed`
-- Set `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
-- Set `## Last Skill` to the name of the sub-skill that just completed (e.g. `sandman-implement`)
-- Set `## Last Skill Status` to `complete` or `incomplete — <one-line context>` describing what was achieved
+- Re-read `.sandman/rendered-prompt.md` and record `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
+- Set `## Last Skill` to `sandman-tdd`
+- Set `## Last Skill Status` to `complete — implementation committed and tests pass`
 - Write the result to `.sandman/handoff.md` in the current worktree
 - If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
 
@@ -121,8 +121,8 @@ Capture the PR URL and number.
 - Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
 - Substitute `<STAGE>` in the skill template's `## Stage:` line with `pr-created`
 - Set `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
-- Set `## Last Skill` to the name of the sub-skill that just completed (e.g. `sandman-implement`)
-- Set `## Last Skill Status` to `complete` or `incomplete — <one-line context>` describing what was achieved
+- Set `## Last Skill` to `sandman-implement`
+- Set `## Last Skill Status` to `complete — PR created and pushed`
 - Write the result to `.sandman/handoff.md` in the current worktree
 - If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
 
@@ -142,8 +142,8 @@ When the delegated review result is either PR approval or a hard blocker:
 - Follow its workflow to assemble completed, pending, blockers, key decisions, and next step
 - Substitute `<STAGE>` in the skill template's `## Stage:` line with `pr-review-finished`
 - Set `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
-- Set `## Last Skill` to the name of the sub-skill that just completed (e.g. `sandman-pr-review`)
-- Set `## Last Skill Status` to `complete` or `incomplete — <one-line context>` describing the review outcome
+- Set `## Last Skill` to `sandman-pr-review`
+- Set `## Last Skill Status` to `complete — PR approved and ready to merge` if the PR was approved, or `incomplete — hard blocker encountered` if a hard blocker was encountered
 - If the review returned a hard blocker, fill the `## Blockers` section with the blocker; otherwise leave `## Blockers` empty
 - Write the result to `.sandman/handoff.md` in the current worktree
 - If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)

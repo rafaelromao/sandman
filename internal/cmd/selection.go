@@ -63,16 +63,10 @@ func runSelectionPhase(ctx context.Context, client github.Client, count int, lab
 	}
 
 	modelFlagStr := resolveModelFlag(modelFlag, agentCfg.Preset)
-	modelProvider, modelName, err := resolvePiModel(agentCfg.Preset, modelFlag)
-	if err != nil {
-		return nil, fmt.Errorf("resolve model: %w", err)
-	}
 
 	renderedCmd, err := batch.RenderCommand(agentCfg.Command, batch.CommandData{
-		PromptFile:    promptPath,
-		ModelFlag:     modelFlagStr,
-		ModelProvider: modelProvider,
-		ModelName:     modelName,
+		PromptFile: promptPath,
+		ModelFlag:  modelFlagStr,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render agent command: %w", err)
@@ -125,17 +119,6 @@ func resolveModelFlag(modelFlag, preset string) string {
 		return "-m " + modelFlag
 	}
 	return ""
-}
-
-func resolvePiModel(preset, model string) (string, string, error) {
-	if preset != "pi" || model == "" {
-		return "", "", nil
-	}
-	provider, name, err := config.SplitPiModel(model)
-	if err != nil {
-		return "", "", err
-	}
-	return provider, name, nil
 }
 
 func formatCandidateIssues(issues []github.Issue) string {

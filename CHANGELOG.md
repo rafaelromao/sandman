@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/reconcile-stranded-worktrees.sh` — standalone detection tool for stranded worktrees (prints remediation commands for the operator to run) [#733](https://github.com/rafaelromao/sandman/issues/733)
+- `## Troubleshooting > Stranded worktrees` section in `docs/usage/commands.md` documenting the new script and `--force` reconciliation behavior
 - `SANDMAN_TEST_MODEL_<AGENT>` env vars (e.g. `SANDMAN_TEST_MODEL_OPENCODE`) override the model the smoke and prflow e2e tests target per agent. When unset, the tests use the literal model baked into their case lists. Resolved through `testenv.ResolveTestModel` (testenv_test.go covers empty/set/trim/agent-scoped paths).
 - `sandman init` gains `--retries` and `--run-idle-timeout` flags that persist `retries` and `run_idle_timeout` in the scaffolded `.sandman/config.yaml`. Sentinel `-1` keeps the built-in default (`3` for `retries`, `1800` for `run_idle_timeout`); `0` disables retries / the heartbeat watchdog respectively.
 - `run.idle_timeout` event type: documented in `events.go`, `monitoring.md`, and `configuration.md`. The heartbeat watchdog emits this event when an agent produces no log output for `run_idle_timeout` seconds (default: 1800, configurable via `run_idle_timeout` in config or `--run-idle-timeout` on the CLI). `0` disables the watchdog.

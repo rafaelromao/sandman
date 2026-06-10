@@ -99,7 +99,8 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				if !exists {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
 				}
-				handoffPrompts[num] = content
+				doc := prompt.ParseHandoff(content)
+				handoffPrompts[num] = prompt.BuildResumePrompt(doc)
 			}
 
 			// Replay agent/model/review settings from the first issue's last run.
@@ -293,7 +294,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 	}
 
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
-	cmd.Flags().String("agent", "", "Built-in agent preset (opencode or pi)")
+	cmd.Flags().String("agent", "", "Built-in agent preset (opencode)")
 	cmd.Flags().Int("parallel", 0, "Limit parallel execution")
 	cmd.Flags().Int("start-delay", 0, "Wait N seconds after any AgentRun finishes before starting the next one; 0 disables the delay")
 	cmd.Flags().Int("run-idle-timeout", 0, "Treat an AgentRun as stuck if it produces no output for N seconds; 0 disables the timeout")

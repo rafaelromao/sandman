@@ -4,7 +4,9 @@ import (
 	"os/exec"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 type fakeRunner struct {
@@ -715,6 +717,55 @@ func TestCLIClient_EditPRBody_Error(t *testing.T) {
 	err := client.EditPRBody(42, "body")
 	if err == nil {
 		t.Fatal("expected error when gh api fails")
+	}
+}
+
+func TestCLIClient_ListPRComments_SortParams(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `[]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	if _, err := client.ListPRComments(42); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.calls) < 2 {
+		t.Fatalf("expected at least 2 calls, got %d", len(runner.calls))
+	}
+	apiArgs := runner.calls[1].args
+	found := false
+	for _, arg := range apiArgs {
+		if strings.Contains(arg, "sort=created&direction=asc") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("API args should include sort=created&direction=asc, got %v", apiArgs)
+	}
+}
+
+func TestCLIClient_ListPRComments_PopulatesCreatedAt(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `[{"id":123,"body":"/sandman review","user":{"login":"alice"},"created_at":"2026-06-01T12:00:00Z"},{"id":124,"body":"later comment","user":{"login":"bob"},"created_at":"2026-06-02T12:00:00Z"}]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	comments, err := client.ListPRComments(42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 comments, got %d", len(comments))
+	}
+	wantTimes := []string{"2026-06-01T12:00:00Z", "2026-06-02T12:00:00Z"}
+	for i, want := range wantTimes {
+		wantTime, _ := time.Parse(time.RFC3339, want)
+		if !comments[i].CreatedAt.Equal(wantTime) {
+			t.Errorf("comment %d CreatedAt = %v, want %v", i, comments[i].CreatedAt, wantTime)
+		}
 	}
 }
 

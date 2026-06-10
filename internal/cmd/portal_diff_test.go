@@ -1068,6 +1068,166 @@ func TestPortalHTMLRenderPath_NoRunsBodyInnerHTML(t *testing.T) {
 	}
 }
 
+func TestPortalDiffHighlightJSON_Exists(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"key": "val"}');
+if (typeof result !== 'string') throw new Error('highlightJSON should return string');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_KeyToken(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"key": "val"}');
+if (result.indexOf('json-key') === -1) throw new Error('expected json-key span');
+if (result.indexOf('&quot;key&quot;') === -1) throw new Error('expected escaped key in span');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_StringValue(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"k": "hello world"}');
+if (result.indexOf('json-string') === -1) throw new Error('expected json-string span');
+if (result.indexOf('&quot;hello world&quot;') === -1) throw new Error('expected escaped string value');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_NumberValue(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"n": 42}');
+if (result.indexOf('json-number') === -1) throw new Error('expected json-number span');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_NegativeNumber(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"n": -7}');
+if (result.indexOf('json-number') === -1) throw new Error('expected json-number span for negative');
+if (result.indexOf('>-7<') === -1) throw new Error('expected -7 in number span');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_Zero(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"n": 0}');
+if (result.indexOf('json-number') === -1) throw new Error('expected json-number span for zero');
+if (result.indexOf('>0<') === -1) throw new Error('expected 0 in number span');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_ScientificNotation(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"a": 1e10, "b": 1.5e-3}');
+const count = (result.match(/json-number/g) || []).length;
+if (count !== 2) throw new Error('expected 2 json-number spans for scientific notation, got ' + count);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_BooleanValue(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"f": true, "g": false}');
+const bools = (result.match(/json-boolean/g) || []).length;
+if (bools !== 2) throw new Error('expected 2 json-boolean spans, got ' + bools);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_NullValue(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"n": null}');
+if (result.indexOf('json-null') === -1) throw new Error('expected json-null span');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_Punctuation(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"a": 1, "b": 2}');
+const puncts = (result.match(/json-punctuation/g) || []).length;
+if (puncts < 2) throw new Error('expected json-punctuation spans for colon and comma, got ' + puncts);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_EmptyInput(t *testing.T) {
+	js := `if (SandmanPortalDiff.highlightJSON('') !== '') throw new Error('empty should return empty');
+if (SandmanPortalDiff.highlightJSON(null) !== '') throw new Error('null should return empty');
+if (SandmanPortalDiff.highlightJSON(undefined) !== '') throw new Error('undefined should return empty');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_NestedObject(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"outer": {"inner": "deep"}}');
+if (result.indexOf('json-key') === -1) throw new Error('expected json-key');
+if (result.indexOf('json-string') === -1) throw new Error('expected json-string');
+if (result.indexOf('json-punctuation') === -1) throw new Error('expected json-punctuation');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_Array(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"items": [1, "two", true]}');
+if (result.indexOf('json-number') === -1) throw new Error('expected json-number');
+if (result.indexOf('json-string') === -1) throw new Error('expected json-string');
+if (result.indexOf('json-boolean') === -1) throw new Error('expected json-boolean');
+if (result.indexOf('json-punctuation') === -1) throw new Error('expected json-punctuation for brackets');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_ColonInKey(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"time:out": true}');
+if (result.indexOf('json-key') === -1) throw new Error('expected json-key span');
+if (result.indexOf('&quot;time:out&quot;') === -1) throw new Error('expected full key with colon');
+if (result.indexOf('json-boolean') === -1) throw new Error('expected json-boolean span for value');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_EscapedChars(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"url": "a&b"}');
+if (result.indexOf('&amp;') === -1) throw new Error('expected &amp; for & in string value');
+const result2 = SandmanPortalDiff.highlightJSON('{"html": "<b>bold</b>"}');
+if (result2.indexOf('&lt;b&gt;') === -1) throw new Error('expected &lt; and &gt; for HTML chars');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildEventsContent_RendersHighlightedPayload(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', events: [{ type: 'check', timestamp: 1700000000000, payload: { ok: true, count: 42, msg: "done", items: [1, null] } }] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+if (!detailRow) throw new Error('expected detail row');
+const pre = detailRow.querySelector('pre.event-payload');
+if (!pre) throw new Error('expected pre.event-payload in events tab');
+const html = pre.innerHTML;
+if (html.indexOf('json-key') === -1) throw new Error('expected json-key in highlighted output');
+if (html.indexOf('json-boolean') === -1) throw new Error('expected json-boolean in highlighted output');
+if (html.indexOf('json-number') === -1) throw new Error('expected json-number in highlighted output');
+if (html.indexOf('json-string') === -1) throw new Error('expected json-string in highlighted output');
+if (html.indexOf('json-punctuation') === -1) throw new Error('expected json-punctuation in highlighted output');
+if (html.indexOf('json-null') === -1) throw new Error('expected json-null in highlighted output');
+if (html.indexOf('&quot;ok&quot;') === -1) throw new Error('expected escaped key in highlighted output');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffHelperExists(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required for portal diff helper test")

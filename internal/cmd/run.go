@@ -483,7 +483,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection")
-	cmd.Flags().String("agent", "", "Built-in agent preset (opencode or pi)")
+	cmd.Flags().String("agent", "", "Built-in agent preset (opencode)")
 	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
 
@@ -494,7 +494,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
-	cmd.Flags().Bool("force", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout existing worktree on wrong branch")
+	cmd.Flags().Bool("force", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
 
 	return cmd
 }

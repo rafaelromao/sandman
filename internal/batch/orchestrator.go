@@ -605,14 +605,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		agentCfg.Model = model
 	}
-	if agentCfg.Preset == "pi" {
-		provider, modelName, err := config.SplitPiModel(agentCfg.Model)
-		if err != nil {
-			return nil, err
-		}
-		agentCfg.ModelProvider = provider
-		agentCfg.ModelName = modelName
-	}
 	if err := sandbox.ValidateAgentConfig(agentName, agentCfg); err != nil {
 		return nil, err
 	}
@@ -1664,7 +1656,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 				fmt.Fprintf(o.errorLog, "error: read handoff for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			attemptRenderCfg.HandoffPrompt = handoffContent
+			attemptRenderCfg.HandoffPrompt = prompt.BuildResumePrompt(prompt.ParseHandoff(handoffContent))
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 			if !handoffExists {
 				if openPR == nil {

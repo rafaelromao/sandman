@@ -1037,9 +1037,17 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
-	wantPrompt := "## Completed\nKeep going.\n"
-	if string(data) != wantPrompt {
-		t.Fatalf("unexpected continue prompt content: %q", string(data))
+	if !strings.Contains(string(data), "## Prior Context") {
+		t.Fatalf("expected Prior Context in retry prompt, got: %q", string(data))
+	}
+	if !strings.Contains(string(data), "Keep going.") {
+		t.Fatalf("expected body content in retry prompt, got: %q", string(data))
+	}
+	if !strings.Contains(string(data), "## Source Prompt") {
+		t.Fatalf("expected Source Prompt in retry prompt, got: %q", string(data))
+	}
+	if !strings.Contains(string(data), "## Update Handoff Context") {
+		t.Fatalf("expected Update Handoff Context in retry prompt, got: %q", string(data))
 	}
 }
 
@@ -1946,19 +1954,6 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			agent:   "opencode",
 			wantCmd: `opencode run "$(cat .sandman/rendered-prompt.md)"`,
 		},
-		{
-			name:     "pi splits provider and model",
-			agent:    "pi",
-			cfgModel: "openai/gpt-4.1",
-			wantCmd:  `pi --print --provider openai --model gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`,
-		},
-		{
-			name:     "pi request model overrides config",
-			agent:    "pi",
-			cfgModel: "anthropic/claude-sonnet-4",
-			reqModel: "openai/gpt-4.1",
-			wantCmd:  `pi --print --provider openai --model gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`,
-		},
 	}
 
 	for _, tt := range tests {
@@ -1977,7 +1972,6 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 				Git:         config.GitConfig{BaseBranch: "main"},
 				AgentProviders: map[string]config.Agent{
 					"opencode": {Preset: "opencode", Model: tt.cfgModel},
-					"pi":       {Preset: "pi", Model: tt.cfgModel},
 				},
 			}}, nil)
 			o.sandboxFactory = &fakeSandboxFactory{sandbox: sb}
@@ -1990,32 +1984,6 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 				t.Errorf("expected command %q, got %q", tt.wantCmd, sb.execCommand)
 			}
 		})
-	}
-}
-
-func TestRunBatch_PiModelMustUseProviderModelFormat(t *testing.T) {
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-		},
-	}
-
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
-		Agent:       "pi",
-		Sandbox:     "worktree",
-		WorktreeDir: ".sandman/worktrees",
-		Git:         config.GitConfig{BaseBranch: "main"},
-		AgentProviders: map[string]config.Agent{
-			"pi": {Preset: "pi", Model: "gpt-4.1"},
-		},
-	}}, nil)
-
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
-	if err == nil {
-		t.Fatal("expected error for invalid pi model value")
-	}
-	if !strings.Contains(err.Error(), "provider/model format") {
-		t.Fatalf("expected error mentioning provider/model format, got %v", err)
 	}
 }
 
@@ -4500,7 +4468,7 @@ func TestOrchestrator_ContainerMetadataDriftFailsBeforeBuild(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
 		t.Fatalf("create .sandman: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte("# sandman build-tools: generic\n# sandman default-agent: pi\nFROM debian:bookworm-slim\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte("# sandman build-tools: generic\n# sandman default-agent: opencode\nFROM debian:bookworm-slim\n"), 0644); err != nil {
 		t.Fatalf("write Dockerfile: %v", err)
 	}
 
@@ -6183,51 +6151,6 @@ func TestBuildStartOptions_PopulatesOpencodeSnapshotExcludesAndLiveMounts(t *tes
 	}
 }
 
-func TestBuildStartOptions_PopulatesPiSnapshotExcludesAndLiveMounts(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	agentCfg := config.BuiltInAgentPresets["pi"].Agent("pi")
-	opts, err := buildStartOptions(agentCfg)
-	if err != nil {
-		t.Fatalf("build start options: %v", err)
-	}
-
-	wantExcluded := []string{
-		filepath.Join(home, ".pi", "agent", "npm"),
-		filepath.Join(home, ".pi", "agent", "sessions"),
-	}
-	for _, want := range wantExcluded {
-		found := false
-		for _, e := range opts.AgentConfigExcludes {
-			if e == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected AgentConfigExcludes to contain %q, got %v", want, opts.AgentConfigExcludes)
-		}
-	}
-
-	wantLive := []string{
-		filepath.Join(home, ".pi", "agent", "npm"),
-		filepath.Join(home, ".pi", "agent", "sessions"),
-	}
-	for _, want := range wantLive {
-		found := false
-		for _, l := range opts.LiveMounts {
-			if l == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected LiveMounts to contain %q, got %v", want, opts.LiveMounts)
-		}
-	}
-}
-
 func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -6299,101 +6222,6 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(snapshotSource, "opencode.db")); !os.IsNotExist(err) {
 		t.Errorf("expected opencode.db to be excluded from snapshot (live mount instead), got: %v", err)
-	}
-}
-
-func TestPrepareContainerConfigMounts_PiPresetEndToEnd(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	piDir := filepath.Join(home, ".pi")
-	if err := os.MkdirAll(piDir, 0755); err != nil {
-		t.Fatalf("mkdir pi dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(piDir, "settings.json"), []byte("{}"), 0644); err != nil {
-		t.Fatalf("write settings: %v", err)
-	}
-
-	piAgentDir := filepath.Join(piDir, "agent")
-	if err := os.MkdirAll(piAgentDir, 0755); err != nil {
-		t.Fatalf("mkdir pi agent dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(piAgentDir, "models.json"), []byte("{}"), 0644); err != nil {
-		t.Fatalf("write models: %v", err)
-	}
-
-	npmDir := filepath.Join(piAgentDir, "npm")
-	if err := os.MkdirAll(npmDir, 0755); err != nil {
-		t.Fatalf("mkdir npm dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(npmDir, "package.json"), []byte("{}"), 0644); err != nil {
-		t.Fatalf("write npm package: %v", err)
-	}
-
-	sessionsDir := filepath.Join(piAgentDir, "sessions")
-	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
-		t.Fatalf("mkdir sessions dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionsDir, "session.json"), []byte("{}"), 0644); err != nil {
-		t.Fatalf("write session: %v", err)
-	}
-
-	agentCfg := config.BuiltInAgentPresets["pi"].Agent("pi")
-	startOpts, err := buildStartOptions(agentCfg)
-	if err != nil {
-		t.Fatalf("build start options: %v", err)
-	}
-
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &startOpts, nil)
-	if err != nil {
-		t.Fatalf("prepare container config mounts: %v", err)
-	}
-	defer cleanup()
-
-	var snapshotSource string
-	npmMount := &sandbox.ConfigMount{}
-	sessionsMount := &sandbox.ConfigMount{}
-	var sawNpm, sawSessions bool
-	for i := range startOpts.ConfigMounts {
-		mount := &startOpts.ConfigMounts[i]
-		switch mount.Target {
-		case "/.pi":
-			snapshotSource = mount.Source
-		case "/.pi/agent/npm":
-			*npmMount = *mount
-			sawNpm = true
-		case "/.pi/agent/sessions":
-			*sessionsMount = *mount
-			sawSessions = true
-		}
-	}
-	if snapshotSource == "" {
-		t.Fatalf("expected snapshot mount for /.pi, got %v", startOpts.ConfigMounts)
-	}
-	if !sawNpm {
-		t.Errorf("expected live mount for ~/.pi/agent/npm, got %v", startOpts.ConfigMounts)
-	}
-	if !sawSessions {
-		t.Errorf("expected live mount for ~/.pi/agent/sessions, got %v", startOpts.ConfigMounts)
-	}
-	if npmMount.Source != npmDir {
-		t.Errorf("expected npm live mount source %q, got %q", npmDir, npmMount.Source)
-	}
-	if sessionsMount.Source != sessionsDir {
-		t.Errorf("expected sessions live mount source %q, got %q", sessionsDir, sessionsMount.Source)
-	}
-
-	if _, err := os.Stat(filepath.Join(snapshotSource, "settings.json")); err != nil {
-		t.Errorf("expected settings.json in snapshot: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(snapshotSource, "agent", "models.json")); err != nil {
-		t.Errorf("expected agent/models.json in snapshot: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(snapshotSource, "agent", "npm")); !os.IsNotExist(err) {
-		t.Errorf("expected agent/npm to be excluded from snapshot, got: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(snapshotSource, "agent", "sessions")); !os.IsNotExist(err) {
-		t.Errorf("expected agent/sessions to be excluded from snapshot, got: %v", err)
 	}
 }
 
