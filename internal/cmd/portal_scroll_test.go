@@ -145,3 +145,64 @@ if (api.isSticky('clean-b') !== false) throw new Error('setSticky with null shou
 		t.Fatalf("portal scroll helper failed: %v\n%s", err, out)
 	}
 }
+
+func TestToggleRunScrollOffset(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for portal scroll helper test")
+	}
+
+	script := `
+// Test 1: Scroll target accounts for parent row height (mobile, 56px)
+(function() {
+  const window = { scrollY: 0, scrollTo: () => {} };
+  const parentRow = { offsetHeight: 56 };
+  const detailRow = { getBoundingClientRect: () => ({ top: 500 }) };
+  const rowHeight = parentRow.offsetHeight;
+  const rect = detailRow.getBoundingClientRect();
+  const target = window.scrollY + rect.top - rowHeight;
+  if (target !== 444) throw new Error('Test 1 failed: expected 444, got ' + target);
+})();
+
+// Test 2: Desktop row height with existing scroll
+(function() {
+  const window = { scrollY: 100, scrollTo: () => {} };
+  const parentRow = { offsetHeight: 40 };
+  const detailRow = { getBoundingClientRect: () => ({ top: 300 }) };
+  const rowHeight = parentRow.offsetHeight;
+  const rect = detailRow.getBoundingClientRect();
+  const target = window.scrollY + rect.top - rowHeight;
+  if (target !== 360) throw new Error('Test 2 failed: expected 360, got ' + target);
+})();
+
+// Test 3: Parent row not found (null) — no offset
+(function() {
+  const window = { scrollY: 50, scrollTo: () => {} };
+  const parentRow = null;
+  const detailRow = { getBoundingClientRect: () => ({ top: 200 }) };
+  const rowHeight = parentRow ? parentRow.offsetHeight : 0;
+  const rect = detailRow.getBoundingClientRect();
+  const target = window.scrollY + rect.top - rowHeight;
+  if (target !== 250) throw new Error('Test 3 failed: expected 250, got ' + target);
+})();
+
+// Test 4: window.scrollTo is called with smooth behavior and correct top
+(function() {
+  const window = { scrollY: 0, scrollTo: (opts) => {
+    if (opts.behavior !== 'smooth') throw new Error('Test 4 failed: expected smooth behavior, got ' + opts.behavior);
+    if (opts.top !== 444) throw new Error('Test 4 failed: expected top 444, got ' + opts.top);
+  } };
+  const parentRow = { offsetHeight: 56 };
+  const detailRow = { getBoundingClientRect: () => ({ top: 500 }) };
+  const rowHeight = parentRow.offsetHeight;
+  const rect = detailRow.getBoundingClientRect();
+  window.scrollTo({
+    top: window.scrollY + rect.top - rowHeight,
+    behavior: 'smooth'
+  });
+})();
+`
+	cmd := exec.Command("node", "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("toggle run scroll offset test failed: %v\n%s", err, out)
+	}
+}

@@ -605,14 +605,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		agentCfg.Model = model
 	}
-	if agentCfg.Preset == "pi" {
-		provider, modelName, err := config.SplitPiModel(agentCfg.Model)
-		if err != nil {
-			return nil, err
-		}
-		agentCfg.ModelProvider = provider
-		agentCfg.ModelName = modelName
-	}
 	if err := sandbox.ValidateAgentConfig(agentName, agentCfg); err != nil {
 		return nil, err
 	}
@@ -726,7 +718,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		dangerouslySkipPermissions = &isContainer
 	}
 
-	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "") {
+	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "" || req.PromptConfig.HandoffPrompt != "") {
 		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newBatchIdentityResolver(o, "."), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
 	}
 
@@ -1430,6 +1422,7 @@ func (s *runSession) runOnce(
 			agentRun.baseBranch = s.baseBranch
 			agentRun.outputWriter = s.outputWriter
 			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
+			agentRun.sessionName = "Sandman " + runID + ": "
 		}
 
 		result = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
@@ -1664,7 +1657,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 				fmt.Fprintf(o.errorLog, "error: read handoff for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			attemptRenderCfg.HandoffPrompt = handoffContent
+			attemptRenderCfg.HandoffPrompt = prompt.BuildResumePrompt(prompt.ParseHandoff(handoffContent))
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 			if !handoffExists {
 				if openPR == nil {
@@ -1738,7 +1731,7 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
-	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Force, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, req.Review, req.PRNumber, req.ReviewFocus, req.RunID)
+	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Force, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, req.Review, req.PRNumber, req.ReviewFocus, req.RunID, req.PreviousRunIDs)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -1753,7 +1746,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 
 // runPromptOnlySingle runs a single prompt-only AgentRun. It builds a
 // runSession and delegates to (*runSession).executePromptOnly.
-func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, review bool, prNumber int, reviewFocus string, runID string) (AgentRunResult, bool) {
+func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string) (AgentRunResult, bool) {
 	s := &runSession{
 		o:                          o,
 		cfg:                        cfg,
@@ -1776,6 +1769,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		maxContainers:              maxContainers,
 		maxContainersSet:           maxContainersSet,
 		dangerouslySkipPermissions: dangerouslySkipPermissions,
+		previousRunIDs:             previousRunIDs,
 		review:                     review,
 		prNumber:                   prNumber,
 		reviewFocus:                reviewFocus,
@@ -1868,6 +1862,9 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 			payload["review"] = true
 			payload["pr_number"] = s.prNumber
 			payload["review_focus"] = s.reviewFocus
+		}
+		if prevID, ok := s.previousRunIDs[0]; ok && prevID != "" {
+			payload["previous_run_id"] = prevID
 		}
 		_ = o.eventLog.Log(events.Event{Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}

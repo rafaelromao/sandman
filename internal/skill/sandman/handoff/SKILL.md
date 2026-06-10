@@ -13,9 +13,6 @@ Write `.sandman/handoff.md` in the current worktree before exiting.
 
 ```markdown
 ## Stage: <name>
-## Source Prompt: .sandman/rendered-prompt.md
-## Last Skill: <name>
-## Last Skill Status: complete | incomplete — <one-line context>
 ## Completed
 (what was implemented, committed, or merged)
 
@@ -34,10 +31,9 @@ Write `.sandman/handoff.md` in the current worktree before exiting.
 
 ## Workflow
 
-0. Re-read `.sandman/rendered-prompt.md` to confirm original intent.
 1. Summarize completed work.
 2. List any pending work.
-3. Note blockers.
+3. Note blockers. Before carrying forward any registered blocker, verify it hasn't been solved already — check recent git log, diff, open PRs, or issue status. Do not blindly copy blockers from previous handoffs.
 4. Capture key decisions.
 5. State one next step.
 6. Write the file to `.sandman/handoff.md`.

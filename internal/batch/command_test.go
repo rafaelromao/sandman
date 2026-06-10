@@ -9,8 +9,8 @@ import (
 
 func TestCommandData_ExposesPromptFileAndModelFields(t *testing.T) {
 	typ := reflect.TypeOf(CommandData{})
-	if typ.NumField() != 5 {
-		t.Errorf("expected exactly 5 fields in CommandData, got %d", typ.NumField())
+	if typ.NumField() != 6 {
+		t.Errorf("expected exactly 6 fields in CommandData, got %d", typ.NumField())
 	}
 	field, ok := typ.FieldByName("PromptFile")
 	if !ok {
@@ -40,6 +40,13 @@ func TestCommandData_ExposesPromptFileAndModelFields(t *testing.T) {
 	if nameField.Type.Kind() != reflect.String {
 		t.Errorf("expected ModelName to be string, got %s", nameField.Type)
 	}
+	sessionField, ok := typ.FieldByName("SessionName")
+	if !ok {
+		t.Fatal("expected SessionName field in CommandData")
+	}
+	if sessionField.Type.Kind() != reflect.String {
+		t.Errorf("expected SessionName to be string, got %s", sessionField.Type)
+	}
 }
 
 func TestRenderCommand_InvalidTemplateReturnsError(t *testing.T) {
@@ -53,6 +60,27 @@ func TestRenderCommand_UnknownFieldReturnsError(t *testing.T) {
 	_, err := RenderCommand("opencode --flag {{.Typo}}", CommandData{})
 	if err == nil {
 		t.Fatal("expected error for unknown template field")
+	}
+}
+
+func TestRenderCommand_SubstitutesSessionName(t *testing.T) {
+	got, err := RenderCommand("oc run --title '{{.SessionName}}' {{.PromptFile}}", CommandData{
+		PromptFile:  ".sandman/rendered-prompt.md",
+		SessionName: "Sandman run-42-1712345678901: ",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "oc run --title 'Sandman run-42-1712345678901: ' .sandman/rendered-prompt.md"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderCommand_SessionNameEmptyDoesNotError(t *testing.T) {
+	_, err := RenderCommand("oc run --title '{{.SessionName}}'", CommandData{})
+	if err != nil {
+		t.Fatalf("expected no error for empty SessionName, got: %v", err)
 	}
 }
 
@@ -83,6 +111,29 @@ func TestRenderCommand_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 	}
 }
 
+func TestRenderCommand_BuiltInPreset_WithSessionName(t *testing.T) {
+	got, err := RenderCommand(config.BuiltInAgentPresets["opencode"].Command, CommandData{
+		PromptFile:  ".sandman/rendered-prompt.md",
+		SessionName: "Sandman run-42-1712345678901: ",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `opencode run --title 'Sandman run-42-1712345678901: ' "$(cat .sandman/rendered-prompt.md)"`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderCommand_SessionNameRejectsSingleQuote(t *testing.T) {
+	_, err := RenderCommand("oc run --title '{{.SessionName}}'", CommandData{
+		SessionName: "can't believe",
+	})
+	if err == nil {
+		t.Fatal("expected error for SessionName containing single quote")
+	}
+}
+
 func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 	got, err := RenderCommand("opencode", CommandData{})
 	if err != nil {
@@ -96,7 +147,6 @@ func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 func TestRenderCommand_BuiltInPresets(t *testing.T) {
 	presets := map[string]string{
 		"opencode": `opencode run "$(cat .sandman/rendered-prompt.md)"`,
-		"pi":       `pi --print --provider openai --model gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`,
 	}
 
 	for key, want := range presets {

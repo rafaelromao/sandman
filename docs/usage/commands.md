@@ -14,7 +14,7 @@ sandman init [flags]
 |------|---------|-------------|
 | `--build-tools` | `""` | Build tools preset (`generic`, `dotnet`, `go`, `node`, `python`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
-| `--agent` | `""` | Default built-in agent preset for `init` (`opencode` or `pi`) |
+| `--agent` | `""` | Default built-in agent preset for `init` (`opencode`) |
 | `--model` | `""` | Default model for the agent |
 | `--parallel` | `-1` | Default parallel container count (`-1` = use config default 4) |
 | `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/sandman review` (requires `sandman review` to be running) |
@@ -69,6 +69,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
 | `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run |
+| `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 
 ### Flag interactions
 
@@ -86,7 +87,6 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means no cap (unbounded pool growth)
 - `--model` only applies to built-in presets; if omitted, Sandman uses `model` from config, falling back to the agent provider's configured model
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
-- Pi splits `provider/model` into separate provider and model flags, and errors if `/` is missing
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 
 ## `sandman status`
@@ -123,6 +123,7 @@ Reuses the previously created branch and recorded agent and review command from 
 |------|---------|-------------|
 | `--model` | `model` from config | Override the model for the continued run |
 | `--agent` | prior run's agent | Override the agent preset for the continued run |
+| `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior handoff from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), the command skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
 
 ## `sandman clean`

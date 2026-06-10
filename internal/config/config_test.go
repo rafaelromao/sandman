@@ -14,7 +14,7 @@ import (
 func TestLoad_ValidConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `agent: pi
+	content := `agent: opencode
 build_tools: go
 review_command: /review please
 parallel: 3
@@ -34,8 +34,8 @@ git:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultAgent != "pi" {
-		t.Errorf("agent: got %q, want %q", cfg.DefaultAgent, "pi")
+	if cfg.DefaultAgent != "opencode" {
+		t.Errorf("agent: got %q, want %q", cfg.DefaultAgent, "opencode")
 	}
 	if cfg.Agent != cfg.DefaultAgent {
 		t.Errorf("agent alias: got %q, want %q", cfg.Agent, cfg.DefaultAgent)
@@ -160,7 +160,7 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 	if agent.Preset != "opencode" {
 		t.Errorf("preset: got %q, want %q", agent.Preset, "opencode")
 	}
-	wantCmd := `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`
+	wantCmd := `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`
 	if agent.Command != wantCmd {
 		t.Errorf("command: got %q, want %q", agent.Command, wantCmd)
 	}
@@ -208,40 +208,6 @@ func TestBuiltInAgentPresets_OpencodeLiveMountsDatabase(t *testing.T) {
 		"~/.local/share/opencode/opencode.db",
 		"~/.local/share/opencode/opencode.db-shm",
 		"~/.local/share/opencode/opencode.db-wal",
-	}
-	for _, want := range wantLive {
-		if !slices.Contains(preset.LiveMounts, want) {
-			t.Errorf("expected LiveMounts to contain %q, got %v", want, preset.LiveMounts)
-		}
-	}
-}
-
-func TestBuiltInAgentPresets_PiExcludesMutableState(t *testing.T) {
-	preset, ok := BuiltInAgentPresets["pi"]
-	if !ok {
-		t.Fatal("expected pi preset to exist")
-	}
-
-	wantExcluded := []string{
-		"~/.pi/agent/npm",
-		"~/.pi/agent/sessions",
-	}
-	for _, want := range wantExcluded {
-		if !slices.Contains(preset.SnapshotExcludes, want) {
-			t.Errorf("expected SnapshotExcludes to contain %q, got %v", want, preset.SnapshotExcludes)
-		}
-	}
-}
-
-func TestBuiltInAgentPresets_PiLiveMountsRuntimeState(t *testing.T) {
-	preset, ok := BuiltInAgentPresets["pi"]
-	if !ok {
-		t.Fatal("expected pi preset to exist")
-	}
-
-	wantLive := []string{
-		"~/.pi/agent/npm",
-		"~/.pi/agent/sessions",
 	}
 	for _, want := range wantLive {
 		if !slices.Contains(preset.LiveMounts, want) {
@@ -318,16 +284,6 @@ func TestAgentWithOverrides_UserOpencodePermissionOverridesPreset(t *testing.T) 
 	}
 }
 
-func TestBuiltInAgentPresets_PiEnvUnchanged(t *testing.T) {
-	preset, ok := BuiltInAgentPresets["pi"]
-	if !ok {
-		t.Fatal("expected pi preset to exist")
-	}
-	if _, ok := preset.Env["OPENCODE_PERMISSION"]; ok {
-		t.Error("pi preset must not set OPENCODE_PERMISSION (pi has its own permission model)")
-	}
-}
-
 func keysOf(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -335,45 +291,6 @@ func keysOf(m map[string]string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func TestConfig_ResolveAgentProvider_Pi(t *testing.T) {
-	cfg := &Config{}
-
-	agent, err := cfg.ResolveAgentProvider("pi")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if agent.Preset != "pi" {
-		t.Fatalf("preset: got %q, want %q", agent.Preset, "pi")
-	}
-	if !strings.Contains(agent.Command, "--provider {{.ModelProvider}}") {
-		t.Fatalf("expected pi command to use provider/model flags, got %q", agent.Command)
-	}
-	wantDirs := []string{"~/.pi", "~/.claude", "~/.agents"}
-	if !reflect.DeepEqual(agent.ConfigDirs, wantDirs) {
-		t.Errorf("config_dirs: got %v, want %v", agent.ConfigDirs, wantDirs)
-	}
-}
-
-func TestSplitPiModel(t *testing.T) {
-	provider, model, err := SplitPiModel("openai/gpt-4.1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if provider != "openai" || model != "gpt-4.1" {
-		t.Fatalf("unexpected split: %q / %q", provider, model)
-	}
-}
-
-func TestSplitPiModel_InvalidFormat(t *testing.T) {
-	_, _, err := SplitPiModel("gpt-4.1")
-	if err == nil {
-		t.Fatal("expected error for missing provider/model separator")
-	}
-	if !strings.Contains(err.Error(), "provider/model format") {
-		t.Fatalf("expected error mentioning provider/model format, got %v", err)
-	}
 }
 
 func TestAgent_ConfigFilesCopiedFromPreset(t *testing.T) {
@@ -718,10 +635,10 @@ func TestConfig_GetAndSetDefaultAgent(t *testing.T) {
 	if got, err := cfg.GetValue("retries"); err != nil || got != "0" {
 		t.Fatalf("GetValue(retries) = %q, %v", got, err)
 	}
-	if err := cfg.SetValue("agent", "pi"); err != nil {
+	if err := cfg.SetValue("agent", "opencode"); err != nil {
 		t.Fatalf("SetValue(agent): %v", err)
 	}
-	if cfg.DefaultAgent != "pi" || cfg.Agent != "pi" {
+	if cfg.DefaultAgent != "opencode" || cfg.Agent != "opencode" {
 		t.Fatalf("agent not updated: %#v", cfg)
 	}
 	if _, err := cfg.GetValue("default_agent"); err == nil {
@@ -759,7 +676,7 @@ func TestConfig_GetAndSetBaseBranch(t *testing.T) {
 }
 
 func TestBuiltInPresets_AreOnlySupportedAgents(t *testing.T) {
-	want := []string{"opencode", "pi"}
+	want := []string{"opencode"}
 	got := make([]string, 0, len(BuiltInAgentPresets))
 	for name := range BuiltInAgentPresets {
 		got = append(got, name)
@@ -779,7 +696,7 @@ agents:
     command: custom-command
   another-custom:
     name: another-custom
-    preset: pi
+    preset: opencode
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -792,9 +709,6 @@ agents:
 
 	if _, ok := cfg.AgentProviders["opencode"]; !ok {
 		t.Fatal("expected opencode built-in in AgentProviders")
-	}
-	if _, ok := cfg.AgentProviders["pi"]; !ok {
-		t.Fatal("expected pi built-in in AgentProviders")
 	}
 	if _, ok := cfg.AgentProviders["custom-agent"]; ok {
 		t.Error("custom-agent should not be in AgentProviders")
@@ -1081,7 +995,7 @@ func TestLoad_ReviewAgentAndModelFromYAML(t *testing.T) {
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: opencode
 model: openai/gpt-4.1
-review_agent: pi
+review_agent: opencode
 review_model: openai/gpt-5
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -1093,8 +1007,8 @@ review_model: openai/gpt-5
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultReviewAgent != "pi" {
-		t.Errorf("review_agent: got %q, want %q", cfg.DefaultReviewAgent, "pi")
+	if cfg.DefaultReviewAgent != "opencode" {
+		t.Errorf("review_agent: got %q, want %q", cfg.DefaultReviewAgent, "opencode")
 	}
 	if cfg.DefaultReviewModel != "openai/gpt-5" {
 		t.Errorf("review_model: got %q, want %q", cfg.DefaultReviewModel, "openai/gpt-5")
@@ -1104,7 +1018,7 @@ review_model: openai/gpt-5
 func TestLoad_ReviewAgentDefaultsToDefaultAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `agent: pi
+	content := `agent: opencode
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -1115,8 +1029,8 @@ func TestLoad_ReviewAgentDefaultsToDefaultAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultReviewAgent != "pi" {
-		t.Errorf("review_agent fallback: got %q, want %q", cfg.DefaultReviewAgent, "pi")
+	if cfg.DefaultReviewAgent != "opencode" {
+		t.Errorf("review_agent fallback: got %q, want %q", cfg.DefaultReviewAgent, "opencode")
 	}
 }
 
@@ -1163,18 +1077,18 @@ func TestConfig_ReviewAgentAndModelResolution(t *testing.T) {
 			name:         "explicit review agent and model win",
 			defaultAgent: "opencode",
 			defaultModel: "opencode/big-pickle",
-			reviewAgent:  "pi",
+			reviewAgent:  "opencode",
 			reviewModel:  "openai/gpt-5",
-			wantAgent:    "pi",
+			wantAgent:    "opencode",
 			wantModel:    "openai/gpt-5",
 		},
 		{
 			name:         "review agent set, model falls back to default",
 			defaultAgent: "opencode",
 			defaultModel: "opencode/big-pickle",
-			reviewAgent:  "pi",
+			reviewAgent:  "opencode",
 			reviewModel:  "",
-			wantAgent:    "pi",
+			wantAgent:    "opencode",
 			wantModel:    "opencode/big-pickle",
 		},
 		{
@@ -1327,10 +1241,10 @@ func TestConfig_GetAndSetReviewAgentAndModel(t *testing.T) {
 		t.Fatalf("GetValue(review_model) = %q, %v", got, err)
 	}
 
-	if err := cfg.SetValue("review_agent", "pi"); err != nil {
+	if err := cfg.SetValue("review_agent", "opencode"); err != nil {
 		t.Fatalf("SetValue(review_agent): %v", err)
 	}
-	if cfg.DefaultReviewAgent != "pi" {
+	if cfg.DefaultReviewAgent != "opencode" {
 		t.Fatalf("review_agent not updated: %#v", cfg)
 	}
 

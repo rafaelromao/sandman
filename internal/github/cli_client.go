@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)[:\s]+#(\d+)\b`)
@@ -265,9 +266,10 @@ func (c *CLIClient) ListOpenPRs() ([]PR, error) {
 }
 
 type prCommentPayload struct {
-	ID   int64  `json:"id"`
-	Body string `json:"body"`
-	User struct {
+	ID        int64  `json:"id"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
+	User      struct {
 		Login string `json:"login"`
 	} `json:"user"`
 }
@@ -285,7 +287,7 @@ func (c *CLIClient) ListPRComments(number int) ([]PRComment, error) {
 		return nil, err
 	}
 
-	path := fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=%s", owner, repo, number, prCommentPageSize)
+	path := fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=%s&sort=created&direction=asc", owner, repo, number, prCommentPageSize)
 	cmd := c.command("gh", "api", path, "--paginate")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -311,9 +313,16 @@ func (c *CLIClient) ListPRComments(number int) ([]PRComment, error) {
 
 	comments := make([]PRComment, 0, len(payloads))
 	for _, payload := range payloads {
+		var createdAt time.Time
+		if payload.CreatedAt != "" {
+			if t, err := time.Parse(time.RFC3339, payload.CreatedAt); err == nil {
+				createdAt = t
+			}
+		}
 		comments = append(comments, PRComment{
-			ID:   strconv.FormatInt(payload.ID, 10),
-			Body: payload.Body,
+			ID:        strconv.FormatInt(payload.ID, 10),
+			Body:      payload.Body,
+			CreatedAt: createdAt,
 		})
 	}
 	return comments, nil
@@ -596,6 +605,70 @@ func (c *CLIClient) EditPRBody(prNumber int, body string) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("gh api edit pr: %w\n%s", err, out)
+	}
+	return nil
+}
+
+// AddCommentReaction adds a reaction to a PR conversation comment and returns the reaction ID.
+func (c *CLIClient) AddCommentReaction(commentID, content string) (string, error) {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return "", err
+	}
+	cmd := c.command("gh", "api", "-X", "POST", fmt.Sprintf("repos/%s/%s/issues/comments/%s/reactions", owner, repo, commentID), "-f", fmt.Sprintf("content=%s", content), "--jq", ".id")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gh api add comment reaction: %w\n%s", err, out)
+	}
+	id := strings.TrimSpace(string(out))
+	if id == "" {
+		return "", fmt.Errorf("gh api add comment reaction: empty reaction ID")
+	}
+	return id, nil
+}
+
+// AddIssueReaction adds a reaction to an issue or PR and returns the reaction ID.
+func (c *CLIClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return "", err
+	}
+	cmd := c.command("gh", "api", "-X", "POST", fmt.Sprintf("repos/%s/%s/issues/%d/reactions", owner, repo, issueNumber), "-f", fmt.Sprintf("content=%s", content), "--jq", ".id")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gh api add issue reaction: %w\n%s", err, out)
+	}
+	id := strings.TrimSpace(string(out))
+	if id == "" {
+		return "", fmt.Errorf("gh api add issue reaction: empty reaction ID")
+	}
+	return id, nil
+}
+
+// RemoveCommentReaction removes a reaction from a PR conversation comment.
+func (c *CLIClient) RemoveCommentReaction(commentID, reactionID string) error {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return err
+	}
+	cmd := c.command("gh", "api", "-X", "DELETE", fmt.Sprintf("repos/%s/%s/issues/comments/%s/reactions/%s", owner, repo, commentID, reactionID))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh api remove comment reaction: %w\n%s", err, out)
+	}
+	return nil
+}
+
+// RemoveIssueReaction removes a reaction from an issue or PR.
+func (c *CLIClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return err
+	}
+	cmd := c.command("gh", "api", "-X", "DELETE", fmt.Sprintf("repos/%s/%s/issues/%d/reactions/%s", owner, repo, issueNumber, reactionID))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh api remove issue reaction: %w\n%s", err, out)
 	}
 	return nil
 }

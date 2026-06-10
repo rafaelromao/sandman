@@ -67,7 +67,7 @@ func TestConfigSet_OneArgReturnsUsageError(t *testing.T) {
 func TestConfigGet_DefaultAgent(t *testing.T) {
 	var buf bytes.Buffer
 	store := &fakeStore{
-		config: &config.Config{DefaultAgent: "pi", Agent: "pi"},
+		config: &config.Config{DefaultAgent: "opencode", Agent: "opencode"},
 	}
 	cmd := NewConfigGetCmd(store)
 	cmd.SetOut(&buf)
@@ -79,8 +79,8 @@ func TestConfigGet_DefaultAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "pi") {
-		t.Errorf("expected output to contain 'pi', got: %q", buf.String())
+	if !strings.Contains(buf.String(), "opencode") {
+		t.Errorf("expected output to contain 'opencode', got: %q", buf.String())
 	}
 }
 
@@ -226,7 +226,7 @@ func TestConfigGet_UnknownKey_ReturnsError(t *testing.T) {
 func TestConfigList_PrintsSupportedKeysAndEffectiveValues(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `agent: pi
+	content := `agent: opencode
 model: openai/gpt-4.1
 build_tools: go
 review_command: /review please
@@ -254,9 +254,9 @@ git:
 	}
 
 	want := []string{
-		"agent: pi",
+		"agent: opencode",
 		"model: openai/gpt-4.1",
-		"review_agent: pi",
+		"review_agent: opencode",
 		"review_model: openai/gpt-4.1",
 		"build_tools: go",
 		"review_command: /review please",
@@ -307,7 +307,7 @@ func TestConfigSet_DefaultAgent_UpdatesFile(t *testing.T) {
 
 	store := &config.FileStore{Path: path}
 	cmd := NewConfigSetCmd(store)
-	cmd.SetArgs([]string{"agent", "pi"})
+	cmd.SetArgs([]string{"agent", "opencode"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -318,8 +318,8 @@ func TestConfigSet_DefaultAgent_UpdatesFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload config: %v", err)
 	}
-	if cfg.DefaultAgent != "pi" {
-		t.Errorf("agent: got %q, want %q", cfg.DefaultAgent, "pi")
+	if cfg.DefaultAgent != "opencode" {
+		t.Errorf("agent: got %q, want %q", cfg.DefaultAgent, "opencode")
 	}
 }
 

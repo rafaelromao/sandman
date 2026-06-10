@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+> Superseded by [ADR-0024](0024-remove-pi-agent-support.md) — Pi agent support has been removed from Sandman.
 
 ## Context
 

@@ -18,7 +18,7 @@ Sandman needs a PR review workflow: when someone posts `/sandman review [focus]`
 
 ### Two modes: daemon (default) and one-shot
 
-`sandman review` defaults to **daemon mode** - it polls the repo every 60 seconds for new PRs with `/sandman review` comments. A `--pr <N>` flag runs in **one-shot mode** for manual or CI-driven review invocation.
+`sandman review` defaults to **daemon mode** - it polls the repo every 60 seconds for new PRs with `/sandman review` comments. PR numbers passed as positional arguments run in **one-shot mode** for manual or CI-driven review invocation. One-shot mode accepts bare numbers, closed ranges (`N:M`), and unbounded ranges (`N:`, `:M`).
 
 Rationale: the daemon enables the full automated workflow (AFK agent finishes work, posts `/sandman review`, daemon picks it up). The one-shot mode covers ad-hoc cases without running a background process.
 

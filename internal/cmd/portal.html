@@ -754,6 +754,12 @@
     .term-url { color: color-mix(in oklch, var(--accent) 65%, var(--text)); }
     .term-path { color: color-mix(in oklch, var(--muted) 35%, var(--text)); }
     .term-keyword { color: color-mix(in oklch, var(--danger) 42%, var(--text)); }
+    .json-key { color: var(--accent); }
+    .json-string { color: color-mix(in oklch, var(--warning) 65%, var(--text)); }
+    .json-number { color: color-mix(in oklch, var(--success) 55%, var(--text)); }
+    .json-boolean { color: color-mix(in oklch, var(--danger) 55%, var(--text)); }
+    .json-null { color: var(--muted); }
+    .json-punctuation { color: color-mix(in oklch, var(--muted) 50%, var(--text)); }
     .tab-events {
       display: grid;
       gap: 0;
@@ -795,6 +801,7 @@
       color: var(--muted);
       font-size: 12px;
       background: color-mix(in oklch, var(--bg) 72%, var(--surface-2));
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
     }
     .empty-state {
       padding: 30px 16px;
@@ -2537,6 +2544,7 @@
           renderRunMeta: renderRunMeta,
           renderTerminalContent: renderTerminalContent,
           isRunAbortable: isRunAbortable,
+          highlightJSON: SandmanPortalDiff.highlightJSON,
         },
         abortReservations: abortReservations,
         abortSupported: abortSupported,
@@ -2592,7 +2600,15 @@
           (child) => child.getAttribute('data-detail-for') === state.expandedRunKey
         );
         if (detailRow) {
-          detailRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          const parentRow = Array.from(runsBody.children).find(
+            (child) => child.getAttribute('data-run-key') === state.expandedRunKey
+          );
+          const rowHeight = parentRow ? parentRow.offsetHeight : 0;
+          const rect = detailRow.getBoundingClientRect();
+          window.scrollTo({
+            top: window.scrollY + rect.top - rowHeight,
+            behavior: 'smooth'
+          });
         }
       }
       if (prevExpandedRunKey !== null && state.expandedRunKey === null) {

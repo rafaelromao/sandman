@@ -62,18 +62,18 @@ sandbox: podman
 git:
   base_branch: main
 
-# Sandman installs both built-in agents in scaffolded Dockerfiles and mounts the shared skills directory.
+# Sandman installs the built-in agent in scaffolded Dockerfiles and mounts the shared skills directory.
 ```
 
-## Built-in agents
+## Built-in preset
 
-Sandman supports two built-in presets: `opencode` and `pi`. Both are installed into scaffolded Dockerfiles. `opencode` is the default `agent`.
+Sandman has one built-in preset: `opencode`. It is installed into scaffolded Dockerfiles and is the default `agent`.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
-Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill folder.
+The built-in preset also sees `~/.agents`, which is where Sandman installs the shared skill folder.
 
-`sandman run --agent` selects one of those built-ins per invocation. `sandman config set agent` changes the project default.
+`sandman run --agent` selects the built-in preset per invocation. `sandman config set agent` changes the project default.
 
 Use `sandman run --base-branch` to override `git.base_branch` for a single invocation.
 

@@ -180,7 +180,7 @@ fi
 # Run phase: just succeed
 exit 0
 `, selectionIssuesJSON)
-	for _, name := range []string{"opencode", "pi"} {
+	for _, name := range []string{"opencode"} {
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, []byte(script), 0755); err != nil {
 			t.Fatalf("write fake agent %s: %v", name, err)

@@ -236,7 +236,7 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "# sandman default-agent: opencode") {
 		t.Fatalf("Dockerfile missing default-agent metadata, got:\n%s", content)
 	}
-	if !strings.Contains(content, "# sandman installed-agents: opencode,pi") {
+	if !strings.Contains(content, "# sandman installed-agents: opencode") {
 		t.Fatalf("Dockerfile missing installed-agents metadata, got:\n%s", content)
 	}
 	if !strings.Contains(content, "FROM debian:bookworm-slim") {
@@ -296,7 +296,7 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 func TestReadDockerfileMetadata_ParsesMiseVersion(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Dockerfile")
-	content := "# sandman build-tools: generic\n# sandman default-agent: opencode\n# sandman installed-agents: opencode,pi\n# sandman mise-version: " + DefaultMISEVersion + "\nFROM debian:bookworm-slim\n"
+	content := "# sandman build-tools: generic\n# sandman default-agent: opencode\n# sandman installed-agents: opencode\n# sandman mise-version: " + DefaultMISEVersion + "\nFROM debian:bookworm-slim\n"
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write Dockerfile: %v", err)
 	}
@@ -310,70 +310,6 @@ func TestReadDockerfileMetadata_ParsesMiseVersion(t *testing.T) {
 	}
 	if meta.MiseVersion != DefaultMISEVersion {
 		t.Fatalf("expected mise version %q, got %q", DefaultMISEVersion, meta.MiseVersion)
-	}
-}
-
-func TestScaffold_InstallsBothBuiltInAgents(t *testing.T) {
-	for _, selector := range []string{"latest", "lts", "repo", "0.130"} {
-		t.Run(selector, func(t *testing.T) {
-			dir := t.TempDir()
-			s := &Scaffolder{}
-
-			err := s.Scaffold(dir, Options{BuildTools: "generic", Agent: "opencode", ToolVersion: selector}, &fakePrompter{confirm: true})
-			if err != nil {
-				t.Fatalf("scaffold: %v", err)
-			}
-
-			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
-			if err != nil {
-				t.Fatalf("read Dockerfile: %v", err)
-			}
-			content := string(dockerfileData)
-			if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
-				t.Fatalf("Dockerfile missing opencode install pin, got:\n%s", content)
-			}
-			if !strings.Contains(content, "RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@"+DefaultBuiltInAgentVersion("pi")) {
-				t.Fatalf("Dockerfile missing pi install pin, got:\n%s", content)
-			}
-			if strings.Contains(content, "tool-version") {
-				t.Fatalf("Dockerfile should not expose agent tool-version metadata, got:\n%s", content)
-			}
-		})
-	}
-}
-
-func TestScaffold_PinsNodeVersionForPiWhenPiInstalled(t *testing.T) {
-	// pi-coding-agent uses the regex `v` flag which requires Node 20+. The pi CLI
-	// shebang resolves `env node` to the first `node` on PATH; if only apt's
-	// `nodejs` is installed (Debian Bookworm ships Node 18), the agent crashes
-	// on import. The scaffolder must pin a Node via mise whenever pi is in
-	// installed-agents, regardless of the chosen default agent. See #541.
-	for _, tc := range []struct {
-		buildTools string
-		toolVer    string
-	}{
-		{buildTools: "generic", toolVer: "latest"},
-		{buildTools: "go", toolVer: "1.24"},
-		{buildTools: "node", toolVer: "lts"},
-		{buildTools: "python", toolVer: "latest"},
-		{buildTools: "dotnet", toolVer: "lts"},
-	} {
-		t.Run(tc.buildTools, func(t *testing.T) {
-			dir := t.TempDir()
-			s := &Scaffolder{}
-			if err := s.Scaffold(dir, Options{BuildTools: tc.buildTools, Agent: "opencode", ToolVersion: tc.toolVer}, &fakePrompter{confirm: true}); err != nil {
-				t.Fatalf("scaffold: %v", err)
-			}
-			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
-			if err != nil {
-				t.Fatalf("read Dockerfile: %v", err)
-			}
-			content := string(dockerfileData)
-			wantPin := "RUN mise use -g --pin node@" + piNodeVersion
-			if !strings.Contains(content, wantPin) {
-				t.Fatalf("Dockerfile missing %q for pi node pin, got:\n%s", wantPin, content)
-			}
-		})
 	}
 }
 
@@ -1471,7 +1407,7 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 			if !strings.Contains(content, "# sandman default-agent: "+agent) {
 				t.Fatalf("Dockerfile missing default-agent metadata, got:\n%s", content)
 			}
-			if !strings.Contains(content, "# sandman installed-agents: opencode,pi") {
+			if !strings.Contains(content, "# sandman installed-agents: opencode") {
 				t.Fatalf("Dockerfile missing installed-agents metadata, got:\n%s", content)
 			}
 			if !strings.Contains(content, "FROM debian:bookworm-slim") {
@@ -1568,7 +1504,7 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "# sandman python-version:") {
 		t.Fatalf("Dockerfile missing python-version metadata, got:\n%s", content)
 	}
-	if !strings.Contains(content, "# sandman installed-agents: opencode,pi") {
+	if !strings.Contains(content, "# sandman installed-agents: opencode") {
 		t.Fatalf("Dockerfile missing installed-agents metadata, got:\n%s", content)
 	}
 	if !strings.Contains(content, "FROM debian:bookworm-slim") {
@@ -1812,7 +1748,7 @@ func TestValidateDockerfileMetadata_AllowsGoPreset(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
 		t.Fatalf("create .sandman: %v", err)
 	}
-	content := "# sandman build-tools: go\n# sandman default-agent: opencode\n# sandman installed-agents: opencode,pi\n# sandman go-version: 1.24\n# sandman mise-version: " + DefaultMISEVersion + "\nFROM debian:bookworm-slim\n"
+	content := "# sandman build-tools: go\n# sandman default-agent: opencode\n# sandman installed-agents: opencode\n# sandman go-version: 1.24\n# sandman mise-version: " + DefaultMISEVersion + "\nFROM debian:bookworm-slim\n"
 	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte(content), 0644); err != nil {
 		t.Fatalf("write Dockerfile: %v", err)
 	}

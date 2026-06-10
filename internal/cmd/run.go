@@ -85,6 +85,22 @@ func (c *cachedGitHubClient) EditPRBody(prNumber int, body string) error {
 	return c.client.EditPRBody(prNumber, body)
 }
 
+func (c *cachedGitHubClient) AddCommentReaction(commentID, content string) (string, error) {
+	return c.client.AddCommentReaction(commentID, content)
+}
+
+func (c *cachedGitHubClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+	return c.client.AddIssueReaction(issueNumber, content)
+}
+
+func (c *cachedGitHubClient) RemoveCommentReaction(commentID, reactionID string) error {
+	return c.client.RemoveCommentReaction(commentID, reactionID)
+}
+
+func (c *cachedGitHubClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+	return c.client.RemoveIssueReaction(issueNumber, reactionID)
+}
+
 // NewRunCmd creates the run command.
 func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
@@ -483,7 +499,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection")
-	cmd.Flags().String("agent", "", "Built-in agent preset (opencode or pi)")
+	cmd.Flags().String("agent", "", "Built-in agent preset (opencode)")
 	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
 

@@ -57,10 +57,11 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0014 | Sandman Review - Daemon-Monitored PR Reviews | proposed |
 | 0015 | Store container config snapshots under the run dir | accepted |
 | 0016 | Split OpenCode config snapshot from mutable state | accepted |
-| 0017 | Split Pi config snapshot from mutable state | accepted |
+| 0017 | Split Pi config snapshot from mutable state | superseded |
 | 0018 | Unblock dependents from same-batch success | proposed |
 | 0019 | Canonical test env vars for provider allowlists and e2e scenario gates | accepted |
 | 0020 | Per-agent env vars to parameterize the model used by smoke and e2e tests | accepted |
 | 0021 | Portal auto-runs `clean --stale` on startup | accepted |
 | 0022 | Replace end-of-session continuation with checkpointed handoffs | accepted |
 | 0023 | Handoff points to rendered prompt and tracks last skill | accepted |
+| 0024 | Remove Pi agent support | accepted |

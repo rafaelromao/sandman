@@ -5,7 +5,7 @@ A terminal-native CLI tool for orchestrating AFK coding agents in isolated sandb
 ## Quick Start
 
 ```bash
-# Prerequisites: Go 1.24+, Git, gh CLI, and an AI agent (OpenCode or Pi)
+# Prerequisites: Go 1.24+, Git, gh CLI, and an AI agent (OpenCode)
 # 1. Install
 go install github.com/rafaelromao/sandman/cmd/sandman@latest
 
@@ -83,13 +83,13 @@ make install  # Install to $GOPATH/bin
 Smoke tests (opt-in):
 
 ```bash
-SANDMAN_TEST_PROVIDERS=opencode,pi go test -tags smoke ./internal/cmd -run Smoke
+SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke
 ```
 
 E2E tests (opt-in):
 
 ```bash
-SANDMAN_TEST_PROVIDERS=opencode,pi go test -tags e2e ./internal/cmd -run PRFlow
+SANDMAN_TEST_PROVIDERS=opencode go test -tags e2e ./internal/cmd -run PRFlow
 ```
 
 Gated end-to-end scenarios (opt-in, no build tag required):
@@ -105,16 +105,13 @@ SANDMAN_E2E_GATES=all go test ./...
 
 Override the model the smoke and e2e tests target per agent with
 `SANDMAN_TEST_MODEL_<AGENT>` (one var per supported agent, e.g.
-`SANDMAN_TEST_MODEL_OPENCODE`, `SANDMAN_TEST_MODEL_PI`). When unset, the
+`SANDMAN_TEST_MODEL_OPENCODE`). When unset, the
 literal model baked into the test cases is used.
 
 ```bash
 SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
-  SANDMAN_TEST_MODEL_PI=kilo/kilo-auto/free \
-  SANDMAN_TEST_PROVIDERS=opencode,pi go test -tags smoke ./internal/cmd -run Smoke
+  SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke
 ```
-
-Pi smoke/e2e require `pi-free` installed in active Pi setup.
 
 ## License
 
