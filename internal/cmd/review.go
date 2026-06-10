@@ -121,6 +121,8 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		},
 		Review:   true,
 		PRNumber: pr.Number,
+		RunID:    fmt.Sprintf("PR%d", pr.Number),
+		RunDir:   daemon.RunDir(".sandman", nil, fmt.Sprintf("PR%d", pr.Number)),
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
 	}
