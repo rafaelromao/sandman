@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
@@ -208,9 +209,11 @@ func (d *Daemon) tick(ctx context.Context) error {
 	return nil
 }
 
-// processPR scans one PR's comments and launches a review agent for each
-// unseen /sandman review trigger. Errors fetching comments or running
-// the batch are logged but not returned; the loop continues.
+// processPR scans one PR's comments and launches review agents in a bounded
+// goroutine pool for each unseen /sandman review trigger. A per-PR ClaimStore
+// prevents cross-process double-processing; SeenCommentsStore.TryClaim
+// prevents intra-process races. Errors are logged but not returned; the
+// goroutine pool drains before the function returns.
 func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	comments, err := d.GitHub.ListPRComments(prNumber)
 	if err != nil {
@@ -233,33 +236,62 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		return fmt.Errorf("open seen store: %w", err)
 	}
 
+	cs, err := NewClaimStore(prDir, time.Hour)
+	if err != nil {
+		return fmt.Errorf("create claim store: %w", err)
+	}
+	defer cs.Close()
+
+	parallelLimit := config.DefaultReviewParallel
+	if d.Config != nil {
+		parallelLimit = d.Config.EffectiveReviewParallel()
+	}
+	sem := make(chan struct{}, parallelLimit)
+	var wg sync.WaitGroup
+
 	for _, comment := range comments {
 		focus, ok := ParseTrigger(comment.Body)
 		if !ok {
 			continue
 		}
-		if store.Has(comment.ID) {
+		if !store.TryClaim(comment.ID) {
+			continue
+		}
+		claimed, err := cs.TryClaim(comment.ID)
+		if err != nil {
+			d.logf("claim error for comment %s: %v", comment.ID, err)
+			continue
+		}
+		if !claimed {
+			d.logf("comment %s already claimed, skipping", comment.ID)
 			continue
 		}
 
-		// Signal that this trigger comment is being processed.
-		commentReactionID, commentErr := d.GitHub.AddCommentReaction(comment.ID, "eyes")
-		if commentErr != nil {
-			d.logf("add reaction to comment %s: %v", comment.ID, commentErr)
-		}
-		prReactionID, prErr := d.GitHub.AddIssueReaction(prNumber, "eyes")
-		if prErr != nil {
-			d.logf("add reaction to PR #%d: %v", prNumber, prErr)
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(c github.PRComment, focus string) {
+			defer func() {
+				store.Mark(c.ID)
+				cs.Release(c.ID)
+				<-sem
+				wg.Done()
+			}()
 
-		if err := d.launchReview(ctx, prNumber, prDir, focus, comment.ID, commentReactionID, prReactionID); err != nil {
-			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, err)
-			continue
-		}
-		if err := store.Mark(comment.ID); err != nil {
-			d.logf("mark comment %s seen: %v", comment.ID, err)
-		}
+			commentReactionID, commentErr := d.GitHub.AddCommentReaction(c.ID, "eyes")
+			if commentErr != nil {
+				d.logf("add reaction to comment %s: %v", c.ID, commentErr)
+			}
+			prReactionID, prErr := d.GitHub.AddIssueReaction(prNumber, "eyes")
+			if prErr != nil {
+				d.logf("add reaction to PR #%d: %v", prNumber, prErr)
+			}
+
+			if err := d.launchReview(ctx, prNumber, prDir, focus, c.ID, commentReactionID, prReactionID); err != nil {
+				d.logf("launch review for PR #%d comment %s: %v", prNumber, c.ID, err)
+			}
+		}(comment, focus)
 	}
+	wg.Wait()
 	return nil
 }
 

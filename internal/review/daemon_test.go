@@ -702,7 +702,219 @@ func TestDaemon_LaunchReviewFallsBackToConfigSandbox(t *testing.T) {
 	}
 }
 
+func TestDaemon_ProcessPRLaunchesConcurrentReviews(t *testing.T) {
+	started := make(chan string, 4)
+	proceed := make(chan struct{})
+
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "1", Body: "/sandman review"},
+				{ID: "2", Body: "/sandman review"},
+				{ID: "3", Body: "/sandman review"},
+			},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body"}},
+	}
+
+	blockingRunner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		started <- req.PromptConfig.Branch
+		<-proceed
+		return &batch.Result{}, nil
+	})
+
+	cfg := &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 2,
+	}
+	d, _, _ := newDaemonForTest(t, gh, blockingRunner, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.tick(ctx)
+	}()
+
+	// Wait for at least 2 RunBatch calls to start (proving concurrency with parallel=2).
+	var first, second string
+	select {
+	case first = <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for first review to start")
+	}
+	select {
+	case second = <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for second review to start")
+	}
+
+	if first == second {
+		t.Errorf("expected different branches for concurrent launches, got %q twice", first)
+	}
+
+	// Verify the third doesn't start until a slot is freed (semaphore bounded at 2).
+	select {
+	case third := <-started:
+		t.Errorf("unexpected third launch %q before slot released", third)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(proceed) // unblock the two in-flight reviews
+
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tick to complete")
+	}
+}
+
+func TestDaemon_SerialBehaviorWhenParallelIsOne(t *testing.T) {
+	started := make(chan struct{}, 4)
+	proceed := make(chan struct{})
+
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "1", Body: "/sandman review"},
+				{ID: "2", Body: "/sandman review"},
+			},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body"}},
+	}
+
+	blockingRunner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		started <- struct{}{}
+		<-proceed
+		return &batch.Result{}, nil
+	})
+
+	cfg := &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 1,
+	}
+	d, _, _ := newDaemonForTest(t, gh, blockingRunner, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.tick(ctx)
+	}()
+
+	// First launch should start immediately.
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for first review to start")
+	}
+
+	// Second should NOT start before the first finishes (serial with parallel=1).
+	select {
+	case <-started:
+		t.Error("second review should not start while first is in flight with parallel=1")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(proceed) // unblock
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tick to complete")
+	}
+}
+
+func TestDaemon_ContextCancellationPropagatesToGoroutines(t *testing.T) {
+	started := make(chan struct{}, 1)
+
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "1", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body"}},
+	}
+
+	blockingRunner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	cfg := &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 1,
+	}
+	d, _, _ := newDaemonForTest(t, gh, blockingRunner, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.tick(ctx)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for review to start")
+	}
+
+	cancel() // cancel ctx while RunBatch is blocking
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("tick should not return error on ctx cancellation: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tick to complete after cancel")
+	}
+}
+
+func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "100", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 2,
+	})
+
+	// Pre-create a claim file so the comment appears already claimed.
+	prDir := d.PRDir(1)
+	claimsDir := filepath.Join(prDir, "claims")
+	if err := os.MkdirAll(claimsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claimsDir, "100"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 0 {
+		t.Errorf("expected no batch runs when comment is already claimed, got %d", runner.calls)
+	}
+	if !strings.Contains(buf.String(), "already claimed") {
+		t.Errorf("expected 'already claimed' log, got %q", buf.String())
+	}
+}
+
 func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
+
 	gh := &fakeGH{
 		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
 	}

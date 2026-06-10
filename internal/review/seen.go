@@ -16,15 +16,17 @@ import (
 // than JSON objects — the extension is preserved for grep-ability and
 // forward compatibility should per-comment metadata be added later).
 //
-// The store is safe for concurrent use. Mark appends a single line and is
-// the only operation that mutates the file; Has reads the file when needed
-// and caches the set in memory for the lifetime of the process so callers
-// can call Has frequently without paying disk cost.
+// The store is safe for concurrent use. Two internal sets track state:
+// known  — IDs loaded from disk or persisted via Mark.
+// claimed — IDs claimed via TryClaim but not yet written to disk by Mark.
+// Has reports true for IDs in either set. This separation allows TryClaim
+// to atomically reserve an ID without disk I/O, while Mark persists to
+// disk after the work is done.
 type SeenCommentsStore struct {
-	prDir string
-
-	mu    sync.Mutex
-	known map[string]struct{}
+	prDir   string
+	mu      sync.Mutex
+	known   map[string]struct{}
+	claimed map[string]struct{}
 }
 
 // NewSeenCommentsStore opens (and lazily reads) the seen-comments file for
@@ -32,8 +34,9 @@ type SeenCommentsStore struct {
 // the first Mark.
 func NewSeenCommentsStore(prDir string) (*SeenCommentsStore, error) {
 	s := &SeenCommentsStore{
-		prDir: prDir,
-		known: make(map[string]struct{}),
+		prDir:   prDir,
+		known:   make(map[string]struct{}),
+		claimed: make(map[string]struct{}),
 	}
 	if err := s.load(); err != nil {
 		return nil, err
@@ -75,16 +78,38 @@ func (s *SeenCommentsStore) load() error {
 	return nil
 }
 
-// Has reports whether the given comment ID has been marked as seen.
+// TryClaim atomically checks whether the given comment ID has already been
+// seen (in known or claimed) and, if not, reserves it in the claimed set.
+// It returns true when the caller successfully claimed the ID. The
+// persistent write to disk is deferred to Mark. This replaces the Has+Mark
+// pair for concurrent use where multiple goroutines may race to process the
+// same comment.
+func (s *SeenCommentsStore) TryClaim(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.known[id]; ok {
+		return false
+	}
+	if _, ok := s.claimed[id]; ok {
+		return false
+	}
+	s.claimed[id] = struct{}{}
+	return true
+}
+
+// Has reports whether the given comment ID has been marked as seen or
+// claimed (in known or claimed).
 func (s *SeenCommentsStore) Has(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.known[id]
-	return ok
+	_, inKnown := s.known[id]
+	_, inClaimed := s.claimed[id]
+	return inKnown || inClaimed
 }
 
 // Mark records the given comment ID as seen. It appends a single line to
-// the seen-comments file and updates the in-memory set atomically. The
+// the seen-comments file and updates the in-memory known set atomically,
+// moving the ID from claimed to known if it was previously claimed. The
 // comment ID is written as-is; callers should pass a stable identifier
 // (for example, the GitHub comment ID).
 func (s *SeenCommentsStore) Mark(id string) error {
@@ -97,6 +122,7 @@ func (s *SeenCommentsStore) Mark(id string) error {
 	defer s.mu.Unlock()
 
 	if _, ok := s.known[id]; ok {
+		delete(s.claimed, id)
 		return nil
 	}
 
@@ -111,5 +137,6 @@ func (s *SeenCommentsStore) Mark(id string) error {
 	}
 
 	s.known[id] = struct{}{}
+	delete(s.claimed, id)
 	return nil
 }
