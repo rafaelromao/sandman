@@ -524,10 +524,9 @@ func TestWorktreeSandbox_StartErrorsOnDetachedHead(t *testing.T) {
 	}
 }
 
-func TestWorktreeSandbox_StartRejectsBrokenWorktreeWithStaleDotGitFile(t *testing.T) {
-	// A directory with a .git file pointing to a non-existent gitdir is not a
-	// valid worktree. Start() should reject it because currentBranchRef cannot
-	// resolve HEAD in a broken worktree.
+func TestWorktreeSandbox_StartSelfHealsBrokenWorktreeWithStaleDotGitFile(t *testing.T) {
+	// A stale .git gitlink (pointing to non-existent gitdir) is detected
+	// and the worktree is recreated from scratch when Force is set.
 	dir := t.TempDir()
 	initGitRepoWithRemote(t, dir)
 	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
@@ -535,27 +534,46 @@ func TestWorktreeSandbox_StartRejectsBrokenWorktreeWithStaleDotGitFile(t *testin
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
 	branch := "sandman/42-fix-bug"
-	worktreePath := filepath.Join(worktreeBase, branch)
-	if err := os.MkdirAll(worktreePath, 0755); err != nil {
-		t.Fatalf("create worktree dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".git"), []byte("gitdir: /tmp/fake-worktree\n"), 0644); err != nil {
-		t.Fatalf("write .git file: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(worktreePath, "stale.txt"), []byte("left over from a previous run\n"), 0644); err != nil {
-		t.Fatalf("write stale file: %v", err)
+
+	// Create a real worktree first so the branch exists in the parent repo.
+	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s1.Start(); err != nil {
+		t.Fatalf("create initial worktree: %v", err)
 	}
 
-	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	err := s.Start()
-	if err == nil {
-		t.Fatal("expected error when worktree .git points to non-existent gitdir")
+	// Corrupt the .git gitlink to simulate a stale gitdir (e.g. container destroyed).
+	gitPath := filepath.Join(s1.WorkDir(), ".git")
+	if err := os.WriteFile(gitPath, []byte("gitdir: /tmp/nonexistent-worktree-gitdir\n"), 0644); err != nil {
+		t.Fatalf("corrupt .git file: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not on a branch") {
-		t.Errorf("expected error to mention HEAD not on a branch, got: %v", err)
+
+	// Now try Start() with Force, simulating the review daemon's behavior.
+	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s2.SetForce(true)
+	err := s2.Start()
+	if err != nil {
+		t.Fatalf("Start() should self-heal stale gitlink, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "--force") {
-		t.Errorf("expected error to contain '--force' hint, got: %v", err)
+	t.Cleanup(func() {
+		s2.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	// Verify the worktree was recreated properly.
+	if _, err := os.Stat(filepath.Join(s2.WorkDir(), "tracked.txt")); err != nil {
+		t.Errorf("expected tracked.txt from source branch, got err=%v", err)
+	}
+	newGitlink, err := os.ReadFile(filepath.Join(s2.WorkDir(), ".git"))
+	if err != nil {
+		t.Fatalf("read new gitlink: %v", err)
+	}
+	if strings.Contains(string(newGitlink), "nonexistent-worktree") {
+		t.Error("expected new gitlink to point to valid gitdir, got corrupted gitlink")
+	}
+	revParse := exec.Command("git", "rev-parse", "--git-dir")
+	revParse.Dir = s2.WorkDir()
+	if out, err := revParse.CombinedOutput(); err != nil {
+		t.Fatalf("worktree dir is not a real git worktree: %v: %s", err, out)
 	}
 }
 

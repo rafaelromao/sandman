@@ -47,6 +47,18 @@ func (s *WorktreeSandbox) Start() error {
 		if err := os.RemoveAll(s.workDir); err != nil {
 			return fmt.Errorf("clean forced worktree dir: %w", err)
 		}
+		pruneCmd := exec.Command("git", "worktree", "prune")
+		pruneCmd.Dir = s.repoPath
+		if out, err := pruneCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("prune stale worktree registration: %w\n%s", err, out)
+		}
+		if BranchExists(s.repoPath, s.branch) {
+			delCmd := exec.Command("git", "branch", "-D", s.branch)
+			delCmd.Dir = s.repoPath
+			if out, err := delCmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, err, out)
+			}
+		}
 	}
 	if s.workDirIsValidWorktree() {
 		currentRef, err := currentBranchRef(s.workDir)
@@ -123,12 +135,26 @@ func (s *WorktreeSandbox) workDirIsValidWorktree() bool {
 	if err != nil {
 		return false
 	}
-	// Real worktrees have a `.git` file (a gitlink). A nested git repo would
-	// have a `.git` directory; that's still a valid git worktree from the
-	// parent's perspective (it just won't be registered as a worktree of the
-	// parent), but the subsequent `git worktree add` would fail anyway, so
-	// treat both the same and let the caller re-add.
-	return !info.IsDir()
+	if !info.IsDir() {
+		data, err := os.ReadFile(gitPath)
+		if err != nil {
+			return false
+		}
+		content := strings.TrimSpace(string(data))
+		const prefix = "gitdir: "
+		if !strings.HasPrefix(content, prefix) {
+			return false
+		}
+		gitDir := strings.TrimSpace(strings.TrimPrefix(content, prefix))
+		if !filepath.IsAbs(gitDir) {
+			gitDir = filepath.Join(s.workDir, gitDir)
+		}
+		if info, err := os.Stat(gitDir); err != nil || !info.IsDir() {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // currentBranchRef returns the full ref that HEAD points to in the given worktree.
