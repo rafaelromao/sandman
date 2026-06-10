@@ -137,6 +137,7 @@ sandman clean [flags]
 | `--all` | Remove all worktrees and logs |
 | `--success` | Remove worktrees and logs for successful runs only |
 | `--failed` | Remove worktrees and logs for failed and cancelled runs (runs with `status: failure`) |
+| `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events |
 
 Exactly one flag is required.
 
@@ -155,6 +156,7 @@ sandman archive older-than <days>
 |------------|-------------|
 | `run <id>` | Move `.sandman/runs/<id>` to `.sandman/archive/<id>` |
 | `older-than <days>` | Move every dead run whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than `<days>` days to `.sandman/archive/<id>` |
+| `stale` | Recover unterminated runs in dead batches by emitting `run.aborted` events, then archive every dead-and-terminal run directory |
 
 The run's daemon must not be live. `sandman archive run` calls `daemon.IsRunActive` on the run directory and returns an error if either `cmd.sock` or `run.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
 
@@ -187,6 +189,23 @@ sandman portal [flags]
 The portal is repo-scoped: it scans the current repository's `.sandman/runs/` tree on each poll and shows every live Sandman instance it finds there, plus run status and logs from the event and log files. It also exposes a launcher for repo-scoped command presets.
 
 Use it when you want a browser view of multiple runs in the same repo and a launcher for common Sandman commands.
+
+## `sandman review`
+
+Run a Sandman agent to review a pull request.
+
+```bash
+sandman review [flags]
+```
+
+With `--pr`, posts a single review comment and exits. Without `--pr`, starts the review daemon that polls open PRs every 60s for `/sandman review` comments and launches review agents.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--pr` | `0` | Pull request number to review (omit to start the review daemon) |
+| `--agent` | `""` | Override `default_review_agent` for this run |
+| `--model` | `""` | Override `default_review_model` for this run |
+| `--sandbox` | `"worktree"` | Sandbox mode for the review run |
 
 ## `sandman config`
 
