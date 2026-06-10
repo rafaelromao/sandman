@@ -286,6 +286,9 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if runner.captured.ReviewFocus != "" {
 		t.Errorf("expected empty ReviewFocus on one-shot review batch request, got %q", runner.captured.ReviewFocus)
 	}
+	if runner.captured.RunID != "PR17" {
+		t.Errorf("expected RunID='PR17' on one-shot review batch request, got %q", runner.captured.RunID)
+	}
 }
 
 func TestReviewCmd_AgentFlagOverridesReviewAgent(t *testing.T) {
