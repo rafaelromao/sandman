@@ -16,6 +16,7 @@ const (
 	DefaultBuildToolsPreset  = "generic"
 	DefaultReviewCommand     = "/sandman review"
 	DefaultParallel          = 4
+	DefaultReviewParallel    = 4
 	DefaultStartDelay        = 0
 	DefaultRunIdleTimeout    = 1800
 	DefaultRetries           = 3
@@ -23,7 +24,6 @@ const (
 	DefaultMaxContainers     = 0
 	DefaultWorktreeDir       = ".sandman/worktrees"
 	DefaultSandbox           = "podman"
-	DefaultReviewParallel    = 4
 )
 
 // Config holds the loaded Sandman configuration.
@@ -202,7 +202,7 @@ func Load(path string) (*Config, error) {
 		BuildTools            string           `yaml:"build_tools"`
 		ReviewCommand         string           `yaml:"review_command"`
 		DefaultParallel       int              `yaml:"parallel"`
-		DefaultReviewParallel *int             `yaml:"parallel_reviews"`
+		DefaultReviewParallel int              `yaml:"parallel_reviews"`
 		StartDelay            int              `yaml:"start_delay"`
 		RunIdleTimeout        *int             `yaml:"run_idle_timeout"`
 		Retries               *int             `yaml:"retries"`
@@ -223,22 +223,19 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := Config{
-		DefaultAgent:       raw.DefaultAgent,
-		DefaultModel:       raw.DefaultModel,
-		DefaultReviewAgent: raw.DefaultReviewAgent,
-		DefaultReviewModel: raw.DefaultReviewModel,
-		BuildTools:         raw.BuildTools,
-		ReviewCommand:      raw.ReviewCommand,
-		DefaultParallel:    raw.DefaultParallel,
-		StartDelay:         raw.StartDelay,
-		WorktreeDir:        raw.WorktreeDir,
-		Sandbox:            raw.Sandbox,
-		Agents:             raw.Agents,
-		Git:                GitConfig{BaseBranch: raw.Git.BaseBranch},
-	}
-
-	if raw.DefaultReviewParallel != nil {
-		cfg.DefaultReviewParallel = *raw.DefaultReviewParallel
+		DefaultAgent:          raw.DefaultAgent,
+		DefaultModel:          raw.DefaultModel,
+		DefaultReviewAgent:    raw.DefaultReviewAgent,
+		DefaultReviewModel:    raw.DefaultReviewModel,
+		BuildTools:            raw.BuildTools,
+		ReviewCommand:         raw.ReviewCommand,
+		DefaultParallel:       raw.DefaultParallel,
+		DefaultReviewParallel: raw.DefaultReviewParallel,
+		StartDelay:            raw.StartDelay,
+		WorktreeDir:           raw.WorktreeDir,
+		Sandbox:               raw.Sandbox,
+		Agents:                raw.Agents,
+		Git:                   GitConfig{BaseBranch: raw.Git.BaseBranch},
 	}
 
 	if raw.Git.LegacyBranch != nil {
@@ -247,6 +244,9 @@ func Load(path string) (*Config, error) {
 
 	if cfg.DefaultParallel <= 0 {
 		cfg.DefaultParallel = DefaultParallel
+	}
+	if cfg.DefaultReviewParallel <= 0 {
+		cfg.DefaultReviewParallel = DefaultReviewParallel
 	}
 	if cfg.StartDelay < 0 {
 		return nil, fmt.Errorf("validate config: start_delay must be 0 or greater")
@@ -457,7 +457,7 @@ func (c *Config) GetValue(key string) (string, error) {
 	case "parallel":
 		return fmt.Sprintf("%d", c.DefaultParallel), nil
 	case "parallel_reviews":
-		return fmt.Sprintf("%d", c.DefaultReviewParallel), nil
+		return fmt.Sprintf("%d", c.EffectiveReviewParallel()), nil
 	case "start_delay":
 		return fmt.Sprintf("%d", c.StartDelay), nil
 	case "run_idle_timeout":

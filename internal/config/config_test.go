@@ -968,7 +968,7 @@ parallel_reviews: 8
 	}
 }
 
-func TestLoad_DefaultReviewParallelNotSet_DefaultsToZero(t *testing.T) {
+func TestLoad_DefaultReviewParallelNotSet_DefaultsToDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: opencode
@@ -982,12 +982,12 @@ func TestLoad_DefaultReviewParallelNotSet_DefaultsToZero(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultReviewParallel != 0 {
-		t.Fatalf("parallel_reviews: got %d, want 0 (unset)", cfg.DefaultReviewParallel)
+	if cfg.DefaultReviewParallel != DefaultReviewParallel {
+		t.Fatalf("parallel_reviews: got %d, want %d", cfg.DefaultReviewParallel, DefaultReviewParallel)
 	}
 }
 
-func TestLoad_NegativeDefaultReviewParallel_StoredAsIs(t *testing.T) {
+func TestLoad_NegativeDefaultReviewParallel_Defaulted(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: opencode
@@ -1002,8 +1002,8 @@ parallel_reviews: -2
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultReviewParallel != -2 {
-		t.Fatalf("parallel_reviews: got %d, want -2", cfg.DefaultReviewParallel)
+	if cfg.DefaultReviewParallel != DefaultReviewParallel {
+		t.Fatalf("parallel_reviews: got %d, want %d (defaulted)", cfg.DefaultReviewParallel, DefaultReviewParallel)
 	}
 }
 
@@ -1213,7 +1213,7 @@ func TestConfig_ReviewAgentAndModelResolution(t *testing.T) {
 func TestConfig_GetAndSetParallelReviews(t *testing.T) {
 	cfg := &Config{DefaultReviewParallel: 0}
 
-	if got, err := cfg.GetValue("parallel_reviews"); err != nil || got != "0" {
+	if got, err := cfg.GetValue("parallel_reviews"); err != nil || got != "4" {
 		t.Fatalf("GetValue(parallel_reviews) = %q, %v", got, err)
 	}
 	if err := cfg.SetValue("parallel_reviews", "8"); err != nil {
@@ -1257,6 +1257,7 @@ func TestConfig_EffectiveReviewParallel(t *testing.T) {
 		name           string
 		reviewParallel int
 		parallel       int
+		nilConfig      bool
 		want           int
 	}{
 		{
@@ -1287,6 +1288,7 @@ func TestConfig_EffectiveReviewParallel(t *testing.T) {
 			name:           "falls back to default when nil config",
 			reviewParallel: 0,
 			parallel:       0,
+			nilConfig:      true,
 			want:           DefaultReviewParallel,
 		},
 	}
@@ -1294,7 +1296,7 @@ func TestConfig_EffectiveReviewParallel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var cfg *Config
-			if tt.name == "falls back to default when nil config" {
+			if tt.nilConfig {
 				cfg = nil
 			} else {
 				cfg = &Config{
