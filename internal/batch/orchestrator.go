@@ -1642,7 +1642,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	logPath := agentLogPath(fmt.Sprintf("%d.log", s.issueNumber))
-	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, true, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
+	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, !s.continuation, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
