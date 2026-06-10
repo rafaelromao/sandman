@@ -42,7 +42,7 @@ type Options struct {
 	Agent           string // --agent override
 	Model           string // --model override
 	Parallel        int    // --parallel override (-1 = use config default)
-	ParallelReviews int    // --parallel-reviews override (-1 = use config default)
+	ParallelReviews *int   // --parallel-reviews override; nil = use config.DefaultReviewParallel
 	ReviewCommand   string // --review-command override
 	Retries         *int   // --retries override; nil = use config.DefaultRetries
 	RunIdleTimeout  *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
@@ -256,8 +256,8 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		parallel = opts.Parallel
 	}
 	reviewParallel := config.DefaultReviewParallel
-	if opts.ParallelReviews > 0 {
-		reviewParallel = opts.ParallelReviews
+	if opts.ParallelReviews != nil && *opts.ParallelReviews > 0 {
+		reviewParallel = *opts.ParallelReviews
 	}
 	model := opts.Model
 

@@ -245,9 +245,6 @@ func Load(path string) (*Config, error) {
 	if cfg.DefaultParallel <= 0 {
 		cfg.DefaultParallel = DefaultParallel
 	}
-	if cfg.DefaultReviewParallel <= 0 {
-		cfg.DefaultReviewParallel = DefaultReviewParallel
-	}
 	if cfg.StartDelay < 0 {
 		return nil, fmt.Errorf("validate config: start_delay must be 0 or greater")
 	}

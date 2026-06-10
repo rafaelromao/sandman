@@ -968,7 +968,7 @@ parallel_reviews: 8
 	}
 }
 
-func TestLoad_DefaultReviewParallelNotSet_DefaultsToDefault(t *testing.T) {
+func TestLoad_DefaultReviewParallelNotSet_RawZero(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: opencode
@@ -982,12 +982,15 @@ func TestLoad_DefaultReviewParallelNotSet_DefaultsToDefault(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultReviewParallel != DefaultReviewParallel {
-		t.Fatalf("parallel_reviews: got %d, want %d", cfg.DefaultReviewParallel, DefaultReviewParallel)
+	if cfg.DefaultReviewParallel != 0 {
+		t.Fatalf("parallel_reviews raw: got %d, want 0", cfg.DefaultReviewParallel)
+	}
+	if got := cfg.EffectiveReviewParallel(); got != DefaultReviewParallel {
+		t.Fatalf("EffectiveReviewParallel: got %d, want %d", got, DefaultReviewParallel)
 	}
 }
 
-func TestLoad_NegativeDefaultReviewParallel_Defaulted(t *testing.T) {
+func TestLoad_NegativeDefaultReviewParallel_RawNegative(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: opencode
@@ -1002,8 +1005,11 @@ parallel_reviews: -2
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultReviewParallel != DefaultReviewParallel {
-		t.Fatalf("parallel_reviews: got %d, want %d (defaulted)", cfg.DefaultReviewParallel, DefaultReviewParallel)
+	if cfg.DefaultReviewParallel != -2 {
+		t.Fatalf("parallel_reviews raw: got %d, want -2", cfg.DefaultReviewParallel)
+	}
+	if got := cfg.EffectiveReviewParallel(); got != DefaultReviewParallel {
+		t.Fatalf("EffectiveReviewParallel: got %d, want %d", got, DefaultReviewParallel)
 	}
 }
 

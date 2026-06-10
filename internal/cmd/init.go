@@ -56,7 +56,10 @@ func NewInitCmd() *cobra.Command {
 			agent, _ := cmd.Flags().GetString("agent")
 			model, _ := cmd.Flags().GetString("model")
 			parallel, _ := cmd.Flags().GetInt("parallel")
-			parallelReviews, _ := cmd.Flags().GetInt("parallel-reviews")
+			parallelReviews, err := resolveInitInt(cmd, "parallel-reviews")
+			if err != nil {
+				return err
+			}
 			reviewCommand, _ := cmd.Flags().GetString("review-command")
 
 			retriesOverride, err := resolveInitInt(cmd, "retries")

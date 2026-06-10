@@ -25,6 +25,10 @@ review_command: /sandman review
 # Maximum number of concurrent agent runs.
 parallel: 4
 
+# Maximum concurrent review-daemon runs.
+# Falls back to parallel if unset.
+parallel_reviews: 4
+
 # Idle timeout in seconds for agent runs. When the agent produces no new log
 # output for this duration, the heartbeat watchdog aborts the run.
 # 0 disables the watchdog (runs never abort due to inactivity).
@@ -134,6 +138,8 @@ Use `sandman config get` and `sandman config set` to read and write individual f
 
 ```bash
 sandman config get parallel
+sandman config get parallel_reviews
+sandman config set parallel_reviews 8
 sandman config set container_capacity 2
 sandman config set start_delay 5
 sandman config set run_idle_timeout 3600
