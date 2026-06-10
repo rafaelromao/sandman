@@ -57,7 +57,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = unlimited, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | `0` | Number of times to retry a failed run; `--ralph` sets this to `3` silently |
-| `--force` | `false` | Clear artifacts and reconcile worktree branch before running (deletes prior worktree, logs, and events; force-checkouts existing worktree on wrong branch or detached HEAD) |
+| `--force` | `false` | Clear artifacts before running (deletes prior worktree, logs, and events; force-checkout worktree to expected branch on mismatch or detached HEAD) |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |

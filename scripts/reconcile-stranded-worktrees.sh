@@ -56,7 +56,7 @@ git worktree list --porcelain | awk -v prefix="$worktree_prefix" '
             expected = "refs/heads/sandman/" dirname
             if (detached || (branch != "" && branch != expected)) {
                 actual = (detached ? "detached HEAD" : branch)
-                check = "git rev-parse --verify --quiet " expected " 2>/dev/null"
+                check = "git rev-parse --verify --quiet " expected " >/dev/null 2>&1"
                 missing = (system(check) != 0)
                 if (missing) {
                     print "Worktree " path " is on " actual ", expected " expected " (branch does not exist locally)"
