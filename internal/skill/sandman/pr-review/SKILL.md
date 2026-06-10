@@ -16,7 +16,9 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 4. **You must NOT exit the polling loop on a `0/0` count of (formal reviews, inline comments) when the top-level PR conversation has new comments from any non-agent author.** A reviewer who only posts a top-level PR conversation comment (no formal review event, no inline file comments) is still a real reviewer response. Re-classify the state, run the self-check (Step 4), and continue polling — do not give up.
 
-5. **You must ALWAYS request another review after any new commit that addresses review feedback.** As soon as you push a fix for reviewer feedback, the previous review state is stale; post `{{REVIEW_COMMAND}}` again and continue the loop until the new revision is reviewed.
+5. **You must NOT request another review while a previous `{{REVIEW_COMMAND}}` is still waiting for a response.** Only post `{{REVIEW_COMMAND}}` again after the reviewer has responded to the previous request (approval, changes requested, comments, or inline feedback). If no response has arrived yet, keep polling — do not re-request.
+
+6. **You must NOT request another review before the previous one has produced a response.** Every iteration of the loop that would post a new `{{REVIEW_COMMAND}}` must first check whether the previous request has gotten a response. If it hasn't, skip the request and go back to polling.
 
 ## Workflow
 
@@ -30,64 +32,67 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 1. **Check CI status**
 
-   ```bash
-   gh pr checks <N> --repo <owner/repo>
-   ```
+  ```bash
+  gh pr checks <N> --repo <owner/repo>
+  ```
 
 2. **Wait for CI**
 
-      Poll until status is `pass`. If `fail`:
+  Poll until status is `pass`. If `fail`:
 
-      - If there are merge conflicts, load the `sandman-back-merge` skill and merge the base branch into the local branch.
-      - Read the failed job logs to identify the root cause.
-      - Fix the error in the codebase.
-      - Run local tests/formatting to verify the fix.
-      - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
-      - **Repeat Step 2** (wait for CI again).
+    - If there are merge conflicts, load the `sandman-back-merge` skill and merge the base branch into the local branch.
+    - Read the failed job logs to identify the root cause.
+    - Fix the error in the codebase.
+    - Run local tests/formatting to verify the fix.
+    - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
+    - **Repeat Step 2** (wait for CI again).
 
 3. **Delegate review to the PR Review Agent**
 
-    Request a review with this exact command. Do not change the body of the request for the initial review request.
+  Before posting, check if a previous `{{REVIEW_COMMAND}}` has already been sent and is still awaiting a response. If it has (no review comments, no formal reviews, no inline feedback since that post), skip this step and go back to Step 2 — do not pile on a new request.
 
-    ```bash
-    gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
-    ```
-    **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
+  Request a review with this exact command. Do not change the body of the request for the initial review request.
+
+  ```bash
+  gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
+  ```
+  **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
 4. **Wait for review** (timeout: 10 minutes)
-      Poll every 30–60s. On **every** poll iteration you MUST run all three commands below — never skip one. Run each command as a fully separate, standalone invocation — do NOT chain commands in any way, including with `&&`, `||`, `;`, pipes (`|`), or subshells. Each command must be executed on its own so its full output is captured before processing the next one.
 
-    After every poll, print a counter line in this exact format (the agent must read this counter out loud to the user on every iteration and include the final iteration's counter in the final report):
+  Poll every 30–60s. On **every** poll iteration you MUST run all three commands below — never skip one. Run each command as a fully separate, standalone invocation — do NOT chain commands in any way, including with `&&`, `||`, `;`, pipes (`|`), or subshells. Each command must be executed on its own so its full output is captured before processing the next one.
 
-    ```
-    top=<count> reviews=<count> inline=<count>
-    ```
+  After every poll, print a counter line in this exact format (the agent must read this counter out loud to the user on every iteration and include the final iteration's counter in the final report):
 
-    ```bash
-    gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus
-    gh api repos/<owner>/<repo>/pulls/<N>/reviews
-    gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate
-    ```
+  ```
+  top=<count> reviews=<count> inline=<count>
+  ```
 
-   Counter definitions (apply to a single poll iteration):
-   - `top` = number of top-level PR conversation comments from `gh pr view --json comments` whose author is not the agent itself AND whose body is not the `{{REVIEW_COMMAND}}` request the agent posted. Capture the agent's own GitHub author login from the `{{REVIEW_COMMAND}}` post in step 3 and reuse it as the "self" filter for every subsequent poll
-   - `reviews` = number of entries returned by `gh api .../reviews` (use the full entry, not the truncated `latestReviews`)
-   - `inline` = number of entries returned by `gh api .../comments --paginate` (inline file-level review comments on the diff; use `--paginate` to fetch all pages)
+  ```bash
+  gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus
+  gh api repos/<owner>/<repo>/pulls/<N>/reviews
+  gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate
+  ```
 
-   What each command returns:
-   - `gh pr view --json comments` — top-level PR conversation comments only (NOT inline diff comments)
-   - `gh api .../reviews` — all reviews with their state, body, and commit. Use this for review content, NOT `latestReviews` which is a truncated preview with empty fields
-   - `gh api .../comments --paginate` — inline file-level review comments on the diff. Use `--paginate` to fetch all pages; inline comments can span many files and are often truncated without it
+  Counter definitions (apply to a single poll iteration):
+  - `top` = number of top-level PR conversation comments from `gh pr view --json comments` whose author is not the agent itself AND whose body is not the `{{REVIEW_COMMAND}}` request the agent posted. Capture the agent's own GitHub author login from the `{{REVIEW_COMMAND}}` post in step 3 and reuse it as the "self" filter for every subsequent poll
+  - `reviews` = number of entries returned by `gh api .../reviews` (use the full entry, not the truncated `latestReviews`)
+  - `inline` = number of entries returned by `gh api .../comments --paginate` (inline file-level review comments on the diff; use `--paginate` to fetch all pages)
 
-   A reviewer response is **any** of:
-   - A new top-level comment whose author is not the agent itself and whose body is not the `{{REVIEW_COMMAND}}` request the agent posted
-   - A formal review with `state: COMMENTED`, `APPROVED`, or `CHANGES_REQUESTED`
-   - An inline file comment
+  What each command returns:
+  - `gh pr view --json comments` — top-level PR conversation comments only (NOT inline diff comments)
+  - `gh api .../reviews` — all reviews with their state, body, and commit. Use this for review content, NOT `latestReviews` which is a truncated preview with empty fields
+  - `gh api .../comments --paginate` — inline file-level review comments on the diff. Use `--paginate` to fetch all pages; inline comments can span many files and are often truncated without it
 
-   **Self-check (run after every poll, before classifying state):**
-   If `top > 0` AND `reviews == 0` AND `inline == 0`, do NOT classify the state as "still pending" (case D). Post a follow-up PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. This guarantees that a reviewer who only posts a top-level conversation comment is never silently dropped.
+  A reviewer response is **any** of:
+  - A new top-level comment whose author is not the agent itself and whose body is not the `{{REVIEW_COMMAND}}` request the agent posted
+  - A formal review with `state: COMMENTED`, `APPROVED`, or `CHANGES_REQUESTED`
+  - An inline file comment
 
-   Read every new PR Review Agent comment from all three sources, including inline file comments. Do not overlook comments attached to a file diff instead of the top-level conversation. Treat any requested concrete change in an inline file comment as actionable feedback. If no reviewer response arrives within 10 minutes, stop and report to the user.
+  **Self-check (run after every poll, before classifying state):**
+  If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COMMAND}}` is already pending without response, post a follow-up PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. If a request is already pending, skip — do not pile on. This guarantees that a reviewer who only posts a top-level conversation comment is never silently dropped.
+
+  Read every new PR Review Agent comment from all three sources, including inline file comments. Do not overlook comments attached to a file diff instead of the top-level conversation. Treat any requested concrete change in an inline file comment as actionable feedback. If no reviewer response arrives within 10 minutes, stop and report to the user.
 
 5. **Read and classify feedback**
 
@@ -127,23 +132,23 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
     - All review bodies are boilerplate-only (see below)
     → **Still waiting** — continue polling, do not give up
 
-    **E. Real feedback detected?**
-    An inline file comment exists from `gh api .../comments` with a concrete requested code change, OR a top-level PR conversation comment contains concrete code feedback, OR a review body contains concrete code feedback beyond boilerplate:
-    - Boilerplate pattern: body starts with "### 💡" or "### Codex Review" and only contains "Here are some automated review suggestions" without mentioning specific files, functions, variable names, or line numbers
-    - Real feedback: mentions specific file paths, function names, variable names, or requests concrete code changes
-    → **Has blockers or suggestions** — treat as actionable feedback, apply fixes, commit, push, and re-request review
+  **E. Real feedback detected?**
+  An inline file comment exists from `gh api .../comments` with a concrete requested code change, OR a top-level PR conversation comment contains concrete code feedback, OR a review body contains concrete code feedback beyond boilerplate:
+  - Boilerplate pattern: body starts with "### 💡" or "### Codex Review" and only contains "Here are some automated review suggestions" without mentioning specific files, functions, variable names, or line numbers
+  - Real feedback: mentions specific file paths, function names, variable names, or requests concrete code changes
+  → **Has blockers or suggestions** — treat as actionable feedback, apply fixes, commit, push. Only re-request review after the fix+push cycle if the previous `{{REVIEW_COMMAND}}` has already received a response. If no response was received yet, keep polling — do not re-request.
 
-    **F. Ambiguous feedback with unclear actionable intent only?**
-    - Top-level comments, inline file comments, or review bodies exist, but none of them specify a concrete code change
-    - The reviewer's intended action cannot be reduced to a concrete code change
-    - The feedback is not concrete enough to classify as a specific fix, blocker, or suggestion
-    - No `APPROVED` or `CHANGES_REQUESTED` review is present
-    → **Clarification** — do not guess, do not change code. Post a new PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling.
+  **F. Ambiguous feedback with unclear actionable intent only?**
+  - Top-level comments, inline file comments, or review bodies exist, but none of them specify a concrete code change
+  - The reviewer's intended action cannot be reduced to a concrete code change
+  - The feedback is not concrete enough to classify as a specific fix, blocker, or suggestion
+  - No `APPROVED` or `CHANGES_REQUESTED` review is present
+  → **Clarification** — do not guess, do not change code. Only post a new `{{REVIEW_COMMAND}}` plus clarification request if no previous request is still pending without response. If one is already pending, keep polling — do not pile on.
 
-    **G. Only nits or suggestions?**
-    - Comments that are nits (minor stylistic) or suggestions (optional improvements)
-    - No `CHANGES_REQUESTED` reviews
-     → **Suggestions** — fix if straightforward; skip if requires non-trivial redesign and re-request review after addressing what is straightforward
+  **G. Only nits or suggestions?**
+  - Comments that are nits (minor stylistic) or suggestions (optional improvements)
+  - No `CHANGES_REQUESTED` reviews
+  → **Suggestions** — fix if straightforward; skip if requires non-trivial redesign. Only re-request review after the fix+push cycle if the previous `{{REVIEW_COMMAND}}` has already received a response. If not, keep polling — do not re-request.
 
 6. **Apply fixes**
    - Read `.sandman/.<N>.addressed_comments` to get the set of already-addressed inline comment IDs
@@ -156,7 +161,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
    - Push: `git push`
    - Append the acted-on inline comment IDs to `.sandman/.<N>.addressed_comments` so they do not re-trigger in future passes
 
-7. **Repeat** from step 2. After the final pass, request one last review and report the outcome.
+7. **Repeat** from step 2. Before re-requesting a review in step 3, check whether the previous `{{REVIEW_COMMAND}}` has already received a response. If it hasn't, skip the re-request and go directly to polling (step 4). After the final pass, request one last review and report the outcome.
 
 ### State files
 
