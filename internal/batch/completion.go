@@ -189,17 +189,3 @@ func BuildHandoffPrompt(content string) string {
 	doc := prompt.ParseHandoff(content)
 	return prompt.BuildResumePrompt(doc)
 }
-
-// BuildRetryHandoffPrompt builds a handoff prompt for retry attempts,
-// embedding the Stage, Last Skill, and Last Skill Status headings in
-// the Update Handoff Context tail template.
-func BuildRetryHandoffPrompt(content string) string {
-	return BuildHandoffPrompt(content)
-}
-
-// BuildPRReviewHandoffPrompt builds a handoff prompt for PR review runs,
-// embedding the Stage, Last Skill, and Last Skill Status headings in
-// the Update Handoff Context tail template.
-func BuildPRReviewHandoffPrompt(content string) string {
-	return BuildHandoffPrompt(content)
-}

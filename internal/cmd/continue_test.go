@@ -1066,8 +1066,14 @@ func TestContinue_StageAwarePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "## Update Handoff Context") {
 		t.Fatalf("expected update handoff context section, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "Stage: plan-approved. Last skill:  ()") {
-		t.Fatalf("expected New Instruction with Stage and empty Last Skill, got %q", prompt)
+	if !strings.Contains(prompt, "Stage: plan-approved") {
+		t.Fatalf("expected New Instruction with Stage, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "## Last Skill:") {
+		t.Fatalf("expected ## Last Skill heading in New Instruction, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "## Last Skill Status:") {
+		t.Fatalf("expected ## Last Skill Status heading in New Instruction, got %q", prompt)
 	}
 	if spy.req.PromptConfig.HandoffPrompt != "" {
 		t.Fatalf("expected no bare prompt, got %q", spy.req.PromptConfig.HandoffPrompt)

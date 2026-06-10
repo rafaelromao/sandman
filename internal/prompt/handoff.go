@@ -16,32 +16,19 @@ func ParseHandoff(content string) HandoffDoc {
 	lines := strings.Split(content, "\n")
 	var stage, sourcePrompt, lastSkill, lastSkillStatus string
 	var bodyLines []string
-	inMetadata := true
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if inMetadata {
-			if strings.HasPrefix(trimmed, "## Stage:") {
-				stage = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Stage:"))
-				continue
-			}
-			if strings.HasPrefix(trimmed, "## Source Prompt:") {
-				sourcePrompt = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Source Prompt:"))
-				continue
-			}
-			if strings.HasPrefix(trimmed, "## Last Skill:") {
-				lastSkill = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Last Skill:"))
-				continue
-			}
-			if strings.HasPrefix(trimmed, "## Last Skill Status:") {
-				lastSkillStatus = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Last Skill Status:"))
-				continue
-			}
-			if strings.HasPrefix(trimmed, "##") {
-				inMetadata = false
-			}
-		}
-		if !inMetadata || !strings.HasPrefix(trimmed, "##") {
+		switch {
+		case strings.HasPrefix(trimmed, "## Stage:"):
+			stage = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Stage:"))
+		case strings.HasPrefix(trimmed, "## Source Prompt:"):
+			sourcePrompt = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Source Prompt:"))
+		case strings.HasPrefix(trimmed, "## Last Skill:"):
+			lastSkill = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Last Skill:"))
+		case strings.HasPrefix(trimmed, "## Last Skill Status:"):
+			lastSkillStatus = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Last Skill Status:"))
+		default:
 			bodyLines = append(bodyLines, line)
 		}
 	}
@@ -64,9 +51,11 @@ func ParseHandoff(content string) HandoffDoc {
 func BuildResumePrompt(doc HandoffDoc) string {
 	var b strings.Builder
 
-	b.WriteString("## Prior Context\n")
-	b.WriteString(doc.Body)
-	b.WriteString("\n\n")
+	if doc.Body != "" {
+		b.WriteString("## Prior Context\n")
+		b.WriteString(doc.Body)
+		b.WriteString("\n\n")
+	}
 
 	sourcePrompt := doc.SourcePrompt
 	if sourcePrompt == "" {
@@ -80,11 +69,14 @@ func BuildResumePrompt(doc HandoffDoc) string {
 		b.WriteString("## New Instruction\n")
 		b.WriteString("Stage: ")
 		b.WriteString(doc.Stage)
-		b.WriteString(". Last skill: ")
+		b.WriteString("\n")
+		b.WriteString("## Last Skill: ")
 		b.WriteString(doc.LastSkill)
-		b.WriteString(" (")
+		b.WriteString("\n")
+		b.WriteString("## Last Skill Status: ")
 		b.WriteString(doc.LastSkillStatus)
-		b.WriteString("). Next: ")
+		b.WriteString("\n")
+		b.WriteString("Next: ")
 		b.WriteString(extractNextStep(doc.Body))
 		b.WriteString("\n\n")
 	}
@@ -112,8 +104,12 @@ func BuildResumePrompt(doc HandoffDoc) string {
 }
 
 func extractNextStep(body string) string {
+	if body == "" {
+		return "Continue the work."
+	}
 	lines := strings.Split(body, "\n")
 	inNextStep := false
+	var nextLines []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "## Next Step") {
@@ -124,10 +120,13 @@ func extractNextStep(body string) string {
 			if strings.HasPrefix(trimmed, "## ") {
 				break
 			}
-			if trimmed != "" {
-				return trimmed
+			if trimmed != "" || len(nextLines) > 0 {
+				nextLines = append(nextLines, line)
 			}
 		}
 	}
-	return "Continue the work."
+	if len(nextLines) == 0 {
+		return "Continue the work."
+	}
+	return strings.TrimSpace(strings.Join(nextLines, "\n"))
 }

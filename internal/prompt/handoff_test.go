@@ -189,8 +189,11 @@ func TestBuildResumePrompt_NewInstruction(t *testing.T) {
 	if !strings.Contains(result, "Stage: implementation-committed") {
 		t.Fatalf("expected Stage in New Instruction, got:\n%s", result)
 	}
-	if !strings.Contains(result, "Last skill: sandman-tdd (complete)") {
-		t.Fatalf("expected Last skill in New Instruction, got:\n%s", result)
+	if !strings.Contains(result, "## Last Skill: sandman-tdd") {
+		t.Fatalf("expected ## Last Skill in New Instruction, got:\n%s", result)
+	}
+	if !strings.Contains(result, "## Last Skill Status: complete") {
+		t.Fatalf("expected ## Last Skill Status in New Instruction, got:\n%s", result)
 	}
 	if !strings.Contains(result, "Next: load sandman-merge") {
 		t.Fatalf("expected Next in New Instruction, got:\n%s", result)
@@ -248,6 +251,43 @@ func TestBuildResumePrompt_UpdateHandoffContextTailIncludesHandoffMd(t *testing.
 
 	if !strings.Contains(result, ".sandman/handoff.md") {
 		t.Fatalf("expected Update Handoff Context to reference handoff.md, got:\n%s", result)
+	}
+}
+
+func TestParseHandoff_StageAfterBody(t *testing.T) {
+	content := `## Completed
+Some work.
+
+## Stage: plan-approved
+## Next Step
+Continue.`
+
+	doc := ParseHandoff(content)
+	if doc.Stage != "plan-approved" {
+		t.Fatalf("expected Stage=plan-approved even when after body, got %q", doc.Stage)
+	}
+}
+
+func TestParseHandoff_SourcePromptLast(t *testing.T) {
+	content := `## Completed
+Done.
+
+## Source Prompt: .sandman/custom.md`
+
+	doc := ParseHandoff(content)
+	if doc.SourcePrompt != ".sandman/custom.md" {
+		t.Fatalf("expected SourcePrompt=.sandman/custom.md even at end, got %q", doc.SourcePrompt)
+	}
+}
+
+func TestExtractNextStep_MultiLine(t *testing.T) {
+	body := "## Completed\nDone.\n\n## Next Step\nload sandman-merge\npush PR\ncreate release."
+	next := extractNextStep(body)
+	if !strings.Contains(next, "load sandman-merge") {
+		t.Fatalf("expected multi-line next step, got %q", next)
+	}
+	if !strings.Contains(next, "push PR") {
+		t.Fatalf("expected multi-line next step to include push PR, got %q", next)
 	}
 }
 
