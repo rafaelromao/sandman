@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sort"
@@ -220,9 +221,15 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					}
 
 					if label == "" && query == "" && !hasUnboundedEnd {
-						issues = append(issues, orderedIssues...)
+						issues, err = filterClosedIssues(orderedIssues, selection, githubClient.FetchIssue, cmd.ErrOrStderr())
+						if err != nil {
+							return err
+						}
 					} else if label == "" && query == "" {
-						issues = append(issues, orderedIssues...)
+						issues, err = filterClosedIssues(orderedIssues, selection, githubClient.FetchIssue, cmd.ErrOrStderr())
+						if err != nil {
+							return err
+						}
 						seen := make(map[int]struct{}, len(issues))
 						for _, number := range issues {
 							seen[number] = struct{}{}
@@ -730,6 +737,24 @@ func resolveIssuesLocally(client github.Client, numbers []int, label, query stri
 		issues = append(issues, number)
 	}
 	return issues, nil
+}
+
+func filterClosedIssues(numbers []int, selection issueSelection, fetchFn func(int) (*github.Issue, error), stderr io.Writer) ([]int, error) {
+	filtered := make([]int, 0, len(numbers))
+	for _, n := range numbers {
+		issue, err := fetchFn(n)
+		if err != nil {
+			return nil, fmt.Errorf("fetch issue #%d: %w", n, err)
+		}
+		if issue.State == "closed" {
+			if _, ok := selection.exact[n]; ok {
+				fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
+			}
+			continue
+		}
+		filtered = append(filtered, n)
+	}
+	return filtered, nil
 }
 
 func extractIssueNumbers(ghIssues []github.Issue) []int {
