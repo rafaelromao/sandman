@@ -614,10 +614,13 @@ func (c *Config) EffectiveReviewAgent() string {
 // EffectiveReviewParallel returns the effective parallel_reviews value,
 // falling back to DefaultParallel and then to the DefaultReviewParallel constant.
 func (c *Config) EffectiveReviewParallel() int {
-	if c != nil && c.DefaultReviewParallel > 0 {
+	if c == nil {
+		return DefaultReviewParallel
+	}
+	if c.DefaultReviewParallel > 0 {
 		return c.DefaultReviewParallel
 	}
-	if c != nil && c.DefaultParallel > 0 {
+	if c.DefaultParallel > 0 {
 		return c.DefaultParallel
 	}
 	return DefaultReviewParallel
