@@ -134,7 +134,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 }
 
 // rangeConstraint captures an unbounded range: end==0 means N: (all PRs >= N),
-// start<=end means :M or N:M resolved against open PRs.
+// start=1,end=M with the original arg having empty start means :M (all PRs <= M).
 type rangeConstraint struct {
 	start, end int
 }
@@ -159,7 +159,8 @@ func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Co
 			constraints = append(constraints, rangeConstraint{start: start, end: 0})
 			continue
 		}
-		if start == 1 {
+		isEmptyStart := strings.HasPrefix(arg, ":")
+		if isEmptyStart {
 			constraints = append(constraints, rangeConstraint{start: 1, end: end})
 			continue
 		}

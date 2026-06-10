@@ -748,6 +748,34 @@ func TestReviewCmd_UnboundedRangeStart(t *testing.T) {
 	}
 }
 
+func TestReviewCmd_PRFlagRemoved(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"--pr", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when using removed --pr flag")
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("expected error about unknown flag, got: %v", err)
+	}
+}
+
 func TestReviewCmd_InvalidRangeError(t *testing.T) {
 	cfg := &config.Config{
 		DefaultAgent:       "opencode",
