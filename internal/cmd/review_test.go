@@ -79,7 +79,7 @@ func TestReviewCmd_RequiresPRFlag(t *testing.T) {
 	deps := newReviewDeps(t, gh, cfg, runner)
 
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config) error {
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
 		return fmt.Errorf("daemon reached")
 	}
 	defer func() { reviewDaemonRunner = prev }()
@@ -117,7 +117,7 @@ func TestReviewCmd_DaemonModeCreatesReviewSock(t *testing.T) {
 	deps := newReviewDeps(t, gh, cfg, runner)
 
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config) error {
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
 		if err := os.MkdirAll(".sandman", 0755); err != nil {
 			return err
 		}
@@ -183,7 +183,7 @@ func TestReviewCmd_DaemonSocketAcceptsConnections(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- runReviewDaemon(ctx, deps, cfg) }()
+	go func() { done <- runReviewDaemon(ctx, deps, cfg, "", 0, false, 0, false) }()
 
 	sockPath := filepath.Join(dir, ".sandman", "review.sock")
 	deadline := time.Now().Add(2 * time.Second)
@@ -380,6 +380,74 @@ func TestReviewCmd_SandboxFlagDefaultsToWorktree(t *testing.T) {
 	}
 	if runner.captured.Sandbox != "worktree" {
 		t.Errorf("expected review sandbox default 'worktree', got %q", runner.captured.Sandbox)
+	}
+}
+
+func TestReviewCmd_ContainerCapacityFlag(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultModel:       "opencode/big-pickle",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr:               &github.PR{Number: 1, Title: "T", Body: "B"},
+	}
+	runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--pr", "1", "--container-capacity", "5"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if runner.captured.ContainerCapacity != 5 {
+		t.Errorf("expected ContainerCapacity 5, got %d", runner.captured.ContainerCapacity)
+	}
+	if !runner.captured.ContainerCapacitySet {
+		t.Errorf("expected ContainerCapacitySet=true")
+	}
+}
+
+func TestReviewCmd_MaxContainersFlag(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultModel:       "opencode/big-pickle",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr:               &github.PR{Number: 1, Title: "T", Body: "B"},
+	}
+	runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--pr", "1", "--max-containers", "3"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if runner.captured.MaxContainers != 3 {
+		t.Errorf("expected MaxContainers 3, got %d", runner.captured.MaxContainers)
+	}
+	if !runner.captured.MaxContainersSet {
+		t.Errorf("expected MaxContainersSet=true")
 	}
 }
 
