@@ -23,7 +23,7 @@ import (
 // NewContinueCmd creates the continue command.
 func NewContinueCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "continue [issue-number]... --run-id <id>",
+		Use:   "continue ([issue-number]... | --run-id <id>)",
 		Short: "Continue the last agent run for one or more issues in a batch",
 		Args:  wrapArgs(cobra.ArbitraryArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,8 +56,6 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("read event log: %w", err)
 			}
 
-			lastRuns := lastRunPerIssue(eventsList, issues)
-
 			cfg, err := deps.ConfigStore.Load()
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
@@ -67,18 +65,21 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				return err
 			}
 
+			lastRuns := lastRunPerIssue(eventsList, issues)
+
 			previousRunIDs := make(map[int]string, len(issues))
 			var promptFlagContent string
 			var promptOnlyBaseBranch string
 			var promptOnlyBranch string
 			if runID != "" {
-				lastRun := lastRuns[0]
-				if lastRun.RunID == "" {
+				promptOnlyEvent, found := lastPromptOnlyRun(eventsList)
+				if !found || promptOnlyEvent.RunID == "" {
 					return fmt.Errorf("no previous prompt-only run found")
 				}
-				previousRunIDs[0] = lastRun.RunID
-				promptOnlyBranch, _ = payloadString(lastRun.Payload, "branch")
-				promptOnlyBaseBranch, _ = payloadString(lastRun.Payload, "base_branch")
+				previousRunIDs[0] = promptOnlyEvent.RunID
+				promptOnlyBranch, _ = payloadString(promptOnlyEvent.Payload, "branch")
+				promptOnlyBaseBranch, _ = payloadString(promptOnlyEvent.Payload, "base_branch")
+				lastRuns[0] = promptOnlyEvent
 			}
 
 			worktreeBase := cfg.WorktreeDir
@@ -381,6 +382,33 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only continuation; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection")
 
 	return cmd
+}
+
+// lastPromptOnlyRun returns the most recent run.started or run.continued event
+// whose Issue is 0 and whose payload indicates a prompt-only run (not a review
+// run). A prompt-only run has prompt_source_type == "prompt" in its payload.
+// Review runs (review: true) are explicitly excluded so that --run-id picks
+// the correct prior prompt-only run even when a review event is more recent.
+func lastPromptOnlyRun(eventsList []events.Event) (events.Event, bool) {
+	var match events.Event
+	var found bool
+	for _, e := range eventsList {
+		if e.Type != "run.started" && e.Type != "run.continued" {
+			continue
+		}
+		if e.Issue != 0 {
+			continue
+		}
+		if review, _ := payloadBool(e.Payload, "review"); review {
+			continue
+		}
+		if pt, _ := payloadString(e.Payload, "prompt_source_type"); pt != "prompt" {
+			continue
+		}
+		match = e
+		found = true
+	}
+	return match, found
 }
 
 // lastRunPerIssue scans the event log once and returns the latest run.started

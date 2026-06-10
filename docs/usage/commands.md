@@ -123,7 +123,7 @@ Reuses the previously created branch and recorded agent and review command from 
 |------|---------|-------------|
 | `--model` | `model` from config | Override the model for the continued run |
 | `--agent` | prior run's agent | Override the agent preset for the continued run |
-| `--run-id` | — | Batch-level identifier for prompt-only continuation; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers |
+| `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior handoff from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), the command skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
 
 ## `sandman clean`
