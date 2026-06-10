@@ -57,7 +57,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = unlimited, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | `0` | Number of times to retry a failed run; `--ralph` sets this to `3` silently |
-| `--force` | `false` | Clear artifacts before running (deletes prior worktree and logs for the issue) |
+| `--force` | `false` | Clear artifacts before running (deletes prior worktree, logs, and events; force-checkout worktree to expected branch on mismatch or detached HEAD) |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
@@ -235,3 +235,31 @@ sandman config set <key> <value>
 `sandman config set review_command ...` also re-syncs the shared `sandman` skill tree. If local edits are detected under `~/.agents/skills/sandman/`, Sandman prompts before overwriting in a TTY and fails in non-interactive mode.
 
 Agent commits use your host Git identity, not Sandman config keys. Sandman resolves `user.name` and `user.email` from `~/.gitconfig`, then host global/XDG config, then repo-local `.git/config`.
+
+## Troubleshooting
+
+### Stranded worktrees
+
+A *stranded worktree* is a sandman-managed worktree whose HEAD points to a different branch than its directory name expects. This can happen when a previous run was interrupted after creating the worktree but before checking out the correct branch.
+
+To detect stranded worktrees and print remediation commands, run the standalone script:
+
+```bash
+scripts/reconcile-stranded-worktrees.sh
+```
+
+The script works from the main repo root or from inside any sandman worktree. It reads the configured `worktree_dir` from `.sandman/config.yaml` and resolves the path to match `git worktree list` output correctly, including absolute, tilde-prefixed, and relative `worktree_dir` values.
+
+The script parses `git worktree list --porcelain`, reads the configured `worktree_dir` from `.sandman/config.yaml` (defaults to `.sandman/worktrees`), matches worktrees under that directory whose directory name follows the `sandman/<number>-<slug>` pattern, and compares the actual branch against the expected branch derived from the directory name. For each mismatch it prints a one-line remediation command:
+
+```
+Worktree /path/.sandman/worktrees/sandman/724-foo is on refs/heads/main, expected refs/heads/sandman/724-foo. Run: git -C /path/.sandman/worktrees/sandman/724-foo checkout -f sandman/724-foo
+```
+
+The script is non-destructive: it never checks out branches or removes worktrees automatically. It exits 0 on success, including when no stranded worktrees are found.
+
+> **Warning:** The printed `git checkout -f` command will discard uncommitted changes in the worktree. Commit or stash any worktree-local changes before running the remediation command.
+
+> **Note:** The script only detects stranded worktrees for issue-driven branches (`sandman/<number>-<slug>`). Prompt-only worktrees (timestamp-based branch names) are not checked, as their directory name does not map to a predictable expected branch. When a prompt-only branch's slug starts with a digit (e.g. `sandman/4-eyes-1700000000`), the script may flag it as stranded and report the branch as missing — this is a false positive. `sandman run --force` reconciles all worktrees regardless of naming pattern.
+
+> **Note:** The `--force` flag on `sandman run` performs the same reconciliation automatically at the start of a new run. The standalone script is useful for inspecting or fixing worktrees outside of a run.
