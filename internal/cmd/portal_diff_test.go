@@ -1205,6 +1205,29 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffBuildEventsContent_RendersHighlightedPayload(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', events: [{ type: 'check', timestamp: 1700000000000, payload: { ok: true, count: 42, msg: "done", items: [1, null] } }] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+if (!detailRow) throw new Error('expected detail row');
+const pre = detailRow.querySelector('pre.event-payload');
+if (!pre) throw new Error('expected pre.event-payload in events tab');
+const html = pre.innerHTML;
+if (html.indexOf('json-key') === -1) throw new Error('expected json-key in highlighted output');
+if (html.indexOf('json-boolean') === -1) throw new Error('expected json-boolean in highlighted output');
+if (html.indexOf('json-number') === -1) throw new Error('expected json-number in highlighted output');
+if (html.indexOf('json-string') === -1) throw new Error('expected json-string in highlighted output');
+if (html.indexOf('json-punctuation') === -1) throw new Error('expected json-punctuation in highlighted output');
+if (html.indexOf('json-null') === -1) throw new Error('expected json-null in highlighted output');
+if (html.indexOf('&quot;ok&quot;') === -1) throw new Error('expected escaped key in highlighted output');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffHelperExists(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required for portal diff helper test")
