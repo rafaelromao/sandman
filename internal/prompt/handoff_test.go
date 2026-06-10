@@ -186,8 +186,8 @@ func TestBuildResumePrompt_NewInstruction(t *testing.T) {
 
 	result := BuildResumePrompt(doc)
 
-	if !strings.Contains(result, "Stage: implementation-committed") {
-		t.Fatalf("expected Stage in New Instruction, got:\n%s", result)
+	if !strings.Contains(result, "## Stage: implementation-committed") {
+		t.Fatalf("expected ## Stage in New Instruction, got:\n%s", result)
 	}
 	if !strings.Contains(result, "## Last Skill: sandman-tdd") {
 		t.Fatalf("expected ## Last Skill in New Instruction, got:\n%s", result)
@@ -222,11 +222,14 @@ func TestBuildResumePrompt_UpdateHandoffContext(t *testing.T) {
 	if !strings.Contains(result, "## Stage:") {
 		t.Fatalf("expected ## Stage: in Update Handoff Context, got:\n%s", result)
 	}
+	if !strings.Contains(result, "## Source Prompt:") {
+		t.Fatalf("expected ## Source Prompt: in Update Handoff Context, got:\n%s", result)
+	}
 	if !strings.Contains(result, "## Last Skill:") {
 		t.Fatalf("expected ## Last Skill: in Update Handoff Context, got:\n%s", result)
 	}
-	if !strings.Contains(result, "## Last Skill Status:") {
-		t.Fatalf("expected ## Last Skill Status: in Update Handoff Context, got:\n%s", result)
+	if !strings.Contains(result, "## Last Skill Status: complete") {
+		t.Fatalf("expected ## Last Skill Status: complete (no em-dash) in Update Handoff Context, got:\n%s", result)
 	}
 	if !strings.Contains(result, "## Completed") {
 		t.Fatalf("expected ## Completed in Update Handoff Context, got:\n%s", result)
@@ -263,8 +266,8 @@ Some work.
 Continue.`
 
 	doc := ParseHandoff(content)
-	if doc.Stage != "plan-approved" {
-		t.Fatalf("expected Stage=plan-approved even when after body, got %q", doc.Stage)
+	if doc.Stage != "" {
+		t.Fatalf("expected empty Stage (after first body heading), got %q", doc.Stage)
 	}
 }
 
@@ -275,19 +278,17 @@ Done.
 ## Source Prompt: .sandman/custom.md`
 
 	doc := ParseHandoff(content)
-	if doc.SourcePrompt != ".sandman/custom.md" {
-		t.Fatalf("expected SourcePrompt=.sandman/custom.md even at end, got %q", doc.SourcePrompt)
+	if doc.SourcePrompt != ".sandman/rendered-prompt.md" {
+		t.Fatalf("expected default SourcePrompt (after first body heading), got %q", doc.SourcePrompt)
 	}
 }
 
 func TestExtractNextStep_MultiLine(t *testing.T) {
 	body := "## Completed\nDone.\n\n## Next Step\nload sandman-merge\npush PR\ncreate release."
 	next := extractNextStep(body)
-	if !strings.Contains(next, "load sandman-merge") {
-		t.Fatalf("expected multi-line next step, got %q", next)
-	}
-	if !strings.Contains(next, "push PR") {
-		t.Fatalf("expected multi-line next step to include push PR, got %q", next)
+	expected := "load sandman-merge\npush PR\ncreate release."
+	if next != expected {
+		t.Fatalf("expected exact multi-line next step:\n%q\n\ngot:\n%q", expected, next)
 	}
 }
 
@@ -302,8 +303,29 @@ func TestBuildResumePrompt_WithStageOnly(t *testing.T) {
 	if !strings.Contains(result, "## New Instruction") {
 		t.Fatalf("expected New Instruction with stage, got:\n%s", result)
 	}
-	if !strings.Contains(result, "Stage: pr-created") {
-		t.Fatalf("expected Stage in New Instruction, got:\n%s", result)
+	if !strings.Contains(result, "## Stage: pr-created") {
+		t.Fatalf("expected ## Stage in New Instruction, got:\n%s", result)
+	}
+}
+
+func TestBuildResumePrompt_EmptyTemplateSuppressesMetadataInUHC(t *testing.T) {
+	doc := HandoffDoc{Body: "## Completed\nDone.\n\n## Next Step\nContinue."}
+	result := BuildResumePrompt(doc)
+
+	if strings.Contains(result, "## Stage:") {
+		t.Fatalf("expected no ## Stage: in UHC for empty metadata, got:\n%s", result)
+	}
+	if strings.Contains(result, "## Last Skill:") {
+		t.Fatalf("expected no ## Last Skill: in UHC for empty metadata, got:\n%s", result)
+	}
+	if strings.Contains(result, "## Last Skill Status:") {
+		t.Fatalf("expected no ## Last Skill Status: in UHC for empty metadata, got:\n%s", result)
+	}
+	if !strings.Contains(result, "## Update Handoff Context") {
+		t.Fatalf("expected Update Handoff Context section, got:\n%s", result)
+	}
+	if !strings.Contains(result, "## Completed") {
+		t.Fatalf("expected ## Completed in UHC, got:\n%s", result)
 	}
 }
 

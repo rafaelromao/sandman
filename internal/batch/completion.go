@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/github"
-	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 func parseLogForCompletion(logPath string) bool {
@@ -182,10 +181,3 @@ func logRunMarker(logPath string, attempt, maxRetries int) error {
 }
 
 var logRunMarkerFn = logRunMarker
-
-// BuildHandoffPrompt wraps raw handoff markdown content into a structured
-// resume prompt using the shared prompt package helpers.
-func BuildHandoffPrompt(content string) string {
-	doc := prompt.ParseHandoff(content)
-	return prompt.BuildResumePrompt(doc)
-}

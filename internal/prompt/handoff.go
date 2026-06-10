@@ -16,21 +16,33 @@ func ParseHandoff(content string) HandoffDoc {
 	lines := strings.Split(content, "\n")
 	var stage, sourcePrompt, lastSkill, lastSkillStatus string
 	var bodyLines []string
+	inHeader := true
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(trimmed, "## Stage:"):
-			stage = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Stage:"))
-		case strings.HasPrefix(trimmed, "## Source Prompt:"):
-			sourcePrompt = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Source Prompt:"))
-		case strings.HasPrefix(trimmed, "## Last Skill:"):
-			lastSkill = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Last Skill:"))
-		case strings.HasPrefix(trimmed, "## Last Skill Status:"):
-			lastSkillStatus = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Last Skill Status:"))
-		default:
-			bodyLines = append(bodyLines, line)
+		if inHeader {
+			switch {
+			case strings.HasPrefix(trimmed, "## Stage:"):
+				stage = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Stage:"))
+				continue
+			case strings.HasPrefix(trimmed, "## Source Prompt:"):
+				sourcePrompt = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Source Prompt:"))
+				continue
+			case strings.HasPrefix(trimmed, "## Last Skill:"):
+				lastSkill = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Last Skill:"))
+				continue
+			case strings.HasPrefix(trimmed, "## Last Skill Status:"):
+				lastSkillStatus = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Last Skill Status:"))
+				continue
+			case strings.HasPrefix(trimmed, "## "):
+				inHeader = false
+			case trimmed == "":
+				continue
+			default:
+				inHeader = false
+			}
 		}
+		bodyLines = append(bodyLines, line)
 	}
 
 	body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
@@ -67,7 +79,7 @@ func BuildResumePrompt(doc HandoffDoc) string {
 
 	if doc.Stage != "" || doc.LastSkill != "" || doc.LastSkillStatus != "" {
 		b.WriteString("## New Instruction\n")
-		b.WriteString("Stage: ")
+		b.WriteString("## Stage: ")
 		b.WriteString(doc.Stage)
 		b.WriteString("\n")
 		b.WriteString("## Last Skill: ")
@@ -83,15 +95,24 @@ func BuildResumePrompt(doc HandoffDoc) string {
 
 	b.WriteString("## Update Handoff Context\n")
 	b.WriteString("Overwrite `.sandman/handoff.md` on exit with:\n\n")
-	b.WriteString("## Stage: ")
-	b.WriteString(doc.Stage)
-	b.WriteString("\n")
-	b.WriteString("## Last Skill: ")
-	b.WriteString(doc.LastSkill)
-	b.WriteString("\n")
-	b.WriteString("## Last Skill Status: ")
-	b.WriteString(doc.LastSkillStatus)
-	b.WriteString(" — <context>\n")
+	if doc.Stage != "" || doc.LastSkill != "" || doc.LastSkillStatus != "" {
+		b.WriteString("## Stage: ")
+		b.WriteString(doc.Stage)
+		b.WriteString("\n")
+		b.WriteString("## Source Prompt: ")
+		b.WriteString(sourcePrompt)
+		b.WriteString("\n")
+		b.WriteString("## Last Skill: ")
+		b.WriteString(doc.LastSkill)
+		b.WriteString("\n")
+		if doc.LastSkillStatus != "" {
+			b.WriteString("## Last Skill Status: ")
+			b.WriteString(doc.LastSkillStatus)
+			b.WriteString("\n")
+		} else {
+			b.WriteString("## Last Skill Status: <context>\n")
+		}
+	}
 	b.WriteString("## Completed\n\n\n")
 	b.WriteString("## Pending\n\n\n")
 	b.WriteString("## Blockers\n\n\n")
