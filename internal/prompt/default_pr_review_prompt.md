@@ -33,8 +33,8 @@ Review pull request #{{PR_NUMBER}}: {{PR_TITLE}}
    ```
    Verify that the implementation matches the issue's requirements and acceptance criteria. If the issue body references a spec or design doc, check those too. If no issue reference is found, skip this step gracefully.
 
-4. Read the repo's documented coding standards in `AGENTS.md` and domain vocabulary in `CONTEXT.md`, plus the ADRs in `docs/adr/` that overlap with the changed code. Check for:
-   - Coding style and conventions documented in `AGENTS.md`.
+4. Read the repo's documented coding standards in `CLAUDE.md` (or `AGENTS.md` if present) and domain vocabulary in `CONTEXT.md`, plus the ADRs in `docs/adr/` that overlap with the changed code. Check for:
+   - Coding style and conventions documented in `CLAUDE.md`.
    - Domain terminology defined in `CONTEXT.md` — flag names, file paths, function names, and error messages should match.
    - ADR decisions that constrain the area being modified.
 
