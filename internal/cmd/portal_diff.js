@@ -207,6 +207,27 @@
     for (const node of nodes) pre.appendChild(node);
   }
 
+  function highlightJSON(text) {
+    if (!text) return '';
+    const _e = function(v) {
+      return String(v == null ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    };
+    return text.replace(
+      /("(?:[^"\\]|\\.)*?")(\s*):|("(?:[^"\\]|\\.)*?")|(\b(?:true|false)\b)|(\bnull\b)|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|([{}[\]:,])/g,
+      function(match, keyStr, ws, strVal, boolVal, nullVal, numVal, punct) {
+        if (keyStr) return '<span class="json-key">' + _e(keyStr) + '</span>' + (ws || '') + '<span class="json-punctuation">:</span>';
+        if (strVal) return '<span class="json-string">' + _e(strVal) + '</span>';
+        if (boolVal) return '<span class="json-boolean">' + boolVal + '</span>';
+        if (nullVal) return '<span class="json-null">' + nullVal + '</span>';
+        if (numVal) return '<span class="json-number">' + numVal + '</span>';
+        if (punct) return '<span class="json-punctuation">' + punct + '</span>';
+        return match;
+      }
+    );
+  }
+
   function appendTerminalPre(pre, oldLog, newSuffix, helpers) {
     if (!newSuffix) return;
     if (appendStartsAtBoundary(oldLog, newSuffix)) {
@@ -359,8 +380,8 @@
         row.appendChild(head);
         if (event.payload && Object.keys(event.payload).length) {
           const pre = global.document.createElement('pre');
-          pre.classList.add('event-payload', 'terminal-text');
-          fillTerminalPre(pre, JSON.stringify(event.payload, null, 2), helpers);
+          pre.classList.add('event-payload', 'json-payload');
+          pre.innerHTML = highlightJSON(JSON.stringify(event.payload, null, 2));
           row.appendChild(pre);
         }
         list.appendChild(row);
@@ -753,5 +774,6 @@
     resetCounters,
     getCounters,
     updateDetailPanelLog,
+    highlightJSON,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
