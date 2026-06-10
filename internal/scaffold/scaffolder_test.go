@@ -56,8 +56,7 @@ func TestScaffold_ParallelReviewsSeeded(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
 
-	pr := 8
-	if err := s.Scaffold(dir, Options{BuildTools: "generic", ParallelReviews: &pr}, &fakePrompter{confirm: true}); err != nil {
+	if err := s.Scaffold(dir, Options{BuildTools: "generic", ParallelReviews: 8}, &fakePrompter{confirm: true}); err != nil {
 		t.Fatalf("scaffold: %v", err)
 	}
 

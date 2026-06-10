@@ -56,10 +56,7 @@ func NewInitCmd() *cobra.Command {
 			agent, _ := cmd.Flags().GetString("agent")
 			model, _ := cmd.Flags().GetString("model")
 			parallel, _ := cmd.Flags().GetInt("parallel")
-			parallelReviews, err := resolveInitInt(cmd, "parallel-reviews")
-			if err != nil {
-				return err
-			}
+			parallelReviews, _ := cmd.Flags().GetInt("parallel-reviews")
 			reviewCommand, _ := cmd.Flags().GetString("review-command")
 
 			retriesOverride, err := resolveInitInt(cmd, "retries")
@@ -119,7 +116,7 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().String("agent", "", "Default built-in agent preset (opencode or pi)")
 	cmd.Flags().String("model", "", "Default model for the agent")
 	cmd.Flags().Int("parallel", -1, "Default parallel container count (-1 = use config default 4)")
-	cmd.Flags().Int("parallel-reviews", -1, fmt.Sprintf("Default parallel reviews count (default %d)", config.DefaultReviewParallel))
+	cmd.Flags().Int("parallel-reviews", -1, fmt.Sprintf("Default parallel reviews count (-1 = use built-in default of %d)", config.DefaultReviewParallel))
 	cmd.Flags().String("review-command", "", "Review command to store in config and install into shared skills")
 	cmd.Flags().Int("retries", -1, fmt.Sprintf("Persist `retries` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRetries))
 	cmd.Flags().Int("run-idle-timeout", -1, fmt.Sprintf("Persist `run_idle_timeout` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRunIdleTimeout))
