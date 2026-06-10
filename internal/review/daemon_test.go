@@ -158,6 +158,7 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		Sandbox:            "podman",
 	})
 
 	if err := d.tick(context.Background()); err != nil {
@@ -170,8 +171,8 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	if runner.last.Agent != "opencode" {
 		t.Errorf("expected review agent 'opencode', got %q", runner.last.Agent)
 	}
-	if runner.last.Sandbox != "worktree" {
-		t.Errorf("expected sandbox 'worktree', got %q", runner.last.Sandbox)
+	if runner.last.Sandbox != "podman" {
+		t.Errorf("expected sandbox 'podman', got %q", runner.last.Sandbox)
 	}
 	if !strings.Contains(runner.last.PromptConfig.PromptFlag, "PR 42") {
 		t.Errorf("rendered prompt should mention PR title, got: %q", runner.last.PromptConfig.PromptFlag)
@@ -572,6 +573,79 @@ func TestDaemon_RunFailsFastOnMissingReviewModel(t *testing.T) {
 	}
 
 	cancel()
+}
+
+func TestDaemon_LaunchReviewPropagatesSandboxParams(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 10, State: "open"}},
+		comments: map[int][]github.PRComment{
+			10: {{ID: "c1", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{10: {Number: 10, Title: "PR 10", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	d.Sandbox = "podman"
+	d.ContainerCapacity = 3
+	d.ContainerCapacitySet = true
+	d.MaxContainers = 2
+	d.MaxContainersSet = true
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	if runner.last.Sandbox != "podman" {
+		t.Errorf("expected sandbox 'podman', got %q", runner.last.Sandbox)
+	}
+	if runner.last.ContainerCapacity != 3 {
+		t.Errorf("expected ContainerCapacity 3, got %d", runner.last.ContainerCapacity)
+	}
+	if !runner.last.ContainerCapacitySet {
+		t.Errorf("expected ContainerCapacitySet=true")
+	}
+	if runner.last.MaxContainers != 2 {
+		t.Errorf("expected MaxContainers 2, got %d", runner.last.MaxContainers)
+	}
+	if !runner.last.MaxContainersSet {
+		t.Errorf("expected MaxContainersSet=true")
+	}
+}
+
+func TestDaemon_LaunchReviewFallsBackToConfigSandbox(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 11, State: "open"}},
+		comments: map[int][]github.PRComment{
+			11: {{ID: "c2", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{11: {Number: 11, Title: "PR 11", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+		Sandbox:            "podman",
+	}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	// Deliberately leave d.Sandbox empty to exercise the cfg.Sandbox fallback.
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	if runner.last.Sandbox != "podman" {
+		t.Errorf("expected sandbox 'podman' from cfg.Sandbox fallback, got %q", runner.last.Sandbox)
+	}
 }
 
 func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {

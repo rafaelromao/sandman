@@ -49,16 +49,31 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("load config: %w", err)
 			}
 
+			sandboxFlag, _ := cmd.Flags().GetString("sandbox")
+			ccFlag, _ := cmd.Flags().GetInt("container-capacity")
+			ccSet := cmd.Flags().Changed("container-capacity")
+			mcFlag, _ := cmd.Flags().GetInt("max-containers")
+			mcSet := cmd.Flags().Changed("max-containers")
+
+			if ccSet && ccFlag < 0 {
+				return MarkUsage(fmt.Errorf("container_capacity must be 0 or greater"))
+			}
+			if mcSet && mcFlag < 0 {
+				return MarkUsage(fmt.Errorf("max_containers must be 0 or greater"))
+			}
+
 			if len(args) > 0 {
 				return runReviewOneShotMulti(cmd, deps, cfg, args)
 			}
-			return reviewDaemonRunner(cmd.Context(), deps, cfg)
+			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet)
 		},
 	}
 
 	cmd.Flags().String("agent", "", "Override default_review_agent for this run")
 	cmd.Flags().String("model", "", "Override default_review_model for this run")
-	cmd.Flags().String("sandbox", "", "Sandbox mode for the review run (default: worktree)")
+	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
+	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
+	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means no cap (unbounded pool)")
 
 	return cmd
 }
@@ -75,6 +90,8 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	agentFlag, _ := cmd.Flags().GetString("agent")
 	modelFlag, _ := cmd.Flags().GetString("model")
 	sandboxFlag, _ := cmd.Flags().GetString("sandbox")
+	ccFlag, _ := cmd.Flags().GetInt("container-capacity")
+	mcFlag, _ := cmd.Flags().GetInt("max-containers")
 
 	reviewAgentName := strings.TrimSpace(agentFlag)
 	if reviewAgentName == "" {
@@ -112,13 +129,17 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 
 	sandboxMode := strings.TrimSpace(sandboxFlag)
 	if sandboxMode == "" {
-		sandboxMode = "worktree"
+		sandboxMode = cfg.Sandbox
 	}
 
 	if _, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
-		Agent:   reviewAgentName,
-		Model:   reviewModel,
-		Sandbox: sandboxMode,
+		Agent:                reviewAgentName,
+		Model:                reviewModel,
+		Sandbox:              sandboxMode,
+		ContainerCapacity:    ccFlag,
+		ContainerCapacitySet: cmd.Flags().Changed("container-capacity"),
+		MaxContainers:        mcFlag,
+		MaxContainersSet:     cmd.Flags().Changed("max-containers"),
 		PromptConfig: prompt.RenderConfig{
 			PromptFlag: rendered,
 			Branch:     fmt.Sprintf("sandman/review-%d-%d", pr.Number, time.Now().UnixNano()),
@@ -193,7 +214,7 @@ func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Co
 // runReviewDaemon wires and runs the review daemon. The cmd layer owns
 // the SIGINT/SIGTERM signal handling; the daemon handles the polling
 // loop and the in-flight batch cancellation.
-func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config) error {
+func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
@@ -212,6 +233,11 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
 	d := review.New(socketDir, deps.GitHubClient, deps.PromptRenderer, deps.BatchRunner, cfg, broadcaster)
+	d.Sandbox = sandbox
+	d.ContainerCapacity = cc
+	d.ContainerCapacitySet = ccSet
+	d.MaxContainers = mc
+	d.MaxContainersSet = mcSet
 	d.SetSocket(ctlSocket)
 	return d.Run(ctx)
 }

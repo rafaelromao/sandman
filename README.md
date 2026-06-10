@@ -60,9 +60,9 @@ Sandman reads from `.sandman/config.yaml`. Key fields:
 ```yaml
 agent: opencode
 parallel: 4
-review_command: /oc review
+review_command: /sandman review
 sandbox: podman              # podman, docker, or worktree
-container_capacity: 4        # agent runs per container; 0 uses default container capacity behavior
+container_capacity: 4        # agent runs per container; 0 = unlimited (no per-container cap)
 max_containers: 0            # auto mode; or set a fixed limit
 git:
   base_branch: main

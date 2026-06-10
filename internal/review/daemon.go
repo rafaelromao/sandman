@@ -55,17 +55,22 @@ type PromptRenderer interface {
 // Daemon polls the repo for /sandman review comments and launches review
 // agents serially.
 type Daemon struct {
-	BaseDir       string
-	GitHub        GitHubClient
-	Prompts       PromptRenderer
-	Runner        BatchRunner
-	Config        *config.Config
-	Broadcaster   io.Writer
-	Clock         Clock
-	Trigger       Trigger
-	PollInterval  time.Duration
-	controlSocket *daemon.ControlSocket
-	busy          chan struct{}
+	BaseDir              string
+	GitHub               GitHubClient
+	Prompts              PromptRenderer
+	Runner               BatchRunner
+	Config               *config.Config
+	Broadcaster          io.Writer
+	Clock                Clock
+	Trigger              Trigger
+	PollInterval         time.Duration
+	Sandbox              string
+	ContainerCapacity    int
+	ContainerCapacitySet bool
+	MaxContainers        int
+	MaxContainersSet     bool
+	controlSocket        *daemon.ControlSocket
+	busy                 chan struct{}
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -320,7 +325,13 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 
 	agentName := ""
 	modelName := ""
-	sandboxMode := "worktree"
+	sandboxMode := d.Sandbox
+	if sandboxMode == "" && d.Config != nil {
+		sandboxMode = d.Config.Sandbox
+	}
+	if sandboxMode == "" {
+		sandboxMode = config.DefaultSandbox
+	}
 	if d.Config != nil {
 		agentName = d.Config.EffectiveReviewAgent()
 		modelName = d.Config.EffectiveReviewModel()
@@ -340,9 +351,13 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 
 	runID := fmt.Sprintf("PR%d", prNumber)
 	req := batch.Request{
-		Agent:   agentName,
-		Model:   modelName,
-		Sandbox: sandboxMode,
+		Agent:                agentName,
+		Model:                modelName,
+		Sandbox:              sandboxMode,
+		ContainerCapacity:    d.ContainerCapacity,
+		ContainerCapacitySet: d.ContainerCapacitySet,
+		MaxContainers:        d.MaxContainers,
+		MaxContainersSet:     d.MaxContainersSet,
 		PromptConfig: prompt.RenderConfig{
 			PromptFlag: rendered,
 			Branch:     fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID),

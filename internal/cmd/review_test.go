@@ -102,7 +102,7 @@ func TestReviewCmd_NoArgsStartsDaemon(t *testing.T) {
 	deps := newReviewDeps(t, gh, cfg, runner)
 
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config) error {
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
 		return fmt.Errorf("daemon reached")
 	}
 	defer func() { reviewDaemonRunner = prev }()
@@ -140,7 +140,7 @@ func TestReviewCmd_DaemonModeCreatesReviewSock(t *testing.T) {
 	deps := newReviewDeps(t, gh, cfg, runner)
 
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config) error {
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
 		if err := os.MkdirAll(".sandman", 0755); err != nil {
 			return err
 		}
@@ -206,7 +206,7 @@ func TestReviewCmd_DaemonSocketAcceptsConnections(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- runReviewDaemon(ctx, deps, cfg) }()
+	go func() { done <- runReviewDaemon(ctx, deps, cfg, "", 0, false, 0, false) }()
 
 	sockPath := filepath.Join(dir, ".sandman", "review.sock")
 	deadline := time.Now().Add(2 * time.Second)
@@ -245,6 +245,7 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 		DefaultReviewAgent: "pi",
 		DefaultReviewModel: "openai/gpt-5",
 		Agent:              "opencode",
+		Sandbox:            "podman",
 		Agents:             map[string]config.Agent{},
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Preset: "opencode", Command: "opencode"},
@@ -297,8 +298,8 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if runner.captured.Model != "openai/gpt-5" {
 		t.Errorf("expected review model 'openai/gpt-5', got %q", runner.captured.Model)
 	}
-	if runner.captured.Sandbox != "worktree" {
-		t.Errorf("expected default sandbox 'worktree' for reviews, got %q", runner.captured.Sandbox)
+	if runner.captured.Sandbox != "podman" {
+		t.Errorf("expected default sandbox from config 'podman', got %q", runner.captured.Sandbox)
 	}
 	if !runner.captured.Review {
 		t.Errorf("expected Review=true on one-shot review batch request, got false")
@@ -380,7 +381,82 @@ func TestReviewCmd_ModelFlagOverridesReviewModel(t *testing.T) {
 	}
 }
 
-func TestReviewCmd_SandboxFlagDefaultsToWorktree(t *testing.T) {
+func TestReviewCmd_InvalidContainerFlagsReturnError(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "container capacity less than one",
+			args:    []string{"42", "--container-capacity", "-1"},
+			wantErr: "container_capacity must be 0 or greater",
+		},
+		{
+			name:    "negative max containers",
+			args:    []string{"42", "--max-containers", "-1"},
+			wantErr: "max_containers must be 0 or greater",
+		},
+		{
+			name:    "container capacity negative in daemon mode",
+			args:    []string{"--container-capacity", "-5"},
+			wantErr: "container_capacity must be 0 or greater",
+		},
+		{
+			name:    "max containers negative in daemon mode",
+			args:    []string{"--max-containers", "-5"},
+			wantErr: "max_containers must be 0 or greater",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				DefaultAgent:       "opencode",
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/big-pickle",
+				Agent:              "opencode",
+				AgentProviders: map[string]config.Agent{
+					"opencode": {Preset: "opencode", Command: "opencode"},
+				},
+			}
+			gh := &fakePRGitHubClient{
+				fakeGitHubClient: &fakeGitHubClient{},
+				pr:               &github.PR{Number: 42, Title: "T", Body: "B"},
+			}
+			runner := &spyBatchRunner{result: &batch.Result{}}
+			deps := newReviewDeps(t, gh, cfg, runner)
+
+			prev := reviewDaemonRunner
+			reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
+				return nil
+			}
+			defer func() { reviewDaemonRunner = prev }()
+
+			var buf bytes.Buffer
+			cmd := NewReviewCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+			var target *UsageError
+			if !errors.As(err, &target) {
+				t.Fatalf("expected *UsageError, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+func TestReviewCmd_SandboxFlagDefaultsToConfig(t *testing.T) {
 	cfg := &config.Config{
 		DefaultAgent:       "opencode",
 		DefaultModel:       "opencode/big-pickle",
@@ -407,8 +483,76 @@ func TestReviewCmd_SandboxFlagDefaultsToWorktree(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if runner.captured.Sandbox != "worktree" {
-		t.Errorf("expected review sandbox default 'worktree', got %q", runner.captured.Sandbox)
+	if runner.captured.Sandbox != "podman" {
+		t.Errorf("expected review sandbox default from config 'podman', got %q", runner.captured.Sandbox)
+	}
+}
+
+func TestReviewCmd_ContainerCapacityFlag(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultModel:       "opencode/big-pickle",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr:               &github.PR{Number: 1, Title: "T", Body: "B"},
+	}
+	runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"1", "--container-capacity", "5"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if runner.captured.ContainerCapacity != 5 {
+		t.Errorf("expected ContainerCapacity 5, got %d", runner.captured.ContainerCapacity)
+	}
+	if !runner.captured.ContainerCapacitySet {
+		t.Errorf("expected ContainerCapacitySet=true")
+	}
+}
+
+func TestReviewCmd_MaxContainersFlag(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultModel:       "opencode/big-pickle",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr:               &github.PR{Number: 1, Title: "T", Body: "B"},
+	}
+	runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"1", "--max-containers", "3"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if runner.captured.MaxContainers != 3 {
+		t.Errorf("expected MaxContainers 3, got %d", runner.captured.MaxContainers)
+	}
+	if !runner.captured.MaxContainersSet {
+		t.Errorf("expected MaxContainersSet=true")
 	}
 }
 
@@ -440,6 +584,104 @@ func TestReviewCmd_SandboxFlagOverride(t *testing.T) {
 	}
 	if runner.captured.Sandbox != "podman" {
 		t.Errorf("expected --sandbox override 'podman', got %q", runner.captured.Sandbox)
+	}
+}
+
+func TestReviewCmd_DaemonFlagsCapture(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	var (
+		capturedSandbox string
+		capturedCC      int
+		capturedCCSet   bool
+		capturedMC      int
+		capturedMCSet   bool
+	)
+	prev := reviewDaemonRunner
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
+		capturedSandbox = sandbox
+		capturedCC = cc
+		capturedCCSet = ccSet
+		capturedMC = mc
+		capturedMCSet = mcSet
+		return nil
+	}
+	defer func() { reviewDaemonRunner = prev }()
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--sandbox", "podman", "--container-capacity", "5", "--max-containers", "3"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedSandbox != "podman" {
+		t.Errorf("expected daemon to receive sandbox 'podman', got %q", capturedSandbox)
+	}
+	if capturedCC != 5 {
+		t.Errorf("expected daemon to receive container-capacity 5, got %d", capturedCC)
+	}
+	if !capturedCCSet {
+		t.Errorf("expected daemon to receive container-capacity-set=true")
+	}
+	if capturedMC != 3 {
+		t.Errorf("expected daemon to receive max-containers 3, got %d", capturedMC)
+	}
+	if !capturedMCSet {
+		t.Errorf("expected daemon to receive max-containers-set=true")
+	}
+}
+
+func TestReviewCmd_ZeroContainerFlagsForwarded(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultModel:       "opencode/big-pickle",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr:               &github.PR{Number: 1, Title: "T", Body: "B"},
+	}
+	runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	var buf bytes.Buffer
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"1", "--container-capacity", "0", "--max-containers", "0"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !runner.captured.ContainerCapacitySet {
+		t.Fatal("expected ContainerCapacitySet=true for --container-capacity=0")
+	}
+	if runner.captured.ContainerCapacity != 0 {
+		t.Errorf("expected container_capacity=0, got %d", runner.captured.ContainerCapacity)
+	}
+	if !runner.captured.MaxContainersSet {
+		t.Fatal("expected MaxContainersSet=true for --max-containers=0")
+	}
+	if runner.captured.MaxContainers != 0 {
+		t.Errorf("expected max_containers=0, got %d", runner.captured.MaxContainers)
 	}
 }
 
