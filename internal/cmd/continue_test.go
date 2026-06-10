@@ -121,10 +121,18 @@ func TestContinue_RunID_CombinedWithArgsRejected(t *testing.T) {
 
 func TestContinue_RunID_ContinuesLastPromptOnlyRun(t *testing.T) {
 	dir := t.TempDir()
+	branch := "sandman/prompt-only-123"
+	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	handoffContent := "## Stage: done\n\n## Completed\nPrompt-only run finished.\n\n## Next Step\nContinue.\n"
+	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte(handoffContent), 0644); err != nil {
+		t.Fatalf("write handoff: %v", err)
+	}
 
 	spy := &spyContinueBatchRunner{result: &batch.Result{}}
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-0-abc", Issue: 0, Payload: map[string]any{"agent": "opencode", "model": "openai/gpt-4.1"}},
+		{Type: "run.started", RunID: "run-0-abc", Issue: 0, Payload: map[string]any{"agent": "opencode", "model": "openai/gpt-4.1", "branch": branch, "base_branch": "main"}},
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
@@ -146,8 +154,8 @@ func TestContinue_RunID_ContinuesLastPromptOnlyRun(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 0 {
-		t.Fatalf("expected issues=[0], got %v", spy.req.Issues)
+	if len(spy.req.Issues) != 0 {
+		t.Fatalf("expected empty issues (prompt-only path), got %v", spy.req.Issues)
 	}
 	if !spy.req.Continuation {
 		t.Fatal("expected continuation request")
@@ -160,6 +168,12 @@ func TestContinue_RunID_ContinuesLastPromptOnlyRun(t *testing.T) {
 	}
 	if !strings.Contains(spy.req.RunDir, "my-custom-run") {
 		t.Fatalf("expected RunDir to contain my-custom-run, got %q", spy.req.RunDir)
+	}
+	if spy.req.BaseBranch != "main" {
+		t.Fatalf("expected BaseBranch=main, got %q", spy.req.BaseBranch)
+	}
+	if !strings.Contains(spy.req.PromptConfig.PromptFlag, "Stage: done") {
+		t.Fatalf("expected PromptFlag to contain handoff content, got %q", spy.req.PromptConfig.PromptFlag)
 	}
 }
 
@@ -1003,8 +1017,8 @@ func TestContinue_FailsWhenAnyIssueHasNoPreviousRun(t *testing.T) {
 
 func TestContinue_UsesVariadicSyntaxInUseString(t *testing.T) {
 	cmd := NewContinueCmd(newTestDeps())
-	if !strings.Contains(cmd.Use, "<issue-number>...") {
-		t.Fatalf("expected Use to indicate variadic issue numbers, got %q", cmd.Use)
+	if !strings.Contains(cmd.Use, "[issue-number]...") {
+		t.Fatalf("expected Use to indicate optional variadic issue numbers, got %q", cmd.Use)
 	}
 }
 

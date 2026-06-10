@@ -68,6 +68,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
 | `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run |
+| `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 
 ### Flag interactions
 
@@ -122,6 +123,7 @@ Reuses the previously created branch and recorded agent and review command from 
 |------|---------|-------------|
 | `--model` | `model` from config | Override the model for the continued run |
 | `--agent` | prior run's agent | Override the agent preset for the continued run |
+| `--run-id` | — | Batch-level identifier for prompt-only continuation; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
 
 ## `sandman clean`

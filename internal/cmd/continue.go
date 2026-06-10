@@ -23,7 +23,7 @@ import (
 // NewContinueCmd creates the continue command.
 func NewContinueCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "continue <issue-number>...",
+		Use:   "continue [issue-number]... --run-id <id>",
 		Short: "Continue the last agent run for one or more issues in a batch",
 		Args:  wrapArgs(cobra.ArbitraryArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -68,17 +68,49 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 			}
 
 			previousRunIDs := make(map[int]string, len(issues))
+			var promptFlagContent string
+			var promptOnlyBaseBranch string
+			var promptOnlyBranch string
 			if runID != "" {
 				lastRun := lastRuns[0]
 				if lastRun.RunID == "" {
 					return fmt.Errorf("no previous prompt-only run found")
 				}
 				previousRunIDs[0] = lastRun.RunID
+				promptOnlyBranch, _ = payloadString(lastRun.Payload, "branch")
+				promptOnlyBaseBranch, _ = payloadString(lastRun.Payload, "base_branch")
 			}
 
 			worktreeBase := cfg.WorktreeDir
 			if strings.TrimSpace(worktreeBase) == "" {
 				worktreeBase = ".sandman/worktrees"
+			}
+
+			if runID != "" {
+				if promptOnlyBranch == "" {
+					return fmt.Errorf("missing branch in previous prompt-only run")
+				}
+				if promptOnlyBaseBranch == "" {
+					return fmt.Errorf("missing base branch in previous prompt-only run")
+				}
+				worktreePath := filepath.Join(worktreeBase, promptOnlyBranch)
+				if info, err := os.Stat(worktreePath); err != nil {
+					if os.IsNotExist(err) {
+						return fmt.Errorf("worktree %q is missing for prompt-only run; use \"sandman run\" instead", worktreePath)
+					}
+					return fmt.Errorf("check worktree %q: %w", worktreePath, err)
+				} else if !info.IsDir() {
+					return fmt.Errorf("worktree %q is missing for prompt-only run; use \"sandman run\" instead", worktreePath)
+				}
+				handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+				content, exists, err := batch.ReadHandoffContent(handoffPath)
+				if err != nil {
+					return fmt.Errorf("read handoff %q: %w", handoffPath, err)
+				}
+				if !exists {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", promptOnlyBranch)
+				}
+				promptFlagContent = content
 			}
 
 			branches := make(map[int]string, len(issues))
@@ -241,12 +273,19 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				dangerouslySkipPerm = &val
 			}
 
+			reqIssues := issues
+			effectiveBaseBranch := baseBranches[firstIssue]
+			if runID != "" {
+				reqIssues = nil
+				effectiveBaseBranch = promptOnlyBaseBranch
+			}
+
 			req := batch.Request{
-				Issues:                     issues,
+				Issues:                     reqIssues,
 				Branches:                   branches,
 				Agent:                      agentName,
 				Model:                      model,
-				BaseBranch:                 baseBranches[firstIssue],
+				BaseBranch:                 effectiveBaseBranch,
 				Parallel:                   parallel,
 				Retries:                    retries,
 				StartDelay:                 startDelay,
@@ -266,6 +305,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				RunID:                      runID,
 				PromptConfig: prompt.RenderConfig{
+					PromptFlag:       promptFlagContent,
 					ReviewCommand:    reviewCommand,
 					ReviewCommandSet: true,
 				},
@@ -332,7 +372,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
-	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only continuation; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers")
+	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only continuation; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection")
 
 	return cmd
 }
