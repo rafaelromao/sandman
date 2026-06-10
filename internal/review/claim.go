@@ -1,6 +1,7 @@
 package review
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -112,10 +113,16 @@ func (c *ClaimStore) Close() error {
 	}
 	c.mu.Unlock()
 
+	var errs []error
 	for _, id := range ids {
 		lockPath := filepath.Join(c.claimsDir, id)
-		os.Remove(lockPath)
+		if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("remove claim file %s: %w", id, err))
+		}
 	}
 	c.created = nil
+	if len(errs) > 0 {
+		return fmt.Errorf("close claim store: %w", errors.Join(errs...))
+	}
 	return nil
 }
