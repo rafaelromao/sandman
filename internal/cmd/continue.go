@@ -25,11 +25,30 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "continue <issue-number>...",
 		Short: "Continue the last agent run for one or more issues in a batch",
-		Args:  wrapArgs(cobra.MinimumNArgs(1)),
+		Args:  wrapArgs(cobra.ArbitraryArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			issues, err := parseContinueArgs(args)
-			if err != nil {
-				return MarkUsage(err)
+			runID, _ := cmd.Flags().GetString("run-id")
+			if len(args) == 0 && runID == "" {
+				return MarkUsage(fmt.Errorf("expected at least one issue number or --run-id"))
+			}
+			if runID != "" && !isValidRunID(runID) {
+				return MarkUsage(fmt.Errorf("--run-id must start with a letter and contain only alphanumeric characters, hyphens, and underscores"))
+			}
+			if runID != "" && len(args) > 0 {
+				return MarkUsage(fmt.Errorf("--run-id cannot be combined with issue numbers"))
+			}
+
+			var issues []int
+			{
+				var err error
+				if runID != "" {
+					issues = []int{0}
+				} else {
+					issues, err = parseContinueArgs(args)
+					if err != nil {
+						return MarkUsage(err)
+					}
+				}
 			}
 
 			eventsList, err := deps.EventLog.Read()
@@ -48,6 +67,15 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				return err
 			}
 
+			previousRunIDs := make(map[int]string, len(issues))
+			if runID != "" {
+				lastRun := lastRuns[0]
+				if lastRun.RunID == "" {
+					return fmt.Errorf("no previous prompt-only run found")
+				}
+				previousRunIDs[0] = lastRun.RunID
+			}
+
 			worktreeBase := cfg.WorktreeDir
 			if strings.TrimSpace(worktreeBase) == "" {
 				worktreeBase = ".sandman/worktrees"
@@ -55,51 +83,52 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 
 			branches := make(map[int]string, len(issues))
 			baseBranches := make(map[int]string, len(issues))
-			previousRunIDs := make(map[int]string, len(issues))
 			handoffPrompts := make(map[int]string, len(issues))
-			for _, num := range issues {
-				lastRun := lastRuns[num]
-				if lastRun.RunID == "" {
-					return fmt.Errorf("no previous run found for issue #%d", num)
-				}
-				branch, ok := payloadString(lastRun.Payload, "branch")
-				if !ok || strings.TrimSpace(branch) == "" {
-					return fmt.Errorf("missing branch in previous run for issue #%d", num)
-				}
-				baseBranch, ok := payloadString(lastRun.Payload, "base_branch")
-				if !ok || strings.TrimSpace(baseBranch) == "" {
-					return fmt.Errorf("missing base branch in previous run for issue #%d", num)
-				}
-				merged, err := batch.CheckPRMergedAtHead(deps.GitHubClient, branch, "")
-				if err != nil {
-					return fmt.Errorf("check merged status for issue #%d: %w", num, err)
-				}
-				if merged {
-					return fmt.Errorf("cannot continue issue #%d: PR already merged (branch %q)", num, branch)
-				}
+			if runID == "" {
+				for _, num := range issues {
+					lastRun := lastRuns[num]
+					if lastRun.RunID == "" {
+						return fmt.Errorf("no previous run found for issue #%d", num)
+					}
+					branch, ok := payloadString(lastRun.Payload, "branch")
+					if !ok || strings.TrimSpace(branch) == "" {
+						return fmt.Errorf("missing branch in previous run for issue #%d", num)
+					}
+					baseBranch, ok := payloadString(lastRun.Payload, "base_branch")
+					if !ok || strings.TrimSpace(baseBranch) == "" {
+						return fmt.Errorf("missing base branch in previous run for issue #%d", num)
+					}
+					merged, err := batch.CheckPRMergedAtHead(deps.GitHubClient, branch, "")
+					if err != nil {
+						return fmt.Errorf("check merged status for issue #%d: %w", num, err)
+					}
+					if merged {
+						return fmt.Errorf("cannot continue issue #%d: PR already merged (branch %q)", num, branch)
+					}
 
-				worktreePath := filepath.Join(worktreeBase, branch)
-				if info, err := os.Stat(worktreePath); err != nil {
-					if os.IsNotExist(err) {
+					worktreePath := filepath.Join(worktreeBase, branch)
+					if info, err := os.Stat(worktreePath); err != nil {
+						if os.IsNotExist(err) {
+							return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
+						}
+						return fmt.Errorf("check worktree %q: %w", worktreePath, err)
+					} else if !info.IsDir() {
 						return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
 					}
-					return fmt.Errorf("check worktree %q: %w", worktreePath, err)
-				} else if !info.IsDir() {
-					return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
-				}
-				branches[num] = branch
-				baseBranches[num] = strings.TrimSpace(baseBranch)
-				previousRunIDs[num] = lastRun.RunID
+					branches[num] = branch
+					baseBranches[num] = strings.TrimSpace(baseBranch)
+					previousRunIDs[num] = lastRun.RunID
 
-				handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-				content, exists, err := batch.ReadHandoffContent(handoffPath)
-				if err != nil {
-					return fmt.Errorf("read handoff %q for issue #%d: %w", handoffPath, num, err)
+					handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+					content, exists, err := batch.ReadHandoffContent(handoffPath)
+					if err != nil {
+						return fmt.Errorf("read handoff %q for issue #%d: %w", handoffPath, num, err)
+					}
+					if !exists {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
+					}
+					handoffPrompts[num] = content
 				}
-				if !exists {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
-				}
-				handoffPrompts[num] = content
 			}
 
 			// Replay agent/model/review settings from the first issue's last run.
@@ -235,6 +264,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				BaseBranches:               baseBranches,
 				HandoffPrompts:             handoffPrompts,
 				DangerouslySkipPermissions: dangerouslySkipPerm,
+				RunID:                      runID,
 				PromptConfig: prompt.RenderConfig{
 					ReviewCommand:    reviewCommand,
 					ReviewCommandSet: true,
@@ -255,7 +285,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				}
 			}()
 
-			runDir := daemon.RunDir(".sandman", issues, "")
+			runDir := daemon.RunDir(".sandman", issues, runID)
 			broadcaster := daemon.NewBroadcaster()
 			ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
 
@@ -302,6 +332,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
+	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only continuation; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers")
 
 	return cmd
 }

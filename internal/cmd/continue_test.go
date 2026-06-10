@@ -98,6 +98,121 @@ func TestContinue_InvalidIssueReturnsError(t *testing.T) {
 	}
 }
 
+func TestContinue_RunID_CombinedWithArgsRejected(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-run", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when combining --run-id with issue numbers")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("expected mutual exclusivity error, got %v", err)
+	}
+}
+
+func TestContinue_RunID_ContinuesLastPromptOnlyRun(t *testing.T) {
+	dir := t.TempDir()
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-0-abc", Issue: 0, Payload: map[string]any{"agent": "opencode", "model": "openai/gpt-4.1"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-custom-run"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 0 {
+		t.Fatalf("expected issues=[0], got %v", spy.req.Issues)
+	}
+	if !spy.req.Continuation {
+		t.Fatal("expected continuation request")
+	}
+	if spy.req.PreviousRunIDs[0] != "run-0-abc" {
+		t.Fatalf("expected PreviousRunIDs[0]=run-0-abc, got %q", spy.req.PreviousRunIDs[0])
+	}
+	if spy.req.RunID != "my-custom-run" {
+		t.Fatalf("expected RunID=my-custom-run, got %q", spy.req.RunID)
+	}
+	if !strings.Contains(spy.req.RunDir, "my-custom-run") {
+		t.Fatalf("expected RunDir to contain my-custom-run, got %q", spy.req.RunDir)
+	}
+}
+
+func TestContinue_RunID_NoPriorPromptOnlyRun_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-run"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no prior prompt-only run")
+	}
+	if !strings.Contains(err.Error(), "no previous prompt-only run found") {
+		t.Fatalf("expected error about no previous prompt-only run, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called")
+	}
+}
+
+func TestContinue_RunID_InvalidFormatRejected(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "123invalid"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid --run-id")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "must start with a letter") {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}
+
 func TestContinue_RuntimeErrorNotUsageError(t *testing.T) {
 	deps := Dependencies{
 		BatchRunner: &spyContinueBatchRunner{},
