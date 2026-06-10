@@ -143,6 +143,44 @@ func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *co
 	return d, &buf, dir
 }
 
+func TestDaemon_ProcessPRCommentsSortedByCreatedAt(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "102", Body: "/sandman review", CreatedAt: now.Add(2 * time.Hour)},
+				{ID: "101", Body: "/sandman review", CreatedAt: now.Add(1 * time.Hour)},
+				{ID: "103", Body: "/sandman review", CreatedAt: now.Add(3 * time.Hour)},
+			},
+		},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 3 {
+		t.Fatalf("expected 3 batch runs, got %d", runner.calls)
+	}
+
+	// First edit should be for the oldest comment (101), proving chronological order.
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	if len(gh.editCalls) < 3 {
+		t.Fatalf("expected at least 3 edit calls, got %d", len(gh.editCalls))
+	}
+	// The first EditComment call should reference the oldest comment ID.
+	if gh.editCalls[0].kind != "comment" || gh.editCalls[0].id != "101" {
+		t.Errorf("expected first EditComment for comment 101 (oldest), got %+v", gh.editCalls[0])
+	}
+}
+
 func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
