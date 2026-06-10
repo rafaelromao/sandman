@@ -89,7 +89,23 @@ func (f *fakeGitHubClient) FetchPR(number int) (*github.PR, error) {
 
 func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	f.searchIssuesQuery = query
-	return f.searchIssuesResult, f.searchIssuesError
+	if f.searchIssuesResult != nil || f.searchIssuesError != nil {
+		return f.searchIssuesResult, f.searchIssuesError
+	}
+	if f.issues == nil {
+		// Default: an empty fake client returns a single open placeholder
+		// so tests that don't care about state filtering can still exercise
+		// unrelated code paths. Tests that care set f.searchIssuesResult
+		// or f.issues directly.
+		return []github.Issue{{Number: 1, State: "open"}}, nil
+	}
+	var results []github.Issue
+	for _, issue := range f.issues {
+		if !strings.EqualFold(issue.State, "closed") {
+			results = append(results, *issue)
+		}
+	}
+	return results, nil
 }
 
 func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
@@ -196,15 +212,17 @@ func TestFilterClosedIssues_Helper(t *testing.T) {
 		name       string
 		numbers    []int
 		exact      map[int]struct{}
+		openSet    map[int]struct{}
 		states     map[int]string
 		want       []int
 		wantStderr string
+		wantErr    error
 	}{
 		{
 			name:    "open issues pass through",
 			numbers: []int{1, 2},
 			exact:   map[int]struct{}{1: {}, 2: {}},
-			states:  map[int]string{1: "open", 2: "open"},
+			openSet: map[int]struct{}{1: {}, 2: {}},
 			want:    []int{1, 2},
 		},
 		{
@@ -214,11 +232,11 @@ func TestFilterClosedIssues_Helper(t *testing.T) {
 			states:     map[int]string{42: "closed"},
 			want:       nil,
 			wantStderr: "Issue #42 is closed, skipping\n",
+			wantErr:    errAllExplicitClosed,
 		},
 		{
 			name:    "range-sourced closed skips silently",
 			numbers: []int{43},
-			exact:   map[int]struct{}{},
 			states:  map[int]string{43: "closed"},
 			want:    nil,
 		},
@@ -226,21 +244,37 @@ func TestFilterClosedIssues_Helper(t *testing.T) {
 			name:       "mixed explicit and range sources",
 			numbers:    []int{7, 42, 43, 44},
 			exact:      map[int]struct{}{7: {}, 44: {}},
+			openSet:    map[int]struct{}{42: {}, 44: {}},
 			states:     map[int]string{7: "closed", 42: "open", 43: "closed", 44: "open"},
 			want:       []int{42, 44},
 			wantStderr: "Issue #7 is closed, skipping\n",
+		},
+		{
+			name: "empty numbers slice",
+			want: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sel := issueSelection{exact: tt.exact}
+			searchFn := func(query string) ([]github.Issue, error) {
+				results := make([]github.Issue, 0, len(tt.openSet))
+				for n := range tt.openSet {
+					results = append(results, github.Issue{Number: n, State: "open"})
+				}
+				return results, nil
+			}
 			fetchFn := func(n int) (*github.Issue, error) {
 				return &github.Issue{Number: n, State: tt.states[n]}, nil
 			}
 			var stderr bytes.Buffer
-			got, err := filterClosedIssues(tt.numbers, sel, fetchFn, &stderr)
-			if err != nil {
+			got, err := filterClosedIssues(tt.numbers, sel, searchFn, fetchFn, &stderr)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("expected error %v, got %v", tt.wantErr, err)
+				}
+			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if len(got) != len(tt.want) {
@@ -258,24 +292,53 @@ func TestFilterClosedIssues_Helper(t *testing.T) {
 	}
 }
 
-func TestFilterClosedIssues_FetchError(t *testing.T) {
+func TestFilterClosedIssues_FallsBackToFetchOnSearchError(t *testing.T) {
+	searchFn := func(query string) ([]github.Issue, error) {
+		return nil, fmt.Errorf("transient gh error")
+	}
+	fetchFn := func(n int) (*github.Issue, error) {
+		return &github.Issue{Number: n, State: "open"}, nil
+	}
+	sel := issueSelection{exact: map[int]struct{}{42: {}}}
+	var stderr bytes.Buffer
+	got, err := filterClosedIssues([]int{42, 43}, sel, searchFn, fetchFn, &stderr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected fallback to return all open, got %v", got)
+	}
+}
+
+func TestFilterClosedIssues_FetchErrorIsSkipped(t *testing.T) {
+	searchFn := func(query string) ([]github.Issue, error) {
+		return nil, fmt.Errorf("transient gh error")
+	}
 	fetchFn := func(n int) (*github.Issue, error) {
 		return nil, fmt.Errorf("network error")
 	}
 	sel := issueSelection{exact: map[int]struct{}{42: {}}}
 	var stderr bytes.Buffer
-	_, err := filterClosedIssues([]int{42}, sel, fetchFn, &stderr)
-	if err == nil {
-		t.Fatal("expected error from failed fetch")
+	got, err := filterClosedIssues([]int{42}, sel, searchFn, fetchFn, &stderr)
+	if err != nil {
+		t.Fatalf("expected no error when fetch errors are skipped, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "network error") {
-		t.Errorf("expected network error, got: %v", err)
+	if len(got) != 0 {
+		t.Errorf("expected empty result, got %v", got)
+	}
+	if !strings.Contains(stderr.String(), "Warning: could not fetch issue #42") {
+		t.Errorf("expected warning on stderr, got: %s", stderr.String())
 	}
 }
 
 func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
+	deps.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Single Issue"},
+		},
+	}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1970,11 +2033,12 @@ func TestRun_UnboundedEndRangeWithStateQueryUsesIssueState(t *testing.T) {
 
 func TestRun_UnboundedStartRangeUsesQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
+	results := make([]github.Issue, 45)
+	for i := range results {
+		results[i] = github.Issue{Number: i + 1, Title: fmt.Sprintf("Issue %d", i+1)}
+	}
 	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 1, Title: "Issue A"},
-			{Number: 45, Title: "Issue B"},
-		},
+		searchIssuesResult: results,
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
@@ -1997,8 +2061,8 @@ func TestRun_UnboundedStartRangeUsesQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "" {
-		t.Errorf("expected no search query for bounded start-end range, got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "is:open" {
+		t.Errorf("expected is:open search for bounded range, got %q", gh.searchIssuesQuery)
 	}
 	want := make([]int, 45)
 	for i := range want {
@@ -2125,14 +2189,15 @@ func TestRun_ExplicitClosedIssueLogsWarning(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when only issue is closed")
 	}
-	if !strings.Contains(err.Error(), "no issues selected") {
-		t.Errorf("expected 'no issues selected' error, got: %v", err)
-	}
 	if spy.called {
 		t.Fatal("expected batch runner not to be called")
 	}
 	if !strings.Contains(stderr.String(), "Issue #42 is closed, skipping") {
 		t.Errorf("expected closed issue warning on stderr, got: %s", stderr.String())
+	}
+	var ue *UsageError
+	if errors.As(err, &ue) {
+		t.Errorf("expected plain runtime error (no usage banner), got UsageError: %v", err)
 	}
 }
 
@@ -2214,6 +2279,38 @@ func TestRun_BoundedRangeAllOpenKeepsWorking(t *testing.T) {
 		if spy.req.Issues[i] != v {
 			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
 		}
+	}
+}
+
+func TestRun_BoundedRangePrefersSearchOverPerIssueFetch(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Open A"},
+			43: {Number: 43, Title: "Closed", State: "closed"},
+			44: {Number: 44, Title: "Open B"},
+			45: {Number: 45, Title: "Open C"},
+		},
+	}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = gh
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"42:45"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gh.searchIssuesQuery != "is:open" {
+		t.Errorf("expected is:open search to be used, got: %s", gh.searchIssuesQuery)
+	}
+	want := []int{42, 44, 45}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
 }
 

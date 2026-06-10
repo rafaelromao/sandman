@@ -210,6 +210,11 @@ func TestRunPlaceholder(t *testing.T) {
 func TestRun_ParallelFlagParsed(t *testing.T) {
 	var buf bytes.Buffer
 	deps := newTestDeps()
+	deps.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Open A"},
+		},
+	}
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
