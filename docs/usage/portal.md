@@ -33,7 +33,7 @@ POST /api/runs/abort
 {"runKey": "<run-key>", "issue": <N>}
 ```
 
-The endpoint signals the agent daemon and waits for the issue run to abort, returning:
+The endpoint signals the command server and waits for the AgentRun to abort, returning:
 
 ```json
 {"runKey": "...", "issue": <N>, "status": "aborted", "scope": "issue"}
