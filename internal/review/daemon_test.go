@@ -142,6 +142,9 @@ func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *co
 	return d, &buf, dir
 }
 
+// TestDaemon_ProcessPRCommentsSortedByCreatedAt verifies that only the
+// newest unseen trigger is processed when multiple trigger comments exist
+// with different creation times.
 func TestDaemon_ProcessPRCommentsSortedByCreatedAt(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
@@ -164,28 +167,77 @@ func TestDaemon_ProcessPRCommentsSortedByCreatedAt(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	if runner.calls != 3 {
-		t.Fatalf("expected 3 batch runs, got %d", runner.calls)
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run (only newest trigger), got %d", runner.calls)
 	}
 
-	// First add_comment reaction should be for the oldest comment (101), proving chronological order.
+	// Reactions should be added only for the newest comment (103).
 	gh.mu.Lock()
 	defer gh.mu.Unlock()
-	if len(gh.reactionCalls) < 3 {
-		t.Fatalf("expected at least 3 reaction calls, got %d", len(gh.reactionCalls))
-	}
-	// The first add_comment reaction should reference the oldest comment ID.
-	addCount := 0
 	for _, c := range gh.reactionCalls {
 		if c.kind == "add_comment" {
-			if addCount == 0 && c.commentID != "101" {
-				t.Errorf("expected first AddCommentReaction for comment 101 (oldest), got comment %s", c.commentID)
+			if c.commentID != "103" {
+				t.Errorf("expected AddCommentReaction only for newest comment 103, got comment %s", c.commentID)
 			}
-			addCount++
 		}
 	}
-	if addCount != 3 {
-		t.Errorf("expected 3 add_comment reactions, got %d", addCount)
+}
+
+func TestDaemon_OnlyNewestUnseenTriggerProcessed(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "102", Body: "/sandman review", CreatedAt: now.Add(2 * time.Hour)},
+				{ID: "101", Body: "/sandman review", CreatedAt: now.Add(1 * time.Hour)},
+				{ID: "103", Body: "/sandman review focus on x", CreatedAt: now.Add(3 * time.Hour)},
+			},
+		},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run (only newest trigger), got %d", runner.calls)
+	}
+
+	// The launched review should have the newest comment's focus ("focus on x" for ID "103").
+	if runner.last.ReviewFocus != "focus on x" {
+		t.Errorf("expected review focus from newest trigger (103), got %q", runner.last.ReviewFocus)
+	}
+
+	// Only the newest trigger (103) should get reactions; stale triggers (101, 102) get none.
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	for _, c := range gh.reactionCalls {
+		if c.kind == "add_comment" || c.kind == "remove_comment" {
+			if c.commentID != "103" {
+				t.Errorf("expected reactions only for newest comment 103, got reaction on comment %s", c.commentID)
+			}
+		}
+	}
+
+	// All three triggers should be marked as seen in the store.
+	store, err := NewSeenCommentsStore(d.PRDir(1))
+	if err != nil {
+		t.Fatalf("open seen store: %v", err)
+	}
+	if !store.Has("101") {
+		t.Error("stale trigger 101 should be marked as seen")
+	}
+	if !store.Has("102") {
+		t.Error("stale trigger 102 should be marked as seen")
+	}
+	if !store.Has("103") {
+		t.Error("newest trigger 103 should be marked as seen after successful review")
 	}
 }
 
@@ -386,6 +438,98 @@ func TestDaemon_TickSkipsSeenComment(t *testing.T) {
 	if runner.calls != 0 {
 		t.Errorf("expected no batch runs, got %d", runner.calls)
 	}
+}
+
+func TestDaemon_StaleTriggersLogged(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "old1", Body: "/sandman review", CreatedAt: now},
+				{ID: "old2", Body: "/sandman review", CreatedAt: now.Add(1 * time.Minute)},
+				{ID: "latest", Body: "/sandman review", CreatedAt: now.Add(10 * time.Minute)},
+			},
+		},
+	}
+	runner := &capturedRequest{}
+	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "skipping stale trigger comment old1") {
+		t.Errorf("expected log to mention stale trigger old1, got %q", output)
+	}
+	if !strings.Contains(output, "skipping stale trigger comment old2") {
+		t.Errorf("expected log to mention stale trigger old2, got %q", output)
+	}
+	if !strings.Contains(output, "newer latest exists") {
+		t.Errorf("expected log to mention newest comment 'latest', got %q", output)
+	}
+}
+
+func TestDaemon_MixedSeenAndUnseenTriggers(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "already-seen", Body: "/sandman review", CreatedAt: now},
+				{ID: "unseen-new", Body: "/sandman review focus: newer", CreatedAt: now.Add(5 * time.Minute)},
+				{ID: "unseen-old", Body: "/sandman review focus: older", CreatedAt: now.Add(2 * time.Minute)},
+			},
+		},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+
+	// Pre-mark "already-seen" as seen.
+	prDir := d.PRDir(1)
+	if err := os.MkdirAll(prDir, 0755); err != nil {
+		t.Fatalf("create PR dir: %v", err)
+	}
+	store, err := NewSeenCommentsStore(prDir)
+	if err != nil {
+		t.Fatalf("open seen store: %v", err)
+	}
+	if err := store.Mark("already-seen"); err != nil {
+		t.Fatalf("mark already-seen: %v", err)
+	}
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run (only newest unseen), got %d", runner.calls)
+	}
+
+	// The focus should come from the newest unseen trigger: "unseen-new".
+	if runner.last.ReviewFocus != "focus: newer" {
+		t.Errorf("expected review focus 'focus: newer' from newest unseen, got %q", runner.last.ReviewFocus)
+	}
+
+	// Verify "already-seen" was NOT double-processed (no reaction for it).
+	gh.mu.Lock()
+	for _, c := range gh.reactionCalls {
+		if c.commentID == "already-seen" {
+			t.Errorf("seen comment 'already-seen' should not get any reactions")
+		}
+	}
+	gh.mu.Unlock()
 }
 
 func TestDaemon_TickCaseInsensitive(t *testing.T) {
