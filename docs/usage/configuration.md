@@ -59,7 +59,7 @@ sandbox: podman
 git:
   base_branch: main
 
-# Sandman installs both built-in agents in scaffolded Dockerfiles and mounts the shared skills directory.
+# Sandman installs the built-in agent in scaffolded Dockerfiles and mounts the shared skills directory.
 ```
 
 ## Built-in agents

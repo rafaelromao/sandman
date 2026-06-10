@@ -2,7 +2,7 @@
 
 Sandman includes one built-in preset: `opencode`.
 
-## Built-in presets
+## Built-in preset
 
 | Preset | Display Name | Command Template |
 |--------|-------------|------------------|
