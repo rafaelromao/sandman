@@ -210,6 +210,22 @@ func (f *fakeGitHubClient) EditPRBody(prNumber int, body string) error {
 	return nil
 }
 
+func (f *fakeGitHubClient) AddCommentReaction(commentID, content string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeGitHubClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeGitHubClient) RemoveCommentReaction(commentID, reactionID string) error {
+	return nil
+}
+
+func (f *fakeGitHubClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+	return nil
+}
+
 func mergedPR(branch, sha string) *github.PR {
 	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}
 }

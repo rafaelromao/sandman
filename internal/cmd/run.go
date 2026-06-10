@@ -85,6 +85,22 @@ func (c *cachedGitHubClient) EditPRBody(prNumber int, body string) error {
 	return c.client.EditPRBody(prNumber, body)
 }
 
+func (c *cachedGitHubClient) AddCommentReaction(commentID, content string) (string, error) {
+	return c.client.AddCommentReaction(commentID, content)
+}
+
+func (c *cachedGitHubClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+	return c.client.AddIssueReaction(issueNumber, content)
+}
+
+func (c *cachedGitHubClient) RemoveCommentReaction(commentID, reactionID string) error {
+	return c.client.RemoveCommentReaction(commentID, reactionID)
+}
+
+func (c *cachedGitHubClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+	return c.client.RemoveIssueReaction(issueNumber, reactionID)
+}
+
 // NewRunCmd creates the run command.
 func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{

@@ -43,4 +43,8 @@ type Client interface {
 	RepoName() (string, error)
 	EditComment(commentID, body string) error
 	EditPRBody(prNumber int, body string) error
+	AddCommentReaction(commentID, content string) (string, error)
+	AddIssueReaction(issueNumber int, content string) (string, error)
+	RemoveCommentReaction(commentID, reactionID string) error
+	RemoveIssueReaction(issueNumber int, reactionID string) error
 }
