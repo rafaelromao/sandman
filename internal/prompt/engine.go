@@ -1,7 +1,9 @@
 package prompt
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +21,21 @@ var defaultPRReviewPrompt string
 
 //go:embed priority_selection_prompt.md
 var prioritySelectionPrompt string
+
+// promptVersion is the hex-encoded SHA-256 digest of the embedded
+// default_prompt.md. When the embedded template changes between sandman
+// versions the digest changes, signalling that MaterializePromptFile should
+// overwrite the project's .sandman/prompt.md.
+var promptVersion string
+
+// promptVersionFile is the sidecar file that records the version of the
+// materialized prompt template inside .sandman/.
+const promptVersionFile = ".prompt-version"
+
+func init() {
+	sum := sha256.Sum256([]byte(defaultPrompt))
+	promptVersion = hex.EncodeToString(sum[:])
+}
 
 // DefaultPrompt returns Sandman's canonical prompt template.
 func DefaultPrompt() string { return defaultPrompt }
@@ -132,8 +149,10 @@ func (e *Engine) RenderReview(cfg RenderConfig, data PRData) (string, error) {
 	return result, nil
 }
 
-// MaterializePromptFile creates the project prompt template if it is missing
-// and no prompt/template override is active.
+// MaterializePromptFile creates the project prompt template when no
+// prompt/template override is active. If the template already exists it is
+// overwritten when the embedded default_prompt.md has changed since the last
+// materialization (detected via a version sidecar).
 func MaterializePromptFile(cfg RenderConfig) error {
 	if cfg.PromptFlag != "" || cfg.TemplateFlag != "" {
 		return nil
@@ -141,16 +160,32 @@ func MaterializePromptFile(cfg RenderConfig) error {
 	if cfg.PromptFile == "" {
 		return nil
 	}
-	if _, err := os.Stat(cfg.PromptFile); err == nil {
-		return nil
+	dir := filepath.Dir(cfg.PromptFile)
+	versionPath := filepath.Join(dir, promptVersionFile)
+
+	needsWrite := true
+	if info, err := os.Stat(cfg.PromptFile); err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("prompt path is a directory: %s", cfg.PromptFile)
+		}
+		if versionData, err := os.ReadFile(versionPath); err == nil {
+			needsWrite = string(versionData) != promptVersion
+		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("check prompt file: %w", err)
 	}
-	dir := filepath.Dir(cfg.PromptFile)
+
+	if !needsWrite {
+		return nil
+	}
+
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create prompt directory: %w", err)
 	}
-	return os.WriteFile(cfg.PromptFile, []byte(DefaultPrompt()), 0644)
+	if err := os.WriteFile(cfg.PromptFile, []byte(DefaultPrompt()), 0644); err != nil {
+		return fmt.Errorf("write prompt file: %w", err)
+	}
+	return os.WriteFile(versionPath, []byte(promptVersion), 0644)
 }
 
 // Ensure Engine implements Renderer.

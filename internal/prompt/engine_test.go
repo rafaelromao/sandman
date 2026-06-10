@@ -400,9 +400,10 @@ func TestMaterializePromptFile_EmptyPromptFileIsNoOp(t *testing.T) {
 	}
 }
 
-func TestMaterializePromptFile_ExistingFileLeftUntouched(t *testing.T) {
+func TestMaterializePromptFile_ExistingFileWithoutVersionSidecar_Overwritten(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	versionPath := filepath.Join(dir, ".sandman", promptVersionFile)
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		t.Fatalf("create dir: %v", err)
 	}
@@ -422,8 +423,16 @@ func TestMaterializePromptFile_ExistingFileLeftUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("file should still exist: %v", err)
 	}
-	if got := string(data); got != existingContent {
-		t.Fatalf("content should not change\nwant:\n%s\ngot:\n%s", existingContent, got)
+	if got := string(data); got != DefaultPrompt() {
+		t.Fatalf("stale file (no version sidecar) should be overwritten\nwant:\n%s\ngot:\n%s", DefaultPrompt(), got)
+	}
+
+	versionData, err := os.ReadFile(versionPath)
+	if err != nil {
+		t.Fatalf("version sidecar not created: %v", err)
+	}
+	if got := string(versionData); got != promptVersion {
+		t.Fatalf("version sidecar mismatch\nwant:\n%s\ngot:\n%s", promptVersion, got)
 	}
 }
 
@@ -466,6 +475,7 @@ func TestMaterializePromptFile_NoCreateWhenPromptFlagSet(t *testing.T) {
 func TestMaterializePromptFile_CreatesMissingFile(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	versionPath := filepath.Join(dir, ".sandman", promptVersionFile)
 	cfg := RenderConfig{PromptFile: promptPath}
 
 	err := MaterializePromptFile(cfg)
@@ -479,6 +489,97 @@ func TestMaterializePromptFile_CreatesMissingFile(t *testing.T) {
 	}
 	if got := string(data); got != DefaultPrompt() {
 		t.Fatalf("content mismatch\nwant:\n%s\ngot:\n%s", DefaultPrompt(), got)
+	}
+
+	versionData, err := os.ReadFile(versionPath)
+	if err != nil {
+		t.Fatalf("version sidecar not created: %v", err)
+	}
+	if got := string(versionData); got != promptVersion {
+		t.Fatalf("version sidecar mismatch\nwant:\n%s\ngot:\n%s", promptVersion, got)
+	}
+}
+
+func TestMaterializePromptFile_ExistingFileWithMatchingVersion_Preserved(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	versionPath := filepath.Join(dir, ".sandman", promptVersionFile)
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
+		t.Fatalf("create dir: %v", err)
+	}
+	existingContent := "existing content"
+	if err := os.WriteFile(promptPath, []byte(existingContent), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := os.WriteFile(versionPath, []byte(promptVersion), 0644); err != nil {
+		t.Fatalf("write version sidecar: %v", err)
+	}
+
+	cfg := RenderConfig{PromptFile: promptPath}
+
+	err := MaterializePromptFile(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("file should still exist: %v", err)
+	}
+	if got := string(data); got != existingContent {
+		t.Fatalf("matching version should preserve content\nwant:\n%s\ngot:\n%s", existingContent, got)
+	}
+}
+
+func TestMaterializePromptFile_ExistingFileWithMismatchedVersion_Overwritten(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	versionPath := filepath.Join(dir, ".sandman", promptVersionFile)
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
+		t.Fatalf("create dir: %v", err)
+	}
+	existingContent := "existing content"
+	if err := os.WriteFile(promptPath, []byte(existingContent), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := os.WriteFile(versionPath, []byte("old-version-hash"), 0644); err != nil {
+		t.Fatalf("write version sidecar: %v", err)
+	}
+
+	cfg := RenderConfig{PromptFile: promptPath}
+
+	err := MaterializePromptFile(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("file should still exist: %v", err)
+	}
+	if got := string(data); got != DefaultPrompt() {
+		t.Fatalf("mismatched version should overwrite\nwant:\n%s\ngot:\n%s", DefaultPrompt(), got)
+	}
+
+	versionData, err := os.ReadFile(versionPath)
+	if err != nil {
+		t.Fatalf("version sidecar should exist: %v", err)
+	}
+	if got := string(versionData); got != promptVersion {
+		t.Fatalf("version sidecar should be updated\nwant:\n%s\ngot:\n%s", promptVersion, got)
+	}
+}
+
+func TestMaterializePromptFile_PromptPathIsDirectory_Error(t *testing.T) {
+	dir := t.TempDir()
+	cfg := RenderConfig{PromptFile: dir}
+
+	err := MaterializePromptFile(cfg)
+	if err == nil {
+		t.Fatal("expected error for directory prompt path")
+	}
+	if !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("expected directory error, got: %v", err)
 	}
 }
 
