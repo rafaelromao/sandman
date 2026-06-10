@@ -52,10 +52,10 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			mcSet := cmd.Flags().Changed("max-containers")
 
 			if ccSet && ccFlag < 0 {
-				return MarkUsage(fmt.Errorf("container-capacity must be 0 or greater"))
+				return MarkUsage(fmt.Errorf("container_capacity must be 0 or greater"))
 			}
 			if mcSet && mcFlag < 0 {
-				return MarkUsage(fmt.Errorf("max-containers must be 0 or greater"))
+				return MarkUsage(fmt.Errorf("max_containers must be 0 or greater"))
 			}
 
 			if prNumber > 0 {

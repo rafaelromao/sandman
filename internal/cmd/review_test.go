@@ -222,6 +222,7 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 		DefaultReviewAgent: "pi",
 		DefaultReviewModel: "openai/gpt-5",
 		Agent:              "opencode",
+		Sandbox:            "podman",
 		Agents:             map[string]config.Agent{},
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Preset: "opencode", Command: "opencode"},
@@ -274,8 +275,8 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if runner.captured.Model != "openai/gpt-5" {
 		t.Errorf("expected review model 'openai/gpt-5', got %q", runner.captured.Model)
 	}
-	if runner.captured.Sandbox != "" {
-		t.Errorf("expected default sandbox '' (cfg.Sandbox is empty), got %q", runner.captured.Sandbox)
+	if runner.captured.Sandbox != "podman" {
+		t.Errorf("expected default sandbox from config 'podman', got %q", runner.captured.Sandbox)
 	}
 	if !runner.captured.Review {
 		t.Errorf("expected Review=true on one-shot review batch request, got false")
@@ -479,6 +480,40 @@ func TestReviewCmd_SandboxFlagOverride(t *testing.T) {
 	}
 	if runner.captured.Sandbox != "podman" {
 		t.Errorf("expected --sandbox override 'podman', got %q", runner.captured.Sandbox)
+	}
+}
+
+func TestReviewCmd_DaemonSandboxFlagCapture(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	var capturedSandbox string
+	prev := reviewDaemonRunner
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
+		capturedSandbox = sandbox
+		return nil
+	}
+	defer func() { reviewDaemonRunner = prev }()
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--sandbox", "podman"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedSandbox != "podman" {
+		t.Errorf("expected daemon to receive sandbox 'podman', got %q", capturedSandbox)
 	}
 }
 
