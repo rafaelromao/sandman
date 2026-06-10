@@ -1102,6 +1102,33 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffHighlightJSON_NegativeNumber(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"n": -7}');
+if (result.indexOf('json-number') === -1) throw new Error('expected json-number span for negative');
+if (result.indexOf('>-7<') === -1) throw new Error('expected -7 in number span');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_Zero(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"n": 0}');
+if (result.indexOf('json-number') === -1) throw new Error('expected json-number span for zero');
+if (result.indexOf('>0<') === -1) throw new Error('expected 0 in number span');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightJSON_ScientificNotation(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightJSON('{"a": 1e10, "b": 1.5e-3}');
+const count = (result.match(/json-number/g) || []).length;
+if (count !== 2) throw new Error('expected 2 json-number spans for scientific notation, got ' + count);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffHighlightJSON_BooleanValue(t *testing.T) {
 	js := `const result = SandmanPortalDiff.highlightJSON('{"f": true, "g": false}');
 const bools = (result.match(/json-boolean/g) || []).length;

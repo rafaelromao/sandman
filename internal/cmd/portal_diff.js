@@ -209,6 +209,7 @@
 
   function highlightJSON(text) {
     if (!text) return '';
+    // local escapeHTML — the helpers bag isn't always in scope
     const _e = function(v) {
       return String(v == null ? '' : v)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -380,7 +381,7 @@
         row.appendChild(head);
         if (event.payload && Object.keys(event.payload).length) {
           const pre = global.document.createElement('pre');
-          pre.classList.add('event-payload', 'json-payload');
+          pre.classList.add('event-payload');
           pre.innerHTML = highlightJSON(JSON.stringify(event.payload, null, 2));
           row.appendChild(pre);
         }
