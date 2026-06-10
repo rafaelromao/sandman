@@ -51,11 +51,18 @@ git worktree list --porcelain | awk -v prefix="$worktree_prefix" '
     if (path != "" && !prunable && index(path, prefix) == 1) {
         split(path, parts, "/")
         dirname = parts[length(parts)]
+        # Dirname pattern matches Sandman Branch convention (see CONTEXT.md)
         if (dirname ~ /^[0-9]+-/) {
             expected = "refs/heads/sandman/" dirname
             if (detached || (branch != "" && branch != expected)) {
                 actual = (detached ? "detached HEAD" : branch)
-                print "Worktree " path " is on " actual ", expected " expected ". Run: git -C " path " checkout -f sandman/" dirname
+                check = "git rev-parse --verify --quiet " expected " >/dev/null 2>&1"
+                missing = (system(check) != 0)
+                if (missing) {
+                    print "Worktree " path " is on " actual ", expected " expected " (branch does not exist locally)"
+                } else {
+                    print "Worktree " path " is on " actual ", expected " expected ". Run: git -C " path " checkout -f sandman/" dirname
+                }
             }
         }
     }

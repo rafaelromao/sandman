@@ -223,7 +223,7 @@ Agent commits use your host Git identity, not Sandman config keys. Sandman resol
 
 A *stranded worktree* is a sandman-managed worktree whose HEAD points to a different branch than its directory name expects. This can happen when a previous run was interrupted after creating the worktree but before checking out the correct branch.
 
-To detect and remediate stranded worktrees, run the standalone cleanup script:
+To detect stranded worktrees and print remediation commands, run the standalone script:
 
 ```bash
 scripts/reconcile-stranded-worktrees.sh
