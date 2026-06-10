@@ -51,8 +51,6 @@ After the TDD plan is approved via subagent consensus:
 - Write the result to `.sandman/handoff.md` in the current worktree
 - If `.sandman/handoff.md` already exists, overwrite it (only one handoff file is kept per worktree)
 
-> The `sandman-handoff` skill's prose still references `.sandman/continuation-context.md` from before the rename. The runtime file path is `.sandman/handoff.md` — write there.
-
 ### 4. Implement (TDD)
 
 - Follow `sandman-tdd` workflow: vertical slices, one test → one implementation, within the repository codebase

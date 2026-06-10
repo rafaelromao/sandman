@@ -189,6 +189,13 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	if runner.last.ReviewFocus != "focus on tests" {
 		t.Errorf("expected ReviewFocus='focus on tests', got %q", runner.last.ReviewFocus)
 	}
+	if runner.last.RunID != "PR42" {
+		t.Errorf("expected RunID='PR42' on daemon review batch request, got %q", runner.last.RunID)
+	}
+	wantRunDir := filepath.Join(d.BaseDir, "runs", "PR42")
+	if runner.last.RunDir != wantRunDir {
+		t.Errorf("expected RunDir=%q, got %q", wantRunDir, runner.last.RunDir)
+	}
 
 	dir := d.PRDir(42)
 	seenPath := filepath.Join(dir, "seen-comments.jsonl")

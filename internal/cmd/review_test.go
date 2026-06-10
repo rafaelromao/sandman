@@ -288,7 +288,7 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 		t.Errorf("expected empty ReviewFocus on one-shot review batch request, got %q", runner.captured.ReviewFocus)
 	}
 	if runner.captured.RunID != "PR17" {
-		t.Errorf("expected RunID=PR17, got %q", runner.captured.RunID)
+		t.Errorf("expected RunID='PR17' on one-shot review batch request, got %q", runner.captured.RunID)
 	}
 	if !strings.Contains(runner.captured.RunDir, "PR17") {
 		t.Errorf("expected RunDir to contain PR17, got %q", runner.captured.RunDir)
