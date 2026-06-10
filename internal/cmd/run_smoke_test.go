@@ -78,21 +78,6 @@ var smokeProviderCases = []smokeProviderCase{
 			"~/.local/share/opencode",
 		},
 	},
-	{
-		name:       "pi",
-		hostCLI:    "pi",
-		buildTools: "generic",
-		model:      "kilo/kilo-auto/free",
-		issue: github.Issue{
-			Number: 424,
-			Title:  "Smoke pi",
-			Body:   "Reply with exactly SMOKE_OK.",
-		},
-		wantBranch: "sandman/424-smoke-pi",
-		authPaths: []string{
-			"~/.pi",
-		},
-	},
 }
 
 // applySmokeModelOverrides lets operators steer the smoke tests at a
@@ -137,7 +122,7 @@ func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
 		t.Fatal(err)
 	}
 	if len(allowed) == 0 {
-		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode,pi and run `go test -tags smoke ./internal/cmd -run Smoke`")
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
 	}
 
 	for _, tc := range cases {
@@ -161,9 +146,6 @@ func smokeProviderNames(cases []smokeProviderCase) []string {
 
 func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	t.Helper()
-	if tc.name == "pi" {
-		setupPiTestShim(t)
-	}
 	ensureSmokeHostCLI(t, tc)
 
 	runtime, err := sandbox.ResolveRuntime("podman")
@@ -200,19 +182,12 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	}
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
-	if tc.name == "pi" {
-		ensurePiFreePackage(t, homeDir)
-	}
 
 	warmSmokeRuntime(t, runtime)
 
 	s := &scaffold.Scaffolder{}
 	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: tc.buildTools, Agent: tc.name}, smokePrompter{}); err != nil {
 		t.Fatalf("scaffold repo: %v", err)
-	}
-	if tc.name == "pi" {
-		writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
-		appendPiTestShimToDockerfile(t, repoDir)
 	}
 	if err := addSmokeDockerDeps(repoDir, tc.name); err != nil {
 		t.Fatalf("update Dockerfile: %v", err)
@@ -470,8 +445,6 @@ func customizeSmokeConfig(repoDir, provider, model string) (*config.Config, erro
 				resolved.ConfigDirs = append(resolved.ConfigDirs, dir)
 			}
 		}
-	} else if provider == "pi" {
-		resolved.Command = `PATH=/workspace/.sandman/bin:${PATH} pi --print --provider {{.ModelProvider}}{{if .ModelName}} --model {{.ModelName}}{{end}} "$(cat {{.PromptFile}})"`
 	}
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
@@ -517,16 +490,6 @@ func ensureSmokeWritableDirs(t *testing.T, homeDir, provider string) {
 		if err := os.Chmod(path, 0777); err != nil {
 			t.Fatalf("chmod %s: %v", rel, err)
 		}
-	}
-}
-
-func ensurePiFreePackage(t *testing.T, homeDir string) {
-	t.Helper()
-
-	cmd := exec.Command("pi", "install", "git:github.com/apmantza/pi-free")
-	cmd.Env = append(os.Environ(), "HOME="+homeDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("install pi-free: %v: %s", err, out)
 	}
 }
 

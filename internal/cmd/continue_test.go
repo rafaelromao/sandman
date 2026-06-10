@@ -139,12 +139,12 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if err := log.Log(events.Event{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "model": "gpt-4.1", "agent": "opencode", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}}); err != nil {
 		t.Fatalf("write run.started event: %v", err)
 	}
-	if err := log.Log(events.Event{Type: "run.continued", RunID: "run-42-2", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "model": "gpt-4.2", "agent": "pi", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true}}); err != nil {
+	if err := log.Log(events.Event{Type: "run.continued", RunID: "run-42-2", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "model": "gpt-4.2", "agent": "opencode", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true}}); err != nil {
 		t.Fatalf("write run.continued event: %v", err)
 	}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", DefaultModel: "openai/gpt-4.1", WorktreeDir: dir, ReviewCommand: "/current review", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", DefaultModel: "openai/gpt-4.1", WorktreeDir: dir, ReviewCommand: "/current review", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -189,7 +189,7 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if spy.req.BaseBranch != "main" {
 		t.Fatalf("expected base branch replay, got %q", spy.req.BaseBranch)
 	}
-	if spy.req.Agent != "pi" {
+	if spy.req.Agent != "opencode" {
 		t.Fatalf("expected agent replay, got %q", spy.req.Agent)
 	}
 	if spy.req.Parallel != 7 {
@@ -252,7 +252,7 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	}}
 	deps := Dependencies{
 		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}, "pi": {Preset: "pi", Command: "true"}}}},
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
 		EventLog:    log,
 	}
 
@@ -260,7 +260,7 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	cmd := NewContinueCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--model", "gpt-override", "--agent", "pi", "--parallel", "9", "--start-delay", "12", "--retries", "5", "--sandbox", "worktree", "--container-capacity", "8", "--max-containers", "6", "42"})
+	cmd.SetArgs([]string{"--model", "gpt-override", "--agent", "opencode", "--parallel", "9", "--start-delay", "12", "--retries", "5", "--sandbox", "worktree", "--container-capacity", "8", "--max-containers", "6", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -270,7 +270,7 @@ func TestContinue_UsesFlagsToOverrideReplayedValues(t *testing.T) {
 	if spy.req.Model != "gpt-override" {
 		t.Fatalf("expected model override, got %q", spy.req.Model)
 	}
-	if spy.req.Agent != "pi" {
+	if spy.req.Agent != "opencode" {
 		t.Fatalf("expected agent override, got %q", spy.req.Agent)
 	}
 	if spy.req.Parallel != 9 {

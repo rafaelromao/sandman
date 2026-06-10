@@ -96,7 +96,6 @@ func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 func TestRenderCommand_BuiltInPresets(t *testing.T) {
 	presets := map[string]string{
 		"opencode": `opencode run "$(cat .sandman/rendered-prompt.md)"`,
-		"pi":       `pi --print --provider openai --model gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`,
 	}
 
 	for key, want := range presets {

@@ -59,13 +59,6 @@ var prFlowProviderCases = []prFlowProviderCase{
 		requiredAuthPaths: []string{"~/.local/share/opencode/auth.json"},
 		authPaths:         []string{"~/.config/opencode", "~/.local/share/opencode"},
 	},
-	{
-		name:              "pi",
-		hostCLI:           "pi",
-		model:             "kilo/kilo-auto/free",
-		requiredAuthPaths: []string{"~/.pi"},
-		authPaths:         []string{"~/.pi"},
-	},
 }
 
 // applyPRFlowModelOverrides lets operators steer the prflow e2e tests
@@ -96,7 +89,7 @@ func runPRFlowProviderCases(t *testing.T, fn func(t *testing.T, tc prFlowProvide
 		t.Fatal(err)
 	}
 	if len(allowed) == 0 {
-		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode,pi and run `go test -tags e2e ./internal/cmd -run PRFlow`")
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags e2e ./internal/cmd -run PRFlow`")
 	}
 
 	for _, tc := range prFlowProviderCases {
@@ -153,10 +146,6 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 		}
 		if _, err := runSandmanBinary(t, binPath, repoDir, "config", "set", "review_command", "/oc review"); err != nil {
 			t.Fatalf("sandman config set failed: %v", err)
-		}
-		if tc.name == "pi" {
-			writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
-			appendPiTestShimToDockerfile(t, repoDir)
 		}
 		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
@@ -531,10 +520,6 @@ func TestDouble(t *testing.T) {
 func requirePRFlowProvider(t *testing.T, tc prFlowProviderCase) string {
 	t.Helper()
 
-	if tc.name == "pi" {
-		setupPiTestShim(t)
-	}
-
 	realHome, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("resolve home dir: %v", err)
@@ -624,8 +609,6 @@ func customizePRFlowAgent(t *testing.T, repoDir string, tc prFlowProviderCase, o
 	switch tc.name {
 	case "opencode":
 		agent.Command = prefix.String() + fmt.Sprintf(`opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, tc.model)
-	case "pi":
-		agent.Command = prefix.String() + `pi --print{{if .ModelProvider}} --provider {{.ModelProvider}}{{end}}{{if .ModelName}} --model {{.ModelName}}{{end}} "$(cat {{.PromptFile}})"`
 	default:
 		t.Fatalf("unsupported provider %q", tc.name)
 	}
@@ -1135,10 +1118,6 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 		if _, err := runSandmanBinary(t, binPath, repoDir, "config", "set", "review_command", "/oc review"); err != nil {
 			t.Fatalf("sandman config set failed: %v", err)
 		}
-		if tc.name == "pi" {
-			writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
-			appendPiTestShimToDockerfile(t, repoDir)
-		}
 		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
 		ghShimDir := t.TempDir()
@@ -1362,10 +1341,6 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 		}
 		if _, err := runSandmanBinary(t, binPath, repoDir, "config", "set", "review_command", "/oc review"); err != nil {
 			t.Fatalf("sandman config set failed: %v", err)
-		}
-		if tc.name == "pi" {
-			writePiTestShim(t, filepath.Join(repoDir, ".sandman", "bin"))
-			appendPiTestShimToDockerfile(t, repoDir)
 		}
 		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 

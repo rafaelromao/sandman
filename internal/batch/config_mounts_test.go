@@ -412,39 +412,32 @@ func TestOpenCodePreset_ExcludesMutableStateAndLiveMountsDatabase(t *testing.T) 
 	}
 }
 
-func TestPiPreset_ExcludesNpmAndSessionsAndLiveMountsThem(t *testing.T) {
+func TestConfigMounts_ExcludesAndLiveMountsDirectories(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	piDir := filepath.Join(home, ".pi")
-	agentDir := filepath.Join(piDir, "agent")
-	if err := os.MkdirAll(agentDir, 0755); err != nil {
-		t.Fatalf("mkdir agent dir: %v", err)
+	appDir := filepath.Join(home, ".app")
+	cacheDir := filepath.Join(appDir, "cache")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(piDir, "config.json"), []byte("{}"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(appDir, "config.json"), []byte("{}"), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
-	npmDir := filepath.Join(agentDir, "npm")
-	if err := os.MkdirAll(npmDir, 0755); err != nil {
-		t.Fatalf("mkdir npm: %v", err)
+	exclude1 := filepath.Join(cacheDir, "tmp")
+	exclude2 := filepath.Join(cacheDir, "logs")
+	if err := os.MkdirAll(exclude1, 0755); err != nil {
+		t.Fatalf("mkdir tmp: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(npmDir, "package.json"), []byte("{}"), 0644); err != nil {
-		t.Fatalf("write npm package: %v", err)
-	}
-
-	sessionsDir := filepath.Join(agentDir, "sessions")
-	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
-		t.Fatalf("mkdir sessions: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionsDir, "session.json"), []byte("{}"), 0644); err != nil {
-		t.Fatalf("write session: %v", err)
+	if err := os.MkdirAll(exclude2, 0755); err != nil {
+		t.Fatalf("mkdir logs: %v", err)
 	}
 
 	opts := sandbox.StartOptions{
-		AgentConfigDirs:     []string{piDir},
-		AgentConfigExcludes: []string{npmDir, sessionsDir},
-		LiveMounts:          []string{npmDir, sessionsDir},
+		AgentConfigDirs:     []string{appDir},
+		AgentConfigExcludes: []string{exclude1, exclude2},
+		LiveMounts:          []string{exclude1, exclude2},
 	}
 	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts, nil)
 	if err != nil {
@@ -454,49 +447,49 @@ func TestPiPreset_ExcludesNpmAndSessionsAndLiveMountsThem(t *testing.T) {
 
 	var snapshotSource string
 	for _, mount := range opts.ConfigMounts {
-		if mount.Target == "/.pi" {
+		if mount.Target == "/.app" {
 			snapshotSource = mount.Source
 			break
 		}
 	}
 	if snapshotSource == "" {
-		t.Fatalf("expected snapshot mount for /.pi, got %v", opts.ConfigMounts)
+		t.Fatalf("expected snapshot mount for /.app, got %v", opts.ConfigMounts)
 	}
 
 	if _, err := os.Stat(filepath.Join(snapshotSource, "config.json")); err != nil {
 		t.Errorf("expected config.json in snapshot: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(snapshotSource, "agent")); err != nil {
-		t.Fatalf("expected agent dir in snapshot: %v", err)
+	if _, err := os.Stat(filepath.Join(snapshotSource, "cache")); err != nil {
+		t.Fatalf("expected cache dir in snapshot: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(snapshotSource, "agent", "npm")); !os.IsNotExist(err) {
-		t.Errorf("expected npm to be excluded from snapshot, got: %v", err)
+	if _, err := os.Stat(filepath.Join(snapshotSource, "cache", "tmp")); !os.IsNotExist(err) {
+		t.Errorf("expected tmp to be excluded from snapshot, got: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(snapshotSource, "agent", "sessions")); !os.IsNotExist(err) {
-		t.Errorf("expected sessions to be excluded from snapshot, got: %v", err)
+	if _, err := os.Stat(filepath.Join(snapshotSource, "cache", "logs")); !os.IsNotExist(err) {
+		t.Errorf("expected logs to be excluded from snapshot, got: %v", err)
 	}
 
-	var npmLiveMount, sessionsLiveMount *sandbox.ConfigMount
+	var tmpLiveMount, logsLiveMount *sandbox.ConfigMount
 	for i := range opts.ConfigMounts {
 		mount := &opts.ConfigMounts[i]
 		switch mount.Target {
-		case "/.pi/agent/npm":
-			npmLiveMount = mount
-		case "/.pi/agent/sessions":
-			sessionsLiveMount = mount
+		case "/.app/cache/tmp":
+			tmpLiveMount = mount
+		case "/.app/cache/logs":
+			logsLiveMount = mount
 		}
 	}
-	if npmLiveMount == nil {
-		t.Errorf("expected live mount for npm, got %v", opts.ConfigMounts)
+	if tmpLiveMount == nil {
+		t.Errorf("expected live mount for tmp, got %v", opts.ConfigMounts)
 	}
-	if npmLiveMount != nil && npmLiveMount.Source != npmDir {
-		t.Errorf("expected live mount source %q, got %q", npmDir, npmLiveMount.Source)
+	if tmpLiveMount != nil && tmpLiveMount.Source != exclude1 {
+		t.Errorf("expected live mount source %q, got %q", exclude1, tmpLiveMount.Source)
 	}
-	if sessionsLiveMount == nil {
-		t.Errorf("expected live mount for sessions, got %v", opts.ConfigMounts)
+	if logsLiveMount == nil {
+		t.Errorf("expected live mount for logs, got %v", opts.ConfigMounts)
 	}
-	if sessionsLiveMount != nil && sessionsLiveMount.Source != sessionsDir {
-		t.Errorf("expected live mount source %q, got %q", sessionsDir, sessionsLiveMount.Source)
+	if logsLiveMount != nil && logsLiveMount.Source != exclude2 {
+		t.Errorf("expected live mount source %q, got %q", exclude2, logsLiveMount.Source)
 	}
 }
 

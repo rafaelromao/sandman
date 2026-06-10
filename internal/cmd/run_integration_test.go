@@ -186,7 +186,7 @@ func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode stri
 		panic(err)
 	}
 	script := "#!/bin/sh\nset -e\n" + renderShellExports(agent.Env) + strings.TrimSpace(agent.Command) + "\n"
-	for _, name := range []string{"opencode", "pi"} {
+	for _, name := range []string{"opencode"} {
 		path := filepath.Join(binDir, name)
 		if err := os.WriteFile(path, []byte(script), 0755); err != nil {
 			panic(err)
@@ -206,7 +206,6 @@ func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode stri
 		Git:           gitCfg,
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Command: agent.Command, Env: agent.Env},
-			"pi":       {Command: agent.Command, Env: agent.Env},
 		},
 	}}
 
@@ -259,7 +258,6 @@ func TestRun_ExplicitZeroParallelRunsThroughOrchestratorEndToEnd(t *testing.T) {
 		Git:             config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Command: agentCommand},
-			"pi":       {Command: agentCommand},
 		},
 	}}
 	deps.ConfigStore = store

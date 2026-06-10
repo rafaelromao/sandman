@@ -7,7 +7,7 @@ import (
 )
 
 func TestParseList_EmptyReturnsNil(t *testing.T) {
-	allowed, err := ParseList("", []string{"opencode", "pi"}, "provider")
+	allowed, err := ParseList("", []string{"opencode", "claude"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -17,7 +17,7 @@ func TestParseList_EmptyReturnsNil(t *testing.T) {
 }
 
 func TestParseList_WhitespaceOnlyReturnsNil(t *testing.T) {
-	allowed, err := ParseList("   ", []string{"opencode", "pi"}, "provider")
+	allowed, err := ParseList("   ", []string{"opencode", "claude"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -27,62 +27,62 @@ func TestParseList_WhitespaceOnlyReturnsNil(t *testing.T) {
 }
 
 func TestParseList_AllReturnsKnown(t *testing.T) {
-	allowed, err := ParseList("all", []string{"opencode", "pi"}, "provider")
+	allowed, err := ParseList("all", []string{"opencode", "claude"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := map[string]bool{"opencode": true, "pi": true}
+	want := map[string]bool{"opencode": true, "claude": true}
 	if !reflect.DeepEqual(allowed, want) {
 		t.Fatalf("expected %#v, got %#v", want, allowed)
 	}
 }
 
 func TestParseList_StarReturnsKnown(t *testing.T) {
-	allowed, err := ParseList("*", []string{"opencode", "pi"}, "provider")
+	allowed, err := ParseList("*", []string{"opencode", "claude"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := map[string]bool{"opencode": true, "pi": true}
+	want := map[string]bool{"opencode": true, "claude": true}
 	if !reflect.DeepEqual(allowed, want) {
 		t.Fatalf("expected %#v, got %#v", want, allowed)
 	}
 }
 
 func TestParseList_CommaListReturnsExplicit(t *testing.T) {
-	allowed, err := ParseList("opencode,pi", []string{"opencode", "pi"}, "provider")
+	allowed, err := ParseList("opencode,claude", []string{"opencode", "claude"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := map[string]bool{"opencode": true, "pi": true}
+	want := map[string]bool{"opencode": true, "claude": true}
 	if !reflect.DeepEqual(allowed, want) {
 		t.Fatalf("expected %#v, got %#v", want, allowed)
 	}
 }
 
 func TestParseList_TrimsWhitespaceAroundEntries(t *testing.T) {
-	allowed, err := ParseList("  opencode , pi  ", []string{"opencode", "pi"}, "provider")
+	allowed, err := ParseList("  opencode , claude  ", []string{"opencode", "claude"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := map[string]bool{"opencode": true, "pi": true}
+	want := map[string]bool{"opencode": true, "claude": true}
 	if !reflect.DeepEqual(allowed, want) {
 		t.Fatalf("expected %#v, got %#v", want, allowed)
 	}
 }
 
 func TestParseList_EmptyEntriesAreSkipped(t *testing.T) {
-	allowed, err := ParseList(",,opencode,,,pi,,", []string{"opencode", "pi"}, "provider")
+	allowed, err := ParseList(",,opencode,,,claude,,", []string{"opencode", "claude"}, "provider")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := map[string]bool{"opencode": true, "pi": true}
+	want := map[string]bool{"opencode": true, "claude": true}
 	if !reflect.DeepEqual(allowed, want) {
 		t.Fatalf("expected %#v, got %#v", want, allowed)
 	}
 }
 
 func TestParseList_UnknownNameReturnsError(t *testing.T) {
-	_, err := ParseList("opencode,claude", []string{"opencode", "pi"}, "provider")
+	_, err := ParseList("opencode,claude", []string{"opencode", "custom"}, "provider")
 	if err == nil {
 		t.Fatal("expected error for unknown name, got nil")
 	}
@@ -92,14 +92,14 @@ func TestParseList_UnknownNameReturnsError(t *testing.T) {
 }
 
 func TestParseList_SingleUnknownNameReturnsError(t *testing.T) {
-	_, err := ParseList("claude", []string{"opencode", "pi"}, "provider")
+	_, err := ParseList("claude", []string{"opencode", "custom"}, "provider")
 	if err == nil {
 		t.Fatal("expected error for unknown name, got nil")
 	}
 }
 
 func TestParseList_EmptyKindUsesGenericError(t *testing.T) {
-	_, err := ParseList("claude", []string{"opencode", "pi"}, "")
+	_, err := ParseList("claude", []string{"opencode", "custom"}, "")
 	if err == nil {
 		t.Fatal("expected error for unknown name, got nil")
 	}
@@ -110,7 +110,7 @@ func TestParseList_EmptyKindUsesGenericError(t *testing.T) {
 
 func TestResolveProviderAllowlist_NeitherSetReturnsNil(t *testing.T) {
 	t.Setenv("SANDMAN_TEST_PROVIDERS", "")
-	allowed, err := ResolveProviderAllowlist([]string{"opencode", "pi"})
+	allowed, err := ResolveProviderAllowlist([]string{"opencode", "claude"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestResolveProviderAllowlist_NeitherSetReturnsNil(t *testing.T) {
 
 func TestResolveProviderAllowlist_CanonicalReturnedAsAllowlist(t *testing.T) {
 	t.Setenv("SANDMAN_TEST_PROVIDERS", "opencode")
-	allowed, err := ResolveProviderAllowlist([]string{"opencode", "pi"})
+	allowed, err := ResolveProviderAllowlist([]string{"opencode", "claude"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -133,11 +133,11 @@ func TestResolveProviderAllowlist_CanonicalReturnedAsAllowlist(t *testing.T) {
 
 func TestResolveProviderAllowlist_AllExpandsToKnown(t *testing.T) {
 	t.Setenv("SANDMAN_TEST_PROVIDERS", "all")
-	allowed, err := ResolveProviderAllowlist([]string{"opencode", "pi"})
+	allowed, err := ResolveProviderAllowlist([]string{"opencode", "claude"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := map[string]bool{"opencode": true, "pi": true}
+	want := map[string]bool{"opencode": true, "claude": true}
 	if !reflect.DeepEqual(allowed, want) {
 		t.Fatalf("expected canonical to expand all: want %#v, got %#v", want, allowed)
 	}
@@ -226,7 +226,7 @@ func TestTestModelEnvVar_UppercasesAgent(t *testing.T) {
 	if got, want := TestModelEnvVar("opencode"), "SANDMAN_TEST_MODEL_OPENCODE"; got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
-	if got, want := TestModelEnvVar("pi"), "SANDMAN_TEST_MODEL_PI"; got != want {
+	if got, want := TestModelEnvVar("claude"), "SANDMAN_TEST_MODEL_CLAUDE"; got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 	if got, want := TestModelEnvVar("OpenCode"), "SANDMAN_TEST_MODEL_OPENCODE"; got != want {
@@ -252,8 +252,8 @@ func TestResolveTestModel_SetReturnsOverride(t *testing.T) {
 }
 
 func TestResolveTestModel_TrimsSurroundingWhitespace(t *testing.T) {
-	t.Setenv("SANDMAN_TEST_MODEL_PI", "   kilo/some-model  ")
-	if got := ResolveTestModel("pi", "kilo/kilo-auto/free"); got != "kilo/some-model" {
+	t.Setenv("SANDMAN_TEST_MODEL_CLAUDE", "   kilo/some-model  ")
+	if got := ResolveTestModel("claude", "kilo/kilo-auto/free"); got != "kilo/some-model" {
 		t.Fatalf("expected trimmed override, got %q", got)
 	}
 }
@@ -267,7 +267,7 @@ func TestResolveTestModel_EmptyOverrideReturnsDefault(t *testing.T) {
 
 func TestResolveTestModel_AgentScoped(t *testing.T) {
 	t.Setenv("SANDMAN_TEST_MODEL_OPENCODE", "opencode/x")
-	if got := ResolveTestModel("pi", "kilo/kilo-auto/free"); got != "kilo/kilo-auto/free" {
-		t.Fatalf("expected pi default unaffected by opencode env, got %q", got)
+	if got := ResolveTestModel("claude", "kilo/kilo-auto/free"); got != "kilo/kilo-auto/free" {
+		t.Fatalf("expected claude default unaffected by opencode env, got %q", got)
 	}
 }

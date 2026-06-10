@@ -219,13 +219,12 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	cfg := &config.Config{
 		DefaultAgent:       "opencode",
 		DefaultModel:       "opencode/big-pickle",
-		DefaultReviewAgent: "pi",
+		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "openai/gpt-5",
 		Agent:              "opencode",
 		Agents:             map[string]config.Agent{},
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Preset: "opencode", Command: "opencode"},
-			"pi":       {Preset: "pi", Command: "pi"},
 		},
 	}
 	gh := &fakePRGitHubClient{
@@ -248,7 +247,7 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "repo=owner/repo agent=pi model=openai/gpt-5") {
+	if !strings.Contains(buf.String(), "repo=owner/repo agent=opencode model=openai/gpt-5") {
 		t.Errorf("expected repo/agent/model info line, got %q", buf.String())
 	}
 	if len(runner.captured.Issues) != 0 {
@@ -268,8 +267,8 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 			t.Errorf("rendered prompt missing %q\nprompt:\n%s", w, runner.captured.PromptConfig.PromptFlag)
 		}
 	}
-	if runner.captured.Agent != "pi" {
-		t.Errorf("expected review agent 'pi', got %q", runner.captured.Agent)
+	if runner.captured.Agent != "opencode" {
+		t.Errorf("expected review agent 'opencode', got %q", runner.captured.Agent)
 	}
 	if runner.captured.Model != "openai/gpt-5" {
 		t.Errorf("expected review model 'openai/gpt-5', got %q", runner.captured.Model)
@@ -292,12 +291,11 @@ func TestReviewCmd_AgentFlagOverridesReviewAgent(t *testing.T) {
 	cfg := &config.Config{
 		DefaultAgent:       "opencode",
 		DefaultModel:       "opencode/big-pickle",
-		DefaultReviewAgent: "pi",
+		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "openai/gpt-5",
 		Agent:              "opencode",
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Preset: "opencode", Command: "opencode"},
-			"pi":       {Preset: "pi", Command: "pi"},
 		},
 	}
 	gh := &fakePRGitHubClient{
@@ -316,7 +314,7 @@ func TestReviewCmd_AgentFlagOverridesReviewAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if runner.captured.Agent != "opencode" {
-		t.Errorf("expected --agent to override review agent, got %q", runner.captured.Agent)
+		t.Errorf("expected --agent to specify review agent, got %q", runner.captured.Agent)
 	}
 }
 

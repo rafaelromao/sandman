@@ -128,33 +128,6 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.local/share/opencode/opencode.db-wal",
 		},
 	},
-	"pi": {
-		DisplayName: "Pi",
-		Command:     `pi --print{{if .ModelProvider}} --provider {{.ModelProvider}}{{end}}{{if .ModelName}} --model {{.ModelName}}{{end}} "$(cat {{.PromptFile}})"`,
-		ConfigDirs: []string{
-			"~/.pi",
-			"~/.claude",
-			"~/.agents",
-		},
-		// Mutable runtime state under ~/.pi/agent/ is too large or too
-		// session-specific to snapshot. npm is a package cache that can
-		// grow large; sessions holds mutable per-run state that should
-		// remain inspectable on the host after the container run. The
-		// exclude list is a subset of LiveMounts; PrepareContainerConfigMounts
-		// unions them, so the redundancy is intentional.
-		SnapshotExcludes: []string{
-			"~/.pi/agent/npm",
-			"~/.pi/agent/sessions",
-		},
-		// Concurrent agents sharing one container share the same host
-		// npm cache and session dir; last-write-wins applies (Pi does
-		// not run a concurrency layer the way opencode.db does under
-		// SQLite WAL mode).
-		LiveMounts: []string{
-			"~/.pi/agent/npm",
-			"~/.pi/agent/sessions",
-		},
-	},
 }
 
 // Store loads and saves Sandman configuration.
@@ -305,16 +278,9 @@ func Load(path string) (*Config, error) {
 		}
 		cfg.AgentProviders[name] = agent
 	}
-	agentCfg, err := cfg.ResolveAgentProvider(cfg.DefaultAgent)
-	if err != nil {
+	if _, err := cfg.ResolveAgentProvider(cfg.DefaultAgent); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
-	if agentCfg.Preset == "pi" {
-		if _, _, err := SplitPiModel(agentCfg.Model); err != nil {
-			return nil, fmt.Errorf("validate config: %w", err)
-		}
-	}
-
 	return &cfg, nil
 }
 
@@ -416,19 +382,6 @@ func copyStringMap(src map[string]string) map[string]string {
 		dst[k] = v
 	}
 	return dst
-}
-
-// SplitPiModel splits a Pi model value in provider/model form.
-func SplitPiModel(model string) (string, string, error) {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return "", "", nil
-	}
-	provider, name, ok := strings.Cut(model, "/")
-	if !ok || strings.TrimSpace(provider) == "" || strings.TrimSpace(name) == "" {
-		return "", "", fmt.Errorf("pi model must use provider/model format, got %q", model)
-	}
-	return strings.TrimSpace(provider), strings.TrimSpace(name), nil
 }
 
 // GetValue returns the string representation of a config field by its dot-notation key.
