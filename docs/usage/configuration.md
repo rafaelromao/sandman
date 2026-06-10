@@ -46,7 +46,7 @@ container_capacity: 4
 start_delay: 0
 
 # Maximum number of ContainerSandbox instances.
-# 0 means auto mode: create the minimum needed for active runs.
+# 0 = no cap (unbounded pool growth — Sandman creates as many containers as needed for active runs).
 max_containers: 0
 
 # Directory for git worktrees.
@@ -106,9 +106,9 @@ See [Sandman Skills](skills.md) for the shared workflow details.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `container_capacity` | `4` | Max concurrent agent runs per `ContainerSandbox`. `0` = unlimited (no per-container cap), `1` = one agent per container |
-| `max_containers` | `0` | Max `ContainerSandbox` instances. `0` = no cap (unbounded pool growth). An explicit positive value caps total container-backed concurrency |
+| `max_containers` | `0` | Max `ContainerSandbox` instances. `0` = no cap (unbounded pool growth — Sandman creates as many containers as needed for active runs). An explicit positive value caps total container-backed concurrency |
 
-When `max_containers=0` (unbounded pool growth) and `container_capacity=4` with 6 active runs, Sandman creates 2 containers (4 + 2). When a positive `max_containers` limit is reached and all containers are at capacity, additional runs queue until capacity frees up.
+When `max_containers=0` (no cap, unbounded pool growth — Sandman creates as many containers as needed for active runs) and `container_capacity=4` with 6 active runs, Sandman creates 2 containers (4 + 2). When a positive `max_containers` limit is reached and all containers are at capacity, additional runs queue until capacity frees up.
 
 See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 
