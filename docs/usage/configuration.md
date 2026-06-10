@@ -102,7 +102,7 @@ Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on 
 
 See [Sandman Skills](skills.md) for the shared workflow details.
 
-`sandman continue` replays the stored branch, base branch, agent, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, resolves the model from `--model` or `model`, reads the handoff document (`.sandman/handoff.md`) from the worktree, and passes its contents verbatim as the agent's resume prompt. When no handoff document exists, an empty handoff template is used with a warning on stderr.
+`sandman continue` replays the stored branch, base branch, agent, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, resolves the model from `--model` or `model`, reads the handoff document (`.sandman/handoff.md`) from the worktree, and passes its contents verbatim as the agent's resume prompt. The handoff document now carries three structured fields — `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` — added by [ADR-0023](../adr/0023-handoff-points-to-rendered-prompt-and-captures-last-skill.md) on top of the existing stage fields. When no handoff document exists, an empty handoff template is used with a warning on stderr.
 
 ## Container scheduling configuration
 
