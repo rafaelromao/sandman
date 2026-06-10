@@ -14,7 +14,7 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 - pr-review
 - merge
 - pr-merge
-- continuation
+- handoff
 
 `docs/usage/default-prompt.md` now acts as a bootstrap that passes issue context, branch context, and the configured review command into the installed `sandman` skill.
 
