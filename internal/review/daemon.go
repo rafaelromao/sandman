@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
@@ -209,11 +208,11 @@ func (d *Daemon) tick(ctx context.Context) error {
 	return nil
 }
 
-// processPR scans one PR's comments and launches review agents in a bounded
-// goroutine pool for each unseen /sandman review trigger. A per-PR ClaimStore
-// prevents cross-process double-processing; SeenCommentsStore.TryClaim
-// prevents intra-process races. Errors are logged but not returned; the
-// goroutine pool drains before the function returns.
+// processPR scans one PR's comments and launches a review agent for the
+// newest unseen /sandman review trigger. A per-PR ClaimStore provides
+// cross-process safety; SeenCommentsStore.TryClaim prevents intra-process
+// races. Stale unseen triggers are marked as seen and skipped. Errors are
+// logged but not returned.
 func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	comments, err := d.GitHub.ListPRComments(prNumber)
 	if err != nil {
@@ -242,13 +241,11 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	}
 	defer cs.Close()
 
-	parallelLimit := config.DefaultReviewParallel
-	if d.Config != nil {
-		parallelLimit = d.Config.EffectiveReviewParallel()
+	type unseenTrigger struct {
+		comment github.PRComment
+		focus   string
 	}
-	sem := make(chan struct{}, parallelLimit)
-	var wg sync.WaitGroup
-
+	var triggers []unseenTrigger
 	for _, comment := range comments {
 		focus, ok := ParseTrigger(comment.Body)
 		if !ok {
@@ -266,32 +263,48 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			d.logf("comment %s already claimed, skipping", comment.ID)
 			continue
 		}
-
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(c github.PRComment, focus string) {
-			defer func() {
-				store.Mark(c.ID)
-				cs.Release(c.ID)
-				<-sem
-				wg.Done()
-			}()
-
-			commentReactionID, commentErr := d.GitHub.AddCommentReaction(c.ID, "eyes")
-			if commentErr != nil {
-				d.logf("add reaction to comment %s: %v", c.ID, commentErr)
-			}
-			prReactionID, prErr := d.GitHub.AddIssueReaction(prNumber, "eyes")
-			if prErr != nil {
-				d.logf("add reaction to PR #%d: %v", prNumber, prErr)
-			}
-
-			if err := d.launchReview(ctx, prNumber, prDir, focus, c.ID, commentReactionID, prReactionID); err != nil {
-				d.logf("launch review for PR #%d comment %s: %v", prNumber, c.ID, err)
-			}
-		}(comment, focus)
+		triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
 	}
-	wg.Wait()
+	if len(triggers) == 0 {
+		return nil
+	}
+
+	newest := triggers[0]
+	for i := 1; i < len(triggers); i++ {
+		if triggers[i].comment.CreatedAt.After(newest.comment.CreatedAt) {
+			newest = triggers[i]
+		}
+	}
+
+	for _, t := range triggers {
+		if t.comment.ID != newest.comment.ID {
+			if err := store.Mark(t.comment.ID); err != nil {
+				d.logf("mark stale comment %s seen: %v", t.comment.ID, err)
+			}
+			cs.Release(t.comment.ID)
+			d.logf("skipping stale trigger comment %s (newer %s exists)", t.comment.ID, newest.comment.ID)
+		}
+	}
+
+	comment := newest.comment
+	focus := newest.focus
+	commentReactionID, commentErr := d.GitHub.AddCommentReaction(comment.ID, "eyes")
+	if commentErr != nil {
+		d.logf("add reaction to comment %s: %v", comment.ID, commentErr)
+	}
+	prReactionID, prErr := d.GitHub.AddIssueReaction(prNumber, "eyes")
+	if prErr != nil {
+		d.logf("add reaction to PR #%d: %v", prNumber, prErr)
+	}
+
+	if err := d.launchReview(ctx, prNumber, prDir, focus, comment.ID, commentReactionID, prReactionID); err != nil {
+		d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, err)
+		return nil
+	}
+	if err := store.Mark(comment.ID); err != nil {
+		d.logf("mark comment %s seen: %v", comment.ID, err)
+	}
+	cs.Release(comment.ID)
 	return nil
 }
 
