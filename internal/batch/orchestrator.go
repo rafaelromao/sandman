@@ -605,14 +605,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		agentCfg.Model = model
 	}
-	if agentCfg.Preset == "pi" {
-		provider, modelName, err := config.SplitPiModel(agentCfg.Model)
-		if err != nil {
-			return nil, err
-		}
-		agentCfg.ModelProvider = provider
-		agentCfg.ModelName = modelName
-	}
 	if err := sandbox.ValidateAgentConfig(agentName, agentCfg); err != nil {
 		return nil, err
 	}

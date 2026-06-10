@@ -125,7 +125,7 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman default-agent: opencode") {
 		t.Fatalf("Dockerfile missing default-agent metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "# sandman installed-agents: opencode,pi") {
+	if !strings.Contains(dockerfile, "# sandman installed-agents: opencode") {
 		t.Fatalf("Dockerfile missing installed-agents metadata, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
@@ -473,7 +473,7 @@ func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	cmd := NewInitCmd()
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
-	cmd.SetArgs([]string{"--build-tools", "generic", "--agent", "pi"})
+	cmd.SetArgs([]string{"--build-tools", "generic", "--agent", "opencode"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -487,7 +487,7 @@ func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	if !strings.Contains(string(configData), "build_tools: generic") {
 		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
 	}
-	if !strings.Contains(string(configData), "agent: pi") {
+	if !strings.Contains(string(configData), "agent: opencode") {
 		t.Errorf("config missing agent preset, got:\n%s", configData)
 	}
 
@@ -497,12 +497,6 @@ func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	}
 	if !strings.Contains(string(dockerfileData), "RUN npm install -g opencode-ai@"+scaffold.DefaultBuiltInAgentVersion("opencode")) {
 		t.Errorf("Dockerfile missing opencode install, got:\n%s", dockerfileData)
-	}
-	if !strings.Contains(string(dockerfileData), "RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@"+scaffold.DefaultBuiltInAgentVersion("pi")) {
-		t.Errorf("Dockerfile missing pi install, got:\n%s", dockerfileData)
-	}
-	if !strings.Contains(string(dockerfileData), "RUN mise use -g --pin node@22.19.0") {
-		t.Errorf("Dockerfile missing node pin for pi, got:\n%s", dockerfileData)
 	}
 }
 
@@ -524,7 +518,7 @@ func TestInit_InfersToolVersionRepoWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
-	if !strings.Contains(string(dockerfileData), "# sandman installed-agents: opencode,pi") {
+	if !strings.Contains(string(dockerfileData), "# sandman installed-agents: opencode") {
 		t.Fatalf("expected installed-agents metadata, got:\n%s", dockerfileData)
 	}
 }

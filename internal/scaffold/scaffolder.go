@@ -33,8 +33,6 @@ const DefaultMISEVersion = "v2026.5.8"
 
 const DefaultRTKVersion = "v0.42.0"
 
-const piNodeVersion = "22.19.0"
-
 // Options configures the scaffolding behavior.
 type Options struct {
 	BuildTools     string // --build-tools override
@@ -145,7 +143,6 @@ var KnownBuildToolsPresets = func() []string {
 
 var builtInAgentVersionCatalog = map[string][]string{
 	"opencode": {"1.15.0", "1.14.0", "1.13.0"},
-	"pi":       {"0.75.5", "0.75.4", "0.75.3"},
 }
 
 var bundledGoVersionCatalog = map[string]string{
@@ -872,7 +869,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
-	fmt.Fprintf(&out, "# sandman installed-agents: opencode,pi\n")
+	fmt.Fprintf(&out, "# sandman installed-agents: opencode\n")
 	if preset.Name == goBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman go-version: %s\n", goVersion)
 	}
@@ -911,14 +908,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
 	}
-	// pi is always installed (see renderAgentInstallCommand("pi", ...) below) and
-	// its CLI uses the `v` regex flag which requires Node 20+. Pin a Node version via
-	// mise so the mise shim takes precedence over the apt `nodejs` on PATH; otherwise
-	// pi shebang `#!/usr/bin/env node` resolves to Debian Bookworm's Node 18 and the
-	// agent crashes on import (see #541).
-	out.WriteString(renderNodeInstallCommand(piNodeVersion))
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
-	out.WriteString(renderAgentInstallCommand("pi", DefaultBuiltInAgentVersion("pi")))
 	out.WriteString(renderRTKInstallCommand())
 	return out.String()
 }
@@ -1116,8 +1106,6 @@ func renderAgentInstallCommand(agent, version string) string {
 	switch agent {
 	case "opencode":
 		return fmt.Sprintf("RUN npm install -g opencode-ai@%s\n", version)
-	case "pi":
-		return fmt.Sprintf("RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@%s\n", version)
 	default:
 		return ""
 	}
@@ -1152,7 +1140,7 @@ func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAge
 	if meta.DefaultAgent != expectedDefaultAgent {
 		return fmt.Errorf("scaffold metadata drift: Dockerfile default-agent %q does not match config default agent %q", meta.DefaultAgent, expectedDefaultAgent)
 	}
-	wantAgents := []string{"opencode", "pi"}
+	wantAgents := []string{"opencode"}
 	if !reflect.DeepEqual(meta.InstalledAgents, wantAgents) {
 		return fmt.Errorf("scaffold metadata drift: Dockerfile installed-agents %v does not match expected %v", meta.InstalledAgents, wantAgents)
 	}
