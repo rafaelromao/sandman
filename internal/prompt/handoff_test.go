@@ -97,6 +97,44 @@ Partial.`
 	}
 }
 
+func TestParseHandoff_SourcePrompt(t *testing.T) {
+	content := `## Stage: plan-approved
+## Source Prompt: .sandman/custom-prompt.md
+## Last Skill: sandman-tdd
+## Last Skill Status: complete
+## Completed
+Done.`
+
+	doc := ParseHandoff(content)
+	if doc.SourcePrompt != ".sandman/custom-prompt.md" {
+		t.Fatalf("expected SourcePrompt=.sandman/custom-prompt.md, got %q", doc.SourcePrompt)
+	}
+}
+
+func TestParseHandoff_SourcePromptDefault(t *testing.T) {
+	content := `## Stage: plan-approved
+## Completed
+Done.`
+
+	doc := ParseHandoff(content)
+	if doc.SourcePrompt != ".sandman/rendered-prompt.md" {
+		t.Fatalf("expected default SourcePrompt=.sandman/rendered-prompt.md, got %q", doc.SourcePrompt)
+	}
+}
+
+func TestBuildResumePrompt_SourcePromptFormat(t *testing.T) {
+	doc := HandoffDoc{
+		SourcePrompt: ".sandman/my-prompt.md",
+		Body:         "## Completed\nDone.",
+	}
+
+	result := BuildResumePrompt(doc)
+
+	if !strings.Contains(result, "## Source Prompt: .sandman/my-prompt.md") {
+		t.Fatalf("expected Source Prompt line with colon and path, got:\n%s", result)
+	}
+}
+
 func TestParseHandoff_StageLineWithExtraSpaces(t *testing.T) {
 	content := "## Stage:   implementation-committed   \n## Last Skill:  sandman-tdd\n## Last Skill Status: complete\n\n## Completed\ndone."
 	doc := ParseHandoff(content)
