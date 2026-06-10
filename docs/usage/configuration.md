@@ -26,7 +26,6 @@ review_command: /sandman review
 parallel: 4
 
 # Maximum concurrent review-daemon runs.
-# Falls back to parallel if unset.
 parallel_reviews: 4
 
 # Idle timeout in seconds for agent runs. When the agent produces no new log

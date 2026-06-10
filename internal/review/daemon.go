@@ -86,7 +86,7 @@ func New(baseDir string, gh GitHubClient, prompts PromptRenderer, runner BatchRu
 		Clock:        time.Now,
 		Trigger:      nil,
 		PollInterval: PollingInterval,
-		busy:         make(chan struct{}, 1),
+		busy:         make(chan struct{}, cfg.EffectiveReviewParallel()),
 	}
 }
 

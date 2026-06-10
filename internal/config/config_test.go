@@ -982,8 +982,8 @@ func TestLoad_DefaultReviewParallelNotSet_RawZero(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultReviewParallel != 0 {
-		t.Fatalf("parallel_reviews raw: got %d, want 0", cfg.DefaultReviewParallel)
+	if cfg.DefaultReviewParallel != DefaultReviewParallel {
+		t.Fatalf("parallel_reviews: got %d, want %d", cfg.DefaultReviewParallel, DefaultReviewParallel)
 	}
 	if got := cfg.EffectiveReviewParallel(); got != DefaultReviewParallel {
 		t.Fatalf("EffectiveReviewParallel: got %d, want %d", got, DefaultReviewParallel)
@@ -1005,8 +1005,8 @@ parallel_reviews: -2
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultReviewParallel != -2 {
-		t.Fatalf("parallel_reviews raw: got %d, want -2", cfg.DefaultReviewParallel)
+	if cfg.DefaultReviewParallel != DefaultReviewParallel {
+		t.Fatalf("parallel_reviews: got %d, want %d", cfg.DefaultReviewParallel, DefaultReviewParallel)
 	}
 	if got := cfg.EffectiveReviewParallel(); got != DefaultReviewParallel {
 		t.Fatalf("EffectiveReviewParallel: got %d, want %d", got, DefaultReviewParallel)
@@ -1273,16 +1273,16 @@ func TestConfig_EffectiveReviewParallel(t *testing.T) {
 			want:           8,
 		},
 		{
-			name:           "falls back to parallel when review_parallel is zero",
+			name:           "falls back to default when review_parallel is zero",
 			reviewParallel: 0,
 			parallel:       6,
-			want:           6,
+			want:           DefaultReviewParallel,
 		},
 		{
-			name:           "falls back to parallel when review_parallel is negative",
+			name:           "falls back to default when review_parallel is negative",
 			reviewParallel: -1,
 			parallel:       6,
-			want:           6,
+			want:           DefaultReviewParallel,
 		},
 		{
 			name:           "falls back to default when both are zero",
@@ -1291,7 +1291,7 @@ func TestConfig_EffectiveReviewParallel(t *testing.T) {
 			want:           DefaultReviewParallel,
 		},
 		{
-			name:           "falls back to default when nil config",
+			name:           "default when nil config",
 			reviewParallel: 0,
 			parallel:       0,
 			nilConfig:      true,

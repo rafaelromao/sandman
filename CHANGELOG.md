@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `parallel_reviews` config key and `--parallel-reviews` init flag (default 4) controlling review-daemon concurrency. `EffectiveReviewParallel()` falls back to `parallel` then to 4 when unset.
+- `parallel_reviews` config key and `--parallel-reviews` init flag (default 4) controlling review-daemon concurrency. `EffectiveReviewParallel()` defaults to the constant when unset or invalid.
 - `scripts/reconcile-stranded-worktrees.sh` — standalone detection tool for stranded worktrees (prints remediation commands for the operator to run) [#733](https://github.com/rafaelromao/sandman/issues/733)
 - `## Troubleshooting > Stranded worktrees` section in `docs/usage/commands.md` documenting the new script and `--force` reconciliation behavior
 - `SANDMAN_TEST_MODEL_<AGENT>` env vars (e.g. `SANDMAN_TEST_MODEL_OPENCODE`, `SANDMAN_TEST_MODEL_PI`) override the model the smoke and prflow e2e tests target per agent. When unset, the tests use the literal model baked into their case lists. Resolved through `testenv.ResolveTestModel` (testenv_test.go covers empty/set/trim/agent-scoped paths).

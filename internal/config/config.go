@@ -245,6 +245,9 @@ func Load(path string) (*Config, error) {
 	if cfg.DefaultParallel <= 0 {
 		cfg.DefaultParallel = DefaultParallel
 	}
+	if cfg.DefaultReviewParallel <= 0 {
+		cfg.DefaultReviewParallel = DefaultReviewParallel
+	}
 	if cfg.StartDelay < 0 {
 		return nil, fmt.Errorf("validate config: start_delay must be 0 or greater")
 	}
@@ -608,19 +611,12 @@ func (c *Config) EffectiveReviewAgent() string {
 	return DefaultAgent
 }
 
-// EffectiveReviewParallel returns the effective parallel_reviews value,
-// falling back to DefaultParallel and then to the DefaultReviewParallel constant.
+// EffectiveReviewParallel returns the effective parallel_reviews value.
 func (c *Config) EffectiveReviewParallel() int {
-	if c == nil {
+	if c == nil || c.DefaultReviewParallel <= 0 {
 		return DefaultReviewParallel
 	}
-	if c.DefaultReviewParallel > 0 {
-		return c.DefaultReviewParallel
-	}
-	if c.DefaultParallel > 0 {
-		return c.DefaultParallel
-	}
-	return DefaultReviewParallel
+	return c.DefaultReviewParallel
 }
 
 // EffectiveReviewModel returns the configured review model, falling back to
