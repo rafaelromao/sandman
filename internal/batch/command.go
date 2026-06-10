@@ -13,6 +13,7 @@ type CommandData struct {
 	ModelProvider              string
 	ModelName                  string
 	DangerouslySkipPermissions bool
+	SessionName                string
 }
 
 // RenderCommand renders an agent command template with the given data.
