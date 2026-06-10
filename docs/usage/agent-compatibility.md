@@ -7,7 +7,7 @@ Sandman includes built-in presets for two AI coding agents: `opencode` and `pi`.
 | Preset | Display Name | Command Template |
 |--------|-------------|------------------|
 | `opencode` | OpenCode | `opencode run "$(cat {{.PromptFile}})"` |
-| `pi` | Pi | `pi --print --provider <provider> --model <model> "$(cat {{.PromptFile}})"` |
+| `pi` | Pi | `pi --print{{if .ModelProvider}} --provider {{.ModelProvider}}{{end}}{{if .ModelName}} --model {{.ModelName}}{{end}} "$(cat {{.PromptFile}})"` |
 
 ## OpenCode shell strategy
 
