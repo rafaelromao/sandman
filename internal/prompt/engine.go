@@ -166,7 +166,7 @@ func MaterializePromptFile(cfg RenderConfig) error {
 	needsWrite := true
 	if info, err := os.Stat(cfg.PromptFile); err == nil {
 		if info.IsDir() {
-			return fmt.Errorf("%s is a directory", cfg.PromptFile)
+			return fmt.Errorf("prompt path is a directory: %s", cfg.PromptFile)
 		}
 		if versionData, err := os.ReadFile(versionPath); err == nil {
 			needsWrite = string(versionData) != promptVersion

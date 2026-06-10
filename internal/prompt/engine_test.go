@@ -570,6 +570,19 @@ func TestMaterializePromptFile_ExistingFileWithMismatchedVersion_Overwritten(t *
 	}
 }
 
+func TestMaterializePromptFile_PromptPathIsDirectory_Error(t *testing.T) {
+	dir := t.TempDir()
+	cfg := RenderConfig{PromptFile: dir}
+
+	err := MaterializePromptFile(cfg)
+	if err == nil {
+		t.Fatal("expected error for directory prompt path")
+	}
+	if !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("expected directory error, got: %v", err)
+	}
+}
+
 func TestRender_MissingPromptFileFallsBack(t *testing.T) {
 	engine := &Engine{}
 	cfg := RenderConfig{
