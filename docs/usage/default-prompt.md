@@ -78,7 +78,7 @@ The long workflow now lives in the shared Sandman skill. This page describes the
     - Whether each required skill checklist was completed.
     - Test/format commands run and outcomes.
     - PR URL and review status, if a PR was created.
-    - Whether `.sandman/handoff.md` was written.
+    - Whether `.sandman/handoff.md` was written (the file now carries `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` as structured fields).
     - Whether PR merge was performed or skipped, with reason.
 <!-- default-prompt:end -->
 
@@ -100,4 +100,4 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 - **Project Prompt Template**: `.sandman/prompt.md`, created from the Default Prompt during `sandman init` and materialized on run when missing.
 - **Sandman Skill**: the shared skill folder installed into `~/.agents/skills/sandman/` by `sandman init`.
 - **Prompt**: `.sandman/rendered-prompt.md`, the rendered instruction file handed to the agent.
-- **Continue replay**: `sandman continue` reuses the stored branch, base branch, agent, and review command from the prior run. It reads the handoff document (`.sandman/handoff.md`) from the worktree and passes its contents verbatim as the agent's resume prompt. When no handoff document exists, an empty handoff template is used with a warning on stderr.
+- **Continue replay**: `sandman continue` reuses the stored branch, base branch, agent, and review command from the prior run. It reads the handoff document (`.sandman/handoff.md`) from the worktree and passes its contents verbatim as the agent's resume prompt. The handoff document now carries `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` as structured fields. When no handoff document exists, an empty handoff template is used with a warning on stderr.

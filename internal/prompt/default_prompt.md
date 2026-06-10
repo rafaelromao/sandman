@@ -69,5 +69,5 @@ Before final response, verify and report:
 - Whether each required skill checklist was completed.
 - Test/format commands run and outcomes.
 - PR URL and review status, if a PR was created.
-- Whether `.sandman/handoff.md` was written.
+- Whether `.sandman/handoff.md` was written (the file now carries `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` as structured fields).
 - Whether PR merge was performed or skipped, with reason.
