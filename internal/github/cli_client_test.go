@@ -830,6 +830,19 @@ func TestCLIClient_AddCommentReaction_Error(t *testing.T) {
 	}
 }
 
+func TestCLIClient_AddCommentReaction_EmptyID(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: ""},
+	}}
+	client := &CLIClient{runner: runner}
+
+	_, err := client.AddCommentReaction("100", "eyes")
+	if err == nil {
+		t.Fatal("expected error for empty reaction ID")
+	}
+}
+
 func TestCLIClient_AddIssueReaction_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
@@ -863,6 +876,19 @@ func TestCLIClient_AddIssueReaction_Error(t *testing.T) {
 	_, err := client.AddIssueReaction(42, "eyes")
 	if err == nil {
 		t.Fatal("expected error when gh api fails")
+	}
+}
+
+func TestCLIClient_AddIssueReaction_EmptyID(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: ""},
+	}}
+	client := &CLIClient{runner: runner}
+
+	_, err := client.AddIssueReaction(42, "eyes")
+	if err == nil {
+		t.Fatal("expected error for empty reaction ID")
 	}
 }
 

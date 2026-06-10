@@ -243,13 +243,13 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		}
 
 		// Signal that this trigger comment is being processed.
-		commentReactionID, err := d.GitHub.AddCommentReaction(comment.ID, "eyes")
-		if err != nil {
-			d.logf("add reaction to comment %s: %v", comment.ID, err)
+		commentReactionID, commentErr := d.GitHub.AddCommentReaction(comment.ID, "eyes")
+		if commentErr != nil {
+			d.logf("add reaction to comment %s: %v", comment.ID, commentErr)
 		}
-		prReactionID, err := d.GitHub.AddIssueReaction(prNumber, "eyes")
-		if err != nil {
-			d.logf("add reaction to PR #%d: %v", prNumber, err)
+		prReactionID, prErr := d.GitHub.AddIssueReaction(prNumber, "eyes")
+		if prErr != nil {
+			d.logf("add reaction to PR #%d: %v", prNumber, prErr)
 		}
 
 		if err := d.launchReview(ctx, prNumber, prDir, focus, comment.ID, commentReactionID, prReactionID); err != nil {

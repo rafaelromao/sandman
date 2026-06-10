@@ -620,7 +620,11 @@ func (c *CLIClient) AddCommentReaction(commentID, content string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("gh api add comment reaction: %w\n%s", err, out)
 	}
-	return strings.TrimSpace(string(out)), nil
+	id := strings.TrimSpace(string(out))
+	if id == "" {
+		return "", fmt.Errorf("gh api add comment reaction: empty reaction ID")
+	}
+	return id, nil
 }
 
 // AddIssueReaction adds a reaction to an issue or PR and returns the reaction ID.
@@ -634,7 +638,11 @@ func (c *CLIClient) AddIssueReaction(issueNumber int, content string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("gh api add issue reaction: %w\n%s", err, out)
 	}
-	return strings.TrimSpace(string(out)), nil
+	id := strings.TrimSpace(string(out))
+	if id == "" {
+		return "", fmt.Errorf("gh api add issue reaction: empty reaction ID")
+	}
+	return id, nil
 }
 
 // RemoveCommentReaction removes a reaction from a PR conversation comment.
