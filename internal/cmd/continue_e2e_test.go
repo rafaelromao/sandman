@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,12 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	writeMergedFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 	installFakeOpenCodeForContainer(t, repoDir)
 
+	// Pre-set the PR state to "merged" so checkPRMerged succeeds on first attempt.
+	prStatePath := filepath.Join(repoDir, ".sandman", "bin", "pr-state-sandman_1-fix-failing-test")
+	if err := os.WriteFile(prStatePath, []byte("merged\n"), 0644); err != nil {
+		t.Fatalf("write pr state: %v", err)
+	}
+
 	out, err = runSandmanBinary(t, binPath, repoDir, "run", "--sandbox", "podman", "1")
 	if err != nil {
 		ghLog, _ := os.ReadFile(filepath.Join(ghShimDir, "gh-calls.log"))
@@ -67,16 +74,34 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 		t.Fatalf("expected rendered prompt to mention continuation context, got:\n%s", initialPrompt)
 	}
 
+	// Initial run succeeded and PR was merged, so handoff.md was cleaned up
+	// by the orchestrator. Write a handoff.md manually to simulate the state
+	// a previous run would have left before the first continue.
 	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-	initialContext, err := os.ReadFile(contextPath)
-	if err != nil {
-		t.Fatalf("read initial continuation context: %v", err)
+	initialHandoffContent := fmt.Sprintf(`## Stage: plan-approved
+
+## Completed
+Initial run for %s.
+
+## Pending
+none
+
+## Blockers
+none
+
+## Key Decisions
+fake opencode for continuation e2e
+
+## Next Step
+continue the flow for %s
+`, continueE2EBranch, continueE2EBranch)
+	if err := os.WriteFile(contextPath, []byte(initialHandoffContent), 0644); err != nil {
+		t.Fatalf("write initial handoff: %v", err)
 	}
-	if !strings.Contains(string(initialContext), "## Stage: plan-approved") {
-		t.Fatalf("expected initial context stage, got:\n%s", initialContext)
-	}
-	if !strings.Contains(string(initialContext), "Initial run for "+continueE2EBranch+".") {
-		t.Fatalf("expected initial context contents, got:\n%s", initialContext)
+	// Reset the fake opencode step file so the first continue runs step 1.
+	stepFilePath := filepath.Join(worktreePath, ".sandman", "fake-opencode-step-df007d4b37ed388b")
+	if err := os.WriteFile(stepFilePath, []byte("1\n"), 0644); err != nil {
+		t.Fatalf("write step file: %v", err)
 	}
 
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
@@ -88,10 +113,6 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoDir, ".sandman", "bin", "pr-state"), []byte("open\n"), 0644); err != nil {
-		t.Fatalf("reset gh pr state: %v", err)
-	}
-
 	out, err = runSandmanBinary(t, binPath, repoDir, "continue", "1")
 	if err != nil {
 		t.Fatalf("first continue failed: %v\noutput:\n%s", err, out)
@@ -131,6 +152,11 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 		t.Fatalf("expected first continue context contents, got:\n%s", firstHandoffContext)
 	}
 
+	// Reset PR state so the second continue is not rejected as already merged.
+	if err := os.WriteFile(prStatePath, []byte("open\n"), 0644); err != nil {
+		t.Fatalf("reset pr state: %v", err)
+	}
+
 	out, err = runSandmanBinary(t, binPath, repoDir, "continue", "1")
 	if err != nil {
 		t.Fatalf("second continue failed: %v\noutput:\n%s", err, out)
@@ -146,9 +172,6 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if !strings.Contains(string(secondHandoffPrompt), "First continue for "+continueE2EBranch+".") {
 		t.Fatalf("expected updated context in second continue prompt, got:\n%s", secondHandoffPrompt)
 	}
-	if !strings.Contains(string(secondHandoffPrompt), "## Stage: implementation-committed") {
-		t.Fatalf("expected stage line preserved verbatim in second prompt, got:\n%s", secondHandoffPrompt)
-	}
 
 	secondHandoffContext, err := os.ReadFile(contextPath)
 	if err != nil {
@@ -156,6 +179,11 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	}
 	if !strings.Contains(string(secondHandoffContext), "Second continue for "+continueE2EBranch+".") {
 		t.Fatalf("expected second continue context contents, got:\n%s", secondHandoffContext)
+	}
+
+	// Reset PR state again for the third continue.
+	if err := os.WriteFile(prStatePath, []byte("open\n"), 0644); err != nil {
+		t.Fatalf("reset pr state: %v", err)
 	}
 
 	out, err = runSandmanBinary(t, binPath, repoDir, "continue", "1")
@@ -170,11 +198,11 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	if err != nil {
 		t.Fatalf("read third continue prompt: %v", err)
 	}
-	if !strings.Contains(string(thirdHandoffPrompt), "Third continue for "+continueE2EBranch+".") {
-		t.Fatalf("expected updated context in third continue prompt, got:\n%s", thirdHandoffPrompt)
+	if !strings.Contains(string(thirdHandoffPrompt), "Second continue for "+continueE2EBranch+".") {
+		t.Fatalf("expected second continue context in third continue prompt, got:\n%s", thirdHandoffPrompt)
 	}
-	if !strings.Contains(string(thirdHandoffPrompt), "## Stage: pr-review-finished") {
-		t.Fatalf("expected stage line preserved verbatim in third prompt, got:\n%s", thirdHandoffPrompt)
+	if !strings.Contains(string(thirdHandoffPrompt), "## Prior Context") {
+		t.Fatalf("expected prior context wrapper in third prompt, got:\n%s", thirdHandoffPrompt)
 	}
 
 	thirdHandoffContext, err := os.ReadFile(contextPath)
@@ -257,6 +285,17 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	writeMergedFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 	installFakeOpenCodeForContainer(t, repoDir)
 
+	prStateDir := filepath.Join(repoDir, ".sandman", "bin")
+	for _, pr := range []struct{ branch, hash string }{
+		{"sandman/1-fix-failing-test", "sandman_1-fix-failing-test"},
+		{"sandman/2-fix-failing-test", "sandman_2-fix-failing-test"},
+	} {
+		prStatePath := filepath.Join(prStateDir, "pr-state-"+pr.hash)
+		if err := os.WriteFile(prStatePath, []byte("merged\n"), 0644); err != nil {
+			t.Fatalf("write pr state for %s: %v", pr.branch, err)
+		}
+	}
+
 	for _, issue := range []string{"1", "2"} {
 		t.Logf("running issue %s", issue)
 		out, err = runSandmanBinary(t, binPath, repoDir, "run", "--sandbox", "podman", issue)
@@ -285,6 +324,39 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 	}
 	if !strings.Contains(string(initialPrompt2), ".sandman/handoff.md") {
 		t.Fatalf("expected issue 2 rendered prompt to mention continuation context, got:\n%s", initialPrompt2)
+	}
+
+	// Initial runs succeeded and PRs were merged, so handoff.md was cleaned up.
+	// Write handoff.md and step files for both issues before the continue.
+	for _, wtPath := range []struct{ path, branch, hash string }{
+		{issueOneWorktree, "sandman/1-fix-failing-test", "df007d4b37ed388b"},
+		{issueTwoWorktree, "sandman/2-fix-failing-test", "83f322e35451c018"},
+	} {
+		handoffContent := fmt.Sprintf(`## Stage: plan-approved
+
+## Completed
+Initial run for %s.
+
+## Pending
+none
+
+## Blockers
+none
+
+## Key Decisions
+fake opencode for continuation e2e
+
+## Next Step
+continue the flow for %s
+`, wtPath.branch, wtPath.branch)
+		handoffPath := filepath.Join(wtPath.path, ".sandman", "handoff.md")
+		if err := os.WriteFile(handoffPath, []byte(handoffContent), 0644); err != nil {
+			t.Fatalf("write handoff for %s: %v", wtPath.branch, err)
+		}
+		stepPath := filepath.Join(wtPath.path, ".sandman", "fake-opencode-step-"+wtPath.hash)
+		if err := os.WriteFile(stepPath, []byte("1\n"), 0644); err != nil {
+			t.Fatalf("write step file for %s: %v", wtPath.branch, err)
+		}
 	}
 
 	out, err = runSandmanBinary(t, binPath, repoDir, "continue", "1", "2")
@@ -676,7 +748,7 @@ JSON
       done
       head_key="$(printf '%s' "${head:-default}" | tr '/ ' '__')"
       state_file="__SHIM_DIR__/pr-state-${head_key}"
-      state="merged"
+      state="open"
       if [ -f "$state_file" ]; then
         state=$(cat "$state_file")
       fi

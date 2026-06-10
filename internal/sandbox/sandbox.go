@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"syscall"
 )
 
 // Process represents a running OS process that can be signalled.
@@ -38,6 +39,7 @@ type Sandbox interface {
 }
 
 // waitCmd waits for cmd to finish, returning ctx.Err() if the context is cancelled first.
+// When the context is cancelled, the process is killed so the wait unblocks.
 func waitCmd(ctx context.Context, cmd *exec.Cmd) error {
 	done := make(chan error, 1)
 	go func() {
@@ -48,6 +50,12 @@ func waitCmd(ctx context.Context, cmd *exec.Cmd) error {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
+		if cmd.Process != nil {
+			// Kill the entire process group (negative PID) to ensure child
+			// processes such as agent scripts and their background tasks
+			// are terminated, not just the immediate sh -c parent.
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
 		<-done
 		return ctx.Err()
 	}

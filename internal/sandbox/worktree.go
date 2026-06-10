@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // WorktreeSandbox provides isolation via git worktree only.
@@ -241,6 +242,7 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stde
 	cmd.Dir = s.workDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("exec start: %w", err)

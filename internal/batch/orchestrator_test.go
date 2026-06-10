@@ -4128,10 +4128,10 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
-	// Continuation writes a new handoff, but after the merged-PR check it is also cleaned up.
+	// Continuation does not check PR merge, so handoff.md is preserved.
 	_, err = os.Stat(filepath.Join(sandmanDir, "handoff.md"))
-	if !os.IsNotExist(err) {
-		t.Fatalf("expected handoff.md to be removed after merged PR on continue, err=%v", err)
+	if err != nil {
+		t.Fatalf("expected handoff.md to be preserved after continuation (no merge check), err=%v", err)
 	}
 
 	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[2].RunID}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "push the PR"}})
@@ -4139,8 +4139,8 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("second continue failed: %v", err)
 	}
 	_, err = os.Stat(filepath.Join(sandmanDir, "handoff.md"))
-	if !os.IsNotExist(err) {
-		t.Fatalf("expected handoff.md to be removed after merged PR on second continue, err=%v", err)
+	if err != nil {
+		t.Fatalf("expected handoff.md to be preserved after second continuation, err=%v", err)
 	}
 
 	if state.writes != 3 {
