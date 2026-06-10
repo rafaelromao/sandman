@@ -241,6 +241,6 @@ The script is non-destructive: it never checks out branches or removes worktrees
 
 > **Warning:** The printed `git checkout -f` command will discard uncommitted changes in the worktree. Commit or stash any worktree-local changes before running the remediation command.
 
-> **Note:** The script only detects stranded worktrees for issue-driven branches (`sandman/<number>-<slug>`). Prompt-only worktrees (timestamp-based branch names) are not checked, as their directory name does not map to a predictable expected branch. `sandman run --force` reconciles all worktrees regardless of naming pattern.
+> **Note:** The script only detects stranded worktrees for issue-driven branches (`sandman/<number>-<slug>`). Prompt-only worktrees (timestamp-based branch names) are not checked, as their directory name does not map to a predictable expected branch. When a prompt-only branch's slug starts with a digit (e.g. `sandman/4-eyes-1700000000`), the script may flag it as stranded and report the branch as missing — this is a false positive. `sandman run --force` reconciles all worktrees regardless of naming pattern.
 
 > **Note:** The `--force` flag on `sandman run` performs the same reconciliation automatically at the start of a new run. The standalone script is useful for inspecting or fixing worktrees outside of a run.
