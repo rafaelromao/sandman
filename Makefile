@@ -3,9 +3,9 @@
 BINARY := sandman
 CMD := ./cmd/sandman
 
-.PHONY: check build install fmt test vet clean
+.PHONY: check build install fmt test vet test-scripts clean
 
-check: fmt vet test
+check: fmt vet test test-scripts
 	@echo "All checks passed."
 
 fmt:
@@ -19,6 +19,10 @@ vet:
 test:
 	@echo "Running tests..."
 	go test -v ./...
+
+test-scripts:
+	@echo "Running script smoke tests..."
+	@bash tests/scripts/reconcile-stranded-worktrees_test.sh
 
 build:
 	@echo "Building $(BINARY)..."

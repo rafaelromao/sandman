@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `sandman continue --run-id` flag for prompt-only continuation. Mirrors `sandman run --run-id`: looks up the most recent prompt-only run (`Issue: 0`) from the event log, reads the handoff from its worktree, and forwards it as the prompt for the new prompt-only run. Supports the same format validation and mutual-exclusivity with issue numbers. (#784)
+- `scripts/reconcile-stranded-worktrees.sh` — standalone detection tool for stranded worktrees (prints remediation commands for the operator to run) [#733](https://github.com/rafaelromao/sandman/issues/733)
+- `## Troubleshooting > Stranded worktrees` section in `docs/usage/commands.md` documenting the new script and `--force` reconciliation behavior
 - `SANDMAN_TEST_MODEL_<AGENT>` env vars (e.g. `SANDMAN_TEST_MODEL_OPENCODE`, `SANDMAN_TEST_MODEL_PI`) override the model the smoke and prflow e2e tests target per agent. When unset, the tests use the literal model baked into their case lists. Resolved through `testenv.ResolveTestModel` (testenv_test.go covers empty/set/trim/agent-scoped paths).
 - `sandman init` gains `--retries` and `--run-idle-timeout` flags that persist `retries` and `run_idle_timeout` in the scaffolded `.sandman/config.yaml`. Sentinel `-1` keeps the built-in default (`3` for `retries`, `1800` for `run_idle_timeout`); `0` disables retries / the heartbeat watchdog respectively.
 - Pi preset now snapshots `~/.pi/` but keeps `~/.pi/agent/npm` (npm cache) and `~/.pi/agent/sessions` (mutable per-run sessions) mounted live. Mirrors the OpenCode split using the same mechanism; no new fields or code paths (ADR-0017).
