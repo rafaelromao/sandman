@@ -5,7 +5,7 @@
 - [Go](https://go.dev/dl/) 1.24 or later
 - [Git](https://git-scm.com/)
 - [`gh` CLI](https://cli.github.com/) — authenticated and with `repo` scope
-- An AI coding agent: [OpenCode](https://opencode.ai/) or [Pi](https://pi.dev)
+- An AI coding agent: [OpenCode](https://opencode.ai/)
 - (Optional but recommended) [Podman](https://podman.io/) or [Docker](https://docker.com/) for container-backed sandboxing
 
 If you plan to use Sandman with the `opencode` preset, install OpenCode's `opencode-shell-strategy` plugin first. Sandman runs OpenCode headlessly, so OpenCode must be taught to avoid interactive shell commands that would hang without a TTY/PTY. This applies to OpenCode subagents too, because they inherit the same instructions.
@@ -72,7 +72,7 @@ Sandman resolves them from `~/.gitconfig`, then the host global/XDG Git config, 
 
 The `init` command interactively prompts you for:
 
-- **Default agent preset** — which built-in agent to use by default (opencode or pi)
+- **Default agent preset** — which built-in agent to use by default (opencode)
 - **Build tools preset** — container recipe for the image (generic, dotnet, go, node, or python)
 - **Tool version** — version selector for the build toolchain
 

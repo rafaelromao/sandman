@@ -1,13 +1,12 @@
 # Agent Compatibility
 
-Sandman includes built-in presets for two AI coding agents: `opencode` and `pi`.
+Sandman includes one built-in preset: `opencode`.
 
-## Built-in presets
+## Built-in preset
 
 | Preset | Display Name | Command Template |
 |--------|-------------|------------------|
 | `opencode` | OpenCode | `opencode run "$(cat {{.PromptFile}})"` |
-| `pi` | Pi | `pi --print --provider <provider> --model <model> "$(cat {{.PromptFile}})"` |
 
 ## OpenCode shell strategy
 
@@ -43,7 +42,7 @@ Restart OpenCode after installing it.
 
 ## Model selection
 
-Sandman wires `AgentModel` only for built-in presets. `sandman run --model` overrides the configured default. Pi expects `provider/model` and Sandman splits it into separate provider and model flags.
+Sandman wires `AgentModel` only for built-in presets. `sandman run --model` overrides the configured default.
 
 The model resolution order is:
 
@@ -58,9 +57,8 @@ If none are set, no model flag is passed to the agent, leaving it to the agent's
 | Preset | Worktree | Container | Keychain Auth | Host Config Paths |
 |--------|----------|-----------|---------------|-------------------|
 | `opencode` | Yes | Yes | No | `~/.config/opencode`, `~/.local/share/opencode`, `~/.claude`, `~/.agents` |
-| `pi` | Yes | Yes | No | `~/.pi`, `~/.claude`, `~/.agents` |
 
-Both presets support worktree and container-backed sandboxing.
+The built-in preset supports worktree and container-backed sandboxing.
 
 ## Container auth model
 
@@ -72,9 +70,9 @@ To use an agent inside a container:
 2. Use file-based authentication (e.g., API keys stored in config files)
 3. Sandman resolves config files and directories into the container via a temporary copy (see ADR-0008)
 
-Both OpenCode and Pi read `CLAUDE.md` and `.claude/skills/` if they exist. Sandman resolves `~/.claude` into the container automatically when using either preset so those files are available to the agent.
+OpenCode reads `CLAUDE.md` and `.claude/skills/` if they exist. Sandman resolves `~/.claude` into the container automatically so those files are available to the agent.
 
-Sandman installs its shared skill into `~/.agents/skills`, so both built-in presets mount `~/.agents` in container mode.
+Sandman installs its shared skill into `~/.agents/skills`, so the built-in preset mounts `~/.agents` in container mode.
 
 ## Worktree management
 

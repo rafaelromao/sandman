@@ -17,15 +17,15 @@ A blocker named in an AgentRun's BlockedBy that is not a member of the current B
 _Avoid_: outside blocker, third-party blocker.
 
 **Agent**:
-An external AI coding tool (OpenCode or Pi) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
+An external AI coding tool (OpenCode) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
 _Avoid_: AI model, LLM, copilot.
 
 **AgentPreset**:
-A built-in command, config source, and auth profile for a known AI coding tool keyed by name (opencode, pi). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
+A built-in command, config source, and auth profile for a known AI coding tool keyed by name (currently `opencode`). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
 _Avoid_: Provider template, agent type.
 
 **Agent Provider**:
-A configured agent preset or custom provider definition. Sandman supports built-in presets (`opencode`, `pi`) and optional repo-local custom providers via the `agents` config map.
+A configured agent preset or custom provider definition. Sandman supports the built-in preset (`opencode`) and optional repo-local custom providers via the `agents` config map.
 _Avoid_: Agent type, runner.
 
 **AgentModel**:
@@ -65,11 +65,11 @@ Individual files resolved into a container sandbox via a temporary copy for agen
 _Avoid_: config paths, settings files.
 
 **SnapshotExcludes**:
-Paths (typically subtrees of a `ConfigDir`) skipped during the copy-resolve snapshot step (ADR-0008/ADR-0015). Used to keep large mutable runtime state out of the run-owned snapshot (ADR-0016/ADR-0017). Paths starting with `~` are expanded.
+Paths (typically subtrees of a `ConfigDir`) skipped during the copy-resolve snapshot step (ADR-0008/ADR-0015). Used to keep large mutable runtime state out of the run-owned snapshot (ADR-0016). Paths starting with `~` are expanded.
 _Avoid_: snapshot blocklist, copy excludes.
 
 **LiveMount**:
-A path bind-mounted directly from the host into a ContainerSandbox at its corresponding HOME=/ container path, instead of being copied into the snapshot. Used when host-side state must remain inspectable after the container run completes — e.g. OpenCode's `opencode.db` session database (ADR-0016) or Pi's `~/.pi/agent/{npm,sessions}` (ADR-0017). A LiveMount is implicitly a `SnapshotExclude` of the same path.
+A path bind-mounted directly from the host into a ContainerSandbox at its corresponding HOME=/ container path, instead of being copied into the snapshot. Used when host-side state must remain inspectable after the container run completes — e.g. OpenCode's `opencode.db` session database (ADR-0016). A LiveMount is implicitly a `SnapshotExclude` of the same path.
 _Avoid_: bind mount (too generic), shared mount.
 
 **ContainerSandbox**:
