@@ -83,15 +83,19 @@ func TestReadHandoffContent_MissingFile_ThenBuildResumePrompt(t *testing.T) {
 }
 
 func TestReadHandoffContent_ReadError(t *testing.T) {
-	dir := t.TempDir()
-	// os.ReadFile on a directory fails with "is a directory" regardless of uid.
-	_, _, err := ReadHandoffContent(dir)
+	orig := readFileFn
+	readFileFn = func(string) ([]byte, error) {
+		return nil, os.ErrPermission
+	}
+	t.Cleanup(func() { readFileFn = orig })
+
+	_, _, err := ReadHandoffContent("/nonexistent/handoff.md")
 	if err == nil {
 		t.Fatal("expected error for unreadable path, got nil")
 	}
 }
 
-func TestParseHandoff_AllFourStages(t *testing.T) {
+func TestBatchParseHandoff_AllFourStages(t *testing.T) {
 	for _, stage := range []string{"plan-approved", "implementation-committed", "pr-created", "pr-review-finished"} {
 		content := "## Stage: " + stage + "\n## Last Skill: s\n## Last Skill Status: c\n\n## Completed\ndone."
 		doc := prompt.ParseHandoff(content)
@@ -101,7 +105,7 @@ func TestParseHandoff_AllFourStages(t *testing.T) {
 	}
 }
 
-func TestParseHandoff_MissingFieldFallback(t *testing.T) {
+func TestBatchParseHandoff_MissingFieldFallback(t *testing.T) {
 	content := "## Completed\nSome work.\n\n## Next Step\nContinue."
 	doc := prompt.ParseHandoff(content)
 	if doc.Stage != "" {
