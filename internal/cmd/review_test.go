@@ -771,8 +771,8 @@ func TestReviewCmd_PRFlagRemoved(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when using removed --pr flag")
 	}
-	if !strings.Contains(err.Error(), "unknown flag") {
-		t.Errorf("expected error about unknown flag, got: %v", err)
+	if !strings.Contains(err.Error(), "unknown flag: --pr") {
+		t.Errorf("expected error about unknown flag: --pr, got: %v", err)
 	}
 }
 
@@ -813,6 +813,124 @@ func TestReviewCmd_InvalidRangeError(t *testing.T) {
 				t.Error("expected error for invalid range, got nil")
 			}
 		})
+	}
+}
+
+func TestReviewCmd_UnboundedRange_ListOpenPRError(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		prByNumber:       map[int]*github.PR{},
+		openPRErr:        errors.New("boom"),
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"100:"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when ListOpenPRs fails")
+	}
+	if !strings.Contains(err.Error(), "list open PRs: boom") {
+		t.Errorf("expected error about list open PRs: boom, got: %v", err)
+	}
+}
+
+func TestReviewCmd_MixedPlainAndUnboundedRange(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		prByNumber: map[int]*github.PR{
+			42:  {Number: 42, Title: "PR 42", Body: "B"},
+			7:   {Number: 7, Title: "PR 7", Body: "B"},
+			100: {Number: 100, Title: "PR 100", Body: "B"},
+			101: {Number: 101, Title: "PR 101", Body: "B"},
+		},
+		openPRs: []github.PR{
+			{Number: 100, Title: "PR 100", Body: "B"},
+			{Number: 101, Title: "PR 101", Body: "B"},
+		},
+	}
+	runner := &spyBatchRunnerMultiCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "100:"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	reqs := runner.requests()
+	if len(reqs) != 3 {
+		t.Fatalf("expected 3 batch requests (42,100,101), got %d", len(reqs))
+	}
+	if reqs[0].PRNumber != 42 {
+		t.Errorf("expected first request PRNumber=42, got %d", reqs[0].PRNumber)
+	}
+	if reqs[1].PRNumber != 100 {
+		t.Errorf("expected second request PRNumber=100, got %d", reqs[1].PRNumber)
+	}
+	if reqs[2].PRNumber != 101 {
+		t.Errorf("expected third request PRNumber=101, got %d", reqs[2].PRNumber)
+	}
+}
+
+func TestReviewCmd_RangeTooLarge(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		prByNumber:       map[int]*github.PR{},
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"1:1001"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for range > 1000")
+	}
+	if !strings.Contains(err.Error(), "more than 1000 issues") {
+		t.Errorf("expected error about more than 1000 issues, got: %v", err)
 	}
 }
 

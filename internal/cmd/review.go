@@ -31,7 +31,7 @@ var reviewDaemonRunner = runReviewDaemon
 // (exposed via `sandman attach`) and shuts down cleanly on SIGINT/SIGTERM.
 func NewReviewCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "review [pr-number...]",
+		Use:   "review [pr-numbers...]",
 		Short: "Run a Sandman agent to review a pull request",
 		Long: "Run a Sandman agent to review a pull request. With PR numbers as positional " +
 			"args, posts a single review comment for each and exits. Without args, starts " +
@@ -149,7 +149,7 @@ func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Co
 	for _, arg := range args {
 		start, end, isRange, err := parseIssueRange(arg)
 		if err != nil {
-			return fmt.Errorf("invalid argument %q: %w", arg, err)
+			return fmt.Errorf("invalid issue number %q: %w", arg, err)
 		}
 		if !isRange {
 			prSet[start] = struct{}{}
@@ -163,6 +163,9 @@ func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Co
 		if isEmptyStart {
 			constraints = append(constraints, rangeConstraint{start: 1, end: end})
 			continue
+		}
+		if end-start >= 1000 {
+			return fmt.Errorf("range %q expands to more than 1000 issues", arg)
 		}
 		for n := start; n <= end; n++ {
 			prSet[n] = struct{}{}
