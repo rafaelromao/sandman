@@ -68,9 +68,9 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("pr", 0, "Pull request number to review (omit to start the review daemon)")
 	cmd.Flags().String("agent", "", "Override default_review_agent for this run")
 	cmd.Flags().String("model", "", "Override default_review_model for this run")
-	cmd.Flags().String("sandbox", "", "Sandbox mode for the review run (default: config value)")
-	cmd.Flags().Int("container-capacity", 0, "Container capacity for sandbox containers (default: config value)")
-	cmd.Flags().Int("max-containers", 0, "Maximum number of sandbox containers (default: config value)")
+	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
+	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
+	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")
 
 	return cmd
 }

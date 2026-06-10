@@ -329,6 +329,9 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	if sandboxMode == "" && d.Config != nil {
 		sandboxMode = d.Config.Sandbox
 	}
+	if sandboxMode == "" {
+		sandboxMode = config.DefaultSandbox
+	}
 	if d.Config != nil {
 		agentName = d.Config.EffectiveReviewAgent()
 		modelName = d.Config.EffectiveReviewModel()

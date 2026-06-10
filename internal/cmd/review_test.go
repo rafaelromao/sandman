@@ -620,6 +620,48 @@ func TestReviewCmd_DaemonFlagsCapture(t *testing.T) {
 	}
 }
 
+func TestReviewCmd_ZeroContainerFlagsForwarded(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultModel:       "opencode/big-pickle",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr:               &github.PR{Number: 1, Title: "T", Body: "B"},
+	}
+	runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	var buf bytes.Buffer
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"--pr", "1", "--container-capacity", "0", "--max-containers", "0"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !runner.captured.ContainerCapacitySet {
+		t.Fatal("expected ContainerCapacitySet=true for --container-capacity=0")
+	}
+	if runner.captured.ContainerCapacity != 0 {
+		t.Errorf("expected container_capacity=0, got %d", runner.captured.ContainerCapacity)
+	}
+	if !runner.captured.MaxContainersSet {
+		t.Fatal("expected MaxContainersSet=true for --max-containers=0")
+	}
+	if runner.captured.MaxContainers != 0 {
+		t.Errorf("expected max_containers=0, got %d", runner.captured.MaxContainers)
+	}
+}
+
 func TestReviewCmd_FetchPRErrorBubblesUp(t *testing.T) {
 	cfg := &config.Config{
 		DefaultAgent:       "opencode",
