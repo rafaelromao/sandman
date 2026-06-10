@@ -1422,6 +1422,7 @@ func (s *runSession) runOnce(
 			agentRun.baseBranch = s.baseBranch
 			agentRun.outputWriter = s.outputWriter
 			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
+			agentRun.sessionName = "Sandman " + runID + ": "
 		}
 
 		result = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {

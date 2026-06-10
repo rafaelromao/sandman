@@ -120,7 +120,7 @@ _Avoid_: User prompt, custom prompt.
 The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{BASE_BRANCH}}`, `{{BRANCH}}`, `{{REVIEW_COMMAND}}`. Custom keys are supported via the `--prompt-arg KEY=VALUE` CLI flag.
 
 **Command template key**:
-The `{{.PromptFile}}` key available in agent command templates, resolved to the relative path of the rendered prompt file.
+The substitution keys available in agent command templates: `{{.PromptFile}}` (relative path of the rendered prompt file) and `{{.SessionName}}` (pre-formatted session display title supplied by the caller, e.g. `"Sandman run-42-1712345678901: "`). `SessionName` must not contain single quotes — the template shells it as `--title '{{.SessionName}}'` and the renderer rejects any value containing `'` with an error. Templates that reference `{{.SessionName}}` should guard the substitution with `{{if .SessionName}}` to avoid emitting a bare `--title ''` when the field is empty.
 
 **Portal launcher**:
 A repo-scoped browser launcher in `sandman portal` that can start Sandman commands from typed presets while observing live runs in the current repository.
