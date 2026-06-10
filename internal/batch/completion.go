@@ -117,13 +117,15 @@ const EmptyHandoffTemplate = `## Completed
 ## Next Step
 Continue the work.`
 
+var readFileFn = os.ReadFile
+
 // ReadHandoffContent reads the handoff document at the given path and returns
 // its verbatim content. The second return value is true when the file was read
 // successfully. When the file is missing (os.IsNotExist), EmptyHandoffTemplate
 // is returned and exists is false. Other read errors (permission denied, I/O
 // failure) are surfaced through the error return.
 func ReadHandoffContent(path string) (content string, exists bool, err error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readFileFn(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return EmptyHandoffTemplate, false, nil
