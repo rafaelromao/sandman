@@ -6217,10 +6217,6 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 	}
 }
 
-func TestPrepareContainerConfigMounts_PiPresetEndToEnd(t *testing.T) {
-	// Removed: Pi agent preset no longer exists.
-}
-
 func TestRunBatch_UsesDotGitconfigIdentityOverRepoLocalConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

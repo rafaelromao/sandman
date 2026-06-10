@@ -82,7 +82,7 @@ func TestParseList_EmptyEntriesAreSkipped(t *testing.T) {
 }
 
 func TestParseList_UnknownNameReturnsError(t *testing.T) {
-	_, err := ParseList("opencode,claude", []string{"opencode", "custom"}, "provider")
+	_, err := ParseList("opencode,custom", []string{"opencode", "claude"}, "provider")
 	if err == nil {
 		t.Fatal("expected error for unknown name, got nil")
 	}
@@ -92,14 +92,14 @@ func TestParseList_UnknownNameReturnsError(t *testing.T) {
 }
 
 func TestParseList_SingleUnknownNameReturnsError(t *testing.T) {
-	_, err := ParseList("claude", []string{"opencode", "custom"}, "provider")
+	_, err := ParseList("custom", []string{"opencode", "claude"}, "provider")
 	if err == nil {
 		t.Fatal("expected error for unknown name, got nil")
 	}
 }
 
 func TestParseList_EmptyKindUsesGenericError(t *testing.T) {
-	_, err := ParseList("claude", []string{"opencode", "custom"}, "")
+	_, err := ParseList("custom", []string{"opencode", "claude"}, "")
 	if err == nil {
 		t.Fatal("expected error for unknown name, got nil")
 	}
