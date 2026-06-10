@@ -306,6 +306,7 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				RunID:                      runID,
 				PromptConfig: prompt.RenderConfig{
+					Branch:           promptOnlyBranch,
 					PromptFlag:       promptFlagContent,
 					ReviewCommand:    reviewCommand,
 					ReviewCommandSet: true,

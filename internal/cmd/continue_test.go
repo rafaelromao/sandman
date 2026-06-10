@@ -175,6 +175,9 @@ func TestContinue_RunID_ContinuesLastPromptOnlyRun(t *testing.T) {
 	if !strings.Contains(spy.req.PromptConfig.PromptFlag, "Stage: done") {
 		t.Fatalf("expected PromptFlag to contain handoff content, got %q", spy.req.PromptConfig.PromptFlag)
 	}
+	if spy.req.PromptConfig.Branch != branch {
+		t.Fatalf("expected PromptConfig.Branch=%q (reuse prior worktree), got %q", branch, spy.req.PromptConfig.Branch)
+	}
 }
 
 func TestContinue_RunID_NoPriorPromptOnlyRun_ReturnsError(t *testing.T) {
