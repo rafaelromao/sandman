@@ -264,6 +264,22 @@ func (c *fetchIssueErrorClient) EditPRBody(prNumber int, body string) error {
 	return nil
 }
 
+func (c *fetchIssueErrorClient) AddCommentReaction(commentID, content string) (string, error) {
+	return "", nil
+}
+
+func (c *fetchIssueErrorClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+	return "", nil
+}
+
+func (c *fetchIssueErrorClient) RemoveCommentReaction(commentID, reactionID string) error {
+	return nil
+}
+
+func (c *fetchIssueErrorClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+	return nil
+}
+
 func TestDependencyResolverResolve_IgnoresClosedBlockers(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

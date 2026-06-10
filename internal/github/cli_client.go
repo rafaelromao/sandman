@@ -609,5 +609,61 @@ func (c *CLIClient) EditPRBody(prNumber int, body string) error {
 	return nil
 }
 
+// AddCommentReaction adds a reaction to a PR conversation comment and returns the reaction ID.
+func (c *CLIClient) AddCommentReaction(commentID, content string) (string, error) {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return "", err
+	}
+	cmd := c.command("gh", "api", "-X", "POST", fmt.Sprintf("repos/%s/%s/issues/comments/%s/reactions", owner, repo, commentID), "-f", fmt.Sprintf("content=%s", content), "--jq", ".id")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gh api add comment reaction: %w\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// AddIssueReaction adds a reaction to an issue or PR and returns the reaction ID.
+func (c *CLIClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return "", err
+	}
+	cmd := c.command("gh", "api", "-X", "POST", fmt.Sprintf("repos/%s/%s/issues/%d/reactions", owner, repo, issueNumber), "-f", fmt.Sprintf("content=%s", content), "--jq", ".id")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gh api add issue reaction: %w\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// RemoveCommentReaction removes a reaction from a PR conversation comment.
+func (c *CLIClient) RemoveCommentReaction(commentID, reactionID string) error {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return err
+	}
+	cmd := c.command("gh", "api", "-X", "DELETE", fmt.Sprintf("repos/%s/%s/issues/comments/%s/reactions/%s", owner, repo, commentID, reactionID))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh api remove comment reaction: %w\n%s", err, out)
+	}
+	return nil
+}
+
+// RemoveIssueReaction removes a reaction from an issue or PR.
+func (c *CLIClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return err
+	}
+	cmd := c.command("gh", "api", "-X", "DELETE", fmt.Sprintf("repos/%s/%s/issues/%d/reactions/%s", owner, repo, issueNumber, reactionID))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh api remove issue reaction: %w\n%s", err, out)
+	}
+	return nil
+}
+
 // Ensure CLIClient implements Client.
 var _ Client = (*CLIClient)(nil)
