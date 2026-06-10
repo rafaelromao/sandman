@@ -51,6 +51,13 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			mcFlag, _ := cmd.Flags().GetInt("max-containers")
 			mcSet := cmd.Flags().Changed("max-containers")
 
+			if ccSet && ccFlag < 0 {
+				return MarkUsage(fmt.Errorf("container-capacity must be 0 or greater"))
+			}
+			if mcSet && mcFlag < 0 {
+				return MarkUsage(fmt.Errorf("max-containers must be 0 or greater"))
+			}
+
 			if prNumber > 0 {
 				return runReviewOneShot(cmd, deps, cfg, prNumber)
 			}
@@ -118,7 +125,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 
 	sandboxMode := strings.TrimSpace(sandboxFlag)
 	if sandboxMode == "" {
-		sandboxMode = "worktree"
+		sandboxMode = cfg.Sandbox
 	}
 
 	if _, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{

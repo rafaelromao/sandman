@@ -612,6 +612,35 @@ func TestDaemon_LaunchReviewPropagatesSandboxParams(t *testing.T) {
 	}
 }
 
+func TestDaemon_LaunchReviewFallsBackToConfigSandbox(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 11, State: "open"}},
+		comments: map[int][]github.PRComment{
+			11: {{ID: "c2", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{11: {Number: 11, Title: "PR 11", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+		Sandbox:            "podman",
+	}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	// Deliberately leave d.Sandbox empty to exercise the cfg.Sandbox fallback.
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	if runner.last.Sandbox != "podman" {
+		t.Errorf("expected sandbox 'podman' from cfg.Sandbox fallback, got %q", runner.last.Sandbox)
+	}
+}
+
 func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
 	gh := &fakeGH{
 		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},

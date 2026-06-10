@@ -274,8 +274,8 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if runner.captured.Model != "openai/gpt-5" {
 		t.Errorf("expected review model 'openai/gpt-5', got %q", runner.captured.Model)
 	}
-	if runner.captured.Sandbox != "worktree" {
-		t.Errorf("expected default sandbox 'worktree' for reviews, got %q", runner.captured.Sandbox)
+	if runner.captured.Sandbox != "" {
+		t.Errorf("expected default sandbox '' (cfg.Sandbox is empty), got %q", runner.captured.Sandbox)
 	}
 	if !runner.captured.Review {
 		t.Errorf("expected Review=true on one-shot review batch request, got false")
@@ -351,7 +351,7 @@ func TestReviewCmd_ModelFlagOverridesReviewModel(t *testing.T) {
 	}
 }
 
-func TestReviewCmd_SandboxFlagDefaultsToWorktree(t *testing.T) {
+func TestReviewCmd_SandboxFlagDefaultsToConfig(t *testing.T) {
 	cfg := &config.Config{
 		DefaultAgent:       "opencode",
 		DefaultModel:       "opencode/big-pickle",
@@ -378,8 +378,8 @@ func TestReviewCmd_SandboxFlagDefaultsToWorktree(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if runner.captured.Sandbox != "worktree" {
-		t.Errorf("expected review sandbox default 'worktree', got %q", runner.captured.Sandbox)
+	if runner.captured.Sandbox != "podman" {
+		t.Errorf("expected review sandbox default from config 'podman', got %q", runner.captured.Sandbox)
 	}
 }
 
