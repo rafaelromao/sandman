@@ -33,6 +33,9 @@ Continue the work.`
 	}
 
 	doc := prompt.ParseHandoff(raw)
+	if doc.SourcePrompt != ".sandman/rendered-prompt.md" {
+		t.Fatalf("expected default SourcePrompt, got %q", doc.SourcePrompt)
+	}
 	if doc.Stage != "plan-approved" {
 		t.Fatalf("expected Stage=plan-approved, got %q", doc.Stage)
 	}
@@ -88,7 +91,7 @@ func TestReadHandoffContent_ReadError(t *testing.T) {
 	}
 }
 
-func TestParseHandoff_AllFourStagesFromBatch(t *testing.T) {
+func TestParseHandoff_AllFourStages(t *testing.T) {
 	for _, stage := range []string{"plan-approved", "implementation-committed", "pr-created", "pr-review-finished"} {
 		content := "## Stage: " + stage + "\n## Last Skill: s\n## Last Skill Status: c\n\n## Completed\ndone."
 		doc := prompt.ParseHandoff(content)
@@ -98,7 +101,7 @@ func TestParseHandoff_AllFourStagesFromBatch(t *testing.T) {
 	}
 }
 
-func TestParseHandoff_MissingFieldFallbackFromBatch(t *testing.T) {
+func TestParseHandoff_MissingFieldFallback(t *testing.T) {
 	content := "## Completed\nSome work.\n\n## Next Step\nContinue."
 	doc := prompt.ParseHandoff(content)
 	if doc.Stage != "" {
