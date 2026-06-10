@@ -159,7 +159,8 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 					if !exists {
 						fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
 					}
-					handoffPrompts[num] = content
+					doc := prompt.ParseHandoff(content)
+					handoffPrompts[num] = prompt.BuildResumePrompt(doc)
 				}
 			}
 
