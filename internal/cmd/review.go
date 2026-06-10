@@ -133,64 +133,45 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	return nil
 }
 
-// rangeConstraint captures an unbounded range: end==0 means N: (all PRs >= N),
-// start=1,end=M with the original arg having empty start means :M (all PRs <= M).
-type rangeConstraint struct {
-	start, end int
-}
-
 // runReviewOneShotMulti parses positional args (bare numbers, N:M, N:,
 // :M ranges) and runs a one-shot review for each resolved PR. For unbounded
 // ranges (N: or :M) it fetches open PRs via ListOpenPRs and filters by PR number.
 func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Config, args []string) error {
 	prSet := make(map[int]struct{})
-	var constraints []rangeConstraint
+	hasUnbounded := false
+	sel := issueSelection{exact: make(map[int]struct{})}
 
 	for _, arg := range args {
 		start, end, isRange, err := parseIssueRange(arg)
 		if err != nil {
-			return fmt.Errorf("invalid issue number %q: %w", arg, err)
+			return fmt.Errorf("invalid PR number %q: %w", arg, err)
 		}
-		if !isRange {
+		if isRange {
+			sel.ranges = append(sel.ranges, issueRangeSelection{start: start, end: end})
+			if end == 0 || strings.HasPrefix(arg, ":") {
+				hasUnbounded = true
+				continue
+			}
+			if end-start >= 1000 {
+				return fmt.Errorf("range %q expands to more than 1000 pull requests", arg)
+			}
+			for n := start; n <= end; n++ {
+				prSet[n] = struct{}{}
+			}
+		} else {
+			sel.exact[start] = struct{}{}
 			prSet[start] = struct{}{}
-			continue
-		}
-		if end == 0 {
-			constraints = append(constraints, rangeConstraint{start: start, end: 0})
-			continue
-		}
-		isEmptyStart := strings.HasPrefix(arg, ":")
-		if isEmptyStart {
-			constraints = append(constraints, rangeConstraint{start: 1, end: end})
-			continue
-		}
-		if end-start >= 1000 {
-			return fmt.Errorf("range %q expands to more than 1000 issues", arg)
-		}
-		for n := start; n <= end; n++ {
-			prSet[n] = struct{}{}
 		}
 	}
 
-	if len(constraints) > 0 {
+	if hasUnbounded {
 		openPRs, err := deps.GitHubClient.ListOpenPRs()
 		if err != nil {
 			return fmt.Errorf("list open PRs: %w", err)
 		}
 		for _, pr := range openPRs {
-			if _, ok := prSet[pr.Number]; ok {
-				continue
-			}
-			for _, c := range constraints {
-				if c.end == 0 {
-					if pr.Number >= c.start {
-						prSet[pr.Number] = struct{}{}
-						break
-					}
-				} else if pr.Number <= c.end {
-					prSet[pr.Number] = struct{}{}
-					break
-				}
+			if sel.matches(pr.Number) {
+				prSet[pr.Number] = struct{}{}
 			}
 		}
 	}

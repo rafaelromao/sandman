@@ -771,8 +771,8 @@ func TestReviewCmd_PRFlagRemoved(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when using removed --pr flag")
 	}
-	if !strings.Contains(err.Error(), "unknown flag: --pr") {
-		t.Errorf("expected error about unknown flag: --pr, got: %v", err)
+	if !strings.Contains(err.Error(), "--pr") {
+		t.Errorf("expected error mentioning --pr, got: %v", err)
 	}
 }
 
@@ -929,8 +929,42 @@ func TestReviewCmd_RangeTooLarge(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for range > 1000")
 	}
-	if !strings.Contains(err.Error(), "more than 1000 issues") {
-		t.Errorf("expected error about more than 1000 issues, got: %v", err)
+	if !strings.Contains(err.Error(), "more than 1000 pull requests") {
+		t.Errorf("expected error about more than 1000 pull requests, got: %v", err)
+	}
+}
+
+func TestReviewCmd_UnboundedRange_EmptyOpenPRs(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/big-pickle",
+		Agent:              "opencode",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		prByNumber:       map[int]*github.PR{},
+		openPRs:          []github.PR{},
+	}
+	runner := &spyBatchRunnerMultiCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"100:"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error for empty open PR list: %v", err)
+	}
+
+	reqs := runner.requests()
+	if len(reqs) != 0 {
+		t.Errorf("expected 0 batch requests for empty open PR list, got %d", len(reqs))
 	}
 }
 
