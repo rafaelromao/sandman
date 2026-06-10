@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -21,38 +22,40 @@ import (
 // daemon. Tests override it to avoid actually polling GitHub.
 var reviewDaemonRunner = runReviewDaemon
 
-// NewReviewCmd creates the `sandman review` command. When --pr is provided
-// the command runs in one-shot mode (post a single review comment and
-// exit). When --pr is omitted, the command starts the review daemon:
-// it polls open PRs every 60s for `/sandman review` comments and launches
-// review agents serially. The daemon writes log lines to .sandman/review.sock
+// NewReviewCmd creates the `sandman review` command. When PR numbers
+// are provided as positional args the command runs in one-shot mode
+// (post a single review comment for each PR and exit). When no args
+// are provided, the command starts the review daemon: it polls open
+// PRs every 60s for `/sandman review` comments and launches review
+// agents serially. The daemon writes log lines to .sandman/review.sock
 // (exposed via `sandman attach`) and shuts down cleanly on SIGINT/SIGTERM.
 func NewReviewCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "review",
+		Use:   "review [pr-number...]",
 		Short: "Run a Sandman agent to review a pull request",
-		Long: "Run a Sandman agent to review a pull request. With --pr, posts a single " +
-			"review comment and exits. Without --pr, starts the review daemon that polls " +
-			"open PRs every 60s for /sandman review comments and launches review agents.",
+		Long: "Run a Sandman agent to review a pull request. With PR numbers as positional " +
+			"args, posts a single review comment for each and exits. Without args, starts " +
+			"the review daemon that polls open PRs every 60s for /sandman review comments " +
+			"and launches review agents.",
+		Example: `  sandman review 42
+  sandman review 42 43
+  sandman review 42:45
+  sandman review 42:
+  sandman review :45
+  sandman review 42 --agent opencode --model opencode/big-pickle`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := deps.ConfigStore.Load()
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			prNumber, err := cmd.Flags().GetInt("pr")
-			if err != nil {
-				return fmt.Errorf("read --pr flag: %w", err)
-			}
-
-			if prNumber > 0 {
-				return runReviewOneShot(cmd, deps, cfg, prNumber)
+			if len(args) > 0 {
+				return runReviewOneShotMulti(cmd, deps, cfg, args)
 			}
 			return reviewDaemonRunner(cmd.Context(), deps, cfg)
 		},
 	}
 
-	cmd.Flags().Int("pr", 0, "Pull request number to review (omit to start the review daemon)")
 	cmd.Flags().String("agent", "", "Override default_review_agent for this run")
 	cmd.Flags().String("model", "", "Override default_review_model for this run")
 	cmd.Flags().String("sandbox", "", "Sandbox mode for the review run (default: worktree)")
@@ -60,8 +63,9 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
-// runReviewOneShot handles the legacy --pr <N> flow. Kept as a separate
-// function so the daemon branch can be tested independently.
+// runReviewOneShot handles the one-shot review for a single PR number.
+// Kept as a separate function so the daemon and multi-PR branches can be
+// tested independently.
 func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config, prNumber int) error {
 	pr, err := deps.GitHubClient.FetchPR(prNumber)
 	if err != nil {
@@ -125,6 +129,78 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		RunDir:   daemon.RunDir(".sandman", nil, fmt.Sprintf("PR%d", pr.Number)),
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
+	}
+	return nil
+}
+
+// rangeConstraint captures an unbounded range: end==0 means N: (all PRs >= N),
+// start<=end means :M or N:M resolved against open PRs.
+type rangeConstraint struct {
+	start, end int
+}
+
+// runReviewOneShotMulti parses positional args (bare numbers, N:M, N:,
+// :M ranges) and runs a one-shot review for each resolved PR. For unbounded
+// ranges (N: or :M) it fetches open PRs via ListOpenPRs and filters by PR number.
+func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Config, args []string) error {
+	prSet := make(map[int]struct{})
+	var constraints []rangeConstraint
+
+	for _, arg := range args {
+		start, end, isRange, err := parseIssueRange(arg)
+		if err != nil {
+			return fmt.Errorf("invalid argument %q: %w", arg, err)
+		}
+		if !isRange {
+			prSet[start] = struct{}{}
+			continue
+		}
+		if end == 0 {
+			constraints = append(constraints, rangeConstraint{start: start, end: 0})
+			continue
+		}
+		if start == 1 {
+			constraints = append(constraints, rangeConstraint{start: 1, end: end})
+			continue
+		}
+		for n := start; n <= end; n++ {
+			prSet[n] = struct{}{}
+		}
+	}
+
+	if len(constraints) > 0 {
+		openPRs, err := deps.GitHubClient.ListOpenPRs()
+		if err != nil {
+			return fmt.Errorf("list open PRs: %w", err)
+		}
+		for _, pr := range openPRs {
+			if _, ok := prSet[pr.Number]; ok {
+				continue
+			}
+			for _, c := range constraints {
+				if c.end == 0 {
+					if pr.Number >= c.start {
+						prSet[pr.Number] = struct{}{}
+						break
+					}
+				} else if pr.Number <= c.end {
+					prSet[pr.Number] = struct{}{}
+					break
+				}
+			}
+		}
+	}
+
+	prNumbers := make([]int, 0, len(prSet))
+	for n := range prSet {
+		prNumbers = append(prNumbers, n)
+	}
+	sort.Ints(prNumbers)
+
+	for _, prNumber := range prNumbers {
+		if err := runReviewOneShot(cmd, deps, cfg, prNumber); err != nil {
+			return err
+		}
 	}
 	return nil
 }
