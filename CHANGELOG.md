@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `sandman continue --run-id` flag for prompt-only continuation. Mirrors `sandman run --run-id`: looks up the most recent prompt-only run (`Issue: 0`) from the event log, reads the handoff from its worktree, and forwards it as the prompt for the new prompt-only run. Supports the same format validation and mutual-exclusivity with issue numbers. (#784)
 - `scripts/reconcile-stranded-worktrees.sh` — standalone detection tool for stranded worktrees (prints remediation commands for the operator to run) [#733](https://github.com/rafaelromao/sandman/issues/733)
 - `## Troubleshooting > Stranded worktrees` section in `docs/usage/commands.md` documenting the new script and `--force` reconciliation behavior
 - `SANDMAN_TEST_MODEL_<AGENT>` env vars (e.g. `SANDMAN_TEST_MODEL_OPENCODE`, `SANDMAN_TEST_MODEL_PI`) override the model the smoke and prflow e2e tests target per agent. When unset, the tests use the literal model baked into their case lists. Resolved through `testenv.ResolveTestModel` (testenv_test.go covers empty/set/trim/agent-scoped paths).

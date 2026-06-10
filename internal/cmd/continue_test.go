@@ -98,6 +98,378 @@ func TestContinue_InvalidIssueReturnsError(t *testing.T) {
 	}
 }
 
+func TestContinue_RunID_CombinedWithArgsRejected(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-run", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when combining --run-id with issue numbers")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("expected mutual exclusivity error, got %v", err)
+	}
+}
+
+func TestContinue_RunID_ContinuesLastPromptOnlyRun(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/prompt-only-123"
+	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	handoffContent := "## Stage: done\n\n## Completed\nPrompt-only run finished.\n\n## Next Step\nContinue.\n"
+	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte(handoffContent), 0644); err != nil {
+		t.Fatalf("write handoff: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-0-abc", Issue: 0, Payload: map[string]any{"agent": "opencode", "model": "openai/gpt-4.1", "branch": branch, "base_branch": "main", "prompt_source_type": "prompt"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-custom-run"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if len(spy.req.Issues) != 0 {
+		t.Fatalf("expected empty issues (prompt-only path), got %v", spy.req.Issues)
+	}
+	if !spy.req.Continuation {
+		t.Fatal("expected continuation request")
+	}
+	if spy.req.PreviousRunIDs[0] != "run-0-abc" {
+		t.Fatalf("expected PreviousRunIDs[0]=run-0-abc, got %q", spy.req.PreviousRunIDs[0])
+	}
+	if spy.req.RunID != "my-custom-run" {
+		t.Fatalf("expected RunID=my-custom-run, got %q", spy.req.RunID)
+	}
+	if !strings.Contains(spy.req.RunDir, "my-custom-run") {
+		t.Fatalf("expected RunDir to contain my-custom-run, got %q", spy.req.RunDir)
+	}
+	if spy.req.BaseBranch != "main" {
+		t.Fatalf("expected BaseBranch=main, got %q", spy.req.BaseBranch)
+	}
+	if !strings.Contains(spy.req.PromptConfig.PromptFlag, "Stage: done") {
+		t.Fatalf("expected PromptFlag to contain handoff content, got %q", spy.req.PromptConfig.PromptFlag)
+	}
+	if spy.req.PromptConfig.Branch != branch {
+		t.Fatalf("expected PromptConfig.Branch=%q (reuse prior worktree), got %q", branch, spy.req.PromptConfig.Branch)
+	}
+	if !strings.Contains(spy.req.PromptConfig.HandoffPrompt, "Stage: done") {
+		t.Fatalf("expected HandoffPrompt to contain handoff content, got %q", spy.req.PromptConfig.HandoffPrompt)
+	}
+}
+
+func TestContinue_RunID_NoPriorPromptOnlyRun_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-run"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no prior prompt-only run")
+	}
+	if !strings.Contains(err.Error(), "no previous prompt-only run found") {
+		t.Fatalf("expected error about no previous prompt-only run, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called")
+	}
+}
+
+func TestContinue_RunID_SkipsReviewEventSelectsPromptOnly(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/prompt-only-456"
+	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	handoffContent := "## Stage: done\n\nContinue the review.\n"
+	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte(handoffContent), 0644); err != nil {
+		t.Fatalf("write handoff: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	// Review event is more recent (appears later) than the prompt-only event.
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-0-prompt", Issue: 0, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main", "prompt_source_type": "prompt"}},
+		{Type: "run.started", RunID: "run-0-review", Issue: 0, Payload: map[string]any{"agent": "opencode", "branch": "sandman/some-review", "base_branch": "main", "review": true}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "continue-prompt"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if spy.req.PreviousRunIDs[0] != "run-0-prompt" {
+		t.Fatalf("expected PreviousRunIDs[0]=run-0-prompt (prompt-only event), got %q", spy.req.PreviousRunIDs[0])
+	}
+	if spy.req.PromptConfig.Branch != branch {
+		t.Fatalf("expected PromptConfig.Branch=%q (prompt-only branch), got %q", branch, spy.req.PromptConfig.Branch)
+	}
+}
+
+func TestContinue_RunID_OnlyReviewEventReturnsError(t *testing.T) {
+	dir := t.TempDir()
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-0-review", Issue: 0, Payload: map[string]any{"agent": "opencode", "branch": "sandman/review", "base_branch": "main", "review": true}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-run"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when only review events exist")
+	}
+	if !strings.Contains(err.Error(), "no previous prompt-only run found") {
+		t.Fatalf("expected error about no previous prompt-only run, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called")
+	}
+}
+
+func TestContinue_RunID_InvalidFormatRejected(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "123invalid"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid --run-id")
+	}
+	var target *UsageError
+	if !errors.As(err, &target) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "must start with a letter") {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}
+
+func TestContinue_RunID_MissingWorktreeReturnsError(t *testing.T) {
+	dir := t.TempDir()
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-0-abc", Issue: 0, Payload: map[string]any{"agent": "opencode", "branch": "sandman/nonexistent", "base_branch": "main", "prompt_source_type": "prompt"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-run"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when worktree is missing")
+	}
+	if !strings.Contains(err.Error(), "is missing for prompt-only run") {
+		t.Fatalf("expected error about missing worktree, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called")
+	}
+}
+
+func TestContinue_RunID_MissingHandoffEmitsWarning(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/prompt-only-no-handoff"
+	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-0-abc", Issue: 0, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main", "prompt_source_type": "prompt"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-run"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error when handoff is missing: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called despite missing handoff")
+	}
+	if !strings.Contains(spy.req.PromptConfig.PromptFlag, "## Completed") {
+		t.Fatalf("expected empty template PromptFlag when no handoff, got %q", spy.req.PromptConfig.PromptFlag)
+	}
+	if !strings.Contains(buf.String(), "warning: no handoff found") {
+		t.Fatalf("expected warning about missing handoff on stderr, got %q", buf.String())
+	}
+}
+
+func TestContinue_RunID_MissingBranchInPayloadReturnsError(t *testing.T) {
+	dir := t.TempDir()
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-0-abc", Issue: 0, Payload: map[string]any{"agent": "opencode", "base_branch": "main", "prompt_source_type": "prompt"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-run"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when branch is missing in payload")
+	}
+	if !strings.Contains(err.Error(), "no previous prompt-only run found") {
+		t.Fatalf("expected error about no previous prompt-only run (branch-less event skipped), got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called")
+	}
+}
+
+func TestContinue_RunID_MissingBaseBranchInPayloadReturnsError(t *testing.T) {
+	dir := t.TempDir()
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-0-abc", Issue: 0, Payload: map[string]any{"agent": "opencode", "branch": "sandmon/some-branch", "prompt_source_type": "prompt"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-run"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when base branch is missing in payload")
+	}
+	if !strings.Contains(err.Error(), "missing base branch") {
+		t.Fatalf("expected error about missing base branch, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called")
+	}
+}
+
+func TestContinue_RunID_PriorEventWithEmptyRunIDReturnsError(t *testing.T) {
+	dir := t.TempDir()
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "", Issue: 0, Payload: map[string]any{"agent": "opencode", "branch": "sandmon/some-branch", "base_branch": "main", "prompt_source_type": "prompt"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--run-id", "my-run"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when prior event has empty RunID")
+	}
+	if !strings.Contains(err.Error(), "no previous prompt-only run found") {
+		t.Fatalf("expected error about no previous prompt-only run, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called")
+	}
+}
+
 func TestContinue_RuntimeErrorNotUsageError(t *testing.T) {
 	deps := Dependencies{
 		BatchRunner: &spyContinueBatchRunner{},
@@ -901,10 +1273,13 @@ func TestContinue_FailsWhenAnyIssueHasNoPreviousRun(t *testing.T) {
 	}
 }
 
-func TestContinue_UsesVariadicSyntaxInUseString(t *testing.T) {
+func TestContinue_UsesMutuallyExclusiveSyntaxInUseString(t *testing.T) {
 	cmd := NewContinueCmd(newTestDeps())
-	if !strings.Contains(cmd.Use, "<issue-number>...") {
-		t.Fatalf("expected Use to indicate variadic issue numbers, got %q", cmd.Use)
+	if !strings.Contains(cmd.Use, "[issue-number]...") {
+		t.Fatalf("expected Use to indicate optional variadic issue numbers, got %q", cmd.Use)
+	}
+	if !strings.Contains(cmd.Use, "--run-id") {
+		t.Fatalf("expected Use to mention --run-id alternative, got %q", cmd.Use)
 	}
 }
 
