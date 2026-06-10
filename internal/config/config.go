@@ -16,6 +16,7 @@ const (
 	DefaultBuildToolsPreset  = "generic"
 	DefaultReviewCommand     = "/sandman review"
 	DefaultParallel          = 4
+	DefaultReviewParallel    = 4
 	DefaultStartDelay        = 0
 	DefaultRunIdleTimeout    = 1800
 	DefaultRetries           = 3
@@ -27,24 +28,25 @@ const (
 
 // Config holds the loaded Sandman configuration.
 type Config struct {
-	DefaultAgent       string           `yaml:"agent"`
-	DefaultModel       string           `yaml:"model"`
-	DefaultReviewAgent string           `yaml:"review_agent"`
-	DefaultReviewModel string           `yaml:"review_model"`
-	BuildTools         string           `yaml:"build_tools"`
-	ReviewCommand      string           `yaml:"review_command"`
-	DefaultParallel    int              `yaml:"parallel"`
-	StartDelay         int              `yaml:"start_delay"`
-	RunIdleTimeout     int              `yaml:"run_idle_timeout"`
-	Retries            int              `yaml:"retries"`
-	ContainerCapacity  int              `yaml:"container_capacity"`
-	MaxContainers      int              `yaml:"max_containers"`
-	WorktreeDir        string           `yaml:"worktree_dir"`
-	Sandbox            string           `yaml:"sandbox"`
-	Agents             map[string]Agent `yaml:"agents,omitempty"`
-	Git                GitConfig        `yaml:"git"`
-	Agent              string           `yaml:"-"`
-	AgentProviders     map[string]Agent `yaml:"-"`
+	DefaultAgent          string           `yaml:"agent"`
+	DefaultModel          string           `yaml:"model"`
+	DefaultReviewAgent    string           `yaml:"review_agent"`
+	DefaultReviewModel    string           `yaml:"review_model"`
+	BuildTools            string           `yaml:"build_tools"`
+	ReviewCommand         string           `yaml:"review_command"`
+	DefaultParallel       int              `yaml:"parallel"`
+	DefaultReviewParallel int              `yaml:"parallel_reviews"`
+	StartDelay            int              `yaml:"start_delay"`
+	RunIdleTimeout        int              `yaml:"run_idle_timeout"`
+	Retries               int              `yaml:"retries"`
+	ContainerCapacity     int              `yaml:"container_capacity"`
+	MaxContainers         int              `yaml:"max_containers"`
+	WorktreeDir           string           `yaml:"worktree_dir"`
+	Sandbox               string           `yaml:"sandbox"`
+	Agents                map[string]Agent `yaml:"agents,omitempty"`
+	Git                   GitConfig        `yaml:"git"`
+	Agent                 string           `yaml:"-"`
+	AgentProviders        map[string]Agent `yaml:"-"`
 }
 
 // GitConfig holds git-specific settings.
@@ -146,6 +148,7 @@ func SupportedKeys() []string {
 		"build_tools",
 		"review_command",
 		"parallel",
+		"parallel_reviews",
 		"start_delay",
 		"run_idle_timeout",
 		"retries",
@@ -165,22 +168,23 @@ func Load(path string) (*Config, error) {
 	}
 
 	type rawConfig struct {
-		DefaultAgent       string           `yaml:"agent"`
-		DefaultModel       string           `yaml:"model"`
-		DefaultReviewAgent string           `yaml:"review_agent"`
-		DefaultReviewModel string           `yaml:"review_model"`
-		BuildTools         string           `yaml:"build_tools"`
-		ReviewCommand      string           `yaml:"review_command"`
-		DefaultParallel    int              `yaml:"parallel"`
-		StartDelay         int              `yaml:"start_delay"`
-		RunIdleTimeout     *int             `yaml:"run_idle_timeout"`
-		Retries            *int             `yaml:"retries"`
-		ContainerCapacity  *int             `yaml:"container_capacity"`
-		MaxContainers      *int             `yaml:"max_containers"`
-		WorktreeDir        string           `yaml:"worktree_dir"`
-		Sandbox            string           `yaml:"sandbox"`
-		Agents             map[string]Agent `yaml:"agents"`
-		Git                struct {
+		DefaultAgent          string           `yaml:"agent"`
+		DefaultModel          string           `yaml:"model"`
+		DefaultReviewAgent    string           `yaml:"review_agent"`
+		DefaultReviewModel    string           `yaml:"review_model"`
+		BuildTools            string           `yaml:"build_tools"`
+		ReviewCommand         string           `yaml:"review_command"`
+		DefaultParallel       int              `yaml:"parallel"`
+		DefaultReviewParallel int              `yaml:"parallel_reviews"`
+		StartDelay            int              `yaml:"start_delay"`
+		RunIdleTimeout        *int             `yaml:"run_idle_timeout"`
+		Retries               *int             `yaml:"retries"`
+		ContainerCapacity     *int             `yaml:"container_capacity"`
+		MaxContainers         *int             `yaml:"max_containers"`
+		WorktreeDir           string           `yaml:"worktree_dir"`
+		Sandbox               string           `yaml:"sandbox"`
+		Agents                map[string]Agent `yaml:"agents"`
+		Git                   struct {
 			BaseBranch   string  `yaml:"base_branch"`
 			LegacyBranch *string `yaml:"default_branch"`
 		} `yaml:"git"`
@@ -192,18 +196,19 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := Config{
-		DefaultAgent:       raw.DefaultAgent,
-		DefaultModel:       raw.DefaultModel,
-		DefaultReviewAgent: raw.DefaultReviewAgent,
-		DefaultReviewModel: raw.DefaultReviewModel,
-		BuildTools:         raw.BuildTools,
-		ReviewCommand:      raw.ReviewCommand,
-		DefaultParallel:    raw.DefaultParallel,
-		StartDelay:         raw.StartDelay,
-		WorktreeDir:        raw.WorktreeDir,
-		Sandbox:            raw.Sandbox,
-		Agents:             raw.Agents,
-		Git:                GitConfig{BaseBranch: raw.Git.BaseBranch},
+		DefaultAgent:          raw.DefaultAgent,
+		DefaultModel:          raw.DefaultModel,
+		DefaultReviewAgent:    raw.DefaultReviewAgent,
+		DefaultReviewModel:    raw.DefaultReviewModel,
+		BuildTools:            raw.BuildTools,
+		ReviewCommand:         raw.ReviewCommand,
+		DefaultParallel:       raw.DefaultParallel,
+		DefaultReviewParallel: raw.DefaultReviewParallel,
+		StartDelay:            raw.StartDelay,
+		WorktreeDir:           raw.WorktreeDir,
+		Sandbox:               raw.Sandbox,
+		Agents:                raw.Agents,
+		Git:                   GitConfig{BaseBranch: raw.Git.BaseBranch},
 	}
 
 	if raw.Git.LegacyBranch != nil {
@@ -212,6 +217,9 @@ func Load(path string) (*Config, error) {
 
 	if cfg.DefaultParallel <= 0 {
 		cfg.DefaultParallel = DefaultParallel
+	}
+	if cfg.DefaultReviewParallel <= 0 {
+		cfg.DefaultReviewParallel = DefaultReviewParallel
 	}
 	if cfg.StartDelay < 0 {
 		return nil, fmt.Errorf("validate config: start_delay must be 0 or greater")
@@ -401,6 +409,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.EffectiveReviewCommand(), nil
 	case "parallel":
 		return fmt.Sprintf("%d", c.DefaultParallel), nil
+	case "parallel_reviews":
+		return fmt.Sprintf("%d", c.EffectiveReviewParallel()), nil
 	case "start_delay":
 		return fmt.Sprintf("%d", c.StartDelay), nil
 	case "run_idle_timeout":
@@ -455,6 +465,15 @@ func (c *Config) SetValue(key, value string) error {
 			return fmt.Errorf("parallel must be greater than 0")
 		}
 		c.DefaultParallel = n
+	case "parallel_reviews":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for parallel_reviews: %w", err)
+		}
+		if n <= 0 {
+			return fmt.Errorf("parallel_reviews must be greater than 0")
+		}
+		c.DefaultReviewParallel = n
 	case "start_delay":
 		n, err := strconv.Atoi(value)
 		if err != nil {
@@ -543,6 +562,14 @@ func (c *Config) EffectiveReviewAgent() string {
 		return name
 	}
 	return DefaultAgent
+}
+
+// EffectiveReviewParallel returns the effective parallel_reviews value.
+func (c *Config) EffectiveReviewParallel() int {
+	if c == nil || c.DefaultReviewParallel <= 0 {
+		return DefaultReviewParallel
+	}
+	return c.DefaultReviewParallel
 }
 
 // EffectiveReviewModel returns the configured review model, falling back to

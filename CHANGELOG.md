@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `parallel_reviews` config key and `--parallel-reviews` init flag (default 4) controlling review-daemon concurrency. `EffectiveReviewParallel()` defaults to the constant when unset or invalid.
 - `sandman continue --run-id` flag for prompt-only continuation. Mirrors `sandman run --run-id`: looks up the most recent prompt-only run (`Issue: 0`) from the event log, reads the handoff from its worktree, and forwards it as the prompt for the new prompt-only run. Supports the same format validation and mutual-exclusivity with issue numbers. (#784)
 - `scripts/reconcile-stranded-worktrees.sh` — standalone detection tool for stranded worktrees (prints remediation commands for the operator to run) [#733](https://github.com/rafaelromao/sandman/issues/733)
 - `## Troubleshooting > Stranded worktrees` section in `docs/usage/commands.md` documenting the new script and `--force` reconciliation behavior

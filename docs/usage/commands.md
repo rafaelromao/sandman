@@ -19,6 +19,7 @@ sandman init [flags]
 | `--parallel` | `-1` | Default parallel container count (`-1` = use config default 4) |
 | `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/sandman review` (requires `sandman review` to be running) |
 | `--retries` | `-1` | Persist `retries` in scaffolded config. `-1` keeps the built-in default of `3`; `0` disables retries |
+| `--parallel-reviews` | `-1` | Persist `parallel_reviews` in scaffolded config (default `4`) |
 | `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `1800`; `0` disables the heartbeat watchdog |
 
 When `--tool-version` is omitted, `init` infers `repo` as the version selector, reading version hints from the repo when available. If flags are completely omitted and no repo hints are found, interactive prompts guide you through the choices.
@@ -225,6 +226,7 @@ sandman config set <key> <value>
 | `model` | string | `opencode/big-pickle` |
 | `build_tools` | string | `node` |
 | `parallel` | int | `4` |
+| `parallel_reviews` | int | `4` |
 | `start_delay` | int | `0` |
 | `review_command` | string | `/sandman review` |
 | `container_capacity` | int | `4` |

@@ -542,6 +542,73 @@ func TestInit_ExistingDirectoryPrompts(t *testing.T) {
 	}
 }
 
+func TestInit_ParallelReviewsFlagOverridesPersistedDefault(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantInYAML  string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:       "default persists 4",
+			args:       []string{"--build-tools", "generic"},
+			wantInYAML: "parallel_reviews: 4",
+		},
+		{
+			name:       "explicit 8 persists 8",
+			args:       []string{"--build-tools", "generic", "--parallel-reviews", "8"},
+			wantInYAML: "parallel_reviews: 8",
+		},
+		{
+			name:       "explicit 0 persists 4",
+			args:       []string{"--build-tools", "generic", "--parallel-reviews", "0"},
+			wantInYAML: "parallel_reviews: 4",
+		},
+		{
+			name:       "sentinel -1 persists 4",
+			args:       []string{"--build-tools", "generic", "--parallel-reviews", "-1"},
+			wantInYAML: "parallel_reviews: 4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+
+			var out bytes.Buffer
+			cmd := NewInitCmd()
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetIn(strings.NewReader(""))
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Fatalf("error should contain %q, got %v", tt.errContains, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+			if err != nil {
+				t.Fatalf("read config.yaml: %v", err)
+			}
+			if !strings.Contains(string(data), tt.wantInYAML) {
+				t.Fatalf("config.yaml missing %q, got:\n%s", tt.wantInYAML, data)
+			}
+		})
+	}
+}
+
 func TestInit_RetriesFlagOverridesPersistedDefault(t *testing.T) {
 	tests := []struct {
 		name        string
