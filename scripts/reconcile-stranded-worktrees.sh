@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v git >/dev/null 2>&1; then
+    echo "Error: git is not installed or not on PATH" >&2
+    exit 1
+fi
+
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
     echo "Error: not inside a git repository" >&2
     exit 1
@@ -29,7 +34,15 @@ if [[ -f "$repo_root/.sandman/config.yaml" ]]; then
     fi
 fi
 
-git worktree list --porcelain | awk -v prefix="$repo_root/$worktree_dir/" '
+# Resolve worktree_dir prefix
+case "$worktree_dir" in
+  /*) worktree_prefix="$worktree_dir" ;;
+  ~/*) worktree_prefix="$HOME/${worktree_dir#~/}" ;;
+  *)  worktree_prefix="$repo_root/$worktree_dir" ;;
+esac
+worktree_prefix="${worktree_prefix%%/}/"
+
+git worktree list --porcelain | awk -v prefix="$worktree_prefix" '
 /^worktree / { path = substr($0, 10); next }
 /^branch /  { branch = substr($0, 8); next }
 /^detached$/ { detached = 1; next }

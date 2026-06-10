@@ -223,13 +223,13 @@ Agent commits use your host Git identity, not Sandman config keys. Sandman resol
 
 A *stranded worktree* is a sandman-managed worktree whose HEAD points to a different branch than its directory name expects. This can happen when a previous run was interrupted after creating the worktree but before checking out the correct branch.
 
-To detect and remediate stranded worktrees, run the standalone cleanup script from the main repo root:
+To detect and remediate stranded worktrees, run the standalone cleanup script:
 
 ```bash
 scripts/reconcile-stranded-worktrees.sh
 ```
 
-> **Note:** Run the script from the main repository root, not from inside a sandman worktree. When invoked from a linked worktree the script resolves the repo root automatically, but the resulting path prefix may not match `git worktree list` output entries.
+The script works from the main repo root or from inside any sandman worktree. It reads the configured `worktree_dir` from `.sandman/config.yaml` and resolves the path to match `git worktree list` output correctly, including absolute, tilde-prefixed, and relative `worktree_dir` values.
 
 The script parses `git worktree list --porcelain`, reads the configured `worktree_dir` from `.sandman/config.yaml` (defaults to `.sandman/worktrees`), matches worktrees under that directory whose directory name follows the `sandman/<number>-<slug>` pattern, and compares the actual branch against the expected branch derived from the directory name. For each mismatch it prints a one-line remediation command:
 
