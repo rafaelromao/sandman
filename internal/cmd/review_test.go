@@ -287,6 +287,12 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if runner.captured.ReviewFocus != "" {
 		t.Errorf("expected empty ReviewFocus on one-shot review batch request, got %q", runner.captured.ReviewFocus)
 	}
+	if runner.captured.RunID != "PR17" {
+		t.Errorf("expected RunID=PR17, got %q", runner.captured.RunID)
+	}
+	if !strings.Contains(runner.captured.RunDir, "PR17") {
+		t.Errorf("expected RunDir to contain PR17, got %q", runner.captured.RunDir)
+	}
 }
 
 func TestReviewCmd_AgentFlagOverridesReviewAgent(t *testing.T) {
@@ -349,6 +355,81 @@ func TestReviewCmd_ModelFlagOverridesReviewModel(t *testing.T) {
 	}
 	if runner.captured.Model != "openai/gpt-4.1" {
 		t.Errorf("expected --model to override review model, got %q", runner.captured.Model)
+	}
+}
+
+func TestReviewCmd_InvalidContainerFlagsReturnError(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "container capacity less than one",
+			args:    []string{"--container-capacity", "-1", "--pr", "42"},
+			wantErr: "container_capacity must be 0 or greater",
+		},
+		{
+			name:    "negative max containers",
+			args:    []string{"--max-containers", "-1", "--pr", "42"},
+			wantErr: "max_containers must be 0 or greater",
+		},
+		{
+			name:    "container capacity negative in daemon mode",
+			args:    []string{"--container-capacity", "-5"},
+			wantErr: "container_capacity must be 0 or greater",
+		},
+		{
+			name:    "max containers negative in daemon mode",
+			args:    []string{"--max-containers", "-5"},
+			wantErr: "max_containers must be 0 or greater",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				DefaultAgent:       "opencode",
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/big-pickle",
+				Agent:              "opencode",
+				AgentProviders: map[string]config.Agent{
+					"opencode": {Preset: "opencode", Command: "opencode"},
+				},
+			}
+			gh := &fakePRGitHubClient{
+				fakeGitHubClient: &fakeGitHubClient{},
+				pr:               &github.PR{Number: 42, Title: "T", Body: "B"},
+			}
+			runner := &spyBatchRunner{result: &batch.Result{}}
+			deps := newReviewDeps(t, gh, cfg, runner)
+
+			prev := reviewDaemonRunner
+			reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
+				return nil
+			}
+			defer func() { reviewDaemonRunner = prev }()
+
+			var buf bytes.Buffer
+			cmd := NewReviewCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+			var target *UsageError
+			if !errors.As(err, &target) {
+				t.Fatalf("expected *UsageError, got %T: %v", err, err)
+			}
+		})
 	}
 }
 
@@ -483,7 +564,7 @@ func TestReviewCmd_SandboxFlagOverride(t *testing.T) {
 	}
 }
 
-func TestReviewCmd_DaemonSandboxFlagCapture(t *testing.T) {
+func TestReviewCmd_DaemonFlagsCapture(t *testing.T) {
 	var buf bytes.Buffer
 	cfg := &config.Config{
 		DefaultAgent:       "opencode",
@@ -496,10 +577,20 @@ func TestReviewCmd_DaemonSandboxFlagCapture(t *testing.T) {
 	runner := &spyBatchRunner{result: &batch.Result{}}
 	deps := newReviewDeps(t, gh, cfg, runner)
 
-	var capturedSandbox string
+	var (
+		capturedSandbox string
+		capturedCC      int
+		capturedCCSet   bool
+		capturedMC      int
+		capturedMCSet   bool
+	)
 	prev := reviewDaemonRunner
 	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
 		capturedSandbox = sandbox
+		capturedCC = cc
+		capturedCCSet = ccSet
+		capturedMC = mc
+		capturedMCSet = mcSet
 		return nil
 	}
 	defer func() { reviewDaemonRunner = prev }()
@@ -507,13 +598,25 @@ func TestReviewCmd_DaemonSandboxFlagCapture(t *testing.T) {
 	cmd := NewReviewCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--sandbox", "podman"})
+	cmd.SetArgs([]string{"--sandbox", "podman", "--container-capacity", "5", "--max-containers", "3"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if capturedSandbox != "podman" {
 		t.Errorf("expected daemon to receive sandbox 'podman', got %q", capturedSandbox)
+	}
+	if capturedCC != 5 {
+		t.Errorf("expected daemon to receive container-capacity 5, got %d", capturedCC)
+	}
+	if !capturedCCSet {
+		t.Errorf("expected daemon to receive container-capacity-set=true")
+	}
+	if capturedMC != 3 {
+		t.Errorf("expected daemon to receive max-containers 3, got %d", capturedMC)
+	}
+	if !capturedMCSet {
+		t.Errorf("expected daemon to receive max-containers-set=true")
 	}
 }
 
