@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -216,6 +217,10 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	if len(comments) == 0 {
 		return nil
 	}
+
+	sort.Slice(comments, func(i, j int) bool {
+		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
+	})
 
 	prDir := d.PRDir(prNumber)
 	if err := os.MkdirAll(prDir, 0755); err != nil {
