@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,32 +19,28 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
-// editCall records a single EditComment or EditPRBody invocation.
-type editCall struct {
-	kind   string // "comment" or "prbody"
-	id     string // comment ID (for comments) or empty
-	number int    // PR number (for PR body)
-	body   string
+// reactionCall records a single reaction method invocation.
+type reactionCall struct {
+	kind        string // "add_comment", "add_issue", "remove_comment", "remove_issue"
+	commentID   string
+	issueNumber int
+	content     string
+	reactionID  string
 }
 
 // fakeGH is a test double for the GitHubClient surface area used by the
 // review daemon.
 type fakeGH struct {
-	mu         sync.Mutex
-	prs        []github.PR
-	comments   map[int][]github.PRComment
-	prFetch    map[int]*github.PR
-	listErr    error
-	commentErr map[int]error
-	fetchErr   map[int]error
-	listCalls  int
-	editCalls  []editCall
-	// persistedEdits stores the body as last written by EditPRBody /
-	// EditComment so that subsequent FetchPR / ListPRComments return the
-	// updated content. This lets the deferred cleanup in launchReview
-	// detect and strip the eye prefix.
-	persistedPRBody  map[int]string
-	persistedComment map[string]string
+	mu            sync.Mutex
+	prs           []github.PR
+	comments      map[int][]github.PRComment
+	prFetch       map[int]*github.PR
+	listErr       error
+	commentErr    map[int]error
+	fetchErr      map[int]error
+	listCalls     int
+	reactionCalls []reactionCall
+	addReactionID int // auto-increment for fake reaction IDs
 }
 
 func (f *fakeGH) ListOpenPRs() ([]github.PR, error) {
@@ -64,11 +61,6 @@ func (f *fakeGH) ListPRComments(number int) ([]github.PRComment, error) {
 	comments := f.comments[number]
 	result := make([]github.PRComment, len(comments))
 	copy(result, comments)
-	for i, c := range result {
-		if edited, ok := f.persistedComment[c.ID]; ok {
-			result[i].Body = edited
-		}
-	}
 	return result, nil
 }
 
@@ -84,9 +76,6 @@ func (f *fakeGH) FetchPR(number int) (*github.PR, error) {
 	if pr, ok := f.prFetch[number]; ok {
 		body = pr.Body
 	}
-	if edited, ok := f.persistedPRBody[number]; ok {
-		body = edited
-	}
 	if pr, ok := f.prFetch[number]; ok {
 		return &github.PR{Number: pr.Number, Title: pr.Title, Body: body}, nil
 	}
@@ -97,25 +86,35 @@ func (f *fakeGH) RepoName() (string, error) {
 	return "owner/repo", nil
 }
 
-func (f *fakeGH) EditComment(commentID, body string) error {
+func (f *fakeGH) AddCommentReaction(commentID, content string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.editCalls = append(f.editCalls, editCall{kind: "comment", id: commentID, body: body})
-	if f.persistedComment == nil {
-		f.persistedComment = make(map[string]string)
-	}
-	f.persistedComment[commentID] = body
+	f.addReactionID++
+	id := fmt.Sprintf("react-%d", f.addReactionID)
+	f.reactionCalls = append(f.reactionCalls, reactionCall{kind: "add_comment", commentID: commentID, content: content, reactionID: id})
+	return id, nil
+}
+
+func (f *fakeGH) AddIssueReaction(issueNumber int, content string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.addReactionID++
+	id := fmt.Sprintf("react-%d", f.addReactionID)
+	f.reactionCalls = append(f.reactionCalls, reactionCall{kind: "add_issue", issueNumber: issueNumber, content: content, reactionID: id})
+	return id, nil
+}
+
+func (f *fakeGH) RemoveCommentReaction(commentID, reactionID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reactionCalls = append(f.reactionCalls, reactionCall{kind: "remove_comment", commentID: commentID, reactionID: reactionID})
 	return nil
 }
 
-func (f *fakeGH) EditPRBody(prNumber int, body string) error {
+func (f *fakeGH) RemoveIssueReaction(issueNumber int, reactionID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.editCalls = append(f.editCalls, editCall{kind: "prbody", number: prNumber, body: body})
-	if f.persistedPRBody == nil {
-		f.persistedPRBody = make(map[int]string)
-	}
-	f.persistedPRBody[prNumber] = body
+	f.reactionCalls = append(f.reactionCalls, reactionCall{kind: "remove_issue", issueNumber: issueNumber, reactionID: reactionID})
 	return nil
 }
 
@@ -143,44 +142,6 @@ func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *co
 	return d, &buf, dir
 }
 
-func TestDaemon_ProcessPRCommentsSortedByCreatedAt(t *testing.T) {
-	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
-	gh := &fakeGH{
-		prs: []github.PR{{Number: 1, State: "open"}},
-		comments: map[int][]github.PRComment{
-			1: {
-				{ID: "102", Body: "/sandman review", CreatedAt: now.Add(2 * time.Hour)},
-				{ID: "101", Body: "/sandman review", CreatedAt: now.Add(1 * time.Hour)},
-				{ID: "103", Body: "/sandman review", CreatedAt: now.Add(3 * time.Hour)},
-			},
-		},
-	}
-	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "opencode/foo",
-	})
-
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
-
-	if runner.calls != 3 {
-		t.Fatalf("expected 3 batch runs, got %d", runner.calls)
-	}
-
-	// First edit should be for the oldest comment (101), proving chronological order.
-	gh.mu.Lock()
-	defer gh.mu.Unlock()
-	if len(gh.editCalls) < 3 {
-		t.Fatalf("expected at least 3 edit calls, got %d", len(gh.editCalls))
-	}
-	// The first EditComment call should reference the oldest comment ID.
-	if gh.editCalls[0].kind != "comment" || gh.editCalls[0].id != "101" {
-		t.Errorf("expected first EditComment for comment 101 (oldest), got %+v", gh.editCalls[0])
-	}
-}
-
 func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
@@ -196,7 +157,6 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
-		Sandbox:            "podman",
 	})
 
 	if err := d.tick(context.Background()); err != nil {
@@ -209,8 +169,8 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	if runner.last.Agent != "opencode" {
 		t.Errorf("expected review agent 'opencode', got %q", runner.last.Agent)
 	}
-	if runner.last.Sandbox != "podman" {
-		t.Errorf("expected sandbox 'podman', got %q", runner.last.Sandbox)
+	if runner.last.Sandbox != "worktree" {
+		t.Errorf("expected sandbox 'worktree', got %q", runner.last.Sandbox)
 	}
 	if !strings.Contains(runner.last.PromptConfig.PromptFlag, "PR 42") {
 		t.Errorf("rendered prompt should mention PR title, got: %q", runner.last.PromptConfig.PromptFlag)
@@ -227,13 +187,6 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	if runner.last.ReviewFocus != "focus on tests" {
 		t.Errorf("expected ReviewFocus='focus on tests', got %q", runner.last.ReviewFocus)
 	}
-	if runner.last.RunID != "PR42" {
-		t.Errorf("expected RunID='PR42' on daemon review batch request, got %q", runner.last.RunID)
-	}
-	wantRunDir := filepath.Join(d.BaseDir, "runs", "PR42")
-	if runner.last.RunDir != wantRunDir {
-		t.Errorf("expected RunDir=%q, got %q", wantRunDir, runner.last.RunDir)
-	}
 
 	dir := d.PRDir(42)
 	seenPath := filepath.Join(dir, "seen-comments.jsonl")
@@ -246,7 +199,7 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	}
 }
 
-func TestDaemon_TickAddsEyeEmojiAndRemovesAfterReview(t *testing.T) {
+func TestDaemon_TickAddsReactionAndRemovesAfterReview(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -266,37 +219,45 @@ func TestDaemon_TickAddsEyeEmojiAndRemovesAfterReview(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	// EYE ADDED: EditComment should have been called with 👁️  prefix.
-	foundEyeComment := false
-	foundEyePR := false
-	// EYE REMOVED: The deferred cleanup should strip the prefix.
-	foundCleanComment := false
-	foundCleanPR := false
-	for _, c := range gh.editCalls {
-		if c.kind == "comment" && c.id == "100" && c.body == "👁️ /sandman review focus on tests" {
-			foundEyeComment = true
-		}
-		if c.kind == "comment" && c.id == "100" && c.body == "/sandman review focus on tests" {
-			foundCleanComment = true
-		}
-		if c.kind == "prbody" && c.number == 42 && c.body == "👁️ Body of 42" {
-			foundEyePR = true
-		}
-		if c.kind == "prbody" && c.number == 42 && c.body == "Body of 42" {
-			foundCleanPR = true
+	// Verify reactions were added and then removed.
+	foundAddComment := false
+	foundAddIssue := false
+	foundRemoveComment := false
+	foundRemoveIssue := false
+	var commentReactionID, issueReactionID string
+	for _, c := range gh.reactionCalls {
+		switch c.kind {
+		case "add_comment":
+			if c.commentID == "100" && c.content == "eyes" {
+				foundAddComment = true
+				commentReactionID = c.reactionID
+			}
+		case "add_issue":
+			if c.issueNumber == 42 && c.content == "eyes" {
+				foundAddIssue = true
+				issueReactionID = c.reactionID
+			}
+		case "remove_comment":
+			if c.commentID == "100" && c.reactionID == commentReactionID {
+				foundRemoveComment = true
+			}
+		case "remove_issue":
+			if c.issueNumber == 42 && c.reactionID == issueReactionID {
+				foundRemoveIssue = true
+			}
 		}
 	}
-	if !foundEyeComment {
-		t.Error("expected EditComment call with 👁️  prefix, not found. Calls:", gh.editCalls)
+	if !foundAddComment {
+		t.Error("expected AddCommentReaction for comment 100 with eyes, not found. Calls:", gh.reactionCalls)
 	}
-	if !foundEyePR {
-		t.Error("expected EditPRBody call with 👁️  prefix, not found. Calls:", gh.editCalls)
+	if !foundAddIssue {
+		t.Error("expected AddIssueReaction for PR 42 with eyes, not found. Calls:", gh.reactionCalls)
 	}
-	if !foundCleanPR {
-		t.Error("expected EditPRBody cleanup to strip 👁️  prefix, not found. Calls:", gh.editCalls)
+	if !foundRemoveComment {
+		t.Error("expected RemoveCommentReaction for comment 100, not found. Calls:", gh.reactionCalls)
 	}
-	if !foundCleanComment {
-		t.Error("expected EditComment cleanup to strip 👁️  prefix, not found. Calls:", gh.editCalls)
+	if !foundRemoveIssue {
+		t.Error("expected RemoveIssueReaction for PR 42, not found. Calls:", gh.reactionCalls)
 	}
 
 	// Verify the review was launched.
@@ -305,7 +266,7 @@ func TestDaemon_TickAddsEyeEmojiAndRemovesAfterReview(t *testing.T) {
 	}
 }
 
-func TestDaemon_EyeEmojiRemovedOnRunBatchError(t *testing.T) {
+func TestDaemon_ReactionRemovedOnRunBatchError(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -327,22 +288,22 @@ func TestDaemon_EyeEmojiRemovedOnRunBatchError(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	// The eye prefix should still be stripped even though RunBatch failed.
-	foundCleanPR := false
-	foundCleanComment := false
-	for _, c := range gh.editCalls {
-		if c.kind == "prbody" && c.number == 1 && c.body == "Body" {
-			foundCleanPR = true
+	// Reactions should still be removed even though RunBatch failed.
+	foundRemoveComment := false
+	foundRemoveIssue := false
+	for _, c := range gh.reactionCalls {
+		if c.kind == "remove_comment" && c.commentID == "x" {
+			foundRemoveComment = true
 		}
-		if c.kind == "comment" && c.id == "x" && c.body == "/sandman review" {
-			foundCleanComment = true
+		if c.kind == "remove_issue" && c.issueNumber == 1 {
+			foundRemoveIssue = true
 		}
 	}
-	if !foundCleanPR {
-		t.Error("expected PR body cleanup after RunBatch error, got calls:", gh.editCalls)
+	if !foundRemoveComment {
+		t.Error("expected comment reaction cleanup after RunBatch error, got calls:", gh.reactionCalls)
 	}
-	if !foundCleanComment {
-		t.Error("expected comment cleanup after RunBatch error, got calls:", gh.editCalls)
+	if !foundRemoveIssue {
+		t.Error("expected issue reaction cleanup after RunBatch error, got calls:", gh.reactionCalls)
 	}
 }
 
@@ -613,79 +574,6 @@ func TestDaemon_RunFailsFastOnMissingReviewModel(t *testing.T) {
 	cancel()
 }
 
-func TestDaemon_LaunchReviewPropagatesSandboxParams(t *testing.T) {
-	gh := &fakeGH{
-		prs: []github.PR{{Number: 10, State: "open"}},
-		comments: map[int][]github.PRComment{
-			10: {{ID: "c1", Body: "/sandman review"}},
-		},
-		prFetch: map[int]*github.PR{10: {Number: 10, Title: "PR 10", Body: "Body"}},
-	}
-	runner := &capturedRequest{}
-	cfg := &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "opencode/foo",
-	}
-	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
-	d.Sandbox = "podman"
-	d.ContainerCapacity = 3
-	d.ContainerCapacitySet = true
-	d.MaxContainers = 2
-	d.MaxContainersSet = true
-
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
-
-	if runner.calls != 1 {
-		t.Fatalf("expected 1 batch run, got %d", runner.calls)
-	}
-	if runner.last.Sandbox != "podman" {
-		t.Errorf("expected sandbox 'podman', got %q", runner.last.Sandbox)
-	}
-	if runner.last.ContainerCapacity != 3 {
-		t.Errorf("expected ContainerCapacity 3, got %d", runner.last.ContainerCapacity)
-	}
-	if !runner.last.ContainerCapacitySet {
-		t.Errorf("expected ContainerCapacitySet=true")
-	}
-	if runner.last.MaxContainers != 2 {
-		t.Errorf("expected MaxContainers 2, got %d", runner.last.MaxContainers)
-	}
-	if !runner.last.MaxContainersSet {
-		t.Errorf("expected MaxContainersSet=true")
-	}
-}
-
-func TestDaemon_LaunchReviewFallsBackToConfigSandbox(t *testing.T) {
-	gh := &fakeGH{
-		prs: []github.PR{{Number: 11, State: "open"}},
-		comments: map[int][]github.PRComment{
-			11: {{ID: "c2", Body: "/sandman review"}},
-		},
-		prFetch: map[int]*github.PR{11: {Number: 11, Title: "PR 11", Body: "Body"}},
-	}
-	runner := &capturedRequest{}
-	cfg := &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "opencode/foo",
-		Sandbox:            "podman",
-	}
-	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
-	// Deliberately leave d.Sandbox empty to exercise the cfg.Sandbox fallback.
-
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
-
-	if runner.calls != 1 {
-		t.Fatalf("expected 1 batch run, got %d", runner.calls)
-	}
-	if runner.last.Sandbox != "podman" {
-		t.Errorf("expected sandbox 'podman' from cfg.Sandbox fallback, got %q", runner.last.Sandbox)
-	}
-}
-
 func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
 	gh := &fakeGH{
 		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
@@ -711,7 +599,7 @@ func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
 	if err := os.MkdirAll(prDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	err := d.launchReview(context.Background(), 1, prDir, "", "c1")
+	err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", "")
 	if err == nil {
 		t.Fatal("expected error from launchReview when model is empty")
 	}

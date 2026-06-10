@@ -122,6 +122,22 @@ func (f *fakeGitHubClient) EditPRBody(prNumber int, body string) error {
 	return nil
 }
 
+func (f *fakeGitHubClient) AddCommentReaction(commentID, content string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeGitHubClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeGitHubClient) RemoveCommentReaction(commentID, reactionID string) error {
+	return nil
+}
+
+func (f *fakeGitHubClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+	return nil
+}
+
 // newRunDeps returns Dependencies for a run command test. The
 // default review command is overridden to "/oc review" so the
 // review daemon guard (issue #383) is bypassed by default. Tests

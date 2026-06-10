@@ -1,7 +1,5 @@
 package github
 
-import "time"
-
 // Issue holds metadata fetched from GitHub.
 type Issue struct {
 	Number int
@@ -26,9 +24,8 @@ type PR struct {
 
 // PRComment holds a PR conversation comment fetched from the GitHub REST API.
 type PRComment struct {
-	ID        string
-	Body      string
-	CreatedAt time.Time
+	ID   string
+	Body string
 }
 
 // Client wraps gh CLI for GitHub operations.
@@ -43,4 +40,8 @@ type Client interface {
 	RepoName() (string, error)
 	EditComment(commentID, body string) error
 	EditPRBody(prNumber int, body string) error
+	AddCommentReaction(commentID, content string) (string, error)
+	AddIssueReaction(issueNumber int, content string) (string, error)
+	RemoveCommentReaction(commentID, reactionID string) error
+	RemoveIssueReaction(issueNumber int, reactionID string) error
 }

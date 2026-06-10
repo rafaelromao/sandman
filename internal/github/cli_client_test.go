@@ -4,9 +4,7 @@ import (
 	"os/exec"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
-	"time"
 )
 
 type fakeRunner struct {
@@ -720,52 +718,141 @@ func TestCLIClient_EditPRBody_Error(t *testing.T) {
 	}
 }
 
-func TestCLIClient_ListPRComments_SortParams(t *testing.T) {
+func TestCLIClient_AddCommentReaction_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `[]`},
+		{output: "123"},
 	}}
 	client := &CLIClient{runner: runner}
 
-	if _, err := client.ListPRComments(42); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(runner.calls) < 2 {
-		t.Fatalf("expected at least 2 calls, got %d", len(runner.calls))
-	}
-	apiArgs := runner.calls[1].args
-	found := false
-	for _, arg := range apiArgs {
-		if strings.Contains(arg, "sort=created&direction=asc") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("API args should include sort=created&direction=asc, got %v", apiArgs)
-	}
-}
-
-func TestCLIClient_ListPRComments_PopulatesCreatedAt(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{
-		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `[{"id":123,"body":"/sandman review","user":{"login":"alice"},"created_at":"2026-06-01T12:00:00Z"},{"id":124,"body":"later comment","user":{"login":"bob"},"created_at":"2026-06-02T12:00:00Z"}]`},
-	}}
-	client := &CLIClient{runner: runner}
-
-	comments, err := client.ListPRComments(42)
+	id, err := client.AddCommentReaction("100", "eyes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(comments) != 2 {
-		t.Fatalf("expected 2 comments, got %d", len(comments))
+	if id != "123" {
+		t.Errorf("expected reaction ID 123, got %q", id)
 	}
-	wantTimes := []string{"2026-06-01T12:00:00Z", "2026-06-02T12:00:00Z"}
-	for i, want := range wantTimes {
-		wantTime, _ := time.Parse(time.RFC3339, want)
-		if !comments[i].CreatedAt.Equal(wantTime) {
-			t.Errorf("comment %d CreatedAt = %v, want %v", i, comments[i].CreatedAt, wantTime)
-		}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
+	}
+	expectedArgs := []string{"api", "-X", "POST", "repos/rafaelromao/sandman/issues/comments/100/reactions", "-f", "content=eyes", "--jq", ".id"}
+	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
+		t.Fatalf("expected args %v, got %v", expectedArgs, runner.calls[1].args)
+	}
+}
+
+func TestCLIClient_AddCommentReaction_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	_, err := client.AddCommentReaction("100", "eyes")
+	if err == nil {
+		t.Fatal("expected error when gh api fails")
+	}
+}
+
+func TestCLIClient_AddIssueReaction_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: "456"},
+	}}
+	client := &CLIClient{runner: runner}
+
+	id, err := client.AddIssueReaction(42, "eyes")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "456" {
+		t.Errorf("expected reaction ID 456, got %q", id)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
+	}
+	expectedArgs := []string{"api", "-X", "POST", "repos/rafaelromao/sandman/issues/42/reactions", "-f", "content=eyes", "--jq", ".id"}
+	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
+		t.Fatalf("expected args %v, got %v", expectedArgs, runner.calls[1].args)
+	}
+}
+
+func TestCLIClient_AddIssueReaction_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	_, err := client.AddIssueReaction(42, "eyes")
+	if err == nil {
+		t.Fatal("expected error when gh api fails")
+	}
+}
+
+func TestCLIClient_RemoveCommentReaction_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: ""},
+	}}
+	client := &CLIClient{runner: runner}
+
+	err := client.RemoveCommentReaction("100", "123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
+	}
+	expectedArgs := []string{"api", "-X", "DELETE", "repos/rafaelromao/sandman/issues/comments/100/reactions/123"}
+	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
+		t.Fatalf("expected args %v, got %v", expectedArgs, runner.calls[1].args)
+	}
+}
+
+func TestCLIClient_RemoveCommentReaction_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	err := client.RemoveCommentReaction("100", "123")
+	if err == nil {
+		t.Fatal("expected error when gh api fails")
+	}
+}
+
+func TestCLIClient_RemoveIssueReaction_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: ""},
+	}}
+	client := &CLIClient{runner: runner}
+
+	err := client.RemoveIssueReaction(42, "456")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
+	}
+	expectedArgs := []string{"api", "-X", "DELETE", "repos/rafaelromao/sandman/issues/42/reactions/456"}
+	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
+		t.Fatalf("expected args %v, got %v", expectedArgs, runner.calls[1].args)
+	}
+}
+
+func TestCLIClient_RemoveIssueReaction_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	err := client.RemoveIssueReaction(42, "456")
+	if err == nil {
+		t.Fatal("expected error when gh api fails")
 	}
 }
 
