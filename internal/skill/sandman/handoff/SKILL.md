@@ -13,6 +13,9 @@ Write `.sandman/handoff.md` in the current worktree before exiting.
 
 ```markdown
 ## Stage: <name>
+## Source Prompt: .sandman/rendered-prompt.md
+## Last Skill: <name>
+## Last Skill Status: complete | incomplete — <one-line context>
 ## Completed
 (what was implemented, committed, or merged)
 
@@ -31,6 +34,7 @@ Write `.sandman/handoff.md` in the current worktree before exiting.
 
 ## Workflow
 
+0. Re-read `.sandman/rendered-prompt.md` to confirm original intent.
 1. Summarize completed work.
 2. List any pending work.
 3. Note blockers.
