@@ -338,3 +338,86 @@ func TestBuildResumePrompt_SourcePromptDoesNotInlineContent(t *testing.T) {
 		t.Fatalf("expected Source Prompt to not inline rendered prompt content, got:\n%s", result)
 	}
 }
+
+func TestParseHandoff_MissingStage(t *testing.T) {
+	content := "## Last Skill: sandman-tdd\n## Last Skill Status: complete\n\n## Completed\ndone."
+	doc := ParseHandoff(content)
+	if doc.Stage != "" {
+		t.Fatalf("expected empty Stage, got %q", doc.Stage)
+	}
+	if doc.LastSkill != "sandman-tdd" {
+		t.Fatalf("expected LastSkill=sandman-tdd, got %q", doc.LastSkill)
+	}
+	if doc.LastSkillStatus != "complete" {
+		t.Fatalf("expected LastSkillStatus=complete, got %q", doc.LastSkillStatus)
+	}
+}
+
+func TestParseHandoff_MissingLastSkill(t *testing.T) {
+	content := "## Stage: plan-approved\n## Last Skill Status: complete\n\n## Completed\ndone."
+	doc := ParseHandoff(content)
+	if doc.Stage != "plan-approved" {
+		t.Fatalf("expected Stage=plan-approved, got %q", doc.Stage)
+	}
+	if doc.LastSkill != "" {
+		t.Fatalf("expected empty LastSkill, got %q", doc.LastSkill)
+	}
+	if doc.LastSkillStatus != "complete" {
+		t.Fatalf("expected LastSkillStatus=complete, got %q", doc.LastSkillStatus)
+	}
+}
+
+func TestParseHandoff_MissingLastSkillStatus(t *testing.T) {
+	content := "## Stage: plan-approved\n## Last Skill: sandman-tdd\n\n## Completed\ndone."
+	doc := ParseHandoff(content)
+	if doc.Stage != "plan-approved" {
+		t.Fatalf("expected Stage=plan-approved, got %q", doc.Stage)
+	}
+	if doc.LastSkill != "sandman-tdd" {
+		t.Fatalf("expected LastSkill=sandman-tdd, got %q", doc.LastSkill)
+	}
+	if doc.LastSkillStatus != "" {
+		t.Fatalf("expected empty LastSkillStatus, got %q", doc.LastSkillStatus)
+	}
+}
+
+func TestParseHandoff_LastSkillStatusHardBlocker(t *testing.T) {
+	content := "## Stage: pr-review-finished\n## Last Skill: sandman-pr-review\n## Last Skill Status: incomplete \u2014 hard blocker from reviewer\n## Completed\nReview issues found."
+	doc := ParseHandoff(content)
+	if doc.Stage != "pr-review-finished" {
+		t.Fatalf("expected Stage=pr-review-finished, got %q", doc.Stage)
+	}
+	if doc.LastSkill != "sandman-pr-review" {
+		t.Fatalf("expected LastSkill=sandman-pr-review, got %q", doc.LastSkill)
+	}
+	if doc.LastSkillStatus != "incomplete \u2014 hard blocker from reviewer" {
+		t.Fatalf("expected LastSkillStatus with hard blocker context, got %q", doc.LastSkillStatus)
+	}
+}
+
+func TestParseHandoff_WhitespaceTrimmedAllFields(t *testing.T) {
+	content := "## Stage:   plan-approved   \n## Last Skill:   sandman-tdd   \n## Last Skill Status:   complete   \n\n## Completed\ndone."
+	doc := ParseHandoff(content)
+	if doc.Stage != "plan-approved" {
+		t.Fatalf("expected Stage=plan-approved, got %q", doc.Stage)
+	}
+	if doc.LastSkill != "sandman-tdd" {
+		t.Fatalf("expected LastSkill=sandman-tdd, got %q", doc.LastSkill)
+	}
+	if doc.LastSkillStatus != "complete" {
+		t.Fatalf("expected LastSkillStatus=complete, got %q", doc.LastSkillStatus)
+	}
+}
+
+func TestBuildResumePrompt_UpdateHandoffContext_EmptyStatusRendersPlaceholder(t *testing.T) {
+	doc := HandoffDoc{
+		Stage:     "plan-approved",
+		LastSkill: "sandman-tdd",
+		Body:      "## Completed\nDone.\n\n## Next Step\nContinue.",
+	}
+	result := BuildResumePrompt(doc)
+
+	if !strings.Contains(result, "## Last Skill Status: <context>") {
+		t.Fatalf("expected ## Last Skill Status: <context> placeholder in UHC, got:\n%s", result)
+	}
+}

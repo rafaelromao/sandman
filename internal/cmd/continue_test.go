@@ -1486,6 +1486,149 @@ func continueGuardDeps(t testing.TB, cfg *config.Config) (Dependencies, *spyCont
 	return deps, spy
 }
 
+// runContinueWithHandoff creates a temp worktree with the given handoff content,
+// executes the continue command for issue 42, and returns the spy batch runner.
+func runContinueWithHandoff(t *testing.T, handoffContent string) *spyContinueBatchRunner {
+	t.Helper()
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	contextPath := filepath.Join(dir, branch, ".sandman", "handoff.md")
+	if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err != nil {
+		t.Fatalf("mkdir handoff dir: %v", err)
+	}
+	if err := os.WriteFile(contextPath, []byte(handoffContent), 0644); err != nil {
+		t.Fatalf("write handoff: %v", err)
+	}
+
+	spy := &spyContinueBatchRunner{result: &batch.Result{}}
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}},
+		EventLog:    log,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewContinueCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	return spy
+}
+
+func TestContinue_StageAwarePrompt_AllStages(t *testing.T) {
+	tests := []struct {
+		name           string
+		handoffContent string
+		wantStage      string
+		wantLastSkill  string
+		wantStatus     string
+	}{
+		{
+			name:           "plan-approved -> sandman-tdd",
+			handoffContent: "## Stage: plan-approved\n## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-tdd\n## Last Skill Status: complete\n## Completed\nInitial pass.\n\n## Next Step\nContinue the work.\n",
+			wantStage:      "plan-approved",
+			wantLastSkill:  "sandman-tdd",
+			wantStatus:     "complete",
+		},
+		{
+			name:           "implementation-committed -> sandman-tdd",
+			handoffContent: "## Stage: implementation-committed\n## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-tdd\n## Last Skill Status: complete\n## Completed\nImplementation done.\n\n## Next Step\nCreate PR.\n",
+			wantStage:      "implementation-committed",
+			wantLastSkill:  "sandman-tdd",
+			wantStatus:     "complete",
+		},
+		{
+			name:           "pr-created -> sandman-implement",
+			handoffContent: "## Stage: pr-created\n## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-implement\n## Last Skill Status: complete\n## Completed\nPR created.\n\n## Next Step\nRequest review.\n",
+			wantStage:      "pr-created",
+			wantLastSkill:  "sandman-implement",
+			wantStatus:     "complete",
+		},
+		{
+			name:           "pr-review-finished -> sandman-pr-review",
+			handoffContent: "## Stage: pr-review-finished\n## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-pr-review\n## Last Skill Status: complete\n## Completed\nReview done.\n\n## Next Step\nMerge PR.\n",
+			wantStage:      "pr-review-finished",
+			wantLastSkill:  "sandman-pr-review",
+			wantStatus:     "complete",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spy := runContinueWithHandoff(t, tt.handoffContent)
+			prompt := spy.req.HandoffPrompts[42]
+
+			if !strings.Contains(prompt, "## Source Prompt: .sandman/rendered-prompt.md") {
+				t.Fatalf("expected ## Source Prompt: .sandman/rendered-prompt.md in rendered prompt, got:\n%s", prompt)
+			}
+
+			wantLastSkillLine := "## Last Skill: " + tt.wantLastSkill
+			if !strings.Contains(prompt, wantLastSkillLine) {
+				t.Fatalf("expected %q in rendered prompt, got:\n%s", wantLastSkillLine, prompt)
+			}
+
+			wantStatusLine := "## Last Skill Status: " + tt.wantStatus
+			if !strings.Contains(prompt, wantStatusLine) {
+				t.Fatalf("expected %q in rendered prompt, got:\n%s", wantStatusLine, prompt)
+			}
+
+			if strings.Contains(prompt, "## Source Prompt: .sandman/rendered-prompt.md\n\nImplement") {
+				t.Fatalf("expected ## Source Prompt to be a file reference, not inline content, got:\n%s", prompt)
+			}
+
+			uhcIdx := strings.Index(prompt, "## Update Handoff Context")
+			if uhcIdx < 0 {
+				t.Fatalf("expected ## Update Handoff Context section")
+			}
+			uhc := prompt[uhcIdx:]
+			if !strings.Contains(uhc, "## Stage:") {
+				t.Fatalf("expected ## Stage: in Update Handoff Context, got:\n%s", uhc)
+			}
+			if !strings.Contains(uhc, "## Source Prompt:") {
+				t.Fatalf("expected ## Source Prompt: in Update Handoff Context, got:\n%s", uhc)
+			}
+			if !strings.Contains(uhc, "## Last Skill:") {
+				t.Fatalf("expected ## Last Skill: in Update Handoff Context, got:\n%s", uhc)
+			}
+			if !strings.Contains(uhc, "## Last Skill Status:") {
+				t.Fatalf("expected ## Last Skill Status: in Update Handoff Context, got:\n%s", uhc)
+			}
+		})
+	}
+}
+
+func TestContinue_StageAwarePrompt_IncompleteStatus(t *testing.T) {
+	handoffContent := "## Stage: pr-review-finished\n## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-pr-review\n## Last Skill Status: incomplete \u2014 hard blocker from reviewer\n## Completed\nReview issues found.\n\n## Next Step\nFix issues.\n"
+	spy := runContinueWithHandoff(t, handoffContent)
+	prompt := spy.req.HandoffPrompts[42]
+
+	if !strings.Contains(prompt, "## Stage: pr-review-finished") {
+		t.Fatalf("expected stage pr-review-finished, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "## Last Skill: sandman-pr-review") {
+		t.Fatalf("expected last skill sandman-pr-review, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "## Last Skill Status: incomplete \u2014 hard blocker from reviewer") {
+		t.Fatalf("expected incomplete status with hard blocker context, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "## Source Prompt: .sandman/rendered-prompt.md") {
+		t.Fatalf("expected ## Source Prompt: .sandman/rendered-prompt.md, got:\n%s", prompt)
+	}
+}
+
 func TestContinue_GuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testing.T) {
 	cfg := &config.Config{Agent: "opencode", WorktreeDir: ".", ReviewCommand: "/sandman review"}
 	deps, spy := continueGuardDeps(t, cfg)
