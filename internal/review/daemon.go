@@ -233,6 +233,11 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		return fmt.Errorf("open seen store: %w", err)
 	}
 
+	type unseenTrigger struct {
+		comment github.PRComment
+		focus   string
+	}
+	var triggers []unseenTrigger
 	for _, comment := range comments {
 		focus, ok := ParseTrigger(comment.Body)
 		if !ok {
@@ -241,24 +246,45 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		if store.Has(comment.ID) {
 			continue
 		}
+		triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
+	}
+	if len(triggers) == 0 {
+		return nil
+	}
 
-		// Signal that this trigger comment is being processed.
-		commentReactionID, commentErr := d.GitHub.AddCommentReaction(comment.ID, "eyes")
-		if commentErr != nil {
-			d.logf("add reaction to comment %s: %v", comment.ID, commentErr)
+	newest := triggers[0]
+	for i := 1; i < len(triggers); i++ {
+		if triggers[i].comment.CreatedAt.After(newest.comment.CreatedAt) {
+			newest = triggers[i]
 		}
-		prReactionID, prErr := d.GitHub.AddIssueReaction(prNumber, "eyes")
-		if prErr != nil {
-			d.logf("add reaction to PR #%d: %v", prNumber, prErr)
-		}
+	}
 
-		if err := d.launchReview(ctx, prNumber, prDir, focus, comment.ID, commentReactionID, prReactionID); err != nil {
-			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, err)
-			continue
+	for _, t := range triggers {
+		if t.comment.ID != newest.comment.ID {
+			if err := store.Mark(t.comment.ID); err != nil {
+				d.logf("mark stale comment %s seen: %v", t.comment.ID, err)
+			}
+			d.logf("skipping stale trigger comment %s (newer %s exists)", t.comment.ID, newest.comment.ID)
 		}
-		if err := store.Mark(comment.ID); err != nil {
-			d.logf("mark comment %s seen: %v", comment.ID, err)
-		}
+	}
+
+	comment := newest.comment
+	focus := newest.focus
+	commentReactionID, commentErr := d.GitHub.AddCommentReaction(comment.ID, "eyes")
+	if commentErr != nil {
+		d.logf("add reaction to comment %s: %v", comment.ID, commentErr)
+	}
+	prReactionID, prErr := d.GitHub.AddIssueReaction(prNumber, "eyes")
+	if prErr != nil {
+		d.logf("add reaction to PR #%d: %v", prNumber, prErr)
+	}
+
+	if err := d.launchReview(ctx, prNumber, prDir, focus, comment.ID, commentReactionID, prReactionID); err != nil {
+		d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, err)
+		return nil
+	}
+	if err := store.Mark(comment.ID); err != nil {
+		d.logf("mark comment %s seen: %v", comment.ID, err)
 	}
 	return nil
 }
