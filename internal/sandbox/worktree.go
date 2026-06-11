@@ -67,11 +67,11 @@ func (s *WorktreeSandbox) Start() error {
 				return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --override to reconcile", s.workDir, err)
 			}
 			if !BranchExists(s.repoPath, s.branch) {
-				return fmt.Errorf("cannot force-reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
+				return fmt.Errorf("cannot reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
 			}
-			s.warn("worktree %q has detached HEAD, force-checking out %q\n", s.workDir, s.branch)
+			s.warn("worktree %q has detached HEAD, checking out %q\n", s.workDir, s.branch)
 			if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
-				return fmt.Errorf("force-checkout branch %q in worktree %q: %w", s.branch, s.workDir, err)
+				return fmt.Errorf("check out branch %q in worktree %q: %w", s.branch, s.workDir, err)
 			}
 			return s.configureGitIdentity()
 		}
@@ -84,12 +84,12 @@ func (s *WorktreeSandbox) Start() error {
 				s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
 		}
 		if !BranchExists(s.repoPath, s.branch) {
-			return fmt.Errorf("cannot force-reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
+			return fmt.Errorf("cannot reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
 		}
 		oldBranch := strings.TrimPrefix(currentRef, "refs/heads/")
-		s.warn("worktree %q on branch %q, force-checking out %q\n", s.workDir, oldBranch, s.branch)
+		s.warn("worktree %q on branch %q, checking out %q\n", s.workDir, oldBranch, s.branch)
 		if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
-			return fmt.Errorf("force-checkout branch %q in worktree %q: %w", s.branch, s.workDir, err)
+			return fmt.Errorf("check out branch %q in worktree %q: %w", s.branch, s.workDir, err)
 		}
 		return s.configureGitIdentity()
 	}
