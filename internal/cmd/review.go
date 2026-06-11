@@ -50,11 +50,15 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			}
 
 			sandboxFlag, _ := cmd.Flags().GetString("sandbox")
+			parallelFlag, _ := cmd.Flags().GetInt("parallel")
 			ccFlag, _ := cmd.Flags().GetInt("container-capacity")
 			ccSet := cmd.Flags().Changed("container-capacity")
 			mcFlag, _ := cmd.Flags().GetInt("max-containers")
 			mcSet := cmd.Flags().Changed("max-containers")
 
+			if parallelFlag < 0 {
+				return MarkUsage(fmt.Errorf("parallel must be 0 or greater"))
+			}
 			if ccSet && ccFlag < 0 {
 				return MarkUsage(fmt.Errorf("container_capacity must be 0 or greater"))
 			}
@@ -63,7 +67,10 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if len(args) > 0 {
-				return runReviewOneShotMulti(cmd, deps, cfg, args)
+				return runReviewOneShotMulti(cmd, deps, cfg, args, parallelFlag)
+			}
+			if parallelFlag > 0 {
+				cfg.DefaultReviewParallel = parallelFlag
 			}
 			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet)
 		},
@@ -72,6 +79,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("agent", "", "Override default_review_agent for this run")
 	cmd.Flags().String("model", "", "Override default_review_model for this run")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
+	cmd.Flags().Int("parallel", 0, "Override parallel_reviews for this run; 0 uses the configured value")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means no cap (unbounded pool)")
 
@@ -81,7 +89,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 // runReviewOneShot handles the one-shot review for a single PR number.
 // Kept as a separate function so the daemon and multi-PR branches can be
 // tested independently.
-func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config, prNumber int) error {
+func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config, prNumber int, parallelFlag int) error {
 	pr, err := deps.GitHubClient.FetchPR(prNumber)
 	if err != nil {
 		return fmt.Errorf("fetch PR #%d: %w", prNumber, err)
@@ -112,6 +120,11 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
 	}
 
+	reviewParallel := parallelFlag
+	if reviewParallel <= 0 {
+		reviewParallel = cfg.EffectiveReviewParallel()
+	}
+
 	repoName, err := deps.GitHubClient.RepoName()
 	if err != nil {
 		return fmt.Errorf("get repo name: %w", err)
@@ -136,6 +149,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		Agent:                reviewAgentName,
 		Model:                reviewModel,
 		Sandbox:              sandboxMode,
+		Parallel:             reviewParallel,
 		ContainerCapacity:    ccFlag,
 		ContainerCapacitySet: cmd.Flags().Changed("container-capacity"),
 		MaxContainers:        mcFlag,
@@ -157,7 +171,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 // runReviewOneShotMulti parses positional args (bare numbers, N:M, N:,
 // :M ranges) and runs a one-shot review for each resolved PR. For unbounded
 // ranges (N: or :M) it fetches open PRs via ListOpenPRs and filters by PR number.
-func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Config, args []string) error {
+func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Config, args []string, parallelFlag int) error {
 	prSet := make(map[int]struct{})
 	hasUnbounded := false
 	sel := issueSelection{exact: make(map[int]struct{})}
@@ -204,7 +218,7 @@ func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Co
 	sort.Ints(prNumbers)
 
 	for _, prNumber := range prNumbers {
-		if err := runReviewOneShot(cmd, deps, cfg, prNumber); err != nil {
+		if err := runReviewOneShot(cmd, deps, cfg, prNumber, parallelFlag); err != nil {
 			return err
 		}
 	}
