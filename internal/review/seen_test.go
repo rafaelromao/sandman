@@ -180,6 +180,26 @@ func TestSeenCommentsStore_TryClaimThenMarkIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestSeenCommentsStore_ReleaseClaimAllowsRetry(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSeenCommentsStore(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !store.TryClaim("retry-me") {
+		t.Fatal("TryClaim should succeed before release")
+	}
+	store.ReleaseClaim("retry-me")
+
+	if store.Has("retry-me") {
+		t.Fatal("ReleaseClaim should clear claimed state")
+	}
+	if !store.TryClaim("retry-me") {
+		t.Fatal("TryClaim should succeed again after release")
+	}
+}
+
 func TestSeenCommentsStore_TryClaimIsConcurrencySafe(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewSeenCommentsStore(dir)

@@ -97,6 +97,20 @@ func (s *SeenCommentsStore) TryClaim(id string) bool {
 	return true
 }
 
+// ReleaseClaim removes the given comment ID from the claimed set without
+// marking it as seen. Callers use this when a claim attempt must be retried
+// later because a downstream lock could not be acquired.
+func (s *SeenCommentsStore) ReleaseClaim(id string) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
+
+	s.mu.Lock()
+	delete(s.claimed, id)
+	s.mu.Unlock()
+}
+
 // Has reports whether the given comment ID has been marked as seen or
 // claimed (in known or claimed).
 func (s *SeenCommentsStore) Has(id string) bool {

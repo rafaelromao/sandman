@@ -275,9 +275,11 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		claimed, err := cs.TryClaim(comment.ID)
 		if err != nil {
 			d.logf("claim error for comment %s: %v", comment.ID, err)
+			store.ReleaseClaim(comment.ID)
 			continue
 		}
 		if !claimed {
+			store.ReleaseClaim(comment.ID)
 			d.logf("comment %s already claimed, skipping", comment.ID)
 			continue
 		}
