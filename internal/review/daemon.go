@@ -396,6 +396,20 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
 	runID := fmt.Sprintf("PR%d", prNumber)
+	runDir := daemon.RunDir(d.BaseDir, nil, runID)
+
+	broadcaster := daemon.NewBroadcaster()
+	ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
+	if err := ctlSocket.Start(); err != nil {
+		return fmt.Errorf("start control socket: %w", err)
+	}
+	defer ctlSocket.Stop()
+	defer os.RemoveAll(runDir)
+
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: nil, CreatedAt: time.Now()}); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
+
 	req := batch.Request{
 		Agent:                agentName,
 		Model:                modelName,
@@ -413,7 +427,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		PRNumber:     prNumber,
 		ReviewFocus:  focus,
 		RunID:        runID,
-		RunDir:       daemon.RunDir(d.BaseDir, nil, runID),
+		RunDir:       runDir,
 		Override:     true,
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
