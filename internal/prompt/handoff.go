@@ -115,8 +115,7 @@ func BuildResumePrompt(doc HandoffDoc) string {
 	}
 	if doc.History != "" {
 		b.WriteString("## Prior History\n")
-		b.WriteString(doc.History)
-		b.WriteString("\n\n")
+		b.WriteString("Additional preserved checkpoints remain in `## History` of `.sandman/handoff.md`.\n\n")
 	}
 
 	b.WriteString("## Update Handoff Context\n")

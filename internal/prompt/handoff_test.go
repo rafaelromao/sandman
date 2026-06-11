@@ -283,8 +283,11 @@ func TestBuildResumePrompt_UpdateHandoffContextPreservesHistory(t *testing.T) {
 	if !strings.Contains(result, "## Prior History") {
 		t.Fatalf("expected Update Handoff Context to surface prior history, got:\n%s", result)
 	}
-	if !strings.Contains(result, "Earlier work.") {
-		t.Fatalf("expected prior handoff content to be rendered, got:\n%s", result)
+	if !strings.Contains(result, "Additional preserved checkpoints remain in `## History` of `.sandman/handoff.md`.") {
+		t.Fatalf("expected prior history summary in resume prompt, got:\n%s", result)
+	}
+	if strings.Contains(result, "Earlier work.") {
+		t.Fatalf("expected resume prompt to avoid inlining full preserved history, got:\n%s", result)
 	}
 }
 
