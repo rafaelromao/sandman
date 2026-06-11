@@ -89,7 +89,19 @@ func (f *fakeGitHubClient) FetchPR(number int) (*github.PR, error) {
 
 func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	f.searchIssuesQuery = query
-	return f.searchIssuesResult, f.searchIssuesError
+	if f.searchIssuesResult != nil || f.searchIssuesError != nil {
+		return f.searchIssuesResult, f.searchIssuesError
+	}
+	if f.issues == nil {
+		return nil, fmt.Errorf("fake: search not configured")
+	}
+	var results []github.Issue
+	for _, issue := range f.issues {
+		if !strings.EqualFold(issue.State, "closed") {
+			results = append(results, *issue)
+		}
+	}
+	return results, nil
 }
 
 func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
@@ -188,6 +200,130 @@ func newRunDepsInDir(t testing.TB, runner batch.Runner) (string, Dependencies) {
 		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: &fakeGitHubClient{},
+	}
+}
+
+func TestFilterClosedIssues_Helper(t *testing.T) {
+	tests := []struct {
+		name       string
+		numbers    []int
+		exact      map[int]struct{}
+		openSet    map[int]struct{}
+		states     map[int]string
+		want       []int
+		wantStderr string
+		wantErr    error
+	}{
+		{
+			name:    "open issues pass through",
+			numbers: []int{1, 2},
+			exact:   map[int]struct{}{1: {}, 2: {}},
+			openSet: map[int]struct{}{1: {}, 2: {}},
+			want:    []int{1, 2},
+		},
+		{
+			name:       "explicit closed logs warning",
+			numbers:    []int{42},
+			exact:      map[int]struct{}{42: {}},
+			states:     map[int]string{42: "closed"},
+			want:       nil,
+			wantStderr: "Issue #42 is closed, skipping\n",
+			wantErr:    errAllExplicitClosed,
+		},
+		{
+			name:    "range-sourced closed skips silently",
+			numbers: []int{43},
+			states:  map[int]string{43: "closed"},
+			want:    nil,
+		},
+		{
+			name:       "mixed explicit and range sources",
+			numbers:    []int{7, 42, 43, 44},
+			exact:      map[int]struct{}{7: {}, 44: {}},
+			openSet:    map[int]struct{}{42: {}, 44: {}},
+			states:     map[int]string{7: "closed", 42: "open", 43: "closed", 44: "open"},
+			want:       []int{42, 44},
+			wantStderr: "Issue #7 is closed, skipping\n",
+		},
+		{
+			name: "empty numbers slice",
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sel := issueSelection{exact: tt.exact}
+			searchFn := func(query string) ([]github.Issue, error) {
+				results := make([]github.Issue, 0, len(tt.openSet))
+				for n := range tt.openSet {
+					results = append(results, github.Issue{Number: n, State: "open"})
+				}
+				return results, nil
+			}
+			fetchFn := func(n int) (*github.Issue, error) {
+				return &github.Issue{Number: n, State: tt.states[n]}, nil
+			}
+			var stderr bytes.Buffer
+			got, err := filterClosedIssues(tt.numbers, sel, searchFn, fetchFn, &stderr)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("expected error %v, got %v", tt.wantErr, err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+			for i, v := range tt.want {
+				if got[i] != v {
+					t.Errorf("expected %d at index %d, got %d", v, i, got[i])
+				}
+			}
+			if stderr.String() != tt.wantStderr {
+				t.Errorf("stderr:\n  got:  %q\n  want: %q", stderr.String(), tt.wantStderr)
+			}
+		})
+	}
+}
+
+func TestFilterClosedIssues_FallsBackToFetchOnSearchError(t *testing.T) {
+	searchFn := func(query string) ([]github.Issue, error) {
+		return nil, fmt.Errorf("transient gh error")
+	}
+	fetchFn := func(n int) (*github.Issue, error) {
+		return &github.Issue{Number: n, State: "open"}, nil
+	}
+	sel := issueSelection{exact: map[int]struct{}{42: {}}}
+	var stderr bytes.Buffer
+	got, err := filterClosedIssues([]int{42, 43}, sel, searchFn, fetchFn, &stderr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected fallback to return all open, got %v", got)
+	}
+}
+
+func TestFilterClosedIssues_FetchErrorIsSkipped(t *testing.T) {
+	searchFn := func(query string) ([]github.Issue, error) {
+		return nil, fmt.Errorf("transient gh error")
+	}
+	fetchFn := func(n int) (*github.Issue, error) {
+		return nil, fmt.Errorf("network error")
+	}
+	sel := issueSelection{exact: map[int]struct{}{42: {}}}
+	var stderr bytes.Buffer
+	got, err := filterClosedIssues([]int{42}, sel, searchFn, fetchFn, &stderr)
+	if err != nil {
+		t.Fatalf("expected no error when fetch errors are skipped, got %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty result, got %v", got)
+	}
+	if !strings.Contains(stderr.String(), "Warning: could not fetch issue #42") {
+		t.Errorf("expected warning on stderr, got: %s", stderr.String())
 	}
 }
 
@@ -1645,8 +1781,8 @@ func TestRun_RangeArgUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "" {
-		t.Errorf("expected no search query for bounded ranges, got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "is:open" {
+		t.Errorf("expected is:open search for bounded ranges, got %q", gh.searchIssuesQuery)
 	}
 	want := []int{42, 43, 44, 45}
 	if len(spy.req.Issues) != len(want) {
@@ -1888,11 +2024,12 @@ func TestRun_UnboundedEndRangeWithStateQueryUsesIssueState(t *testing.T) {
 
 func TestRun_UnboundedStartRangeUsesQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
+	results := make([]github.Issue, 45)
+	for i := range results {
+		results[i] = github.Issue{Number: i + 1, Title: fmt.Sprintf("Issue %d", i+1)}
+	}
 	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 1, Title: "Issue A"},
-			{Number: 45, Title: "Issue B"},
-		},
+		searchIssuesResult: results,
 	}
 	deps := Dependencies{
 		BatchRunner:  spy,
@@ -1915,8 +2052,8 @@ func TestRun_UnboundedStartRangeUsesQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "" {
-		t.Errorf("expected no search query for bounded start-end range, got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "is:open" {
+		t.Errorf("expected is:open search for bounded range, got %q", gh.searchIssuesQuery)
 	}
 	want := make([]int, 45)
 	for i := range want {
@@ -1953,10 +2090,10 @@ func TestRun_MixedExactAndUnboundedRangePreservesExplicitIssues(t *testing.T) {
 		IsTTY:        func() bool { return false },
 	}
 
-	var buf bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"7", "42:"})
 
 	err := cmd.Execute()
@@ -1966,7 +2103,7 @@ func TestRun_MixedExactAndUnboundedRangePreservesExplicitIssues(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	want := []int{7, 42, 43}
+	want := []int{42, 43}
 	if len(spy.req.Issues) != len(want) {
 		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
@@ -1977,6 +2114,194 @@ func TestRun_MixedExactAndUnboundedRangePreservesExplicitIssues(t *testing.T) {
 	}
 	if gh.searchIssuesQuery != "is:open" {
 		t.Errorf("expected search query 'is:open', got %q", gh.searchIssuesQuery)
+	}
+	if !strings.Contains(stderr.String(), "Issue #7 is closed, skipping") {
+		t.Errorf("expected closed issue warning on stderr, got: %s", stderr.String())
+	}
+}
+
+func TestRun_BoundedRangeSkipsClosedSilently(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Open A"},
+			43: {Number: 43, Title: "Closed Issue", State: "closed"},
+			44: {Number: 44, Title: "Open B"},
+			45: {Number: 45, Title: "Open C"},
+		},
+	}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = gh
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"42:45"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{42, 44, 45}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if stderr.String() != "" {
+		t.Errorf("expected no stderr for range-sourced closed issues, got: %s", stderr.String())
+	}
+}
+
+func TestRun_ExplicitClosedIssueLogsWarning(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Closed Issue", State: "closed"},
+		},
+	}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = gh
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when only issue is closed")
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+	if !strings.Contains(stderr.String(), "Issue #42 is closed, skipping") {
+		t.Errorf("expected closed issue warning on stderr, got: %s", stderr.String())
+	}
+	var ue *UsageError
+	if errors.As(err, &ue) {
+		t.Errorf("expected plain runtime error (no usage banner), got UsageError: %v", err)
+	}
+}
+
+func TestRun_MixedExplicitAndRangeSkipsClosed(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			7:  {Number: 7, Title: "Closed Explicit", State: "closed"},
+			42: {Number: 42, Title: "Open A"},
+			43: {Number: 43, Title: "Closed Range", State: "closed"},
+			44: {Number: 44, Title: "Open B"},
+			45: {Number: 45, Title: "Open C"},
+		},
+	}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = gh
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"7", "42:45"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{42, 44, 45}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if !strings.Contains(stderr.String(), "Issue #7 is closed, skipping") {
+		t.Errorf("expected closed explicit warning on stderr, got: %s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "Issue #43 is closed, skipping") {
+		t.Errorf("expected no warning for range-sourced closed issue, got: %s", stderr.String())
+	}
+}
+
+func TestRun_BoundedRangeAllOpenKeepsWorking(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Open A"},
+			43: {Number: 43, Title: "Open B"},
+			44: {Number: 44, Title: "Open C"},
+			45: {Number: 45, Title: "Open D"},
+		},
+	}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = gh
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"42:45"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{42, 43, 44, 45}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+}
+
+func TestRun_BoundedRangePrefersSearchOverPerIssueFetch(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Open A"},
+			43: {Number: 43, Title: "Closed", State: "closed"},
+			44: {Number: 44, Title: "Open B"},
+			45: {Number: 45, Title: "Open C"},
+		},
+	}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = gh
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"42:45"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gh.searchIssuesQuery != "is:open" {
+		t.Errorf("expected is:open search to be used, got: %s", gh.searchIssuesQuery)
+	}
+	want := []int{42, 44, 45}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sort"
@@ -219,30 +220,41 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return MarkUsage(err)
 					}
 
-					if label == "" && query == "" && !hasUnboundedEnd {
-						issues = append(issues, orderedIssues...)
-					} else if label == "" && query == "" {
-						issues = append(issues, orderedIssues...)
-						seen := make(map[int]struct{}, len(issues))
-						for _, number := range issues {
-							seen[number] = struct{}{}
+					if label == "" && query == "" {
+						numbersForFilter := orderedIssues
+						if hasUnboundedEnd {
+							numbersForFilter = explicitIssueNumbers(selection)
 						}
-						searchResults, err := searchIssues(cmd.Context(), githubClient, "is:open")
+						issues, err = filterClosedIssues(numbersForFilter, selection, githubClient.SearchIssues, githubClient.FetchIssue, cmd.ErrOrStderr())
 						if err != nil {
-							return err
-						}
-						if len(searchResults) >= 1000 {
-							return MarkUsage(fmt.Errorf("issue selection exceeds search result limit"))
-						}
-						for _, issue := range searchResults {
-							if !selection.matches(issue.Number) {
-								continue
+							if hasUnboundedEnd && errors.Is(err, errAllExplicitClosed) {
+								issues = nil
+							} else {
+								return err
 							}
-							if _, ok := seen[issue.Number]; ok {
-								continue
+						}
+						if hasUnboundedEnd {
+							seen := make(map[int]struct{}, len(issues))
+							for _, number := range issues {
+								seen[number] = struct{}{}
 							}
-							seen[issue.Number] = struct{}{}
-							issues = append(issues, issue.Number)
+							searchResults, err := searchIssues(cmd.Context(), githubClient, "is:open")
+							if err != nil {
+								return err
+							}
+							if len(searchResults) >= 1000 {
+								return MarkUsage(fmt.Errorf("issue selection exceeds search result limit"))
+							}
+							for _, issue := range searchResults {
+								if !selection.matches(issue.Number) {
+									continue
+								}
+								if _, ok := seen[issue.Number]; ok {
+									continue
+								}
+								seen[issue.Number] = struct{}{}
+								issues = append(issues, issue.Number)
+							}
 						}
 					} else if querySupportsLocalFiltering(query) {
 						resolved, err := resolveIssuesLocally(githubClient, orderedIssues, label, query)
@@ -730,6 +742,121 @@ func resolveIssuesLocally(client github.Client, numbers []int, label, query stri
 		issues = append(issues, number)
 	}
 	return issues, nil
+}
+
+// explicitIssueNumbers returns the explicitly-listed numbers from a
+// selection in their original (unordered) form. Used by unbounded-range
+// callers that want the filter to only classify explicit numbers,
+// leaving the range extension to the is:open search that follows.
+func explicitIssueNumbers(selection issueSelection) []int {
+	numbers := make([]int, 0, len(selection.exact))
+	for n := range selection.exact {
+		numbers = append(numbers, n)
+	}
+	return numbers
+}
+
+// errAllExplicitClosed is returned by filterClosedIssues when every
+// explicitly-listed issue is closed and no range-sourced issues remain.
+// Callers propagate it as a plain runtime error so the usage banner is
+// suppressed in executeRoot.
+var errAllExplicitClosed = errors.New("all explicit issues are closed")
+
+// filterClosedIssues returns the subset of numbers that are still open.
+// Explicit issues (those listed by themselves outside any range) that
+// resolve to closed produce a stderr warning; range-sourced issues that
+// resolve to closed are dropped silently.
+//
+// The implementation prefers a single repo-wide is:open search to avoid
+// one gh CLI call per issue (the per-issue fetch path was a 2x cost on
+// bounded ranges of N). If the search hits the GitHub result limit
+// (1000) or fails, it falls back to per-issue fetch, where individual
+// fetch errors are logged and skipped rather than aborting the batch.
+//
+// When the input slice contains only explicit issues and all of them
+// are closed, the function returns errAllExplicitClosed so callers
+// can suppress the cobra usage banner. Pass only explicit numbers
+// (e.g. via explicitIssueNumbers) when the caller is going to extend
+// the result with its own range source.
+func filterClosedIssues(numbers []int, selection issueSelection, searchFn func(string) ([]github.Issue, error), fetchFn func(int) (*github.Issue, error), stderr io.Writer) ([]int, error) {
+	openSet, searchHitLimit, searchErr := loadOpenIssueSet(searchFn)
+	if searchErr == nil && !searchHitLimit {
+		filtered, allClosed := filterClosedByOpenSet(numbers, selection, openSet, stderr)
+		if allClosed {
+			return nil, errAllExplicitClosed
+		}
+		return filtered, nil
+	}
+
+	filtered := make([]int, 0, len(numbers))
+	closedExplicit := 0
+	totalExplicit := 0
+	for _, n := range numbers {
+		_, isExplicit := selection.exact[n]
+		if isExplicit {
+			totalExplicit++
+		}
+		issue, err := fetchFn(n)
+		if err != nil {
+			fmt.Fprintf(stderr, "Warning: could not fetch issue #%d: %v\n", n, err)
+			continue
+		}
+		if strings.EqualFold(issue.State, "closed") {
+			if isExplicit {
+				fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
+				closedExplicit++
+			}
+			continue
+		}
+		filtered = append(filtered, n)
+	}
+	if len(filtered) == 0 && totalExplicit > 0 && closedExplicit > 0 {
+		return nil, errAllExplicitClosed
+	}
+	return filtered, nil
+}
+
+// loadOpenIssueSet runs the repo-wide is:open search and returns a set
+// of open issue numbers. When the search hits GitHub's 1000-result
+// limit, the set is unreliable (an open issue past the cutoff would
+// look closed) and the caller should fall back to per-issue fetch.
+func loadOpenIssueSet(searchFn func(string) ([]github.Issue, error)) (map[int]struct{}, bool, error) {
+	results, err := searchFn("is:open")
+	if err != nil {
+		return nil, false, err
+	}
+	if len(results) >= 1000 {
+		return nil, true, nil
+	}
+	openSet := make(map[int]struct{}, len(results))
+	for _, issue := range results {
+		openSet[issue.Number] = struct{}{}
+	}
+	return openSet, false, nil
+}
+
+func filterClosedByOpenSet(numbers []int, selection issueSelection, openSet map[int]struct{}, stderr io.Writer) ([]int, bool) {
+	filtered := make([]int, 0, len(numbers))
+	closedExplicit := 0
+	totalExplicit := 0
+	for _, n := range numbers {
+		_, isExplicit := selection.exact[n]
+		if isExplicit {
+			totalExplicit++
+		}
+		if _, open := openSet[n]; !open {
+			if isExplicit {
+				fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
+				closedExplicit++
+			}
+			continue
+		}
+		filtered = append(filtered, n)
+	}
+	if len(filtered) == 0 && totalExplicit > 0 && closedExplicit > 0 {
+		return filtered, true
+	}
+	return filtered, false
 }
 
 func extractIssueNumbers(ghIssues []github.Issue) []int {
