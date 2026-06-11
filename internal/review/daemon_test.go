@@ -75,8 +75,6 @@ func (f *fakeGH) FetchPR(number int) (*github.PR, error) {
 	body := "B"
 	if pr, ok := f.prFetch[number]; ok {
 		body = pr.Body
-	}
-	if pr, ok := f.prFetch[number]; ok {
 		return &github.PR{Number: pr.Number, Title: pr.Title, Body: body}, nil
 	}
 	return &github.PR{Number: number, Title: "T", Body: body}, nil
@@ -303,6 +301,57 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "100") {
 		t.Errorf("seen file should contain 100, got %q", string(data))
+	}
+}
+
+func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}, {Number: 2, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "100", Body: "/sandman review"}},
+			2: {{ID: "200", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{
+			1: {Number: 1, Title: "PR 1", Body: "Body 1"},
+			2: {Number: 2, Title: "PR 2", Body: "Body 2"},
+		},
+	}
+	started := make(chan int, 2)
+	release := make(chan struct{})
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		started <- req.PRNumber
+		<-release
+		return &batch.Result{}, nil
+	})
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 2,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- d.tick(context.Background())
+	}()
+
+	seen := map[int]struct{}{}
+	for len(seen) < 2 {
+		select {
+		case prNumber := <-started:
+			seen[prNumber] = struct{}{}
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected both PR reviews to start in parallel")
+		}
+	}
+
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("tick: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tick did not finish after releasing parallel reviews")
 	}
 }
 
