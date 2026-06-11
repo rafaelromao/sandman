@@ -3,6 +3,7 @@ package review
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
@@ -1081,5 +1083,172 @@ func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "review model is not set") {
 		t.Errorf("expected error about missing review model, got: %v", err)
+	}
+}
+
+func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
+	gh := &fakeGH{
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
+	}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"opencode": {Preset: "opencode", Command: "opencode"},
+	}
+
+	var capturedRunDir string
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		capturedRunDir = req.RunDir
+
+		sockPath := filepath.Join(req.RunDir, "run.sock")
+		if _, err := os.Stat(sockPath); err != nil {
+			t.Errorf("run.sock should exist at %s: %v", sockPath, err)
+		}
+
+		manifestPath := filepath.Join(req.RunDir, "batch.json")
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			t.Errorf("batch.json should exist at %s: %v", manifestPath, err)
+		} else {
+			var manifest daemon.BatchManifest
+			if err := json.Unmarshal(data, &manifest); err != nil {
+				t.Errorf("invalid batch.json: %v", err)
+			}
+			if len(manifest.Issues) != 0 {
+				t.Errorf("expected empty Issues, got %v", manifest.Issues)
+			}
+			if manifest.CreatedAt.IsZero() {
+				t.Errorf("expected non-zero CreatedAt")
+			}
+		}
+
+		return &batch.Result{}, nil
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	d.Config = cfg
+
+	prDir := d.PRDir(1)
+	if err := os.MkdirAll(prDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", ""); err != nil {
+		t.Fatalf("launchReview: %v", err)
+	}
+
+	if _, err := os.Stat(capturedRunDir); !os.IsNotExist(err) {
+		t.Errorf("run directory should be removed after launchReview, but %s still exists", capturedRunDir)
+	}
+}
+
+func TestDaemon_LaunchReviewCleansUpRunDirOnError(t *testing.T) {
+	gh := &fakeGH{
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
+	}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"opencode": {Preset: "opencode", Command: "opencode"},
+	}
+
+	var capturedRunDir string
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		capturedRunDir = req.RunDir
+		return nil, errors.New("batch exploded")
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	d.Config = cfg
+
+	prDir := d.PRDir(1)
+	if err := os.MkdirAll(prDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", "")
+	if err == nil {
+		t.Fatal("expected error from launchReview")
+	}
+
+	if _, err := os.Stat(capturedRunDir); !os.IsNotExist(err) {
+		t.Errorf("run directory should be removed after launchReview error, but %s still exists", capturedRunDir)
+	}
+}
+
+func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
+	gh := &fakeGH{
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
+	}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"opencode": {Preset: "opencode", Command: "opencode"},
+	}
+
+	runDirChecked := make(chan struct{})
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		conn, err := net.Dial("unix", filepath.Join(req.RunDir, "run.sock"))
+		if err != nil {
+			t.Errorf("should be able to connect to run.sock: %v", err)
+		} else {
+			conn.Close()
+		}
+
+		manifestPath := filepath.Join(req.RunDir, "batch.json")
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			t.Errorf("batch.json should exist: %v", err)
+		} else {
+			var manifest daemon.BatchManifest
+			if err := json.Unmarshal(data, &manifest); err != nil {
+				t.Errorf("invalid batch.json: %v", err)
+			}
+			if len(manifest.Issues) != 0 {
+				t.Errorf("expected empty Issues, got %v", manifest.Issues)
+			}
+		}
+
+		close(runDirChecked)
+		return &batch.Result{}, nil
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	d.Config = cfg
+
+	prDir := d.PRDir(1)
+	if err := os.MkdirAll(prDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	runID := "PR1"
+	runDir := filepath.Join(d.BaseDir, "runs", runID)
+
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.sock"), []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte(`{"issues":[99],"createdAt":"2020-01-01T00:00:00Z"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", ""); err != nil {
+		t.Fatalf("launchReview: %v", err)
+	}
+
+	select {
+	case <-runDirChecked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for RunBatch to be called")
+	}
+
+	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
+		t.Errorf("run directory should be removed after launchReview, but %s still exists", runDir)
 	}
 }

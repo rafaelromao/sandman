@@ -453,6 +453,80 @@ func TestPortalStaleCleaner_MessageSuppressedWhenNoRecoveredRuns(t *testing.T) {
 	})
 }
 
+func TestPortal_RunFromActiveMatchReturnsReviewingForPRInstance(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
+	sockPath := filepath.Join(sockDir, "run.sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	match := portalRunMatch{
+		instance: portalActiveRun{
+			Key:        "PR42",
+			SocketPath: sockPath,
+			PRNumber:   42,
+			ModTime:    time.Now().Add(-1 * time.Minute),
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil)
+
+	if run.Status != "reviewing" {
+		t.Fatalf("expected status 'reviewing' for PR instance, got %q", run.Status)
+	}
+	if !run.Review {
+		t.Fatal("expected Review=true for PR instance")
+	}
+	if run.PRNumber != 42 {
+		t.Fatalf("expected PRNumber=42, got %d", run.PRNumber)
+	}
+	if run.IssueLabel != "PR#42" {
+		t.Fatalf("expected IssueLabel 'PR#42', got %q", run.IssueLabel)
+	}
+	if run.Kind != "active" {
+		t.Fatalf("expected kind 'active' for PR instance with live socket, got %q", run.Kind)
+	}
+}
+
+func TestPortal_ParseRunDirPR(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantNum   int
+		wantMatch bool
+	}{
+		{"PR42", "PR42", 42, true},
+		{"existing run-issue format", "run-42-123", 0, false},
+		{"PR without number", "PR", 0, false},
+		{"PR with non-numeric suffix", "PR123abc", 0, false},
+		{"plain number", "42", 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			num, ok := (&portalRunsView{}).parseRunDirPR(tt.input)
+			if ok != tt.wantMatch {
+				t.Errorf("parseRunDirPR(%q) match = %v, want %v", tt.input, ok, tt.wantMatch)
+			}
+			if num != tt.wantNum {
+				t.Errorf("parseRunDirPR(%q) num = %d, want %d", tt.input, num, tt.wantNum)
+			}
+		})
+	}
+}
+
 func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
