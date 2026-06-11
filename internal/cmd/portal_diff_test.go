@@ -825,10 +825,10 @@ const detailRow = body.children[1];
 const pre = detailRow.querySelector('pre[data-rendered-json]');
 if (!pre) throw new Error('expected details pre');
 if (!pre.getAttribute('data-rendered-json') || pre.getAttribute('data-rendered-json').indexOf('"runId": "r1"') === -1) throw new Error('expected raw json fingerprint, got ' + pre.getAttribute('data-rendered-json'));
-if (pre.innerHTML.indexOf('json-key') === -1) throw new Error('expected highlighted json key, got ' + pre.innerHTML);
-if (pre.innerHTML.indexOf('json-string') === -1) throw new Error('expected highlighted json string, got ' + pre.innerHTML);
-if (pre.innerHTML.indexOf('json-number') === -1) throw new Error('expected highlighted json number, got ' + pre.innerHTML);
-if (pre.innerHTML.indexOf('json-punctuation') === -1) throw new Error('expected highlighted json punctuation, got ' + pre.innerHTML);
+if (!pre.querySelector('.json-key')) throw new Error('expected highlighted json key');
+if (!pre.querySelector('.json-string')) throw new Error('expected highlighted json string');
+if (!pre.querySelector('.json-number')) throw new Error('expected highlighted json number');
+if (!pre.querySelector('.json-punctuation')) throw new Error('expected highlighted json punctuation');
 if (pre.textContent.indexOf('runId') === -1) throw new Error('expected runId in json, got ' + pre.textContent);
 if (pre.textContent.indexOf('source') === -1) throw new Error('expected source in json, got ' + pre.textContent);
 if (detailRow.querySelector('.detail-meta')) throw new Error('old detail-meta layout should be gone');
@@ -1532,9 +1532,16 @@ function parseHtmlInto(parent, html, log) {
       if (openEnd < 0) { pos = html.length; break; }
       const closeStart = html.indexOf('</span>', openEnd);
       if (closeStart < 0) { pos = html.length; break; }
+      const openTag = html.slice(pos, openEnd + 1);
       const text = html.slice(openEnd + 1, closeStart);
       const span = makeMockRow();
       span.tagName = 'SPAN';
+      const classMatch = openTag.match(/class="([^"]+)"/);
+      if (classMatch) {
+        for (const cls of classMatch[1].split(/\s+/)) {
+          if (cls) span.classList.add(cls);
+        }
+      }
       span._textContent = text;
       parent.appendChild(span);
       pos = closeStart + 7;

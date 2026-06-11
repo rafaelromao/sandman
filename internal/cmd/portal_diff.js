@@ -401,7 +401,9 @@
     const pre = global.document.createElement('pre');
     pre.classList.add('terminal-text');
     const json = detailsJSON(run, helpers);
-    pre.innerHTML = highlightJSON(json);
+    fillTerminalPre(pre, json, {
+      renderTerminalContent: highlightJSON,
+    });
     pre.setAttribute('data-rendered-json', json);
     section.appendChild(pre);
     content.appendChild(section);
