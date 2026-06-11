@@ -186,6 +186,9 @@ continue the flow for %s
 	if !strings.Contains(string(secondHandoffPrompt), "## Source Prompt: .sandman/rendered-prompt.md") {
 		t.Fatalf("expected source prompt in second continue prompt, got:\n%s", secondHandoffPrompt)
 	}
+	if !strings.Contains(string(secondHandoffPrompt), "## Update Handoff Context") {
+		t.Fatalf("expected update handoff context in second continue prompt, got:\n%s", secondHandoffPrompt)
+	}
 	if !strings.Contains(string(secondHandoffPrompt), "## Last Skill: sandman-tdd") {
 		t.Fatalf("expected last skill in second continue prompt, got:\n%s", secondHandoffPrompt)
 	}
@@ -229,6 +232,9 @@ continue the flow for %s
 	}
 	if !strings.Contains(string(thirdHandoffPrompt), "## Source Prompt: .sandman/rendered-prompt.md") {
 		t.Fatalf("expected source prompt in third continue prompt, got:\n%s", thirdHandoffPrompt)
+	}
+	if !strings.Contains(string(thirdHandoffPrompt), "## Update Handoff Context") {
+		t.Fatalf("expected update handoff context in third continue prompt, got:\n%s", thirdHandoffPrompt)
 	}
 	if !strings.Contains(string(thirdHandoffPrompt), "## Last Skill: sandman-implement") {
 		t.Fatalf("expected last skill in third continue prompt, got:\n%s", thirdHandoffPrompt)
@@ -418,6 +424,9 @@ continue the flow for %s
 	if !strings.Contains(string(handoffPrompt1), "## Source Prompt: .sandman/rendered-prompt.md") {
 		t.Fatalf("expected issue 1 prompt to have source prompt, got:\n%s", handoffPrompt1)
 	}
+	if !strings.Contains(string(handoffPrompt1), "## Update Handoff Context") {
+		t.Fatalf("expected issue 1 prompt to have update handoff context, got:\n%s", handoffPrompt1)
+	}
 	if !strings.Contains(string(handoffPrompt1), "## Last Skill: sandman-tdd") {
 		t.Fatalf("expected issue 1 prompt to have sandman-tdd, got:\n%s", handoffPrompt1)
 	}
@@ -440,6 +449,9 @@ continue the flow for %s
 	}
 	if !strings.Contains(string(handoffPrompt2), "## Source Prompt: .sandman/rendered-prompt.md") {
 		t.Fatalf("expected issue 2 prompt to have source prompt, got:\n%s", handoffPrompt2)
+	}
+	if !strings.Contains(string(handoffPrompt2), "## Update Handoff Context") {
+		t.Fatalf("expected issue 2 prompt to have update handoff context, got:\n%s", handoffPrompt2)
 	}
 	if !strings.Contains(string(handoffPrompt2), "## Last Skill: sandman-implement") {
 		t.Fatalf("expected issue 2 prompt to have sandman-implement, got:\n%s", handoffPrompt2)
