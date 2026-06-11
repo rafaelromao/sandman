@@ -273,6 +273,14 @@ Archive this handoff.`)
 	if strings.Count(result, "## Source Prompt: .sandman/rendered-prompt.md") < 2 {
 		t.Fatalf("expected archived snapshot to include prior metadata, got:\n%s", result)
 	}
+	updateIdx := strings.Index(result, "## Update Handoff Context")
+	historyIdx := strings.Index(result, "## History")
+	if historyIdx < updateIdx {
+		t.Fatalf("expected History inside Update Handoff Context, got:\n%s", result)
+	}
+	if !strings.Contains(result[updateIdx:historyIdx], "## Next Step") {
+		t.Fatalf("expected History after Next Step inside Update Handoff Context, got:\n%s", result)
+	}
 	if strings.Index(result, "## History") < strings.Index(result, "## Next Step") {
 		t.Fatalf("expected History after Next Step, got:\n%s", result)
 	}
