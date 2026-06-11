@@ -39,9 +39,7 @@ type portalRun struct {
 	Log         string        `json:"log,omitempty"`
 	Events      []portalEvent `json:"events,omitempty"`
 	// Review flags runs whose run.started event carried payload.review = true.
-	// The portal UI uses it to render a REVIEW badge next to the issue label
-	// so review-agent runs are distinguishable from implementation runs. The
-	// field is omitted from JSON when false to preserve the existing /api/runs
+	// The field is omitted from JSON when false to preserve the existing /api/runs
 	// contract for implementation runs.
 	Review bool `json:"review,omitempty"`
 	// PRNumber mirrors payload.pr_number from the run.started event. Only

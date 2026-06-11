@@ -37,6 +37,25 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffCreateRunRow_DoesNotRenderReviewBadgeInTitle(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+const titleCell = created.row.querySelector('[data-cell="title"]');
+if (!titleCell) throw new Error('expected title cell');
+const titleWrap = titleCell.children[0];
+if (!titleWrap) throw new Error('expected title wrap');
+if (titleWrap.children.length !== 2) throw new Error('expected title wrap to have only issue label and meta, got ' + titleWrap.children.length);
+const statusCell = created.row.querySelector('[data-cell="badge"]');
+const statusLabel = statusCell.querySelector('.badge-label');
+if (!statusLabel || statusLabel.textContent !== 'reviewing') throw new Error('expected reviewing status badge, got ' + (statusLabel && statusLabel.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateCells_DurationChangeUpdatesOnlyDuration(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1', branch: 'main', duration: '5s' };
