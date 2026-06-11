@@ -315,6 +315,48 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if !strings.Contains(runner.captured.RunDir, "PR17") {
 		t.Errorf("expected RunDir to contain PR17, got %q", runner.captured.RunDir)
 	}
+	if runner.captured.Parallel != 4 {
+		t.Errorf("expected default review parallel 4, got %d", runner.captured.Parallel)
+	}
+}
+
+func TestReviewCmd_OneShotParallelFlagOverridesConfig(t *testing.T) {
+	cfg := &config.Config{
+		DefaultAgent:          "opencode",
+		DefaultModel:          "opencode/big-pickle",
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "openai/gpt-5",
+		DefaultReviewParallel: 4,
+		Agent:                 "opencode",
+		Sandbox:               "podman",
+		Agents:                map[string]config.Agent{},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr: &github.PR{
+			Number: 17,
+			Title:  "Refactor daemon",
+			Body:   "Splits the orchestrator.",
+		},
+	}
+	runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"17", "--parallel", "7"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if runner.captured.Parallel != 7 {
+		t.Fatalf("expected --parallel to set request parallel to 7, got %d", runner.captured.Parallel)
+	}
 }
 
 func TestReviewCmd_AgentFlagOverridesReviewAgent(t *testing.T) {
@@ -399,6 +441,11 @@ func TestReviewCmd_InvalidContainerFlagsReturnError(t *testing.T) {
 			name:    "container capacity negative in daemon mode",
 			args:    []string{"--container-capacity", "-5"},
 			wantErr: "container_capacity must be 0 or greater",
+		},
+		{
+			name:    "negative parallel",
+			args:    []string{"--parallel", "-3"},
+			wantErr: "parallel must be 0 or greater",
 		},
 		{
 			name:    "max containers negative in daemon mode",
@@ -638,6 +685,44 @@ func TestReviewCmd_DaemonFlagsCapture(t *testing.T) {
 	}
 	if !capturedMCSet {
 		t.Errorf("expected daemon to receive max-containers-set=true")
+	}
+}
+
+func TestReviewCmd_DaemonParallelFlagOverridesConfig(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := &config.Config{
+		DefaultAgent:          "opencode",
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/big-pickle",
+		DefaultReviewParallel: 4,
+	}
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	var capturedParallel int
+	prev := reviewDaemonRunner
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
+		capturedParallel = cfg.DefaultReviewParallel
+		return nil
+	}
+	defer func() { reviewDaemonRunner = prev }()
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--parallel", "8"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedParallel != 8 {
+		t.Fatalf("expected daemon config parallel 8, got %d", capturedParallel)
+	}
+	if cfg.DefaultReviewParallel != 8 {
+		t.Fatalf("expected loaded config to be overridden to 8, got %d", cfg.DefaultReviewParallel)
 	}
 }
 
