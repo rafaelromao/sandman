@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
@@ -199,12 +200,29 @@ func (d *Daemon) tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list open PRs: %w", err)
 	}
-	for _, pr := range prs {
-		if err := d.processPR(ctx, pr.Number); err != nil {
-			d.logf("process PR #%d: %v", pr.Number, err)
-			continue
-		}
+	limit := 1
+	if d.Config != nil {
+		limit = d.Config.EffectiveReviewParallel()
 	}
+	if limit < 1 {
+		limit = 1
+	}
+
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for _, pr := range prs {
+		pr := pr
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := d.processPR(ctx, pr.Number); err != nil {
+				d.logf("process PR #%d: %v", pr.Number, err)
+			}
+		}()
+	}
+	wg.Wait()
 	return nil
 }
 
