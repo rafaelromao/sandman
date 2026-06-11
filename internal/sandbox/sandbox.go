@@ -30,9 +30,9 @@ type Sandbox interface {
 	WritePrompt(content string) error
 	// Process returns the running OS process, or nil if no process is active.
 	Process() Process
-	// SetForce enables force-clean behavior for orphan worktree recovery.
+	// SetOverride enables override behavior for orphan worktree recovery.
 	// Must be safe to call before Start.
-	SetForce(force bool)
+	SetOverride(override bool)
 	// SetGitIdentity configures the identity Sandman should write to worktree-local git config.
 	// Must be safe to call before Start.
 	SetGitIdentity(name, email string)

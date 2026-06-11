@@ -17,7 +17,7 @@ type WorktreeSandbox struct {
 	worktreeBase string
 	branch       string
 	sourceBranch string
-	force        bool
+	override     bool
 	workDir      string
 	gitName      string
 	gitEmail     string
@@ -35,15 +35,15 @@ func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *Wo
 	}
 }
 
-// SetForce enables force-clean behavior for orphan worktree recovery.
-func (s *WorktreeSandbox) SetForce(force bool) {
-	s.force = force
+// SetOverride enables override behavior for orphan worktree recovery.
+func (s *WorktreeSandbox) SetOverride(override bool) {
+	s.override = override
 }
 
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
-	if s.force && s.workDirExists() && !s.workDirIsValidWorktree() {
+	if s.override && s.workDirExists() && !s.workDirIsValidWorktree() {
 		if err := os.RemoveAll(s.workDir); err != nil {
 			return fmt.Errorf("clean forced worktree dir: %w", err)
 		}
@@ -63,7 +63,7 @@ func (s *WorktreeSandbox) Start() error {
 	if s.workDirIsValidWorktree() {
 		currentRef, err := currentBranchRef(s.workDir)
 		if err != nil {
-			if !s.force {
+			if !s.override {
 				return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --override to reconcile", s.workDir, err)
 			}
 			if !BranchExists(s.repoPath, s.branch) {
@@ -79,7 +79,7 @@ func (s *WorktreeSandbox) Start() error {
 		if currentRef == expectedRef {
 			return s.configureGitIdentity()
 		}
-		if !s.force {
+		if !s.override {
 			return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --override to reconcile",
 				s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
 		}

@@ -53,9 +53,9 @@ func (s *ContainerSandbox) SetGitIdentity(name, email string) {
 	s.worktree.SetGitIdentity(name, email)
 }
 
-// SetForce forwards force-clean behavior to the underlying worktree.
-func (s *ContainerSandbox) SetForce(force bool) {
-	s.worktree.SetForce(force)
+// SetOverride forwards override behavior to the underlying worktree.
+func (s *ContainerSandbox) SetOverride(override bool) {
+	s.worktree.SetOverride(override)
 }
 
 func (s *ContainerSandbox) containerWorkDir() string {

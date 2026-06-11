@@ -448,7 +448,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
-				Force:                      overrideFlag,
+				Override:                   overrideFlag,
 				Issues:                     resolvedBatch.Issues,
 				Dependencies:               resolvedBatch.Deps,
 				Blocked:                    resolvedBatch.Blocked,
