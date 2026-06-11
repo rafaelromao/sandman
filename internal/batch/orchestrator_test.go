@@ -1482,6 +1482,58 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	}
 }
 
+func TestRunSingle_LogsIssueTitleOnRunStarted(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	rtSandbox := &retrySandbox{workDir: worktreePath}
+	log := &spyEventLog{}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}},
+		renderer:     &retryRenderer{result: "rendered prompt"},
+		errorLog:     io.Discard,
+		eventLog:     log,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	for _, event := range log.events {
+		if event.Type != "run.started" {
+			continue
+		}
+		if got := event.Payload["issue_title"]; got != "Fix bug" {
+			t.Fatalf("issue_title = %#v, want %q", got, "Fix bug")
+		}
+		return
+	}
+	t.Fatal("expected run.started event")
+}
+
 func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
