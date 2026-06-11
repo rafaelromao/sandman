@@ -493,8 +493,8 @@ func TestPortal_RunFromActiveMatchReturnsReviewingForPRInstance(t *testing.T) {
 	if run.PRNumber != 42 {
 		t.Fatalf("expected PRNumber=42, got %d", run.PRNumber)
 	}
-	if run.IssueLabel != "PR#42" {
-		t.Fatalf("expected IssueLabel 'PR#42', got %q", run.IssueLabel)
+	if run.IssueLabel != "PR42" {
+		t.Fatalf("expected IssueLabel 'PR42', got %q", run.IssueLabel)
 	}
 	if run.Kind != "active" {
 		t.Fatalf("expected kind 'active' for PR instance with live socket, got %q", run.Kind)
