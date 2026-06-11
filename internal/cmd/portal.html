@@ -401,11 +401,10 @@
       position: absolute;
       inset: 0;
       background:
-        linear-gradient(90deg, transparent 0 30%, color-mix(in oklch, var(--accent) 20%, transparent) 30% 30.5%, transparent 30.5% 100%),
-        radial-gradient(circle at 78% 28%, color-mix(in oklch, var(--accent) 18%, transparent), transparent 22%),
-        radial-gradient(circle at 86% 42%, color-mix(in oklch, var(--accent) 10%, transparent), transparent 18%),
-        linear-gradient(180deg, color-mix(in oklch, var(--bg) 10%, transparent), transparent 30%);
-      opacity: 0.85;
+        radial-gradient(circle at 78% 28%, color-mix(in oklch, var(--accent) 14%, transparent), transparent 26%),
+        radial-gradient(circle at 86% 42%, color-mix(in oklch, var(--accent) 8%, transparent), transparent 20%),
+        linear-gradient(180deg, color-mix(in oklch, var(--bg) 8%, transparent), transparent 30%);
+      opacity: 0.9;
       pointer-events: none;
     }
     .masthead-copy {
@@ -435,10 +434,6 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
-    .masthead-brand-text span {
-      color: var(--muted);
-      font-size: 11px;
-    }
     .settings-wrap {
       display: flex;
       flex-wrap: wrap;
@@ -458,12 +453,14 @@
     }
     .meta-line {
       margin-top: 10px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px 14px;
+      display: grid;
+      grid-auto-flow: column;
+      grid-template-columns: auto 1fr;
+      gap: 4px 10px;
       align-items: baseline;
       color: var(--muted);
       font-size: 12px;
+      max-width: 42ch;
     }
     .meta-line span {
       text-transform: uppercase;
@@ -1494,10 +1491,8 @@
           </svg>
           <div class="masthead-brand-text">
             <strong>Sandman</strong>
-            <span>Quiet orchestration</span>
           </div>
         </div>
-        <p class="eyebrow">Local portal</p>
         <h1>{{.PortalTitle}}</h1>
         <p class="subtitle">{{.PortalSubtitle}}</p>
         <div class="meta-line">
