@@ -59,6 +59,7 @@ type portalActiveRun struct {
 	SocketPath   string
 	IssueNumber  int
 	IssueNumbers []int
+	PRNumber     int
 	StartedAt    time.Time
 	ModTime      time.Time
 }
@@ -279,6 +280,7 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun,
 		runDir := filepath.Dir(instance.SocketPath)
 		manifest, manifestErr := daemon.ReadManifest(runDir)
 		issueNumber, _ := v.parseRunDirIssue(instance.Name)
+		prNumber, _ := v.parseRunDirPR(instance.Name)
 		issueNumbers := []int(nil)
 		startedAt := info.ModTime()
 		if manifestErr == nil {
@@ -296,6 +298,7 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun,
 			SocketPath:   instance.SocketPath,
 			IssueNumber:  issueNumber,
 			IssueNumbers: issueNumbers,
+			PRNumber:     prNumber,
 			StartedAt:    startedAt,
 			ModTime:      info.ModTime(),
 		})
@@ -518,17 +521,28 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	startedAt := match.instance.ModTime
 	issueLabel := "prompt-only"
 	issueNumber := match.instance.IssueNumber
-	if issueNumber > 0 {
+	prNumber := match.instance.PRNumber
+	if prNumber > 0 {
+		issueLabel = fmt.Sprintf("PR#%d", prNumber)
+	} else if issueNumber > 0 {
 		issueLabel = fmt.Sprintf("#%d", issueNumber)
+	}
+	status := "running"
+	review := false
+	if prNumber > 0 {
+		status = "reviewing"
+		review = true
 	}
 	logPath := v.portalLogPath(repoRoot, issueNumber, "")
 	run := portalRun{
 		Key:         match.instance.Key,
 		RunID:       match.instance.Key,
 		Kind:        "active",
-		Status:      "running",
+		Status:      status,
 		IssueLabel:  issueLabel,
 		IssueNumber: issueNumber,
+		Review:      review,
+		PRNumber:    prNumber,
 		StartedAt:   startedAt,
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
@@ -784,6 +798,21 @@ func (v *portalRunsView) parseRunDirIssue(name string) (int, bool) {
 		return 0, false
 	}
 	n, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func (v *portalRunsView) parseRunDirPR(name string) (int, bool) {
+	if !strings.HasPrefix(name, "PR") {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(name, "PR")
+	if rest == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
 	if err != nil {
 		return 0, false
 	}
