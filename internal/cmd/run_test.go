@@ -1276,6 +1276,30 @@ func TestRun_PrintsPromptOnlySummaryLabel(t *testing.T) {
 	}
 }
 
+func TestRun_PrintsReviewRunSummaryLabel(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", Branch: "sandman/review-PR42", Review: true, RunID: "PR42"}}}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt", "Review the PR."})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "PR42  success  sandman/review-PR42") {
+		t.Fatalf("expected review run summary label PR42, got:\n%s", out)
+	}
+	if strings.Contains(out, "prompt-only") {
+		t.Fatalf("expected no prompt-only label for review run, got:\n%s", out)
+	}
+}
+
 func TestRun_ExplicitZeroParallelPassesThroughToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)

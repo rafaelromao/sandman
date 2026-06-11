@@ -61,6 +61,9 @@ func ProjectRunStates(events []Event) []RunState {
 
 // IssueLabel returns the human-facing issue label for the run.
 func (r RunState) IssueLabel() string {
+	if r.IsReview() {
+		return r.RunID
+	}
 	if r.IsPromptOnly() {
 		return "prompt-only"
 	}

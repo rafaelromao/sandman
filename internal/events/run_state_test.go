@@ -142,6 +142,34 @@ func TestProjectRunStates_LegacyCancelledEventStillProjectsAsAborted(t *testing.
 	}
 }
 
+func TestProjectRunStates_ReviewRunLabel(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, IssueRef: nil, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Issue: 0, IssueRef: nil, Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if got := run.IssueLabel(); got != "PR42" {
+		t.Fatalf("expected review run label PR42, got %q", got)
+	}
+	if got := run.IsReview(); !got {
+		t.Fatal("expected IsReview() == true for review run")
+	}
+	if got := run.IssueNumber(); got != 0 {
+		t.Fatalf("expected IssueNumber 0 for review run, got %d", got)
+	}
+	if got := run.RunID; got != "PR42" {
+		t.Fatalf("expected RunID PR42, got %q", got)
+	}
+}
+
 func TestProjectRunStates_IdleTimeoutEventDoesNotBreakProjection(t *testing.T) {
 	idleTimeoutAt := time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC)
 	abortedAt := time.Date(2025, 1, 1, 12, 6, 0, 0, time.UTC)
