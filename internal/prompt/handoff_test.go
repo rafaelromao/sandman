@@ -133,6 +133,9 @@ func TestBuildResumePrompt_SourcePromptFormat(t *testing.T) {
 	if !strings.Contains(result, "## Source Prompt: .sandman/my-prompt.md") {
 		t.Fatalf("expected Source Prompt line with colon and path, got:\n%s", result)
 	}
+	if !strings.Contains(result, "Re-read `.sandman/my-prompt.md` before continuing") {
+		t.Fatalf("expected explicit re-read instruction, got:\n%s", result)
+	}
 }
 
 func TestParseHandoff_StageLineWithExtraSpaces(t *testing.T) {

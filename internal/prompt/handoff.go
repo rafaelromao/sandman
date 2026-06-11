@@ -76,6 +76,9 @@ func BuildResumePrompt(doc HandoffDoc) string {
 	b.WriteString("## Source Prompt: ")
 	b.WriteString(sourcePrompt)
 	b.WriteString("\n\n")
+	b.WriteString("Re-read `")
+	b.WriteString(sourcePrompt)
+	b.WriteString("` before continuing so the original workflow stays in view.\n\n")
 
 	if doc.Stage != "" || doc.LastSkill != "" || doc.LastSkillStatus != "" {
 		b.WriteString("## New Instruction\n")
