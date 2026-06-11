@@ -1008,7 +1008,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-	if err := os.WriteFile(contextPath, []byte("## Completed\nKeep going.\n"), 0644); err != nil {
+	if err := os.WriteFile(contextPath, []byte("## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-pr-review\n## Last Skill Status: complete\n## Completed\nKeep going.\n"), 0644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
 
@@ -1059,8 +1059,14 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if !strings.Contains(string(data), "Keep going.") {
 		t.Fatalf("expected body content in retry prompt, got: %q", string(data))
 	}
-	if !strings.Contains(string(data), "## Source Prompt") {
+	if !strings.Contains(string(data), "## Source Prompt: .sandman/rendered-prompt.md") {
 		t.Fatalf("expected Source Prompt in retry prompt, got: %q", string(data))
+	}
+	if !strings.Contains(string(data), "## Last Skill: sandman-pr-review") {
+		t.Fatalf("expected Last Skill in retry prompt, got: %q", string(data))
+	}
+	if !strings.Contains(string(data), "## Last Skill Status: complete") {
+		t.Fatalf("expected Last Skill Status in retry prompt, got: %q", string(data))
 	}
 	if !strings.Contains(string(data), "## Update Handoff Context") {
 		t.Fatalf("expected Update Handoff Context in retry prompt, got: %q", string(data))
@@ -1377,7 +1383,7 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-	if err := os.WriteFile(contextPath, []byte("## Stage: plan-approved\n\n## Completed\nInitial implementation done.\n"), 0644); err != nil {
+	if err := os.WriteFile(contextPath, []byte("## Stage: plan-approved\n## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-tdd\n## Last Skill Status: complete\n\n## Completed\nInitial implementation done.\n"), 0644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
 
@@ -1425,7 +1431,95 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 	if !strings.Contains(string(data), "## Stage: plan-approved") {
 		t.Fatalf("expected stage line preserved verbatim, got:\n%s", data)
 	}
+	if !strings.Contains(string(data), "## Source Prompt: .sandman/rendered-prompt.md") {
+		t.Fatalf("expected source prompt line preserved verbatim, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "## Last Skill: sandman-tdd") {
+		t.Fatalf("expected last skill line preserved verbatim, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "## Last Skill Status: complete") {
+		t.Fatalf("expected last skill status line preserved verbatim, got:\n%s", data)
+	}
 	if !strings.Contains(string(data), "Initial implementation done.") {
+		t.Fatalf("expected verbatim context content, got:\n%s", data)
+	}
+}
+
+func TestRunSingle_RetryUsesPRReviewHandoffPrompt(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+	if err := os.WriteFile(contextPath, []byte("## Stage: pr-review-finished\n## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-pr-review\n## Last Skill Status: complete\n\n## Completed\nReview done.\n"), 0644); err != nil {
+		t.Fatalf("write context: %v", err)
+	}
+
+	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: {Number: 42, State: "closed", Merged: true, HeadRefName: branch}}},
+		renderer:     renderer,
+		errorLog:     io.Discard,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+	var resetCalls int
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls++
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if renderer.renderCalls != 1 {
+		t.Fatalf("render calls = %d, want 1", renderer.renderCalls)
+	}
+	if resetCalls != 0 {
+		t.Fatalf("reset calls = %d, want 0", resetCalls)
+	}
+	if rtSandbox.execCommand != "opencode run .sandman/handoff-prompt.md" {
+		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
+	}
+	handoffPromptPath := filepath.Join(worktreePath, ".sandman", "handoff-prompt.md")
+	data, err := os.ReadFile(handoffPromptPath)
+	if err != nil {
+		t.Fatalf("read continue prompt: %v", err)
+	}
+	if !strings.Contains(string(data), "## Stage: pr-review-finished") {
+		t.Fatalf("expected stage line preserved verbatim, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "## Source Prompt: .sandman/rendered-prompt.md") {
+		t.Fatalf("expected source prompt line preserved verbatim, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "## Last Skill: sandman-pr-review") {
+		t.Fatalf("expected last skill line preserved verbatim, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "## Last Skill Status: complete") {
+		t.Fatalf("expected last skill status line preserved verbatim, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "Review done.") {
 		t.Fatalf("expected verbatim context content, got:\n%s", data)
 	}
 }
