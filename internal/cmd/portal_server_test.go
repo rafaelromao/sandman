@@ -236,6 +236,9 @@ func TestPortal_ReviewRunShowsReviewingStatus(t *testing.T) {
 	if reviewRun.PRNumber != 42 {
 		t.Fatalf("expected PRNumber=42 for review run, got %d", reviewRun.PRNumber)
 	}
+	if reviewRun.IssueLabel == "prompt-only" {
+		t.Fatalf("expected review run to avoid prompt-only label, got %q", reviewRun.IssueLabel)
+	}
 	if reviewRun.Kind != "active" {
 		t.Fatalf("expected kind 'active' for reviewing run, got %q", reviewRun.Kind)
 	}
@@ -249,6 +252,89 @@ func TestPortal_ReviewRunShowsReviewingStatus(t *testing.T) {
 	}
 	if normalRun.Review {
 		t.Fatal("expected Review=false for normal run")
+	}
+	if normalRun.IssueLabel != "#2" {
+		t.Fatalf("expected IssueLabel #2 for normal run, got %q", normalRun.IssueLabel)
+	}
+}
+
+func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, ".sandman", "runs", "PR43")
+	sockPath := filepath.Join(sockDir, "run.sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+	}()
+
+	started := time.Now().Add(-5 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: started, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
+		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "run-prompt-1", Issue: 0, Payload: map[string]any{"branch": "sandman/prompt-only-1"}},
+		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "run-prompt-1", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/prompt-only-1"}},
+	})
+
+	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 runs, got %#v", runs)
+	}
+
+	byRunID := make(map[string]portalRun, len(runs))
+	for _, run := range runs {
+		byRunID[run.RunID] = run
+	}
+
+	reviewRun, ok := byRunID["PR42"]
+	if !ok {
+		t.Fatal("expected completed review run with RunID PR42")
+	}
+	if reviewRun.IssueLabel != "PR42" {
+		t.Fatalf("expected review run label PR42, got %q", reviewRun.IssueLabel)
+	}
+	if !reviewRun.Review {
+		t.Fatal("expected review flag on completed review run")
+	}
+
+	activeReview, ok := byRunID["PR43"]
+	if !ok {
+		t.Fatal("expected active review run with RunID PR43")
+	}
+	if activeReview.IssueLabel != "PR43" {
+		t.Fatalf("expected active review run label PR43, got %q", activeReview.IssueLabel)
+	}
+	if !activeReview.Review {
+		t.Fatal("expected review flag on active review run")
+	}
+
+	promptOnly, ok := byRunID["run-prompt-1"]
+	if !ok {
+		t.Fatal("expected prompt-only run")
+	}
+	if promptOnly.IssueLabel != "prompt-only" {
+		t.Fatalf("expected prompt-only label to stay prompt-only, got %q", promptOnly.IssueLabel)
+	}
+	if promptOnly.Review {
+		t.Fatal("expected Review=false for prompt-only run")
 	}
 }
 

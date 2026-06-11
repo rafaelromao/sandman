@@ -512,6 +512,7 @@ func (v *portalRunsView) matchRunState(instance portalActiveRun, states []events
 }
 
 func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun map[string][]portalEvent) portalRun {
+	runID := match.instance.Key
 	if match.state != nil {
 		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun)
 		run.BatchKey = match.instance.Key
@@ -523,7 +524,10 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	issueNumber := match.instance.IssueNumber
 	prNumber := match.instance.PRNumber
 	if prNumber > 0 {
-		issueLabel = fmt.Sprintf("PR#%d", prNumber)
+		issueLabel = runID
+		if issueLabel == "" {
+			issueLabel = fmt.Sprintf("PR%d", prNumber)
+		}
 	} else if issueNumber > 0 {
 		issueLabel = fmt.Sprintf("#%d", issueNumber)
 	}
@@ -535,8 +539,8 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	}
 	logPath := v.portalLogPath(repoRoot, issueNumber, "")
 	run := portalRun{
-		Key:         match.instance.Key,
-		RunID:       match.instance.Key,
+		Key:         runID,
+		RunID:       runID,
 		Kind:        "active",
 		Status:      status,
 		IssueLabel:  issueLabel,
@@ -565,6 +569,9 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	issueNumber := runState.IssueNumber()
 	branch := runState.Branch()
 	issueLabel := runState.IssueLabel()
+	if runState.IsReview() && issueNumber == 0 && runID != "" {
+		issueLabel = runID
+	}
 	if issueLabel == "" {
 		issueLabel = runID
 	}
