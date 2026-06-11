@@ -62,18 +62,6 @@
     name.classList.add('name');
     name.textContent = run.issueLabel || run.key;
     wrap.appendChild(name);
-    if (run.review) {
-      const reviewBadge = global.document.createElement('span');
-      reviewBadge.classList.add('badge', 'review');
-      const dot = global.document.createElement('span');
-      dot.classList.add('dot');
-      reviewBadge.appendChild(dot);
-      const labelSpan = global.document.createElement('span');
-      labelSpan.classList.add('badge-label');
-      labelSpan.textContent = 'REVIEW';
-      reviewBadge.appendChild(labelSpan);
-      wrap.appendChild(reviewBadge);
-    }
     const meta = global.document.createElement('span');
     meta.classList.add('meta-line', 'mono');
     meta.textContent = helpers.renderRunMeta(run);
@@ -544,6 +532,11 @@
     }
     if (oldSnap.metaText !== newSnap.metaText && meta) {
       setText(meta, newSnap.metaText);
+    }
+    const staleBadge = wrap.children[1];
+    if (staleBadge && staleBadge.classList && staleBadge.classList.contains('review')) {
+      wrap.removeChild(staleBadge);
+      mutationCount += 1;
     }
   }
 
