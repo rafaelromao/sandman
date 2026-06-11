@@ -1436,23 +1436,20 @@ func (s *runSession) runOnce(
 		}
 		result.RetriesTotal = attempt + 1
 
-		success := result.Status == "success"
 		if mergeRequired {
-			success = success || parseLogForCompletion(logPath)
-		}
-		if success {
-			if mergeRequired && !checkPRMerged(o.githubClient, branch) {
-				result.Status = "failure"
-				continue
-			}
-			if mergeRequired {
+			if checkPRMerged(o.githubClient, branch) {
 				handoffPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
 				if err := os.Remove(handoffPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 					fmt.Fprintf(o.errorLog, "warning: remove handoff %q: %v\n", handoffPath, err)
 				}
+				result.Status = "success"
+				break
 			}
-			result.Status = "success"
-			break
+			result.Status = "failure"
+		} else {
+			if result.Status == "success" {
+				break
+			}
 		}
 	}
 
