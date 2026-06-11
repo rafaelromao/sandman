@@ -134,7 +134,7 @@ func (o *Orchestrator) validateBatchBranches(req Request) error {
 		return nil
 	}
 
-	return fmt.Errorf("refusing to start batch: branches already exist from previous runs: %s. Delete them with git branch -D <branch> or re-run with --force", strings.Join(conflicts, ", "))
+	return fmt.Errorf("refusing to start batch: branches already exist from previous runs: %s. Delete them with git branch -D <branch> or re-run with --override", strings.Join(conflicts, ", "))
 }
 
 // Orchestrator coordinates parallel AgentRun execution.

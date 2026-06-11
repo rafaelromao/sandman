@@ -2147,8 +2147,8 @@ func TestRunBatch_AbortsUpfrontWhenAnyBranchExists(t *testing.T) {
 	if !strings.Contains(err.Error(), `git branch -D <branch>`) {
 		t.Fatalf("expected delete hint in error, got %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), `--force`) {
-		t.Fatalf("expected force hint in error, got %q", err.Error())
+	if !strings.Contains(err.Error(), `--override`) {
+		t.Fatalf("expected override hint in error, got %q", err.Error())
 	}
 	if len(factory.created) != 0 {
 		t.Fatalf("expected no runnables created, got %d", len(factory.created))
@@ -7465,18 +7465,18 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 		if result.Status != "failure" {
 			t.Fatalf("status = %q, want failure", result.Status)
 		}
-		if !strings.Contains(errorBuf.String(), `expected "sandman/42-fix-bug"; re-run with --force to reconcile`) {
+		if !strings.Contains(errorBuf.String(), `expected "sandman/42-fix-bug"; re-run with --override to reconcile`) {
 			t.Fatalf("error log does not contain branch mismatch message:\n%s", errorBuf.String())
 		}
 	})
 
-	t.Run("force reconciles branch mismatch", func(t *testing.T) {
+	t.Run("override reconciles branch mismatch", func(t *testing.T) {
 		result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &defaultSandboxFactory{}, nil, true, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
 		if !started {
-			t.Fatal("expected force run to start")
+			t.Fatal("expected override run to start")
 		}
 		if result.Status != "success" {
-			t.Fatalf("force status = %q, want success", result.Status)
+			t.Fatalf("override status = %q, want success", result.Status)
 		}
 		worktreePath := filepath.Join(workDir, "worktrees", branch)
 		cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")

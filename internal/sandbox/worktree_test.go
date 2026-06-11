@@ -477,8 +477,8 @@ func TestWorktreeSandbox_StartErrorsOnWrongBranch(t *testing.T) {
 	if !strings.Contains(err.Error(), s.WorkDir()) {
 		t.Errorf("expected error to contain worktree path %q, got: %v", s.WorkDir(), err)
 	}
-	if !strings.Contains(err.Error(), "--force") {
-		t.Errorf("expected error to contain '--force' hint, got: %v", err)
+	if !strings.Contains(err.Error(), "--override") {
+		t.Errorf("expected error to contain '--override' hint, got: %v", err)
 	}
 
 	headRef := runGit(t, s.WorkDir(), "symbolic-ref", "HEAD")
@@ -514,8 +514,8 @@ func TestWorktreeSandbox_StartErrorsOnDetachedHead(t *testing.T) {
 	if !strings.Contains(err.Error(), s.WorkDir()) {
 		t.Errorf("expected error to contain worktree path %q, got: %v", s.WorkDir(), err)
 	}
-	if !strings.Contains(err.Error(), "--force") {
-		t.Errorf("expected error to contain '--force' hint, got: %v", err)
+	if !strings.Contains(err.Error(), "--override") {
+		t.Errorf("expected error to contain '--override' hint, got: %v", err)
 	}
 
 	headRef := runGit(t, s.WorkDir(), "rev-parse", "--short", "HEAD")
@@ -596,7 +596,7 @@ func TestWorktreeSandbox_ForceReconcileWrongBranch(t *testing.T) {
 	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	s2.SetForce(true)
 	if err := s2.Start(); err != nil {
-		t.Fatalf("expected no error with --force, got: %v", err)
+		t.Fatalf("expected no error with --override, got: %v", err)
 	}
 
 	headRef := runGit(t, s2.WorkDir(), "symbolic-ref", "HEAD")
@@ -652,7 +652,7 @@ func TestWorktreeSandbox_ForceReconcileDetachedHead(t *testing.T) {
 	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	s2.SetForce(true)
 	if err := s2.Start(); err != nil {
-		t.Fatalf("expected no error with --force on detached HEAD, got: %v", err)
+		t.Fatalf("expected no error with --override on detached HEAD, got: %v", err)
 	}
 
 	headRef := runGit(t, s2.WorkDir(), "symbolic-ref", "HEAD")
