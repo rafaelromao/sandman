@@ -673,8 +673,8 @@ func TestRun_OverrideFlagPassedToBatchRunner(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !spy.req.Force {
-		t.Error("expected Force=true when --override flag is passed")
+	if !spy.req.Override {
+		t.Error("expected Override=true when --override flag is passed")
 	}
 }
 
@@ -693,12 +693,12 @@ func TestRun_OverrideFalseByDefault(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.req.Force {
-		t.Error("expected Force=false when --override flag is not passed")
+	if spy.req.Override {
+		t.Error("expected Override=false when --override flag is not passed")
 	}
 }
 
-func TestRun_NoForceAlias(t *testing.T) {
+func TestRun_NoOverrideAlias(t *testing.T) {
 	cmd := NewRunCmd(newRunDeps(&spyBatchRunner{result: &batch.Result{}}))
 	if cmd.Flags().Lookup("force") != nil {
 		t.Fatal("expected --force flag to be removed")

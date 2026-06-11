@@ -298,16 +298,16 @@ func (f sandboxFactoryFunc) NewSandbox(repoPath, worktreeBase, branch, sourceBra
 }
 
 type retrySandbox struct {
-	startCalled      bool
-	writePromptCount int
-	execCount        int
-	execCommand      string
-	execErrors       []error
-	workDir          string
-	setForceCalled   bool
-	setForceValue    bool
-	setIdentityName  string
-	setIdentityEmail string
+	startCalled       bool
+	writePromptCount  int
+	execCount         int
+	execCommand       string
+	execErrors        []error
+	workDir           string
+	setOverrideCalled bool
+	setOverrideValue  bool
+	setIdentityName   string
+	setIdentityEmail  string
 }
 
 func (s *retrySandbox) Start() error {
@@ -334,9 +334,9 @@ func (s *retrySandbox) WritePrompt(content string) error {
 	return nil
 }
 func (s *retrySandbox) Process() sandbox.Process { return nil }
-func (s *retrySandbox) SetForce(force bool) {
-	s.setForceCalled = true
-	s.setForceValue = force
+func (s *retrySandbox) SetOverride(override bool) {
+	s.setOverrideCalled = true
+	s.setOverrideValue = override
 }
 func (s *retrySandbox) SetGitIdentity(name, email string) {
 	s.setIdentityName = name
@@ -2236,7 +2236,7 @@ func TestRunBatch_AllowsBatchWhenNoBranchExists(t *testing.T) {
 	}
 }
 
-func TestRunBatch_ForceClearsExistingBranchesAndProceeds(t *testing.T) {
+func TestRunBatch_OverrideClearsExistingBranchesAndProceeds(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -2272,7 +2272,7 @@ func TestRunBatch_ForceClearsExistingBranchesAndProceeds(t *testing.T) {
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 
-	result, err := o.RunBatch(context.Background(), Request{Issues: []int{441, 450, 452}, Force: true})
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{441, 450, 452}, Override: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -7327,25 +7327,25 @@ func TestOrchestrator_AbortIssue_BlockedRun(t *testing.T) {
 	}
 }
 
-func TestRunSession_ApplyForceAndIdentity_CallsMethodsDirectlyOnSandbox(t *testing.T) {
+func TestRunSession_ApplyOverrideAndIdentity_CallsMethodsDirectlyOnSandbox(t *testing.T) {
 	wt := &fakeSandbox{}
 	s := &runSession{
 		o:                &Orchestrator{errorLog: io.Discard},
-		force:            true,
+		override:         true,
 		issueNumber:      42,
 		identityResolver: noopIdentityResolver(),
 	}
 
-	_, ok := s.applyForceAndIdentity(wt, "sandman/42-fix-bug")
+	_, ok := s.applyOverrideAndIdentity(wt, "sandman/42-fix-bug")
 	if !ok {
-		t.Fatal("expected applyForceAndIdentity to succeed")
+		t.Fatal("expected applyOverrideAndIdentity to succeed")
 	}
 
-	if !wt.setForceCalled {
-		t.Fatal("expected sandbox.SetForce to be called")
+	if !wt.setOverrideCalled {
+		t.Fatal("expected sandbox.SetOverride to be called")
 	}
-	if !wt.setForceValue {
-		t.Error("expected SetForce(true) to forward the force value")
+	if !wt.setOverrideValue {
+		t.Error("expected SetOverride(true) to forward the override value")
 	}
 	if wt.setIdentityName != "" || wt.setIdentityEmail != "" {
 		t.Errorf("expected noop identity to leave name/email unset, got name=%q email=%q",
@@ -7353,25 +7353,25 @@ func TestRunSession_ApplyForceAndIdentity_CallsMethodsDirectlyOnSandbox(t *testi
 	}
 }
 
-func TestRunSession_ApplyForceAndIdentity_PropagatesForceFalse(t *testing.T) {
+func TestRunSession_ApplyOverrideAndIdentity_PropagatesOverrideFalse(t *testing.T) {
 	wt := &fakeSandbox{}
 	s := &runSession{
 		o:                &Orchestrator{errorLog: io.Discard},
-		force:            false,
+		override:         false,
 		issueNumber:      7,
 		identityResolver: noopIdentityResolver(),
 	}
 
-	_, ok := s.applyForceAndIdentity(wt, "sandman/7-other")
+	_, ok := s.applyOverrideAndIdentity(wt, "sandman/7-other")
 	if !ok {
-		t.Fatal("expected applyForceAndIdentity to succeed")
+		t.Fatal("expected applyOverrideAndIdentity to succeed")
 	}
 
-	if !wt.setForceCalled {
-		t.Fatal("expected sandbox.SetForce to be called")
+	if !wt.setOverrideCalled {
+		t.Fatal("expected sandbox.SetOverride to be called")
 	}
-	if wt.setForceValue {
-		t.Error("expected SetForce(false) to forward the force value")
+	if wt.setOverrideValue {
+		t.Error("expected SetOverride(false) to forward the override value")
 	}
 }
 

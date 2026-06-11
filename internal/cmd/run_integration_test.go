@@ -604,7 +604,7 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 	}
 }
 
-func TestRun_WorktreeSandboxForceFlagClearsArtifacts(t *testing.T) {
+func TestRun_WorktreeSandboxOverrideFlagClearsArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	_ = initRunIntegrationRepoWithRemote(t, dir)

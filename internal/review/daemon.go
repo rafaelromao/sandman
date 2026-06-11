@@ -414,7 +414,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		ReviewFocus:  focus,
 		RunID:        runID,
 		RunDir:       daemon.RunDir(d.BaseDir, nil, runID),
-		Force:        true,
+		Override:     true,
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return fmt.Errorf("run batch: %w", err)

@@ -695,7 +695,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
-	if req.Force {
+	if req.Override {
 		for _, num := range req.Issues {
 			issue, err := o.githubClient.FetchIssue(num)
 			if err != nil {
@@ -925,7 +925,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 
-			res, started := o.runSingle(issueCtx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, req.Force, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
+			res, started := o.runSingle(issueCtx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, req.Override, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -1227,7 +1227,7 @@ type runSession struct {
 	activeMu                   *sync.Mutex
 	sbFactory                  SandboxFactory
 	containerAlloc             containerAllocator
-	force                      bool
+	override                   bool
 	baseBranch                 string
 	externalBlockers           []int
 	parallel                   int
@@ -1262,11 +1262,11 @@ type runSession struct {
 	opts runSessionOptions
 }
 
-// applyForceAndIdentity applies s.force and the resolved git identity to wt.
+// applyOverrideAndIdentity applies s.override and the resolved git identity to wt.
 // On identity failure returns (_, false) so the caller can short-circuit.
-func (s *runSession) applyForceAndIdentity(wt sandbox.Sandbox, branch string) (AgentRunResult, bool) {
+func (s *runSession) applyOverrideAndIdentity(wt sandbox.Sandbox, branch string) (AgentRunResult, bool) {
 	o := s.o
-	wt.SetForce(s.force)
+	wt.SetOverride(s.override)
 	identity, err := s.identityResolver.resolve()
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
@@ -1461,7 +1461,7 @@ func (s *runSession) runOnce(
 
 // runSingle runs a single issue-driven AgentRun. It builds a runSession and
 // delegates to (*runSession).execute.
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
 	s := &runSession{
 		o:                          o,
 		issueNumber:                num,
@@ -1478,7 +1478,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		activeMu:                   activeMu,
 		sbFactory:                  sbFactory,
 		containerAlloc:             containerAlloc,
-		force:                      force,
+		override:                   override,
 		baseBranch:                 baseBranch,
 		externalBlockers:           externalBlockers,
 		parallel:                   parallel,
@@ -1528,7 +1528,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	wt := s.sbFactory.NewSandbox(".", s.cfg.WorktreeDir, branch, s.baseBranch, container)
-	if errResult, ok := s.applyForceAndIdentity(wt, branch); !ok {
+	if errResult, ok := s.applyOverrideAndIdentity(wt, branch); !ok {
 		return errResult, false
 	}
 	if err := wt.Start(); err != nil {
@@ -1731,7 +1731,7 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
-	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Force, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, req.Review, req.PRNumber, req.ReviewFocus, req.RunID, req.PreviousRunIDs)
+	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Override, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, req.Review, req.PRNumber, req.ReviewFocus, req.RunID, req.PreviousRunIDs)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -1746,7 +1746,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 
 // runPromptOnlySingle runs a single prompt-only AgentRun. It builds a
 // runSession and delegates to (*runSession).executePromptOnly.
-func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, force bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string) (AgentRunResult, bool) {
+func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string) (AgentRunResult, bool) {
 	s := &runSession{
 		o:                          o,
 		cfg:                        cfg,
@@ -1758,7 +1758,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		outputWriter:               outputWriter,
 		sbFactory:                  sbFactory,
 		containerAlloc:             containerAlloc,
-		force:                      force,
+		override:                   override,
 		baseBranch:                 baseBranch,
 		parallel:                   parallel,
 		startDelay:                 startDelay,
@@ -1803,7 +1803,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 
 	wt := s.sbFactory.NewSandbox(".", s.cfg.WorktreeDir, branch, s.baseBranch, container)
-	if errResult, ok := s.applyForceAndIdentity(wt, branch); !ok {
+	if errResult, ok := s.applyOverrideAndIdentity(wt, branch); !ok {
 		return errResult, false
 	}
 	if err := wt.Start(); err != nil {
@@ -2070,7 +2070,7 @@ var _ Runner = (*Orchestrator)(nil)
 // Production usage:
 //
 //	resolver := newBatchIdentityResolver(o, ".")
-//	// later, from (*runSession).applyForceAndIdentity:
+//	// later, from (*runSession).applyOverrideAndIdentity:
 //	identity, err := s.identityResolver.resolve()
 //
 // Test usage (no real git invocation, no worktree-config side effect):

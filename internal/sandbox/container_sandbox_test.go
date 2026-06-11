@@ -21,8 +21,8 @@ type fakeWorktreeForContainer struct {
 	execCommand        string
 	execError          error
 	process            Process
-	setForceCalled     bool
-	setForceValue      bool
+	setOverrideCalled  bool
+	setOverrideValue   bool
 	setIdentityName    string
 	setIdentityEmail   string
 }
@@ -63,9 +63,9 @@ func (f *fakeWorktreeForContainer) Process() Process {
 	return f.process
 }
 
-func (f *fakeWorktreeForContainer) SetForce(force bool) {
-	f.setForceCalled = true
-	f.setForceValue = force
+func (f *fakeWorktreeForContainer) SetOverride(override bool) {
+	f.setOverrideCalled = true
+	f.setOverrideValue = override
 }
 
 func (f *fakeWorktreeForContainer) SetGitIdentity(name, email string) {
@@ -360,18 +360,18 @@ func TestSharedContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	}
 }
 
-func TestContainerSandbox_SetForce_ForwardsToWorktree(t *testing.T) {
+func TestContainerSandbox_SetOverride_ForwardsToWorktree(t *testing.T) {
 	wt := &fakeWorktreeForContainer{}
 	ctr := &fakeContainer{id: "abc123"}
 	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
 
-	sb.SetForce(true)
+	sb.SetOverride(true)
 
-	if !wt.setForceCalled {
-		t.Fatal("expected worktree.SetForce to be called")
+	if !wt.setOverrideCalled {
+		t.Fatal("expected worktree.SetOverride to be called")
 	}
-	if !wt.setForceValue {
-		t.Error("expected SetForce(true) to forward value true to worktree")
+	if !wt.setOverrideValue {
+		t.Error("expected SetOverride(true) to forward value true to worktree")
 	}
 }
 
@@ -390,17 +390,17 @@ func TestContainerSandbox_SetGitIdentity_ForwardsToWorktree(t *testing.T) {
 	}
 }
 
-func TestSharedContainerSandbox_SetForce_ForwardsToWorktree(t *testing.T) {
+func TestSharedContainerSandbox_SetOverride_ForwardsToWorktree(t *testing.T) {
 	wt := &fakeWorktreeForContainer{}
 	ctr := &fakeContainer{id: "shared123"}
 	sb := NewSharedContainerSandbox(wt, ctr, "docker", "/host/repo")
 
-	sb.SetForce(false)
+	sb.SetOverride(false)
 
-	if !wt.setForceCalled {
-		t.Fatal("expected worktree.SetForce to be called")
+	if !wt.setOverrideCalled {
+		t.Fatal("expected worktree.SetOverride to be called")
 	}
-	if wt.setForceValue {
-		t.Error("expected SetForce(false) to forward value false to worktree")
+	if wt.setOverrideValue {
+		t.Error("expected SetOverride(false) to forward value false to worktree")
 	}
 }

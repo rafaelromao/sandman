@@ -62,8 +62,8 @@ type fakeSandbox struct {
 	process               *fakeProcess
 	stopCalled            bool
 	workDir               string
-	setForceCalled        bool
-	setForceValue         bool
+	setOverrideCalled     bool
+	setOverrideValue      bool
 	setIdentityName       string
 	setIdentityEmail      string
 }
@@ -104,9 +104,9 @@ func (f *fakeSandbox) Process() sandbox.Process {
 	}
 	return f.process
 }
-func (f *fakeSandbox) SetForce(force bool) {
-	f.setForceCalled = true
-	f.setForceValue = force
+func (f *fakeSandbox) SetOverride(override bool) {
+	f.setOverrideCalled = true
+	f.setOverrideValue = override
 }
 func (f *fakeSandbox) SetGitIdentity(name, email string) {
 	f.setIdentityName = name
