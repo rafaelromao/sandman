@@ -124,6 +124,12 @@ func BuildResumePrompt(doc HandoffDoc) string {
 	b.WriteString(extractNextStep(doc.Body))
 	b.WriteString("\n")
 
+	if doc.Body != "" {
+		b.WriteString("\n## History\n")
+		b.WriteString(doc.Body)
+		b.WriteString("\n")
+	}
+
 	return b.String()
 }
 
