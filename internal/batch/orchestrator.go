@@ -1599,6 +1599,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		payload := map[string]any{
 			"branch":                 branch,
 			"base_branch":            s.baseBranch,
+			"issue_title":            issue.Title,
 			"prompt_source_type":     promptSourceType,
 			"parallel":               s.parallel,
 			"start_delay":            int(s.startDelay / time.Second),
