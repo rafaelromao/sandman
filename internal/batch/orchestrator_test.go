@@ -3855,6 +3855,7 @@ func TestRunBatch_PromptOnlyReviewRunEmitsReviewTag(t *testing.T) {
 		Review:       true,
 		PRNumber:     17,
 		ReviewFocus:  "focus on tests",
+		RunID:        "PR17",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -3873,6 +3874,40 @@ func TestRunBatch_PromptOnlyReviewRunEmitsReviewTag(t *testing.T) {
 		if evt.Payload["review_focus"] != "focus on tests" {
 			t.Errorf("event %q missing review_focus in payload, got %#v", evt.Type, evt.Payload["review_focus"])
 		}
+	}
+}
+
+func TestRunBatch_PromptOnlyReviewRunResultCarriesReviewIdentity(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1")}}
+	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+	}}
+
+	result, err := o.RunBatch(context.Background(), Request{
+		PromptConfig: prompt.RenderConfig{PromptFlag: "Review the PR."},
+		Review:       true,
+		PRNumber:     17,
+		RunID:        "PR17",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(result.Runs))
+	}
+	if !result.Runs[0].Review {
+		t.Errorf("expected result.Runs[0].Review == true")
+	}
+	if result.Runs[0].RunID != "PR17" {
+		t.Errorf("expected result.Runs[0].RunID == \"PR17\", got %q", result.Runs[0].RunID)
 	}
 }
 
