@@ -275,12 +275,16 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		claimed, err := cs.TryClaim(comment.ID)
 		if err != nil {
 			d.logf("claim error for comment %s: %v", comment.ID, err)
-			store.ReleaseClaim(comment.ID)
+			if err := store.Mark(comment.ID); err != nil {
+				d.logf("mark claim-failed comment %s seen: %v", comment.ID, err)
+			}
 			continue
 		}
 		if !claimed {
-			store.ReleaseClaim(comment.ID)
 			d.logf("comment %s already claimed, skipping", comment.ID)
+			if err := store.Mark(comment.ID); err != nil {
+				d.logf("mark already-claimed comment %s seen: %v", comment.ID, err)
+			}
 			continue
 		}
 		triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
