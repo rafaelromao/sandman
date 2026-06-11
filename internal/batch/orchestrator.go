@@ -1377,7 +1377,7 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 }
 
 // runOnce runs the retry loop for a session. mergeRequired gates the
-// issue-driven flavour's extra parseLogForCompletion + checkPRMerged checks;
+// issue-driven flavour's checkPRMerged check (the sole success signal);
 // prepareAttempt returns (_, &errResult) to short-circuit.
 func (s *runSession) runOnce(
 	ctx context.Context,
