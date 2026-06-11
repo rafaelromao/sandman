@@ -403,10 +403,10 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	if err := ctlSocket.Start(); err != nil {
 		return fmt.Errorf("start control socket: %w", err)
 	}
-	defer ctlSocket.Stop()
 	defer os.RemoveAll(runDir)
+	defer ctlSocket.Stop()
 
-	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: nil, CreatedAt: time.Now()}); err != nil {
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{}, CreatedAt: time.Now()}); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 

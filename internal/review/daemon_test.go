@@ -1116,8 +1116,8 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 			if err := json.Unmarshal(data, &manifest); err != nil {
 				t.Errorf("invalid batch.json: %v", err)
 			}
-			if manifest.Issues != nil {
-				t.Errorf("expected Issues=nil, got %v", manifest.Issues)
+			if len(manifest.Issues) != 0 {
+				t.Errorf("expected empty Issues, got %v", manifest.Issues)
 			}
 			if manifest.CreatedAt.IsZero() {
 				t.Errorf("expected non-zero CreatedAt")
@@ -1208,8 +1208,8 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 			if err := json.Unmarshal(data, &manifest); err != nil {
 				t.Errorf("invalid batch.json: %v", err)
 			}
-			if manifest.Issues != nil {
-				t.Errorf("expected Issues=nil, got %v", manifest.Issues)
+			if len(manifest.Issues) != 0 {
+				t.Errorf("expected empty Issues, got %v", manifest.Issues)
 			}
 		}
 
