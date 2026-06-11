@@ -56,6 +56,28 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateCells_RemovesStaleReviewBadgeFromTitle(t *testing.T) {
+	js := `const body = makeMockBody();
+const runOld = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1' };
+const runNew = Object.assign({}, runOld, { issueLabel: 'Issue 1 updated' });
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
+const titleWrap = created.row.querySelector('[data-cell="title"]').children[0];
+const reviewBadge = documentRef.createElement('span');
+reviewBadge.classList.add('badge', 'review');
+reviewBadge.textContent = 'REVIEW';
+titleWrap.insertBefore(reviewBadge, titleWrap.children[1]);
+SandmanPortalDiff.resetCounters();
+const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
+if (!result.mutated) throw new Error('expected mutated=true');
+if (titleWrap.children.length !== 2) throw new Error('expected stale review badge removed, got ' + titleWrap.children.length);
+if (titleWrap.children[0].textContent !== 'Issue 1 updated') throw new Error('expected updated issue label');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateCells_DurationChangeUpdatesOnlyDuration(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1', branch: 'main', duration: '5s' };

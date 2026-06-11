@@ -533,6 +533,11 @@
     if (oldSnap.metaText !== newSnap.metaText && meta) {
       setText(meta, newSnap.metaText);
     }
+    const staleBadge = wrap.children[1];
+    if (staleBadge && staleBadge.classList && staleBadge.classList.contains('review')) {
+      wrap.removeChild(staleBadge);
+      mutationCount += 1;
+    }
   }
 
   function updateBadgeCell(cell, oldSnap, newSnap) {
