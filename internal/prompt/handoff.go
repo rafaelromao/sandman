@@ -9,6 +9,7 @@ type HandoffDoc struct {
 	SourcePrompt    string // always ".sandman/rendered-prompt.md"
 	LastSkill       string // sandman sub-skill the previous run was on
 	LastSkillStatus string // "complete" or "incomplete" with optional context after " — "
+	Raw             string // verbatim prior handoff snapshot
 	Body            string // the remaining content (Completed, Pending, Blockers, Key Decisions, Next Step)
 }
 
@@ -56,6 +57,7 @@ func ParseHandoff(content string) HandoffDoc {
 		SourcePrompt:    sourcePrompt,
 		LastSkill:       lastSkill,
 		LastSkillStatus: lastSkillStatus,
+		Raw:             content,
 		Body:            body,
 	}
 }
@@ -124,9 +126,13 @@ func BuildResumePrompt(doc HandoffDoc) string {
 	b.WriteString(extractNextStep(doc.Body))
 	b.WriteString("\n")
 
-	if doc.Body != "" {
+	archive := doc.Raw
+	if archive == "" {
+		archive = doc.Body
+	}
+	if archive != "" {
 		b.WriteString("\n## History\n")
-		b.WriteString(doc.Body)
+		b.WriteString(archive)
 		b.WriteString("\n")
 	}
 

@@ -252,23 +252,61 @@ func TestBuildResumePrompt_UpdateHandoffContext(t *testing.T) {
 }
 
 func TestBuildResumePrompt_UpdateHandoffContext_ArchivesPriorBody(t *testing.T) {
-	doc := HandoffDoc{
-		Stage:           "implementation-committed",
-		LastSkill:       "sandman-tdd",
-		LastSkillStatus: "complete",
-		Body:            "## Completed\nOld work.\n\n## Next Step\nArchive this handoff.",
-	}
+	doc := ParseHandoff(`## Stage: implementation-committed
+## Source Prompt: .sandman/rendered-prompt.md
+## Last Skill: sandman-tdd
+## Last Skill Status: complete
+## Completed
+Old work.
+
+## Next Step
+Archive this handoff.`)
 
 	result := BuildResumePrompt(doc)
 
 	if !strings.Contains(result, "## History") {
 		t.Fatalf("expected ## History section in Update Handoff Context, got:\n%s", result)
 	}
-	if !strings.Contains(result, "Old work.") {
-		t.Fatalf("expected archived prior handoff content in History, got:\n%s", result)
+	if !strings.Contains(result, "## Source Prompt: .sandman/rendered-prompt.md") {
+		t.Fatalf("expected archived prior handoff snapshot in History, got:\n%s", result)
+	}
+	if strings.Count(result, "## Source Prompt: .sandman/rendered-prompt.md") < 2 {
+		t.Fatalf("expected archived snapshot to include prior metadata, got:\n%s", result)
 	}
 	if strings.Index(result, "## History") < strings.Index(result, "## Next Step") {
 		t.Fatalf("expected History after Next Step, got:\n%s", result)
+	}
+}
+
+func TestBuildResumePrompt_UpdateHandoffContext_ArchivesExistingHistory(t *testing.T) {
+	doc := ParseHandoff(`## Stage: pr-created
+## Source Prompt: .sandman/rendered-prompt.md
+## Last Skill: sandman-implement
+## Last Skill Status: complete
+## Completed
+PR created.
+
+## Next Step
+Request review.
+
+## History
+## Stage: implementation-committed
+## Source Prompt: .sandman/rendered-prompt.md
+## Last Skill: sandman-tdd
+## Last Skill Status: complete
+## Completed
+Old work.
+
+## Next Step
+Archive this handoff.`)
+
+	result := BuildResumePrompt(doc)
+
+	if strings.Count(result, "## History") < 2 {
+		t.Fatalf("expected previous history snapshot to be archived verbatim, got:\n%s", result)
+	}
+	if !strings.Contains(result, "## Last Skill: sandman-implement") || !strings.Contains(result, "## Last Skill: sandman-tdd") {
+		t.Fatalf("expected both current and archived snapshots in History, got:\n%s", result)
 	}
 }
 
