@@ -824,8 +824,13 @@ SandmanPortalDiff.diffRuns(body, [run], opts);
 const detailRow = body.children[1];
 const pre = detailRow.querySelector('pre[data-rendered-json]');
 if (!pre) throw new Error('expected details pre');
-if (!pre.textContent.includes('"runId": "r1"')) throw new Error('expected runId in json, got ' + pre.textContent);
-if (!pre.textContent.includes('"source": "/tmp/run.log"')) throw new Error('expected source in json, got ' + pre.textContent);
+if (!pre.getAttribute('data-rendered-json') || pre.getAttribute('data-rendered-json').indexOf('"runId": "r1"') === -1) throw new Error('expected raw json fingerprint, got ' + pre.getAttribute('data-rendered-json'));
+if (pre.innerHTML.indexOf('json-key') === -1) throw new Error('expected highlighted json key, got ' + pre.innerHTML);
+if (pre.innerHTML.indexOf('json-string') === -1) throw new Error('expected highlighted json string, got ' + pre.innerHTML);
+if (pre.innerHTML.indexOf('json-number') === -1) throw new Error('expected highlighted json number, got ' + pre.innerHTML);
+if (pre.innerHTML.indexOf('json-punctuation') === -1) throw new Error('expected highlighted json punctuation, got ' + pre.innerHTML);
+if (pre.textContent.indexOf('runId') === -1) throw new Error('expected runId in json, got ' + pre.textContent);
+if (pre.textContent.indexOf('source') === -1) throw new Error('expected source in json, got ' + pre.textContent);
 if (detailRow.querySelector('.detail-meta')) throw new Error('old detail-meta layout should be gone');
 console.log('PASS');
 `
@@ -851,7 +856,7 @@ const content2 = detailRow.querySelector('.detail-content');
 if (content2 !== content1) throw new Error('content identity should be preserved');
 const pre2 = detailRow.querySelector('pre[data-rendered-json]');
 if (pre2 !== pre1) throw new Error('details pre should not be replaced');
-if (!pre2.textContent.includes('"source": "/tmp/run.log"')) throw new Error('expected source to remain in json');
+if (!pre2.getAttribute('data-rendered-json').includes('"source": "/tmp/run.log"')) throw new Error('expected source to remain in json');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -874,8 +879,8 @@ if (counters.mutations === 0) throw new Error('changed details should mutate, go
 const content2 = detailRow.querySelector('.detail-content');
 if (content2 !== content1) throw new Error('content identity should be preserved across rebuilds');
 const pre2 = detailRow.querySelector('pre[data-rendered-json]');
-if (pre2.textContent === pre1.textContent) throw new Error('details json should change when data changes');
-if (!pre2.textContent.includes('"logUrl": "/log-2"')) throw new Error('expected updated logUrl in json, got ' + pre2.textContent);
+if (pre2.getAttribute('data-rendered-json') === pre1.getAttribute('data-rendered-json')) throw new Error('details json should change when data changes');
+if (!pre2.getAttribute('data-rendered-json').includes('"logUrl": "/log-2"')) throw new Error('expected updated logUrl in json, got ' + pre2.getAttribute('data-rendered-json'));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -952,7 +957,7 @@ const optsLog = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run], optsDetails);
 const detailRow = body.children[1];
 let pre = detailRow.querySelector('pre[data-rendered-json]');
-if (!pre || !pre.textContent.includes('"source": "/tmp/run.log"')) throw new Error('expected details json initially');
+if (!pre || !pre.getAttribute('data-rendered-json').includes('"source": "/tmp/run.log"')) throw new Error('expected details json initially');
 SandmanPortalDiff.diffRuns(body, [run], optsLog);
 pre = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre) throw new Error('expected log pre after switch to log');
@@ -961,7 +966,7 @@ SandmanPortalDiff.diffRuns(body, [run], optsDetails);
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('returning to details tab should rebuild the pane, got 0 mutations');
 pre = detailRow.querySelector('pre[data-rendered-json]');
-if (!pre || !pre.textContent.includes('"source": "/tmp/run.log"')) throw new Error('expected details json after returning to details');
+if (!pre || !pre.getAttribute('data-rendered-json').includes('"source": "/tmp/run.log"')) throw new Error('expected details json after returning to details');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -986,7 +991,7 @@ const detailsBtn2 = detailRow.querySelector('button[data-tab="details"]');
 if (logBtn2.getAttribute('aria-pressed') !== 'false') throw new Error('log button should not be pressed after switch');
 if (detailsBtn2.getAttribute('aria-pressed') !== 'true') throw new Error('details button should be pressed after switch');
 const pre = detailRow.querySelector('pre[data-rendered-json]');
-if (!pre || !pre.textContent.includes('"source": "/tmp/run.log"')) throw new Error('expected details json after tab switch');
+if (!pre || !pre.getAttribute('data-rendered-json').includes('"source": "/tmp/run.log"')) throw new Error('expected details json after tab switch');
 console.log('PASS');
 `
 	runNodeScript(t, js)
