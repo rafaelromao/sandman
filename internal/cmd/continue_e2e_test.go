@@ -79,7 +79,9 @@ func TestContinueFlow_PodmanSandboxBinaryReusesContinuationContext(t *testing.T)
 	// a previous run would have left before the first continue.
 	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
 	initialHandoffContent := fmt.Sprintf(`## Stage: plan-approved
-
+## Source Prompt: .sandman/rendered-prompt.md
+## Last Skill: sandman-tdd
+## Last Skill Status: complete
 ## Completed
 Initial run for %s.
 
@@ -143,6 +145,15 @@ continue the flow for %s
 	if !strings.Contains(string(firstHandoffPrompt), "## Stage: plan-approved") {
 		t.Fatalf("expected stage line preserved, got:\n%s", firstHandoffPrompt)
 	}
+	if !strings.Contains(string(firstHandoffPrompt), "## Last Skill: sandman-tdd") {
+		t.Fatalf("expected last skill in first continue prompt, got:\n%s", firstHandoffPrompt)
+	}
+	if !strings.Contains(string(firstHandoffPrompt), "## Last Skill Status: complete") {
+		t.Fatalf("expected last skill status in first continue prompt, got:\n%s", firstHandoffPrompt)
+	}
+	if strings.Contains(string(firstHandoffPrompt), string(initialPrompt)) {
+		t.Fatalf("expected handoff-prompt.md to NOT inline rendered-prompt.md content, got:\n%s", firstHandoffPrompt)
+	}
 
 	firstHandoffContext, err := os.ReadFile(contextPath)
 	if err != nil {
@@ -171,6 +182,21 @@ continue the flow for %s
 	}
 	if !strings.Contains(string(secondHandoffPrompt), "First continue for "+continueE2EBranch+".") {
 		t.Fatalf("expected updated context in second continue prompt, got:\n%s", secondHandoffPrompt)
+	}
+	if !strings.Contains(string(secondHandoffPrompt), "## Source Prompt: .sandman/rendered-prompt.md") {
+		t.Fatalf("expected source prompt in second continue prompt, got:\n%s", secondHandoffPrompt)
+	}
+	if !strings.Contains(string(secondHandoffPrompt), "## Update Handoff Context") {
+		t.Fatalf("expected update handoff context in second continue prompt, got:\n%s", secondHandoffPrompt)
+	}
+	if !strings.Contains(string(secondHandoffPrompt), "## Last Skill: sandman-tdd") {
+		t.Fatalf("expected last skill in second continue prompt, got:\n%s", secondHandoffPrompt)
+	}
+	if !strings.Contains(string(secondHandoffPrompt), "## Last Skill Status: complete") {
+		t.Fatalf("expected last skill status in second continue prompt, got:\n%s", secondHandoffPrompt)
+	}
+	if strings.Contains(string(secondHandoffPrompt), string(initialPrompt)) {
+		t.Fatalf("expected handoff-prompt.md to NOT inline rendered-prompt.md content, got:\n%s", secondHandoffPrompt)
 	}
 
 	secondHandoffContext, err := os.ReadFile(contextPath)
@@ -203,6 +229,21 @@ continue the flow for %s
 	}
 	if !strings.Contains(string(thirdHandoffPrompt), "## Prior Context") {
 		t.Fatalf("expected prior context wrapper in third prompt, got:\n%s", thirdHandoffPrompt)
+	}
+	if !strings.Contains(string(thirdHandoffPrompt), "## Source Prompt: .sandman/rendered-prompt.md") {
+		t.Fatalf("expected source prompt in third continue prompt, got:\n%s", thirdHandoffPrompt)
+	}
+	if !strings.Contains(string(thirdHandoffPrompt), "## Update Handoff Context") {
+		t.Fatalf("expected update handoff context in third continue prompt, got:\n%s", thirdHandoffPrompt)
+	}
+	if !strings.Contains(string(thirdHandoffPrompt), "## Last Skill: sandman-implement") {
+		t.Fatalf("expected last skill in third continue prompt, got:\n%s", thirdHandoffPrompt)
+	}
+	if !strings.Contains(string(thirdHandoffPrompt), "## Last Skill Status: complete") {
+		t.Fatalf("expected last skill status in third continue prompt, got:\n%s", thirdHandoffPrompt)
+	}
+	if strings.Contains(string(thirdHandoffPrompt), string(initialPrompt)) {
+		t.Fatalf("expected handoff-prompt.md to NOT inline rendered-prompt.md content, got:\n%s", thirdHandoffPrompt)
 	}
 
 	thirdHandoffContext, err := os.ReadFile(contextPath)
@@ -328,12 +369,15 @@ func TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues(t *testing.T) {
 
 	// Initial runs succeeded and PRs were merged, so handoff.md was cleaned up.
 	// Write handoff.md and step files for both issues before the continue.
-	for _, wtPath := range []struct{ path, branch, hash string }{
-		{issueOneWorktree, "sandman/1-fix-failing-test", "df007d4b37ed388b"},
-		{issueTwoWorktree, "sandman/2-fix-failing-test", "83f322e35451c018"},
+	// Per-issue Last Skill values diverge on purpose to test field independence.
+	for _, wtPath := range []struct{ path, branch, hash, lastSkill string }{
+		{issueOneWorktree, "sandman/1-fix-failing-test", "df007d4b37ed388b", "sandman-tdd"},
+		{issueTwoWorktree, "sandman/2-fix-failing-test", "83f322e35451c018", "sandman-implement"},
 	} {
 		handoffContent := fmt.Sprintf(`## Stage: plan-approved
-
+## Source Prompt: .sandman/rendered-prompt.md
+## Last Skill: %s
+## Last Skill Status: complete
 ## Completed
 Initial run for %s.
 
@@ -348,7 +392,7 @@ fake opencode for continuation e2e
 
 ## Next Step
 continue the flow for %s
-`, wtPath.branch, wtPath.branch)
+`, wtPath.lastSkill, wtPath.branch, wtPath.branch)
 		handoffPath := filepath.Join(wtPath.path, ".sandman", "handoff.md")
 		if err := os.WriteFile(handoffPath, []byte(handoffContent), 0644); err != nil {
 			t.Fatalf("write handoff for %s: %v", wtPath.branch, err)
@@ -377,6 +421,21 @@ continue the flow for %s
 	if !strings.Contains(string(handoffPrompt1), "## Prior Context") {
 		t.Fatalf("expected issue 1 prompt to have prior context wrapper, got:\n%s", handoffPrompt1)
 	}
+	if !strings.Contains(string(handoffPrompt1), "## Source Prompt: .sandman/rendered-prompt.md") {
+		t.Fatalf("expected issue 1 prompt to have source prompt, got:\n%s", handoffPrompt1)
+	}
+	if !strings.Contains(string(handoffPrompt1), "## Update Handoff Context") {
+		t.Fatalf("expected issue 1 prompt to have update handoff context, got:\n%s", handoffPrompt1)
+	}
+	if !strings.Contains(string(handoffPrompt1), "## Last Skill: sandman-tdd") {
+		t.Fatalf("expected issue 1 prompt to have sandman-tdd, got:\n%s", handoffPrompt1)
+	}
+	if !strings.Contains(string(handoffPrompt1), "## Last Skill Status: complete") {
+		t.Fatalf("expected issue 1 prompt to have complete status, got:\n%s", handoffPrompt1)
+	}
+	if strings.Contains(string(handoffPrompt1), string(initialPrompt1)) {
+		t.Fatalf("expected issue 1 handoff-prompt.md to NOT inline rendered-prompt.md content, got:\n%s", handoffPrompt1)
+	}
 
 	handoffPrompt2, err := os.ReadFile(filepath.Join(issueTwoWorktree, ".sandman", "handoff-prompt.md"))
 	if err != nil {
@@ -387,6 +446,21 @@ continue the flow for %s
 	}
 	if !strings.Contains(string(handoffPrompt2), "## Prior Context") {
 		t.Fatalf("expected issue 2 prompt to have prior context wrapper, got:\n%s", handoffPrompt2)
+	}
+	if !strings.Contains(string(handoffPrompt2), "## Source Prompt: .sandman/rendered-prompt.md") {
+		t.Fatalf("expected issue 2 prompt to have source prompt, got:\n%s", handoffPrompt2)
+	}
+	if !strings.Contains(string(handoffPrompt2), "## Update Handoff Context") {
+		t.Fatalf("expected issue 2 prompt to have update handoff context, got:\n%s", handoffPrompt2)
+	}
+	if !strings.Contains(string(handoffPrompt2), "## Last Skill: sandman-implement") {
+		t.Fatalf("expected issue 2 prompt to have sandman-implement, got:\n%s", handoffPrompt2)
+	}
+	if !strings.Contains(string(handoffPrompt2), "## Last Skill Status: complete") {
+		t.Fatalf("expected issue 2 prompt to have complete status, got:\n%s", handoffPrompt2)
+	}
+	if strings.Contains(string(handoffPrompt2), string(initialPrompt2)) {
+		t.Fatalf("expected issue 2 handoff-prompt.md to NOT inline rendered-prompt.md content, got:\n%s", handoffPrompt2)
 	}
 
 	handoffContext1, err := os.ReadFile(filepath.Join(issueOneWorktree, ".sandman", "handoff.md"))
@@ -480,9 +554,12 @@ mkdir -p .sandman
 write_context() {
   completed="$1"
   stage="$2"
+  last_skill="$3"
   cat > .sandman/handoff.md <<EOF
 ## Stage: $stage
-
+## Source Prompt: .sandman/rendered-prompt.md
+## Last Skill: $last_skill
+## Last Skill Status: complete
 ## Completed
 $completed
 
@@ -505,16 +582,16 @@ case "$step" in
     if [ -f double.go ]; then
       perl -0pi -e 's/return 0/return 4/' double.go
     fi
-    write_context "Initial run for $branch." "plan-approved"
+    write_context "Initial run for $branch." "plan-approved" "sandman-tdd"
     ;;
   1)
-    write_context "First continue for $branch." "implementation-committed"
+    write_context "First continue for $branch." "implementation-committed" "sandman-tdd"
     ;;
   2)
-    write_context "Second continue for $branch." "pr-created"
+    write_context "Second continue for $branch." "pr-created" "sandman-implement"
     ;;
   3)
-    write_context "Third continue for $branch." "pr-review-finished"
+    write_context "Third continue for $branch." "pr-review-finished" "sandman-pr-review"
     ;;
   *)
     printf 'unexpected fake opencode step %s for %s\n' "$step" "$branch" >&2
