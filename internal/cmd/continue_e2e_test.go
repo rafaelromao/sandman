@@ -183,11 +183,17 @@ continue the flow for %s
 	if !strings.Contains(string(secondHandoffPrompt), "First continue for "+continueE2EBranch+".") {
 		t.Fatalf("expected updated context in second continue prompt, got:\n%s", secondHandoffPrompt)
 	}
+	if !strings.Contains(string(secondHandoffPrompt), "## Source Prompt: .sandman/rendered-prompt.md") {
+		t.Fatalf("expected source prompt in second continue prompt, got:\n%s", secondHandoffPrompt)
+	}
 	if !strings.Contains(string(secondHandoffPrompt), "## Last Skill: sandman-tdd") {
 		t.Fatalf("expected last skill in second continue prompt, got:\n%s", secondHandoffPrompt)
 	}
 	if !strings.Contains(string(secondHandoffPrompt), "## Last Skill Status: complete") {
 		t.Fatalf("expected last skill status in second continue prompt, got:\n%s", secondHandoffPrompt)
+	}
+	if strings.Contains(string(secondHandoffPrompt), string(initialPrompt)) {
+		t.Fatalf("expected handoff-prompt.md to NOT inline rendered-prompt.md content, got:\n%s", secondHandoffPrompt)
 	}
 
 	secondHandoffContext, err := os.ReadFile(contextPath)
@@ -221,11 +227,17 @@ continue the flow for %s
 	if !strings.Contains(string(thirdHandoffPrompt), "## Prior Context") {
 		t.Fatalf("expected prior context wrapper in third prompt, got:\n%s", thirdHandoffPrompt)
 	}
+	if !strings.Contains(string(thirdHandoffPrompt), "## Source Prompt: .sandman/rendered-prompt.md") {
+		t.Fatalf("expected source prompt in third continue prompt, got:\n%s", thirdHandoffPrompt)
+	}
 	if !strings.Contains(string(thirdHandoffPrompt), "## Last Skill: sandman-implement") {
 		t.Fatalf("expected last skill in third continue prompt, got:\n%s", thirdHandoffPrompt)
 	}
 	if !strings.Contains(string(thirdHandoffPrompt), "## Last Skill Status: complete") {
 		t.Fatalf("expected last skill status in third continue prompt, got:\n%s", thirdHandoffPrompt)
+	}
+	if strings.Contains(string(thirdHandoffPrompt), string(initialPrompt)) {
+		t.Fatalf("expected handoff-prompt.md to NOT inline rendered-prompt.md content, got:\n%s", thirdHandoffPrompt)
 	}
 
 	thirdHandoffContext, err := os.ReadFile(contextPath)
@@ -412,6 +424,9 @@ continue the flow for %s
 	if !strings.Contains(string(handoffPrompt1), "## Last Skill Status: complete") {
 		t.Fatalf("expected issue 1 prompt to have complete status, got:\n%s", handoffPrompt1)
 	}
+	if strings.Contains(string(handoffPrompt1), string(initialPrompt1)) {
+		t.Fatalf("expected issue 1 handoff-prompt.md to NOT inline rendered-prompt.md content, got:\n%s", handoffPrompt1)
+	}
 
 	handoffPrompt2, err := os.ReadFile(filepath.Join(issueTwoWorktree, ".sandman", "handoff-prompt.md"))
 	if err != nil {
@@ -431,6 +446,9 @@ continue the flow for %s
 	}
 	if !strings.Contains(string(handoffPrompt2), "## Last Skill Status: complete") {
 		t.Fatalf("expected issue 2 prompt to have complete status, got:\n%s", handoffPrompt2)
+	}
+	if strings.Contains(string(handoffPrompt2), string(initialPrompt2)) {
+		t.Fatalf("expected issue 2 handoff-prompt.md to NOT inline rendered-prompt.md content, got:\n%s", handoffPrompt2)
 	}
 
 	handoffContext1, err := os.ReadFile(filepath.Join(issueOneWorktree, ".sandman", "handoff.md"))
