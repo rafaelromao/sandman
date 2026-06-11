@@ -37,7 +37,7 @@ func ParseHandoff(content string) HandoffDoc {
 			case strings.HasPrefix(trimmed, "## Last Skill Status:"):
 				lastSkillStatus = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Last Skill Status:"))
 				continue
-			case strings.HasPrefix(trimmed, "## History"):
+			case trimmed == "## History":
 				inHeader = false
 				inHistory = true
 				continue
@@ -50,7 +50,7 @@ func ParseHandoff(content string) HandoffDoc {
 				inHeader = false
 				inHistory = false
 			}
-		} else if strings.HasPrefix(trimmed, "## History") && !inHistory {
+		} else if trimmed == "## History" && !inHistory {
 			inHistory = true
 			continue
 		}
@@ -111,6 +111,11 @@ func BuildResumePrompt(doc HandoffDoc) string {
 		b.WriteString("\n")
 		b.WriteString("Next: ")
 		b.WriteString(extractNextStep(doc.Body))
+		b.WriteString("\n\n")
+	}
+	if doc.History != "" {
+		b.WriteString("## Prior History\n")
+		b.WriteString(doc.History)
 		b.WriteString("\n\n")
 	}
 

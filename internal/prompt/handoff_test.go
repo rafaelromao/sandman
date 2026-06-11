@@ -267,14 +267,24 @@ func TestBuildResumePrompt_UpdateHandoffContextTailIncludesHandoffMd(t *testing.
 }
 
 func TestBuildResumePrompt_UpdateHandoffContextPreservesHistory(t *testing.T) {
-	doc := HandoffDoc{Body: "## Completed\nDone."}
+	doc := HandoffDoc{
+		Body:    "## Completed\nDone.",
+		History: "## Stage: plan-approved\n## Completed\nEarlier work.",
+	}
 	result := BuildResumePrompt(doc)
 
-	if !strings.Contains(result, "Preserve its current content") {
-		t.Fatalf("expected Update Handoff Context to preserve existing handoff content, got:\n%s", result)
+	uhcIdx := strings.Index(result, "## Update Handoff Context")
+	if uhcIdx == -1 {
+		t.Fatalf("expected Update Handoff Context section, got:\n%s", result)
 	}
-	if !strings.Contains(result, "history is not lost") {
-		t.Fatalf("expected Update Handoff Context to mention preserved history, got:\n%s", result)
+	if strings.Index(result[uhcIdx:], "Preserve its current content before replacing it so history is not lost.") == -1 {
+		t.Fatalf("expected canonical preserve instruction inside Update Handoff Context, got:\n%s", result)
+	}
+	if !strings.Contains(result, "## Prior History") {
+		t.Fatalf("expected Update Handoff Context to surface prior history, got:\n%s", result)
+	}
+	if !strings.Contains(result, "Earlier work.") {
+		t.Fatalf("expected prior handoff content to be rendered, got:\n%s", result)
 	}
 }
 
@@ -348,6 +358,22 @@ Earlier work.
 	}
 	if !strings.Contains(doc.History, "## Stage: plan-approved") {
 		t.Fatalf("expected History to contain preserved checkpoint, got %q", doc.History)
+	}
+}
+
+func TestParseHandoff_IgnoresHistoryNotesHeading(t *testing.T) {
+	content := `## Completed
+Done.
+
+## History Notes
+This is still body content.`
+
+	doc := ParseHandoff(content)
+	if doc.History != "" {
+		t.Fatalf("expected empty History when heading is not exact ## History, got %q", doc.History)
+	}
+	if !strings.Contains(doc.Body, "## History Notes") {
+		t.Fatalf("expected ## History Notes to remain in Body, got %q", doc.Body)
 	}
 }
 

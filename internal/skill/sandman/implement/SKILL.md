@@ -48,7 +48,7 @@ After the TDD plan is approved via subagent consensus:
 - Re-read `.sandman/rendered-prompt.md` and record `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
 - Set `## Last Skill` to `sandman-tdd`
 - Set `## Last Skill Status` to `complete — plan approved via subagent consensus`
-- Write the result to `.sandman/handoff.md` in the current worktree with the latest checkpoint at top and any previous handoff content under `## History` so history is preserved
+- Write `.sandman/handoff.md` on exit with the latest checkpoint at top and any previous handoff content under `## History`. Preserve its current content before replacing it so history is not lost.
 
 ### 4. Implement (TDD)
 
@@ -73,7 +73,7 @@ git commit -m "feat: <issue title>"
 - Re-read `.sandman/rendered-prompt.md` and record `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
 - Set `## Last Skill` to `sandman-tdd`
 - Set `## Last Skill Status` to `complete — implementation committed and tests pass`
-- Write the result to `.sandman/handoff.md` in the current worktree with the latest checkpoint at top and any previous handoff content under `## History` so history is preserved
+- Write `.sandman/handoff.md` on exit with the latest checkpoint at top and any previous handoff content under `## History`. Preserve its current content before replacing it so history is not lost.
 
 ### 7. Self-review
 
@@ -121,7 +121,7 @@ Capture the PR URL and number.
 - Set `## Source Prompt: .sandman/rendered-prompt.md` (fixed path, unchanged)
 - Set `## Last Skill` to `sandman-implement`
 - Set `## Last Skill Status` to `complete — PR created and pushed`
-- Write the result to `.sandman/handoff.md` in the current worktree with the latest checkpoint at top and any previous handoff content under `## History` so history is preserved
+- Write `.sandman/handoff.md` on exit with the latest checkpoint at top and any previous handoff content under `## History`. Preserve its current content before replacing it so history is not lost.
 
 ### 11. Delegate review
 
@@ -142,7 +142,7 @@ When the delegated review result is either PR approval or a hard blocker:
 - Set `## Last Skill` to `sandman-pr-review`
 - Set `## Last Skill Status` to `complete — PR approved and ready to merge` if the PR was approved, or `incomplete — hard blocker encountered` if a hard blocker was encountered
 - If the review returned a hard blocker, fill the `## Blockers` section with the blocker; otherwise leave `## Blockers` empty
-- Write the result to `.sandman/handoff.md` in the current worktree with the latest checkpoint at top and any previous handoff content under `## History` so history is preserved
+- Write `.sandman/handoff.md` on exit with the latest checkpoint at top and any previous handoff content under `## History`. Preserve its current content before replacing it so history is not lost.
 
 > **Hard rule**: If the PR was already merged (e.g. `sandman-pr-merge` already ran and succeeded), do NOT write a handoff document. Skip step 12 entirely. A post-merge handoff is misleading — it suggests work remains, but there is none. The orchestrator also enforces this by deleting `.sandman/handoff.md` from the worktree when the PR merge gate passes.
 

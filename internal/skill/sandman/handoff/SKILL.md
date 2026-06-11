@@ -43,7 +43,7 @@ Write `.sandman/handoff.md` in the current worktree before exiting.
 4. Note blockers. Before carrying forward any registered blocker, verify it hasn't been solved already — check recent git log, diff, open PRs, or issue status. Do not blindly copy blockers from previous handoffs.
 5. Capture key decisions.
 6. State one next step.
-7. Write the file to `.sandman/handoff.md` with the latest checkpoint at top and any older content under `## History` so history is preserved.
+7. Write `.sandman/handoff.md` on exit with the latest checkpoint at top and any previous handoff content under `## History`. Preserve its current content before replacing it so history is not lost.
 
 ## Stop conditions
 
