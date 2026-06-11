@@ -10,7 +10,6 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
-	"github.com/rafaelromao/sandman/internal/github"
 )
 
 func TestRequireReviewDaemon_BypassesWhenReviewCommandHasNoSandmanSubstring(t *testing.T) {
@@ -132,13 +131,7 @@ func TestRun_GuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testing.T)
 func TestRun_GuardBypassedWhenReviewCommandHasNoSandmanSubstring(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	cfg := &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}
-	gh := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Open A"},
-		},
-	}
 	deps := runGuardDeps(t, spy, cfg)
-	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)

@@ -93,11 +93,7 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 		return f.searchIssuesResult, f.searchIssuesError
 	}
 	if f.issues == nil {
-		// Default: an empty fake client returns a single open placeholder
-		// so tests that don't care about state filtering can still exercise
-		// unrelated code paths. Tests that care set f.searchIssuesResult
-		// or f.issues directly.
-		return []github.Issue{{Number: 1, State: "open"}}, nil
+		return nil, fmt.Errorf("fake: search not configured")
 	}
 	var results []github.Issue
 	for _, issue := range f.issues {
@@ -334,11 +330,6 @@ func TestFilterClosedIssues_FetchErrorIsSkipped(t *testing.T) {
 func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
-	deps.GitHubClient = &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Single Issue"},
-		},
-	}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1790,8 +1781,8 @@ func TestRun_RangeArgUsesCombinedQuery(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if gh.searchIssuesQuery != "" {
-		t.Errorf("expected no search query for bounded ranges, got %q", gh.searchIssuesQuery)
+	if gh.searchIssuesQuery != "is:open" {
+		t.Errorf("expected is:open search for bounded ranges, got %q", gh.searchIssuesQuery)
 	}
 	want := []int{42, 43, 44, 45}
 	if len(spy.req.Issues) != len(want) {
