@@ -10,13 +10,16 @@ type HandoffDoc struct {
 	LastSkill       string // sandman sub-skill the previous run was on
 	LastSkillStatus string // "complete" or "incomplete" with optional context after " — "
 	Body            string // the remaining content (Completed, Pending, Blockers, Key Decisions, Next Step)
+	History         string // preserved prior handoff content after ## History, if present
 }
 
 func ParseHandoff(content string) HandoffDoc {
 	lines := strings.Split(content, "\n")
 	var stage, sourcePrompt, lastSkill, lastSkillStatus string
 	var bodyLines []string
+	var historyLines []string
 	inHeader := true
+	inHistory := false
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -34,18 +37,32 @@ func ParseHandoff(content string) HandoffDoc {
 			case strings.HasPrefix(trimmed, "## Last Skill Status:"):
 				lastSkillStatus = strings.TrimSpace(strings.TrimPrefix(trimmed, "## Last Skill Status:"))
 				continue
+			case strings.HasPrefix(trimmed, "## History"):
+				inHeader = false
+				inHistory = true
+				continue
 			case strings.HasPrefix(trimmed, "## "):
 				inHeader = false
+				inHistory = false
 			case trimmed == "":
 				continue
 			default:
 				inHeader = false
+				inHistory = false
 			}
+		} else if strings.HasPrefix(trimmed, "## History") && !inHistory {
+			inHistory = true
+			continue
+		}
+		if inHistory {
+			historyLines = append(historyLines, line)
+			continue
 		}
 		bodyLines = append(bodyLines, line)
 	}
 
 	body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
+	history := strings.TrimSpace(strings.Join(historyLines, "\n"))
 
 	if sourcePrompt == "" {
 		sourcePrompt = ".sandman/rendered-prompt.md"
@@ -57,6 +74,7 @@ func ParseHandoff(content string) HandoffDoc {
 		LastSkill:       lastSkill,
 		LastSkillStatus: lastSkillStatus,
 		Body:            body,
+		History:         history,
 	}
 }
 
@@ -97,8 +115,7 @@ func BuildResumePrompt(doc HandoffDoc) string {
 	}
 
 	b.WriteString("## Update Handoff Context\n")
-	b.WriteString("Overwrite `.sandman/handoff.md` on exit with:\n\n")
-	b.WriteString("If `.sandman/handoff.md` already exists, preserve its current content in the new handoff before replacing it so history is preserved.\n\n")
+	b.WriteString("Write `.sandman/handoff.md` on exit with the latest checkpoint at top and any previous handoff content under `## History`. Preserve its current content before replacing it so history is not lost.\n\n")
 	if doc.Stage != "" || doc.LastSkill != "" || doc.LastSkillStatus != "" {
 		b.WriteString("## Stage: ")
 		b.WriteString(doc.Stage)
@@ -124,6 +141,8 @@ func BuildResumePrompt(doc HandoffDoc) string {
 	b.WriteString("## Next Step\n")
 	b.WriteString(extractNextStep(doc.Body))
 	b.WriteString("\n")
+	b.WriteString("\n## History\n")
+	b.WriteString("(preserve previous handoff content here, if any)\n")
 
 	return b.String()
 }

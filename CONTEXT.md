@@ -184,7 +184,7 @@ An AgentRun or Batch request mode that skips prompt template rendering and write
 _Avoid_: Replay mode.
 
 **Handoff**:
-The persisted state written by `sandman-handoff` to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, key decisions, the originating rendered prompt (`## Source Prompt: .sandman/rendered-prompt.md`), the last executed sub-skill (`## Last Skill`), and its completion status (`## Last Skill Status`) so that a `Continue` or retry can resume from the right checkpoint. (ADR-0023). Removed by the orchestrator once the PR is merged.
+The persisted state written by `sandman-handoff` to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, key decisions, the originating rendered prompt (`## Source Prompt: .sandman/rendered-prompt.md`), the last executed sub-skill (`## Last Skill`), its completion status (`## Last Skill Status`), and an optional bounded `## History` tail that preserves older checkpoints without changing the active top-of-file checkpoint. (ADR-0023). Removed by the orchestrator once the PR is merged.
 _Avoid_: Continuation context (legacy filename), continuation file.
 
 ## Relationships

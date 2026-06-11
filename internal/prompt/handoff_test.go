@@ -249,6 +249,12 @@ func TestBuildResumePrompt_UpdateHandoffContext(t *testing.T) {
 	if !strings.Contains(result, "## Next Step") {
 		t.Fatalf("expected ## Next Step in Update Handoff Context, got:\n%s", result)
 	}
+	if !strings.Contains(result, "## History") {
+		t.Fatalf("expected ## History in Update Handoff Context, got:\n%s", result)
+	}
+	if !strings.Contains(result, "Preserve its current content") {
+		t.Fatalf("expected canonical preserve instruction, got:\n%s", result)
+	}
 }
 
 func TestBuildResumePrompt_UpdateHandoffContextTailIncludesHandoffMd(t *testing.T) {
@@ -264,10 +270,10 @@ func TestBuildResumePrompt_UpdateHandoffContextPreservesHistory(t *testing.T) {
 	doc := HandoffDoc{Body: "## Completed\nDone."}
 	result := BuildResumePrompt(doc)
 
-	if !strings.Contains(result, "preserve its current content") {
+	if !strings.Contains(result, "Preserve its current content") {
 		t.Fatalf("expected Update Handoff Context to preserve existing handoff content, got:\n%s", result)
 	}
-	if !strings.Contains(result, "history is preserved") {
+	if !strings.Contains(result, "history is not lost") {
 		t.Fatalf("expected Update Handoff Context to mention preserved history, got:\n%s", result)
 	}
 }
@@ -295,6 +301,53 @@ Done.
 	doc := ParseHandoff(content)
 	if doc.SourcePrompt != ".sandman/rendered-prompt.md" {
 		t.Fatalf("expected default SourcePrompt (after first body heading), got %q", doc.SourcePrompt)
+	}
+}
+
+func TestParseHandoff_SeparatesHistoryFromLatestCheckpoint(t *testing.T) {
+	content := `## Stage: pr-created
+## Source Prompt: .sandman/rendered-prompt.md
+## Last Skill: sandman-handoff
+## Last Skill Status: complete
+## Completed
+Latest work.
+
+## Pending
+None.
+
+## Blockers
+None.
+
+## Key Decisions
+Keep latest checkpoint authoritative.
+
+## Next Step
+Ship it.
+
+## History
+## Stage: plan-approved
+## Source Prompt: .sandman/rendered-prompt.md
+## Last Skill: sandman-tdd
+## Last Skill Status: complete
+## Completed
+Earlier work.
+`
+
+	doc := ParseHandoff(content)
+	if doc.Stage != "pr-created" {
+		t.Fatalf("expected latest Stage=pr-created, got %q", doc.Stage)
+	}
+	if doc.LastSkill != "sandman-handoff" {
+		t.Fatalf("expected latest LastSkill=sandman-handoff, got %q", doc.LastSkill)
+	}
+	if !strings.Contains(doc.Body, "Latest work.") {
+		t.Fatalf("expected Body to contain latest checkpoint content, got %q", doc.Body)
+	}
+	if strings.Contains(doc.Body, "Earlier work.") {
+		t.Fatalf("expected Body to exclude history content, got %q", doc.Body)
+	}
+	if !strings.Contains(doc.History, "## Stage: plan-approved") {
+		t.Fatalf("expected History to contain preserved checkpoint, got %q", doc.History)
 	}
 }
 

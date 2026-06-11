@@ -16,7 +16,7 @@ Second, the handoff file tracked the workflow stage (`plan-approved`, `implement
 
 ## Decision
 
-Add three new structured fields to `.sandman/handoff.md`, layered on top of the four existing stage fields from ADR-0022:
+Add three new structured fields to `.sandman/handoff.md`, layered on top of the four existing stage fields from ADR-0022, and reserve an explicit `## History` tail for preserved prior handoff content:
 
 1. **`## Source Prompt: .sandman/rendered-prompt.md`** — placed immediately after `## Stage:` (the second heading in the file). This is a fixed-path pointer to the rendered prompt file in the same `.sandman/` directory. The resume prompt references this file by path without inlining its content; the agent can read the file if it needs the original task description. The field is machine-readable (the path is always `.sandman/rendered-prompt.md` relative to the worktree root) and human-readable (the heading and path together make provenance obvious).
 
@@ -26,6 +26,8 @@ Add three new structured fields to `.sandman/handoff.md`, layered on top of the 
 
 The resume prompt logic (`sandman continue` and the orchestrator's retry path) uses the `## Source Prompt` pointer to reference `.sandman/rendered-prompt.md` by path in the resume prompt. It does not inline the rendered prompt content — the agent reads the file on demand. The `## Last Skill` and `## Last Skill Status` fields are surfaced in the resume prompt as-is, so the agent can decide whether to reload the previous sub-skill.
 
+The `## History` section, when present, lives after the current checkpoint body. Resume parsing treats the latest top-of-file checkpoint as authoritative and excludes the historical tail from the active body so repeated resumes do not grow unboundedly.
+
 ## Consequences
 
 ### Positive
@@ -34,6 +36,7 @@ The resume prompt logic (`sandman continue` and the orchestrator's retry path) u
 - The `## Last Skill` and `## Last Skill Status` fields let a resumed agent skip directly to the right sub-skill without recomputing context from the stage name alone.
 - Not inlining the rendered prompt content keeps the resume prompt compact. The agent loads the rendered prompt on demand via a file read, which is a trivial operation.
 - The free-form `## Last Skill` field requires no code change when a new sub-skill name is introduced — only the skill that writes the handoff needs to know its own name.
+- The bounded `## History` tail keeps older checkpoints available without letting the active body grow on every resume.
 
 ### Negative
 
