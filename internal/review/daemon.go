@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
@@ -199,18 +200,37 @@ func (d *Daemon) tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list open PRs: %w", err)
 	}
-	for _, pr := range prs {
-		if err := d.processPR(ctx, pr.Number); err != nil {
-			d.logf("process PR #%d: %v", pr.Number, err)
-			continue
-		}
+	limit := 1
+	if d.Config != nil {
+		limit = d.Config.EffectiveReviewParallel()
 	}
+	if limit < 1 {
+		limit = 1
+	}
+
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for _, pr := range prs {
+		pr := pr
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := d.processPR(ctx, pr.Number); err != nil {
+				d.logf("process PR #%d: %v", pr.Number, err)
+			}
+		}()
+	}
+	wg.Wait()
 	return nil
 }
 
 // processPR scans one PR's comments and launches a review agent for the
-// newest unseen /sandman review trigger. Stale unseen triggers are marked
-// as seen and skipped. Errors are logged but not returned.
+// newest unseen /sandman review trigger. A per-PR ClaimStore provides
+// cross-process safety; SeenCommentsStore.TryClaim prevents intra-process
+// races. Stale unseen triggers are marked as seen and skipped. Errors are
+// logged but not returned.
 func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	comments, err := d.GitHub.ListPRComments(prNumber)
 	if err != nil {
@@ -233,6 +253,12 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		return fmt.Errorf("open seen store: %w", err)
 	}
 
+	cs, err := NewClaimStore(prDir, time.Hour)
+	if err != nil {
+		return fmt.Errorf("create claim store: %w", err)
+	}
+	defer cs.Close()
+
 	type unseenTrigger struct {
 		comment github.PRComment
 		focus   string
@@ -243,7 +269,22 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		if !ok {
 			continue
 		}
-		if store.Has(comment.ID) {
+		if !store.TryClaim(comment.ID) {
+			continue
+		}
+		claimed, err := cs.TryClaim(comment.ID)
+		if err != nil {
+			d.logf("claim error for comment %s: %v", comment.ID, err)
+			if err := store.Mark(comment.ID); err != nil {
+				d.logf("mark claim-failed comment %s seen: %v", comment.ID, err)
+			}
+			continue
+		}
+		if !claimed {
+			d.logf("comment %s already claimed, skipping", comment.ID)
+			if err := store.Mark(comment.ID); err != nil {
+				d.logf("mark already-claimed comment %s seen: %v", comment.ID, err)
+			}
 			continue
 		}
 		triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
@@ -264,6 +305,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			if err := store.Mark(t.comment.ID); err != nil {
 				d.logf("mark stale comment %s seen: %v", t.comment.ID, err)
 			}
+			cs.Release(t.comment.ID)
 			d.logf("skipping stale trigger comment %s (newer %s exists)", t.comment.ID, newest.comment.ID)
 		}
 	}
@@ -286,6 +328,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	if err := store.Mark(comment.ID); err != nil {
 		d.logf("mark comment %s seen: %v", comment.ID, err)
 	}
+	cs.Release(comment.ID)
 	return nil
 }
 
