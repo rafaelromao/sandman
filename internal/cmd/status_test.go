@@ -82,6 +82,32 @@ func TestStatus_ShowsPromptOnlyRun(t *testing.T) {
 	}
 }
 
+func TestStatus_ShowsReviewRunWithPRID(t *testing.T) {
+	log := &fakeEventLog{
+		events: []events.Event{
+			{Type: "run.started", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewStatusCmd(log)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "PR42") {
+		t.Fatalf("expected review run to show PR42, got:\n%s", out)
+	}
+	if strings.Contains(out, "prompt-only") {
+		t.Fatalf("expected review run NOT to show prompt-only, got:\n%s", out)
+	}
+}
+
 func TestStatus_ExcludesBlockedRuns(t *testing.T) {
 	log := &fakeEventLog{
 		events: []events.Event{
