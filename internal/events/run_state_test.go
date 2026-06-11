@@ -147,8 +147,8 @@ func TestProjectRunStates_ReviewRunLabel(t *testing.T) {
 	finishedAt := startedAt.Add(2 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, IssueRef: nil, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Issue: 0, IssueRef: nil, Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42"}},
 	})
 
 	if len(runs) != 1 {
