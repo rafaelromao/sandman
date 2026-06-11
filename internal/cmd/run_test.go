@@ -658,7 +658,7 @@ func TestRun_LoadConfigError(t *testing.T) {
 	}
 }
 
-func TestRun_ForceFlagPassedToBatchRunner(t *testing.T) {
+func TestRun_OverrideFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
 
@@ -666,7 +666,7 @@ func TestRun_ForceFlagPassedToBatchRunner(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--force", "42"})
+	cmd.SetArgs([]string{"--override", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -674,11 +674,11 @@ func TestRun_ForceFlagPassedToBatchRunner(t *testing.T) {
 	}
 
 	if !spy.req.Force {
-		t.Error("expected Force=true when --force flag is passed")
+		t.Error("expected Force=true when --override flag is passed")
 	}
 }
 
-func TestRun_ForceFalseByDefault(t *testing.T) {
+func TestRun_OverrideFalseByDefault(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
 
@@ -694,7 +694,17 @@ func TestRun_ForceFalseByDefault(t *testing.T) {
 	}
 
 	if spy.req.Force {
-		t.Error("expected Force=false when --force flag is not passed")
+		t.Error("expected Force=false when --override flag is not passed")
+	}
+}
+
+func TestRun_NoForceAlias(t *testing.T) {
+	cmd := NewRunCmd(newRunDeps(&spyBatchRunner{result: &batch.Result{}}))
+	if cmd.Flags().Lookup("force") != nil {
+		t.Fatal("expected --force flag to be removed")
+	}
+	if cmd.Flags().Lookup("override") == nil {
+		t.Fatal("expected --override flag to exist")
 	}
 }
 

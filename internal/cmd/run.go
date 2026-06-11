@@ -167,7 +167,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			query, _ := cmd.Flags().GetString("query")
 
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
-			forceFlag, _ := cmd.Flags().GetBool("force")
+			overrideFlag, _ := cmd.Flags().GetBool("override")
 
 			ralphFlag := cmd.Flags().Lookup("ralph")
 			ralphProvided := ralphFlag != nil && ralphFlag.Changed
@@ -448,7 +448,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
-				Force:                      forceFlag,
+				Force:                      overrideFlag,
 				Issues:                     resolvedBatch.Issues,
 				Dependencies:               resolvedBatch.Deps,
 				Blocked:                    resolvedBatch.Blocked,
@@ -522,7 +522,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
-	cmd.Flags().Bool("force", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
+	cmd.Flags().Bool("override", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
 
 	return cmd
 }

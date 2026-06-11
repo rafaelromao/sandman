@@ -639,13 +639,13 @@ func TestRun_WorktreeSandboxForceFlagClearsArtifacts(t *testing.T) {
 	verifyPath(worktreePath, true)
 	verifyPath(logPath, true)
 
-	// Second run with --force clears old artifacts and creates new ones
-	out, err = executeRunCommand(t, deps, "--sandbox", "worktree", "--force", "42")
+	// Second run with --override clears old artifacts and creates new ones
+	out, err = executeRunCommand(t, deps, "--sandbox", "worktree", "--override", "42")
 	if err != nil {
-		t.Fatalf("force run unexpected error: %v\noutput:\n%s", err, out)
+		t.Fatalf("override run unexpected error: %v\noutput:\n%s", err, out)
 	}
 	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
-		t.Fatalf("force run expected success, got:\n%s", out)
+		t.Fatalf("override run expected success, got:\n%s", out)
 	}
 	verifyPath(worktreePath, true)
 	verifyPath(logPath, true)

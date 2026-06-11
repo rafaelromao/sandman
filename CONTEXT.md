@@ -143,7 +143,7 @@ A sandbox adapter that uses only a git worktree for isolation, with no container
 _Avoid_: Local sandbox.
 
 **Stranded worktree**:
-A sandman-managed git worktree whose HEAD points to a different branch than its directory name expects. Stranded worktrees can result from interrupted runs. `sandman run --force` reconciles them automatically; `scripts/reconcile-stranded-worktrees.sh` provides a standalone detection tool that prints remediation commands for the operator to run.
+A sandman-managed git worktree whose HEAD points to a different branch than its directory name expects. Stranded worktrees can result from interrupted runs. `sandman run --override` reconciles them automatically; `scripts/reconcile-stranded-worktrees.sh` provides a standalone detection tool that prints remediation commands for the operator to run.
 _Avoid_: Orphaned worktree, lost worktree.
 _See_: Branch, Worktree.
 

@@ -58,7 +58,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = unlimited, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | `0` | Number of times to retry a failed run; `--ralph` sets this to `3` silently |
-| `--force` | `false` | Clear artifacts before running (deletes prior worktree, logs, and events; force-checkout worktree to expected branch on mismatch or detached HEAD) |
+| `--override` | `false` | Clear artifacts before running (deletes prior worktree, logs, and events; force-checkout worktree to expected branch on mismatch or detached HEAD) |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
@@ -263,6 +263,6 @@ The script is non-destructive: it never checks out branches or removes worktrees
 
 > **Warning:** The printed `git checkout -f` command will discard uncommitted changes in the worktree. Commit or stash any worktree-local changes before running the remediation command.
 
-> **Note:** The script only detects stranded worktrees for issue-driven branches (`sandman/<number>-<slug>`). Prompt-only worktrees (timestamp-based branch names) are not checked, as their directory name does not map to a predictable expected branch. When a prompt-only branch's slug starts with a digit (e.g. `sandman/4-eyes-1700000000`), the script may flag it as stranded and report the branch as missing — this is a false positive. `sandman run --force` reconciles all worktrees regardless of naming pattern.
+> **Note:** The script only detects stranded worktrees for issue-driven branches (`sandman/<number>-<slug>`). Prompt-only worktrees (timestamp-based branch names) are not checked, as their directory name does not map to a predictable expected branch. When a prompt-only branch's slug starts with a digit (e.g. `sandman/4-eyes-1700000000`), the script may flag it as stranded and report the branch as missing — this is a false positive. `sandman run --override` reconciles all worktrees regardless of naming pattern.
 
-> **Note:** The `--force` flag on `sandman run` performs the same reconciliation automatically at the start of a new run. The standalone script is useful for inspecting or fixing worktrees outside of a run.
+> **Note:** The `--override` flag on `sandman run` performs the same reconciliation automatically at the start of a new run. The standalone script is useful for inspecting or fixing worktrees outside of a run.

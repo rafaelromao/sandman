@@ -64,7 +64,7 @@ func (s *WorktreeSandbox) Start() error {
 		currentRef, err := currentBranchRef(s.workDir)
 		if err != nil {
 			if !s.force {
-				return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --force to reconcile", s.workDir, err)
+				return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --override to reconcile", s.workDir, err)
 			}
 			if !BranchExists(s.repoPath, s.branch) {
 				return fmt.Errorf("cannot force-reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
@@ -80,7 +80,7 @@ func (s *WorktreeSandbox) Start() error {
 			return s.configureGitIdentity()
 		}
 		if !s.force {
-			return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --force to reconcile",
+			return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --override to reconcile",
 				s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
 		}
 		if !BranchExists(s.repoPath, s.branch) {
