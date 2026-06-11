@@ -98,6 +98,7 @@ func BuildResumePrompt(doc HandoffDoc) string {
 
 	b.WriteString("## Update Handoff Context\n")
 	b.WriteString("Overwrite `.sandman/handoff.md` on exit with:\n\n")
+	b.WriteString("If `.sandman/handoff.md` already exists, preserve its current content in the new handoff before replacing it so history is preserved.\n\n")
 	if doc.Stage != "" || doc.LastSkill != "" || doc.LastSkillStatus != "" {
 		b.WriteString("## Stage: ")
 		b.WriteString(doc.Stage)

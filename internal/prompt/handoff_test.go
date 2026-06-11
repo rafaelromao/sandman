@@ -260,6 +260,18 @@ func TestBuildResumePrompt_UpdateHandoffContextTailIncludesHandoffMd(t *testing.
 	}
 }
 
+func TestBuildResumePrompt_UpdateHandoffContextPreservesHistory(t *testing.T) {
+	doc := HandoffDoc{Body: "## Completed\nDone."}
+	result := BuildResumePrompt(doc)
+
+	if !strings.Contains(result, "preserve its current content") {
+		t.Fatalf("expected Update Handoff Context to preserve existing handoff content, got:\n%s", result)
+	}
+	if !strings.Contains(result, "history is preserved") {
+		t.Fatalf("expected Update Handoff Context to mention preserved history, got:\n%s", result)
+	}
+}
+
 func TestParseHandoff_StageAfterBody(t *testing.T) {
 	content := `## Completed
 Some work.
