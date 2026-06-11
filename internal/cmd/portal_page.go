@@ -59,7 +59,7 @@ func buildPortalPageData(repoRoot string, launchData portalLaunchFormData) (*por
 		RunsPath:              "/api/runs",
 		InstancesPath:         "/api/instances",
 		RefreshPath:           "/api/runs",
-		PortalTitle:           "Sleep while your agents work",
+		PortalTitle:           "Sleep while your agents code",
 		PortalSubtitle:        "AFK coding agents orchestration in isolated sandboxes.",
 		PortalStateStorageKey: fmt.Sprintf("sandman.portal.view-state.v1:%s", repoRoot),
 		LaunchData:            launchData,

@@ -415,7 +415,7 @@
     .masthead-brand {
       display: inline-flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
       margin-bottom: 10px;
       color: var(--text);
     }
@@ -425,14 +425,20 @@
       flex: 0 0 auto;
     }
     .masthead-brand-text {
-      display: grid;
-      gap: 1px;
+      display: inline-flex;
+      align-items: baseline;
+      gap: 10px;
       line-height: 1.1;
     }
     .masthead-brand-text strong {
       font-size: 14px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
+    }
+    .masthead-tagline {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 500;
     }
     .settings-wrap {
       display: flex;
@@ -454,7 +460,6 @@
     .meta-line {
       margin-top: 10px;
       display: grid;
-      grid-auto-flow: column;
       grid-template-columns: auto 1fr;
       gap: 4px 10px;
       align-items: baseline;
@@ -499,7 +504,7 @@
     .subtitle {
       margin: 10px 0 0;
       max-width: 68ch;
-      color: var(--muted);
+      color: var(--text);
     }
     .meta {
       display: grid;
@@ -822,12 +827,9 @@
       gap: 0;
       align-content: start;
       margin: 0 16px 16px;
-      border-radius: 14px;
-      overflow: auto;
     }
     .tab-events .event-row {
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--border);
+      padding: 12px 14px 0;
     }
     .tab-events .event-row:last-child { border-bottom: 0; }
     .events-list {
@@ -1491,14 +1493,14 @@
           </svg>
           <div class="masthead-brand-text">
             <strong>Sandman</strong>
+            <span class="masthead-tagline">{{.PortalTitle}}</span>
           </div>
         </div>
-        <h1>{{.PortalTitle}}</h1>
         <p class="subtitle">{{.PortalSubtitle}}</p>
         <div class="meta-line">
-          <span>Repo</span>
+          <span class="meta-label">Repo</span>
           <code>{{.RepoRoot}}</code>
-          <span>Updated</span>
+          <span class="meta-label">Updated</span>
           <strong id="last-updated">Waiting for first refresh</strong>
         </div>
       </div>
@@ -2647,7 +2649,7 @@
 
     function updateLastUpdated() {
       const now = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date());
-      lastUpdated.textContent = 'Updated ' + now;
+      lastUpdated.textContent = now;
     }
 
     async function refresh() {
