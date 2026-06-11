@@ -14,20 +14,16 @@
         ['mocha', 'catppuccin-mocha'],
       ]);
       const storageKey = 'sandman.portal.theme';
-      let theme = 'catppuccin-frappe';
+      const defaultTheme = 'sandman';
+      let theme = defaultTheme;
       try {
         const saved = localStorage.getItem(storageKey);
         if (themes.has(saved)) {
           theme = saved;
         } else if (aliases.has(saved)) {
           theme = aliases.get(saved);
-        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-          theme = 'catppuccin-mocha';
         }
       } catch (err) {
-        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-          theme = 'catppuccin-mocha';
-        }
       }
       document.documentElement.dataset.theme = theme;
     })();
@@ -38,21 +34,40 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: oklch(0.33 0.03 275);
-      --surface: oklch(0.30 0.03 276);
-      --surface-2: oklch(0.39 0.03 276);
-      --surface-3: oklch(0.46 0.03 273);
-      --border: oklch(0.52 0.03 274);
-      --text: oklch(0.86 0.05 273);
-      --muted: oklch(0.75 0.04 274);
-      --accent: oklch(0.76 0.11 304);
+      --bg: oklch(0.17 0.03 260);
+      --surface: oklch(0.21 0.03 260);
+      --surface-2: oklch(0.25 0.03 260);
+      --surface-3: oklch(0.30 0.03 260);
+      --border: oklch(0.36 0.03 260);
+      --text: oklch(0.94 0.02 94);
+      --muted: oklch(0.72 0.03 94);
+      --accent: oklch(0.79 0.12 82);
       --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.18 0.03 275);
-      --success: oklch(0.81 0.11 133);
-      --danger: oklch(0.72 0.12 19);
-      --warning: oklch(0.84 0.08 83);
-      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
-      --page-top: oklch(0.15 0.012 245);
+      --accent-ink: oklch(0.17 0.03 260);
+      --success: oklch(0.79 0.11 145);
+      --danger: oklch(0.71 0.13 28);
+      --warning: oklch(0.86 0.08 78);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.28);
+      --page-top: oklch(0.14 0.03 260);
+      --page-bottom: var(--bg);
+    }
+    html[data-theme="sandman"] {
+      color-scheme: dark;
+      --bg: oklch(0.17 0.03 260);
+      --surface: oklch(0.21 0.03 260);
+      --surface-2: oklch(0.25 0.03 260);
+      --surface-3: oklch(0.30 0.03 260);
+      --border: oklch(0.36 0.03 260);
+      --text: oklch(0.94 0.02 94);
+      --muted: oklch(0.72 0.03 94);
+      --accent: oklch(0.79 0.12 82);
+      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      --accent-ink: oklch(0.17 0.03 260);
+      --success: oklch(0.79 0.11 145);
+      --danger: oklch(0.71 0.13 28);
+      --warning: oklch(0.86 0.08 78);
+      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.28);
+      --page-top: oklch(0.14 0.03 260);
       --page-bottom: var(--bg);
     }
     html[data-theme="catppuccin-latte"] {
@@ -347,7 +362,7 @@
       font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at 18% 0%, color-mix(in oklch, var(--accent) 14%, transparent), transparent 36%),
+        radial-gradient(circle at 18% 0%, color-mix(in oklch, var(--accent) 16%, transparent), transparent 34%),
         linear-gradient(180deg, var(--page-top), var(--page-bottom));
     }
     body.commands-open {
@@ -367,6 +382,7 @@
       flex-direction: column;
     }
     .masthead {
+      position: relative;
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       gap: 18px;
@@ -378,9 +394,50 @@
       border-radius: 22px;
       background: linear-gradient(180deg, color-mix(in oklch, var(--surface) 92%, var(--text) 8%), var(--surface));
       box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .masthead::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, transparent 0 30%, color-mix(in oklch, var(--accent) 20%, transparent) 30% 30.5%, transparent 30.5% 100%),
+        radial-gradient(circle at 78% 28%, color-mix(in oklch, var(--accent) 18%, transparent), transparent 22%),
+        radial-gradient(circle at 86% 42%, color-mix(in oklch, var(--accent) 10%, transparent), transparent 18%),
+        linear-gradient(180deg, color-mix(in oklch, var(--bg) 10%, transparent), transparent 30%);
+      opacity: 0.85;
+      pointer-events: none;
     }
     .masthead-copy {
       min-width: 0;
+      position: relative;
+      z-index: 1;
+    }
+    .masthead-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    .masthead-brand svg {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 auto;
+    }
+    .masthead-brand-text {
+      display: grid;
+      gap: 1px;
+      line-height: 1.1;
+    }
+    .masthead-brand-text strong {
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .masthead-brand-text span {
+      color: var(--muted);
+      font-size: 11px;
     }
     .settings-wrap {
       display: flex;
@@ -388,11 +445,16 @@
       justify-content: flex-end;
       align-items: center;
       gap: 8px;
+      position: relative;
+      z-index: 1;
     }
     .settings-toggle {
       align-self: start;
       min-width: 0;
       padding-inline: 14px;
+    }
+    .brand-mark {
+      display: block;
     }
     .meta-line {
       margin-top: 10px;
@@ -1410,6 +1472,33 @@
   <main>
     <header class="masthead">
       <div class="masthead-copy">
+        <div class="masthead-brand" aria-hidden="true">
+          <svg class="brand-mark" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="color: var(--accent)">
+            <g fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M 245 14 L 115 14 A 91 91 0 0 0 24 105 A 91 91 0 0 0 115 196 L 205 196 A 19 19 0 0 1 224 215 A 19 19 0 0 1 205 234 L 75 234"/>
+              <path d="M 245 32 L 115 32 A 73 73 0 0 0 42 105 A 73 73 0 0 0 115 178 L 205 178 A 37 37 0 0 1 242 215 A 37 37 0 0 1 205 252 L 75 252"/>
+              <path d="M 245 50 L 115 50 A 55 55 0 0 0 60 105 A 55 55 0 0 0 115 160 L 205 160 A 55 55 0 0 1 260 215 A 55 55 0 0 1 205 270 L 75 270"/>
+              <path d="M 245 68 L 115 68 A 37 37 0 0 0 78 105 A 37 37 0 0 0 115 142 L 205 142 A 73 73 0 0 1 278 215 A 73 73 0 0 1 205 288 L 75 288"/>
+              <path d="M 245 86 L 115 86 A 19 19 0 0 0 96 105 A 19 19 0 0 0 115 124 L 205 124 A 91 91 0 0 1 296 215 A 91 91 0 0 1 205 306 L 75 306"/>
+            </g>
+            <g>
+              <circle cx="264" cy="14" r="3.2" fill="currentColor" opacity="0.65"/>
+              <circle cx="56" cy="234" r="3.2" fill="currentColor" opacity="0.65"/>
+              <circle cx="264" cy="32" r="3.2" fill="currentColor" opacity="0.65"/>
+              <circle cx="56" cy="252" r="3.2" fill="currentColor" opacity="0.65"/>
+              <circle cx="264" cy="50" r="3.2" fill="currentColor" opacity="0.65"/>
+              <circle cx="56" cy="270" r="3.2" fill="currentColor" opacity="0.65"/>
+              <circle cx="264" cy="68" r="3.2" fill="currentColor" opacity="0.65"/>
+              <circle cx="56" cy="288" r="3.2" fill="currentColor" opacity="0.65"/>
+              <circle cx="264" cy="86" r="3.2" fill="currentColor" opacity="0.65"/>
+              <circle cx="56" cy="306" r="3.2" fill="currentColor" opacity="0.65"/>
+            </g>
+          </svg>
+          <div class="masthead-brand-text">
+            <strong>Sandman</strong>
+            <span>Quiet orchestration</span>
+          </div>
+        </div>
         <p class="eyebrow">Local portal</p>
         <h1>{{.PortalTitle}}</h1>
         <p class="subtitle">{{.PortalSubtitle}}</p>
@@ -1627,7 +1716,7 @@
     let settingsPanelOpen = false;
 
     function systemTheme() {
-      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'catppuccin-mocha' : 'catppuccin-frappe';
+      return 'sandman';
     }
 
     function normalizeTheme(value) {
@@ -1638,7 +1727,7 @@
         ['mocha', 'catppuccin-mocha'],
       ]);
       if (supportedThemes.has(value)) return value;
-      return aliases.get(value) || 'catppuccin-frappe';
+      return aliases.get(value) || 'sandman';
     }
 
     function readStoredTheme() {
@@ -1665,7 +1754,7 @@
 
     applyTheme(document.documentElement.dataset.theme || readStoredTheme() || systemTheme(), false);
     if (themePicker) {
-      themePicker.value = document.documentElement.dataset.theme || 'catppuccin-frappe';
+      themePicker.value = document.documentElement.dataset.theme || 'sandman';
       themePicker.addEventListener('change', () => applyTheme(themePicker.value, true));
     }
 
