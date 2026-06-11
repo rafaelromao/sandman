@@ -89,6 +89,8 @@ type AgentRunResult struct {
 	RetriesTotal int
 	Branch       string
 	WorktreePath string
+	Review       bool
+	RunID        string
 }
 
 // Runnable represents a single agent execution that can be run.

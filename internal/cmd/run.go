@@ -954,11 +954,14 @@ func printSummary(cmd *cobra.Command, result *batch.Result) {
 		if run.RetriesTotal > 1 {
 			status = fmt.Sprintf("%s (%d retries)", status, run.RetriesTotal-1)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s\n", formatIssueLabel(run.IssueNumber, run.Issue), status, run.Branch)
+		fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s\n", formatIssueLabel(run.IssueNumber, run.Issue, run.Review, run.RunID), status, run.Branch)
 	}
 }
 
-func formatIssueLabel(issueNumber int, issue *int) string {
+func formatIssueLabel(issueNumber int, issue *int, review bool, runID string) string {
+	if review && runID != "" {
+		return runID
+	}
 	if issue == nil && issueNumber == 0 {
 		return "prompt-only"
 	}

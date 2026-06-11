@@ -1790,14 +1790,14 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	branch := s.branches[0]
 	if err := o.syncBaseBranch(".", s.baseBranch); err != nil {
 		fmt.Fprintf(o.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
-		return AgentRunResult{Status: "failure", Branch: branch}, false
+		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 	}
 	var container sandbox.Container
 	if s.containerAlloc != nil {
 		lease, err := s.containerAlloc.Acquire()
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: acquire container for prompt-only run: %v\n", err)
-			return AgentRunResult{Status: "failure", Branch: branch}, false
+			return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 		}
 		container = lease.container
 		defer lease.Release()
@@ -1809,7 +1809,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 	if err := wt.Start(); err != nil {
 		fmt.Fprintf(o.errorLog, "error: start sandbox for prompt-only run: %v\n", err)
-		return AgentRunResult{Status: "failure", Branch: branch}, false
+		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 	}
 
 	activeRuns := map[int]sandbox.Sandbox{0: wt}
@@ -1875,7 +1875,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		if attempt > 0 {
 			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
 				fmt.Fprintf(o.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
-				return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt}
+				return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
 			}
 			if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
 				if o.errorLog != nil {
@@ -1889,6 +1889,8 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		}
 		return s.renderCfg, nil
 	})
+	result.Review = s.review
+	result.RunID = s.runID
 	if !started {
 		return result, false
 	}
