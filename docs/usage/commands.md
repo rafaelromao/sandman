@@ -59,6 +59,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | `0` | Number of times to retry a failed run; `--ralph` sets this to `3` silently |
 | `--override` | `false` | Clear artifacts before running (deletes prior worktree, logs, and events; force-checkout worktree to expected branch on mismatch or detached HEAD) |
+| `--continue` | `false` | Accepted placeholder for future continuation behavior; no-op for now |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
@@ -262,6 +263,8 @@ Worktree /path/.sandman/worktrees/sandman/724-foo is on refs/heads/main, expecte
 The script is non-destructive: it never checks out branches or removes worktrees automatically. It exits 0 on success, including when no stranded worktrees are found.
 
 > **Warning:** The printed `git checkout -f` command will discard uncommitted changes in the worktree. Commit or stash any worktree-local changes before running the remediation command.
+
+> **Note:** `sandman run --continue` is accepted for parsing now, but it is a no-op until continuation behavior lands. It is mutually exclusive with `--override`.
 
 > **Note:** The script only detects stranded worktrees for issue-driven branches (`sandman/<number>-<slug>`). Prompt-only worktrees (timestamp-based branch names) are not checked, as their directory name does not map to a predictable expected branch. When a prompt-only branch's slug starts with a digit (e.g. `sandman/4-eyes-1700000000`), the script may flag it as stranded and report the branch as missing — this is a false positive. `sandman run --override` reconciles stranded worktrees before a run starts, regardless of naming pattern.
 
