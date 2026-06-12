@@ -609,9 +609,12 @@ func TestRun_WorktreeSandboxOverrideFlagClearsArtifacts(t *testing.T) {
 	t.Chdir(dir)
 	_ = initRunIntegrationRepoWithRemote(t, dir)
 
-	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
-		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-	}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+		prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug"}},
+	}
 	deps := newRunIntegrationDeps(`printf '%s\n' "agent stdout"`, gh)
 
 	// First run creates artifacts
@@ -1466,9 +1469,12 @@ func podmanGitIdentityDeps(t *testing.T, dir, remoteDir, dotGitConfig, xdgGitCon
 		t.Fatalf("warm podman image for test home: %v: %s", err, out)
 	}
 
-	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
-		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-	}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+		prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug"}},
+	}
 
 	return newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "podman", config.GitConfig{BaseBranch: "main"}, gh)
 }
@@ -1617,9 +1623,12 @@ func TestRun_WorktreeSandboxUsesHostGitIdentityWithoutMutatingWorktreeConfig(t *
 	git commit -m "test commit by host identity"
 	git log --format="%an <%ae>" -1
 	`
-	deps := newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "worktree", config.GitConfig{BaseBranch: "main"}, &fakeGitHubClient{issues: map[int]*github.Issue{
-		42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
-	}})
+	deps := newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "worktree", config.GitConfig{BaseBranch: "main"}, &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+		prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug"}},
+	})
 
 	out, err := executeRunCommand(t, deps, "--sandbox", "worktree", "42")
 	if err != nil {

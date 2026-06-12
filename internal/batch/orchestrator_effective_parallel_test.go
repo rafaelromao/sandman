@@ -128,6 +128,12 @@ func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 			3: {Number: 3, Title: "Three"},
 			4: {Number: 4, Title: "Four"},
 		},
+		prs: map[string]*github.PR{
+			"sandman/1-one":   {Number: 1, State: "closed", Merged: true, HeadRefName: "sandman/1-one"},
+			"sandman/2-two":   {Number: 2, State: "closed", Merged: true, HeadRefName: "sandman/2-two"},
+			"sandman/3-three": {Number: 3, State: "closed", Merged: true, HeadRefName: "sandman/3-three"},
+			"sandman/4-four":  {Number: 4, State: "closed", Merged: true, HeadRefName: "sandman/4-four"},
+		},
 	}
 
 	// If the gate used the raw parallel=4, the fakeRunnableFactory would

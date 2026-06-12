@@ -1388,7 +1388,7 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 }
 
 // runOnce runs the retry loop for a session. mergeRequired gates the
-// issue-driven flavour's extra parseLogForCompletion + checkPRMerged checks;
+// issue-driven flavour's checkPRMerged check (the sole success signal);
 // prepareAttempt returns (_, &errResult) to short-circuit.
 func (s *runSession) runOnce(
 	ctx context.Context,
@@ -1447,23 +1447,29 @@ func (s *runSession) runOnce(
 		}
 		result.RetriesTotal = attempt + 1
 
-		success := result.Status == "success"
 		if mergeRequired {
-			success = success || parseLogForCompletion(logPath)
-		}
-		if success {
-			if mergeRequired && !checkPRMerged(o.githubClient, branch) {
-				result.Status = "failure"
-				continue
-			}
-			if mergeRequired {
+			prMerged := checkPRMerged(o.githubClient, branch)
+			if prMerged {
 				handoffPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
 				if err := os.Remove(handoffPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 					fmt.Fprintf(o.errorLog, "warning: remove handoff %q: %v\n", handoffPath, err)
 				}
 			}
-			result.Status = "success"
-			break
+			if result.Status == "aborted" {
+				continue
+			}
+			if prMerged {
+				if ctx.Err() != nil {
+					break
+				}
+				result.Status = "success"
+				break
+			}
+			result.Status = "failure"
+		} else {
+			if result.Status == "success" {
+				break
+			}
 		}
 	}
 
