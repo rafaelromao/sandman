@@ -18,17 +18,28 @@ var ErrAborted = errors.New("batch aborted by context cancellation")
 // not currently tracked (already finished, never started, or unknown to this batch).
 var ErrNoSuchIssue = errors.New("batch: no such issue")
 
+// IssueMode routes one issue through the batch orchestrator.
+type IssueMode int
+
+const (
+	ModeFresh IssueMode = iota
+	ModeOverride
+	ModeContinue
+)
+
 // Request describes a batch of AgentRuns to execute.
 type Request struct {
 	Issues []int
 	// Dependencies maps each issue to its resolved BlockedBy set.
 	Dependencies map[int][]int
 	// Blocked marks issues that should be skipped before submission.
-	Blocked      map[int][]int
-	Agent        string
-	Model        string
-	BaseBranch   string
-	Continuation bool
+	Blocked    map[int][]int
+	Agent      string
+	Model      string
+	BaseBranch string
+	// Mode maps each issue number to its routing mode. Missing entries default
+	// to ModeFresh.
+	Mode map[int]IssueMode
 	// PreviousRunIDs maps each issue number to the run id being continued.
 	PreviousRunIDs map[int]string
 	// BaseBranches maps each issue number to its base branch.
@@ -74,6 +85,17 @@ type Request struct {
 	// run.started events instead of the auto-generated run-0-<timestamp>.
 	// Must be validated by the caller to match [a-zA-Z][a-zA-Z0-9_-]*.
 	RunID string
+}
+
+// IssueMode returns the mode for num, defaulting to ModeFresh.
+func (r Request) IssueMode(num int) IssueMode {
+	if r.Mode == nil {
+		return ModeFresh
+	}
+	if mode, ok := r.Mode[num]; ok {
+		return mode
+	}
+	return ModeFresh
 }
 
 // Result describes the outcome of a batch.

@@ -148,6 +148,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	if _, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 		Agent:                reviewAgentName,
 		Model:                reviewModel,
+		Mode:                 map[int]batch.IssueMode{0: batch.ModeOverride},
 		Sandbox:              sandboxMode,
 		Parallel:             reviewParallel,
 		ContainerCapacity:    ccFlag,

@@ -35,6 +35,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 	var handoffPromptContent string
 	var promptOnlyBaseBranch string
 	var promptOnlyBranch string
+	modes := make(map[int]batch.IssueMode, len(issues))
 	if runID != "" {
 		promptOnlyEvent, found := lastPromptOnlyRun(eventsList)
 		if !found || promptOnlyEvent.RunID == "" {
@@ -93,6 +94,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 			branches[num] = strings.TrimSpace(branch)
 			baseBranches[num] = strings.TrimSpace(baseBranch)
 			handoffPrompts[num] = prompt.BuildResumePrompt(prompt.ParseHandoff(content))
+			modes[num] = batch.ModeContinue
 		}
 	} else {
 		promptOnlyEvent := lastRuns[0]
@@ -123,6 +125,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		}
 		promptFlagContent = content
 		handoffPromptContent = prompt.BuildResumePrompt(prompt.ParseHandoff(content))
+		modes[0] = batch.ModeContinue
 	}
 
 	firstIssue := issues[0]
@@ -280,7 +283,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		Agent:                      agentName,
 		Model:                      model,
 		BaseBranch:                 baseBranch,
-		Continuation:               true,
+		Mode:                       modes,
 		PreviousRunIDs:             previousRunIDs,
 		BaseBranches:               baseBranches,
 		HandoffPrompts:             handoffPrompts,

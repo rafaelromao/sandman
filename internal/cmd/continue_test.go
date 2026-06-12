@@ -48,7 +48,7 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if !spy.req.Continuation {
+	if spy.req.Mode == nil || spy.req.IssueMode(0) != batch.ModeContinue {
 		t.Fatal("expected continuation request")
 	}
 	if spy.req.RunID != "my-run" {

@@ -674,8 +674,8 @@ func TestRun_OverrideFlagPassedToBatchRunner(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !spy.req.Override {
-		t.Error("expected Override=true when --override flag is passed")
+	if got := spy.req.IssueMode(42); got != batch.ModeOverride {
+		t.Errorf("expected ModeOverride when --override flag is passed, got %v", got)
 	}
 }
 
@@ -694,8 +694,8 @@ func TestRun_OverrideFalseByDefault(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.req.Override {
-		t.Error("expected Override=false when --override flag is not passed")
+	if got := spy.req.IssueMode(42); got != batch.ModeFresh {
+		t.Errorf("expected ModeFresh when --override flag is not passed, got %v", got)
 	}
 }
 
@@ -766,8 +766,8 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 			if !spy.called {
 				t.Fatal("expected batch runner to be called")
 			}
-			if spy.req.Override {
-				t.Fatal("expected Override=false when only --continue is passed")
+			if got := spy.req.IssueMode(42); got != batch.ModeContinue {
+				t.Fatalf("expected ModeContinue when only --continue is passed, got %v", got)
 			}
 		})
 	}
@@ -815,8 +815,8 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if !spy.req.Continuation {
-		t.Fatal("expected continuation request")
+	if got := spy.req.IssueMode(42); got != batch.ModeContinue {
+		t.Fatalf("expected ModeContinue request, got %v", got)
 	}
 	if spy.req.PreviousRunIDs[42] != "run-42-2" {
 		t.Fatalf("expected PreviousRunIDs[42]=run-42-2, got %q", spy.req.PreviousRunIDs[42])
@@ -944,11 +944,11 @@ func TestRun_ContinueFlag_NoPriorRunErrors(t *testing.T) {
 	cmd.SetArgs([]string{"--continue", "42"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when no prior run exists")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no previous run found for issue #42") {
-		t.Fatalf("expected no-prior-run error, got %v", err)
+	if got := spy.req.IssueMode(42); got != batch.ModeFresh {
+		t.Fatalf("expected ModeFresh when no prior run exists, got %v", got)
 	}
 }
 

@@ -413,6 +413,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	req := batch.Request{
 		Agent:                agentName,
 		Model:                modelName,
+		Mode:                 map[int]batch.IssueMode{0: batch.ModeOverride},
 		Sandbox:              sandboxMode,
 		ContainerCapacity:    d.ContainerCapacity,
 		ContainerCapacitySet: d.ContainerCapacitySet,
@@ -428,7 +429,6 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		ReviewFocus:  focus,
 		RunID:        runID,
 		RunDir:       runDir,
-		Override:     true,
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return fmt.Errorf("run batch: %w", err)
