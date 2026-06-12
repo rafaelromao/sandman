@@ -322,91 +322,129 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return MarkUsage(fmt.Errorf("no issues selected"))
 			}
 
-			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
-			baseBranch := strings.TrimSpace(baseBranchFlag)
-			if baseBranch == "" {
-				baseBranch = strings.TrimSpace(cfg.Git.BaseBranch)
-			}
-			if baseBranch == "" {
-				baseBranch = "main"
-			}
-
-			resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies)
-			if err != nil {
-				return fmt.Errorf("resolve dependencies: %w", err)
-			}
-
-			parallelFlag := cmd.Flags().Lookup("parallel")
-			parallelSet := parallelFlag != nil && parallelFlag.Changed
-			parallel, _ := cmd.Flags().GetInt("parallel")
-			if !parallelSet && cfg != nil {
-				parallel = cfg.DefaultParallel
-			}
-			if parallelSet && parallel < 0 {
-				return MarkUsage(fmt.Errorf("parallel must be 0 or greater"))
-			}
-
-			startDelayFlag := cmd.Flags().Lookup("start-delay")
-			startDelaySet := startDelayFlag != nil && startDelayFlag.Changed
-			startDelay, _ := cmd.Flags().GetInt("start-delay")
-			if startDelaySet && startDelay < 0 {
-				return MarkUsage(fmt.Errorf("start_delay must be 0 or greater"))
-			}
-
-			runIdleTimeoutFlag := cmd.Flags().Lookup("run-idle-timeout")
-			runIdleTimeoutSet := runIdleTimeoutFlag != nil && runIdleTimeoutFlag.Changed
-			runIdleTimeout, _ := cmd.Flags().GetInt("run-idle-timeout")
-			if runIdleTimeoutSet && runIdleTimeout < 0 {
-				return MarkUsage(fmt.Errorf("run_idle_timeout must be 0 or greater"))
-			}
-
-			sandboxMode, _ := cmd.Flags().GetString("sandbox")
-			containerCapacityFlag := cmd.Flags().Lookup("container-capacity")
-			containerCapacitySet := containerCapacityFlag != nil && containerCapacityFlag.Changed
-			containerCapacity, _ := cmd.Flags().GetInt("container-capacity")
-			maxContainersFlag := cmd.Flags().Lookup("max-containers")
-			maxContainersSet := maxContainersFlag != nil && maxContainersFlag.Changed
-			maxContainers, _ := cmd.Flags().GetInt("max-containers")
-			if containerCapacitySet && containerCapacity < 0 {
-				return MarkUsage(fmt.Errorf("container_capacity must be 0 or greater"))
-			}
-			if maxContainersSet && maxContainers < 0 {
-				return MarkUsage(fmt.Errorf("max_containers must be 0 or greater"))
-			}
-
-			retriesFlag := cmd.Flags().Lookup("retries")
-			retriesSet := retriesFlag != nil && retriesFlag.Changed
-			retries, _ := cmd.Flags().GetInt("retries")
-			if retriesSet && retries < 0 {
-				return MarkUsage(fmt.Errorf("retries must be 0 or greater"))
-			}
-			if !retriesSet {
-				retries = -1
-			}
-
-			if ralphProvided {
-				if !parallelSet {
-					parallel = 1
+			var req batch.Request
+			if continueFlag {
+				req, err = buildContinuationRequest(cmd, deps, cfg, issues, runID)
+				if err != nil {
+					return err
 				}
-				if !containerCapacitySet {
-					containerCapacity = 1
-					containerCapacitySet = true
+			} else {
+				baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
+				baseBranch := strings.TrimSpace(baseBranchFlag)
+				if baseBranch == "" {
+					baseBranch = strings.TrimSpace(cfg.Git.BaseBranch)
 				}
-				if !maxContainersSet {
-					maxContainers = 1
-					maxContainersSet = true
+				if baseBranch == "" {
+					baseBranch = "main"
+				}
+
+				resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies)
+				if err != nil {
+					return fmt.Errorf("resolve dependencies: %w", err)
+				}
+
+				parallelFlag := cmd.Flags().Lookup("parallel")
+				parallelSet := parallelFlag != nil && parallelFlag.Changed
+				parallel, _ := cmd.Flags().GetInt("parallel")
+				if !parallelSet && cfg != nil {
+					parallel = cfg.DefaultParallel
+				}
+				if parallelSet && parallel < 0 {
+					return MarkUsage(fmt.Errorf("parallel must be 0 or greater"))
+				}
+
+				startDelayFlag := cmd.Flags().Lookup("start-delay")
+				startDelaySet := startDelayFlag != nil && startDelayFlag.Changed
+				startDelay, _ := cmd.Flags().GetInt("start-delay")
+				if startDelaySet && startDelay < 0 {
+					return MarkUsage(fmt.Errorf("start_delay must be 0 or greater"))
+				}
+
+				runIdleTimeoutFlag := cmd.Flags().Lookup("run-idle-timeout")
+				runIdleTimeoutSet := runIdleTimeoutFlag != nil && runIdleTimeoutFlag.Changed
+				runIdleTimeout, _ := cmd.Flags().GetInt("run-idle-timeout")
+				if runIdleTimeoutSet && runIdleTimeout < 0 {
+					return MarkUsage(fmt.Errorf("run_idle_timeout must be 0 or greater"))
+				}
+
+				sandboxMode, _ := cmd.Flags().GetString("sandbox")
+				containerCapacityFlag := cmd.Flags().Lookup("container-capacity")
+				containerCapacitySet := containerCapacityFlag != nil && containerCapacityFlag.Changed
+				containerCapacity, _ := cmd.Flags().GetInt("container-capacity")
+				maxContainersFlag := cmd.Flags().Lookup("max-containers")
+				maxContainersSet := maxContainersFlag != nil && maxContainersFlag.Changed
+				maxContainers, _ := cmd.Flags().GetInt("max-containers")
+				if containerCapacitySet && containerCapacity < 0 {
+					return MarkUsage(fmt.Errorf("container_capacity must be 0 or greater"))
+				}
+				if maxContainersSet && maxContainers < 0 {
+					return MarkUsage(fmt.Errorf("max_containers must be 0 or greater"))
+				}
+
+				retriesFlag := cmd.Flags().Lookup("retries")
+				retriesSet := retriesFlag != nil && retriesFlag.Changed
+				retries, _ := cmd.Flags().GetInt("retries")
+				if retriesSet && retries < 0 {
+					return MarkUsage(fmt.Errorf("retries must be 0 or greater"))
 				}
 				if !retriesSet {
-					retries = 3
+					retries = -1
 				}
-			}
 
-			dangerouslySkipPermFlag := cmd.Flags().Lookup("dangerously-skip-permissions")
-			dangerouslySkipPermSet := dangerouslySkipPermFlag != nil && dangerouslySkipPermFlag.Changed
-			var dangerouslySkipPerm *bool
-			if dangerouslySkipPermSet {
-				val, _ := cmd.Flags().GetBool("dangerously-skip-permissions")
-				dangerouslySkipPerm = &val
+				if ralphProvided {
+					if !parallelSet {
+						parallel = 1
+					}
+					if !containerCapacitySet {
+						containerCapacity = 1
+						containerCapacitySet = true
+					}
+					if !maxContainersSet {
+						maxContainers = 1
+						maxContainersSet = true
+					}
+					if !retriesSet {
+						retries = 3
+					}
+				}
+
+				dangerouslySkipPermFlag := cmd.Flags().Lookup("dangerously-skip-permissions")
+				dangerouslySkipPermSet := dangerouslySkipPermFlag != nil && dangerouslySkipPermFlag.Changed
+				var dangerouslySkipPerm *bool
+				if dangerouslySkipPermSet {
+					val, _ := cmd.Flags().GetBool("dangerously-skip-permissions")
+					dangerouslySkipPerm = &val
+				}
+
+				req = batch.Request{
+					Override:                   overrideFlag,
+					Issues:                     resolvedBatch.Issues,
+					Dependencies:               resolvedBatch.Deps,
+					Blocked:                    resolvedBatch.Blocked,
+					Agent:                      agentName,
+					Model:                      resolveModel(modelFlag, cfg.DefaultModel, agentCfg.Preset),
+					BaseBranch:                 baseBranch,
+					Retries:                    retries,
+					Parallel:                   parallel,
+					StartDelay:                 time.Duration(startDelay) * time.Second,
+					StartDelaySet:              startDelaySet,
+					RunIdleTimeout:             runIdleTimeout,
+					RunIdleTimeoutSet:          runIdleTimeoutSet,
+					Sandbox:                    sandboxMode,
+					RequireDockerfile:          true,
+					ContainerCapacity:          containerCapacity,
+					ContainerCapacitySet:       containerCapacitySet,
+					MaxContainers:              maxContainers,
+					MaxContainersSet:           maxContainersSet,
+					DangerouslySkipPermissions: dangerouslySkipPerm,
+					PromptConfig: prompt.RenderConfig{
+						PromptFlag:       promptFlag,
+						TemplateFlag:     templateFlag,
+						ReviewCommand:    reviewCommand,
+						ReviewCommandSet: true,
+						PromptArgs:       promptArgs,
+					},
+				}
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -422,7 +460,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}()
 
-			runDir := daemon.RunDir(".sandman", resolvedBatch.Issues, runID)
+			runDir := daemon.RunDir(".sandman", req.Issues, runID)
 			broadcaster := daemon.NewBroadcaster()
 			ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
 
@@ -437,51 +475,25 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			defer ctlSocket.Stop()
 			defer os.RemoveAll(runDir)
-			if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: append([]int(nil), resolvedBatch.Issues...), CreatedAt: time.Now()}); err != nil {
+			if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now()}); err != nil {
 				return err
 			}
 
-			var cmdServer *daemon.CommandServer
-			if commander, ok := deps.BatchRunner.(daemon.IssueCommander); ok {
-				cmdServer = daemon.NewCommandServer(runDir, commander)
-				if err := cmdServer.Start(); err != nil {
-					return err
+			if !continueFlag {
+				var cmdServer *daemon.CommandServer
+				if commander, ok := deps.BatchRunner.(daemon.IssueCommander); ok {
+					cmdServer = daemon.NewCommandServer(runDir, commander)
+					if err := cmdServer.Start(); err != nil {
+						return err
+					}
+					defer cmdServer.Stop()
 				}
-				defer cmdServer.Stop()
 			}
 
-			result, err := deps.BatchRunner.RunBatch(ctx, batch.Request{
-				Override:                   overrideFlag,
-				Issues:                     resolvedBatch.Issues,
-				Dependencies:               resolvedBatch.Deps,
-				Blocked:                    resolvedBatch.Blocked,
-				Agent:                      agentName,
-				Model:                      resolveModel(modelFlag, cfg.DefaultModel, agentCfg.Preset),
-				BaseBranch:                 baseBranch,
-				Retries:                    retries,
-				Parallel:                   parallel,
-				StartDelay:                 time.Duration(startDelay) * time.Second,
-				StartDelaySet:              startDelaySet,
-				RunIdleTimeout:             runIdleTimeout,
-				RunIdleTimeoutSet:          runIdleTimeoutSet,
-				Sandbox:                    sandboxMode,
-				RequireDockerfile:          true,
-				ContainerCapacity:          containerCapacity,
-				ContainerCapacitySet:       containerCapacitySet,
-				MaxContainers:              maxContainers,
-				MaxContainersSet:           maxContainersSet,
-				DangerouslySkipPermissions: dangerouslySkipPerm,
-				OutputWriter:               broadcaster,
-				RunDir:                     runDir,
-				RunID:                      runID,
-				PromptConfig: prompt.RenderConfig{
-					PromptFlag:       promptFlag,
-					TemplateFlag:     templateFlag,
-					ReviewCommand:    reviewCommand,
-					ReviewCommandSet: true,
-					PromptArgs:       promptArgs,
-				},
-			})
+			req.OutputWriter = broadcaster
+			req.RunDir = runDir
+
+			result, err := deps.BatchRunner.RunBatch(ctx, req)
 			if result != nil {
 				printSummary(cmd, result)
 				for _, run := range result.Runs {
@@ -526,7 +538,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
 	cmd.Flags().Bool("override", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
-	cmd.Flags().Bool("continue", false, "Accepted placeholder for future continuation behavior; no-op for now")
+	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff and stored settings")
 
 	return cmd
 }
