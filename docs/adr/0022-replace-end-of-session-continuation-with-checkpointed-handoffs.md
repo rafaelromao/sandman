@@ -23,13 +23,13 @@ Replace the `sandman-continuation` skill and `.sandman/continuation-context.md` 
 3. `pr-created` — after the pull request is opened against the base branch.
 4. `pr-review-finished` — after the delegated PR review returns approval or a hard blocker.
 
-Each stage records the same five fields: completed work, pending items, blockers, key decisions, and the single most important next step. The `## Stage:` line at the top of the file is informational only — the agent reads its next instruction from the `## Next Step` field directly. The Go orchestrator and `sandman continue` no longer parse the stage name.
+Each stage records the same five fields: completed work, pending items, blockers, key decisions, and the single most important next step. The `## Stage:` line at the top of the file is informational only — the agent reads its next instruction from the `## Next Step` field directly. The Go orchestrator and `sandman run --continue` no longer parse the stage name.
 
-The Go orchestrator and `sandman continue` pass the verbatim handoff document content (or an empty handoff template if the file is missing) as the resume prompt. The agent reads the `## Next Step` field and follows it directly, without any meta-prompt wrapping from the orchestrator. If `handoff.md` is missing, the empty template instructs the agent to "Continue the work."
+The Go orchestrator and `sandman run --continue` pass the verbatim handoff document content (or an empty handoff template if the file is missing) as the resume prompt. The agent reads the `## Next Step` field and follows it directly, without any meta-prompt wrapping from the orchestrator. If `handoff.md` is missing, the empty template instructs the agent to "Continue the work."
 
 > **Note:** ADR-0023 partially supersedes this paragraph. The resume prompt now wraps the handoff body in a structured prompt with `## Prior Context`, `## Source Prompt`, `## New Instruction`, and `## Update Handoff Context` sections. The `## Stage:`, `## Last Skill:`, and `## Last Skill Status:` headings from the handoff document are surfaced as-is in the `## New Instruction` block. The rendered prompt file is referenced by path (not inlined). See ADR-0023 for the current design.
 
-The four checkpoints replace the single end-of-session summary. Every workflow mode that ends — `sandman-implement`, the orchestrator's retry path, and `sandman continue` itself — writes the same file at the relevant stage, so a single handoff file per worktree captures the full state of the run.
+The four checkpoints replace the single end-of-session summary. Every workflow mode that ends — `sandman-implement`, the orchestrator's retry path, and `sandman run --continue` itself — writes the same file at the relevant stage, so a single handoff file per worktree captures the full state of the run.
 
 ## Consequences
 
