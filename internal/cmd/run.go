@@ -474,7 +474,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			var continuationReq batch.Request
 			var hasContinuationReq bool
-			if continueFlag && len(continueIssues) > 0 {
+			if continueFlag && (len(continueIssues) > 0 || runID != "") {
 				continuationReq, err = buildContinuationRequest(cmd, deps, cfg, continueIssues, runID)
 				if err != nil {
 					return err
@@ -522,7 +522,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				},
 			}
 			if hasContinuationReq {
-				if len(continueIssues) == len(resolvedBatch.Issues) {
+				if runID != "" && len(resolvedBatch.Issues) == 0 {
+					req = continuationReq
+				} else if len(continueIssues) == len(resolvedBatch.Issues) {
 					req.Agent = continuationReq.Agent
 					req.Model = continuationReq.Model
 					req.BaseBranch = continuationReq.BaseBranch
@@ -552,6 +554,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 				for k, v := range continuationReq.HandoffPrompts {
 					req.HandoffPrompts[k] = v
+				}
+				if continuationReq.PromptConfig.HandoffPrompt != "" {
+					req.PromptConfig.HandoffPrompt = continuationReq.PromptConfig.HandoffPrompt
+				}
+				if continuationReq.PromptConfig.PromptFlag != "" {
+					req.PromptConfig.PromptFlag = continuationReq.PromptConfig.PromptFlag
 				}
 			}
 
