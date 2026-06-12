@@ -39,7 +39,7 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--continue", "--run-id", "my-run", "--prompt", "Return only OK."})
+	cmd.SetArgs([]string{"--continue", "--run-id", "my-run"})
 
 	err := cmd.Execute()
 	if err != nil {

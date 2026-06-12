@@ -305,21 +305,25 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					}
 					issues = extractIssueNumbers(searchResults)
 				} else {
-					if runID != "" {
-						return MarkUsage(fmt.Errorf("--run-id requires --prompt or --template for prompt-only mode"))
-					}
-					if deps.IsTTY != nil && deps.IsTTY() {
-						issues, err = pickIssues(cmd.Context(), githubClient, deps.IssuePicker)
-						if err != nil {
-							return err
-						}
+					if runID != "" && continueFlag {
+						issues = []int{0}
 					} else {
-						return MarkUsage(fmt.Errorf("no issues provided"))
+						if runID != "" {
+							return MarkUsage(fmt.Errorf("--run-id requires --prompt or --template for prompt-only mode"))
+						}
+						if deps.IsTTY != nil && deps.IsTTY() {
+							issues, err = pickIssues(cmd.Context(), githubClient, deps.IssuePicker)
+							if err != nil {
+								return err
+							}
+						} else {
+							return MarkUsage(fmt.Errorf("no issues provided"))
+						}
 					}
 				}
 			}
 
-			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) {
+			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) && !(continueFlag && runID != "") {
 				return MarkUsage(fmt.Errorf("no issues selected"))
 			}
 
