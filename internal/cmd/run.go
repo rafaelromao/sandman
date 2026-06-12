@@ -121,6 +121,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
+			overrideFlag, _ := cmd.Flags().GetBool("override")
+			continueFlag, _ := cmd.Flags().GetBool("continue")
+			if overrideFlag && continueFlag {
+				return MarkUsage(fmt.Errorf("--override cannot be combined with --continue"))
+			}
 			if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), ".sandman"); err != nil {
 				return err
 			}
@@ -167,8 +172,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			query, _ := cmd.Flags().GetString("query")
 
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
-			overrideFlag, _ := cmd.Flags().GetBool("override")
-
 			ralphFlag := cmd.Flags().Lookup("ralph")
 			ralphProvided := ralphFlag != nil && ralphFlag.Changed
 			ralphCount, _ := cmd.Flags().GetInt("ralph")
@@ -523,6 +526,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
 	cmd.Flags().Bool("override", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
+	cmd.Flags().Bool("continue", false, "Accepted placeholder for future continuation behavior; no-op for now")
 
 	return cmd
 }
