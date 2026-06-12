@@ -416,9 +416,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			modes := make(map[int]batch.IssueMode)
 			previousRunIDs := make(map[int]string)
-				branches := make(map[int]string)
-				baseBranches := make(map[int]string)
-				taskPrompts := make(map[int]string)
+			branches := make(map[int]string)
+			baseBranches := make(map[int]string)
+			taskPrompts := make(map[int]string)
 			continueIssues := make([]int, 0, len(resolvedBatch.Issues))
 			if continueFlag {
 				modeEvents := []events.Event{}

@@ -926,9 +926,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			mode := req.IssueMode(issueNum)
 			renderCfg := req.PromptConfig
 			if mode == ModeContinue {
-			if taskPrompt, ok := req.TaskPrompts[issueNum]; ok {
-				renderCfg.TaskPrompt = taskPrompt
-			}
+				if taskPrompt, ok := req.TaskPrompts[issueNum]; ok {
+					renderCfg.TaskPrompt = taskPrompt
+				}
 			}
 			issueBaseBranch := baseBranch
 			if mode == ModeContinue {

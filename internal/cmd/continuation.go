@@ -122,7 +122,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		if !exists {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", promptOnlyBranch)
 		}
-			taskPromptContent = prompt.BuildTaskPrompt(prompt.ParseTask(content))
+		taskPromptContent = prompt.BuildTaskPrompt(prompt.ParseTask(content))
 		modes[0] = batch.ModeContinue
 	}
 
