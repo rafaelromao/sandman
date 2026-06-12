@@ -1711,7 +1711,7 @@ func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", 0, 0, 0, "", 0, false, 0, false, false, false, 0, "", "", nil)
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, 0, "", "", nil)
 	if !started {
 		t.Fatal("expected prompt-only run to start")
 	}
@@ -2418,7 +2418,7 @@ func TestRunBatch_OverrideClearsExistingBranchesAndProceeds(t *testing.T) {
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 
-	result, err := o.RunBatch(context.Background(), Request{Issues: []int{441, 450, 452}, Override: true})
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{441, 450, 452}, Mode: map[int]IssueMode{441: ModeOverride, 450: ModeOverride, 452: ModeOverride}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4027,7 +4027,7 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, PreviousRunIDs: map[int]string{42: "run-42-1"}, BaseBranch: "main", Parallel: 2, Retries: 1, StartDelay: 5 * time.Second, StartDelaySet: true, Sandbox: "worktree", ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 6, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{HandoffPrompt: "finish the tests"}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, PreviousRunIDs: map[int]string{42: "run-42-1"}, BaseBranch: "main", Parallel: 2, Retries: 1, StartDelay: 5 * time.Second, StartDelaySet: true, Sandbox: "worktree", ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 6, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{HandoffPrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4107,7 +4107,7 @@ func TestRunBatch_ContinuationUsesPerIssuePrompts(t *testing.T) {
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:         []int{1, 2},
 		Branches:       map[int]string{1: "sandman/1-one", 2: "sandman/2-two"},
-		Continuation:   true,
+		Mode:           map[int]IssueMode{1: ModeContinue, 2: ModeContinue},
 		PreviousRunIDs: map[int]string{1: "run-1-prev", 2: "run-2-prev"},
 		HandoffPrompts: map[int]string{1: "prompt-one", 2: "prompt-two"},
 		BaseBranch:     "main",
@@ -4159,7 +4159,7 @@ func TestRunBatch_PerIssuePreviousRunIDLookup(t *testing.T) {
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:         []int{42, 43},
-		Continuation:   true,
+		Mode:           map[int]IssueMode{42: ModeContinue, 43: ModeContinue},
 		PreviousRunIDs: map[int]string{42: "run-42-prev", 43: "run-43-prev"},
 		BaseBranch:     "main",
 		Parallel:       1,
@@ -4207,7 +4207,7 @@ func TestRunBatch_MultiIssueContinuationLogsPerIssuePreviousRunID(t *testing.T) 
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:         []int{42, 99},
-		Continuation:   true,
+		Mode:           map[int]IssueMode{42: ModeContinue, 99: ModeContinue},
 		PreviousRunIDs: map[int]string{42: "run-42-7", 99: "run-99-3"},
 		BaseBranch:     "main",
 		Parallel:       1,
@@ -4256,7 +4256,7 @@ func TestRunBatch_ContinuationSkipsBaseBranchSync(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunIDs: map[int]string{42: "run-42-1"}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "finish the tests"}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: "run-42-1"}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4305,7 +4305,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected handoff.md to be removed after merged PR, err=%v", err)
 	}
 
-	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[0].RunID}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "finish the tests"}})
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[0].RunID}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
@@ -4315,7 +4315,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected handoff.md to be preserved after continuation (no merge check), err=%v", err)
 	}
 
-	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Continuation: true, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[2].RunID}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "push the PR"}})
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[2].RunID}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "push the PR"}})
 	if err != nil {
 		t.Fatalf("second continue failed: %v", err)
 	}
@@ -7512,7 +7512,7 @@ func TestRunSession_ApplyOverrideAndIdentity_CallsMethodsDirectlyOnSandbox(t *te
 	wt := &fakeSandbox{}
 	s := &runSession{
 		o:                &Orchestrator{errorLog: io.Discard},
-		override:         true,
+		mode:             ModeOverride,
 		issueNumber:      42,
 		identityResolver: noopIdentityResolver(),
 	}
@@ -7538,7 +7538,7 @@ func TestRunSession_ApplyOverrideAndIdentity_PropagatesOverrideFalse(t *testing.
 	wt := &fakeSandbox{}
 	s := &runSession{
 		o:                &Orchestrator{errorLog: io.Discard},
-		override:         false,
+		mode:             ModeFresh,
 		issueNumber:      7,
 		identityResolver: noopIdentityResolver(),
 	}

@@ -97,7 +97,7 @@ func gitTopLevel(repoPath string) (string, error) {
 }
 
 func (o *Orchestrator) validateBatchBranches(req Request) error {
-	if !branchValidationEnabled || req.Continuation || len(req.Issues) == 0 {
+	if !branchValidationEnabled || len(req.Mode) > 0 || len(req.Issues) == 0 {
 		return nil
 	}
 
@@ -679,33 +679,41 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		inputIndex[num] = idx
 	}
 
-	if !req.Continuation && req.PromptConfig.PromptFile == "" {
+	allContinue := len(req.Issues) > 0 && len(req.Mode) > 0
+	for _, num := range req.Issues {
+		if req.IssueMode(num) != ModeContinue {
+			allContinue = false
+			break
+		}
+	}
+	if !allContinue && req.PromptConfig.PromptFile == "" {
 		req.PromptConfig.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
 	}
 	if req.PromptConfig.RenderedPromptFile == "" {
-		if req.Continuation {
+		if allContinue {
 			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 		} else {
 			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
 		}
 	}
-	if !req.Continuation {
+	if !allContinue {
 		if err := prompt.MaterializePromptFile(req.PromptConfig); err != nil {
 			return nil, fmt.Errorf("materialize prompt template: %w", err)
 		}
 	}
 
-	if req.Override {
-		for _, num := range req.Issues {
-			issue, err := o.githubClient.FetchIssue(num)
-			if err != nil {
-				fmt.Fprintf(o.errorLog, "error: fetch issue %d for force-clean: %v\n", num, err)
-				continue
-			}
-			branches := collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog)
-			for _, branch := range branches {
-				ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog)
-			}
+	for _, num := range req.Issues {
+		if req.IssueMode(num) != ModeOverride {
+			continue
+		}
+		issue, err := o.githubClient.FetchIssue(num)
+		if err != nil {
+			fmt.Fprintf(o.errorLog, "error: fetch issue %d for force-clean: %v\n", num, err)
+			continue
+		}
+		branches := collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog)
+		for _, branch := range branches {
+			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog)
 		}
 	}
 
@@ -912,20 +920,21 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
+			mode := req.IssueMode(issueNum)
 			renderCfg := req.PromptConfig
-			if req.Continuation {
+			if mode == ModeContinue {
 				if handoffPrompt, ok := req.HandoffPrompts[issueNum]; ok {
 					renderCfg.HandoffPrompt = handoffPrompt
 				}
 			}
 			issueBaseBranch := baseBranch
-			if req.Continuation {
+			if mode == ModeContinue {
 				if perIssueBaseBranch, ok := req.BaseBranches[issueNum]; ok && strings.TrimSpace(perIssueBaseBranch) != "" {
 					issueBaseBranch = perIssueBaseBranch
 				}
 			}
 
-			res, started := o.runSingle(issueCtx, issueNum, cfg, agentName, agentCfg, req.Continuation, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, req.Override, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
+			res, started := o.runSingle(issueCtx, issueNum, cfg, agentName, agentCfg, mode == ModeContinue, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, mode == ModeOverride, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -1217,7 +1226,7 @@ type runSession struct {
 	cfg                        *config.Config
 	agentName                  string
 	agentCfg                   config.Agent
-	continuation               bool
+	mode                       IssueMode
 	previousRunIDs             map[int]string
 	identityResolver           *gitIdentityResolver
 	branches                   map[int]string
@@ -1227,7 +1236,6 @@ type runSession struct {
 	activeMu                   *sync.Mutex
 	sbFactory                  SandboxFactory
 	containerAlloc             containerAllocator
-	override                   bool
 	baseBranch                 string
 	externalBlockers           []int
 	parallel                   int
@@ -1262,11 +1270,11 @@ type runSession struct {
 	opts runSessionOptions
 }
 
-// applyOverrideAndIdentity applies s.override and the resolved git identity to wt.
+// applyOverrideAndIdentity applies the session mode override and the resolved git identity to wt.
 // On identity failure returns (_, false) so the caller can short-circuit.
 func (s *runSession) applyOverrideAndIdentity(wt sandbox.Sandbox, branch string) (AgentRunResult, bool) {
 	o := s.o
-	wt.SetOverride(s.override)
+	wt.SetOverride(s.mode == ModeOverride)
 	identity, err := s.identityResolver.resolve()
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
@@ -1463,12 +1471,20 @@ func (s *runSession) runOnce(
 // delegates to (*runSession).execute.
 func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (AgentRunResult, bool) {
 	s := &runSession{
-		o:                          o,
-		issueNumber:                num,
-		cfg:                        cfg,
-		agentName:                  agentName,
-		agentCfg:                   agentCfg,
-		continuation:               continuation,
+		o:           o,
+		issueNumber: num,
+		cfg:         cfg,
+		agentName:   agentName,
+		agentCfg:    agentCfg,
+		mode: func() IssueMode {
+			if continuation {
+				return ModeContinue
+			}
+			if override {
+				return ModeOverride
+			}
+			return ModeFresh
+		}(),
 		previousRunIDs:             previousRunIDs,
 		identityResolver:           identityResolver,
 		branches:                   branches,
@@ -1478,7 +1494,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		activeMu:                   activeMu,
 		sbFactory:                  sbFactory,
 		containerAlloc:             containerAlloc,
-		override:                   override,
 		baseBranch:                 baseBranch,
 		externalBlockers:           externalBlockers,
 		parallel:                   parallel,
@@ -1510,7 +1525,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	if branch == "" {
 		branch = BranchName(issue.Number, issue.Title)
 	}
-	if !s.continuation {
+	if s.mode != ModeContinue {
 		if err := o.syncBaseBranch(".", s.baseBranch); err != nil {
 			fmt.Fprintf(o.errorLog, "error: sync base branch for issue %d: %v\n", s.issueNumber, err)
 			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
@@ -1610,10 +1625,10 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			"max_containers":         s.maxContainers,
 			"max_containers_set":     s.maxContainersSet,
 		}
-		if s.continuation {
+		if s.mode == ModeContinue {
 			payload["previous_run_id"] = s.previousRunIDs[s.issueNumber]
 		}
-		if promptSourceValue != "" && !s.continuation {
+		if promptSourceValue != "" && s.mode != ModeContinue {
 			payload["prompt_source_value"] = promptSourceValue
 		}
 		if len(s.renderCfg.PromptArgs) > 0 {
@@ -1629,7 +1644,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			payload["model"] = model
 		}
 		eventType := "run.started"
-		if s.continuation {
+		if s.mode == ModeContinue {
 			eventType = "run.continued"
 		}
 		_ = o.eventLog.Log(events.Event{
@@ -1643,7 +1658,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	logPath := agentLogPath(fmt.Sprintf("%d.log", s.issueNumber))
-	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, !s.continuation, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
+	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
@@ -1732,7 +1747,7 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
-	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.Override, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, req.Review, req.PRNumber, req.ReviewFocus, req.RunID, req.PreviousRunIDs)
+	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.IssueMode(0), baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, req.Review, req.PRNumber, req.ReviewFocus, req.RunID, req.PreviousRunIDs)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -1747,7 +1762,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 
 // runPromptOnlySingle runs a single prompt-only AgentRun. It builds a
 // runSession and delegates to (*runSession).executePromptOnly.
-func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string) (AgentRunResult, bool) {
+func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, mode IssueMode, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string) (AgentRunResult, bool) {
 	s := &runSession{
 		o:                          o,
 		cfg:                        cfg,
@@ -1759,7 +1774,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		outputWriter:               outputWriter,
 		sbFactory:                  sbFactory,
 		containerAlloc:             containerAlloc,
-		override:                   override,
+		mode:                       mode,
 		baseBranch:                 baseBranch,
 		parallel:                   parallel,
 		startDelay:                 startDelay,
@@ -1788,9 +1803,11 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, bool) {
 	o := s.o
 	branch := s.branches[0]
-	if err := o.syncBaseBranch(".", s.baseBranch); err != nil {
-		fmt.Fprintf(o.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
-		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
+	if s.mode != ModeContinue {
+		if err := o.syncBaseBranch(".", s.baseBranch); err != nil {
+			fmt.Fprintf(o.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
+			return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
+		}
 	}
 	var container sandbox.Container
 	if s.containerAlloc != nil {
@@ -1847,6 +1864,9 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 			payload["prompt_source_value"] = s.renderCfg.TemplateFlag
 		}
 		payload["prompt_source_type"] = promptSourceType
+		if s.mode == ModeContinue {
+			payload["previous_run_id"] = s.previousRunIDs[0]
+		}
 		if len(s.renderCfg.PromptArgs) > 0 {
 			payload["prompt_args"] = s.renderCfg.PromptArgs
 		}
@@ -1864,10 +1884,11 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 			payload["pr_number"] = s.prNumber
 			payload["review_focus"] = s.reviewFocus
 		}
-		if prevID, ok := s.previousRunIDs[0]; ok && prevID != "" {
-			payload["previous_run_id"] = prevID
+		eventType := "run.started"
+		if s.mode == ModeContinue {
+			eventType = "run.continued"
 		}
-		_ = o.eventLog.Log(events.Event{Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
+		_ = o.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}
 
 	logPath := agentLogPath(fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))

@@ -341,12 +341,21 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				effectiveBaseBranch = promptOnlyBaseBranch
 			}
 
+			modes := make(map[int]batch.IssueMode, len(issues))
+			for _, num := range issues {
+				modes[num] = batch.ModeContinue
+			}
+			if runID != "" {
+				modes = map[int]batch.IssueMode{0: batch.ModeContinue}
+			}
+
 			req := batch.Request{
 				Issues:                     reqIssues,
 				Branches:                   branches,
 				Agent:                      agentName,
 				Model:                      model,
 				BaseBranch:                 effectiveBaseBranch,
+				Mode:                       modes,
 				Parallel:                   parallel,
 				Retries:                    retries,
 				StartDelay:                 startDelay,
@@ -359,7 +368,6 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				ContainerCapacitySet:       containerCapacitySet,
 				MaxContainers:              maxContainers,
 				MaxContainersSet:           maxContainersSet,
-				Continuation:               true,
 				PreviousRunIDs:             previousRunIDs,
 				BaseBranches:               baseBranches,
 				HandoffPrompts:             handoffPrompts,
