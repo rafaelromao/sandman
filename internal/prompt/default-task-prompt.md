@@ -14,6 +14,16 @@ Implement GitHub issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 - Base branch: `{{BASE_BRANCH}}`
 - Review command: `{{REVIEW_COMMAND}}`
 
+## Execution Checklist
+
+- [ ] Create branch
+- [ ] Plan (sandman-plan)
+- [ ] Implement (sandman-implement: execute TDD + commit + self-review + back-merge + create PR + delegate review)
+- [ ] PR-Review (sandman-pr-review)
+- [ ] PR-Merge (sandman-pr-merge)
+
+After completing each item, update `.sandman/task.md` in place by checking that item off.
+
 ## Mandatory Execution Contract
 
 This task must be executed through the Sandman skill workflow, not by ad-hoc implementation.
@@ -56,18 +66,16 @@ During `sandman implement`, follow all delegated subskills it calls:
 
 ## Required Order
 
-1. Run `sandman implement` and complete every required step in `sandman-implement` and all subskills it loads.
+1. Complete checklist items in order: Create branch, Plan, Implement, PR-Review, PR-Merge.
 2. For any plan-approval, confirmation, or satisfaction step, use subagent review and proceed after consensus. Do not ask the user.
-3. If the delegated PR review completed with full approval and all merge gates are true, load and run `sandman-pr-merge`.
-4. If any merge gate is false or ambiguous, do not merge. Leave the PR open and report blockers in the handoff.
+3. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.
+4. If any merge gate is false or ambiguous, do not merge. Leave the PR open and report blockers.
 
 ## Completion Requirements
 
 Before final response, verify and report:
 
-- Which Sandman subskills were loaded.
 - Whether each required skill checklist was completed.
 - Test/format commands run and outcomes.
 - PR URL and review status, if a PR was created.
-- Whether `.sandman/handoff.md` was written (the file now carries `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` as structured fields).
 - Whether PR merge was performed or skipped, with reason.
