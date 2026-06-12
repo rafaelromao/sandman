@@ -31,52 +31,98 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 	branches := make(map[int]string, len(issues))
 	baseBranches := make(map[int]string, len(issues))
 	handoffPrompts := make(map[int]string, len(issues))
+	var promptFlagContent string
+	var handoffPromptContent string
+	var promptOnlyBaseBranch string
+	var promptOnlyBranch string
+	if runID != "" {
+		promptOnlyEvent, found := lastPromptOnlyRun(eventsList)
+		if !found || promptOnlyEvent.RunID == "" {
+			return batch.Request{}, fmt.Errorf("no previous prompt-only run found")
+		}
+		issues = []int{0}
+		lastRuns[0] = promptOnlyEvent
+		previousRunIDs[0] = promptOnlyEvent.RunID
+		promptOnlyBranch, _ = payloadString(promptOnlyEvent.Payload, "branch")
+		promptOnlyBaseBranch, _ = payloadString(promptOnlyEvent.Payload, "base_branch")
+	}
 
-	for _, num := range issues {
-		lastRun := lastRuns[num]
-		if lastRun.RunID == "" {
-			return batch.Request{}, fmt.Errorf("no previous run found for issue #%d", num)
-		}
+	if runID == "" {
+		for _, num := range issues {
+			lastRun := lastRuns[num]
+			if lastRun.RunID == "" {
+				return batch.Request{}, fmt.Errorf("no previous run found for issue #%d", num)
+			}
 
-		branch, ok := payloadString(lastRun.Payload, "branch")
-		if !ok || strings.TrimSpace(branch) == "" {
-			return batch.Request{}, fmt.Errorf("missing branch in previous run for issue #%d", num)
-		}
-		baseBranch, ok := payloadString(lastRun.Payload, "base_branch")
-		if !ok || strings.TrimSpace(baseBranch) == "" {
-			return batch.Request{}, fmt.Errorf("missing base branch in previous run for issue #%d", num)
-		}
-		merged, err := batch.CheckPRMergedAtHead(deps.GitHubClient, branch, "")
-		if err != nil {
-			return batch.Request{}, fmt.Errorf("check merged status for issue #%d: %w", num, err)
-		}
-		if merged {
-			return batch.Request{}, fmt.Errorf("cannot continue issue #%d: PR already merged (branch %q)", num, branch)
-		}
+			branch, ok := payloadString(lastRun.Payload, "branch")
+			if !ok || strings.TrimSpace(branch) == "" {
+				return batch.Request{}, fmt.Errorf("missing branch in previous run for issue #%d", num)
+			}
+			baseBranch, ok := payloadString(lastRun.Payload, "base_branch")
+			if !ok || strings.TrimSpace(baseBranch) == "" {
+				return batch.Request{}, fmt.Errorf("missing base branch in previous run for issue #%d", num)
+			}
+			merged, err := batch.CheckPRMergedAtHead(deps.GitHubClient, branch, "")
+			if err != nil {
+				return batch.Request{}, fmt.Errorf("check merged status for issue #%d: %w", num, err)
+			}
+			if merged {
+				return batch.Request{}, fmt.Errorf("cannot continue issue #%d: PR already merged (branch %q)", num, branch)
+			}
 
-		worktreePath := filepath.Join(worktreeBase, branch)
+			worktreePath := filepath.Join(worktreeBase, branch)
+			if info, err := os.Stat(worktreePath); err != nil {
+				if os.IsNotExist(err) {
+					return batch.Request{}, fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
+				}
+				return batch.Request{}, fmt.Errorf("check worktree %q: %w", worktreePath, err)
+			} else if !info.IsDir() {
+				return batch.Request{}, fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
+			}
+
+			handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+			content, exists, err := batch.ReadHandoffContent(handoffPath)
+			if err != nil {
+				return batch.Request{}, fmt.Errorf("read handoff %q for issue #%d: %w", handoffPath, num, err)
+			}
+			if !exists {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
+			}
+
+			previousRunIDs[num] = lastRun.RunID
+			branches[num] = strings.TrimSpace(branch)
+			baseBranches[num] = strings.TrimSpace(baseBranch)
+			handoffPrompts[num] = prompt.BuildResumePrompt(prompt.ParseHandoff(content))
+		}
+	} else {
+		promptOnlyEvent := lastRuns[0]
+		promptOnlyBranch, _ = payloadString(promptOnlyEvent.Payload, "branch")
+		promptOnlyBaseBranch, _ = payloadString(promptOnlyEvent.Payload, "base_branch")
+		if promptOnlyBranch == "" {
+			return batch.Request{}, fmt.Errorf("missing branch in previous prompt-only run")
+		}
+		if promptOnlyBaseBranch == "" {
+			return batch.Request{}, fmt.Errorf("missing base branch in previous prompt-only run")
+		}
+		worktreePath := filepath.Join(worktreeBase, promptOnlyBranch)
 		if info, err := os.Stat(worktreePath); err != nil {
 			if os.IsNotExist(err) {
-				return batch.Request{}, fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
+				return batch.Request{}, fmt.Errorf("worktree %q is missing for prompt-only run; use \"sandman run\" instead", worktreePath)
 			}
 			return batch.Request{}, fmt.Errorf("check worktree %q: %w", worktreePath, err)
 		} else if !info.IsDir() {
-			return batch.Request{}, fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
+			return batch.Request{}, fmt.Errorf("worktree %q is missing for prompt-only run; use \"sandman run\" instead", worktreePath)
 		}
-
 		handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
 		content, exists, err := batch.ReadHandoffContent(handoffPath)
 		if err != nil {
-			return batch.Request{}, fmt.Errorf("read handoff %q for issue #%d: %w", handoffPath, num, err)
+			return batch.Request{}, fmt.Errorf("read handoff %q: %w", handoffPath, err)
 		}
 		if !exists {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", promptOnlyBranch)
 		}
-
-		previousRunIDs[num] = lastRun.RunID
-		branches[num] = strings.TrimSpace(branch)
-		baseBranches[num] = strings.TrimSpace(baseBranch)
-		handoffPrompts[num] = prompt.BuildResumePrompt(prompt.ParseHandoff(content))
+		promptFlagContent = content
+		handoffPromptContent = prompt.BuildResumePrompt(prompt.ParseHandoff(content))
 	}
 
 	firstIssue := issues[0]
@@ -221,9 +267,16 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 			baseBranches[num] = baseBranch
 		}
 	}
+	if runID != "" {
+		baseBranch = promptOnlyBaseBranch
+	}
+	reqIssues := issues
+	if runID != "" {
+		reqIssues = nil
+	}
 
 	return batch.Request{
-		Issues:                     issues,
+		Issues:                     reqIssues,
 		Agent:                      agentName,
 		Model:                      model,
 		BaseBranch:                 baseBranch,
@@ -246,6 +299,9 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		MaxContainersSet:           maxContainersSet,
 		DangerouslySkipPermissions: dangerouslySkipPerm,
 		PromptConfig: prompt.RenderConfig{
+			Branch:           promptOnlyBranch,
+			PromptFlag:       promptFlagContent,
+			HandoffPrompt:    handoffPromptContent,
 			ReviewCommand:    reviewCommand,
 			ReviewCommandSet: true,
 		},
@@ -269,6 +325,32 @@ func lastRunPerIssue(eventsList []events.Event, issues []int) map[int]events.Eve
 		lastRuns[e.Issue] = e
 	}
 	return lastRuns
+}
+
+// lastPromptOnlyRun returns the most recent prompt-only run event.
+func lastPromptOnlyRun(eventsList []events.Event) (events.Event, bool) {
+	var match events.Event
+	var found bool
+	for _, e := range eventsList {
+		if e.Type != "run.started" && e.Type != "run.continued" {
+			continue
+		}
+		if e.Issue != 0 {
+			continue
+		}
+		if e.RunID == "" {
+			continue
+		}
+		if review, _ := payloadBool(e.Payload, "review"); review {
+			continue
+		}
+		if branch, _ := payloadString(e.Payload, "branch"); branch == "" {
+			continue
+		}
+		match = e
+		found = true
+	}
+	return match, found
 }
 
 func cmdFlag(cmd *cobra.Command, name string) string {
