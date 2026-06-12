@@ -176,15 +176,19 @@ A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the 
 _Avoid_: dashboard, monitor, control panel.
 
 **Continue**:
-Re-run the latest AgentRun for one or more issues while reusing each issue's prior branch, base branch, agent, and review command. Continuation resumes from the stored handoff text rather than a fresh prompt. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. Continuation keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. Invoked via `sandman run --continue`. When `.sandman/handoff.md` and `.sandman/handoff-prompt.md` are present in the worktree, the resumed run consumes them instead of starting from a blank prompt.
+The `--continue` flag on `sandman run` re-runs the latest AgentRun for one or more issues while reusing each issue's prior branch, base branch, agent, and review command. Continuation resumes from the stored handoff text rather than a fresh prompt. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. `--continue` keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. When `.sandman/handoff.md` and `.sandman/handoff-prompt.md` are present in the worktree, the resumed run consumes them instead of starting from a blank prompt.
 _Avoid_: Retry.
 
 **Continuation**:
-An AgentRun or Batch request mode that skips prompt template rendering and writes raw prompt text to `handoff-prompt.md` inside the worktree.
+An AgentRun or Batch request mode behind the `sandman run --continue` flag that skips prompt template rendering and writes raw prompt text to `handoff-prompt.md` inside the worktree.
 _Avoid_: Replay mode.
 
+**Override**:
+The `--override` flag on `sandman run`. Clears prior run artifacts before starting by deleting the existing worktree, logs, and events, then force-checks out the expected branch when the current checkout is mismatched or detached. Use it to reconcile stranded worktrees before a fresh run.
+_Avoid_: Clean reset, manual checkout.
+
 **Handoff**:
-The persisted state written by `sandman-handoff` to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, key decisions, the originating rendered prompt (`## Source Prompt: .sandman/rendered-prompt.md`), the last executed sub-skill (`## Last Skill`), and its completion status (`## Last Skill Status`) so that a `Continue` or retry can resume from the right checkpoint. (ADR-0023). Removed by the orchestrator once the PR is merged.
+The persisted state written by `sandman-handoff` to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, key decisions, the originating rendered prompt (`## Source Prompt: .sandman/rendered-prompt.md`), the last executed sub-skill (`## Last Skill`), and its completion status (`## Last Skill Status`) so that a `--continue` resume or retry can resume from the right checkpoint. (ADR-0023). Removed by the orchestrator once the PR is merged.
 _Avoid_: Continuation context (legacy filename), continuation file.
 
 ## Relationships
