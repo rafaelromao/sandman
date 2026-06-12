@@ -48,6 +48,12 @@ When exploring the codebase, use the project's domain glossary so that test name
 
 Before writing any code:
 
+- [ ] Check `.sandman/task.md` for a top-level `## Plan` section with non-empty content
+- [ ] If a plan exists, use it, skip the planning subagent review, and proceed to tracer-bullet execution
+- [ ] If no plan exists, continue with the planning flow below
+
+The remaining planning bullets below apply only when no existing plan is present.
+
 - [ ] Identify opportunities for [deep modules](deep-modules.md) (small interface, deep implementation)
 - [ ] Design interfaces for [testability](interface-design.md)
 - [ ] List the behaviors to test (not implementation steps)
