@@ -305,9 +305,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					}
 					issues = extractIssueNumbers(searchResults)
 				} else {
-					if runID != "" && continueFlag {
-						issues = []int{0}
-					} else {
+					if !(runID != "" && continueFlag) {
 						if runID != "" {
 							return MarkUsage(fmt.Errorf("--run-id requires --prompt or --template for prompt-only mode"))
 						}
