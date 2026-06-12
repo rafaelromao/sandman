@@ -606,12 +606,12 @@ type handoffFlowRunnable struct {
 }
 
 func (r *handoffFlowRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
-	if renderCfg.HandoffPrompt != "" {
-		promptPath := filepath.Join(r.sb.WorkDir(), ".sandman", "handoff-prompt.md")
+	if renderCfg.TaskPrompt != "" {
+		promptPath := filepath.Join(r.sb.WorkDir(), ".sandman", "task-prompt.md")
 		if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err == nil {
-			_ = os.WriteFile(promptPath, []byte(renderCfg.HandoffPrompt), 0644)
+			_ = os.WriteFile(promptPath, []byte(renderCfg.TaskPrompt), 0644)
 		}
-		r.state.recordPrompt(renderCfg.HandoffPrompt)
+		r.state.recordPrompt(renderCfg.TaskPrompt)
 	}
 	contextPath := filepath.Join(r.sb.WorkDir(), ".sandman", "handoff.md")
 	if content := r.state.nextContext(); content != "" {
@@ -1031,7 +1031,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
-	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+	contextPath := filepath.Join(worktreePath, ".sandman", "task.md")
 	if err := os.WriteFile(contextPath, []byte("## Source Prompt: .sandman/task.md\n## Last Skill: sandman-pr-review\n## Last Skill Status: complete\n## Completed\nKeep going.\n"), 0644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
@@ -1080,11 +1080,11 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0", resetCalls)
 	}
-	if rtSandbox.execCommand != "opencode run .sandman/handoff-prompt.md" {
+	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
 		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
 	}
-	handoffPromptPath := filepath.Join(worktreePath, ".sandman", "handoff-prompt.md")
-	data, err := os.ReadFile(handoffPromptPath)
+	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
+	data, err := os.ReadFile(taskPromptPath)
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
@@ -1103,15 +1103,15 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if !strings.Contains(string(data), "## Last Skill Status: complete") {
 		t.Fatalf("expected Last Skill Status in retry prompt, got: %q", string(data))
 	}
-	if !strings.Contains(string(data), "## Update Handoff Context") {
-		t.Fatalf("expected Update Handoff Context in retry prompt, got: %q", string(data))
+	if !strings.Contains(string(data), "## Update Task Context") {
+		t.Fatalf("expected Update Task Context in retry prompt, got: %q", string(data))
 	}
 }
 
 // When a retry happens with an open PR and the handoff file is missing, the
-// agent receives the EmptyHandoffTemplate (no branch reset) so the open PR is
+// agent receives the EmptyTaskTemplate (no branch reset) so the open PR is
 // preserved and the agent continues working on it without prior context.
-func TestRunSingle_RetryWithOpenPRFallsBackToEmptyHandoffTemplate(t *testing.T) {
+func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1172,11 +1172,11 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyHandoffTemplate(t *testing.T) 
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0", resetCalls)
 	}
-	if rtSandbox.execCommand != "opencode run .sandman/handoff-prompt.md" {
+	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
 		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
 	}
-	handoffPromptPath := filepath.Join(worktreePath, ".sandman", "handoff-prompt.md")
-	data, err := os.ReadFile(handoffPromptPath)
+	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
+	data, err := os.ReadFile(taskPromptPath)
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
@@ -1486,14 +1486,14 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	if resetCalls != 1 {
 		t.Fatalf("reset calls = %d, want 1", resetCalls)
 	}
-	if rtSandbox.execCommand != "opencode run .sandman/handoff-prompt.md" {
-		t.Fatalf("expected handoff-prompt.md to be used, got %q", rtSandbox.execCommand)
+	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
+		t.Fatalf("expected task-prompt.md to be used, got %q", rtSandbox.execCommand)
 	}
 	// Verify the handoff prompt is the empty template (no handoff doc existed)
-	promptPath := filepath.Join(worktreePath, ".sandman", "handoff-prompt.md")
+	promptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
-		t.Fatalf("read handoff-prompt.md: %v", err)
+		t.Fatalf("read task-prompt.md: %v", err)
 	}
 	if !strings.Contains(string(data), "Continue the work.") {
 		t.Fatalf("expected empty handoff template, got %q", string(data))
@@ -1516,7 +1516,7 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
-	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+	contextPath := filepath.Join(worktreePath, ".sandman", "task.md")
 	if err := os.WriteFile(contextPath, []byte("## Stage: plan-approved\n## Source Prompt: .sandman/task.md\n## Last Skill: sandman-tdd\n## Last Skill Status: complete\n\n## Completed\nInitial implementation done.\n"), 0644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
@@ -1565,11 +1565,11 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0", resetCalls)
 	}
-	if rtSandbox.execCommand != "opencode run .sandman/handoff-prompt.md" {
+	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
 		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
 	}
-	handoffPromptPath := filepath.Join(worktreePath, ".sandman", "handoff-prompt.md")
-	data, err := os.ReadFile(handoffPromptPath)
+	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
+	data, err := os.ReadFile(taskPromptPath)
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
@@ -1590,7 +1590,7 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryUsesPRReviewHandoffPrompt(t *testing.T) {
+func TestRunSingle_RetryUsesPRReviewTaskPrompt(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1606,7 +1606,7 @@ func TestRunSingle_RetryUsesPRReviewHandoffPrompt(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
-	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+	contextPath := filepath.Join(worktreePath, ".sandman", "task.md")
 	if err := os.WriteFile(contextPath, []byte("## Stage: pr-review-finished\n## Source Prompt: .sandman/task.md\n## Last Skill: sandman-pr-review\n## Last Skill Status: complete\n\n## Completed\nReview done.\n"), 0644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
@@ -1655,11 +1655,11 @@ func TestRunSingle_RetryUsesPRReviewHandoffPrompt(t *testing.T) {
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0", resetCalls)
 	}
-	if rtSandbox.execCommand != "opencode run .sandman/handoff-prompt.md" {
+	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
 		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
 	}
-	handoffPromptPath := filepath.Join(worktreePath, ".sandman", "handoff-prompt.md")
-	data, err := os.ReadFile(handoffPromptPath)
+	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
+	data, err := os.ReadFile(taskPromptPath)
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
@@ -2650,7 +2650,7 @@ func TestRunBatch_MixedContinueStillValidatesFreshBranches(t *testing.T) {
 		Branches:       map[int]string{42: continueBranch},
 		BaseBranches:   map[int]string{42: "main"},
 		PreviousRunIDs: map[int]string{42: "run-42-prev"},
-		PromptConfig:   prompt.RenderConfig{HandoffPrompt: "finish the work"},
+		PromptConfig:   prompt.RenderConfig{TaskPrompt: "finish the work"},
 	})
 	if err == nil {
 		t.Fatal("expected error when fresh issue branch already exists")
@@ -4257,7 +4257,7 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, PreviousRunIDs: map[int]string{42: "run-42-1"}, BaseBranch: "main", Parallel: 2, Retries: 1, StartDelay: 5 * time.Second, StartDelaySet: true, Sandbox: "worktree", ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 6, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{HandoffPrompt: "finish the tests"}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, PreviousRunIDs: map[int]string{42: "run-42-1"}, BaseBranch: "main", Parallel: 2, Retries: 1, StartDelay: 5 * time.Second, StartDelaySet: true, Sandbox: "worktree", ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 6, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{TaskPrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4339,9 +4339,9 @@ func TestRunBatch_ContinuationUsesPerIssuePrompts(t *testing.T) {
 		Branches:       map[int]string{1: "sandman/1-one", 2: "sandman/2-two"},
 		Mode:           map[int]IssueMode{1: ModeContinue, 2: ModeContinue},
 		PreviousRunIDs: map[int]string{1: "run-1-prev", 2: "run-2-prev"},
-		HandoffPrompts: map[int]string{1: "prompt-one", 2: "prompt-two"},
+		TaskPrompts:    map[int]string{1: "prompt-one", 2: "prompt-two"},
 		BaseBranch:     "main",
-		PromptConfig:   prompt.RenderConfig{HandoffPrompt: "shared-prompt"},
+		PromptConfig:   prompt.RenderConfig{TaskPrompt: "shared-prompt"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -4354,7 +4354,7 @@ func TestRunBatch_ContinuationUsesPerIssuePrompts(t *testing.T) {
 		if sb == nil {
 			t.Fatalf("missing sandbox for %s", branch)
 		}
-		promptPath := filepath.Join(sb.workDir, ".sandman", "handoff-prompt.md")
+		promptPath := filepath.Join(sb.workDir, ".sandman", "task-prompt.md")
 		data, err := os.ReadFile(promptPath)
 		if err != nil {
 			t.Fatalf("read prompt for %s: %v", branch, err)
@@ -4393,7 +4393,7 @@ func TestRunBatch_PerIssuePreviousRunIDLookup(t *testing.T) {
 		PreviousRunIDs: map[int]string{42: "run-42-prev", 43: "run-43-prev"},
 		BaseBranch:     "main",
 		Parallel:       1,
-		PromptConfig:   prompt.RenderConfig{HandoffPrompt: "finish the work"},
+		PromptConfig:   prompt.RenderConfig{TaskPrompt: "finish the work"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -4441,7 +4441,7 @@ func TestRunBatch_MultiIssueContinuationLogsPerIssuePreviousRunID(t *testing.T) 
 		PreviousRunIDs: map[int]string{42: "run-42-7", 99: "run-99-3"},
 		BaseBranch:     "main",
 		Parallel:       1,
-		PromptConfig:   prompt.RenderConfig{HandoffPrompt: "finish them"},
+		PromptConfig:   prompt.RenderConfig{TaskPrompt: "finish them"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -4486,7 +4486,7 @@ func TestRunBatch_ContinuationSkipsBaseBranchSync(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: "run-42-1"}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "finish the tests"}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: "run-42-1"}, PromptConfig: prompt.RenderConfig{TaskPrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4535,7 +4535,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected handoff.md to be removed after merged PR, err=%v", err)
 	}
 
-	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[0].RunID}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "finish the tests"}})
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[0].RunID}, PromptConfig: prompt.RenderConfig{TaskPrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
@@ -4545,7 +4545,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected handoff.md to be preserved after continuation (no merge check), err=%v", err)
 	}
 
-	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[2].RunID}, PromptConfig: prompt.RenderConfig{HandoffPrompt: "push the PR"}})
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[2].RunID}, PromptConfig: prompt.RenderConfig{TaskPrompt: "push the PR"}})
 	if err != nil {
 		t.Fatalf("second continue failed: %v", err)
 	}

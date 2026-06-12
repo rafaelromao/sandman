@@ -416,9 +416,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			modes := make(map[int]batch.IssueMode)
 			previousRunIDs := make(map[int]string)
-			branches := make(map[int]string)
-			baseBranches := make(map[int]string)
-			handoffPrompts := make(map[int]string)
+				branches := make(map[int]string)
+				baseBranches := make(map[int]string)
+				taskPrompts := make(map[int]string)
 			continueIssues := make([]int, 0, len(resolvedBatch.Issues))
 			if continueFlag {
 				modeEvents := []events.Event{}
@@ -457,10 +457,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					} else if !info.IsDir() {
 						return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
 					}
-					handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-					content, exists, err := batch.ReadHandoffContent(handoffPath)
+					taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
+					content, exists, err := batch.ReadTaskContent(taskPath)
 					if err != nil {
-						return fmt.Errorf("read handoff %q for issue #%d: %w", handoffPath, num, err)
+						return fmt.Errorf("read task %q for issue #%d: %w", taskPath, num, err)
 					}
 					if !exists {
 						fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
@@ -469,7 +469,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					previousRunIDs[num] = lastRun.RunID
 					branches[num] = strings.TrimSpace(branch)
 					baseBranches[num] = strings.TrimSpace(baseBranchValue)
-					handoffPrompts[num] = prompt.BuildResumePrompt(prompt.ParseHandoff(content))
+					taskPrompts[num] = prompt.BuildTaskPrompt(prompt.ParseTask(content))
 				}
 			}
 			var continuationReq batch.Request
@@ -499,7 +499,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				PreviousRunIDs:             previousRunIDs,
 				Branches:                   branches,
 				BaseBranches:               baseBranches,
-				HandoffPrompts:             handoffPrompts,
+				TaskPrompts:                taskPrompts,
 				Retries:                    retries,
 				Parallel:                   parallel,
 				StartDelay:                 time.Duration(startDelay) * time.Second,
@@ -552,11 +552,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				for k, v := range continuationReq.BaseBranches {
 					req.BaseBranches[k] = v
 				}
-				for k, v := range continuationReq.HandoffPrompts {
-					req.HandoffPrompts[k] = v
+				for k, v := range continuationReq.TaskPrompts {
+					req.TaskPrompts[k] = v
 				}
-				if continuationReq.PromptConfig.HandoffPrompt != "" {
-					req.PromptConfig.HandoffPrompt = continuationReq.PromptConfig.HandoffPrompt
+				if continuationReq.PromptConfig.TaskPrompt != "" {
+					req.PromptConfig.TaskPrompt = continuationReq.PromptConfig.TaskPrompt
 				}
 				if continuationReq.PromptConfig.PromptFlag != "" {
 					req.PromptConfig.PromptFlag = continuationReq.PromptConfig.PromptFlag

@@ -30,9 +30,8 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 	previousRunIDs := make(map[int]string, len(issues))
 	branches := make(map[int]string, len(issues))
 	baseBranches := make(map[int]string, len(issues))
-	handoffPrompts := make(map[int]string, len(issues))
-	var promptFlagContent string
-	var handoffPromptContent string
+	taskPrompts := make(map[int]string, len(issues))
+	var taskPromptContent string
 	var promptOnlyBaseBranch string
 	var promptOnlyBranch string
 	modes := make(map[int]batch.IssueMode, len(issues))
@@ -81,10 +80,10 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 				return batch.Request{}, fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
 			}
 
-			handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-			content, exists, err := batch.ReadHandoffContent(handoffPath)
+			taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
+			content, exists, err := batch.ReadTaskContent(taskPath)
 			if err != nil {
-				return batch.Request{}, fmt.Errorf("read handoff %q for issue #%d: %w", handoffPath, num, err)
+				return batch.Request{}, fmt.Errorf("read task %q for issue #%d: %w", taskPath, num, err)
 			}
 			if !exists {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
@@ -93,7 +92,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 			previousRunIDs[num] = lastRun.RunID
 			branches[num] = strings.TrimSpace(branch)
 			baseBranches[num] = strings.TrimSpace(baseBranch)
-			handoffPrompts[num] = prompt.BuildResumePrompt(prompt.ParseHandoff(content))
+			taskPrompts[num] = prompt.BuildTaskPrompt(prompt.ParseTask(content))
 			modes[num] = batch.ModeContinue
 		}
 	} else {
@@ -115,16 +114,15 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		} else if !info.IsDir() {
 			return batch.Request{}, fmt.Errorf("worktree %q is missing for prompt-only run; use \"sandman run\" instead", worktreePath)
 		}
-		handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-		content, exists, err := batch.ReadHandoffContent(handoffPath)
+		taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
+		content, exists, err := batch.ReadTaskContent(taskPath)
 		if err != nil {
-			return batch.Request{}, fmt.Errorf("read handoff %q: %w", handoffPath, err)
+			return batch.Request{}, fmt.Errorf("read task %q: %w", taskPath, err)
 		}
 		if !exists {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", promptOnlyBranch)
 		}
-		promptFlagContent = content
-		handoffPromptContent = prompt.BuildResumePrompt(prompt.ParseHandoff(content))
+			taskPromptContent = prompt.BuildTaskPrompt(prompt.ParseTask(content))
 		modes[0] = batch.ModeContinue
 	}
 
@@ -286,7 +284,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		Mode:                       modes,
 		PreviousRunIDs:             previousRunIDs,
 		BaseBranches:               baseBranches,
-		HandoffPrompts:             handoffPrompts,
+		TaskPrompts:                taskPrompts,
 		Retries:                    retries,
 		Parallel:                   parallel,
 		StartDelay:                 time.Duration(startDelay) * time.Second,
@@ -303,8 +301,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		DangerouslySkipPermissions: dangerouslySkipPerm,
 		PromptConfig: prompt.RenderConfig{
 			Branch:           promptOnlyBranch,
-			PromptFlag:       promptFlagContent,
-			HandoffPrompt:    handoffPromptContent,
+			TaskPrompt:       taskPromptContent,
 			ReviewCommand:    reviewCommand,
 			ReviewCommandSet: true,
 		},

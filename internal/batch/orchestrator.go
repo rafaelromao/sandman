@@ -729,7 +729,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		dangerouslySkipPermissions = &isContainer
 	}
 
-	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "" || req.PromptConfig.HandoffPrompt != "") {
+	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "" || req.PromptConfig.TaskPrompt != "") {
 		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newBatchIdentityResolver(o, "."), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions)
 	}
 
@@ -926,9 +926,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			mode := req.IssueMode(issueNum)
 			renderCfg := req.PromptConfig
 			if mode == ModeContinue {
-				if handoffPrompt, ok := req.HandoffPrompts[issueNum]; ok {
-					renderCfg.HandoffPrompt = handoffPrompt
-				}
+			if taskPrompt, ok := req.TaskPrompts[issueNum]; ok {
+				renderCfg.TaskPrompt = taskPrompt
+			}
 			}
 			issueBaseBranch := baseBranch
 			if mode == ModeContinue {
@@ -1671,20 +1671,20 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
-			// Always pass the handoff content verbatim (or empty template if
-			// missing). The agent reads its next instruction from the handoff
+			// Always pass the task content verbatim (or empty template if
+			// missing). The agent reads its next instruction from the task
 			// document's ## Next Step field directly. The openPR value is only
 			// used below to decide whether to reset the branch — the agent
-			// receives the same handoff content regardless of open-PR state.
-			handoffPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
-			handoffContent, handoffExists, err := ReadHandoffContent(handoffPath)
+			// receives the same task content regardless of open-PR state.
+			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
+			taskContent, taskExists, err := ReadTaskContent(taskPath)
 			if err != nil {
-				fmt.Fprintf(o.errorLog, "error: read handoff for issue %d: %v\n", s.issueNumber, err)
+				fmt.Fprintf(o.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			attemptRenderCfg.HandoffPrompt = prompt.BuildResumePrompt(prompt.ParseHandoff(handoffContent))
-			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
-			if !handoffExists {
+			attemptRenderCfg.TaskPrompt = prompt.BuildTaskPrompt(prompt.ParseTask(taskContent))
+			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task-prompt.md")
+			if !taskExists {
 				if openPR == nil {
 					if prLookupErr != nil {
 						fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
