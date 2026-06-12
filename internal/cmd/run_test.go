@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
 )
 
@@ -696,6 +697,40 @@ func TestRun_OverrideFalseByDefault(t *testing.T) {
 
 	if got := spy.req.IssueMode(42); got != batch.ModeFresh {
 		t.Errorf("expected ModeFresh when --override flag is not passed, got %v", got)
+	}
+}
+
+func TestRun_FreshRunErrorsWhenBranchAlreadyExists(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initRunIntegrationRepo(t, dir)
+	writeSandmanDockerfile(t, dir)
+
+	branch := "sandman/42-fix-bug"
+	runGit(t, dir, "checkout", "-b", branch)
+	runGit(t, dir, "checkout", "main")
+
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}
+	store := &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
+	deps := Dependencies{
+		BatchRunner:  batch.NewOrchestrator(gh, &prompt.Engine{}, store, &fakeEventLog{}),
+		ConfigStore:  store,
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when branch already exists")
+	}
+	if !strings.Contains(err.Error(), "--override") || !strings.Contains(err.Error(), "--continue") {
+		t.Fatalf("expected branch-conflict guidance, got %v", err)
 	}
 }
 
