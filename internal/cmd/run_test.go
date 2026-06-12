@@ -1023,6 +1023,29 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	}
 }
 
+func TestRun_ContinueFlag_NoPreviousPromptOnlyRun_ReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.EventLog = &fakeEventLog{events: []events.Event{}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "--run-id", "my-run"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no previous prompt-only run exists")
+	}
+	if !strings.Contains(err.Error(), "no previous prompt-only run found") {
+		t.Fatalf("expected prompt-only replay error, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
+	}
+}
+
 func TestRun_ContinueFlag_NoPriorRunErrors(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)

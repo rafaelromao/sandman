@@ -18,9 +18,11 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun_E2E(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
-	handoffContent := "## Stage: plan-approved\n\nContinue.\n"
-	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte(handoffContent), 0644); err != nil {
-		t.Fatalf("write handoff: %v", err)
+	resumeContent := "## Stage: plan-approved\n\nContinue.\n"
+	for _, name := range []string{"handoff.md", "task.md"} {
+		if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", name), []byte(resumeContent), 0644); err != nil {
+			t.Fatalf("write handoff: %v", err)
+		}
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
@@ -60,8 +62,8 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun_E2E(t *testing.T) {
 	if spy.req.PromptConfig.Branch != branch {
 		t.Fatalf("expected PromptConfig.Branch=%q, got %q", branch, spy.req.PromptConfig.Branch)
 	}
-	if !strings.Contains(spy.req.PromptConfig.HandoffPrompt, "Continue.") {
-		t.Fatalf("expected prompt flag content, got %q", spy.req.PromptConfig.HandoffPrompt)
+	if !strings.Contains(spy.req.PromptConfig.HandoffPrompt, "## Prior Context") {
+		t.Fatalf("expected wrapped resume prompt, got %q", spy.req.PromptConfig.HandoffPrompt)
 	}
 	if strings.Contains(buf.String(), "warning: no handoff found") {
 		t.Fatalf("did not expect missing-handoff warning, got %q", buf.String())
