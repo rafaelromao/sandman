@@ -1442,7 +1442,9 @@ func (s *runSession) runOnce(
 				if err := os.Remove(handoffPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 					fmt.Fprintf(o.errorLog, "warning: remove handoff %q: %v\n", handoffPath, err)
 				}
-				result.Status = "success"
+				if result.Status != "aborted" {
+					result.Status = "success"
+				}
 				break
 			}
 			result.Status = "failure"
