@@ -19,7 +19,7 @@ func TestDefaultPromptDocMatchesCanonicalPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	templatePath := filepath.Join("default_prompt.md")
+	templatePath := filepath.Join("default-task-prompt.md")
 	template, err := os.ReadFile(templatePath)
 	if err != nil {
 		t.Fatalf("read default prompt template: %v", err)

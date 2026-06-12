@@ -1032,7 +1032,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-	if err := os.WriteFile(contextPath, []byte("## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-pr-review\n## Last Skill Status: complete\n## Completed\nKeep going.\n"), 0644); err != nil {
+	if err := os.WriteFile(contextPath, []byte("## Source Prompt: .sandman/task.md\n## Last Skill: sandman-pr-review\n## Last Skill Status: complete\n## Completed\nKeep going.\n"), 0644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
 
@@ -1094,7 +1094,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if !strings.Contains(string(data), "Keep going.") {
 		t.Fatalf("expected body content in retry prompt, got: %q", string(data))
 	}
-	if !strings.Contains(string(data), "## Source Prompt: .sandman/rendered-prompt.md") {
+	if !strings.Contains(string(data), "## Source Prompt: .sandman/task.md") {
 		t.Fatalf("expected Source Prompt in retry prompt, got: %q", string(data))
 	}
 	if !strings.Contains(string(data), "## Last Skill: sandman-pr-review") {
@@ -1517,7 +1517,7 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-	if err := os.WriteFile(contextPath, []byte("## Stage: plan-approved\n## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-tdd\n## Last Skill Status: complete\n\n## Completed\nInitial implementation done.\n"), 0644); err != nil {
+	if err := os.WriteFile(contextPath, []byte("## Stage: plan-approved\n## Source Prompt: .sandman/task.md\n## Last Skill: sandman-tdd\n## Last Skill Status: complete\n\n## Completed\nInitial implementation done.\n"), 0644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
 
@@ -1576,7 +1576,7 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 	if !strings.Contains(string(data), "## Stage: plan-approved") {
 		t.Fatalf("expected stage line preserved verbatim, got:\n%s", data)
 	}
-	if !strings.Contains(string(data), "## Source Prompt: .sandman/rendered-prompt.md") {
+	if !strings.Contains(string(data), "## Source Prompt: .sandman/task.md") {
 		t.Fatalf("expected source prompt line preserved verbatim, got:\n%s", data)
 	}
 	if !strings.Contains(string(data), "## Last Skill: sandman-tdd") {
@@ -1607,7 +1607,7 @@ func TestRunSingle_RetryUsesPRReviewHandoffPrompt(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 	contextPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-	if err := os.WriteFile(contextPath, []byte("## Stage: pr-review-finished\n## Source Prompt: .sandman/rendered-prompt.md\n## Last Skill: sandman-pr-review\n## Last Skill Status: complete\n\n## Completed\nReview done.\n"), 0644); err != nil {
+	if err := os.WriteFile(contextPath, []byte("## Stage: pr-review-finished\n## Source Prompt: .sandman/task.md\n## Last Skill: sandman-pr-review\n## Last Skill Status: complete\n\n## Completed\nReview done.\n"), 0644); err != nil {
 		t.Fatalf("write context: %v", err)
 	}
 
@@ -1666,7 +1666,7 @@ func TestRunSingle_RetryUsesPRReviewHandoffPrompt(t *testing.T) {
 	if !strings.Contains(string(data), "## Stage: pr-review-finished") {
 		t.Fatalf("expected stage line preserved verbatim, got:\n%s", data)
 	}
-	if !strings.Contains(string(data), "## Source Prompt: .sandman/rendered-prompt.md") {
+	if !strings.Contains(string(data), "## Source Prompt: .sandman/task.md") {
 		t.Fatalf("expected source prompt line preserved verbatim, got:\n%s", data)
 	}
 	if !strings.Contains(string(data), "## Last Skill: sandman-pr-review") {
@@ -2837,7 +2837,7 @@ func TestRunBatch_WritesPromptAndExecutesAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug", ".sandman", "rendered-prompt.md")
+	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug", ".sandman", "task.md")
 	if _, err := os.Stat(promptPath); err != nil {
 		t.Errorf("prompt file not found: %v", err)
 	}
@@ -2968,7 +2968,7 @@ sandbox: worktree
 		t.Errorf("expected branch sandman/42-fix-login-bug, got %s", result.Runs[0].Branch)
 	}
 
-	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-login-bug", ".sandman", "rendered-prompt.md")
+	promptPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-login-bug", ".sandman", "task.md")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		t.Fatalf("read prompt: %v", err)

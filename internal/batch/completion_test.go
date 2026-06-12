@@ -33,7 +33,7 @@ Continue the work.`
 	}
 
 	doc := prompt.ParseHandoff(raw)
-	if doc.SourcePrompt != ".sandman/rendered-prompt.md" {
+	if doc.SourcePrompt != ".sandman/task.md" {
 		t.Fatalf("expected default SourcePrompt, got %q", doc.SourcePrompt)
 	}
 	if doc.Stage != "plan-approved" {
@@ -117,7 +117,7 @@ func TestBatchParseHandoff_MissingFieldFallback(t *testing.T) {
 	if doc.LastSkillStatus != "" {
 		t.Fatalf("expected empty LastSkillStatus, got %q", doc.LastSkillStatus)
 	}
-	if doc.SourcePrompt != ".sandman/rendered-prompt.md" {
+	if doc.SourcePrompt != ".sandman/task.md" {
 		t.Fatalf("expected default SourcePrompt, got %q", doc.SourcePrompt)
 	}
 }

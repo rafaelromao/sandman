@@ -100,7 +100,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	renderedPromptFile := renderCfg.RenderedPromptFile
 	if renderedPromptFile == "" {
-		renderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+		renderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 	}
 
 	if renderCfg.HandoffPrompt != "" {

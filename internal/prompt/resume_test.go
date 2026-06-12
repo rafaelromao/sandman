@@ -117,8 +117,8 @@ func TestParseHandoff_SourcePromptDefault(t *testing.T) {
 Done.`
 
 	doc := ParseHandoff(content)
-	if doc.SourcePrompt != ".sandman/rendered-prompt.md" {
-		t.Fatalf("expected default SourcePrompt=.sandman/rendered-prompt.md, got %q", doc.SourcePrompt)
+	if doc.SourcePrompt != ".sandman/task.md" {
+		t.Fatalf("expected default SourcePrompt=.sandman/task.md, got %q", doc.SourcePrompt)
 	}
 }
 
@@ -174,8 +174,8 @@ func TestBuildResumePrompt_SourcePromptReferencesFile(t *testing.T) {
 	doc := HandoffDoc{Body: "## Completed\nDone."}
 	result := BuildResumePrompt(doc)
 
-	if !strings.Contains(result, ".sandman/rendered-prompt.md") {
-		t.Fatalf("expected Source Prompt to reference rendered-prompt.md, got:\n%s", result)
+	if !strings.Contains(result, ".sandman/task.md") {
+		t.Fatalf("expected Source Prompt to reference task.md, got:\n%s", result)
 	}
 }
 
@@ -281,7 +281,7 @@ Done.
 ## Source Prompt: .sandman/custom.md`
 
 	doc := ParseHandoff(content)
-	if doc.SourcePrompt != ".sandman/rendered-prompt.md" {
+	if doc.SourcePrompt != ".sandman/task.md" {
 		t.Fatalf("expected default SourcePrompt (after first body heading), got %q", doc.SourcePrompt)
 	}
 }

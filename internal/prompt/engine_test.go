@@ -39,7 +39,7 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 }
 
 func TestDefaultPrompt_EmbeddedPromptMatchesTemplate(t *testing.T) {
-	data, err := os.ReadFile("default_prompt.md")
+	data, err := os.ReadFile("default-task-prompt.md")
 	if err != nil {
 		t.Fatalf("read default prompt template: %v", err)
 	}

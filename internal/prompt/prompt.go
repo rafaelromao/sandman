@@ -6,7 +6,7 @@ type RenderConfig struct {
 	PromptFlag         string            // --prompt: inline template
 	TemplateFlag       string            // --template: path to template file
 	PromptFile         string            // .sandman/prompt.md project template path
-	RenderedPromptFile string            // .sandman/rendered-prompt.md rendered prompt path
+	RenderedPromptFile string            // .sandman/task.md rendered prompt path
 	HandoffPrompt      string            // raw handoff prompt text
 	ReviewCommand      string            // REVIEW_COMMAND substitution value
 	ReviewCommandSet   bool              // true when review_command should be recorded in events

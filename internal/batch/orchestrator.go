@@ -696,7 +696,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		if allContinue {
 			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
 		} else {
-			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 		}
 	}
 	if !allContinue {
@@ -1405,7 +1405,7 @@ func (s *runSession) runOnce(
 		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
 	}
 	if s.renderCfg.RenderedPromptFile == "" {
-		s.renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+		s.renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 	}
 
 	attempts := s.retries + 1

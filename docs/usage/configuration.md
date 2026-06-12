@@ -81,10 +81,10 @@ Use `sandman run --base-branch` to override `git.base_branch` for a single invoc
 
 Sandman's prompt lifecycle has four steps:
 
-- **Default Prompt** — the embedded bootstrap template in `internal/prompt/default_prompt.md`
+- **Default Prompt** — the embedded bootstrap template in `internal/prompt/default-task-prompt.md`
 - **Project Prompt Template** — `.sandman/prompt.md`, created from the Default Prompt by `sandman init` and materialized on run when missing
 - **Sandman Skill** — the shared skill folder in `~/.agents/skills/sandman/`, installed by `sandman init`
-- **Prompt** — `.sandman/rendered-prompt.md`, the rendered instruction file passed to the agent
+- **Prompt** — `.sandman/task.md`, the rendered instruction file passed to the agent
 
 The following built-in substitution keys are available in prompt templates:
 
