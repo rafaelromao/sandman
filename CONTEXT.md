@@ -105,7 +105,7 @@ The generated instruction file passed to an Agent, rendered from a template with
 _Avoid_: Instructions, query.
 
 **Default Prompt**:
-The canonical bootstrap prompt template embedded in Sandman at `internal/prompt/default_prompt.md`.
+The canonical bootstrap prompt template embedded in Sandman at `internal/prompt/default-task-prompt.md`.
 _Avoid_: Base prompt, stock prompt.
 
 **Sandman Skill**:
@@ -188,7 +188,7 @@ The `--override` flag on `sandman run`. Clears prior run artifacts before starti
 _Avoid_: Clean reset, manual checkout.
 
 **Handoff**:
-The persisted state written by `sandman-handoff` to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, key decisions, the originating rendered prompt (`## Source Prompt: .sandman/rendered-prompt.md`), the last executed sub-skill (`## Last Skill`), and its completion status (`## Last Skill Status`) so that a `--continue` resume or retry can resume from the right checkpoint. (ADR-0023). Removed by the orchestrator once the PR is merged.
+The persisted state written by the continuation workflow to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, key decisions, the originating task prompt (`## Source Prompt: .sandman/task.md`), the last executed sub-skill (`## Last Skill`), and its completion status (`## Last Skill Status`) so that a `--continue` resume or retry can resume from the right checkpoint. (ADR-0023). Removed by the orchestrator once the PR is merged.
 _Avoid_: Continuation context (legacy filename), continuation file.
 
 ## Relationships

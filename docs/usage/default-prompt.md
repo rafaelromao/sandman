@@ -1,6 +1,6 @@
 # Default Prompt
 
-Sandman's canonical prompt lives in `internal/prompt/default_prompt.md`. `sandman init` copies it to `.sandman/prompt.md`, which becomes the Project Prompt Template you customize per repo. Sandman then renders that template into `.sandman/rendered-prompt.md` and passes the rendered Prompt to the agent.
+Sandman's canonical prompt lives in `internal/prompt/default-task-prompt.md`. `sandman init` copies it to `.sandman/prompt.md`, which becomes the Project Prompt Template you customize per repo. Sandman then renders that template into `.sandman/task.md` and passes the rendered Prompt to the agent.
 
 The long workflow now lives in the shared Sandman skill. This page describes the bootstrap prompt that passes issue context and runtime values to that skill. See [Sandman Skills](skills.md) for the shared workflow itself.
 
@@ -99,5 +99,5 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 - **Default Prompt**: Sandman's embedded bootstrap prompt.
 - **Project Prompt Template**: `.sandman/prompt.md`, created from the Default Prompt during `sandman init` and materialized on run when missing.
 - **Sandman Skill**: the shared skill folder installed into `~/.agents/skills/sandman/` by `sandman init`.
-- **Prompt**: `.sandman/rendered-prompt.md`, the rendered instruction file handed to the agent.
+- **Prompt**: `.sandman/task.md`, the rendered instruction file handed to the agent.
 - **Continue replay**: `sandman run --continue` reuses the stored branch, base branch, agent, and review command from the prior run. It reads the handoff document (`.sandman/handoff.md`) from the worktree and passes its contents verbatim as the agent's resume prompt. The handoff document now carries `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` as structured fields. When no handoff document exists, an empty handoff template is used with a warning on stderr.

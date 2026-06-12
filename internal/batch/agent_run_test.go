@@ -243,7 +243,7 @@ func TestAgentRun_Run_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
 
-	want := `opencode run -m gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`
+	want := `opencode run -m gpt-4.1 "$(cat .sandman/task.md)"`
 	if sb.execCommand != want {
 		t.Errorf("expected command %q, got %q", want, sb.execCommand)
 	}
@@ -264,7 +264,7 @@ func TestAgentRun_Run_DoesNotInjectModelFlagForCustomCommand(t *testing.T) {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
 
-	want := `opencode run "$(cat .sandman/rendered-prompt.md)"`
+	want := `opencode run "$(cat .sandman/task.md)"`
 	if sb.execCommand != want {
 		t.Errorf("expected command %q, got %q", want, sb.execCommand)
 	}
@@ -449,7 +449,7 @@ func TestAgentRun_Run_InjectsPromptFileIntoCommandTemplate(t *testing.T) {
 	if res.Status != "success" {
 		t.Errorf("expected status success, got %s", res.Status)
 	}
-	if sb.execCommand != "opencode --prompt-file .sandman/rendered-prompt.md" {
+	if sb.execCommand != "opencode --prompt-file .sandman/task.md" {
 		t.Errorf("expected rendered command with prompt file, got %q", sb.execCommand)
 	}
 }
@@ -500,7 +500,7 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	if !sb.execCalled {
 		t.Fatal("expected Exec to be called")
 	}
-	wantPrefix := "export API_KEY='sk-test123'; export MODEL='gpt-4'; opencode run .sandman/rendered-prompt.md"
+	wantPrefix := "export API_KEY='sk-test123'; export MODEL='gpt-4'; opencode run .sandman/task.md"
 	if sb.execCommand != wantPrefix {
 		t.Errorf("exec command:\ngot:  %q\nwant: %q", sb.execCommand, wantPrefix)
 	}
@@ -544,14 +544,14 @@ func TestAgentRun_Prepare_PassesRenderConfigToRenderer(t *testing.T) {
 	}
 }
 
-func TestAgentRun_Run_WritesRawHandoffPrompt(t *testing.T) {
+func TestAgentRun_Run_WritesRawTaskPrompt(t *testing.T) {
 	dir := t.TempDir()
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{workDir: dir}
 	spy := &spyRenderer{result: "rendered prompt"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
-	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{HandoffPrompt: "finish {{ISSUE_NUMBER}}"})
+	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{TaskPrompt: "finish {{ISSUE_NUMBER}}"})
 
 	if res.Status != "success" {
 		t.Fatalf("expected success, got %s", res.Status)
@@ -562,7 +562,7 @@ func TestAgentRun_Run_WritesRawHandoffPrompt(t *testing.T) {
 	if sb.writePromptCalled {
 		t.Fatal("expected WritePrompt not to be called for continue prompt")
 	}
-	promptPath := filepath.Join(dir, ".sandman", "handoff-prompt.md")
+	promptPath := filepath.Join(dir, ".sandman", "task-prompt.md")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		t.Fatalf("expected continue prompt file: %v", err)
@@ -570,7 +570,7 @@ func TestAgentRun_Run_WritesRawHandoffPrompt(t *testing.T) {
 	if string(data) != "finish {{ISSUE_NUMBER}}" {
 		t.Fatalf("expected raw continue prompt, got %q", string(data))
 	}
-	if sb.execCommand != "opencode run .sandman/handoff-prompt.md" {
+	if sb.execCommand != "opencode run .sandman/task-prompt.md" {
 		t.Fatalf("expected continue prompt file in command, got %q", sb.execCommand)
 	}
 }
@@ -604,7 +604,7 @@ func TestAgentRun_Run_EmptyEnvLeavesCommandUnchanged(t *testing.T) {
 	if res.Status != "success" {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
-	if sb.execCommand != "opencode run .sandman/rendered-prompt.md" {
+	if sb.execCommand != "opencode run .sandman/task.md" {
 		t.Errorf("expected unchanged command, got %q", sb.execCommand)
 	}
 }
@@ -624,7 +624,7 @@ func TestAgentRun_Run_ExportsSortedQuotedVariables(t *testing.T) {
 	if res.Status != "success" {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
-	want := "export ALPHA='it'\"'\"'s fine'; export BETA='two words'; opencode run .sandman/rendered-prompt.md"
+	want := "export ALPHA='it'\"'\"'s fine'; export BETA='two words'; opencode run .sandman/task.md"
 	if sb.execCommand != want {
 		t.Errorf("expected sorted quoted exports, got:\n%s", sb.execCommand)
 	}
@@ -658,7 +658,7 @@ func TestAgentRun_Run_OpencodePresetExportsPermissionForDangerousRuns(t *testing
 	if !strings.HasPrefix(sb.execCommand, wantPrefix) {
 		t.Fatalf("expected rendered opencode command to start with %q, got:\n%s", wantPrefix, sb.execCommand)
 	}
-	if !strings.HasSuffix(sb.execCommand, "'; opencode run --dangerously-skip-permissions .sandman/rendered-prompt.md") {
+	if !strings.HasSuffix(sb.execCommand, "'; opencode run --dangerously-skip-permissions .sandman/task.md") {
 		t.Fatalf("expected rendered opencode command to end with the opencode run invocation, got:\n%s", sb.execCommand)
 	}
 }
@@ -684,7 +684,7 @@ func TestAgentRun_Run_OpencodePresetSkipsPermissionForNonDangerousRuns(t *testin
 	if res.Status != "success" {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
-	want := `opencode run .sandman/rendered-prompt.md`
+	want := `opencode run .sandman/task.md`
 	if sb.execCommand != want {
 		t.Fatalf("expected non-dangerous opencode command to stay unchanged, got:\n%s", sb.execCommand)
 	}

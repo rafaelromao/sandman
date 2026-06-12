@@ -827,8 +827,8 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 	if spy.req.BaseBranches[42] != "main" {
 		t.Fatalf("expected BaseBranches[42]=main, got %q", spy.req.BaseBranches[42])
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[42], "## Prior Context") {
-		t.Fatalf("expected handoff prompt wrapper, got %q", spy.req.HandoffPrompts[42])
+	if !strings.Contains(spy.req.TaskPrompts[42], "## Prior Context") {
+		t.Fatalf("expected task prompt wrapper, got %q", spy.req.TaskPrompts[42])
 	}
 	if spy.req.Agent != "opencode" {
 		t.Fatalf("expected agent replay, got %q", spy.req.Agent)
@@ -927,8 +927,8 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateWarning(t *testing.T) {
 	if !strings.Contains(buf.String(), "warning: no handoff found") {
 		t.Fatalf("expected warning about missing handoff, got %q", buf.String())
 	}
-	if !strings.Contains(spy.req.HandoffPrompts[42], "Continue the work.") {
-		t.Fatalf("expected empty-template resume prompt, got %q", spy.req.HandoffPrompts[42])
+	if !strings.Contains(spy.req.TaskPrompts[42], "Continue the work.") {
+		t.Fatalf("expected empty-template task prompt, got %q", spy.req.TaskPrompts[42])
 	}
 }
 

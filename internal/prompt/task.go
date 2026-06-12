@@ -4,15 +4,15 @@ import (
 	"strings"
 )
 
-type HandoffDoc struct {
+type TaskDoc struct {
 	Stage           string // plan-approved, implementation-committed, pr-created, pr-review-finished
-	SourcePrompt    string // always ".sandman/rendered-prompt.md"
+	SourcePrompt    string // always ".sandman/task.md"
 	LastSkill       string // sandman sub-skill the previous run was on
 	LastSkillStatus string // "complete" or "incomplete" with optional context after " — "
 	Body            string // the remaining content (Completed, Pending, Blockers, Key Decisions, Next Step)
 }
 
-func ParseHandoff(content string) HandoffDoc {
+func ParseTask(content string) TaskDoc {
 	lines := strings.Split(content, "\n")
 	var stage, sourcePrompt, lastSkill, lastSkillStatus string
 	var bodyLines []string
@@ -48,10 +48,10 @@ func ParseHandoff(content string) HandoffDoc {
 	body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
 
 	if sourcePrompt == "" {
-		sourcePrompt = ".sandman/rendered-prompt.md"
+		sourcePrompt = ".sandman/task.md"
 	}
 
-	return HandoffDoc{
+	return TaskDoc{
 		Stage:           stage,
 		SourcePrompt:    sourcePrompt,
 		LastSkill:       lastSkill,
@@ -60,7 +60,7 @@ func ParseHandoff(content string) HandoffDoc {
 	}
 }
 
-func BuildResumePrompt(doc HandoffDoc) string {
+func BuildTaskPrompt(doc TaskDoc) string {
 	var b strings.Builder
 
 	if doc.Body != "" {
@@ -71,7 +71,7 @@ func BuildResumePrompt(doc HandoffDoc) string {
 
 	sourcePrompt := doc.SourcePrompt
 	if sourcePrompt == "" {
-		sourcePrompt = ".sandman/rendered-prompt.md"
+		sourcePrompt = ".sandman/task.md"
 	}
 	b.WriteString("## Source Prompt: ")
 	b.WriteString(sourcePrompt)
@@ -96,8 +96,8 @@ func BuildResumePrompt(doc HandoffDoc) string {
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString("## Update Handoff Context\n")
-	b.WriteString("Overwrite `.sandman/handoff.md` on exit with:\n\n")
+	b.WriteString("## Update Task Context\n")
+	b.WriteString("Overwrite `.sandman/task.md` on exit with:\n\n")
 	if doc.Stage != "" || doc.LastSkill != "" || doc.LastSkillStatus != "" {
 		b.WriteString("## Stage: ")
 		b.WriteString(doc.Stage)

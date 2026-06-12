@@ -18,9 +18,9 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
-	handoffContent := "## Stage: done\n\nContinue.\n"
-	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte(handoffContent), 0644); err != nil {
-		t.Fatalf("write handoff: %v", err)
+	taskContent := "## Stage: done\n\nContinue.\n"
+	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "task.md"), []byte(taskContent), 0644); err != nil {
+		t.Fatalf("write task: %v", err)
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
@@ -63,7 +63,10 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun(t *testing.T) {
 	if spy.req.PromptConfig.Branch != branch {
 		t.Fatalf("expected PromptConfig.Branch=%q, got %q", branch, spy.req.PromptConfig.Branch)
 	}
-	if !strings.Contains(spy.req.PromptConfig.PromptFlag, "Continue.") {
-		t.Fatalf("expected prompt flag content, got %q", spy.req.PromptConfig.PromptFlag)
+	if !strings.Contains(spy.req.PromptConfig.TaskPrompt, "## Prior Context") {
+		t.Fatalf("expected wrapped task prompt content, got %q", spy.req.PromptConfig.TaskPrompt)
+	}
+	if !strings.Contains(spy.req.PromptConfig.TaskPrompt, "Continue.") {
+		t.Fatalf("expected task body in prompt, got %q", spy.req.PromptConfig.TaskPrompt)
 	}
 }

@@ -47,7 +47,7 @@ The flag was renamed to signal that the behaviour has changed from simple numeri
 
 ### Priority selection prompt
 
-A built-in `priority_selection_prompt.md` is embedded via `//go:embed` in `internal/prompt/` alongside the existing `default_prompt.md`. It uses two new substitution keys — `{{CANDIDATE_ISSUES}}` (a formatted list) and `{{MAX_COUNT}}` (the N from `--ralph=N`) — that are populated at render time alongside the existing keys.
+A built-in `priority_selection_prompt.md` is embedded via `//go:embed` in `internal/prompt/` alongside the existing `default-task-prompt.md`. It uses two new substitution keys — `{{CANDIDATE_ISSUES}}` (a formatted list) and `{{MAX_COUNT}}` (the N from `--ralph=N`) — that are populated at render time alongside the existing keys.
 
 The `sandman init` command creates `.sandman/priority-selection-prompt.md` from the built-in default, following the same pattern as `prompt.md`. Running `init` again does not overwrite an existing file (idempotent).
 

@@ -44,8 +44,8 @@ type Request struct {
 	PreviousRunIDs map[int]string
 	// BaseBranches maps each issue number to its base branch.
 	BaseBranches map[int]string
-	// HandoffPrompts maps each issue number to its rendered handoff prompt.
-	HandoffPrompts    map[int]string
+	// TaskPrompts maps each issue number to its rendered task prompt.
+	TaskPrompts       map[int]string
 	Retries           int
 	Parallel          int
 	StartDelay        time.Duration

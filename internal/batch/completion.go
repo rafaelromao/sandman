@@ -99,10 +99,10 @@ func findOpenPRByBranch(client github.Client, branch string) (*github.PR, error)
 	return pr, nil
 }
 
-// EmptyHandoffTemplate is the fallback prompt used when the handoff document
+// EmptyTaskTemplate is the fallback prompt used when the task document
 // is missing (the file does not exist). It tells the agent to continue the
 // work without prior context.
-const EmptyHandoffTemplate = `## Completed
+const EmptyTaskTemplate = `## Completed
 
 
 ## Pending
@@ -119,16 +119,16 @@ Continue the work.`
 
 var readFileFn = os.ReadFile
 
-// ReadHandoffContent reads the handoff document at the given path and returns
+// ReadTaskContent reads the task document at the given path and returns
 // its verbatim content. The second return value is true when the file was read
-// successfully. When the file is missing (os.IsNotExist), EmptyHandoffTemplate
+// successfully. When the file is missing (os.IsNotExist), EmptyTaskTemplate
 // is returned and exists is false. Other read errors (permission denied, I/O
 // failure) are surfaced through the error return.
-func ReadHandoffContent(path string) (content string, exists bool, err error) {
+func ReadTaskContent(path string) (content string, exists bool, err error) {
 	raw, err := readFileFn(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return EmptyHandoffTemplate, false, nil
+			return EmptyTaskTemplate, false, nil
 		}
 		return "", false, err
 	}
