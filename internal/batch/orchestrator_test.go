@@ -287,6 +287,18 @@ func (f *fakeRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb
 	return r
 }
 
+type byIssueRunnableFactory struct {
+	results map[int]AgentRunResult
+}
+
+func (f *byIssueRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	res, ok := f.results[issue.Number]
+	if !ok {
+		res = AgentRunResult{IssueNumber: issue.Number, Status: "failure"}
+	}
+	return &fakeRunnable{result: res}
+}
+
 type fakeSandboxFactory struct {
 	sandbox *fakeSandbox
 }
@@ -2986,18 +2998,15 @@ func TestRunBatch_OneFailureDoesNotAbortOthers(t *testing.T) {
 		},
 		prs: map[string]*github.PR{
 			"sandman/1-a": mergedPR("sandman/1-a", ""),
-			"sandman/2-b": mergedPR("sandman/2-b", ""),
 			"sandman/3-c": mergedPR("sandman/3-c", ""),
 		},
 	}
 
-	factory := &fakeRunnableFactory{
-		results: []AgentRunResult{
-			{IssueNumber: 1, Status: "success"},
-			{IssueNumber: 2, Status: "failure"},
-			{IssueNumber: 3, Status: "success"},
-		},
-	}
+	factory := &byIssueRunnableFactory{results: map[int]AgentRunResult{
+		1: {IssueNumber: 1, Status: "success"},
+		2: {IssueNumber: 2, Status: "failure"},
+		3: {IssueNumber: 3, Status: "success"},
+	}}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.runnableFactory = factory
