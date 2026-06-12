@@ -97,7 +97,7 @@ func gitTopLevel(repoPath string) (string, error) {
 }
 
 func (o *Orchestrator) validateBatchBranches(req Request) error {
-	if !branchValidationEnabled || len(req.Mode) > 0 || len(req.Issues) == 0 {
+	if !branchValidationEnabled || len(req.Issues) == 0 {
 		return nil
 	}
 
@@ -109,6 +109,9 @@ func (o *Orchestrator) validateBatchBranches(req Request) error {
 	var conflicts []string
 	seenConflict := make(map[string]struct{}, len(req.Issues))
 	for _, num := range req.Issues {
+		if req.IssueMode(num) != ModeFresh {
+			continue
+		}
 		issue, err := o.githubClient.FetchIssue(num)
 		if err != nil {
 			if o.errorLog != nil {

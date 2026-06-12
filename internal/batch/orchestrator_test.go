@@ -2436,6 +2436,50 @@ func TestRunBatch_OverrideClearsExistingBranchesAndProceeds(t *testing.T) {
 	}
 }
 
+func TestRunBatch_MixedContinueStillValidatesFreshBranches(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	continueBranch := BranchName(42, "Continue issue")
+	freshBranch := BranchName(43, "Fresh issue")
+	runGit(t, dir, "checkout", "-b", freshBranch)
+	runGit(t, dir, "checkout", "main")
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Continue issue"},
+			43: {Number: 43, Title: "Fresh issue"},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}, {IssueNumber: 43, Status: "success"}}}
+	oldBranchExists := branchExists
+	oldBranchValidationEnabled := branchValidationEnabled
+	branchExists = sandbox.BranchExists
+	branchValidationEnabled = true
+	t.Cleanup(func() {
+		branchExists = oldBranchExists
+		branchValidationEnabled = oldBranchValidationEnabled
+	})
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Issues:         []int{42, 43},
+		Mode:           map[int]IssueMode{42: ModeContinue, 43: ModeFresh},
+		Branches:       map[int]string{42: continueBranch},
+		BaseBranches:   map[int]string{42: "main"},
+		PreviousRunIDs: map[int]string{42: "run-42-prev"},
+		PromptConfig:   prompt.RenderConfig{HandoffPrompt: "finish the work"},
+	})
+	if err == nil {
+		t.Fatal("expected error when fresh issue branch already exists")
+	}
+	if !strings.Contains(err.Error(), freshBranch) {
+		t.Fatalf("expected error to mention fresh branch %q, got %v", freshBranch, err)
+	}
+}
+
 func TestRunBatch_FetchError(t *testing.T) {
 	client := &fakeGitHubClient{err: errors.New("github api error")}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
