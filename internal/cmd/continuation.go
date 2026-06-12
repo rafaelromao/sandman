@@ -29,6 +29,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 	branches := make(map[int]string, len(issues))
 	baseBranches := make(map[int]string, len(issues))
 	handoffPrompts := make(map[int]string, len(issues))
+	modes := make(map[int]batch.IssueMode, len(issues))
 
 	for _, num := range issues {
 		lastRun := lastRuns[num]
@@ -75,6 +76,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		branches[num] = strings.TrimSpace(branch)
 		baseBranches[num] = strings.TrimSpace(baseBranch)
 		handoffPrompts[num] = prompt.BuildResumePrompt(prompt.ParseHandoff(content))
+		modes[num] = batch.ModeContinue
 	}
 
 	firstIssue := issues[0]
@@ -225,7 +227,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		Agent:                      agentName,
 		Model:                      model,
 		BaseBranch:                 baseBranch,
-		Continuation:               true,
+		Mode:                       modes,
 		PreviousRunIDs:             previousRunIDs,
 		BaseBranches:               baseBranches,
 		HandoffPrompts:             handoffPrompts,

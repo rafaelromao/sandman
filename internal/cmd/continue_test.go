@@ -157,8 +157,8 @@ func TestContinue_RunID_ContinuesLastPromptOnlyRun(t *testing.T) {
 	if len(spy.req.Issues) != 0 {
 		t.Fatalf("expected empty issues (prompt-only path), got %v", spy.req.Issues)
 	}
-	if !spy.req.Continuation {
-		t.Fatal("expected continuation request")
+	if got := spy.req.IssueMode(0); got != batch.ModeContinue {
+		t.Fatalf("expected ModeContinue request, got %v", got)
 	}
 	if spy.req.PreviousRunIDs[0] != "run-0-abc" {
 		t.Fatalf("expected PreviousRunIDs[0]=run-0-abc, got %q", spy.req.PreviousRunIDs[0])
@@ -546,8 +546,8 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if spy.req.PromptConfig.HandoffPrompt != "" {
 		t.Fatalf("expected no bare prompt, got %q", spy.req.PromptConfig.HandoffPrompt)
 	}
-	if !spy.req.Continuation {
-		t.Fatal("expected continuation request")
+	if got := spy.req.IssueMode(42); got != batch.ModeContinue {
+		t.Fatalf("expected ModeContinue request, got %v", got)
 	}
 	if spy.req.PreviousRunIDs[42] != "run-42-2" {
 		t.Fatalf("expected previous run ID run-42-2 for issue 42, got %q", spy.req.PreviousRunIDs[42])
@@ -988,7 +988,7 @@ func (r *handoffFlowBatchRunner) RunBatch(ctx context.Context, req batch.Request
 	}
 	eventType := "run.started"
 	payload := map[string]any{"branch": branch, "base_branch": req.BaseBranch, "agent": req.Agent}
-	if req.Continuation {
+	if req.IssueMode(issue) == batch.ModeContinue {
 		eventType = "run.continued"
 		payload = map[string]any{"branch": branch, "base_branch": req.BaseBranch, "previous_run_id": req.PreviousRunIDs[issue]}
 		promptText := req.PromptConfig.HandoffPrompt
@@ -1194,8 +1194,8 @@ func TestContinue_MultipleIssuesBuildsBranchesAndPreviousRunIDsMaps(t *testing.T
 	if spy.req.PreviousRunIDs[2] != "run-2-a" {
 		t.Fatalf("expected PreviousRunIDs[2]=run-2-a, got %q", spy.req.PreviousRunIDs[2])
 	}
-	if !spy.req.Continuation {
-		t.Fatal("expected continuation request")
+	if got := spy.req.IssueMode(1); got != batch.ModeContinue {
+		t.Fatalf("expected ModeContinue request, got %v", got)
 	}
 }
 

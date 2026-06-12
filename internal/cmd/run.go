@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
@@ -322,128 +324,231 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return MarkUsage(fmt.Errorf("no issues selected"))
 			}
 
-			var req batch.Request
+			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
+			baseBranch := strings.TrimSpace(baseBranchFlag)
+			if baseBranch == "" {
+				baseBranch = strings.TrimSpace(cfg.Git.BaseBranch)
+			}
+			if baseBranch == "" {
+				baseBranch = "main"
+			}
+
+			resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies)
+			if err != nil {
+				return fmt.Errorf("resolve dependencies: %w", err)
+			}
+
+			parallelFlag := cmd.Flags().Lookup("parallel")
+			parallelSet := parallelFlag != nil && parallelFlag.Changed
+			parallel, _ := cmd.Flags().GetInt("parallel")
+			if !parallelSet && cfg != nil {
+				parallel = cfg.DefaultParallel
+			}
+			if parallelSet && parallel < 0 {
+				return MarkUsage(fmt.Errorf("parallel must be 0 or greater"))
+			}
+
+			startDelayFlag := cmd.Flags().Lookup("start-delay")
+			startDelaySet := startDelayFlag != nil && startDelayFlag.Changed
+			startDelay, _ := cmd.Flags().GetInt("start-delay")
+			if startDelaySet && startDelay < 0 {
+				return MarkUsage(fmt.Errorf("start_delay must be 0 or greater"))
+			}
+
+			runIdleTimeoutFlag := cmd.Flags().Lookup("run-idle-timeout")
+			runIdleTimeoutSet := runIdleTimeoutFlag != nil && runIdleTimeoutFlag.Changed
+			runIdleTimeout, _ := cmd.Flags().GetInt("run-idle-timeout")
+			if runIdleTimeoutSet && runIdleTimeout < 0 {
+				return MarkUsage(fmt.Errorf("run_idle_timeout must be 0 or greater"))
+			}
+
+			sandboxMode, _ := cmd.Flags().GetString("sandbox")
+			containerCapacityFlag := cmd.Flags().Lookup("container-capacity")
+			containerCapacitySet := containerCapacityFlag != nil && containerCapacityFlag.Changed
+			containerCapacity, _ := cmd.Flags().GetInt("container-capacity")
+			maxContainersFlag := cmd.Flags().Lookup("max-containers")
+			maxContainersSet := maxContainersFlag != nil && maxContainersFlag.Changed
+			maxContainers, _ := cmd.Flags().GetInt("max-containers")
+			if containerCapacitySet && containerCapacity < 0 {
+				return MarkUsage(fmt.Errorf("container_capacity must be 0 or greater"))
+			}
+			if maxContainersSet && maxContainers < 0 {
+				return MarkUsage(fmt.Errorf("max_containers must be 0 or greater"))
+			}
+
+			retriesFlag := cmd.Flags().Lookup("retries")
+			retriesSet := retriesFlag != nil && retriesFlag.Changed
+			retries, _ := cmd.Flags().GetInt("retries")
+			if retriesSet && retries < 0 {
+				return MarkUsage(fmt.Errorf("retries must be 0 or greater"))
+			}
+			if !retriesSet {
+				retries = -1
+			}
+
+			if ralphProvided {
+				if !parallelSet {
+					parallel = 1
+				}
+				if !containerCapacitySet {
+					containerCapacity = 1
+					containerCapacitySet = true
+				}
+				if !maxContainersSet {
+					maxContainers = 1
+					maxContainersSet = true
+				}
+				if !retriesSet {
+					retries = 3
+				}
+			}
+
+			dangerouslySkipPermFlag := cmd.Flags().Lookup("dangerously-skip-permissions")
+			dangerouslySkipPermSet := dangerouslySkipPermFlag != nil && dangerouslySkipPermFlag.Changed
+			var dangerouslySkipPerm *bool
+			if dangerouslySkipPermSet {
+				val, _ := cmd.Flags().GetBool("dangerously-skip-permissions")
+				dangerouslySkipPerm = &val
+			}
+
+			modes := make(map[int]batch.IssueMode)
+			previousRunIDs := make(map[int]string)
+			branches := make(map[int]string)
+			baseBranches := make(map[int]string)
+			handoffPrompts := make(map[int]string)
+			continueIssues := make([]int, 0, len(resolvedBatch.Issues))
 			if continueFlag {
-				req, err = buildContinuationRequest(cmd, deps, cfg, issues, runID)
+				modeEvents := []events.Event{}
+				if deps.EventLog != nil {
+					modeEvents, err = deps.EventLog.Read()
+					if err != nil {
+						return fmt.Errorf("read event log: %w", err)
+					}
+				}
+				lastRuns := lastRunPerIssue(modeEvents, resolvedBatch.Issues)
+				worktreeBase := cfg.WorktreeDir
+				if strings.TrimSpace(worktreeBase) == "" {
+					worktreeBase = ".sandman/worktrees"
+				}
+				for _, num := range resolvedBatch.Issues {
+					lastRun := lastRuns[num]
+					if lastRun.RunID == "" {
+						modes[num] = batch.ModeFresh
+						continue
+					}
+					continueIssues = append(continueIssues, num)
+					branch, ok := payloadString(lastRun.Payload, "branch")
+					if !ok || strings.TrimSpace(branch) == "" {
+						return fmt.Errorf("missing branch in previous run for issue #%d", num)
+					}
+					baseBranchValue, ok := payloadString(lastRun.Payload, "base_branch")
+					if !ok || strings.TrimSpace(baseBranchValue) == "" {
+						return fmt.Errorf("missing base branch in previous run for issue #%d", num)
+					}
+					worktreePath := filepath.Join(worktreeBase, branch)
+					if info, err := os.Stat(worktreePath); err != nil {
+						if os.IsNotExist(err) {
+							return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
+						}
+						return fmt.Errorf("check worktree %q: %w", worktreePath, err)
+					} else if !info.IsDir() {
+						return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
+					}
+					handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
+					content, exists, err := batch.ReadHandoffContent(handoffPath)
+					if err != nil {
+						return fmt.Errorf("read handoff %q for issue #%d: %w", handoffPath, num, err)
+					}
+					if !exists {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
+					}
+					modes[num] = batch.ModeContinue
+					previousRunIDs[num] = lastRun.RunID
+					branches[num] = strings.TrimSpace(branch)
+					baseBranches[num] = strings.TrimSpace(baseBranchValue)
+					handoffPrompts[num] = prompt.BuildResumePrompt(prompt.ParseHandoff(content))
+				}
+			}
+			var continuationReq batch.Request
+			var hasContinuationReq bool
+			if continueFlag && len(continueIssues) > 0 {
+				continuationReq, err = buildContinuationRequest(cmd, deps, cfg, continueIssues, runID)
 				if err != nil {
 					return err
 				}
-			} else {
-				baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
-				baseBranch := strings.TrimSpace(baseBranchFlag)
-				if baseBranch == "" {
-					baseBranch = strings.TrimSpace(cfg.Git.BaseBranch)
+				hasContinuationReq = true
+			}
+			if overrideFlag {
+				modes = make(map[int]batch.IssueMode, len(resolvedBatch.Issues))
+				for _, num := range resolvedBatch.Issues {
+					modes[num] = batch.ModeOverride
 				}
-				if baseBranch == "" {
-					baseBranch = "main"
-				}
+			}
 
-				resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies)
-				if err != nil {
-					return fmt.Errorf("resolve dependencies: %w", err)
+			req := batch.Request{
+				Issues:                     resolvedBatch.Issues,
+				Dependencies:               resolvedBatch.Deps,
+				Blocked:                    resolvedBatch.Blocked,
+				Agent:                      agentName,
+				Model:                      resolveModel(modelFlag, cfg.DefaultModel, agentCfg.Preset),
+				BaseBranch:                 baseBranch,
+				Mode:                       modes,
+				PreviousRunIDs:             previousRunIDs,
+				Branches:                   branches,
+				BaseBranches:               baseBranches,
+				HandoffPrompts:             handoffPrompts,
+				Retries:                    retries,
+				Parallel:                   parallel,
+				StartDelay:                 time.Duration(startDelay) * time.Second,
+				StartDelaySet:              startDelaySet,
+				RunIdleTimeout:             runIdleTimeout,
+				RunIdleTimeoutSet:          runIdleTimeoutSet,
+				Sandbox:                    sandboxMode,
+				RequireDockerfile:          true,
+				ContainerCapacity:          containerCapacity,
+				ContainerCapacitySet:       containerCapacitySet,
+				MaxContainers:              maxContainers,
+				MaxContainersSet:           maxContainersSet,
+				DangerouslySkipPermissions: dangerouslySkipPerm,
+				PromptConfig: prompt.RenderConfig{
+					PromptFlag:       promptFlag,
+					TemplateFlag:     templateFlag,
+					ReviewCommand:    reviewCommand,
+					ReviewCommandSet: true,
+					PromptArgs:       promptArgs,
+				},
+			}
+			if hasContinuationReq {
+				if len(continueIssues) == len(resolvedBatch.Issues) {
+					req.Agent = continuationReq.Agent
+					req.Model = continuationReq.Model
+					req.BaseBranch = continuationReq.BaseBranch
+					req.Retries = continuationReq.Retries
+					req.Parallel = continuationReq.Parallel
+					req.StartDelay = continuationReq.StartDelay
+					req.StartDelaySet = continuationReq.StartDelaySet
+					req.RunIdleTimeout = continuationReq.RunIdleTimeout
+					req.RunIdleTimeoutSet = continuationReq.RunIdleTimeoutSet
+					req.Sandbox = continuationReq.Sandbox
+					req.ContainerCapacity = continuationReq.ContainerCapacity
+					req.ContainerCapacitySet = continuationReq.ContainerCapacitySet
+					req.MaxContainers = continuationReq.MaxContainers
+					req.MaxContainersSet = continuationReq.MaxContainersSet
+					req.DangerouslySkipPermissions = continuationReq.DangerouslySkipPermissions
+					req.PromptConfig.ReviewCommand = continuationReq.PromptConfig.ReviewCommand
+					req.PromptConfig.ReviewCommandSet = continuationReq.PromptConfig.ReviewCommandSet
 				}
-
-				parallelFlag := cmd.Flags().Lookup("parallel")
-				parallelSet := parallelFlag != nil && parallelFlag.Changed
-				parallel, _ := cmd.Flags().GetInt("parallel")
-				if !parallelSet && cfg != nil {
-					parallel = cfg.DefaultParallel
+				for k, v := range continuationReq.PreviousRunIDs {
+					req.PreviousRunIDs[k] = v
 				}
-				if parallelSet && parallel < 0 {
-					return MarkUsage(fmt.Errorf("parallel must be 0 or greater"))
+				for k, v := range continuationReq.Branches {
+					req.Branches[k] = v
 				}
-
-				startDelayFlag := cmd.Flags().Lookup("start-delay")
-				startDelaySet := startDelayFlag != nil && startDelayFlag.Changed
-				startDelay, _ := cmd.Flags().GetInt("start-delay")
-				if startDelaySet && startDelay < 0 {
-					return MarkUsage(fmt.Errorf("start_delay must be 0 or greater"))
+				for k, v := range continuationReq.BaseBranches {
+					req.BaseBranches[k] = v
 				}
-
-				runIdleTimeoutFlag := cmd.Flags().Lookup("run-idle-timeout")
-				runIdleTimeoutSet := runIdleTimeoutFlag != nil && runIdleTimeoutFlag.Changed
-				runIdleTimeout, _ := cmd.Flags().GetInt("run-idle-timeout")
-				if runIdleTimeoutSet && runIdleTimeout < 0 {
-					return MarkUsage(fmt.Errorf("run_idle_timeout must be 0 or greater"))
-				}
-
-				sandboxMode, _ := cmd.Flags().GetString("sandbox")
-				containerCapacityFlag := cmd.Flags().Lookup("container-capacity")
-				containerCapacitySet := containerCapacityFlag != nil && containerCapacityFlag.Changed
-				containerCapacity, _ := cmd.Flags().GetInt("container-capacity")
-				maxContainersFlag := cmd.Flags().Lookup("max-containers")
-				maxContainersSet := maxContainersFlag != nil && maxContainersFlag.Changed
-				maxContainers, _ := cmd.Flags().GetInt("max-containers")
-				if containerCapacitySet && containerCapacity < 0 {
-					return MarkUsage(fmt.Errorf("container_capacity must be 0 or greater"))
-				}
-				if maxContainersSet && maxContainers < 0 {
-					return MarkUsage(fmt.Errorf("max_containers must be 0 or greater"))
-				}
-
-				retriesFlag := cmd.Flags().Lookup("retries")
-				retriesSet := retriesFlag != nil && retriesFlag.Changed
-				retries, _ := cmd.Flags().GetInt("retries")
-				if retriesSet && retries < 0 {
-					return MarkUsage(fmt.Errorf("retries must be 0 or greater"))
-				}
-				if !retriesSet {
-					retries = -1
-				}
-
-				if ralphProvided {
-					if !parallelSet {
-						parallel = 1
-					}
-					if !containerCapacitySet {
-						containerCapacity = 1
-						containerCapacitySet = true
-					}
-					if !maxContainersSet {
-						maxContainers = 1
-						maxContainersSet = true
-					}
-					if !retriesSet {
-						retries = 3
-					}
-				}
-
-				dangerouslySkipPermFlag := cmd.Flags().Lookup("dangerously-skip-permissions")
-				dangerouslySkipPermSet := dangerouslySkipPermFlag != nil && dangerouslySkipPermFlag.Changed
-				var dangerouslySkipPerm *bool
-				if dangerouslySkipPermSet {
-					val, _ := cmd.Flags().GetBool("dangerously-skip-permissions")
-					dangerouslySkipPerm = &val
-				}
-
-				req = batch.Request{
-					Override:                   overrideFlag,
-					Issues:                     resolvedBatch.Issues,
-					Dependencies:               resolvedBatch.Deps,
-					Blocked:                    resolvedBatch.Blocked,
-					Agent:                      agentName,
-					Model:                      resolveModel(modelFlag, cfg.DefaultModel, agentCfg.Preset),
-					BaseBranch:                 baseBranch,
-					Retries:                    retries,
-					Parallel:                   parallel,
-					StartDelay:                 time.Duration(startDelay) * time.Second,
-					StartDelaySet:              startDelaySet,
-					RunIdleTimeout:             runIdleTimeout,
-					RunIdleTimeoutSet:          runIdleTimeoutSet,
-					Sandbox:                    sandboxMode,
-					RequireDockerfile:          true,
-					ContainerCapacity:          containerCapacity,
-					ContainerCapacitySet:       containerCapacitySet,
-					MaxContainers:              maxContainers,
-					MaxContainersSet:           maxContainersSet,
-					DangerouslySkipPermissions: dangerouslySkipPerm,
-					PromptConfig: prompt.RenderConfig{
-						PromptFlag:       promptFlag,
-						TemplateFlag:     templateFlag,
-						ReviewCommand:    reviewCommand,
-						ReviewCommandSet: true,
-						PromptArgs:       promptArgs,
-					},
+				for k, v := range continuationReq.HandoffPrompts {
+					req.HandoffPrompts[k] = v
 				}
 			}
 
