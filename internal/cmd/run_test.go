@@ -16,6 +16,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/spf13/cobra"
 )
@@ -724,6 +725,20 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 			spy := &spyBatchRunner{result: &batch.Result{}}
 			deps := newRunDeps(spy)
 
+			if tt.name == "continue only" {
+				dir := t.TempDir()
+				branch := "sandman/42-fix-bug"
+				if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
+					t.Fatalf("mkdir worktree: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+					t.Fatalf("write handoff: %v", err)
+				}
+				deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
+				deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
+				deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
+			}
+
 			var buf bytes.Buffer
 			cmd := NewRunCmd(deps)
 			cmd.SetOut(&buf)
@@ -755,6 +770,185 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 				t.Fatal("expected Override=false when only --continue is passed")
 			}
 		})
+	}
+}
+
+func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+		t.Fatalf("write handoff: %v", err)
+	}
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent:         "opencode",
+		DefaultModel:  "openai/gpt-4.1",
+		WorktreeDir:   dir,
+		ReviewCommand: "/oc review",
+		Git:           config.GitConfig{BaseBranch: "trunk"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "true"},
+		},
+	}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}},
+		{Type: "run.continued", RunID: "run-42-2", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.2", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true}},
+	}}
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if !spy.req.Continuation {
+		t.Fatal("expected continuation request")
+	}
+	if spy.req.PreviousRunIDs[42] != "run-42-2" {
+		t.Fatalf("expected PreviousRunIDs[42]=run-42-2, got %q", spy.req.PreviousRunIDs[42])
+	}
+	if spy.req.Branches[42] != branch {
+		t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])
+	}
+	if spy.req.BaseBranches[42] != "main" {
+		t.Fatalf("expected BaseBranches[42]=main, got %q", spy.req.BaseBranches[42])
+	}
+	if !strings.Contains(spy.req.HandoffPrompts[42], "## Prior Context") {
+		t.Fatalf("expected handoff prompt wrapper, got %q", spy.req.HandoffPrompts[42])
+	}
+	if spy.req.Agent != "opencode" {
+		t.Fatalf("expected agent replay, got %q", spy.req.Agent)
+	}
+	if spy.req.Model != "gpt-4.2" {
+		t.Fatalf("expected model replay from prior run, got %q", spy.req.Model)
+	}
+	if spy.req.BaseBranch != "main" {
+		t.Fatalf("expected base branch replay, got %q", spy.req.BaseBranch)
+	}
+	if spy.req.Parallel != 7 {
+		t.Fatalf("expected parallel replay, got %d", spy.req.Parallel)
+	}
+	if spy.req.StartDelay != 11*time.Second || !spy.req.StartDelaySet {
+		t.Fatalf("expected start delay replay, got %s set=%v", spy.req.StartDelay, spy.req.StartDelaySet)
+	}
+	if spy.req.Retries != 4 {
+		t.Fatalf("expected retries replay, got %d", spy.req.Retries)
+	}
+	if spy.req.Sandbox != "docker" {
+		t.Fatalf("expected sandbox replay, got %q", spy.req.Sandbox)
+	}
+	if spy.req.ContainerCapacity != 3 || !spy.req.ContainerCapacitySet {
+		t.Fatalf("expected container capacity replay, got %d set=%v", spy.req.ContainerCapacity, spy.req.ContainerCapacitySet)
+	}
+	if spy.req.MaxContainers != 5 || !spy.req.MaxContainersSet {
+		t.Fatalf("expected max containers replay, got %d set=%v", spy.req.MaxContainers, spy.req.MaxContainersSet)
+	}
+	if spy.req.PromptConfig.ReviewCommand != "/custom review 2" || !spy.req.PromptConfig.ReviewCommandSet {
+		t.Fatalf("expected review command replay, got %q set=%v", spy.req.PromptConfig.ReviewCommand, spy.req.PromptConfig.ReviewCommandSet)
+	}
+}
+
+func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateWarning(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent:         "opencode",
+		WorktreeDir:   dir,
+		ReviewCommand: "/oc review",
+		Git:           config.GitConfig{BaseBranch: "trunk"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "true"},
+		},
+	}}
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "docker", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}}}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "--agent", "opencode", "--model", "gpt-override", "--parallel", "9", "--start-delay", "12", "--retries", "5", "--sandbox", "worktree", "--container-capacity", "8", "--max-containers", "6", "--base-branch", "trunk", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.Agent != "opencode" {
+		t.Fatalf("expected agent override, got %q", spy.req.Agent)
+	}
+	if spy.req.Model != "gpt-override" {
+		t.Fatalf("expected model override, got %q", spy.req.Model)
+	}
+	if spy.req.Parallel != 9 {
+		t.Fatalf("expected parallel override, got %d", spy.req.Parallel)
+	}
+	if spy.req.StartDelay != 12*time.Second || !spy.req.StartDelaySet {
+		t.Fatalf("expected start delay override, got %s set=%v", spy.req.StartDelay, spy.req.StartDelaySet)
+	}
+	if spy.req.Retries != 5 {
+		t.Fatalf("expected retries override, got %d", spy.req.Retries)
+	}
+	if spy.req.Sandbox != "worktree" {
+		t.Fatalf("expected sandbox override, got %q", spy.req.Sandbox)
+	}
+	if spy.req.ContainerCapacity != 8 || !spy.req.ContainerCapacitySet {
+		t.Fatalf("expected container capacity override, got %d set=%v", spy.req.ContainerCapacity, spy.req.ContainerCapacitySet)
+	}
+	if spy.req.MaxContainers != 6 || !spy.req.MaxContainersSet {
+		t.Fatalf("expected max containers override, got %d set=%v", spy.req.MaxContainers, spy.req.MaxContainersSet)
+	}
+	if spy.req.BaseBranch != "trunk" {
+		t.Fatalf("expected base branch override, got %q", spy.req.BaseBranch)
+	}
+	if spy.req.BaseBranches[42] != "trunk" {
+		t.Fatalf("expected per-issue base branch override, got %q", spy.req.BaseBranches[42])
+	}
+	if !strings.Contains(buf.String(), "warning: no handoff found") {
+		t.Fatalf("expected warning about missing handoff, got %q", buf.String())
+	}
+	if !strings.Contains(spy.req.HandoffPrompts[42], "Continue the work.") {
+		t.Fatalf("expected empty-template resume prompt, got %q", spy.req.HandoffPrompts[42])
+	}
+}
+
+func TestRun_ContinueFlag_NoPriorRunErrors(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.EventLog = &fakeEventLog{events: []events.Event{}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no prior run exists")
+	}
+	if !strings.Contains(err.Error(), "no previous run found for issue #42") {
+		t.Fatalf("expected no-prior-run error, got %v", err)
 	}
 }
 

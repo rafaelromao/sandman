@@ -555,8 +555,8 @@ func TestContinue_LooksUpLastRunAndInvokesBatchRunner(t *testing.T) {
 	if spy.req.Branches[42] != branch {
 		t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])
 	}
-	if spy.req.Model != "openai/gpt-4.1" {
-		t.Fatalf("expected config default model, got %q", spy.req.Model)
+	if spy.req.Model != "gpt-4.2" {
+		t.Fatalf("expected replayed model, got %q", spy.req.Model)
 	}
 	if spy.req.BaseBranch != "main" {
 		t.Fatalf("expected base branch replay, got %q", spy.req.BaseBranch)

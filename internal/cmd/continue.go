@@ -65,6 +65,62 @@ func NewContinueCmd(deps Dependencies) *cobra.Command {
 				return err
 			}
 
+			if runID == "" {
+				req, err := buildContinuationRequest(cmd, deps, cfg, issues, runID)
+				if err != nil {
+					return err
+				}
+
+				ctx, cancel := context.WithCancel(cmd.Context())
+				defer cancel()
+
+				sigCh := make(chan os.Signal, 1)
+				signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+				defer signal.Stop(sigCh)
+				go func() {
+					select {
+					case <-sigCh:
+						cancel()
+					case <-ctx.Done():
+					}
+				}()
+
+				runDir := daemon.RunDir(".sandman", req.Issues, runID)
+				broadcaster := daemon.NewBroadcaster()
+				ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
+
+				if staleRemoved, err := daemon.CleanupStaleRunSnapshots(".sandman"); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", err)
+				} else if staleRemoved > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale run-owned config snapshots from previous runs\n", staleRemoved)
+				}
+
+				if err := ctlSocket.Start(); err != nil {
+					return err
+				}
+				defer ctlSocket.Stop()
+				defer os.RemoveAll(runDir)
+				if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now()}); err != nil {
+					return err
+				}
+
+				req.OutputWriter = broadcaster
+				req.RunDir = runDir
+
+				result, err := deps.BatchRunner.RunBatch(ctx, req)
+				if result != nil {
+					printSummary(cmd, result)
+				}
+				if err != nil {
+					if errors.Is(err, batch.ErrAborted) {
+						return &ExitCodedError{Code: 130, Msg: "batch aborted by operator", Err: err}
+					}
+					return fmt.Errorf("run batch: %w", err)
+				}
+
+				return nil
+			}
+
 			lastRuns := lastRunPerIssue(eventsList, issues)
 
 			previousRunIDs := make(map[int]string, len(issues))
