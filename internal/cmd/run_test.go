@@ -708,6 +708,56 @@ func TestRun_NoOverrideAlias(t *testing.T) {
 	}
 }
 
+func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantUsage bool
+	}{
+		{name: "continue only", args: []string{"--continue", "42"}},
+		{name: "override then continue", args: []string{"--override", "--continue", "42"}, wantUsage: true},
+		{name: "continue then override", args: []string{"--continue", "--override", "42"}, wantUsage: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(spy)
+
+			var buf bytes.Buffer
+			cmd := NewRunCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if tt.wantUsage {
+				if err == nil {
+					t.Fatal("expected usage error")
+				}
+				var target *UsageError
+				if !errors.As(err, &target) {
+					t.Fatalf("expected *UsageError, got %T: %v", err, err)
+				}
+				if spy.called {
+					t.Fatal("expected batch runner not to be called")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !spy.called {
+				t.Fatal("expected batch runner to be called")
+			}
+			if spy.req.Override {
+				t.Fatal("expected Override=false when only --continue is passed")
+			}
+		})
+	}
+}
+
 func TestRun_NoIssues(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
