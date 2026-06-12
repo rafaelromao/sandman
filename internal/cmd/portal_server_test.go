@@ -1384,7 +1384,8 @@ func TestPortal_CommandsEndpointPersistsAsyncLaunches(t *testing.T) {
 			data, _ := io.ReadAll(resp.Body)
 			t.Fatalf("expected 201, got %d: %s", resp.StatusCode, data)
 		}
-		if len(gotRunArgs) == 0 || gotRunArgs[0] != "continue" || !strings.Contains(strings.Join(gotRunArgs, " "), "42") {
+		joined := strings.Join(gotRunArgs, " ")
+		if len(gotRunArgs) == 0 || gotRunArgs[0] != "run" || !strings.Contains(joined, "--continue") || !strings.Contains(joined, "42") {
 			t.Fatalf("unexpected run args: %#v", gotRunArgs)
 		}
 		if len(gotStartArgs) != 0 {
@@ -1392,7 +1393,7 @@ func TestPortal_CommandsEndpointPersistsAsyncLaunches(t *testing.T) {
 		}
 
 		commands := readPortalCommands(t, server.URL)
-		continueCmds := filterCommandsByPrefix(commands, "sandman continue ")
+		continueCmds := filterCommandsByPrefix(commands, "sandman run --continue ")
 		if len(continueCmds) == 0 {
 			t.Fatalf("expected continue command persisted, got %#v", commands)
 		}

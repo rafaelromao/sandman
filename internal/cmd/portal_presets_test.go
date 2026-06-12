@@ -11,7 +11,7 @@ func TestBuildPortalCommandArgsContinuePresetSingleIssue(t *testing.T) {
 		t.Fatalf("build command args: %v", err)
 	}
 
-	want := []string{"continue", "42"}
+	want := []string{"run", "--continue", "42"}
 	if len(args) != len(want) {
 		t.Fatalf("expected %d args, got %#v", len(want), args)
 	}
@@ -31,7 +31,7 @@ func TestBuildPortalCommandArgsContinuePresetMultipleIssues(t *testing.T) {
 		t.Fatalf("build command args: %v", err)
 	}
 
-	want := []string{"continue", "1", "42"}
+	want := []string{"run", "--continue", "1", "42"}
 	if len(args) != len(want) {
 		t.Fatalf("expected %d args, got %#v", len(want), args)
 	}
@@ -52,7 +52,7 @@ func TestBuildPortalCommandArgsContinuePresetIgnoresPrompt(t *testing.T) {
 		t.Fatalf("build command args: %v", err)
 	}
 
-	want := []string{"continue", "42"}
+	want := []string{"run", "--continue", "42"}
 	if len(args) != len(want) {
 		t.Fatalf("expected %d args, got %#v", len(want), args)
 	}

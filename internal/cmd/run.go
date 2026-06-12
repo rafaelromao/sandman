@@ -107,13 +107,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [issue...]",
 		Short: "Run an AFK agent for specific issues",
-		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Prompt or template overrides that omit {{ISSUE_NUMBER}} run without issue lookup. Use --base-branch to fetch a different origin branch before each run starts. Use \"sandman clean\" to delete preserved worktrees.",
+		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Prompt or template overrides that omit {{ISSUE_NUMBER}} run without issue lookup. Use --continue to replay the latest AgentRun for each selected issue with its prior handoff and stored settings. Use --base-branch to fetch a different origin branch before each run starts. Use \"sandman clean\" to delete preserved worktrees.",
 		Example: `  sandman run 42 43
   sandman run 42:45
   sandman run :45
   sandman run 42:45 --label bug
   sandman run 42:45 --query "label:bug is:open"
   sandman run --base-branch main 42 43
+  sandman run --continue 42
   sandman run --prompt "Return only OK."
   sandman run --template ./prompt.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {

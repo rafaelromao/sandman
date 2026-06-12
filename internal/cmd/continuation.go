@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
 )
@@ -249,4 +251,105 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		},
 		RunID: runID,
 	}, nil
+}
+
+func lastRunPerIssue(eventsList []events.Event, issues []int) map[int]events.Event {
+	wanted := make(map[int]struct{}, len(issues))
+	for _, num := range issues {
+		wanted[num] = struct{}{}
+	}
+	lastRuns := make(map[int]events.Event, len(issues))
+	for _, e := range eventsList {
+		if e.Type != "run.started" && e.Type != "run.continued" {
+			continue
+		}
+		if _, ok := wanted[e.Issue]; !ok {
+			continue
+		}
+		lastRuns[e.Issue] = e
+	}
+	return lastRuns
+}
+
+func cmdFlag(cmd *cobra.Command, name string) string {
+	value, _ := cmd.Flags().GetString(name)
+	return value
+}
+
+func effectiveReviewCommand(cfg *config.Config) string {
+	if cfg == nil {
+		return config.DefaultReviewCommand
+	}
+	return cfg.EffectiveReviewCommand()
+}
+
+func payloadString(payload map[string]any, key string) (string, bool) {
+	v, ok := payload[key]
+	if !ok {
+		return "", false
+	}
+	str, ok := v.(string)
+	return str, ok
+}
+
+func payloadInt(payload map[string]any, key string) (int, bool) {
+	if payload == nil {
+		return 0, false
+	}
+	v, ok := payload[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int8:
+		return int(n), true
+	case int16:
+		return int(n), true
+	case int32:
+		return int(n), true
+	case int64:
+		return int(n), true
+	case uint:
+		return int(n), true
+	case uint8:
+		return int(n), true
+	case uint16:
+		return int(n), true
+	case uint32:
+		return int(n), true
+	case uint64:
+		return int(n), true
+	case float32:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(n))
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func payloadBool(payload map[string]any, key string) (bool, bool) {
+	if payload == nil {
+		return false, false
+	}
+	v, ok := payload[key]
+	if !ok {
+		return false, false
+	}
+	switch b := v.(type) {
+	case bool:
+		return b, true
+	case string:
+		parsed, err := strconv.ParseBool(strings.TrimSpace(b))
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return false, false
 }
