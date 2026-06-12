@@ -26,12 +26,12 @@ Turn issue context into a concise, behavior-first plan:
 - Read sibling Sandman skills that frame the workflow, especially `sandman-implement` and `sandman-tdd`.
 - Use the repo's glossary and domain language so the plan matches existing terminology.
 
-### 2. Explore the codebase
+### 2. Explore and design
 
 - Inspect code paths closest to the issue.
-- Look for seams where behavior can be tested through public interfaces.
+- Design testable seams: identify where to introduce interfaces, accept dependencies, and separate side effects so that each behavior can be verified through a public boundary.
 - Prefer deep modules: small surface area, complex logic hidden behind it.
-- Note any constraints, existing patterns, or coupling that affect testability.
+- If no seam exists today, identify where to create one — a new interface, a dependency injection point, or a pure-function extraction.
 
 ### 3. Draft the plan
 

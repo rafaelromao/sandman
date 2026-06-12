@@ -15,7 +15,7 @@ This skill implements a GitHub issue by modifying the current repository's sourc
 
 - `gh` CLI authenticated
 - Working directory at repo root
-- `sandman-tdd`, `sandman-self-review`, and `sandman-back-merge` skills available
+- `sandman-plan`, `sandman-tdd`, `sandman-self-review`, and `sandman-back-merge` skills available
 
 ## Workflow
 
@@ -34,9 +34,10 @@ gh issue view <ID> --json title,number
 ### 2. Plan
 
 - Read the issue body and any linked context
-- Load the `sandman-tdd` skill
-- Let `sandman-tdd` handle the plan draft and user approval internally, scoped to the repository codebase
-- Do NOT add a separate confirmation prompt — `sandman-tdd` already asks for approval before writing code
+- Load the `sandman-plan` skill
+- Let `sandman-plan` create the plan sketch
+- Then load `sandman-tdd` and let it execute the plan from `## Plan` in `.sandman/task.md`
+- Do NOT add a separate confirmation prompt
 
 ### 3. Implement (TDD)
 
