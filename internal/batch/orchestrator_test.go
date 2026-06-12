@@ -2296,6 +2296,9 @@ func TestRunBatch_AbortsUpfrontWhenAnyBranchExists(t *testing.T) {
 	if !strings.Contains(err.Error(), `--override`) {
 		t.Fatalf("expected override hint in error, got %q", err.Error())
 	}
+	if !strings.Contains(err.Error(), `--continue`) {
+		t.Fatalf("expected continue hint in error, got %q", err.Error())
+	}
 	if len(factory.created) != 0 {
 		t.Fatalf("expected no runnables created, got %d", len(factory.created))
 	}
