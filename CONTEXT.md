@@ -177,7 +177,7 @@ _Avoid_: dashboard, monitor, control panel.
 
 **Continue**:
 The `--continue` flag on `sandman run` re-runs the latest AgentRun for one or more issues while reusing each issue's prior branch, base branch, agent, and review command. Continuation resumes from the stored handoff text rather than a fresh prompt. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. `--continue` keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. When `.sandman/handoff.md` and `.sandman/handoff-prompt.md` are present in the worktree, the resumed run consumes them instead of starting from a blank prompt.
-_Avoid_: Retry, standalone `sandman continue`.
+_Avoid_: Retry.
 
 **Continuation**:
 An AgentRun or Batch request mode behind the `sandman run --continue` flag that skips prompt template rendering and writes raw prompt text to `handoff-prompt.md` inside the worktree.
