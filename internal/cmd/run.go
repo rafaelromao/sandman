@@ -519,23 +519,25 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				},
 			}
 			if hasContinuationReq {
-				req.Agent = continuationReq.Agent
-				req.Model = continuationReq.Model
-				req.BaseBranch = continuationReq.BaseBranch
-				req.Retries = continuationReq.Retries
-				req.Parallel = continuationReq.Parallel
-				req.StartDelay = continuationReq.StartDelay
-				req.StartDelaySet = continuationReq.StartDelaySet
-				req.RunIdleTimeout = continuationReq.RunIdleTimeout
-				req.RunIdleTimeoutSet = continuationReq.RunIdleTimeoutSet
-				req.Sandbox = continuationReq.Sandbox
-				req.ContainerCapacity = continuationReq.ContainerCapacity
-				req.ContainerCapacitySet = continuationReq.ContainerCapacitySet
-				req.MaxContainers = continuationReq.MaxContainers
-				req.MaxContainersSet = continuationReq.MaxContainersSet
-				req.DangerouslySkipPermissions = continuationReq.DangerouslySkipPermissions
-				req.PromptConfig.ReviewCommand = continuationReq.PromptConfig.ReviewCommand
-				req.PromptConfig.ReviewCommandSet = continuationReq.PromptConfig.ReviewCommandSet
+				if len(continueIssues) == len(resolvedBatch.Issues) {
+					req.Agent = continuationReq.Agent
+					req.Model = continuationReq.Model
+					req.BaseBranch = continuationReq.BaseBranch
+					req.Retries = continuationReq.Retries
+					req.Parallel = continuationReq.Parallel
+					req.StartDelay = continuationReq.StartDelay
+					req.StartDelaySet = continuationReq.StartDelaySet
+					req.RunIdleTimeout = continuationReq.RunIdleTimeout
+					req.RunIdleTimeoutSet = continuationReq.RunIdleTimeoutSet
+					req.Sandbox = continuationReq.Sandbox
+					req.ContainerCapacity = continuationReq.ContainerCapacity
+					req.ContainerCapacitySet = continuationReq.ContainerCapacitySet
+					req.MaxContainers = continuationReq.MaxContainers
+					req.MaxContainersSet = continuationReq.MaxContainersSet
+					req.DangerouslySkipPermissions = continuationReq.DangerouslySkipPermissions
+					req.PromptConfig.ReviewCommand = continuationReq.PromptConfig.ReviewCommand
+					req.PromptConfig.ReviewCommandSet = continuationReq.PromptConfig.ReviewCommandSet
+				}
 				for k, v := range continuationReq.PreviousRunIDs {
 					req.PreviousRunIDs[k] = v
 				}
