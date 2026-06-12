@@ -989,6 +989,9 @@ func TestRun_HelpMentionsPromptOnlyMode(t *testing.T) {
 	if !strings.Contains(out, "prompt-only mode") {
 		t.Fatalf("expected help to mention prompt-only mode, got:\n%s", out)
 	}
+	if !strings.Contains(out, "--continue") {
+		t.Fatalf("expected help to mention --continue, got:\n%s", out)
+	}
 	if !strings.Contains(out, "{{ISSUE_NUMBER}}") {
 		t.Fatalf("expected help to mention ISSUE_NUMBER gating, got:\n%s", out)
 	}

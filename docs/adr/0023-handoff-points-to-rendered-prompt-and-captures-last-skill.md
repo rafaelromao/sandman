@@ -24,7 +24,7 @@ Add three new structured fields to `.sandman/handoff.md`, layered on top of the 
 
 3. **`## Last Skill Status`** — a two-part field with a status (`complete` or `incomplete`) and one line of context. Examples: `complete — all tests pass and review feedback addressed` or `incomplete — interrupted during vertical-slice 3 of 5`. The context line gives the resumed agent enough information to decide whether to reload and re-enter the skill or to mark it done and proceed.
 
-The resume prompt logic (`sandman continue` and the orchestrator's retry path) uses the `## Source Prompt` pointer to reference `.sandman/rendered-prompt.md` by path in the resume prompt. It does not inline the rendered prompt content — the agent reads the file on demand. The `## Last Skill` and `## Last Skill Status` fields are surfaced in the resume prompt as-is, so the agent can decide whether to reload the previous sub-skill.
+The resume prompt logic (`sandman run --continue` and the orchestrator's retry path) uses the `## Source Prompt` pointer to reference `.sandman/rendered-prompt.md` by path in the resume prompt. It does not inline the rendered prompt content — the agent reads the file on demand. The `## Last Skill` and `## Last Skill Status` fields are surfaced in the resume prompt as-is, so the agent can decide whether to reload the previous sub-skill.
 
 ## Consequences
 

@@ -24,7 +24,7 @@ func buildPortalCommandArgs(req portalCommandLaunchRequest) ([]string, error) {
 		if len(req.Issues) == 0 {
 			return nil, fmt.Errorf("continue preset requires issue numbers")
 		}
-		args := []string{"continue"}
+		args := []string{"run", "--continue"}
 		for _, issue := range req.Issues {
 			args = append(args, strconv.Itoa(issue))
 		}

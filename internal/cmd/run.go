@@ -109,13 +109,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [issue...]",
 		Short: "Run an AFK agent for specific issues",
-		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Prompt or template overrides that omit {{ISSUE_NUMBER}} run without issue lookup. Use --base-branch to fetch a different origin branch before each run starts. Use \"sandman clean\" to delete preserved worktrees.",
+		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Prompt or template overrides that omit {{ISSUE_NUMBER}} run without issue lookup. Use --continue to replay the latest AgentRun for each selected issue with its prior handoff and stored settings. Use --base-branch to fetch a different origin branch before each run starts. Use \"sandman clean\" to delete preserved worktrees.",
 		Example: `  sandman run 42 43
   sandman run 42:45
   sandman run :45
   sandman run 42:45 --label bug
   sandman run 42:45 --query "label:bug is:open"
   sandman run --base-branch main 42 43
+  sandman run --continue 42
   sandman run --prompt "Return only OK."
   sandman run --template ./prompt.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -306,21 +307,23 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					}
 					issues = extractIssueNumbers(searchResults)
 				} else {
-					if runID != "" {
-						return MarkUsage(fmt.Errorf("--run-id requires --prompt or --template for prompt-only mode"))
-					}
-					if deps.IsTTY != nil && deps.IsTTY() {
-						issues, err = pickIssues(cmd.Context(), githubClient, deps.IssuePicker)
-						if err != nil {
-							return err
+					if !(runID != "" && continueFlag) {
+						if runID != "" {
+							return MarkUsage(fmt.Errorf("--run-id requires --prompt or --template for prompt-only mode"))
 						}
-					} else {
-						return MarkUsage(fmt.Errorf("no issues provided"))
+						if deps.IsTTY != nil && deps.IsTTY() {
+							issues, err = pickIssues(cmd.Context(), githubClient, deps.IssuePicker)
+							if err != nil {
+								return err
+							}
+						} else {
+							return MarkUsage(fmt.Errorf("no issues provided"))
+						}
 					}
 				}
 			}
 
-			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) {
+			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) && !(continueFlag && runID != "") {
 				return MarkUsage(fmt.Errorf("no issues selected"))
 			}
 
@@ -471,7 +474,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			var continuationReq batch.Request
 			var hasContinuationReq bool
-			if continueFlag && len(continueIssues) > 0 {
+			if continueFlag && (len(continueIssues) > 0 || runID != "") {
 				continuationReq, err = buildContinuationRequest(cmd, deps, cfg, continueIssues, runID)
 				if err != nil {
 					return err
@@ -519,7 +522,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				},
 			}
 			if hasContinuationReq {
-				if len(continueIssues) == len(resolvedBatch.Issues) {
+				if runID != "" && len(resolvedBatch.Issues) == 0 {
+					req = continuationReq
+				} else if len(continueIssues) == len(resolvedBatch.Issues) {
 					req.Agent = continuationReq.Agent
 					req.Model = continuationReq.Model
 					req.BaseBranch = continuationReq.BaseBranch
@@ -549,6 +554,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 				for k, v := range continuationReq.HandoffPrompts {
 					req.HandoffPrompts[k] = v
+				}
+				if continuationReq.PromptConfig.HandoffPrompt != "" {
+					req.PromptConfig.HandoffPrompt = continuationReq.PromptConfig.HandoffPrompt
+				}
+				if continuationReq.PromptConfig.PromptFlag != "" {
+					req.PromptConfig.PromptFlag = continuationReq.PromptConfig.PromptFlag
 				}
 			}
 

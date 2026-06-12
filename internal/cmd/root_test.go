@@ -163,7 +163,7 @@ func TestRootHelpListsAllCommands(t *testing.T) {
 	}
 
 	out := buf.String()
-	commands := []string{"init", "run", "status", "history", "continue", "clean", "config", "attach", "portal", "archive"}
+	commands := []string{"init", "run", "status", "history", "clean", "config", "attach", "portal", "archive"}
 	for _, cmd := range commands {
 		if !strings.Contains(out, cmd) {
 			t.Errorf("help output missing command %q", cmd)
@@ -257,7 +257,7 @@ func TestHistoryNoCompletedRuns(t *testing.T) {
 	}
 }
 
-func TestContinue_NoIssueReturnsError(t *testing.T) {
+func TestContinue_IsUnknownCommand(t *testing.T) {
 	var buf bytes.Buffer
 	deps := newTestDeps()
 	rootCmd := NewRootCmd(deps)
@@ -267,7 +267,10 @@ func TestContinue_NoIssueReturnsError(t *testing.T) {
 
 	err := rootCmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when no issue provided")
+		t.Fatal("expected unknown command error")
+	}
+	if !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("expected unknown command error, got %v", err)
 	}
 }
 

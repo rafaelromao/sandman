@@ -87,7 +87,7 @@ sandman portal
 ## Continuing a failed run
 
 ```bash
-sandman continue 42 "finish the tests"
+sandman run --continue 42 --prompt "finish the tests"
 ```
 
 Reuses the previously created branch for issue #42 and feeds the agent a new prompt plus the handoff document. Useful when the original prompt stalled or drifted.

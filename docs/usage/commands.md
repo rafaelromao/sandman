@@ -110,12 +110,12 @@ sandman history
 
 Displays each completed run with status, duration, and branch name.
 
-## `sandman continue`
+## `sandman run --continue`
 
 Continue the last agent run for one or more issues. Reads the handoff document (`.sandman/handoff.md`) from each issue's worktree and passes it verbatim as the agent's resume prompt. The handoff document now includes `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` as structured fields per [ADR-0023](../adr/0023-handoff-points-to-rendered-prompt-and-captures-last-skill.md).
 
 ```bash
-sandman continue <issue-number>...
+sandman run --continue <issue-number>...
 ```
 
 Reuses the previously created branch and recorded agent and review command from the prior run, though `--agent` can override and `--model` falls back to `model` from config when omitted. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. When no handoff document exists, an empty handoff template is used as the resume prompt (with a warning on stderr).
@@ -124,7 +124,7 @@ Reuses the previously created branch and recorded agent and review command from 
 |------|---------|-------------|
 | `--model` | `model` from config | Override the model for the continued run |
 | `--agent` | prior run's agent | Override the agent preset for the continued run |
-| `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior handoff from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), the command skips it and selects the prior prompt-only run instead — or errors if none exists. |
+| `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior handoff from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), `sandman run --continue` skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
 
 ## `sandman clean`

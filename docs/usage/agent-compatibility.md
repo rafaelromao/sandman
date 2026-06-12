@@ -46,7 +46,7 @@ Sandman wires `AgentModel` only for built-in presets. `sandman run --model` over
 
 The model resolution order is:
 
-1. `--model` flag on `sandman run` or `sandman continue`
+1. `--model` flag on `sandman run` or `sandman run --continue`
 2. `model` from `.sandman/config.yaml`
 3. The selected agent provider's configured model (e.g., from the agent's `model` field)
 

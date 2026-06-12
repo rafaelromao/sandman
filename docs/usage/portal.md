@@ -80,10 +80,10 @@ Runs `sandman run` with full launch form parameters (issues, prompt, agent, mode
 
 ### `continue`
 
-Runs `sandman continue <issue1> <issue2> ... <prompt>`. Requires issue numbers and a prompt argument:
+Runs `sandman run --continue <issue1> <issue2> ...` through the portal preset. Continuation resumes from stored handoff text:
 
 ```json
-{"command": "continue", "issues": [123, 124], "prompt": "review the auth module"}
+{"command": "continue", "issues": [123, 124]}
 ```
 
 ### `clean`

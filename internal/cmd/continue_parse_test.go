@@ -1,60 +1,35 @@
 package cmd
 
 import (
-	"reflect"
+	"bytes"
+	"strings"
 	"testing"
+
+	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 )
 
-func TestContinueParseArgs_SingleIssue(t *testing.T) {
-	issues, err := parseContinueArgs([]string{"42"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !reflect.DeepEqual(issues, []int{42}) {
-		t.Errorf("expected issues=[42], got %v", issues)
-	}
-}
+func TestRun_ContinueFlag_NoPriorPromptOnlyRun_ReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{}}
 
-func TestContinueParseArgs_MultipleIssues(t *testing.T) {
-	issues, err := parseContinueArgs([]string{"1", "2"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !reflect.DeepEqual(issues, []int{1, 2}) {
-		t.Errorf("expected issues=[1 2], got %v", issues)
-	}
-}
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "--run-id", "my-run"})
 
-func TestContinueParseArgs_DedupesIssuesPreservingOrder(t *testing.T) {
-	issues, err := parseContinueArgs([]string{"3", "1", "3", "2", "1"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !reflect.DeepEqual(issues, []int{3, 1, 2}) {
-		t.Errorf("expected issues=[3 1 2], got %v", issues)
-	}
-}
-
-func TestContinueParseArgs_AllNumericSucceeds(t *testing.T) {
-	issues, err := parseContinueArgs([]string{"1", "2", "3"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !reflect.DeepEqual(issues, []int{1, 2, 3}) {
-		t.Errorf("expected issues=[1 2 3], got %v", issues)
-	}
-}
-
-func TestContinueParseArgs_NonNumericArgReturnsError(t *testing.T) {
-	_, err := parseContinueArgs([]string{"abc"})
+	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when arg is not an issue number")
+		t.Fatal("expected error when no prior prompt-only run exists")
 	}
-}
-
-func TestContinueParseArgs_EmptyArgsReturnsError(t *testing.T) {
-	_, err := parseContinueArgs([]string{})
-	if err == nil {
-		t.Fatal("expected error for empty args")
+	if !strings.Contains(err.Error(), "no previous prompt-only run found") {
+		t.Fatalf("expected prompt-only replay error, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
 	}
 }
