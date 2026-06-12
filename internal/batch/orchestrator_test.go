@@ -2660,6 +2660,59 @@ func TestRunBatch_MixedContinueStillValidatesFreshBranches(t *testing.T) {
 	}
 }
 
+func TestRunBatch_MixedContinuePropagatesPerIssueModeMap(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Continue issue"},
+			43: {Number: 43, Title: "Fresh issue"},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-continue-issue": mergedPR("sandman/42-continue-issue", ""),
+			"sandman/43-fresh-issue":    mergedPR("sandman/43-fresh-issue", ""),
+		},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{
+		42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
+		43: &controlledRunnable{result: AgentRunResult{IssueNumber: 43, Status: "success"}},
+	}}
+
+	result, err := o.RunBatch(context.Background(), Request{
+		Issues:         []int{42, 43},
+		Mode:           map[int]IssueMode{42: ModeContinue, 43: ModeFresh},
+		Branches:       map[int]string{42: "sandman/42-continue-issue"},
+		BaseBranches:   map[int]string{42: "main"},
+		PreviousRunIDs: map[int]string{42: "run-42-prev"},
+		PromptConfig:   prompt.RenderConfig{HandoffPrompt: "finish the work"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var continued bool
+	for _, e := range spyLog.events {
+		switch e.Type {
+		case "run.continued":
+			if e.Issue == 42 && e.Payload["previous_run_id"] == "run-42-prev" {
+				continued = true
+			}
+		}
+	}
+	if !continued {
+		t.Fatal("expected run.continued event for issue 42")
+	}
+	if len(result.Runs) != 2 {
+		t.Fatalf("expected 2 run results, got %d", len(result.Runs))
+	}
+	for _, run := range result.Runs {
+		if run.IssueNumber == 43 && run.Status != "success" {
+			t.Fatalf("expected issue 43 success result, got %q", run.Status)
+		}
+	}
+}
+
 func TestRunBatch_FetchError(t *testing.T) {
 	client := &fakeGitHubClient{err: errors.New("github api error")}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)

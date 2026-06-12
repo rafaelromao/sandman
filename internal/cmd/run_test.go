@@ -967,6 +967,62 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateWarning(t *testing.T) {
 	}
 }
 
+func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+		t.Fatalf("write handoff: %v", err)
+	}
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent:         "opencode",
+		WorktreeDir:   dir,
+		ReviewCommand: "/oc review",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "true"},
+		},
+	}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-prev", Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug"},
+		43: {Number: 43, Title: "Fresh bug"},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "42", "43"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := spy.req.IssueMode(42); got != batch.ModeContinue {
+		t.Fatalf("expected issue 42 continue mode, got %v", got)
+	}
+	if got := spy.req.IssueMode(43); got != batch.ModeFresh {
+		t.Fatalf("expected issue 43 fresh mode, got %v", got)
+	}
+	if spy.req.PreviousRunIDs[42] != "run-42-prev" {
+		t.Fatalf("expected issue 42 previous run replay, got %q", spy.req.PreviousRunIDs[42])
+	}
+	if _, ok := spy.req.PreviousRunIDs[43]; ok {
+		t.Fatalf("expected issue 43 to have no previous run replay, got %q", spy.req.PreviousRunIDs[43])
+	}
+	if spy.req.Branches[42] != branch {
+		t.Fatalf("expected issue 42 branch replay, got %q", spy.req.Branches[42])
+	}
+	if _, ok := spy.req.Branches[43]; ok {
+		t.Fatalf("expected issue 43 to have no branch replay, got %q", spy.req.Branches[43])
+	}
+}
+
 func TestRun_ContinueFlag_NoPriorRunErrors(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
