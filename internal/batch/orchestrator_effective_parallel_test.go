@@ -13,6 +13,13 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
+func requireContainerRuntime(t *testing.T) {
+	t.Helper()
+	if _, err := sandbox.ResolveRuntime("podman"); err != nil {
+		t.Skipf("container runtime unavailable: %v", err)
+	}
+}
+
 // TestEffectiveParallel_CapCalculation is a table-driven unit test that locks
 // down the effectiveParallel cap shape across all combinations of parallel,
 // container_capacity, and max_containers called out in issue #501.
@@ -117,6 +124,8 @@ func TestBatchStartGate_HonoursEffectiveParallelCap(t *testing.T) {
 // the batch never sees more than 2 concurrent starts despite the raw
 // parallel being 4.
 func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
+	requireContainerRuntime(t)
+
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -314,6 +323,8 @@ func (f *startOrderRunnableFactory) NewRunnable(issue *github.Issue, branch stri
 // order. This is the FIFO behaviour from issue #422 and the regression guard
 // from issue #501.
 func TestBatch_StartOrderPreservedWithSerialStart(t *testing.T) {
+	requireContainerRuntime(t)
+
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -386,6 +397,8 @@ func TestBatch_StartOrderPreservedWithSerialStart(t *testing.T) {
 // between starts. All 4 issues should be observed starting within a tight
 // window.
 func TestBatch_StartOrderNotSerialisedWithParallelStart(t *testing.T) {
+	requireContainerRuntime(t)
+
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
