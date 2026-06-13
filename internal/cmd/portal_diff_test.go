@@ -804,6 +804,26 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetailLog_PreservesLiveReviewLogAfterCompletion(t *testing.T) {
+	js := `const body = makeMockBody();
+const activeRun = { key: 'PR17', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR17', runId: 'PR17', log: 'review output line 1\nreview output line 2' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'PR17', tabs: { PR17: 'log' } };
+SandmanPortalDiff.diffRuns(body, [activeRun], opts);
+const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+if (pre.textContent !== 'review output line 1\nreview output line 2') throw new Error('expected live review log, got ' + JSON.stringify(pre.textContent));
+const completedRun = { key: 'PR17', kind: 'completed', status: 'success', review: true, issueLabel: 'PR17', runId: 'PR17', log: '' };
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [completedRun], opts);
+if (pre.textContent === 'No log file yet.') throw new Error('completion should not wipe live review log');
+if (pre.textContent !== 'review output line 1\nreview output line 2') throw new Error('expected live review log to remain visible, got ' + JSON.stringify(pre.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailPanelLog_PreservesScrollPosition(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1' };

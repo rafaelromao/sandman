@@ -454,6 +454,9 @@
         if (oldLog === newLog) {
           return;
         }
+        if (oldLog && oldLog !== 'No log file yet.' && newLog === 'No log file yet.') {
+          return;
+        }
         if (oldLog && newLog.length >= oldLog.length && newLog.startsWith(oldLog)) {
           appendTerminalPre(pre, oldLog, newLog.slice(oldLog.length), opts.helpers);
         } else {
