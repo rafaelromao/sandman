@@ -81,7 +81,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 			}
 
 			taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
-			content, _, err := batch.ReadTaskContent(taskPath)
+			content, err := readTaskPrompt(cmd, taskPath)
 			if err != nil {
 				return batch.Request{}, fmt.Errorf("read task %q for issue #%d: %w", taskPath, num, err)
 			}
@@ -112,7 +112,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 			return batch.Request{}, fmt.Errorf("worktree %q is missing for prompt-only run; use \"sandman run\" instead", worktreePath)
 		}
 		taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
-		content, _, err := batch.ReadTaskContent(taskPath)
+		content, err := readTaskPrompt(cmd, taskPath)
 		if err != nil {
 			return batch.Request{}, fmt.Errorf("read task %q: %w", taskPath, err)
 		}
