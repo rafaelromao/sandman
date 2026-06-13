@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+> Superseded by the checklist-in-`.sandman/task.md` simplification, which removes the separate handoff file and keeps checkpoint state in the task file.
 
 ## Context
 
