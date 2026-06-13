@@ -20,6 +20,7 @@ type AgentRun struct {
 	issue                      *github.Issue
 	branch                     string
 	baseBranch                 string
+	runID                      string
 	preset                     string
 	model                      string
 	modelProvider              string
@@ -234,6 +235,9 @@ func (r *AgentRun) issuePointer() *int {
 func (r *AgentRun) prefixLabel() string {
 	if r.issue != nil {
 		return fmt.Sprintf("issue-%d", r.issue.Number)
+	}
+	if r.runID != "" {
+		return r.runID
 	}
 	return "prompt-only"
 }

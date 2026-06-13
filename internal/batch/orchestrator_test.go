@@ -1844,6 +1844,43 @@ func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
 	}
 }
 
+func TestRunPromptOnlySingle_PrefixesOutputWithRunID(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree"), execStdout: "hello from agent\n"}
+	var output bytes.Buffer
+
+	o := &Orchestrator{
+		renderer:       &noopRenderer{},
+		errorLog:       io.Discard,
+		sandboxFactory: &fakeSandboxFactory{sandbox: rtSandbox},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "sandman/review-17-1", prompt.RenderConfig{}, &output, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, true, 17, "check tests", "PR17", nil)
+	if !started {
+		t.Fatal("expected prompt-only review run to start")
+	}
+	if result.RunID != "PR17" {
+		t.Fatalf("expected RunID PR17, got %q", result.RunID)
+	}
+	got := output.String()
+	if !strings.Contains(got, "[PR17]") {
+		t.Fatalf("expected output prefix [PR17], got %q", got)
+	}
+	if strings.Contains(got, "[prompt-only]") {
+		t.Fatalf("expected output not to use prompt-only prefix, got %q", got)
+	}
+}
+
 func TestBatchStartGate_HonoursEffectiveParallel(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
