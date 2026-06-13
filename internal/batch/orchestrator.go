@@ -1657,7 +1657,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	logPath := agentLogPath(fmt.Sprintf("%d.log", s.issueNumber))
-	resetBranchOnRetry := false
 	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
@@ -1668,17 +1667,16 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			// used below to decide whether to reset the branch — the agent
 			// receives the same task content regardless of open-PR state.
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
-			taskContent, taskExists, err := ReadTaskContent(taskPath)
+			taskContent, _, err := ReadTaskContent(taskPath)
 			if err != nil {
 				fmt.Fprintf(o.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			attemptRenderCfg.TaskPrompt = prompt.BuildTaskPrompt(prompt.ParseTask(taskContent))
+			taskDoc := prompt.ParseTask(taskContent)
+			attemptRenderCfg.TaskPrompt = prompt.BuildTaskPrompt(taskDoc)
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
-			if !taskExists && openPR == nil {
-				resetBranchOnRetry = true
-			}
-			if resetBranchOnRetry {
+			hasTaskState := taskDoc.Stage != "" || taskDoc.LastSkill != "" || taskDoc.LastSkillStatus != ""
+			if !hasTaskState && openPR == nil {
 				if prLookupErr != nil {
 					fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
 					return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
