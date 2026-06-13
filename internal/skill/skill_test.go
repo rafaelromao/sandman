@@ -74,6 +74,9 @@ func TestSyncInstallsExactIssueClosingGuardInImplementSkill(t *testing.T) {
 			t.Fatalf("expected implement skill to contain %q, got:\n%s", want, text)
 		}
 	}
+	if strings.Contains(text, "Fixes #<ID>") {
+		t.Fatalf("expected implement skill to reject stale placeholder, got:\n%s", text)
+	}
 }
 
 func TestSyncOverwritesManagedTreeWithoutPrompt(t *testing.T) {
