@@ -21,6 +21,7 @@ type AgentRun struct {
 	branch                     string
 	baseBranch                 string
 	runID                      string
+	review                     bool
 	preset                     string
 	model                      string
 	modelProvider              string
@@ -236,7 +237,7 @@ func (r *AgentRun) prefixLabel() string {
 	if r.issue != nil {
 		return fmt.Sprintf("issue-%d", r.issue.Number)
 	}
-	if r.runID != "" {
+	if r.review && r.runID != "" {
 		return r.runID
 	}
 	return "prompt-only"

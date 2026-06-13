@@ -1881,6 +1881,43 @@ func TestRunPromptOnlySingle_PrefixesOutputWithRunID(t *testing.T) {
 	}
 }
 
+func TestRunPromptOnlySingle_PrefixesOutputPromptOnlyWhenNotReview(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree"), execStdout: "hello from agent\n"}
+	var output bytes.Buffer
+
+	o := &Orchestrator{
+		renderer:       &noopRenderer{},
+		errorLog:       io.Discard,
+		sandboxFactory: &fakeSandboxFactory{sandbox: rtSandbox},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "sandman/prompt-only-123", prompt.RenderConfig{}, &output, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, 0, "", "run-123", nil)
+	if !started {
+		t.Fatal("expected prompt-only run to start")
+	}
+	if result.RunID != "run-123" {
+		t.Fatalf("expected RunID run-123, got %q", result.RunID)
+	}
+	got := output.String()
+	if !strings.Contains(got, "[prompt-only]") {
+		t.Fatalf("expected output prefix [prompt-only], got %q", got)
+	}
+	if strings.Contains(got, "[run-123]") {
+		t.Fatalf("expected output not to use run ID prefix, got %q", got)
+	}
+}
+
 func TestBatchStartGate_HonoursEffectiveParallel(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
