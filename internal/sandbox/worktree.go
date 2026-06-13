@@ -43,9 +43,17 @@ func (s *WorktreeSandbox) SetOverride(override bool) {
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
-	if s.override && s.workDirExists() && !s.workDirIsValidWorktree() {
-		if err := os.RemoveAll(s.workDir); err != nil {
-			return fmt.Errorf("clean forced worktree dir: %w", err)
+	if s.override {
+		if s.workDirExists() {
+			if s.workDirIsValidWorktree() {
+				removeCmd := exec.Command("git", "worktree", "remove", "--force", s.workDir)
+				removeCmd.Dir = s.repoPath
+				if out, err := removeCmd.CombinedOutput(); err != nil {
+					return fmt.Errorf("remove stale worktree: %w\n%s", err, out)
+				}
+			} else if err := os.RemoveAll(s.workDir); err != nil {
+				return fmt.Errorf("clean forced worktree dir: %w", err)
+			}
 		}
 		pruneCmd := exec.Command("git", "worktree", "prune")
 		pruneCmd.Dir = s.repoPath
@@ -63,17 +71,7 @@ func (s *WorktreeSandbox) Start() error {
 	if s.workDirIsValidWorktree() {
 		currentRef, err := currentBranchRef(s.workDir)
 		if err != nil {
-			if !s.override {
-				return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --override to reconcile", s.workDir, err)
-			}
-			if !BranchExists(s.repoPath, s.branch) {
-				return fmt.Errorf("cannot reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
-			}
-			s.warn("worktree %q has detached HEAD, checking out %q\n", s.workDir, s.branch)
-			if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
-				return fmt.Errorf("check out branch %q in worktree %q: %w", s.branch, s.workDir, err)
-			}
-			return s.configureGitIdentity()
+			return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --override to reconcile", s.workDir, err)
 		}
 		expectedRef := "refs/heads/" + s.branch
 		if currentRef == expectedRef {
@@ -83,15 +81,6 @@ func (s *WorktreeSandbox) Start() error {
 			return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --override to reconcile",
 				s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
 		}
-		if !BranchExists(s.repoPath, s.branch) {
-			return fmt.Errorf("cannot reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
-		}
-		oldBranch := strings.TrimPrefix(currentRef, "refs/heads/")
-		s.warn("worktree %q on branch %q, checking out %q\n", s.workDir, oldBranch, s.branch)
-		if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
-			return fmt.Errorf("check out branch %q in worktree %q: %w", s.branch, s.workDir, err)
-		}
-		return s.configureGitIdentity()
 	}
 	if s.workDirExists() {
 		// Directory exists on disk but is not a registered git worktree.

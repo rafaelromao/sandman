@@ -104,7 +104,6 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command st
 	}
 
 	if renderCfg.TaskPrompt != "" {
-		renderedPromptFile = filepath.Join(".", ".sandman", "task-prompt.md")
 		if err := r.writeTaskPrompt(renderedPromptFile, renderCfg.TaskPrompt); err != nil {
 			r.status = "failure"
 			return r.Result()

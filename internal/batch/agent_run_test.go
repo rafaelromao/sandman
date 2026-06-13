@@ -562,7 +562,7 @@ func TestAgentRun_Run_WritesRawTaskPrompt(t *testing.T) {
 	if sb.writePromptCalled {
 		t.Fatal("expected WritePrompt not to be called for continue prompt")
 	}
-	promptPath := filepath.Join(dir, ".sandman", "task-prompt.md")
+	promptPath := filepath.Join(dir, ".sandman", "task.md")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		t.Fatalf("expected continue prompt file: %v", err)
@@ -570,7 +570,7 @@ func TestAgentRun_Run_WritesRawTaskPrompt(t *testing.T) {
 	if string(data) != "finish {{ISSUE_NUMBER}}" {
 		t.Fatalf("expected raw continue prompt, got %q", string(data))
 	}
-	if sb.execCommand != "opencode run .sandman/task-prompt.md" {
+	if sb.execCommand != "opencode run .sandman/task.md" {
 		t.Fatalf("expected continue prompt file in command, got %q", sb.execCommand)
 	}
 }

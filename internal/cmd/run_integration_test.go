@@ -641,6 +641,10 @@ func TestRun_WorktreeSandboxOverrideFlagClearsArtifacts(t *testing.T) {
 	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
 	verifyPath(worktreePath, true)
 	verifyPath(logPath, true)
+	staleMarkerPath := filepath.Join(worktreePath, "stale-marker.txt")
+	if err := os.WriteFile(staleMarkerPath, []byte("stale\n"), 0644); err != nil {
+		t.Fatalf("write stale marker: %v", err)
+	}
 
 	// Second run with --override clears old artifacts and creates new ones
 	out, err = executeRunCommand(t, deps, "--sandbox", "worktree", "--override", "42")
@@ -652,6 +656,12 @@ func TestRun_WorktreeSandboxOverrideFlagClearsArtifacts(t *testing.T) {
 	}
 	verifyPath(worktreePath, true)
 	verifyPath(logPath, true)
+	if _, err := os.Stat(staleMarkerPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale marker to be removed by --override, got: %v", err)
+	}
+	if status := runGit(t, worktreePath, "status", "--short"); strings.Contains(status, "stale-marker.txt") {
+		t.Fatalf("expected stale marker to be absent from worktree status after --override, got:\n%s", status)
+	}
 }
 
 func TestRun_DefaultSandboxSingleIssue_MissingDockerfileFailsBeforeAgentRunBegins(t *testing.T) {
