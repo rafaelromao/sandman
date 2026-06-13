@@ -1427,6 +1427,8 @@ func (s *runSession) runOnce(
 			agentRun.modelName = s.agentCfg.ModelName
 			agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
 			agentRun.baseBranch = s.baseBranch
+			agentRun.runID = runID
+			agentRun.review = s.review
 			agentRun.outputWriter = s.outputWriter
 			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
 			agentRun.sessionName = "Sandman " + runID + ": "
