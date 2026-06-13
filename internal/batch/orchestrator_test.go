@@ -1108,8 +1108,8 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	}
 }
 
-// When a retry happens with an open PR and the handoff file is missing, the
-// agent receives the EmptyTaskTemplate (no branch reset) so the open PR is
+// When a retry happens with an open PR and task.md is missing, the agent
+// receives the EmptyTaskTemplate (no branch reset) so the open PR is
 // preserved and the agent continues working on it without prior context.
 func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 	workDir := t.TempDir()
@@ -1181,7 +1181,7 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 		t.Fatalf("read continue prompt: %v", err)
 	}
 	if !strings.Contains(string(data), "Continue the work.") {
-		t.Fatalf("expected empty handoff template, got %q", string(data))
+		t.Fatalf("expected empty task template, got %q", string(data))
 	}
 }
 
@@ -1293,8 +1293,8 @@ func TestRunSingle_MergedPRSuccessRegardlessOfAgentExitCode(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success (PR merged overrides agent non-zero exit)", result.Status)
 	}
-	if _, err := os.Stat(handoffPath); !os.IsNotExist(err) {
-		t.Fatalf("expected handoff.md to be removed on merged PR, err=%v", err)
+	if _, err := os.Stat(handoffPath); err != nil {
+		t.Fatalf("expected handoff.md to be preserved on merged PR, err=%v", err)
 	}
 }
 
@@ -1382,8 +1382,8 @@ func TestRunSingle_RemovesHandoffOnMergedPR(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success", result.Status)
 	}
-	if _, err := os.Stat(handoffPath); !os.IsNotExist(err) {
-		t.Fatalf("expected handoff.md to be removed, but it still exists (err=%v)", err)
+	if _, err := os.Stat(handoffPath); err != nil {
+		t.Fatalf("expected handoff.md to be preserved, err=%v", err)
 	}
 }
 
@@ -1429,8 +1429,8 @@ func TestRunSingle_RetryRemovesHandoffOnMergedPR(t *testing.T) {
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1 (PR merged on first attempt)", result.RetriesTotal)
 	}
-	if _, err := os.Stat(handoffPath); !os.IsNotExist(err) {
-		t.Fatalf("expected handoff.md to be removed after merged PR on retry, err=%v", err)
+	if _, err := os.Stat(handoffPath); err != nil {
+		t.Fatalf("expected handoff.md to be preserved after merged PR on retry, err=%v", err)
 	}
 }
 
@@ -1496,7 +1496,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 		t.Fatalf("read task-prompt.md: %v", err)
 	}
 	if !strings.Contains(string(data), "Continue the work.") {
-		t.Fatalf("expected empty handoff template, got %q", string(data))
+		t.Fatalf("expected empty task template, got %q", string(data))
 	}
 }
 
@@ -4584,8 +4584,8 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected .sandman dir to exist (runnable should have created it), err=%v", err)
 	}
 	_, err = os.Stat(filepath.Join(sandmanDir, "handoff.md"))
-	if !os.IsNotExist(err) {
-		t.Fatalf("expected handoff.md to be removed after merged PR, err=%v", err)
+	if err != nil {
+		t.Fatalf("expected handoff.md to be preserved after merged PR, err=%v", err)
 	}
 
 	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[0].RunID}, PromptConfig: prompt.RenderConfig{TaskPrompt: "finish the tests"}})
