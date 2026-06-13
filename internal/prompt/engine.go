@@ -13,7 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 )
 
-//go:embed default_prompt.md
+//go:embed default-task-prompt.md
 var defaultPrompt string
 
 //go:embed default_pr_review_prompt.md
@@ -23,7 +23,7 @@ var defaultPRReviewPrompt string
 var prioritySelectionPrompt string
 
 // promptVersion is the hex-encoded SHA-256 digest of the embedded
-// default_prompt.md. When the embedded template changes between sandman
+// default-task-prompt.md. When the embedded template changes between sandman
 // versions the digest changes, signalling that MaterializePromptFile should
 // overwrite the project's .sandman/prompt.md.
 var promptVersion string
@@ -151,7 +151,7 @@ func (e *Engine) RenderReview(cfg RenderConfig, data PRData) (string, error) {
 
 // MaterializePromptFile creates the project prompt template when no
 // prompt/template override is active. If the template already exists it is
-// overwritten when the embedded default_prompt.md has changed since the last
+// overwritten when the embedded default-task-prompt.md has changed since the last
 // materialization (detected via a version sidecar).
 func MaterializePromptFile(cfg RenderConfig) error {
 	if cfg.PromptFlag != "" || cfg.TemplateFlag != "" {

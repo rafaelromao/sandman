@@ -18,13 +18,13 @@ Second, the handoff file tracked the workflow stage (`plan-approved`, `implement
 
 Add three new structured fields to `.sandman/handoff.md`, layered on top of the four existing stage fields from ADR-0022:
 
-1. **`## Source Prompt: .sandman/rendered-prompt.md`** — placed immediately after `## Stage:` (the second heading in the file). This is a fixed-path pointer to the rendered prompt file in the same `.sandman/` directory. The resume prompt references this file by path without inlining its content; the agent can read the file if it needs the original task description. The field is machine-readable (the path is always `.sandman/rendered-prompt.md` relative to the worktree root) and human-readable (the heading and path together make provenance obvious).
+1. **`## Source Prompt: .sandman/task.md`** — placed immediately after `## Stage:` (the second heading in the file). This is a fixed-path pointer to the rendered prompt file in the same `.sandman/` directory. The resume prompt references this file by path without inlining its content; the agent can read the file if it needs the original task description. The field is machine-readable (the path is always `.sandman/task.md` relative to the worktree root) and human-readable (the heading and path together make provenance obvious).
 
 2. **`## Last Skill`** — a free-form string (not a closed enum) naming the sandman sub-skill the previous run was executing when the checkpoint was written. Examples: `sandman-implement`, `sandman-tdd`, `sandman-self-review`, `sandman-pr-review`, `sandman-handoff`. The field is free-form because the orchestrator may load new sub-skills over time; a closed enum would require an ADR update for every new skill name.
 
 3. **`## Last Skill Status`** — a two-part field with a status (`complete` or `incomplete`) and one line of context. Examples: `complete — all tests pass and review feedback addressed` or `incomplete — interrupted during vertical-slice 3 of 5`. The context line gives the resumed agent enough information to decide whether to reload and re-enter the skill or to mark it done and proceed.
 
-The resume prompt logic (`sandman run --continue` and the orchestrator's retry path) uses the `## Source Prompt` pointer to reference `.sandman/rendered-prompt.md` by path in the resume prompt. It does not inline the rendered prompt content — the agent reads the file on demand. The `## Last Skill` and `## Last Skill Status` fields are surfaced in the resume prompt as-is, so the agent can decide whether to reload the previous sub-skill.
+The resume prompt logic (`sandman run --continue` and the orchestrator's retry path) uses the `## Source Prompt` pointer to reference `.sandman/task.md` by path in the resume prompt. It does not inline the rendered prompt content — the agent reads the file on demand. The `## Last Skill` and `## Last Skill Status` fields are surfaced in the resume prompt as-is, so the agent can decide whether to reload the previous sub-skill.
 
 ## Consequences
 
@@ -43,5 +43,5 @@ The resume prompt logic (`sandman run --continue` and the orchestrator's retry p
 
 ### Neutral
 
-- The `## Source Prompt: .sandman/rendered-prompt.md` path is a fixed constant. If the rendered prompt file is ever renamed or moved, this field must be updated in the template. A future ADR could parameterize the path if the naming becomes variable.
+- The `## Source Prompt: .sandman/task.md` path is a fixed constant. If the rendered prompt file is ever renamed or moved, this field must be updated in the template. A future ADR could parameterize the path if the naming becomes variable.
 - Follow-up references: ADR-0022.

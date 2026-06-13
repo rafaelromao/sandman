@@ -100,12 +100,12 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	renderedPromptFile := renderCfg.RenderedPromptFile
 	if renderedPromptFile == "" {
-		renderedPromptFile = filepath.Join(".", ".sandman", "rendered-prompt.md")
+		renderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 	}
 
-	if renderCfg.HandoffPrompt != "" {
-		renderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
-		if err := r.writeHandoffPrompt(renderedPromptFile, renderCfg.HandoffPrompt); err != nil {
+	if renderCfg.TaskPrompt != "" {
+		renderedPromptFile = filepath.Join(".", ".sandman", "task-prompt.md")
+		if err := r.writeTaskPrompt(renderedPromptFile, renderCfg.TaskPrompt); err != nil {
 			r.status = "failure"
 			return r.Result()
 		}
@@ -177,7 +177,7 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func (r *AgentRun) writeHandoffPrompt(renderedPromptFile, content string) error {
+func (r *AgentRun) writeTaskPrompt(renderedPromptFile, content string) error {
 	promptPath := filepath.Join(r.sandbox.WorkDir(), renderedPromptFile)
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		return fmt.Errorf("create prompt dir: %w", err)

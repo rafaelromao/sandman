@@ -65,13 +65,13 @@ func TestRenderCommand_UnknownFieldReturnsError(t *testing.T) {
 
 func TestRenderCommand_SubstitutesSessionName(t *testing.T) {
 	got, err := RenderCommand("oc run --title '{{.SessionName}}' {{.PromptFile}}", CommandData{
-		PromptFile:  ".sandman/rendered-prompt.md",
+		PromptFile:  ".sandman/task.md",
 		SessionName: "Sandman run-42-1712345678901: ",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "oc run --title 'Sandman run-42-1712345678901: ' .sandman/rendered-prompt.md"
+	want := "oc run --title 'Sandman run-42-1712345678901: ' .sandman/task.md"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -86,12 +86,12 @@ func TestRenderCommand_SessionNameEmptyDoesNotError(t *testing.T) {
 
 func TestRenderCommand_SubstitutesPromptFile(t *testing.T) {
 	got, err := RenderCommand("opencode --prompt-file {{.PromptFile}}", CommandData{
-		PromptFile: ".sandman/rendered-prompt.md",
+		PromptFile: ".sandman/task.md",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "opencode --prompt-file .sandman/rendered-prompt.md"
+	want := "opencode --prompt-file .sandman/task.md"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -99,13 +99,13 @@ func TestRenderCommand_SubstitutesPromptFile(t *testing.T) {
 
 func TestRenderCommand_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 	got, err := RenderCommand(config.BuiltInAgentPresets["opencode"].Command, CommandData{
-		PromptFile: ".sandman/rendered-prompt.md",
+		PromptFile: ".sandman/task.md",
 		ModelFlag:  "-m gpt-4.1",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := `opencode run -m gpt-4.1 "$(cat .sandman/rendered-prompt.md)"`
+	want := `opencode run -m gpt-4.1 "$(cat .sandman/task.md)"`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -113,13 +113,13 @@ func TestRenderCommand_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 
 func TestRenderCommand_BuiltInPreset_WithSessionName(t *testing.T) {
 	got, err := RenderCommand(config.BuiltInAgentPresets["opencode"].Command, CommandData{
-		PromptFile:  ".sandman/rendered-prompt.md",
+		PromptFile:  ".sandman/task.md",
 		SessionName: "Sandman run-42-1712345678901: ",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := `opencode run --title 'Sandman run-42-1712345678901: ' "$(cat .sandman/rendered-prompt.md)"`
+	want := `opencode run --title 'Sandman run-42-1712345678901: ' "$(cat .sandman/task.md)"`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -146,7 +146,7 @@ func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 
 func TestRenderCommand_BuiltInPresets(t *testing.T) {
 	presets := map[string]string{
-		"opencode": `opencode run "$(cat .sandman/rendered-prompt.md)"`,
+		"opencode": `opencode run "$(cat .sandman/task.md)"`,
 	}
 
 	for key, want := range presets {
@@ -157,7 +157,7 @@ func TestRenderCommand_BuiltInPresets(t *testing.T) {
 			}
 
 			got, err := RenderCommand(preset.Command, CommandData{
-				PromptFile:    ".sandman/rendered-prompt.md",
+				PromptFile:    ".sandman/task.md",
 				ModelProvider: "openai",
 				ModelName:     "gpt-4.1",
 			})
