@@ -1667,7 +1667,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			// used below to decide whether to reset the branch — the agent
 			// receives the same task content regardless of open-PR state.
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
-			taskContent, _, err := ReadTaskContent(taskPath)
+			taskContent, taskExists, err := ReadTaskContent(taskPath)
 			if err != nil {
 				fmt.Fprintf(o.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
@@ -1675,8 +1675,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			taskDoc := prompt.ParseTask(taskContent)
 			attemptRenderCfg.TaskPrompt = prompt.BuildTaskPrompt(taskDoc)
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
-			hasTaskState := taskDoc.Stage != "" || taskDoc.LastSkill != "" || taskDoc.LastSkillStatus != ""
-			if !hasTaskState && openPR == nil {
+			if !taskExists && openPR == nil {
 				if prLookupErr != nil {
 					fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
 					return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
