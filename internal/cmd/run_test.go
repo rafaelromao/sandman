@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
 )
 
@@ -699,6 +700,40 @@ func TestRun_OverrideFalseByDefault(t *testing.T) {
 	}
 }
 
+func TestRun_FreshRunErrorsWhenBranchAlreadyExists(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initRunIntegrationRepo(t, dir)
+	writeSandmanDockerfile(t, dir)
+
+	branch := "sandman/42-fix-bug"
+	runGit(t, dir, "checkout", "-b", branch)
+	runGit(t, dir, "checkout", "main")
+
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}
+	store := &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
+	deps := Dependencies{
+		BatchRunner:  batch.NewOrchestrator(gh, &prompt.Engine{}, store, &fakeEventLog{}),
+		ConfigStore:  store,
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when branch already exists")
+	}
+	if !strings.Contains(err.Error(), "--override") || !strings.Contains(err.Error(), "--continue") {
+		t.Fatalf("expected branch-conflict guidance, got %v", err)
+	}
+}
+
 func TestRun_NoOverrideAlias(t *testing.T) {
 	cmd := NewRunCmd(newRunDeps(&spyBatchRunner{result: &batch.Result{}}))
 	if cmd.Flags().Lookup("force") != nil {
@@ -929,6 +964,85 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateWarning(t *testing.T) {
 	}
 	if !strings.Contains(spy.req.TaskPrompts[42], "Continue the work.") {
 		t.Fatalf("expected empty-template task prompt, got %q", spy.req.TaskPrompts[42])
+	}
+}
+
+func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
+	dir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+		t.Fatalf("write handoff: %v", err)
+	}
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent:         "opencode",
+		WorktreeDir:   dir,
+		ReviewCommand: "/oc review",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "true"},
+		},
+	}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-prev", Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug"},
+		43: {Number: 43, Title: "Fresh bug"},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "42", "43"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := spy.req.IssueMode(42); got != batch.ModeContinue {
+		t.Fatalf("expected issue 42 continue mode, got %v", got)
+	}
+	if got := spy.req.IssueMode(43); got != batch.ModeFresh {
+		t.Fatalf("expected issue 43 fresh mode, got %v", got)
+	}
+	if spy.req.PreviousRunIDs[42] != "run-42-prev" {
+		t.Fatalf("expected issue 42 previous run replay, got %q", spy.req.PreviousRunIDs[42])
+	}
+	if _, ok := spy.req.PreviousRunIDs[43]; ok {
+		t.Fatalf("expected issue 43 to have no previous run replay, got %q", spy.req.PreviousRunIDs[43])
+	}
+	if spy.req.Branches[42] != branch {
+		t.Fatalf("expected issue 42 branch replay, got %q", spy.req.Branches[42])
+	}
+	if _, ok := spy.req.Branches[43]; ok {
+		t.Fatalf("expected issue 43 to have no branch replay, got %q", spy.req.Branches[43])
+	}
+}
+
+func TestRun_ContinueFlag_NoPreviousPromptOnlyRun_ReturnsError(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.EventLog = &fakeEventLog{events: []events.Event{}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "--run-id", "my-run"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no previous prompt-only run exists")
+	}
+	if !strings.Contains(err.Error(), "no previous prompt-only run found") {
+		t.Fatalf("expected prompt-only replay error, got %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner not to be called")
 	}
 }
 

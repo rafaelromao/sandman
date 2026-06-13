@@ -90,61 +90,7 @@ func applySmokeModelOverrides() {
 	}
 }
 
-func TestSmoke_RealAgentCLIs(t *testing.T) {
-	runSmokeProviderCases(t, smokeProviderCases)
-}
-
-func TestSmoke_RealAgentCLIs_GoPreset(t *testing.T) {
-	cases := make([]smokeProviderCase, len(smokeProviderCases))
-	for i, tc := range smokeProviderCases {
-		tc.buildTools = "go"
-		cases[i] = tc
-	}
-	runSmokeProviderCases(t, cases)
-}
-
-func TestSmoke_RealAgentCLIs_PythonPreset(t *testing.T) {
-	cases := make([]smokeProviderCase, len(smokeProviderCases))
-	for i, tc := range smokeProviderCases {
-		tc.buildTools = "python"
-		cases[i] = tc
-	}
-	runSmokeProviderCases(t, cases)
-}
-
-func parseSmokeProviders(cases []smokeProviderCase) (map[string]bool, error) {
-	return testenv.ResolveProviderAllowlist(smokeProviderNames(cases))
-}
-
-func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
-	allowed, err := parseSmokeProviders(cases)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(allowed) == 0 {
-		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		if !allowed[tc.name] {
-			continue
-		}
-		t.Run(tc.name, func(t *testing.T) {
-			runSmokeProvider(t, tc)
-		})
-	}
-}
-
-func smokeProviderNames(cases []smokeProviderCase) []string {
-	names := make([]string, len(cases))
-	for i, tc := range cases {
-		names[i] = tc.name
-	}
-	return names
-}
-
-func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
+func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, repoDir string, deps Dependencies, issue github.Issue) {
 	t.Helper()
 	ensureSmokeHostCLI(t, tc)
 
@@ -153,7 +99,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 		t.Skipf("container runtime unavailable: %v", err)
 	}
 
-	repoDir := t.TempDir()
+	repoDir = t.TempDir()
 	t.Chdir(repoDir)
 	remoteDir := initRunIntegrationRepoWithRemote(t, repoDir)
 	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
@@ -192,7 +138,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	if err := addSmokeDockerDeps(repoDir, tc.name); err != nil {
 		t.Fatalf("update Dockerfile: %v", err)
 	}
-	smokeCfg, err := customizeSmokeConfig(repoDir, tc.name, tc.model)
+	depsCfg, err := customizeSmokeConfig(repoDir, tc.name, tc.model)
 	if err != nil {
 		t.Fatalf("update config: %v", err)
 	}
@@ -200,17 +146,47 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	preflightSmokeContainer(t, runtime, imageTag, repoDir, homeDir, tc.name, tc.buildTools, tc.authPaths)
 	preflightSmokeWorktree(t, repoDir, tc.wantBranch)
 
-	issue := tc.issue
+	issue = tc.issue
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: &issue}}
-	store := &fakeStore{config: smokeCfg}
-	deps := Dependencies{
+	store := &fakeStore{config: depsCfg}
+	deps = Dependencies{
 		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
 		ConfigStore:    store,
+		EventLog:       &recordingEventLog{},
 		GitHubClient:   gh,
 		PromptRenderer: &prompt.Engine{},
 		IsTTY:          func() bool { return false },
 	}
+	return runtime, repoDir, deps, issue
+}
 
+func assertSmokeProviderRun(t *testing.T, out string, tc smokeProviderCase, repoDir string, issue github.Issue) {
+	t.Helper()
+	if !strings.Contains(out, "Summary: 1 succeeded") {
+		t.Fatalf("expected success summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, tc.wantBranch) {
+		t.Fatalf("expected branch %q in output, got:\n%s", tc.wantBranch, out)
+	}
+
+	logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", issue.Number))
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(logData), "SMOKE_OK") {
+		t.Fatalf("expected log to include SMOKE_OK, got:\n%s", logData)
+	}
+
+	worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", tc.wantBranch)
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected worktree to be preserved, got: %v", err)
+	}
+}
+
+func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
+	t.Helper()
+	runtime, repoDir, deps, issue := prepareSmokeProvider(t, tc)
 	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
 	if err != nil {
 		logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", issue.Number))
@@ -236,42 +212,117 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 		}
 	}
 
-	if !strings.Contains(out, "Summary: 1 succeeded") {
-		t.Fatalf("expected success summary, got:\n%s", out)
-	}
-	if !strings.Contains(out, tc.wantBranch) {
-		t.Fatalf("expected branch %q in output, got:\n%s", tc.wantBranch, out)
-	}
+	assertSmokeProviderRun(t, out, tc, repoDir, issue)
+}
 
-	logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", issue.Number))
-	logData, err := os.ReadFile(logPath)
+func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...string) {
+	t.Helper()
+	runtime, repoDir, deps, issue := prepareSmokeProvider(t, tc)
+	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
 	if err != nil {
-		t.Fatalf("read log: %v", err)
+		t.Fatalf("first smoke run failed: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(string(logData), "SMOKE_OK") {
-		t.Fatalf("expected log to include SMOKE_OK, got:\n%s", logData)
+	assertSmokeProviderRun(t, out, tc, repoDir, issue)
+
+	out, err = executeSmokeRun(t, deps, runtime, issue.Number, secondArgs...)
+	if err != nil {
+		t.Fatalf("second smoke run failed: %v\noutput:\n%s", err, out)
+	}
+	assertSmokeProviderRun(t, out, tc, repoDir, issue)
+}
+
+func TestSmoke_RealAgentCLIs(t *testing.T) {
+	runSmokeProviderCases(t, smokeProviderCases)
+}
+
+func TestSmoke_RealAgentCLIs_GoPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "go"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_PythonPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "python"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_Override(t *testing.T) {
+	allowed, err := parseSmokeProviders(smokeProviderCases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allowed) == 0 || !allowed[smokeProviderCases[0].name] {
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
+	}
+	runSmokeProviderTwice(t, smokeProviderCases[0], "--override")
+}
+
+func TestSmoke_RealAgentCLIs_Continue(t *testing.T) {
+	allowed, err := parseSmokeProviders(smokeProviderCases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allowed) == 0 || !allowed[smokeProviderCases[0].name] {
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
+	}
+	runSmokeProviderTwice(t, smokeProviderCases[0], "--continue")
+}
+
+func parseSmokeProviders(cases []smokeProviderCase) (map[string]bool, error) {
+	return testenv.ResolveProviderAllowlist(smokeProviderNames(cases))
+}
+
+func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
+	allowed, err := parseSmokeProviders(cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allowed) == 0 {
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
 	}
 
-	worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", tc.wantBranch)
-	if _, err := os.Stat(worktreePath); err != nil {
-		t.Fatalf("expected worktree to be preserved, got: %v", err)
+	for _, tc := range cases {
+		tc := tc
+		if !allowed[tc.name] {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			runSmokeProvider(t, tc)
+		})
 	}
 }
 
-func executeSmokeRun(t *testing.T, deps Dependencies, runtime string, issueNumber int) (string, error) {
+func smokeProviderNames(cases []smokeProviderCase) []string {
+	names := make([]string, len(cases))
+	for i, tc := range cases {
+		names[i] = tc.name
+	}
+	return names
+}
+
+func executeSmokeRun(t *testing.T, deps Dependencies, runtime string, issueNumber int, extraArgs ...string) (string, error) {
 	t.Helper()
 
 	var buf bytes.Buffer
 	cmd := NewRootCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{
+	args := []string{
 		"run",
 		"--sandbox", runtime,
 		"--parallel", "1",
 		"--prompt", smokePrompt,
-		fmt.Sprintf("%d", issueNumber),
-	})
+	}
+	args = append(args, extraArgs...)
+	args = append(args, fmt.Sprintf("%d", issueNumber))
+	cmd.SetArgs(args)
 
 	ctx, cancel := smokeContext(t)
 	defer cancel()

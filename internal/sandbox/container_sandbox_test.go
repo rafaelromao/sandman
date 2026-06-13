@@ -404,3 +404,18 @@ func TestSharedContainerSandbox_SetOverride_ForwardsToWorktree(t *testing.T) {
 		t.Error("expected SetOverride(false) to forward value false to worktree")
 	}
 }
+
+func TestContainerSandbox_SetOverride_FalseAlsoForwardsToWorktree(t *testing.T) {
+	wt := &fakeWorktreeForContainer{}
+	ctr := &fakeContainer{id: "abc123"}
+	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	sb.SetOverride(false)
+
+	if !wt.setOverrideCalled {
+		t.Fatal("expected worktree.SetOverride to be called")
+	}
+	if wt.setOverrideValue {
+		t.Error("expected SetOverride(false) to forward value false to worktree")
+	}
+}
