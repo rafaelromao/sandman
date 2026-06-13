@@ -43,15 +43,56 @@ func (s *WorktreeSandbox) SetOverride(override bool) {
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
-	if s.override {
-		if s.workDirExists() {
-			if s.workDirIsValidWorktree() {
-				removeCmd := exec.Command("git", "worktree", "remove", "--force", s.workDir)
-				removeCmd.Dir = s.repoPath
-				if out, err := removeCmd.CombinedOutput(); err != nil {
-					return fmt.Errorf("remove stale worktree: %w\n%s", err, out)
+	overrideRecreate := false
+	if s.workDirIsValidWorktree() {
+		currentRef, err := currentBranchRef(s.workDir)
+		if err != nil {
+			if !s.override {
+				return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --override to reconcile", s.workDir, err)
+			}
+			if BranchExists(s.repoPath, s.branch) {
+				s.warn("worktree %q has detached HEAD, checking out %q\n", s.workDir, s.branch)
+				if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
+					return fmt.Errorf("check out branch %q in worktree %q: %w", s.branch, s.workDir, err)
 				}
-			} else if err := os.RemoveAll(s.workDir); err != nil {
+				return s.configureGitIdentity()
+			}
+			overrideRecreate = true
+			goto overrideCleanup
+		}
+		expectedRef := "refs/heads/" + s.branch
+		if currentRef == expectedRef {
+			if !s.override {
+				return s.configureGitIdentity()
+			}
+			overrideRecreate = true
+		} else {
+			if !s.override {
+				return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --override to reconcile",
+					s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
+			}
+			if !BranchExists(s.repoPath, s.branch) {
+				overrideRecreate = true
+				goto overrideCleanup
+			}
+			oldBranch := strings.TrimPrefix(currentRef, "refs/heads/")
+			s.warn("worktree %q on branch %q, checking out %q\n", s.workDir, oldBranch, s.branch)
+			if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
+				return fmt.Errorf("check out branch %q in worktree %q: %w", s.branch, s.workDir, err)
+			}
+			return s.configureGitIdentity()
+		}
+	}
+overrideCleanup:
+	if s.override {
+		if overrideRecreate {
+			removeCmd := exec.Command("git", "worktree", "remove", "--force", s.workDir)
+			removeCmd.Dir = s.repoPath
+			if out, err := removeCmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("remove stale worktree: %w\n%s", err, out)
+			}
+		} else if s.workDirExists() {
+			if err := os.RemoveAll(s.workDir); err != nil {
 				return fmt.Errorf("clean forced worktree dir: %w", err)
 			}
 		}
@@ -67,29 +108,6 @@ func (s *WorktreeSandbox) Start() error {
 				return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, err, out)
 			}
 		}
-	}
-	if s.workDirIsValidWorktree() {
-		currentRef, err := currentBranchRef(s.workDir)
-		if err != nil {
-			return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --override to reconcile", s.workDir, err)
-		}
-		expectedRef := "refs/heads/" + s.branch
-		if currentRef == expectedRef {
-			return s.configureGitIdentity()
-		}
-		if !s.override {
-			return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --override to reconcile",
-				s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
-		}
-		if !BranchExists(s.repoPath, s.branch) {
-			return fmt.Errorf("cannot reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
-		}
-		oldBranch := strings.TrimPrefix(currentRef, "refs/heads/")
-		s.warn("worktree %q on branch %q, checking out %q\n", s.workDir, oldBranch, s.branch)
-		if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
-			return fmt.Errorf("check out branch %q in worktree %q: %w", s.branch, s.workDir, err)
-		}
-		return s.configureGitIdentity()
 	}
 	if s.workDirExists() {
 		// Directory exists on disk but is not a registered git worktree.
