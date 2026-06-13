@@ -575,7 +575,7 @@ func (f *promptOnlyRunnableFactory) NewRunnable(issue *github.Issue, branch stri
 	return &fakeRunnable{result: f.hook(issue, branch)}
 }
 
-type handoffFlowState struct {
+type continuationFlowState struct {
 	mu       sync.Mutex
 	prompts  []string
 	contexts []string
@@ -583,13 +583,13 @@ type handoffFlowState struct {
 	writes   int
 }
 
-func (s *handoffFlowState) recordPrompt(promptText string) {
+func (s *continuationFlowState) recordPrompt(promptText string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.prompts = append(s.prompts, promptText)
 }
 
-func (s *handoffFlowState) nextContext() string {
+func (s *continuationFlowState) nextContext() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.step >= len(s.contexts) {
@@ -600,12 +600,12 @@ func (s *handoffFlowState) nextContext() string {
 	return context
 }
 
-type handoffFlowRunnable struct {
-	state *handoffFlowState
+type continuationFlowRunnable struct {
+	state *continuationFlowState
 	sb    sandbox.Sandbox
 }
 
-func (r *handoffFlowRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+func (r *continuationFlowRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if renderCfg.TaskPrompt != "" {
 		promptPath := filepath.Join(r.sb.WorkDir(), ".sandman", "task-prompt.md")
 		if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err == nil {
@@ -613,7 +613,7 @@ func (r *handoffFlowRunnable) Run(ctx context.Context, renderer prompt.Renderer,
 		}
 		r.state.recordPrompt(renderCfg.TaskPrompt)
 	}
-	contextPath := filepath.Join(r.sb.WorkDir(), ".sandman", "handoff.md")
+	contextPath := filepath.Join(r.sb.WorkDir(), ".sandman", "task.md")
 	if content := r.state.nextContext(); content != "" {
 		r.state.writes++
 		if err := os.MkdirAll(filepath.Dir(contextPath), 0755); err == nil {
@@ -623,12 +623,12 @@ func (r *handoffFlowRunnable) Run(ctx context.Context, renderer prompt.Renderer,
 	return AgentRunResult{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug", WorktreePath: r.sb.WorkDir()}
 }
 
-type handoffFlowRunnableFactory struct {
-	state *handoffFlowState
+type continuationFlowRunnableFactory struct {
+	state *continuationFlowState
 }
 
-func (f *handoffFlowRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
-	return &handoffFlowRunnable{state: f.state, sb: sb}
+func (f *continuationFlowRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return &continuationFlowRunnable{state: f.state, sb: sb}
 }
 
 func waitForSignal(t *testing.T, signal <-chan struct{}, message string) {
@@ -899,13 +899,13 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 		t.Fatalf("RetriesTotal = %d, want 3", result.RetriesTotal)
 	}
 	if renderer.renderCalls != 1 {
-		t.Fatalf("render calls = %d, want 1 (handoff prompt bypasses renderer)", renderer.renderCalls)
+		t.Fatalf("render calls = %d, want 1 (task prompt bypasses renderer)", renderer.renderCalls)
 	}
 	if rtSandbox.execCount != 3 {
 		t.Fatalf("exec calls = %d, want 3", rtSandbox.execCount)
 	}
 	if rtSandbox.writePromptCount != 1 {
-		t.Fatalf("prompt writes = %d, want 1 (handoff prompt bypasses sandbox WritePrompt)", rtSandbox.writePromptCount)
+		t.Fatalf("prompt writes = %d, want 1 (task prompt bypasses sandbox WritePrompt)", rtSandbox.writePromptCount)
 	}
 	if len(resetCalls) != 2 {
 		t.Fatalf("reset calls = %d, want 2", len(resetCalls))
@@ -1198,13 +1198,6 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
-	handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-	if err := os.MkdirAll(filepath.Dir(handoffPath), 0755); err != nil {
-		t.Fatalf("mkdir .sandman: %v", err)
-	}
-	if err := os.WriteFile(handoffPath, []byte("## Stage: running\n\n## Completed\nSome work.\n"), 0644); err != nil {
-		t.Fatalf("write handoff.md: %v", err)
-	}
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: branch},
@@ -1247,10 +1240,6 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 	if status, _ := events[1].Payload["status"].(string); status != "failure" {
 		t.Fatalf("expected terminal status failure, got %q", status)
 	}
-	// Negative case: unmerged PR must NOT remove an existing handoff.
-	if _, err := os.Stat(handoffPath); err != nil {
-		t.Fatalf("expected handoff.md to be preserved when PR is not merged, err=%v", err)
-	}
 }
 
 func TestRunSingle_MergedPRSuccessRegardlessOfAgentExitCode(t *testing.T) {
@@ -1259,14 +1248,6 @@ func TestRunSingle_MergedPRSuccessRegardlessOfAgentExitCode(t *testing.T) {
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
-	sandmanDir := filepath.Join(worktreePath, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatalf("mkdir .sandman: %v", err)
-	}
-	handoffPath := filepath.Join(sandmanDir, "handoff.md")
-	if err := os.WriteFile(handoffPath, []byte("## Stage: running\n\n## Completed\nSome work.\n"), 0644); err != nil {
-		t.Fatalf("write handoff.md: %v", err)
-	}
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
@@ -1293,9 +1274,6 @@ func TestRunSingle_MergedPRSuccessRegardlessOfAgentExitCode(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success (PR merged overrides agent non-zero exit)", result.Status)
 	}
-	if _, err := os.Stat(handoffPath); err != nil {
-		t.Fatalf("expected handoff.md to be preserved on merged PR, err=%v", err)
-	}
 }
 
 func TestRunSingle_UnmergedPRFailureRegardlessOfAgentExitCode(t *testing.T) {
@@ -1304,13 +1282,6 @@ func TestRunSingle_UnmergedPRFailureRegardlessOfAgentExitCode(t *testing.T) {
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
-	handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-	if err := os.MkdirAll(filepath.Dir(handoffPath), 0755); err != nil {
-		t.Fatalf("mkdir .sandman: %v", err)
-	}
-	if err := os.WriteFile(handoffPath, []byte("## Stage: running\n\n## Completed\nSome work.\n"), 0644); err != nil {
-		t.Fatalf("write handoff.md: %v", err)
-	}
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
@@ -1337,25 +1308,14 @@ func TestRunSingle_UnmergedPRFailureRegardlessOfAgentExitCode(t *testing.T) {
 	if result.Status != "failure" {
 		t.Fatalf("status = %q, want failure (unmerged PR forces failure regardless of agent zero exit)", result.Status)
 	}
-	if _, err := os.Stat(handoffPath); err != nil {
-		t.Fatalf("expected handoff.md to be preserved when PR is not merged, err=%v", err)
-	}
 }
 
-func TestRunSingle_RemovesHandoffOnMergedPR(t *testing.T) {
+func TestRunSingle_RetryWithMergedPRIncrementsRetriesTotal(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
-	sandmanDir := filepath.Join(worktreePath, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatalf("mkdir .sandman: %v", err)
-	}
-	handoffPath := filepath.Join(sandmanDir, "handoff.md")
-	if err := os.WriteFile(handoffPath, []byte("## Stage: pr-created\n\n## Completed\nInitial implementation done.\n"), 0644); err != nil {
-		t.Fatalf("write handoff.md: %v", err)
-	}
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
@@ -1382,24 +1342,17 @@ func TestRunSingle_RemovesHandoffOnMergedPR(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success", result.Status)
 	}
-	if _, err := os.Stat(handoffPath); err != nil {
-		t.Fatalf("expected handoff.md to be preserved, err=%v", err)
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
 	}
 }
 
-func TestRunSingle_RetryRemovesHandoffOnMergedPR(t *testing.T) {
+func TestRunSingle_RetryWithMergedPRKeepsRetryCount(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
-	handoffPath := filepath.Join(worktreePath, ".sandman", "handoff.md")
-	if err := os.MkdirAll(filepath.Dir(handoffPath), 0755); err != nil {
-		t.Fatalf("mkdir .sandman: %v", err)
-	}
-	if err := os.WriteFile(handoffPath, []byte("## Stage: running\n\nSome content.\n"), 0644); err != nil {
-		t.Fatalf("write handoff.md: %v", err)
-	}
 
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "failure", Branch: branch},
@@ -1428,9 +1381,6 @@ func TestRunSingle_RetryRemovesHandoffOnMergedPR(t *testing.T) {
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1 (PR merged on first attempt)", result.RetriesTotal)
-	}
-	if _, err := os.Stat(handoffPath); err != nil {
-		t.Fatalf("expected handoff.md to be preserved after merged PR on retry, err=%v", err)
 	}
 }
 
@@ -1489,7 +1439,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
 		t.Fatalf("expected task-prompt.md to be used, got %q", rtSandbox.execCommand)
 	}
-	// Verify the handoff prompt is the empty template (no handoff doc existed)
+	// Verify the task prompt is the empty template (no task doc existed)
 	promptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
@@ -4565,7 +4515,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	state := &handoffFlowState{writes: 0, contexts: []string{
+	state := &continuationFlowState{writes: 0, contexts: []string{
 		"## Completed\nInitial run.\n",
 		"## Completed\nFirst continue.\n",
 		"## Completed\nSecond continue.\n",
@@ -4573,43 +4523,43 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	log := &spyEventLog{}
 	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: {Merged: true, HeadRefName: branch}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log)
 	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
-	o.runnableFactory = &handoffFlowRunnableFactory{state: state}
+	o.runnableFactory = &continuationFlowRunnableFactory{state: state}
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
 		t.Fatalf("initial run failed: %v", err)
 	}
-	// Verify the runnable wrote the handoff (write-side assertion) before the orchestrator removed it.
+	// Verify runnable wrote staged task context for each continuation.
 	sandmanDir := filepath.Join(worktreePath, ".sandman")
 	if _, err := os.Stat(sandmanDir); err != nil {
 		t.Fatalf("expected .sandman dir to exist (runnable should have created it), err=%v", err)
 	}
-	_, err = os.Stat(filepath.Join(sandmanDir, "handoff.md"))
+	_, err = os.Stat(filepath.Join(sandmanDir, "task.md"))
 	if err != nil {
-		t.Fatalf("expected handoff.md to be preserved after merged PR, err=%v", err)
+		t.Fatalf("expected task.md to be preserved after merged PR, err=%v", err)
 	}
 
 	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[0].RunID}, PromptConfig: prompt.RenderConfig{TaskPrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
-	// Continuation does not check PR merge, so handoff.md is preserved.
-	_, err = os.Stat(filepath.Join(sandmanDir, "handoff.md"))
+	// Continuation does not check PR merge, so task.md is preserved.
+	_, err = os.Stat(filepath.Join(sandmanDir, "task.md"))
 	if err != nil {
-		t.Fatalf("expected handoff.md to be preserved after continuation (no merge check), err=%v", err)
+		t.Fatalf("expected task.md to be preserved after continuation (no merge check), err=%v", err)
 	}
 
 	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[2].RunID}, PromptConfig: prompt.RenderConfig{TaskPrompt: "push the PR"}})
 	if err != nil {
 		t.Fatalf("second continue failed: %v", err)
 	}
-	_, err = os.Stat(filepath.Join(sandmanDir, "handoff.md"))
+	_, err = os.Stat(filepath.Join(sandmanDir, "task.md"))
 	if err != nil {
-		t.Fatalf("expected handoff.md to be preserved after second continuation, err=%v", err)
+		t.Fatalf("expected task.md to be preserved after second continuation, err=%v", err)
 	}
 
 	if state.writes != 3 {
-		t.Fatalf("expected 3 handoff writes, got %d", state.writes)
+		t.Fatalf("expected 3 continuation writes, got %d", state.writes)
 	}
 	if len(state.prompts) != 2 {
 		t.Fatalf("expected 2 continue prompts, got %#v", state.prompts)
