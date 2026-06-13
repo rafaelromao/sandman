@@ -1672,18 +1672,17 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 				fmt.Fprintf(o.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			attemptRenderCfg.TaskPrompt = prompt.BuildTaskPrompt(prompt.ParseTask(taskContent))
-			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task-prompt.md")
-			if !taskExists {
-				if openPR == nil {
-					if prLookupErr != nil {
-						fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
-						return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
-					}
-					if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
-						fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", s.issueNumber, err)
-						return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
-					}
+			taskDoc := prompt.ParseTask(taskContent)
+			attemptRenderCfg.TaskPrompt = prompt.BuildTaskPrompt(taskDoc)
+			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
+			if !taskExists && openPR == nil {
+				if prLookupErr != nil {
+					fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
+					return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
+				}
+				if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
+					fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", s.issueNumber, err)
+					return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 				}
 			}
 			if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {

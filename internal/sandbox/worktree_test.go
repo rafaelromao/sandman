@@ -332,6 +332,39 @@ func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
 	}
 }
 
+func TestWorktreeSandbox_OverrideRecreatesDirtyWorktreeFromScratch(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error on first start: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
+
+	markerPath := filepath.Join(s.WorkDir(), "stale-marker.txt")
+	if err := os.WriteFile(markerPath, []byte("stale\n"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2.SetOverride(true)
+	if err := s2.Start(); err != nil {
+		t.Fatalf("expected no error with --override, got: %v", err)
+	}
+
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale marker to be removed by --override, got: %v", err)
+	}
+	if status := runGit(t, s2.WorkDir(), "status", "--short"); strings.Contains(status, "stale-marker.txt") {
+		t.Fatalf("expected stale marker to be absent from worktree status after --override, got:\n%s", status)
+	}
+}
+
 func TestWorktreeSandbox_StartFailsWhenBranchAlreadyExists(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
@@ -651,12 +684,13 @@ func TestWorktreeSandbox_OverrideReconcileMissingBranch(t *testing.T) {
 
 	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	s2.SetOverride(true)
-	err := s2.Start()
-	if err == nil {
-		t.Fatal("expected error when branch does not exist locally")
+	if err := s2.Start(); err != nil {
+		t.Fatalf("expected no error with --override, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "does not exist locally") {
-		t.Errorf("expected error to mention branch not existing, got: %v", err)
+
+	headRef := runGit(t, s2.WorkDir(), "symbolic-ref", "HEAD")
+	if !strings.Contains(headRef, "sandman/42-fix-bug") {
+		t.Errorf("expected HEAD to be on sandman/42-fix-bug after recreation, got %q", headRef)
 	}
 }
 

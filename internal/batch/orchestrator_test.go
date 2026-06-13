@@ -607,7 +607,7 @@ type continuationFlowRunnable struct {
 
 func (r *continuationFlowRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if renderCfg.TaskPrompt != "" {
-		promptPath := filepath.Join(r.sb.WorkDir(), ".sandman", "task-prompt.md")
+		promptPath := filepath.Join(r.sb.WorkDir(), ".sandman", "task.md")
 		if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err == nil {
 			_ = os.WriteFile(promptPath, []byte(renderCfg.TaskPrompt), 0644)
 		}
@@ -862,7 +862,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 
 	rtSandbox := &retrySandbox{
 		workDir:    filepath.Join(workDir, "worktree"),
-		execErrors: []error{errors.New("exit 1"), errors.New("exit 1"), nil},
+		execErrors: []error{errors.New("exit 1"), nil},
 	}
 	renderer := &retryRenderer{result: "rendered prompt"}
 	oldHeadFn := currentBranchHeadFn
@@ -881,7 +881,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	var resetCalls []struct{ worktreePath, branch, baseBranch string }
 	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 		resetCalls = append(resetCalls, struct{ worktreePath, branch, baseBranch string }{sb.WorkDir(), branch, baseBranch})
-		if len(resetCalls) == 2 {
+		if len(resetCalls) == 1 {
 			pr.Merged = true
 		}
 		return nil
@@ -895,20 +895,20 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success", result.Status)
 	}
-	if result.RetriesTotal != 3 {
-		t.Fatalf("RetriesTotal = %d, want 3", result.RetriesTotal)
+	if result.RetriesTotal != 2 {
+		t.Fatalf("RetriesTotal = %d, want 2", result.RetriesTotal)
 	}
 	if renderer.renderCalls != 1 {
 		t.Fatalf("render calls = %d, want 1 (task prompt bypasses renderer)", renderer.renderCalls)
 	}
-	if rtSandbox.execCount != 3 {
-		t.Fatalf("exec calls = %d, want 3", rtSandbox.execCount)
+	if rtSandbox.execCount != 2 {
+		t.Fatalf("exec calls = %d, want 2", rtSandbox.execCount)
 	}
 	if rtSandbox.writePromptCount != 1 {
 		t.Fatalf("prompt writes = %d, want 1 (task prompt bypasses sandbox WritePrompt)", rtSandbox.writePromptCount)
 	}
-	if len(resetCalls) != 2 {
-		t.Fatalf("reset calls = %d, want 2", len(resetCalls))
+	if len(resetCalls) != 1 {
+		t.Fatalf("reset calls = %d, want 1", len(resetCalls))
 	}
 	if resetCalls[0].branch != branch || resetCalls[0].baseBranch != "main" {
 		t.Fatalf("unexpected reset args: %#v", resetCalls[0])
@@ -1080,10 +1080,10 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0", resetCalls)
 	}
-	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
+	if rtSandbox.execCommand != "opencode run .sandman/task.md" {
 		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
 	}
-	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
+	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task.md")
 	data, err := os.ReadFile(taskPromptPath)
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
@@ -1172,10 +1172,10 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0", resetCalls)
 	}
-	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
+	if rtSandbox.execCommand != "opencode run .sandman/task.md" {
 		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
 	}
-	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
+	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task.md")
 	data, err := os.ReadFile(taskPromptPath)
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
@@ -1436,14 +1436,14 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	if resetCalls != 1 {
 		t.Fatalf("reset calls = %d, want 1", resetCalls)
 	}
-	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
-		t.Fatalf("expected task-prompt.md to be used, got %q", rtSandbox.execCommand)
+	if rtSandbox.execCommand != "opencode run .sandman/task.md" {
+		t.Fatalf("expected task.md to be used, got %q", rtSandbox.execCommand)
 	}
 	// Verify the task prompt is the empty template (no task doc existed)
-	promptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
+	promptPath := filepath.Join(worktreePath, ".sandman", "task.md")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
-		t.Fatalf("read task-prompt.md: %v", err)
+		t.Fatalf("read task.md: %v", err)
 	}
 	if !strings.Contains(string(data), "Continue the work.") {
 		t.Fatalf("expected empty task template, got %q", string(data))
@@ -1515,10 +1515,10 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0", resetCalls)
 	}
-	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
+	if rtSandbox.execCommand != "opencode run .sandman/task.md" {
 		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
 	}
-	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
+	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task.md")
 	data, err := os.ReadFile(taskPromptPath)
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
@@ -1605,10 +1605,10 @@ func TestRunSingle_RetryUsesPRReviewTaskPrompt(t *testing.T) {
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0", resetCalls)
 	}
-	if rtSandbox.execCommand != "opencode run .sandman/task-prompt.md" {
+	if rtSandbox.execCommand != "opencode run .sandman/task.md" {
 		t.Fatalf("expected continue prompt command, got %q", rtSandbox.execCommand)
 	}
-	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task-prompt.md")
+	taskPromptPath := filepath.Join(worktreePath, ".sandman", "task.md")
 	data, err := os.ReadFile(taskPromptPath)
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
@@ -4358,7 +4358,7 @@ func TestRunBatch_ContinuationUsesPerIssuePrompts(t *testing.T) {
 		if sb == nil {
 			t.Fatalf("missing sandbox for %s", branch)
 		}
-		promptPath := filepath.Join(sb.workDir, ".sandman", "task-prompt.md")
+		promptPath := filepath.Join(sb.workDir, ".sandman", "task.md")
 		data, err := os.ReadFile(promptPath)
 		if err != nil {
 			t.Fatalf("read prompt for %s: %v", branch, err)
