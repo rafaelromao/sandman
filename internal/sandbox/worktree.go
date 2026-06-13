@@ -99,7 +99,7 @@ func (s *WorktreeSandbox) Start() error {
 		return fmt.Errorf("create worktree base: %w", err)
 	}
 
-	if BranchExists(s.repoPath, s.branch) {
+	if !s.override && BranchExists(s.repoPath, s.branch) {
 		return fmt.Errorf(`branch %q already exists — delete it with "git branch -D %s" and re-run`, s.branch, s.branch)
 	}
 
