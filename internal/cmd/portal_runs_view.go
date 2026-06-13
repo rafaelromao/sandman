@@ -51,6 +51,9 @@ type portalRun struct {
 	// the same (IssueNumber, BatchKey) so a current active row is never hidden
 	// by a historical aborted row from another batch.
 	BatchKey string `json:"batchKey,omitempty"`
+	// IssueTitle carries the human-readable GitHub issue title from the event
+	// payload (added by issue #833). Empty for historical or prompt-only runs.
+	IssueTitle string `json:"issueTitle,omitempty"`
 }
 
 type portalActiveRun struct {
@@ -406,6 +409,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.Kind = "completed"
 		}
 		run.Branch = state.Branch()
+		run.IssueTitle = v.issueTitleFromPayload(state.Started.Payload)
 		run.StartedAt = state.Started.Timestamp
 		run.Duration = v.durationForRun(*state)
 		run.Events = eventsByRun[state.RunID]
@@ -599,6 +603,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Status:      v.statusOrDefault(status, runState.IsActive(), runState.IsReview()),
 		IssueLabel:  issueLabel,
 		IssueNumber: issueNumber,
+		IssueTitle:  v.issueTitleFromPayload(runState.Started.Payload),
 		Branch:      branch,
 		StartedAt:   startedAt,
 		FinishedAt:  finishedAt,
@@ -740,6 +745,19 @@ func (v *portalRunsView) reviewPRNumber(payload map[string]any) int {
 		return int(n)
 	}
 	return 0
+}
+
+// issueTitleFromPayload reads the issue_title field from a payload.
+func (v *portalRunsView) issueTitleFromPayload(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	raw, ok := payload["issue_title"]
+	if !ok {
+		return ""
+	}
+	title, _ := raw.(string)
+	return title
 }
 
 func (v *portalRunsView) isSocketAlive(socketPath string) bool {

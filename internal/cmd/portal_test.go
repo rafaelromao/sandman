@@ -534,3 +534,89 @@ func hasPrefix(s, prefix string) bool {
 func hasSuffix(s, suffix string) bool {
 	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }
+
+func TestPortal_RunFromState_PopulatesIssueTitle(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runState := events.RunState{
+		RunID: "run-1-1",
+		Started: events.Event{
+			Timestamp: time.Now().Add(-1 * time.Minute),
+			Payload: map[string]any{
+				"issue_title": "Add dark mode toggle",
+			},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+
+	if run.IssueTitle != "Add dark mode toggle" {
+		t.Fatalf("expected IssueTitle %q, got %q", "Add dark mode toggle", run.IssueTitle)
+	}
+}
+
+func TestPortal_RunFromState_EmptyIssueTitleWhenMissing(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runState := events.RunState{
+		RunID: "run-1-1",
+		Started: events.Event{
+			Timestamp: time.Now().Add(-1 * time.Minute),
+			Payload:   map[string]any{},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+
+	if run.IssueTitle != "" {
+		t.Fatalf("expected empty IssueTitle, got %q", run.IssueTitle)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	active := portalActiveRun{
+		Key:          "run-42-1",
+		Dir:          sockDir,
+		SocketPath:   sockPath,
+		IssueNumbers: []int{42},
+		StartedAt:    time.Now().Add(-1 * time.Minute),
+	}
+
+	state := &events.RunState{
+		RunID: "run-42-1",
+		Started: events.Event{
+			Timestamp: time.Now().Add(-1 * time.Minute),
+			Payload: map[string]any{
+				"issue_title": "Fix login bug",
+			},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, "", nil)
+
+	if run.IssueTitle != "Fix login bug" {
+		t.Fatalf("expected IssueTitle %q, got %q", "Fix login bug", run.IssueTitle)
+	}
+}

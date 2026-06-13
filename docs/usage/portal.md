@@ -22,6 +22,8 @@ When the server starts, it prints the URL to open in your browser.
 - Active and completed runs from `.sandman/events.jsonl`
 - Run output and log links from `.sandman/logs/`
 
+The runs table displays these columns: **Run**, **Status**, **Started**, **Duration**, **Issue Title**, **Branch**, and **Actions**. The Issue Title column shows the GitHub issue title for runs with that data available, or an em-dash for historical or prompt-only runs. Source information (socket and log file paths) remains visible in the Details tab when expanding a run.
+
 The portal rescans the repository on each poll, so new `sandman run` processes appear without restarting it. It also provides a typed preset launcher for common repo-scoped Sandman commands.
 
 ## Stop (Abort)
