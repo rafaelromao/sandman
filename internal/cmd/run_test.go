@@ -1063,6 +1063,47 @@ func TestRun_ContinueFlag_NoPriorRunErrors(t *testing.T) {
 	}
 }
 
+func TestRun_ContinueFlag_WarnsWhenIssueTaskMissing(t *testing.T) {
+	dir := t.TempDir()
+	branch := "issue-42"
+	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent:         "opencode",
+		WorktreeDir:   dir,
+		ReviewCommand: "/oc review",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "true"},
+		},
+	}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-prev", Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "42"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := spy.req.IssueMode(42); got != batch.ModeContinue {
+		t.Fatalf("expected ModeContinue when prior run exists, got %v", got)
+	}
+	if !strings.Contains(buf.String(), "warning: no task found") {
+		t.Fatalf("expected missing-task warning, got %q", buf.String())
+	}
+	if !strings.Contains(spy.req.TaskPrompts[42], "Continue the work.") {
+		t.Fatalf("expected empty task template fallback, got %q", spy.req.TaskPrompts[42])
+	}
+}
+
 func TestRun_NoIssues(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)

@@ -458,7 +458,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
 					}
 					taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
-					content, _, err := batch.ReadTaskContent(taskPath)
+					content, err := readTaskPrompt(cmd, taskPath)
 					if err != nil {
 						return fmt.Errorf("read task %q for issue #%d: %w", taskPath, num, err)
 					}

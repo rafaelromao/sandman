@@ -65,12 +65,12 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun_E2E(t *testing.T) {
 	if !strings.Contains(spy.req.PromptConfig.TaskPrompt, "## Prior Context") {
 		t.Fatalf("expected wrapped resume prompt, got %q", spy.req.PromptConfig.TaskPrompt)
 	}
-	if strings.Contains(buf.String(), "warning: no handoff found") {
-		t.Fatalf("did not expect missing-handoff warning, got %q", buf.String())
+	if strings.Contains(buf.String(), "warning: no task found") {
+		t.Fatalf("did not expect missing-task warning, got %q", buf.String())
 	}
 }
 
-func TestRun_ContinueFlag_DoesNotWarnWhenPromptOnlyTaskMissing(t *testing.T) {
+func TestRun_ContinueFlag_WarnsWhenPromptOnlyTaskMissing(t *testing.T) {
 	dir := t.TempDir()
 	branch := "sandman/prompt-only-456"
 	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
@@ -99,7 +99,7 @@ func TestRun_ContinueFlag_DoesNotWarnWhenPromptOnlyTaskMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(buf.String(), "warning: no handoff found") {
-		t.Fatalf("did not expect missing-handoff warning, got %q", buf.String())
+	if !strings.Contains(buf.String(), "warning: no task found") {
+		t.Fatalf("expected missing-task warning, got %q", buf.String())
 	}
 }

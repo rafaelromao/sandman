@@ -81,8 +81,8 @@ Use `sandman run --base-branch` to override `git.base_branch` for a single invoc
 
 Sandman's prompt lifecycle has four steps:
 
-- **Default Prompt** — the embedded bootstrap template in `internal/prompt/default-task-prompt.md`
-- **Project Prompt Template** — `.sandman/prompt.md`, created from the Default Prompt by `sandman init` and materialized on run when missing
+- **Default Task Prompt** — the embedded bootstrap template in `internal/prompt/default-task-prompt.md`
+- **Project Prompt Template** — `.sandman/prompt.md`, created from the Default Task Prompt by `sandman init` and materialized on run when missing
 - **Sandman Skill** — the shared skill folder in `~/.agents/skills/sandman/`, installed by `sandman init`
 - **Prompt** — `.sandman/task.md`, the rendered instruction file passed to the agent
 
@@ -102,7 +102,7 @@ Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on 
 
 See [Sandman Skills](skills.md) for the shared workflow details.
 
-`sandman run --continue` replays the stored branch, base branch, agent, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, resolves the model from `--model` or `model`, reads the handoff document (`.sandman/handoff.md`) from the worktree, and passes its contents verbatim as the agent's resume prompt. The handoff document now carries three structured fields — `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` — added by [ADR-0023](../adr/0023-handoff-points-to-rendered-prompt-and-captures-last-skill.md) on top of the existing stage fields. When no handoff document exists, an empty handoff template is used with a warning on stderr.
+`sandman run --continue` replays the stored branch, base branch, agent, and review command from the prior run. It ignores current `--base-branch` or config changes for that continuation, resolves the model from `--model` or `model`, reads the task file (`.sandman/task.md`) from the worktree, and passes its contents verbatim as the agent's resume prompt. The task file now carries three structured fields — `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` — added by [ADR-0023](../adr/0023-handoff-points-to-rendered-prompt-and-captures-last-skill.md) on top of the existing stage fields. When no task file exists, an empty task template is used with a warning on stderr.
 
 ## Container scheduling configuration
 

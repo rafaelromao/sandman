@@ -58,7 +58,7 @@ This scaffolds the `.sandman/` directory with:
 
 - **`.sandman/config.yaml`** — Sandman configuration with the selected default agent preset
 - **`.sandman/Dockerfile`** — Container image definition for container-backed sandboxing
-- **`.sandman/prompt.md`** — Project Prompt Template seeded from Sandman's Default Prompt
+- **`.sandman/prompt.md`** — Project Prompt Template seeded from Sandman's Default Task Prompt
 - **`.sandman/priority-selection-prompt.md`** — Priority selection prompt for Ralph Loop issue prioritization
 
 Sandman also installs the shared `sandman` skill folder into `~/.agents/skills/sandman/` if it does not already exist.

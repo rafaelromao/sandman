@@ -101,26 +101,30 @@ A GitHub issue fetched via `gh` CLI. The unit of work delegated to an agent.
 _Avoid_: Ticket, story.
 
 **Prompt**:
-The generated instruction file passed to an Agent, rendered from a template with issue metadata and built-in substitutions.
+The instruction content passed to an Agent after template rendering. See `Task` for the on-disk file used for one AgentRun.
 _Avoid_: Instructions, query.
 
-**Default Prompt**:
+**Task**:
+The generated instruction file (`.sandman/task.md`) passed to an Agent for one AgentRun. It contains issue metadata, plan output, and the execution checklist. It replaces `rendered-prompt.md` and subsumes the handoff document's role.
+_Avoid_: Prompt file, handoff doc.
+
+**Default Task Prompt**:
 The canonical bootstrap prompt template embedded in Sandman at `internal/prompt/default-task-prompt.md`.
 _Avoid_: Base prompt, stock prompt.
 
 **Sandman Skill**:
-The shared skill folder installed by `sandman init` into `~/.agents/skills/sandman/` and used by Sandman agents for the full plan/implement/review/merge/continuation flow.
+The shared skill folder installed by `sandman init` into `~/.agents/skills/sandman/` and used by Sandman agents for the full plan/implement/review/merge/continue flow.
 _Avoid_: Prompt workflow, local prompt copy.
 
 **Project Prompt Template**:
-The repo-local `.sandman/prompt.md` template created from the Default Prompt by `sandman init` and materialized on run when missing.
+The repo-local `.sandman/prompt.md` template created from the Default Task Prompt by `sandman init` and materialized on run when missing.
 _Avoid_: User prompt, custom prompt.
 
 **Prompt keys**:
 The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{BASE_BRANCH}}`, `{{BRANCH}}`, `{{REVIEW_COMMAND}}`. Custom keys are supported via the `--prompt-arg KEY=VALUE` CLI flag.
 
 **Command template key**:
-The substitution keys available in agent command templates: `{{.PromptFile}}` (relative path of the rendered prompt file) and `{{.SessionName}}` (pre-formatted session display title supplied by the caller, e.g. `"Sandman run-42-1712345678901: "`). `SessionName` must not contain single quotes — the template shells it as `--title '{{.SessionName}}'` and the renderer rejects any value containing `'` with an error. Templates that reference `{{.SessionName}}` should guard the substitution with `{{if .SessionName}}` to avoid emitting a bare `--title ''` when the field is empty.
+The substitution keys available in agent command templates: `{{.PromptFile}}` (relative path of `.sandman/task.md`) and `{{.SessionName}}` (pre-formatted session display title supplied by the caller, e.g. `"Sandman run-42-1712345678901: "`). `SessionName` must not contain single quotes — the template shells it as `--title '{{.SessionName}}'` and the renderer rejects any value containing `'` with an error. Templates that reference `{{.SessionName}}` should guard the substitution with `{{if .SessionName}}` to avoid emitting a bare `--title ''` when the field is empty.
 
 **Portal launcher**:
 A repo-scoped browser launcher in `sandman portal` that can start Sandman commands from typed presets while observing live runs in the current repository.
@@ -176,11 +180,11 @@ A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the 
 _Avoid_: dashboard, monitor, control panel.
 
 **Continue**:
-The `--continue` flag on `sandman run` re-runs the latest AgentRun for one or more issues while reusing each issue's prior branch, base branch, agent, and review command. Continuation resumes from the stored handoff text rather than a fresh prompt. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. `--continue` keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. When `.sandman/handoff.md` and `.sandman/handoff-prompt.md` are present in the worktree, the resumed run consumes them instead of starting from a blank prompt.
+The `--continue` flag on `sandman run` re-runs the latest AgentRun for one or more issues while reusing each issue's prior branch, base branch, agent, and review command. Continuation reads the existing `.sandman/task.md` directly rather than rendering a fresh prompt. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. `--continue` keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. When `.sandman/task.md` is present in the worktree, the resumed run consumes it instead of starting from a blank prompt.
 _Avoid_: Retry.
 
 **Continuation**:
-An AgentRun or Batch request mode behind the `sandman run --continue` flag that skips prompt template rendering and writes raw prompt text to `handoff-prompt.md` inside the worktree.
+An AgentRun or Batch request mode behind the `sandman run --continue` flag that skips prompt template rendering and reads raw prompt text from `.sandman/task.md` inside the worktree.
 _Avoid_: Replay mode.
 
 **Override**:
@@ -188,7 +192,7 @@ The `--override` flag on `sandman run`. Clears prior run artifacts before starti
 _Avoid_: Clean reset, manual checkout.
 
 **Handoff**:
-The persisted state written by the continuation workflow to `.sandman/handoff.md`, capturing the current workflow stage, completed work, pending items, blockers, key decisions, the originating task prompt (`## Source Prompt: .sandman/task.md`), the last executed sub-skill (`## Last Skill`), and its completion status (`## Last Skill Status`) so that a `--continue` resume or retry can resume from the right checkpoint. (ADR-0023). Removed by the orchestrator once the PR is merged.
+Deprecated: use `Task` (`.sandman/task.md`) instead. The task checklist now carries the checkpointed workflow state that used to live in the separate handoff file.
 _Avoid_: Continuation context (legacy filename), continuation file.
 
 ## Relationships
