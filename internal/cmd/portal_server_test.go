@@ -2766,3 +2766,57 @@ func TestPortal_LoadPortalRunsReviewKindStaysActiveOrCompleted(t *testing.T) {
 		t.Errorf("Kind must remain in {active, completed}; got %q", runs[0].Kind)
 	}
 }
+
+func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now().Add(-5 * time.Minute)
+	branch17 := "sandman/review-17-fixed"
+	branch18 := "sandman/review-18-fixed"
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: started, RunID: "PR17", Issue: 0, Payload: map[string]any{"branch": branch17, "review": true, "pr_number": 17}},
+		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "PR17", Issue: 0, Payload: map[string]any{"status": "success", "branch": branch17, "review": true}},
+		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "PR18", Issue: 0, Payload: map[string]any{"branch": branch18, "review": true, "pr_number": 18}},
+		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "PR18", Issue: 0, Payload: map[string]any{"status": "success", "branch": branch18, "review": true}},
+	})
+
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	view := &portalRunsView{}
+	log17 := filepath.Join(repoRoot, ".sandman", "logs", view.sanitizePortalFilename(branch17)+".log")
+	log18 := filepath.Join(repoRoot, ".sandman", "logs", view.sanitizePortalFilename(branch18)+".log")
+	if err := os.WriteFile(log17, []byte("review 17 log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(log18, []byte("review 18 log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := view.compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 parallel review runs, got %d: %#v", len(runs), runs)
+	}
+	byRunID := map[string]portalRun{}
+	for _, run := range runs {
+		byRunID[run.RunID] = run
+	}
+	for _, runID := range []string{"PR17", "PR18"} {
+		run, ok := byRunID[runID]
+		if !ok {
+			t.Fatalf("expected review run %s to remain visible, got %#v", runID, runs)
+		}
+		if !run.Review {
+			t.Fatalf("expected %s to remain a review run, got %#v", runID, run)
+		}
+		if !strings.Contains(run.Log, "review "+strings.TrimPrefix(runID, "PR")+" log") {
+			t.Fatalf("expected %s to keep its log, got %#v", runID, run)
+		}
+	}
+}
