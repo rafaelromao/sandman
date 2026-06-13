@@ -87,8 +87,12 @@ git commit -m "refactor: self-review fixes"
 
 ```bash
 git push -u origin <branch>
-gh pr create --title "<issue title>" --body "Fixes #<ID>"
+gh pr create --title "<issue title>" --body "Fixes #<issue_number>"
 ```
+
+Before running `gh pr create`, set `body` to exactly `Fixes #<issue_number>`.
+Verify the final `body` string is exactly `Fixes #<issue_number>` and contains no other issue references or extra text.
+If the body is wrong, do NOT create the PR. Instead, report the exact wrong body to the user and stop.
 
 Capture the PR URL and number.
 
@@ -108,5 +112,5 @@ Capture the PR URL and number.
 - [ ] Implementation committed
 - [ ] Self-review performed and fixes committed
 - [ ] Base branch merged into current branch with `sandman-back-merge`
-- [ ] PR created with `Fixes #<ID>`
+- [ ] PR created with `Fixes #<issue_number>`
 - [ ] Delegate review completed

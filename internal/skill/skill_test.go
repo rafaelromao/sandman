@@ -50,6 +50,32 @@ func TestSyncWritesEmbeddedSkill(t *testing.T) {
 	}
 }
 
+func TestSyncInstallsExactIssueClosingGuardInImplementSkill(t *testing.T) {
+	home := t.TempDir()
+
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "implement", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read implement skill: %v", err)
+	}
+	text := string(data)
+	checks := []string{
+		"set `body` to exactly `Fixes #<issue_number>`",
+		"Verify the final `body` string is exactly `Fixes #<issue_number>` and contains no other issue references or extra text",
+		"If the body is wrong",
+		"report the exact wrong body to the user and stop",
+		"PR created with `Fixes #<issue_number>`",
+	}
+	for _, want := range checks {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected implement skill to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
 func TestSyncOverwritesManagedTreeWithoutPrompt(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/old-review"}); err != nil {
