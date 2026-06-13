@@ -2661,6 +2661,7 @@ func TestRunBatch_MixedContinueStillValidatesFreshBranches(t *testing.T) {
 }
 
 func TestRunBatch_MixedContinuePropagatesPerIssueModeMap(t *testing.T) {
+	// Mixed mode should still carry continue metadata only for continue issues.
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Continue issue"},
