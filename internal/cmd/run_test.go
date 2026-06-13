@@ -766,8 +766,8 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 				if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
 					t.Fatalf("mkdir worktree: %v", err)
 				}
-				if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
-					t.Fatalf("write handoff: %v", err)
+				if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "task.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+					t.Fatalf("write task: %v", err)
 				}
 				deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
 				deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
@@ -814,8 +814,8 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
-		t.Fatalf("write handoff: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "task.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+		t.Fatalf("write task: %v", err)
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
@@ -970,8 +970,8 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "handoff.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
-		t.Fatalf("write handoff: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "task.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+		t.Fatalf("write task: %v", err)
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}

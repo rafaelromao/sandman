@@ -19,10 +19,8 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun_E2E(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 	resumeContent := "## Stage: plan-approved\n\nContinue.\n"
-	for _, name := range []string{"handoff.md", "task.md"} {
-		if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", name), []byte(resumeContent), 0644); err != nil {
-			t.Fatalf("write handoff: %v", err)
-		}
+	if err := os.WriteFile(filepath.Join(dir, branch, ".sandman", "task.md"), []byte(resumeContent), 0644); err != nil {
+		t.Fatalf("write task: %v", err)
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}

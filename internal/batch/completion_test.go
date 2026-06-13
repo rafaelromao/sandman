@@ -29,7 +29,7 @@ Continue the work.`
 		t.Fatalf("ReadTaskContent: %v", err)
 	}
 	if !exists {
-		t.Fatal("expected handoff to exist")
+		t.Fatal("expected task doc to exist")
 	}
 
 	doc := prompt.ParseTask(raw)
@@ -46,7 +46,7 @@ Continue the work.`
 		t.Fatalf("expected LastSkillStatus=complete, got %q", doc.LastSkillStatus)
 	}
 	if !strings.Contains(doc.Body, "Initial implementation done.") {
-		t.Fatalf("expected Body to contain handoff content, got %q", doc.Body)
+		t.Fatalf("expected Body to contain task content, got %q", doc.Body)
 	}
 }
 
