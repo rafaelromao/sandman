@@ -70,7 +70,7 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun_E2E(t *testing.T) {
 	}
 }
 
-func TestRun_ContinueFlag_WarnsWhenPromptOnlyHandoffMissing(t *testing.T) {
+func TestRun_ContinueFlag_DoesNotWarnWhenPromptOnlyTaskMissing(t *testing.T) {
 	dir := t.TempDir()
 	branch := "sandman/prompt-only-456"
 	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
@@ -99,7 +99,7 @@ func TestRun_ContinueFlag_WarnsWhenPromptOnlyHandoffMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "warning: no handoff found") {
-		t.Fatalf("expected missing-handoff warning, got %q", buf.String())
+	if strings.Contains(buf.String(), "warning: no handoff found") {
+		t.Fatalf("did not expect missing-handoff warning, got %q", buf.String())
 	}
 }

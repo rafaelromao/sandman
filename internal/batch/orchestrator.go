@@ -693,11 +693,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		req.PromptConfig.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
 	}
 	if req.PromptConfig.RenderedPromptFile == "" {
-		if allContinue {
-			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "handoff-prompt.md")
-		} else {
-			req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
-		}
+		req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 	}
 	if !allContinue {
 		if err := prompt.MaterializePromptFile(req.PromptConfig); err != nil {
@@ -1449,12 +1445,6 @@ func (s *runSession) runOnce(
 
 		if mergeRequired {
 			prMerged := checkPRMerged(o.githubClient, branch)
-			if prMerged {
-				handoffPath := filepath.Join(wt.WorkDir(), ".sandman", "handoff.md")
-				if err := os.Remove(handoffPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-					fmt.Fprintf(o.errorLog, "warning: remove handoff %q: %v\n", handoffPath, err)
-				}
-			}
 			if result.Status == "aborted" {
 				continue
 			}

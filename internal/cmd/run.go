@@ -458,12 +458,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
 					}
 					taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
-					content, exists, err := batch.ReadTaskContent(taskPath)
+					content, _, err := batch.ReadTaskContent(taskPath)
 					if err != nil {
 						return fmt.Errorf("read task %q for issue #%d: %w", taskPath, num, err)
-					}
-					if !exists {
-						fmt.Fprintf(cmd.ErrOrStderr(), "warning: no handoff found in worktree %q; using empty template\n", branch)
 					}
 					modes[num] = batch.ModeContinue
 					previousRunIDs[num] = lastRun.RunID

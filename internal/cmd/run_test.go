@@ -897,7 +897,7 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 	}
 }
 
-func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateWarning(t *testing.T) {
+func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 	dir := t.TempDir()
 	branch := "sandman/42-fix-bug"
 	if err := os.MkdirAll(filepath.Join(dir, branch), 0755); err != nil {
@@ -958,9 +958,6 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateWarning(t *testing.T) {
 	}
 	if spy.req.BaseBranches[42] != "trunk" {
 		t.Fatalf("expected per-issue base branch override, got %q", spy.req.BaseBranches[42])
-	}
-	if !strings.Contains(buf.String(), "warning: no handoff found") {
-		t.Fatalf("expected warning about missing handoff, got %q", buf.String())
 	}
 	if !strings.Contains(spy.req.TaskPrompts[42], "Continue the work.") {
 		t.Fatalf("expected empty-template task prompt, got %q", spy.req.TaskPrompts[42])
