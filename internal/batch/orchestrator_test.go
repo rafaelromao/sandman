@@ -1242,7 +1242,7 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 	}
 }
 
-func TestRunSingle_MergedPRSuccessWithoutRetries(t *testing.T) {
+func TestRunSingle_MergedPRSuccessRegardlessOfAgentExitCode(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 
@@ -1251,7 +1251,7 @@ func TestRunSingle_MergedPRSuccessWithoutRetries(t *testing.T) {
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
-		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "failure", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
 	o := &Orchestrator{
