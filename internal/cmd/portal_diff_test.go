@@ -20,9 +20,9 @@ const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
 const startedCell = created.row.querySelector('[data-cell="started"]');
 const durationCell = created.row.querySelector('[data-cell="duration"]');
 const branchCell = created.row.querySelector('[data-cell="branch"]');
-const sourceCell = created.row.querySelector('[data-cell="source"]');
+const issueTitleCell = created.row.querySelector('[data-cell="issue-title"]');
 const titleCell = created.row.querySelector('[data-cell="title"]');
-clearLog(startedCell); clearLog(durationCell); clearLog(branchCell); clearLog(sourceCell); clearLog(titleCell);
+clearLog(startedCell); clearLog(durationCell); clearLog(branchCell); clearLog(issueTitleCell); clearLog(titleCell);
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true');
@@ -30,7 +30,7 @@ if (result.cells !== 3) throw new Error('expected 3 cell mutations on status cha
 if (countLog(startedCell) !== 0) throw new Error('started cell was touched');
 if (countLog(durationCell) !== 0) throw new Error('duration cell was touched');
 if (countLog(branchCell) !== 0) throw new Error('branch cell was touched');
-if (countLog(sourceCell) !== 0) throw new Error('source cell was touched');
+if (countLog(issueTitleCell) !== 0) throw new Error('issue-title cell was touched');
 if (countLog(titleCell) !== 0) throw new Error('title cell was touched');
 console.log('PASS');
 `
@@ -1333,6 +1333,7 @@ func sharedMockHelpers() string {
 const formatTime = (v) => v ? String(v) : '—';
 const formatDuration = (v) => v && String(v).trim() ? String(v) : '—';
 const formatBranch = (run) => run.branch && String(run.branch).trim() ? run.branch : '—';
+const formatIssueTitle = (run) => run.issueTitle || '—';
 const formatSource = (run) => {
   if (run.kind === 'active' && run.socketPath) return run.socketPath;
   if (run.logPath) return run.logPath;
@@ -1373,7 +1374,7 @@ const isRunAbortable = (run, abortReservations) => {
   return true;
 };
 const helpers = {
-  escapeHTML, formatTime, formatDuration, formatBranch, formatSource,
+  escapeHTML, formatTime, formatDuration, formatBranch, formatIssueTitle, formatSource,
   statusClass, renderStatusBadge, renderRunMeta, renderTerminalContent, isRunAbortable,
 };
 `

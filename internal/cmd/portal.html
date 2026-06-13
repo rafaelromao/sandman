@@ -1625,8 +1625,8 @@
             <th>Status</th>
             <th>Started</th>
             <th>Duration</th>
+            <th>Issue Title</th>
             <th>Branch</th>
-            <th>Source</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -1860,6 +1860,10 @@
 
     function formatBranch(run) {
       return run.branch && String(run.branch).trim() ? run.branch : '—';
+    }
+
+    function formatIssueTitle(run) {
+      return run.issueTitle || '—';
     }
 
     function formatSource(run) {
@@ -2623,6 +2627,7 @@
           formatTime: formatTime,
           formatDuration: formatDuration,
           formatBranch: formatBranch,
+          formatIssueTitle: formatIssueTitle,
           formatSource: formatSource,
           statusClass: statusClass,
           renderRunMeta: renderRunMeta,

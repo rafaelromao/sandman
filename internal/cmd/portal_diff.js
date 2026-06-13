@@ -30,7 +30,7 @@
       startedText: h.formatTime(run.startedAt),
       durationText: h.formatDuration(run.duration),
       branchText: h.formatBranch(run),
-      sourceText: h.formatSource(run),
+      issueTitleText: h.formatIssueTitle(run),
       canAbort: opts.abortSupported !== false && h.isRunAbortable(run, opts.abortReservations),
       ariaExpanded: String(opts.expandedKey === run.key),
     };
@@ -137,11 +137,11 @@
     const durationCell = makeRowCell('duration', tr);
     buildMonoCell(durationCell, opts.helpers.formatDuration(run.duration));
 
+    const issueTitleCell = makeRowCell('issue-title', tr);
+    buildMonoCell(issueTitleCell, opts.helpers.formatIssueTitle(run));
+
     const branchCell = makeRowCell('branch', tr);
     buildMonoCell(branchCell, opts.helpers.formatBranch(run));
-
-    const sourceCell = makeRowCell('source', tr);
-    buildMonoCell(sourceCell, opts.helpers.formatSource(run));
 
     const actionsCell = makeRowCell('actions', tr);
     buildActionsCell(actionsCell, run, opts);
@@ -616,8 +616,8 @@
     const branchCell = cellOf(row, 'branch');
     if (branchCell) updateMonoCell(branchCell, newSnap.branchText);
 
-    const sourceCell = cellOf(row, 'source');
-    if (sourceCell) updateMonoCell(sourceCell, newSnap.sourceText);
+    const issueTitleCell = cellOf(row, 'issue-title');
+    if (issueTitleCell) updateMonoCell(issueTitleCell, newSnap.issueTitleText);
 
     const actionsCell = cellOf(row, 'actions');
     if (actionsCell) updateActionsCell(actionsCell, newRun, opts);
