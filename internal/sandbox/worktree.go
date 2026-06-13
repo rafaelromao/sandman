@@ -81,6 +81,15 @@ func (s *WorktreeSandbox) Start() error {
 			return fmt.Errorf("worktree at %q is on branch %q, expected %q; re-run with --override to reconcile",
 				s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
 		}
+		if !BranchExists(s.repoPath, s.branch) {
+			return fmt.Errorf("cannot reconcile worktree at %q: branch %q does not exist locally; delete the worktree and re-run", s.workDir, s.branch)
+		}
+		oldBranch := strings.TrimPrefix(currentRef, "refs/heads/")
+		s.warn("worktree %q on branch %q, checking out %q\n", s.workDir, oldBranch, s.branch)
+		if err := forceCheckoutBranch(s.workDir, s.branch); err != nil {
+			return fmt.Errorf("check out branch %q in worktree %q: %w", s.branch, s.workDir, err)
+		}
+		return s.configureGitIdentity()
 	}
 	if s.workDirExists() {
 		// Directory exists on disk but is not a registered git worktree.
