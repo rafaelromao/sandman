@@ -752,7 +752,7 @@ func TestDefaultPlanTemplate_EmbeddedTemplate(t *testing.T) {
 	}
 
 	want := strings.TrimSpace(string(data))
-	got := strings.TrimSpace(DefaultPlanTemplate())
+	got := strings.TrimSpace(defaultPlanTemplate())
 	if got != want {
 		t.Fatalf("plan template drifted\nwant:\n%s\ngot:\n%s", want, got)
 	}

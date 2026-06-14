@@ -50,9 +50,11 @@ func DefaultPRReviewPrompt() string { return defaultPRReviewPrompt }
 // DefaultPriorityPrompt returns the built-in priority selection prompt template.
 func DefaultPriorityPrompt() string { return prioritySelectionPrompt }
 
-// DefaultPlanTemplate returns the built-in plan template that defines the
-// output shape for the ## Plan section in task.md.
-func DefaultPlanTemplate() string { return planTemplate }
+// defaultPlanTemplate returns the built-in plan template that defines the
+// output shape for the ## Plan section in task.md. This is currently unexported
+// because no production consumer exists yet; it will be exported when the
+// prompt-rendering path is wired to use it.
+func defaultPlanTemplate() string { return planTemplate }
 
 var keyPattern = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
