@@ -757,23 +757,3 @@ func TestDefaultPlanTemplate_EmbeddedTemplate(t *testing.T) {
 		t.Fatalf("plan template drifted\nwant:\n%s\ngot:\n%s", want, got)
 	}
 }
-
-func TestDefaultPlanTemplate_ContainsRequiredSections(t *testing.T) {
-	template := DefaultPlanTemplate()
-	requiredSections := []string{"## Plan", "### Behaviors to test", "### Testable interfaces", "### Assumptions / risks", "### Next step"}
-	for _, section := range requiredSections {
-		if !strings.Contains(template, section) {
-			t.Errorf("plan template missing section %q", section)
-		}
-	}
-}
-
-func TestDefaultPlanTemplate_HasPlaceholderContent(t *testing.T) {
-	template := DefaultPlanTemplate()
-	if !strings.Contains(template, "- ...") {
-		t.Error("plan template should contain placeholder content '- ...'")
-	}
-	if !strings.Contains(template, "Start `sandman-tdd` with the first tracer bullet.") {
-		t.Error("plan template should contain next step instruction")
-	}
-}
