@@ -36,4 +36,7 @@ type PRData struct {
 type Renderer interface {
 	Render(cfg RenderConfig, data IssueData) (string, error)
 	RenderReview(cfg RenderConfig, data PRData) (string, error)
+	// PlanTemplate returns the built-in plan template that defines the
+	// output shape for the ## Plan section in task.md.
+	PlanTemplate() string
 }
