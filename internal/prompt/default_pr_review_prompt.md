@@ -26,15 +26,7 @@ Before performing the review, ensure the PR is in a healthy state:
    ```bash
    gh pr view {{PR_NUMBER}} --json mergeable
    ```
-   If the `mergeable` field is `CONFLICTING`, check out the PR branch, merge the base branch into it, resolve conflicts, commit, and push:
-   ```bash
-   gh repo clone <owner/repo> -- -b {{PR_HEAD_REF}} /tmp/pr-{{PR_NUMBER}}
-   cd /tmp/pr-{{PR_NUMBER}}
-   git merge {{PR_BASE_REF}}
-   # resolve conflicts...
-   git add -A && git commit -m "fix: resolve merge conflicts"
-   git push
-   ```
+   If the `mergeable` field is `CONFLICTING`, resolve conflicts by checking out the PR branch, merging the base branch into it, resolving conflicts, committing, and pushing. Use `gh pr view` to find the head and base refs.
 
 2. **Fix broken CI.** After ensuring there are no merge conflicts, check CI status:
    ```bash
