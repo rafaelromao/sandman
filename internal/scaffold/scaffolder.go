@@ -87,8 +87,10 @@ var sharedPackages = []string{
 	"openssh-client",
 	"python3",
 	"python3-pip",
+	"ripgrep",
 	"unzip",
 	"xz-utils",
+	"yq",
 }
 
 var builtInBuildToolsPresets = map[string]BuildToolsPreset{

@@ -111,6 +111,32 @@ func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 	}
 }
 
+func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+		t.Run(preset, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+
+			err := s.Scaffold(dir, Options{BuildTools: preset}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(data)
+			if !strings.Contains(content, " ripgrep ") {
+				t.Fatalf("Dockerfile missing ripgrep shared package, got:\n%s", content)
+			}
+			if !strings.Contains(content, " yq ") {
+				t.Fatalf("Dockerfile missing yq shared package, got:\n%s", content)
+			}
+		})
+	}
+}
+
 func TestScaffold_AllPresetsIncludeRTK(t *testing.T) {
 	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
 		t.Run(preset, func(t *testing.T) {
