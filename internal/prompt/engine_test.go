@@ -744,3 +744,36 @@ func TestRender_IssuePathDoesNotConsumePRKeys(t *testing.T) {
 		t.Errorf("error should mention PR_NUMBER, got: %v", err)
 	}
 }
+
+func TestDefaultPlanTemplate_EmbeddedTemplate(t *testing.T) {
+	data, err := os.ReadFile("plan-template.md")
+	if err != nil {
+		t.Fatalf("read plan template file: %v", err)
+	}
+
+	want := strings.TrimSpace(string(data))
+	got := strings.TrimSpace(DefaultPlanTemplate())
+	if got != want {
+		t.Fatalf("plan template drifted\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestDefaultPlanTemplate_ContainsRequiredSections(t *testing.T) {
+	template := DefaultPlanTemplate()
+	requiredSections := []string{"## Plan", "### Behaviors to test", "### Testable interfaces", "### Assumptions / risks", "### Next step"}
+	for _, section := range requiredSections {
+		if !strings.Contains(template, section) {
+			t.Errorf("plan template missing section %q", section)
+		}
+	}
+}
+
+func TestDefaultPlanTemplate_HasPlaceholderContent(t *testing.T) {
+	template := DefaultPlanTemplate()
+	if !strings.Contains(template, "- ...") {
+		t.Error("plan template should contain placeholder content '- ...'")
+	}
+	if !strings.Contains(template, "Start `sandman-tdd` with the first tracer bullet.") {
+		t.Error("plan template should contain next step instruction")
+	}
+}

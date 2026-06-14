@@ -22,6 +22,9 @@ var defaultPRReviewPrompt string
 //go:embed priority_selection_prompt.md
 var prioritySelectionPrompt string
 
+//go:embed plan-template.md
+var planTemplate string
+
 // promptVersion is the hex-encoded SHA-256 digest of the embedded
 // default-task-prompt.md. When the embedded template changes between sandman
 // versions the digest changes, signalling that MaterializePromptFile should
@@ -46,6 +49,10 @@ func DefaultPRReviewPrompt() string { return defaultPRReviewPrompt }
 
 // DefaultPriorityPrompt returns the built-in priority selection prompt template.
 func DefaultPriorityPrompt() string { return prioritySelectionPrompt }
+
+// DefaultPlanTemplate returns the built-in plan template that defines the
+// output shape for the ## Plan section in task.md.
+func DefaultPlanTemplate() string { return planTemplate }
 
 var keyPattern = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
