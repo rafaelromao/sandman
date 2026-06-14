@@ -134,10 +134,6 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 	return result, nil
 }
 
-// PlanTemplate returns the built-in plan template that defines the
-// output shape for the ## Plan section in task.md.
-func (e *Engine) PlanTemplate() string { return defaultPlanTemplate() }
-
 // RenderReview produces a review prompt string. The template is taken from
 // cfg (PromptFlag overrides the embedded default); PR substitutions are then
 // applied. The issue-running render path never sees these keys.
