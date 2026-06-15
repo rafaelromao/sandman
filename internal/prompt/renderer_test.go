@@ -200,8 +200,7 @@ func TestEngine_RenderTreatsBodyPlaceholdersAsInert(t *testing.T) {
 	if strings.Count(result, "/sandman review") != 1 {
 		t.Errorf("operator REVIEW_COMMAND should appear exactly once, got:\n%s", result)
 	}
-	if !strings.Contains(result, "Body contains {{REVIEW_COMMAND}} as a literal") &&
-		!strings.Contains(result, "Body contains &#123;&#123;REVIEW_COMMAND&#125;&#125; as a literal") {
-		t.Errorf("body REVIEW_COMMAND literal should be preserved, got:\n%s", result)
+	if !strings.Contains(result, "Body contains &#123;&#123;REVIEW_COMMAND&#125;&#125; as a literal") {
+		t.Errorf("body REVIEW_COMMAND literal should be escaped to the inert form, got:\n%s", result)
 	}
 }
