@@ -56,7 +56,7 @@ func StrandedWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeIn
 	return StrandedWorktreeInfo{}, false
 }
 
-// issueDrivenBranchName matches directory names that come from issue-driven
+// issueDrivenDir matches directory names that come from issue-driven
 // branches (e.g. "sandman/907-foo" stored as the worktree directory name).
 var issueDrivenDir = regexp.MustCompile(`^[0-9]+-`)
 
