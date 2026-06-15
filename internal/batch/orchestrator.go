@@ -2215,8 +2215,8 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, log
 //
 // On failure at any step, a warning is logged. The caller retries the
 // delete after this returns.
-func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeDir, baseBranch string) {
-	absBase, err := filepath.Abs(worktreeDir)
+func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase, baseBranch string) {
+	absBase, err := filepath.Abs(worktreeBase)
 	if err != nil {
 		fmt.Fprintf(logWriter, "warning: resolve worktree base for stranded recovery: %v\n", err)
 		return
