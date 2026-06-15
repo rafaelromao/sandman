@@ -186,3 +186,169 @@ func TestJSONLLogger_ConcurrentAppendIsAtomic(t *testing.T) {
 		}
 	}
 }
+
+func TestJSONLLogger_RemoveEventsByIssue_FiltersByIssueRef(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	logger := &JSONLLogger{Path: path}
+
+	ptr := 7
+	events := []Event{
+		{Type: "run.started", RunID: "r-1", Issue: 1},
+		{Type: "run.finished", RunID: "r-1", Issue: 1},
+		{Type: "run.started", RunID: "r-7", IssueRef: &ptr},
+		{Type: "run.finished", RunID: "r-7", IssueRef: &ptr},
+		{Type: "run.started", RunID: "r-8", Issue: 8},
+	}
+	for _, e := range events {
+		if err := logger.Log(e); err != nil {
+			t.Fatalf("log %q: %v", e.RunID, err)
+		}
+	}
+
+	if err := logger.RemoveEventsByIssue(7); err != nil {
+		t.Fatalf("remove issue 7: %v", err)
+	}
+
+	got, err := logger.Read()
+	if err != nil {
+		t.Fatalf("read after remove: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 events after remove (Issue=1 kept x2, Issue=8 kept x1), got %d", len(got))
+	}
+	for _, e := range got {
+		if e.IssueRef != nil && *e.IssueRef == 7 {
+			t.Errorf("issue ref 7 should have been removed, got %+v", e)
+		}
+		if e.Issue == 7 {
+			t.Errorf("issue 7 should have been removed, got %+v", e)
+		}
+	}
+}
+
+// TestJSONLLogger_LogVsRemoveRace is the regression test for the
+// slice 6 race: N concurrent Log calls run in parallel with one
+// RemoveEventsByIssue. The post-condition is:
+//
+//  1. No event with Issue != removedIssue is lost in the race. With the
+//     pre-slice-6 implementation, an O_APPEND between Read and O_TRUNC
+//     in RemoveEventsByIssue dropped the appended line, so a non-
+//     matching RunID would be missing from the final file.
+//  2. No RunID appears more than once.
+//  3. After the concurrent batch settles, a subsequent
+//     RemoveEventsByIssue call removes any matching events that were
+//     logged after the first remove completed, leaving the warmup event
+//     and the 90 non-matching events from the 100 logs.
+func TestJSONLLogger_LogVsRemoveRace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	logger := &JSONLLogger{Path: path}
+
+	const (
+		totalLogs    = 100
+		removedIssue = 3
+		matchModulo  = 10
+	)
+
+	// Warm-up Log opens the held file handle before the race window
+	// starts, so the test exercises the held-handle path rather than
+	// the lazy-open path.
+	if err := logger.Log(Event{Type: "run.warmup", RunID: "warmup", Issue: 0}); err != nil {
+		t.Fatalf("warmup log: %v", err)
+	}
+
+	// expectedNonMatching is the set of RunIDs we will log that are
+	// NOT supposed to be removed. The post-condition asserts every one
+	// of these is present after the race and after a final remove.
+	expectedNonMatching := make(map[string]bool, totalLogs)
+	for i := 0; i < totalLogs; i++ {
+		if i%matchModulo == removedIssue {
+			continue
+		}
+		expectedNonMatching[fmt.Sprintf("run-%d", i)] = true
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(totalLogs + 1)
+
+	for i := 0; i < totalLogs; i++ {
+		go func(n int) {
+			defer wg.Done()
+			e := Event{Type: "run.started", RunID: fmt.Sprintf("run-%d", n), Issue: n % matchModulo}
+			<-start
+			if err := logger.Log(e); err != nil {
+				t.Errorf("log %d: %v", n, err)
+			}
+		}(i)
+	}
+
+	go func() {
+		defer wg.Done()
+		<-start
+		if err := logger.RemoveEventsByIssue(removedIssue); err != nil {
+			t.Errorf("remove: %v", err)
+		}
+	}()
+
+	close(start)
+	wg.Wait()
+
+	got, err := logger.Read()
+	if err != nil {
+		t.Fatalf("read after race: %v", err)
+	}
+
+	seen := make(map[string]int)
+	for _, e := range got {
+		if e.RunID == "warmup" {
+			continue
+		}
+		seen[e.RunID]++
+	}
+
+	// Post-condition 1: every non-matching RunID is present exactly once.
+	// A missing non-matching RunID is the original race-induced loss.
+	for id := range expectedNonMatching {
+		count := seen[id]
+		if count == 0 {
+			t.Errorf("non-matching run_id %q was lost in the race", id)
+		}
+		if count > 1 {
+			t.Errorf("run_id %q appeared %d times after the race", id, count)
+		}
+	}
+
+	// Post-condition 2: a final remove cleans up any matching events
+	// that were logged after the concurrent remove completed, leaving
+	// exactly the warmup event plus the 90 non-matching events.
+	if err := logger.RemoveEventsByIssue(removedIssue); err != nil {
+		t.Fatalf("final remove: %v", err)
+	}
+	got, err = logger.Read()
+	if err != nil {
+		t.Fatalf("read after final remove: %v", err)
+	}
+	wantAfterFinal := 1 + len(expectedNonMatching)
+	if len(got) != wantAfterFinal {
+		t.Fatalf("expected %d events after final remove (warmup + %d non-matching), got %d", wantAfterFinal, len(expectedNonMatching), len(got))
+	}
+	gotIDs := make(map[string]bool)
+	for _, e := range got {
+		gotIDs[e.RunID] = true
+	}
+	if !gotIDs["warmup"] {
+		t.Errorf("warmup event missing after final remove")
+	}
+	for id := range expectedNonMatching {
+		if !gotIDs[id] {
+			t.Errorf("non-matching run_id %q missing after final remove", id)
+		}
+	}
+	for _, e := range got {
+		if e.Issue == removedIssue && e.RunID != "warmup" {
+			t.Errorf("matching event %q still in file after final remove", e.RunID)
+		}
+	}
+}
