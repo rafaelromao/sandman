@@ -186,3 +186,148 @@ func TestJSONLLogger_ConcurrentAppendIsAtomic(t *testing.T) {
 		}
 	}
 }
+
+func TestJSONLLogger_RemoveEventsByIssue_FiltersByIssueRef(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	logger := &JSONLLogger{Path: path}
+
+	ptr := 7
+	events := []Event{
+		{Type: "run.started", RunID: "r-1", Issue: 1},
+		{Type: "run.finished", RunID: "r-1", Issue: 1},
+		{Type: "run.started", RunID: "r-7", IssueRef: &ptr},
+		{Type: "run.finished", RunID: "r-7", IssueRef: &ptr},
+		{Type: "run.started", RunID: "r-8", Issue: 8},
+	}
+	for _, e := range events {
+		if err := logger.Log(e); err != nil {
+			t.Fatalf("log %q: %v", e.RunID, err)
+		}
+	}
+
+	if err := logger.RemoveEventsByIssue(7); err != nil {
+		t.Fatalf("remove issue 7: %v", err)
+	}
+
+	got, err := logger.Read()
+	if err != nil {
+		t.Fatalf("read after remove: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 events after remove (Issue=1 kept x2, Issue=8 kept x1), got %d", len(got))
+	}
+	for _, e := range got {
+		if e.IssueRef != nil && *e.IssueRef == 7 {
+			t.Errorf("issue ref 7 should have been removed, got %+v", e)
+		}
+		if e.Issue == 7 {
+			t.Errorf("issue 7 should have been removed, got %+v", e)
+		}
+	}
+}
+
+// TestJSONLLogger_LogVsRemoveRace is the slice 6 regression test: N
+// concurrent Log calls run in parallel with one RemoveEventsByIssue
+// and no non-matching event is lost.
+func TestJSONLLogger_LogVsRemoveRace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	logger := &JSONLLogger{Path: path}
+
+	const (
+		totalLogs    = 100
+		removedIssue = 3
+		matchModulo  = 10
+	)
+
+	if err := logger.Log(Event{Type: "run.warmup", RunID: "warmup", Issue: 0}); err != nil {
+		t.Fatalf("warmup log: %v", err)
+	}
+
+	expectedNonMatching := make(map[string]bool, totalLogs)
+	for i := 0; i < totalLogs; i++ {
+		if i%matchModulo == removedIssue {
+			continue
+		}
+		expectedNonMatching[fmt.Sprintf("run-%d", i)] = true
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(totalLogs + 1)
+
+	for i := 0; i < totalLogs; i++ {
+		go func(n int) {
+			defer wg.Done()
+			e := Event{Type: "run.started", RunID: fmt.Sprintf("run-%d", n), Issue: n % matchModulo}
+			<-start
+			if err := logger.Log(e); err != nil {
+				t.Errorf("log %d: %v", n, err)
+			}
+		}(i)
+	}
+
+	go func() {
+		defer wg.Done()
+		<-start
+		if err := logger.RemoveEventsByIssue(removedIssue); err != nil {
+			t.Errorf("remove: %v", err)
+		}
+	}()
+
+	close(start)
+	wg.Wait()
+
+	got, err := logger.Read()
+	if err != nil {
+		t.Fatalf("read after race: %v", err)
+	}
+
+	seen := make(map[string]int)
+	for _, e := range got {
+		if e.RunID == "warmup" {
+			continue
+		}
+		seen[e.RunID]++
+	}
+
+	for id := range expectedNonMatching {
+		count := seen[id]
+		if count == 0 {
+			t.Errorf("non-matching run_id %q was lost in the race", id)
+		}
+		if count > 1 {
+			t.Errorf("run_id %q appeared %d times after the race", id, count)
+		}
+	}
+
+	if err := logger.RemoveEventsByIssue(removedIssue); err != nil {
+		t.Fatalf("final remove: %v", err)
+	}
+	got, err = logger.Read()
+	if err != nil {
+		t.Fatalf("read after final remove: %v", err)
+	}
+	wantAfterFinal := 1 + len(expectedNonMatching)
+	if len(got) != wantAfterFinal {
+		t.Fatalf("expected %d events after final remove (warmup + %d non-matching), got %d", wantAfterFinal, len(expectedNonMatching), len(got))
+	}
+	gotIDs := make(map[string]bool)
+	for _, e := range got {
+		gotIDs[e.RunID] = true
+	}
+	if !gotIDs["warmup"] {
+		t.Errorf("warmup event missing after final remove")
+	}
+	for id := range expectedNonMatching {
+		if !gotIDs[id] {
+			t.Errorf("non-matching run_id %q missing after final remove", id)
+		}
+	}
+	for _, e := range got {
+		if e.Issue == removedIssue && e.RunID != "warmup" {
+			t.Errorf("matching event %q still in file after final remove", e.RunID)
+		}
+	}
+}
