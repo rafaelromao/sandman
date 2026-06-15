@@ -1728,20 +1728,17 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 
 // reconcileWorktreeBranch returns the worktree's HEAD to the issue branch
 // when it has drifted onto some other ref (e.g. after `gh pr merge --squash
-// --delete-branch` leaves the worktree on the local base branch). The PR
-// merge itself succeeded on GitHub, so any failure here is logged as a
-// warning and the run still returns success.
+// --delete-branch` leaves the worktree on the local base branch, or when
+// the worktree ends up on a detached HEAD). The PR merge itself succeeded
+// on GitHub, so any failure here is logged as a warning and the run still
+// returns success.
 func (s *runSession) reconcileWorktreeBranch(wt sandbox.Sandbox, branch string) {
 	o := s.o
-	currentRef, err := sandbox.CurrentBranchRef(wt.WorkDir())
-	if err != nil {
-		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: resolve HEAD: %v\n", err)
+	expectedRef := "refs/heads/" + branch
+	if currentRef, err := sandbox.CurrentBranchRef(wt.WorkDir()); err == nil && currentRef == expectedRef {
 		return
 	}
-	if currentRef == "refs/heads/"+branch {
-		return
-	}
-	if !branchExists(wt.RepoPath(), branch) {
+	if !sandbox.BranchExists(wt.RepoPath(), branch) {
 		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: branch %q was deleted; next run will recreate it\n", branch)
 		return
 	}

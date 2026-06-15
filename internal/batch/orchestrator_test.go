@@ -8137,6 +8137,16 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 	// Remove the strand factory so subsequent runs use the default runnable.
 	o.runnableFactory = nil
 
+	// The first run strands the worktree on the wrong branch (via the
+	// strand runnable) and succeeds. After the run, reconcileWorktreeBranch
+	// (issue #941) restores the worktree to the issue branch. Re-strand
+	// here so the next subtest exercises the Start-time branch-mismatch
+	// error path on a freshly stranded worktree.
+	worktreePath := filepath.Join(workDir, "worktrees", branch)
+	if out, err := exec.Command("git", "-C", worktreePath, "checkout", "-f", "wrong-branch").CombinedOutput(); err != nil {
+		t.Fatalf("re-strand worktree: %v: %s", err, out)
+	}
+
 	t.Run("no force fails on branch mismatch", func(t *testing.T) {
 		errorBuf.Reset()
 		result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false)
@@ -8262,10 +8272,6 @@ func TestReconcileWorktreeBranch_RestoresBranch(t *testing.T) {
 		t.Fatalf("staging: worktree HEAD on %q, want %q", got, wrong)
 	}
 
-	oldBranchExists := branchExists
-	branchExists = sandbox.BranchExists
-	t.Cleanup(func() { branchExists = oldBranchExists })
-
 	var errorBuf bytes.Buffer
 	s := &runSession{
 		o:        &Orchestrator{errorLog: &errorBuf},
@@ -8297,10 +8303,6 @@ func TestReconcileWorktreeBranch_LogsAndContinuesOnMissingBranch(t *testing.T) {
 		t.Fatalf("delete branch: %v: %s", err, out)
 	}
 
-	oldBranchExists := branchExists
-	branchExists = sandbox.BranchExists
-	t.Cleanup(func() { branchExists = oldBranchExists })
-
 	var errorBuf bytes.Buffer
 	s := &runSession{
 		o:        &Orchestrator{errorLog: &errorBuf},
@@ -8318,6 +8320,39 @@ func TestReconcileWorktreeBranch_LogsAndContinuesOnMissingBranch(t *testing.T) {
 	}
 }
 
+func TestReconcileWorktreeBranch_RestoresFromDetachedHead(t *testing.T) {
+	branch := "sandman/42-fix-bug"
+	_, _, worktreePath, sb := stageReconcileWorktree(t, branch, "")
+
+	// Detach HEAD inside the worktree. `currentBranchRef` returns an error
+	// in this state (symbolic-ref --quiet fails with exit 1 and no output),
+	// so the reconcile method must fall through to the BranchExists +
+	// checkout path, not bail out with a warning.
+	sha := runGit(t, worktreePath, "rev-parse", "HEAD")
+	if out, err := exec.Command("git", "-C", worktreePath, "checkout", "--detach", strings.TrimSpace(sha)).CombinedOutput(); err != nil {
+		t.Fatalf("detach HEAD: %v: %s", err, out)
+	}
+
+	if got := readWorktreeRef(t, worktreePath); got != "HEAD" {
+		t.Fatalf("staging: detached HEAD read as %q, want %q", got, "HEAD")
+	}
+
+	var errorBuf bytes.Buffer
+	s := &runSession{
+		o:        &Orchestrator{errorLog: &errorBuf},
+		branches: map[int]string{42: branch},
+	}
+
+	s.reconcileWorktreeBranch(sb, branch)
+
+	if after := readWorktreeRef(t, worktreePath); after != branch {
+		t.Errorf("worktree HEAD after reconcile: got %q, want %q", after, branch)
+	}
+	if logged := errorBuf.String(); strings.Contains(logged, "resolve HEAD:") {
+		t.Errorf("expected no resolve-HEAD warning, got %q", logged)
+	}
+}
+
 func TestReconcileWorktreeBranch_LogsAndContinuesOnFailure(t *testing.T) {
 	branch := "sandman/42-fix-bug"
 	wrong := "sandman/42-wrong-branch"
@@ -8327,17 +8362,16 @@ func TestReconcileWorktreeBranch_LogsAndContinuesOnFailure(t *testing.T) {
 		t.Fatalf("staging: worktree HEAD on %q, want %q", got, wrong)
 	}
 
-	// Simulate a worktree in a state where the checkout cannot run: the
-	// worktree directory is removed after stranding. This deterministically
-	// makes `git -C <workdir> checkout -f <branch>` fail while leaving the
-	// parent repo and the branch ref intact (BranchExists returns true).
+	// Simulate a worktree in a state where the checkout cannot run. The
+	// spec ("dirty worktree") is loose here: `git checkout -f` does not
+	// refuse dirty files, so a literal uncommitted-edit setup cannot
+	// produce a deterministic failure. Removing the worktree directory
+	// is the simplest, deterministic way to make `git -C <workdir>
+	// checkout -f <branch>` fail while leaving the parent repo and the
+	// branch ref intact (BranchExists returns true).
 	if err := os.RemoveAll(worktreePath); err != nil {
 		t.Fatalf("remove worktree dir: %v", err)
 	}
-
-	oldBranchExists := branchExists
-	branchExists = sandbox.BranchExists
-	t.Cleanup(func() { branchExists = oldBranchExists })
 
 	var errorBuf bytes.Buffer
 	s := &runSession{
