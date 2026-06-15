@@ -247,6 +247,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					if err != nil {
 						return err
 					}
+					candidates, err = expandPRDs(cmd.Context(), githubClient, candidates, cmd.ErrOrStderr())
+					if err != nil {
+						return err
+					}
 					issues, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, ".sandman", agentName, modelFlag, cfg)
 					if err != nil {
 						return err
@@ -359,12 +363,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if len(issues) > 0 {
-				prdResolver := batch.NewPRDResolver(githubClient, cmd.ErrOrStderr())
-				expandedIssues, err := prdResolver.Resolve(cmd.Context(), issues)
+				issues, err = expandPRDs(cmd.Context(), githubClient, issues, cmd.ErrOrStderr())
 				if err != nil {
-					return fmt.Errorf("resolve PRDs: %w", err)
+					return err
 				}
-				issues = expandedIssues
 			}
 
 			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
@@ -1043,6 +1045,22 @@ func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) (
 		return nil, fmt.Errorf("list open issues: %w", err)
 	}
 	return picker.Select(ghIssues)
+}
+
+// expandPRDs runs the PRD resolver on the input issue list and returns the
+// expanded list. Empty input short-circuits to avoid wasted fetches. Any PRD
+// resolution error is wrapped as a regular command error (not a usage error)
+// because the input was syntactically valid.
+func expandPRDs(ctx context.Context, client github.Client, issues []int, stderr io.Writer) ([]int, error) {
+	if len(issues) == 0 {
+		return issues, nil
+	}
+	prdResolver := batch.NewPRDResolver(client, stderr)
+	expanded, err := prdResolver.Resolve(ctx, issues)
+	if err != nil {
+		return nil, fmt.Errorf("resolve PRDs: %w", err)
+	}
+	return expanded, nil
 }
 
 // effectiveAutoCount resolves the candidate cap for Auto Mode.
