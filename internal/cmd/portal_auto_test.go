@@ -16,11 +16,11 @@ func TestPortalLaunchDataFromConfigAutoMaxCountDefaultsFromConfig(t *testing.T) 
 
 func TestPortalLaunchDataFromConfigAutoMaxCountFallsBackToDefault(t *testing.T) {
 	data := portalLaunchDataFromConfig(nil)
-	// The form data mirrors the typed Config field. Config{}.AutoMaxCount is 0
-	// in the zero value; the portal builder applies DefaultAutoMaxCount when
-	// constructing CLI args, and Load() sets a concrete value for loaded configs.
-	if data.AutoMaxCount != 0 {
-		t.Fatalf("expected zero-value AutoMaxCount in form data, got %d", data.AutoMaxCount)
+	// The nil-guarded path sets AutoMaxCount to DefaultAutoMaxCount so the form
+	// prefill matches the runtime default. Load() sets a concrete value for
+	// loaded configs, and explicit cfg.AutoMaxCount <= 0 also falls back here.
+	if data.AutoMaxCount != config.DefaultAutoMaxCount {
+		t.Fatalf("expected AutoMaxCount=%d (default), got %d", config.DefaultAutoMaxCount, data.AutoMaxCount)
 	}
 }
 

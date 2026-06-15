@@ -119,7 +119,11 @@ func loadPortalLaunchConfig(store config.Store) (*config.Config, error) {
 
 func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 	if cfg == nil {
-		cfg = &config.Config{}
+		cfg = &config.Config{AutoMaxCount: config.DefaultAutoMaxCount}
+	}
+	autoMaxCount := cfg.AutoMaxCount
+	if autoMaxCount <= 0 {
+		autoMaxCount = config.DefaultAutoMaxCount
 	}
 
 	agentName := strings.TrimSpace(cfg.DefaultAgent)
@@ -169,7 +173,7 @@ func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 		SelectionModeOptionsHTML: portalRadioOptionsHTML("selectionMode", []portalOption{{Value: "issues", Label: "Issue numbers", Selected: true}, {Value: "label", Label: "Label"}, {Value: "query", Label: "Query"}, {Value: "auto", Label: "Auto Mode"}}, "issues"),
 		AgentOptionsHTML:         agentOptions,
 		SandboxOptionsHTML:       portalSelectOptionsHTML([]portalOption{{Value: "podman", Label: "podman", Selected: sandbox == "podman"}, {Value: "docker", Label: "docker", Selected: sandbox == "docker"}, {Value: "worktree", Label: "worktree", Selected: sandbox == "worktree"}}, sandbox),
-		AutoMaxCount:             cfg.AutoMaxCount,
+		AutoMaxCount:             autoMaxCount,
 		Agent:                    agentName,
 		Model:                    model,
 		BaseBranch:               baseBranch,

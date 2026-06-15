@@ -32,11 +32,11 @@ func resolveAutoQuery(label, query string) string {
 	return "label:ready-for-agent is:open"
 }
 
-func runSelectionPhase(ctx context.Context, client github.Client, count int, label, query, sandmanDir, agentName, modelFlag string, cfg *config.Config, candidates []int) ([]int, error) {
+func runSelectionPhase(ctx context.Context, client github.Client, count int, sandmanDir, agentName, modelFlag string, cfg *config.Config, candidates []int) ([]int, error) {
 	if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
 		return nil, err
 	}
-	candidateIssues, err := fetchCandidateIssues(client, candidates, label, query)
+	candidateIssues, err := fetchCandidateIssues(client, candidates)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,7 @@ func runSelectionPhase(ctx context.Context, client github.Client, count int, lab
 	return readSelectedIssues(sandmanDir, effectiveCount)
 }
 
-func fetchCandidateIssues(client github.Client, candidates []int, label, query string) ([]github.Issue, error) {
+func fetchCandidateIssues(client github.Client, candidates []int) ([]github.Issue, error) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -103,12 +103,6 @@ func fetchCandidateIssues(client github.Client, candidates []int, label, query s
 			return nil, fmt.Errorf("fetch candidate issue #%d: %w", n, err)
 		}
 		if issue == nil {
-			continue
-		}
-		if label != "" && !issueHasLabel(issue.Labels, label) {
-			continue
-		}
-		if query != "" && !issueMatchesFilters(issue, label, query) {
 			continue
 		}
 		issues = append(issues, *issue)
@@ -143,7 +137,7 @@ func readSelectedIssues(sandmanDir string, maxCount int) ([]int, error) {
 
 func resolveAutoIssues(ctx context.Context, client github.Client, count int, candidates []int, sandmanDir, agentName, modelFlag string, cfg *config.Config) ([]int, error) {
 	if autoPromptFileExists(sandmanDir) {
-		return runSelectionPhase(ctx, client, count, "", "", sandmanDir, agentName, modelFlag, cfg, candidates)
+		return runSelectionPhase(ctx, client, count, sandmanDir, agentName, modelFlag, cfg, candidates)
 	}
 
 	if len(candidates) == 0 {

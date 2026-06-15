@@ -3450,7 +3450,7 @@ func TestRunSelectionPhase_AgentWritesSelectedIssuesAndReturnsNumbers(t *testing
 		},
 	}
 
-	got, err := runSelectionPhase(context.Background(), gh, 5, "", "", sandmanDir, "test-agent", "", cfg, []int{1, 2, 3})
+	got, err := runSelectionPhase(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1, 2, 3})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3484,7 +3484,7 @@ func TestRunSelectionPhase_AgentFailureReturnsError(t *testing.T) {
 		},
 	}
 
-	_, err := runSelectionPhase(context.Background(), gh, 5, "", "", sandmanDir, "test-agent", "", cfg, []int{1})
+	_, err := runSelectionPhase(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1})
 	if err == nil {
 		t.Fatal("expected error from agent failure")
 	}
@@ -3505,7 +3505,7 @@ func TestRunSelectionPhase_GuardFiresWhenReviewCommandContainsSandmanAndNoSocket
 		"test-agent": {Command: "true"},
 	}
 
-	_, err := runSelectionPhase(context.Background(), gh, 5, "", "", sandmanDir, "test-agent", "", cfg, []int{1})
+	_, err := runSelectionPhase(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1})
 	if err == nil {
 		t.Fatal("expected error from review guard, got nil")
 	}
