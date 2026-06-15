@@ -47,7 +47,7 @@ func prdSearchToken(parent int) string {
 var issueURLPattern = regexp.MustCompile(`/issues/(\d+)(?:\b|#)`)
 
 var parentHeadingPattern = regexp.MustCompile(`(?im)^##\s+Parent\s*$`)
-var nextHeadingPattern = regexp.MustCompile(`(?m)^##\s`)
+var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
 
 // ExtractParentReference parses the `## Parent` section of an issue body
 // and returns the parent issue number if the section cites exactly one

@@ -285,6 +285,15 @@ func TestPRDResolver_PreservesOrderAndDedupes(t *testing.T) {
 	}
 }
 
+func TestExtractParentReference_HandlesIndentedNextHeading(t *testing.T) {
+	// The next-heading boundary should match even with leading whitespace.
+	body := "## Parent\n\n#42\n\n ## Next Section\n\nOther content.\n"
+	got, ok := ExtractParentReference(body)
+	if !ok || got != 42 {
+		t.Fatalf("expected parent #42, got (%d, %v)", got, ok)
+	}
+}
+
 func TestPRDResolver_NonPRDPassesThrough(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
