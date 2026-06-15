@@ -25,6 +25,9 @@ var prioritySelectionPrompt string
 //go:embed plan-template.md
 var planTemplate string
 
+//go:embed badge_prompt.md
+var badgePrompt string
+
 // promptVersion is the hex-encoded SHA-256 digest of the embedded
 // default-task-prompt.md. When the embedded template changes between sandman
 // versions the digest changes, signalling that MaterializePromptFile should
@@ -49,6 +52,10 @@ func DefaultPRReviewPrompt() string { return defaultPRReviewPrompt }
 
 // DefaultPriorityPrompt returns the built-in priority selection prompt template.
 func DefaultPriorityPrompt() string { return prioritySelectionPrompt }
+
+// DefaultBadgePrompt returns the built-in prompt template used by the
+// post-batch badge-suggestion hook.
+func DefaultBadgePrompt() string { return badgePrompt }
 
 // defaultPlanTemplate returns the built-in plan template that defines the
 // output shape for the ## Plan section in task.md. This is currently unexported
