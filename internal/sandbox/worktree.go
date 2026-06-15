@@ -53,6 +53,15 @@ func (s *WorktreeSandbox) SetStrandedReconcile(enabled bool) {
 
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
+	// Resolve worktreeBase to an absolute path so the
+	// StrandedWorktree helper (and its comparison against
+	// `git worktree list --porcelain` output) works in default
+	// deployments where the configured WorktreeDir is relative.
+	if !filepath.IsAbs(s.worktreeBase) {
+		if abs, err := filepath.Abs(s.worktreeBase); err == nil {
+			s.worktreeBase = abs
+		}
+	}
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
 	overrideRecreate := false
 	if s.workDirIsValidWorktree() {
@@ -122,10 +131,8 @@ overrideCleanup:
 			delCmd.Dir = s.repoPath
 			if out, err := delCmd.CombinedOutput(); err != nil {
 				if s.strandedReconcile && isBranchCheckedOutError(out) {
-					if recovered, recErr := s.reconcileStrandedBranch(); recErr != nil {
+					if recErr := s.reconcileStrandedBranch(); recErr != nil {
 						return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, recErr, out)
-					} else if !recovered {
-						return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, err, out)
 					}
 				} else {
 					return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, err, out)
@@ -430,11 +437,7 @@ func isBranchCheckedOutError(out []byte) bool {
 // the "main repo on the branch" case, dispatched through the
 // package-level reconcileStrandedFn seam (see ADR-0027).
 //
-// Returns (recovered=true, nil) on success; (recovered=false, nil) when
-// no recovery was attempted; (_, err) on a hard failure.
-func (s *WorktreeSandbox) reconcileStrandedBranch() (bool, error) {
-	if err := reconcileStrandedFn(s.repoPath, s.worktreeBase, s.branch, s.sourceBranch); err != nil {
-		return false, err
-	}
-	return true, nil
+// Returns nil on success, or a non-nil error on hard failure.
+func (s *WorktreeSandbox) reconcileStrandedBranch() error {
+	return reconcileStrandedFn(s.repoPath, s.worktreeBase, s.branch, s.sourceBranch)
 }
