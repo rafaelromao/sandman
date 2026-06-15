@@ -7,6 +7,7 @@ import (
 	"io"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -594,6 +595,11 @@ func removeIssueNumber(numbers []int, target int) []int {
 }
 
 // SearchIssues searches for issues via gh CLI.
+//
+// Results are sorted by issue number ascending because gh issue list
+// returns issues in GitHub's default sort order (last updated) and many
+// call sites (unbounded ranges, label/query selection) depend on a
+// deterministic ascending order to produce stable batches.
 func (c *CLIClient) SearchIssues(query string) ([]Issue, error) {
 	cmd := c.command("gh", "issue", "list", "--search", query, "--json", "number,state,title,body,labels", "--limit", "1000")
 	out, err := cmd.CombinedOutput()
@@ -615,6 +621,9 @@ func (c *CLIClient) SearchIssues(query string) ([]Issue, error) {
 			Labels: labelNames(payload.Labels),
 		})
 	}
+	sort.SliceStable(issues, func(i, j int) bool {
+		return issues[i].Number < issues[j].Number
+	})
 	return issues, nil
 }
 
