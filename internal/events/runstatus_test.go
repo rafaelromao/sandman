@@ -28,10 +28,9 @@ func TestRunStatus(t *testing.T) {
 	})
 
 	t.Run("Unknown String returns the carried raw string", func(t *testing.T) {
-		s := RunStatusUnknown
-		s.raw = "anything-else"
+		s := RunStatusFromPayload("anything-else")
 		if got := s.String(); got != "anything-else" {
-			t.Errorf("RunStatus{raw: anything-else}.String() = %q, want %q", got, "anything-else")
+			t.Errorf("RunStatusFromPayload(%q).String() = %q, want %q", "anything-else", got, "anything-else")
 		}
 	})
 

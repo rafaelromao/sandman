@@ -4,6 +4,13 @@ package events
 // append-only event log. It is the single source of truth for the
 // orchestrator and portal when classifying a run's outcome.
 //
+// RunStatus is a struct (not a plain int) so the Unknown arm can carry
+// a raw payload string and round-trip it through String(). The
+// underlying discriminant is unexported; use the named package-level
+// constants and the Is* predicate methods to compare, never == on the
+// struct itself (two Unknown values with the same raw are equal by
+// String() but not by ==).
+//
 // The String() method preserves the exact byte-level contract of
 // RunState.Status() — the portal and every other consumer keeps seeing
 // the same status strings after this enum is introduced.
