@@ -1048,3 +1048,47 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		}
 	})
 }
+
+func TestPortalBatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
+	htmlPath := filepath.Join("portal.html")
+	data, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", htmlPath, err)
+	}
+	html := string(data)
+	idx := strings.Index(html, ".batch-membership")
+	if idx < 0 {
+		t.Fatalf("could not find .batch-membership selector in %s", htmlPath)
+	}
+	open := strings.Index(html[idx:], "{")
+	if open < 0 {
+		t.Fatalf("could not find rule body for .batch-membership in %s", htmlPath)
+	}
+	bodyStart := idx + open + 1
+	close := strings.Index(html[bodyStart:], "}")
+	if close < 0 {
+		t.Fatalf("could not find closing brace for .batch-membership rule in %s", htmlPath)
+	}
+	body := html[bodyStart : bodyStart+close]
+
+	required := []struct {
+		token string
+		desc  string
+	}{
+		{"display: block", "block-level element (not inline-block)"},
+		{"width: 100%", "fills the title cell"},
+		{"box-sizing: border-box", "padding stays inside the cell width"},
+		{"background: var(--surface-3)", "muted chip background preserved"},
+		{"color: var(--muted)", "muted chip text color preserved"},
+		{"font-size: 11px", "chip font size preserved"},
+		{"letter-spacing: 0.04em", "chip letter-spacing preserved"},
+	}
+	for _, r := range required {
+		if !strings.Contains(body, r.token) {
+			t.Errorf(".batch-membership rule missing %q (%s)", r.token, r.desc)
+		}
+	}
+	if strings.Contains(body, "border-radius: 999px") {
+		t.Errorf(".batch-membership rule still has 999px pill radius; expected a small fixed radius so wrapped lines read correctly")
+	}
+}
