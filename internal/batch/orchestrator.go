@@ -1385,7 +1385,10 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 
 // runOnce runs the retry loop for a session. mergeRequired gates the
 // issue-driven flavour's checkPRMerged check (the sole success signal);
-// prepareAttempt returns (_, &errResult) to short-circuit.
+// prepareAttempt returns (_, &errResult) to short-circuit. A short-circuit
+// result with Status="success" (e.g. the pre-retry guard on a merged PR)
+// propagates as a started run so the terminal success event is emitted;
+// any other short-circuit status propagates as a non-started failure.
 func (s *runSession) runOnce(
 	ctx context.Context,
 	issue *github.Issue,
@@ -1415,7 +1418,7 @@ func (s *runSession) runOnce(
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptRenderCfg, errResult := prepareAttempt(attempt)
 		if errResult != nil {
-			return *errResult, false
+			return *errResult, errResult.Status == "success"
 		}
 
 		runnable := factory.NewRunnable(issue, branch, wt)
@@ -1662,6 +1665,15 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
+			// Pre-retry guard: if the PR was merged between attempts (e.g. the
+			// agent merged it on attempt 0 but exited non-zero due to a
+			// transient error), short-circuit to success without launching
+			// the agent again, resetting the branch, or re-rendering the
+			// prompt. The merged PR is the sole success signal for
+			// issue-driven runs (see #860).
+			if checkPRMerged(o.githubClient, branch) {
+				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
+			}
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
 			// Always pass the task content verbatim (or empty template if
 			// missing). The agent reads its next instruction from the task

@@ -216,11 +216,15 @@ func TestRunBatch_IdleTimeoutRetriesAndSucceeds(t *testing.T) {
 	if result == nil || len(result.Runs) != 1 {
 		t.Fatalf("expected one run, got %#v", result)
 	}
+	// The PR is already merged at the start of the run (heartbeatTestSetup
+	// fixture), so the pre-retry guard short-circuits the retry after the
+	// first attempt is aborted. The run is reported as success without
+	// running the second attempt.
 	if result.Runs[0].Status != "success" {
 		t.Errorf("status = %q, want success", result.Runs[0].Status)
 	}
-	if result.Runs[0].RetriesTotal != 2 {
-		t.Errorf("RetriesTotal = %d, want 2", result.Runs[0].RetriesTotal)
+	if result.Runs[0].RetriesTotal != 1 {
+		t.Errorf("RetriesTotal = %d, want 1 (pre-retry guard short-circuits the retry when PR is already merged)", result.Runs[0].RetriesTotal)
 	}
 	if countEventsByType(spyLog.events, "run.idle_timeout") != 1 {
 		t.Errorf("expected exactly 1 run.idle_timeout event, got %d (events: %v)", countEventsByType(spyLog.events, "run.idle_timeout"), spyLog.events)
