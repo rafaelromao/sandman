@@ -6,6 +6,7 @@ import (
 	"io"
 	"os/exec"
 	"testing"
+	"time"
 )
 
 type fakeWorktreeForContainer struct {
@@ -413,6 +414,78 @@ func TestSharedContainerSandbox_SetOverride_ForwardsToWorktree(t *testing.T) {
 	}
 	if wt.setOverrideValue {
 		t.Error("expected SetOverride(false) to forward value false to worktree")
+	}
+}
+
+func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
+	if err := exec.Command("sleep", "0").Run(); err != nil {
+		t.Skipf("sleep command not available: %v", err)
+	}
+
+	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	ctr := &fakeContainer{id: "abc123"}
+	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+		return exec.Command("sleep", "60")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- sb.Exec(ctx, "echo hello", io.Discard, io.Discard)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error from context cancellation")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Exec did not unblock after context cancel — missing Setpgid on container sandbox?")
+	}
+}
+
+func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
+	if err := exec.Command("sleep", "0").Run(); err != nil {
+		t.Skipf("sleep command not available: %v", err)
+	}
+
+	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	ctr := &fakeContainer{id: "abc123"}
+	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+		return exec.Command("sleep", "60")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- sb.ExecInteractive(ctx, "echo hello")
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error from context cancellation")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ExecInteractive did not unblock after context cancel — missing Setpgid on container sandbox?")
 	}
 }
 
