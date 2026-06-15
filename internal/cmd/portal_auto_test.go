@@ -33,7 +33,7 @@ func TestBuildPortalRunArgsAutoSelectionEmitsAutoFlag(t *testing.T) {
 		t.Fatalf("build run args: %v", err)
 	}
 
-	assertArgsContainSequence(t, args, []string{"--auto", "5"})
+	assertArgsContainSequence(t, args, []string{"--auto", "--count", "5"})
 }
 
 func TestBuildPortalRunArgsAutoSelectionIncludesLabelAndQuery(t *testing.T) {
@@ -47,18 +47,19 @@ func TestBuildPortalRunArgsAutoSelectionIncludesLabelAndQuery(t *testing.T) {
 		t.Fatalf("build run args: %v", err)
 	}
 
-	assertArgsContainSequence(t, args, []string{"--auto", "3", "--label", "bug", "--query", "is:open label:bug"})
+	assertArgsContainSequence(t, args, []string{"--auto", "--count", "3", "--label", "bug", "--query", "is:open label:bug"})
 }
 
 func TestBuildPortalRunArgsAutoSelectionDefaultsToConfigCount(t *testing.T) {
-	args, err := buildPortalRunArgs(t.TempDir(), &config.Config{Agent: "opencode", AutoMaxCount: 25}, portalLaunchRequest{
+	cfg := &config.Config{Agent: "opencode", AutoMaxCount: 25}
+	args, err := buildPortalRunArgs(t.TempDir(), cfg, portalLaunchRequest{
 		SelectionMode: "auto",
 	})
 	if err != nil {
 		t.Fatalf("build run args: %v", err)
 	}
 
-	assertArgsContainSequence(t, args, []string{"--auto", "25"})
+	assertArgsContainSequence(t, args, []string{"--auto", "--count", "25"})
 }
 
 func TestBuildPortalRunArgsAutoSelectionFallsBackToDefault(t *testing.T) {
@@ -70,7 +71,7 @@ func TestBuildPortalRunArgsAutoSelectionFallsBackToDefault(t *testing.T) {
 		t.Fatalf("build run args: %v", err)
 	}
 
-	assertArgsContainSequence(t, args, []string{"--auto", "50"})
+	assertArgsContainSequence(t, args, []string{"--auto", "--count", "50"})
 }
 
 func TestBuildPortalRunArgsAutoSelectionRespectsExplicitZeroAsUnlimited(t *testing.T) {
@@ -82,7 +83,8 @@ func TestBuildPortalRunArgsAutoSelectionRespectsExplicitZeroAsUnlimited(t *testi
 		t.Fatalf("build run args: %v", err)
 	}
 
-	assertArgsContainSequence(t, args, []string{"--auto", "0"})
+	assertArgsContainSequence(t, args, []string{"--auto"})
+	assertArgsDoNotContain(t, args, "--count")
 }
 
 func TestBuildPortalRunArgsLabelSelectionDoesNotEmitAuto(t *testing.T) {

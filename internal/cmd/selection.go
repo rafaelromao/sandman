@@ -36,7 +36,7 @@ func runSelectionPhase(ctx context.Context, client github.Client, count int, lab
 	if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
 		return nil, err
 	}
-	candidateIssues, err := fetchCandidateIssues(ctx, client, candidates, label, query)
+	candidateIssues, err := fetchCandidateIssues(client, candidates, label, query)
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +87,7 @@ func runSelectionPhase(ctx context.Context, client github.Client, count int, lab
 	return readSelectedIssues(sandmanDir, effectiveCount)
 }
 
-func fetchCandidateIssues(ctx context.Context, client github.Client, candidates []int, label, query string) ([]github.Issue, error) {
-	_ = ctx
+func fetchCandidateIssues(client github.Client, candidates []int, label, query string) ([]github.Issue, error) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}

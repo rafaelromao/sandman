@@ -57,7 +57,7 @@ func TestBuildPortalRunArgsAutoSelectionIncludesLabelAndQuery_RenamedFromRalph(t
 		t.Fatalf("build run args: %v", err)
 	}
 
-	assertArgsContainSequence(t, args, []string{"--auto", "3", "--label", "bug", "--query", "is:open label:bug"})
+	assertArgsContainSequence(t, args, []string{"--auto", "--count", "3", "--label", "bug", "--query", "is:open label:bug"})
 }
 
 func ptrInt(v int) *int {

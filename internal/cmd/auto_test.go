@@ -183,8 +183,8 @@ func TestRun_AutoFlag_NegativeCountReturnsError(t *testing.T) {
 	if spy.called {
 		t.Error("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "auto_max_count must be 0 or greater") {
-		t.Errorf("expected auto_max_count validation error, got: %v", err)
+	if !strings.Contains(err.Error(), "--count must be 0 or greater") {
+		t.Errorf("expected --count validation error, got: %v", err)
 	}
 }
 

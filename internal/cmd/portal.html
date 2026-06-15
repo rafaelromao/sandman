@@ -1994,7 +1994,9 @@
           } else if (sm === 'query' && s.query) {
             cmd += 'run --query "' + s.query.replace(/"/g, '\\"') + '"';
           } else if (sm === 'auto') {
-            cmd += 'run --auto ' + (s.autoMaxCount || String(launchDefaults.autoMaxCount || 50));
+            const count = s.autoMaxCount || String(launchDefaults.autoMaxCount || 50);
+            cmd += 'run --auto';
+            if (parseInt(count, 10) > 0) cmd += ' --count ' + count;
             if (s.label) cmd += ' --label ' + s.label;
             if (s.query) cmd += ' --query "' + s.query.replace(/"/g, '\\"') + '"';
           }

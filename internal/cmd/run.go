@@ -213,7 +213,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if countProvided && autoCount < 0 {
-				return MarkUsage(fmt.Errorf("auto_max_count must be 0 or greater"))
+				return MarkUsage(fmt.Errorf("--count must be 0 or greater"))
 			}
 
 			if autoProvided {

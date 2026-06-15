@@ -507,7 +507,10 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 			if req.AutoMaxCount != nil {
 				autoCount = *req.AutoMaxCount
 			}
-			args = append(args, "--auto", strconv.Itoa(autoCount))
+			args = append(args, "--auto")
+			if autoCount > 0 {
+				args = append(args, "--count", strconv.Itoa(autoCount))
+			}
 			if label := strings.TrimSpace(req.Label); label != "" {
 				args = append(args, "--label", label)
 			}

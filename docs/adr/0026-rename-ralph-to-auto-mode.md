@@ -44,7 +44,7 @@ If a project has `.sandman/priority-selection-prompt.md` (from a prior `sandman 
 
 #### ADR-0012 is not renamed
 
-ADR-0012 is an immutable historical record of the original decision. We add ADR-0025 as a new file that supersedes 0012. The index in `docs/adr/README.md` is updated to point at 0025 for the current surface.
+ADR-0012 is an immutable historical record of the original decision. We add ADR-0026 as a new file that supersedes 0012. The index in `docs/adr/README.md` is updated to point at 0026 for the current surface.
 
 ## Consequences
 
