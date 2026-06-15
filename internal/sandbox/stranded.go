@@ -63,7 +63,9 @@ var issueDrivenDir = regexp.MustCompile(`^[0-9]+-`)
 // ListStrandedWorktrees scans all worktrees under worktreeBase whose directory
 // name matches the issue-driven branch pattern (N-slug) and returns those whose
 // HEAD ref does not match the expected ref (refs/heads/sandman/<dirname>).
-// Returns nil if worktreeBase is missing or git fails.
+// Returns nil if worktreeBase is missing or git fails; callers that need error
+// visibility on a `git worktree list` failure should call listWorktrees
+// directly.
 func ListStrandedWorktrees(repoPath, worktreeBase string) []StrandedWorktreeInfo {
 	if _, err := os.Stat(worktreeBase); err != nil {
 		return nil
