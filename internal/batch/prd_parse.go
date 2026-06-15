@@ -1,0 +1,84 @@
+package batch
+
+import (
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var issueRefPattern = regexp.MustCompile(`#(\d+)\b`)
+
+// ExtractIssueReferences returns the unique issue numbers referenced in the
+// given text via `#N` shorthand, preserving the order of first occurrence.
+func ExtractIssueReferences(text string) []int {
+	matches := issueRefPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(matches))
+	var out []int
+	for _, match := range matches {
+		number, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[number]; ok {
+			continue
+		}
+		seen[number] = struct{}{}
+		out = append(out, number)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// prdSearchToken returns the path-component form of the parent issue
+// reference that GitHub search reliably matches (verified empirically:
+// the full URL with scheme is tokenized into separate tokens and
+// `gh issue list --search "<url> in:body"` returns no results).
+func prdSearchToken(parent int) string {
+	return "issues/" + strconv.Itoa(parent)
+}
+
+// issueURLPattern matches full GitHub issue URLs of the form
+// `https://<host>/<owner>/<repo>/issues/<n>` (any host).
+var issueURLPattern = regexp.MustCompile(`/issues/(\d+)(?:\b|#)`)
+
+var parentHeadingPattern = regexp.MustCompile(`(?im)^##\s+Parent\s*$`)
+var nextHeadingPattern = regexp.MustCompile(`(?m)^##\s`)
+
+// ExtractParentReference parses the `## Parent` section of an issue body
+// and returns the parent issue number if the section cites exactly one
+// issue. The reference may be a `#N` shorthand or a full GitHub issue URL.
+// Returns (0, false) if there is no `## Parent` section, no recognizable
+// reference, or the section cites multiple distinct issues.
+func ExtractParentReference(body string) (int, bool) {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	idx := parentHeadingPattern.FindStringIndex(body)
+	if idx == nil {
+		return 0, false
+	}
+	afterHeading := body[idx[1]:]
+	nextIdx := nextHeadingPattern.FindStringIndex(afterHeading)
+	var section string
+	if nextIdx != nil {
+		section = afterHeading[:nextIdx[0]]
+	} else {
+		section = afterHeading
+	}
+	refs := ExtractIssueReferences(section)
+	if len(refs) == 1 {
+		return refs[0], true
+	}
+	if len(refs) > 1 {
+		return 0, false
+	}
+	if m := issueURLPattern.FindStringSubmatch(section); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}

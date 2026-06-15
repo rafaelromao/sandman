@@ -24,13 +24,18 @@ import (
 )
 
 type cachedGitHubClient struct {
-	client github.Client
-	mu     sync.Mutex
-	issues map[int]*github.Issue
+	client   github.Client
+	mu       sync.Mutex
+	issues   map[int]*github.Issue
+	comments map[int][]github.IssueComment
 }
 
 func newCachedGitHubClient(client github.Client) *cachedGitHubClient {
-	return &cachedGitHubClient{client: client, issues: make(map[int]*github.Issue)}
+	return &cachedGitHubClient{
+		client:   client,
+		issues:   make(map[int]*github.Issue),
+		comments: make(map[int][]github.IssueComment),
+	}
 }
 
 func (c *cachedGitHubClient) FetchIssue(number int) (*github.Issue, error) {
@@ -74,6 +79,28 @@ func (c *cachedGitHubClient) ListOpenPRs() ([]github.PR, error) {
 
 func (c *cachedGitHubClient) ListPRComments(number int) ([]github.PRComment, error) {
 	return c.client.ListPRComments(number)
+}
+
+func (c *cachedGitHubClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+	c.mu.Lock()
+	if cached, ok := c.comments[number]; ok {
+		c.mu.Unlock()
+		return cached, nil
+	}
+	c.mu.Unlock()
+
+	comments, err := c.client.ListIssueComments(number)
+	if err != nil {
+		return nil, err
+	}
+	if comments == nil {
+		comments = []github.IssueComment{}
+	}
+
+	c.mu.Lock()
+	c.comments[number] = comments
+	c.mu.Unlock()
+	return comments, nil
 }
 
 func (c *cachedGitHubClient) RepoName() (string, error) {
@@ -325,6 +352,15 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) && !(continueFlag && runID != "") {
 				return MarkUsage(fmt.Errorf("no issues selected"))
+			}
+
+			if len(issues) > 0 {
+				prdResolver := batch.NewPRDResolver(githubClient, cmd.ErrOrStderr())
+				expandedIssues, err := prdResolver.Resolve(cmd.Context(), issues)
+				if err != nil {
+					return fmt.Errorf("resolve PRDs: %w", err)
+				}
+				issues = expandedIssues
 			}
 
 			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")

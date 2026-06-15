@@ -31,6 +31,16 @@ type PRComment struct {
 	CreatedAt time.Time
 }
 
+// IssueComment holds an issue conversation comment fetched from the GitHub
+// REST API. These are the comments posted on an issue (not a PR), used by
+// PRD expansion to discover child references that live in the conversation
+// rather than the issue body.
+type IssueComment struct {
+	ID        string
+	Body      string
+	CreatedAt time.Time
+}
+
 // Client wraps gh CLI for GitHub operations.
 type Client interface {
 	FetchIssue(number int) (*Issue, error)
@@ -40,6 +50,7 @@ type Client interface {
 	SearchIssues(query string) ([]Issue, error)
 	ListOpenPRs() ([]PR, error)
 	ListPRComments(number int) ([]PRComment, error)
+	ListIssueComments(number int) ([]IssueComment, error)
 	RepoName() (string, error)
 	EditComment(commentID, body string) error
 	EditPRBody(prNumber int, body string) error

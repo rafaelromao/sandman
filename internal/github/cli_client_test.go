@@ -36,6 +36,39 @@ func (f *fakeRunner) Run(name string, arg ...string) *exec.Cmd {
 	return exec.Command("echo")
 }
 
+func TestCLIClient_ListIssueComments_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `[{"id":200,"body":"referencing #42 and #7","user":{"login":"alice"},"created_at":"2026-06-01T12:00:00Z"}]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	comments, err := client.ListIssueComments(895)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(comments))
+	}
+	if comments[0].ID != "200" {
+		t.Errorf("expected ID 200, got %q", comments[0].ID)
+	}
+	if comments[0].Body != "referencing #42 and #7" {
+		t.Errorf("unexpected body: %q", comments[0].Body)
+	}
+	apiArgs := runner.calls[1].args
+	found := false
+	for _, arg := range apiArgs {
+		if strings.Contains(arg, "sort=created&direction=asc") && strings.Contains(arg, "issues/895/comments") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("API args should target issues/895/comments with sort=created, got %v", apiArgs)
+	}
+}
+
 func TestCLIClient_SearchIssues_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":1,"state":"open","title":"Bug","body":"bug body","labels":[{"name":"bug"}]},{"number":2,"state":"closed","title":"Feature","body":"feat body","labels":[]}]`}}}
 	client := &CLIClient{runner: runner}
