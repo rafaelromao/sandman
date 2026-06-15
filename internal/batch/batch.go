@@ -62,8 +62,14 @@ type Request struct {
 	MaxContainersSet           bool
 	Override                   bool
 	DangerouslySkipPermissions *bool
-	PromptConfig               prompt.RenderConfig
-	OutputWriter               io.Writer
+	// StrandedReconcile controls whether WorktreeSandbox.Start should
+	// auto-recover from a stranded worktree or a "branch used by worktree
+	// at" error from the main-repo cwd. nil means the orchestrator
+	// applies the default (true). A non-nil false opts out and surfaces
+	// the original error unchanged.
+	StrandedReconcile *bool
+	PromptConfig      prompt.RenderConfig
+	OutputWriter      io.Writer
 	// RunDir is the per-batch run directory (typically `.sandman/runs/<run-id>`)
 	// under which container config snapshots are stored for the lifetime of
 	// the batch. When empty, snapshots fall back to a temp directory.

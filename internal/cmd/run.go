@@ -456,6 +456,20 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				dangerouslySkipPerm = &val
 			}
 
+			reconcileStrandedFlag := cmd.Flags().Lookup("reconcile-stranded")
+			noReconcileStrandedFlag := cmd.Flags().Lookup("no-reconcile-stranded")
+			reconcileStrandedSet := reconcileStrandedFlag != nil && reconcileStrandedFlag.Changed
+			noReconcileStrandedSet := noReconcileStrandedFlag != nil && noReconcileStrandedFlag.Changed
+			var reconcileStranded *bool
+			if reconcileStrandedSet {
+				val, _ := cmd.Flags().GetBool("reconcile-stranded")
+				reconcileStranded = &val
+			} else if noReconcileStrandedSet {
+				val, _ := cmd.Flags().GetBool("no-reconcile-stranded")
+				val = !val
+				reconcileStranded = &val
+			}
+
 			modes := make(map[int]batch.IssueMode)
 			previousRunIDs := make(map[int]string)
 			branches := make(map[int]string)
@@ -553,6 +567,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				MaxContainers:              maxContainers,
 				MaxContainersSet:           maxContainersSet,
 				DangerouslySkipPermissions: dangerouslySkipPerm,
+				StrandedReconcile:          reconcileStranded,
 				PromptConfig: prompt.RenderConfig{
 					PromptFlag:       promptFlag,
 					TemplateFlag:     templateFlag,
@@ -580,6 +595,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					req.MaxContainers = continuationReq.MaxContainers
 					req.MaxContainersSet = continuationReq.MaxContainersSet
 					req.DangerouslySkipPermissions = continuationReq.DangerouslySkipPermissions
+					req.StrandedReconcile = continuationReq.StrandedReconcile
 					req.PromptConfig.ReviewCommand = continuationReq.PromptConfig.ReviewCommand
 					req.PromptConfig.ReviewCommandSet = continuationReq.PromptConfig.ReviewCommandSet
 				}
@@ -690,6 +706,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("count", 0, "Candidate cap for Auto Mode; 0 means unlimited (use auto_max_count from config when not set on the CLI)")
 
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
+
+	cmd.Flags().Bool("reconcile-stranded", true, "Auto-recover from a stranded worktree or main-repo branch mismatch before starting the AgentRun; pass --no-reconcile-stranded to opt out and surface the original 'branch used by worktree at' error")
+	cmd.Flags().Bool("no-reconcile-stranded", false, "Opt out of stranded-worktree auto-recovery (negative form of --reconcile-stranded)")
+	cmd.Flags().MarkHidden("no-reconcile-stranded")
 
 	cmd.Flags().Bool("override", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
 	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff and stored settings")

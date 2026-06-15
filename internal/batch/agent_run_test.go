@@ -53,19 +53,21 @@ type fakeSandbox struct {
 	writePromptContent string
 	writePromptError   error
 
-	execCalled            bool
-	execInteractiveCalled bool
-	execCommand           string
-	execError             error
-	execStdout            string
-	execStderr            string
-	process               *fakeProcess
-	stopCalled            bool
-	workDir               string
-	setOverrideCalled     bool
-	setOverrideValue      bool
-	setIdentityName       string
-	setIdentityEmail      string
+	execCalled                 bool
+	execInteractiveCalled      bool
+	execCommand                string
+	execError                  error
+	execStdout                 string
+	execStderr                 string
+	process                    *fakeProcess
+	stopCalled                 bool
+	workDir                    string
+	setOverrideCalled          bool
+	setOverrideValue           bool
+	setStrandedReconcileCalled bool
+	setStrandedReconcileValue  bool
+	setIdentityName            string
+	setIdentityEmail           string
 }
 
 func (f *fakeSandbox) Start() error {
@@ -113,6 +115,10 @@ func (f *fakeSandbox) Process() sandbox.Process {
 func (f *fakeSandbox) SetOverride(override bool) {
 	f.setOverrideCalled = true
 	f.setOverrideValue = override
+}
+func (f *fakeSandbox) SetStrandedReconcile(enabled bool) {
+	f.setStrandedReconcileCalled = true
+	f.setStrandedReconcileValue = enabled
 }
 func (f *fakeSandbox) SetGitIdentity(name, email string) {
 	f.setIdentityName = name

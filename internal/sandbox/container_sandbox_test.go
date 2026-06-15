@@ -9,22 +9,24 @@ import (
 )
 
 type fakeWorktreeForContainer struct {
-	startCalled        bool
-	startError         error
-	stopCalled         bool
-	stopError          error
-	workDir            string
-	writePromptCalled  bool
-	writePromptContent string
-	writePromptError   error
-	execCalled         bool
-	execCommand        string
-	execError          error
-	process            Process
-	setOverrideCalled  bool
-	setOverrideValue   bool
-	setIdentityName    string
-	setIdentityEmail   string
+	startCalled                bool
+	startError                 error
+	stopCalled                 bool
+	stopError                  error
+	workDir                    string
+	writePromptCalled          bool
+	writePromptContent         string
+	writePromptError           error
+	execCalled                 bool
+	execCommand                string
+	execError                  error
+	process                    Process
+	setOverrideCalled          bool
+	setOverrideValue           bool
+	setStrandedReconcileCalled bool
+	setStrandedReconcileValue  bool
+	setIdentityName            string
+	setIdentityEmail           string
 }
 
 func (f *fakeWorktreeForContainer) Start() error {
@@ -70,6 +72,11 @@ func (f *fakeWorktreeForContainer) Process() Process {
 func (f *fakeWorktreeForContainer) SetOverride(override bool) {
 	f.setOverrideCalled = true
 	f.setOverrideValue = override
+}
+
+func (f *fakeWorktreeForContainer) SetStrandedReconcile(enabled bool) {
+	f.setStrandedReconcileCalled = true
+	f.setStrandedReconcileValue = enabled
 }
 
 func (f *fakeWorktreeForContainer) SetGitIdentity(name, email string) {
