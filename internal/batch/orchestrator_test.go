@@ -7446,11 +7446,11 @@ func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 // recovery paths added by #938. When `git branch -D` from the main repo fails
 // with "used by worktree at" (the main repo is checked out on the target
 // branch) and `strandedReconcile` is true, the function must auto-recover
-// so that the branch is gone and no error is logged. The issue's
-// `TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo` contract
-// is satisfied by these two subtests; the nil/false belt-and-suspenders
-// behaviours are covered by TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders
-// and TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders.
+// so that the branch is gone and no error is logged. The two subtests
+// cover the stranded-worktree path and the base-branch-checkout path
+// respectively; the nil/false belt-and-suspenders behaviours are covered
+// by TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders and
+// TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders.
 func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) {
 	branch := "sandman/42-fix-bug"
 	otherBranch := "sandman/99-other-branch"
