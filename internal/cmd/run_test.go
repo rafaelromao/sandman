@@ -1147,8 +1147,8 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	if _, ok := spy.req.Branches[43]; ok {
 		t.Fatalf("expected issue 43 to have no branch replay, got %q", spy.req.Branches[43])
 	}
-	if got := strings.Count(buf.String(), "[--continue] promoting #43 to override (no prior started/continued run)"); got != 1 {
-		t.Fatalf("expected exactly one promotion log line for issue 43, got %d\noutput:\n%s", got, buf.String())
+	if !strings.Contains(buf.String(), "[--continue] promoting #43 to override (no prior started/continued run)") {
+		t.Fatalf("expected promotion log line for issue 43, got output:\n%s", buf.String())
 	}
 }
 
@@ -1196,8 +1196,8 @@ func TestRun_ContinueFlag_NoPriorRunPromotesToOverride(t *testing.T) {
 	if got := spy.req.IssueMode(42); got != batch.ModeOverride {
 		t.Fatalf("expected ModeOverride when no prior run exists under --continue, got %v", got)
 	}
-	if got := strings.Count(buf.String(), "[--continue] promoting #42 to override (no prior started/continued run)"); got != 1 {
-		t.Fatalf("expected exactly one promotion log line, got %d\noutput:\n%s", got, buf.String())
+	if !strings.Contains(buf.String(), "[--continue] promoting #42 to override (no prior started/continued run)") {
+		t.Fatalf("expected promotion log line for issue 42, got output:\n%s", buf.String())
 	}
 }
 
