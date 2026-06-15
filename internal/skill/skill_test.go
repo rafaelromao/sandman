@@ -193,3 +193,76 @@ func TestSyncPromptsBeforeOverwritingLocalEdits(t *testing.T) {
 		t.Fatalf("expected overwrite prompt, got %q", out.String())
 	}
 }
+
+func readEmbeddedSkill(t *testing.T, rel string) string {
+	t.Helper()
+	data, err := fs.ReadFile(embeddedSkills, embeddedSkillRoot+"/"+rel)
+	if err != nil {
+		t.Fatalf("read embedded skill %s: %v", rel, err)
+	}
+	return string(data)
+}
+
+func TestSandmanTddSkill_PlanReuseAndNoPlanBranches(t *testing.T) {
+	text := readEmbeddedSkill(t, "tdd/SKILL.md")
+
+	checks := []struct {
+		name    string
+		substr  string
+		message string
+	}{
+		{
+			name:    "explanatory section heading",
+			substr:  "## About the plan",
+			message: "expected an initial explanatory 'About the plan' section before the workflow",
+		},
+		{
+			name:    "plan existence check",
+			substr:  "## Plan",
+			message: "expected the skill to reference the ## Plan section in task.md",
+		},
+		{
+			name:    "skip plan-review directive on plan-exists branch",
+			substr:  "skip the planning subagent review",
+			message: "expected the skill to instruct skipping the planning subagent review when a plan exists",
+		},
+		{
+			name:    "deep modules bullet preserved on no-plan branch",
+			substr:  "[deep modules]",
+			message: "expected the original deep-modules planning bullet to remain in the no-plan branch",
+		},
+		{
+			name:    "subagent review bullet preserved on no-plan branch",
+			substr:  "Ask a subagent to review the plan",
+			message: "expected the original subagent-review planning bullet to remain in the no-plan branch",
+		},
+	}
+	for _, c := range checks {
+		if !strings.Contains(text, c.substr) {
+			t.Errorf("%s: missing %q\nfull text:\n%s", c.message, c.substr, text)
+		}
+	}
+
+	planIdx := strings.Index(text, "## About the plan")
+	workflowIdx := strings.Index(text, "## Workflow")
+	if planIdx == -1 {
+		t.Fatal("expected ## About the plan section to be present")
+	}
+	if workflowIdx == -1 {
+		t.Fatal("expected ## Workflow section to be present")
+	}
+	if planIdx >= workflowIdx {
+		t.Errorf("expected ## About the plan (%d) to come before ## Workflow (%d)", planIdx, workflowIdx)
+	}
+}
+
+func TestSandmanPlanSkill_OutputShapeNoNextStep(t *testing.T) {
+	text := readEmbeddedSkill(t, "plan/SKILL.md")
+
+	if strings.Contains(text, "### Next step") {
+		t.Errorf("expected sandman-plan SKILL.md to not contain '### Next step' in the plan output shape, got:\n%s", text)
+	}
+	if strings.Contains(text, "## Plan output shape") == false {
+		t.Fatal("expected sandman-plan SKILL.md to contain a 'Plan output shape' section")
+	}
+}

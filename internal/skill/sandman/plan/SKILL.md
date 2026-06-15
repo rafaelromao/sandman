@@ -82,9 +82,6 @@ Use this shape inside `.sandman/task.md`. The canonical template is at `internal
 
 ### Assumptions / risks
 - ...
-
-### Next step
-Start `sandman-tdd` with the first tracer bullet.
 ```
 
 ## Rules

@@ -9,6 +9,7 @@ type TaskDoc struct {
 	SourcePrompt    string // always ".sandman/task.md"
 	LastSkill       string // sandman sub-skill the previous run was on
 	LastSkillStatus string // "complete" or "incomplete" with optional context after " — "
+	Plan            string // body of the top-level ## Plan section when present, "" otherwise
 	Body            string // the remaining content (Completed, Pending, Blockers, Key Decisions, Next Step)
 }
 
@@ -16,7 +17,10 @@ func ParseTask(content string) TaskDoc {
 	lines := strings.Split(content, "\n")
 	var stage, sourcePrompt, lastSkill, lastSkillStatus string
 	var bodyLines []string
+	var planLines []string
 	inHeader := true
+	inPlan := false
+	planHasContent := false
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -42,10 +46,30 @@ func ParseTask(content string) TaskDoc {
 				inHeader = false
 			}
 		}
+		if !inHeader && trimmed == "## Plan" {
+			inPlan = true
+			continue
+		}
+		if inPlan {
+			if strings.HasPrefix(trimmed, "## ") {
+				inPlan = false
+			} else {
+				planLines = append(planLines, line)
+				if trimmed != "" {
+					planHasContent = true
+				}
+				continue
+			}
+		}
 		bodyLines = append(bodyLines, line)
 	}
 
 	body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
+
+	plan := ""
+	if planHasContent {
+		plan = strings.TrimSpace(strings.Join(planLines, "\n"))
+	}
 
 	if sourcePrompt == "" {
 		sourcePrompt = ".sandman/task.md"
@@ -56,6 +80,7 @@ func ParseTask(content string) TaskDoc {
 		SourcePrompt:    sourcePrompt,
 		LastSkill:       lastSkill,
 		LastSkillStatus: lastSkillStatus,
+		Plan:            plan,
 		Body:            body,
 	}
 }

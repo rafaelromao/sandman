@@ -423,3 +423,97 @@ func TestBuildTaskPrompt_UpdateTaskContext_EmptyStatusRendersPlaceholder(t *test
 		t.Fatalf("expected ## Last Skill Status: <context> placeholder in UHC, got:\n%s", result)
 	}
 }
+
+func TestParseTask_PlanSectionPresent(t *testing.T) {
+	content := `## Stage: plan-approved
+## Last Skill: sandman-tdd
+## Last Skill Status: complete
+## Plan
+### Behaviors to test
+- behavior one
+- behavior two
+
+### Testable interfaces
+- seam one
+
+### Assumptions / risks
+- risk one
+
+## Completed
+Initial implementation done.
+
+## Pending
+Nothing.
+
+## Blockers
+None.
+
+## Key Decisions
+Use TDD.
+
+## Next Step
+Continue.`
+
+	doc := ParseTask(content)
+	if doc.Plan == "" {
+		t.Fatalf("expected Plan to be populated, got %q", doc.Plan)
+	}
+	if !strings.Contains(doc.Plan, "behavior one") || !strings.Contains(doc.Plan, "behavior two") {
+		t.Fatalf("expected Plan to contain behaviors, got %q", doc.Plan)
+	}
+	if !strings.Contains(doc.Plan, "seam one") {
+		t.Fatalf("expected Plan to contain testable interfaces, got %q", doc.Plan)
+	}
+	if !strings.Contains(doc.Plan, "risk one") {
+		t.Fatalf("expected Plan to contain assumptions, got %q", doc.Plan)
+	}
+	if strings.Contains(doc.Body, "## Plan") {
+		t.Fatalf("expected Body to not contain ## Plan heading, got %q", doc.Body)
+	}
+	if !strings.Contains(doc.Body, "## Completed") {
+		t.Fatalf("expected Body to contain ## Completed section, got %q", doc.Body)
+	}
+	if !strings.Contains(doc.Body, "Initial implementation done.") {
+		t.Fatalf("expected Body to contain completed content, got %q", doc.Body)
+	}
+	if !strings.Contains(doc.Body, "## Next Step") {
+		t.Fatalf("expected Body to contain ## Next Step section, got %q", doc.Body)
+	}
+}
+
+func TestParseTask_PlanSectionMissing(t *testing.T) {
+	content := `## Stage: plan-approved
+## Last Skill: sandman-tdd
+## Last Skill Status: complete
+## Completed
+Initial implementation done.`
+
+	doc := ParseTask(content)
+	if doc.Plan != "" {
+		t.Fatalf("expected Plan to be empty, got %q", doc.Plan)
+	}
+	if !strings.Contains(doc.Body, "Initial implementation done.") {
+		t.Fatalf("expected Body to contain completed content, got %q", doc.Body)
+	}
+}
+
+func TestParseTask_PlanSectionEmpty(t *testing.T) {
+	content := `## Stage: plan-approved
+## Last Skill: sandman-tdd
+## Last Skill Status: complete
+## Plan
+
+## Completed
+Initial implementation done.`
+
+	doc := ParseTask(content)
+	if doc.Plan != "" {
+		t.Fatalf("expected Plan to be empty when ## Plan section has no content, got %q", doc.Plan)
+	}
+	if strings.Contains(doc.Body, "## Plan") {
+		t.Fatalf("expected Body to not contain ## Plan heading, got %q", doc.Body)
+	}
+	if !strings.Contains(doc.Body, "## Completed") {
+		t.Fatalf("expected Body to contain ## Completed section, got %q", doc.Body)
+	}
+}
