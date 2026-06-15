@@ -156,7 +156,7 @@ func TestPortal_E2E_MixedBatchShowsBatchMembershipAndKeepsIssuePrefixes(t *testi
 
 	binPath := buildSandmanBinary(t)
 
-	repoDir := t.TempDir()
+	repoDir := shortTempDir(t)
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
