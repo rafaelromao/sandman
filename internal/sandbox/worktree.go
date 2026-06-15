@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 )
 
@@ -25,7 +24,6 @@ type WorktreeSandbox struct {
 	gitEmail          string
 	cmd               *exec.Cmd
 	processWrapper    *processWrapper
-	processOnce       sync.Once
 	errorLog          io.Writer
 }
 
@@ -315,8 +313,9 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stde
 		return fmt.Errorf("exec start: %w", err)
 	}
 	s.cmd = cmd
+	s.processWrapper = newProcessWrapper(cmd)
 
-	if err := waitCmd(ctx, cmd); err != nil {
+	if err := waitCmd(ctx, cmd, s.processWrapper); err != nil {
 		return fmt.Errorf("exec: %w", err)
 	}
 	return nil
@@ -334,8 +333,9 @@ func (s *WorktreeSandbox) ExecInteractive(ctx context.Context, command string) e
 		return fmt.Errorf("exec start: %w", err)
 	}
 	s.cmd = cmd
+	s.processWrapper = newProcessWrapper(cmd)
 
-	if err := waitCmd(ctx, cmd); err != nil {
+	if err := waitCmd(ctx, cmd, s.processWrapper); err != nil {
 		return fmt.Errorf("exec: %w", err)
 	}
 	return nil
@@ -378,11 +378,8 @@ func (s *WorktreeSandbox) Process() Process {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return nil
 	}
-	s.processOnce.Do(func() {
-		s.processWrapper = newProcessWrapper(s.cmd)
-	})
 	if s.processWrapper == nil {
-		return nil
+		s.processWrapper = newProcessWrapper(s.cmd)
 	}
 	return s.processWrapper
 }

@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 )
 
@@ -24,7 +23,6 @@ type ContainerSandbox struct {
 	ownsContainer  bool
 	cmd            *exec.Cmd
 	processWrapper *processWrapper
-	processOnce    sync.Once
 	execFn         func(name string, arg ...string) *exec.Cmd
 }
 
@@ -143,8 +141,9 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 		return fmt.Errorf("container exec start: %w", err)
 	}
 	s.cmd = cmd
+	s.processWrapper = newProcessWrapper(cmd)
 
-	if err := waitCmd(ctx, cmd); err != nil {
+	if err := waitCmd(ctx, cmd, s.processWrapper); err != nil {
 		return fmt.Errorf("container exec: %w", err)
 	}
 	return nil
@@ -158,11 +157,12 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("container exec start: %w", err)
+		return fmt.Errorf("exec start: %w", err)
 	}
 	s.cmd = cmd
+	s.processWrapper = newProcessWrapper(cmd)
 
-	if err := waitCmd(ctx, cmd); err != nil {
+	if err := waitCmd(ctx, cmd, s.processWrapper); err != nil {
 		return fmt.Errorf("container exec: %w", err)
 	}
 	return nil
@@ -197,11 +197,8 @@ func (s *ContainerSandbox) Process() Process {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return nil
 	}
-	s.processOnce.Do(func() {
-		s.processWrapper = newProcessWrapper(s.cmd)
-	})
 	if s.processWrapper == nil {
-		return nil
+		s.processWrapper = newProcessWrapper(s.cmd)
 	}
 	return s.processWrapper
 }

@@ -924,6 +924,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			defer o.unregisterIssueCancel(issueNum)
 			defer issueCancel()
 
+			// parentCtx is the RunBatch ctx — it is only
+			// cancelled by an external abort (e.g. parent ctx
+			// cancellation), not by the per-issue abort or the
+			// session's normal end. The supervisor in execute
+			// uses parentCtx to decide whether to shut down the
+			// process; a normal session end (no parent abort)
+			// leaves the process alone.
+			parentCtx := ctx
+
 			advanceTurn := func() {
 				if effectiveParallel != 1 {
 					return
@@ -1043,7 +1052,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 
-			res, started := o.runSingle(issueCtx, issueNum, cfg, agentName, agentCfg, mode == ModeContinue, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, policy.sandboxFactory, policy.containerAlloc, mode == ModeOverride, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile)
+			res, started := o.runSingle(issueCtx, parentCtx, issueNum, cfg, agentName, agentCfg, mode == ModeContinue, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, policy.sandboxFactory, policy.containerAlloc, mode == ModeOverride, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -1356,6 +1365,14 @@ type runSession struct {
 	maxContainersSet           bool
 	dangerouslySkipPermissions bool
 	strandedReconcile          bool
+	// parentCtx is the RunBatch ctx. The supervisor in execute
+	// uses it to decide whether the session is being externally
+	// aborted (parent ctx fired) versus ending normally (parent
+	// ctx alive). ctx (the parameter to execute) is the per-issue
+	// ctx, which is cancelled in both cases — by external abort
+	// AND by the deferred issueCancel on normal return — so it
+	// cannot be used to distinguish the two.
+	parentCtx context.Context
 
 	// runID is an optional batch-level identifier for prompt-only runs.
 	// When non-empty, it is used as the run directory name and as the
@@ -1582,8 +1599,10 @@ func (s *runSession) runOnce(
 }
 
 // runSingle runs a single issue-driven AgentRun. It builds a runSession and
-// delegates to (*runSession).execute.
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool) (AgentRunResult, bool) {
+// delegates to (*runSession).execute. parentCtx is the RunBatch ctx
+// (the ctx that owns this whole batch); the supervisor uses it to
+// distinguish external aborts from normal session end.
+func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool) (AgentRunResult, bool) {
 	s := &runSession{
 		o:           o,
 		issueNumber: num,
@@ -1619,6 +1638,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		maxContainersSet:           maxContainersSet,
 		dangerouslySkipPermissions: dangerouslySkipPermissions,
 		strandedReconcile:          strandedReconcile,
+		parentCtx:                  parentCtx,
 		opts:                       o.runSessionOpts,
 	}
 	return s.execute(ctx)
@@ -1684,24 +1704,24 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// Pre-register the supervisor's done channel with the batch-wide
 	// fan-in BEFORE spawning the supervisor, so a session that
 	// started just before ctx fired cannot race the snapshot taken
-	// by RunBatch's fan-in goroutine. The fan-in waits on this
-	// channel directly; the supervisor closes it when it has
-	// finished shutting the process down.
+	// by RunBatch's fan-in goroutine.
 	supervisorDone := make(chan struct{})
 	o.trackShutdownSupervisor(supervisorDone)
-	sessionDone := make(chan struct{})
+	sessionCtx, cancelSession := context.WithCancel(ctx)
 	go func() {
 		defer close(supervisorDone)
-		select {
-		case <-ctx.Done():
+		<-sessionCtx.Done()
+		if s.parentCtx != nil && s.parentCtx.Err() != nil {
 			if proc := wt.Process(); proc != nil {
-				done := superviseShutdown(context.Background(), proc, s.opts.killTimeout)
+				done := superviseShutdown(ctx, proc, s.opts.killTimeout)
 				<-done
 			}
-		case <-sessionDone:
 		}
 	}()
-	defer close(sessionDone)
+	defer func() {
+		cancelSession()
+		<-supervisorDone
+	}()
 
 	if o.eventLog != nil {
 		promptSourceType := "current"
@@ -1933,6 +1953,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		prNumber:                   prNumber,
 		reviewFocus:                reviewFocus,
 		runID:                      runID,
+		parentCtx:                  ctx,
 		opts:                       o.runSessionOpts,
 	}
 	return s.executePromptOnly(ctx)
@@ -1976,24 +1997,28 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	defer o.unregisterActiveRun(0)
 
 	// Pre-register the supervisor's done channel with the batch-wide
-	// fan-in before spawning the supervisor, so a session that
+	// fan-in BEFORE spawning the supervisor, so a session that
 	// started just before ctx fired cannot race the snapshot taken
-	// by RunBatch's fan-in goroutine.
+	// by RunBatch's fan-in goroutine. sessionCtx is cancelled when
+	// this executePromptOnly call returns, regardless of how it
+	// returns, so the supervisor can exit promptly.
 	supervisorDone := make(chan struct{})
 	o.trackShutdownSupervisor(supervisorDone)
-	sessionDone := make(chan struct{})
+	sessionCtx, cancelSession := context.WithCancel(ctx)
 	go func() {
 		defer close(supervisorDone)
-		select {
-		case <-ctx.Done():
+		<-sessionCtx.Done()
+		if s.parentCtx != nil && s.parentCtx.Err() != nil {
 			if proc := wt.Process(); proc != nil {
-				done := superviseShutdown(context.Background(), proc, s.opts.killTimeout)
+				done := superviseShutdown(ctx, proc, s.opts.killTimeout)
 				<-done
 			}
-		case <-sessionDone:
 		}
 	}()
-	defer close(sessionDone)
+	defer func() {
+		cancelSession()
+		<-supervisorDone
+	}()
 
 	runID := s.runID
 	if runID == "" {

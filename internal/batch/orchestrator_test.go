@@ -923,7 +923,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 2, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 2, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -998,7 +998,7 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1041,7 +1041,7 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, _ := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, _ := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: "sandman/42-fix-bug"}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if result.Status != "failure" {
 		t.Fatalf("status = %q, want failure on lookup error", result.Status)
 	}
@@ -1106,7 +1106,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1201,7 +1201,7 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1259,7 +1259,7 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1309,7 +1309,7 @@ func TestRunSingle_MergedPRSuccessRegardlessOfAgentExitCode(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1343,7 +1343,7 @@ func TestRunSingle_UnmergedPRFailureRegardlessOfAgentExitCode(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1377,7 +1377,7 @@ func TestRunSingle_RetryWithMergedPRIncrementsRetriesTotal(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1414,7 +1414,7 @@ func TestRunSingle_RetryWithMergedPRKeepsRetryCount(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1465,7 +1465,7 @@ func TestRunSingle_PreRetryGuardShortCircuitsOnMergedPR(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}, nil, false, "main", nil, 0, 0, 2, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}, nil, false, "main", nil, 0, 0, 2, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1525,7 +1525,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1601,7 +1601,7 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1691,7 +1691,7 @@ func TestRunSingle_RetryUsesPRReviewTaskPrompt(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1776,7 +1776,7 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1831,7 +1831,7 @@ func TestRunSingle_LogsIssueTitleOnRunStarted(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -1890,7 +1890,7 @@ func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -8141,13 +8141,16 @@ func TestOrchestrator_AbortIssue_ActiveRun(t *testing.T) {
 	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
 		t.Fatalf("expected aborted terminal status, got %q", status)
 	}
-	// Per-issue abort now delegates to the unified superviseShutdown
-	// helper, which signals SIGTERM on entry. The "sibling Ctrl+C
-	// path" guarantee is preserved by the per-session scope of the
-	// supervisor: only the aborted issue's process is signalled, not
-	// its siblings. This test exercises the single-process case.
-	if !proc.sigTermObserved() {
-		t.Fatal("per-issue abort should signal SIGTERM to the aborted issue's process via superviseShutdown")
+	// Per-issue abort cancels the per-issue ctx; the runnable
+	// unblocks on ctx.Done and returns. The supervisor is scoped
+	// to the parent ctx (batch-wide cancellation), so it does
+	// NOT signal the per-aborted issue's process. The "sibling
+	// Ctrl+C path" guarantee is preserved by the per-session
+	// scope of the supervisor. This test exercises the
+	// single-process case to assert the supervisor does not fire
+	// on per-issue abort.
+	if proc.sigTermObserved() {
+		t.Fatal("per-issue abort must not signal the aborted issue's process; the supervisor only fires on parent-ctx cancellation")
 	}
 }
 
@@ -8176,16 +8179,24 @@ func TestOrchestrator_AbortIssue_SiblingIsNotSignalled(t *testing.T) {
 
 	// Multi-sandbox factory: returns a different fakeSandbox per
 	// issue so the two sessions are independent.
-	sb42Factory := &fakeSandboxFactory{sandbox: sb42}
-	sb43Factory := &fakeSandboxFactory{sandbox: sb43}
-	twoSandboxFactory := &twoSandboxFactory{primary: sb42Factory, secondary: sb43Factory}
+	twoSandboxFactory := &twoSandboxFactory{
+		primaryIssue:   42,
+		primary:        sb42,
+		secondaryIssue: 43,
+		secondary:      sb43,
+	}
 
 	runnable42 := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond, running: make(chan struct{})}
 	// Sibling runnable returns success after a short natural delay
 	// (it does not depend on ctx.Done) so the batch can complete
 	// after the per-issue abort of issue 42.
 	runnable43 := &shortSuccessRunnable{returnAfter: 50 * time.Millisecond, running: make(chan struct{})}
-	runFactory := &twoRunnableFactory{primary: runnable42, secondary: runnable43}
+	runFactory := &twoRunnableFactory{
+		primaryIssue:   42,
+		primary:        runnable42,
+		secondaryIssue: 43,
+		secondary:      runnable43,
+	}
 	spyLog := &spyEventLog{}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
@@ -8221,36 +8232,43 @@ func TestOrchestrator_AbortIssue_SiblingIsNotSignalled(t *testing.T) {
 	// PR short-circuit path).
 	waitForSignal(t, done, "expected batch to complete after AbortIssue(42)")
 
-	if !proc42.sigTermObserved() {
-		t.Fatal("expected issue 42's process to be signalled by the aborted supervisor")
+	if proc42.sigTermObserved() {
+		t.Fatal("per-issue abort must not signal SIGTERM on the aborted issue's process; the supervisor only fires on parent-ctx cancellation")
 	}
 	if proc43.sigTermObserved() {
 		t.Fatal("per-issue abort must not signal sibling issue 43's process")
 	}
 }
 
-// twoSandboxFactory hands out a different fakeSandbox per branch so
-// sibling-safety tests can verify that AbortIssue on one issue does
-// not signal a sibling's process.
+// twoSandboxFactory hands out a different fakeSandbox per issue
+// number so sibling-safety tests can verify that AbortIssue on one
+// issue does not signal a sibling's process.
 type twoSandboxFactory struct {
-	primary   *fakeSandboxFactory
-	secondary *fakeSandboxFactory
+	primaryIssue   int
+	primary        *fakeSandbox
+	secondaryIssue int
+	secondary      *fakeSandbox
 }
 
 func (f *twoSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
-	if branch == "sandman/43-other-bug" {
-		return f.secondary.sandbox
+	switch branch {
+	case fmt.Sprintf("sandman/%d-fix-bug", f.primaryIssue):
+		return f.primary
+	case fmt.Sprintf("sandman/%d-other-bug", f.secondaryIssue):
+		return f.secondary
 	}
-	return f.primary.sandbox
+	return f.primary
 }
 
 type twoRunnableFactory struct {
-	primary   Runnable
-	secondary Runnable
+	primaryIssue   int
+	primary        Runnable
+	secondaryIssue int
+	secondary      Runnable
 }
 
 func (f *twoRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
-	if branch == "sandman/43-other-bug" {
+	if issue.Number == f.secondaryIssue {
 		return f.secondary
 	}
 	return f.primary
@@ -8507,7 +8525,7 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 	}
 
 	// Step 1: Create worktree and strand it on the wrong branch via the strand runnable.
-	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false)
 	if !started {
 		t.Fatal("expected strand run to start")
 	}
@@ -8536,7 +8554,7 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 
 	t.Run("no force fails on branch mismatch", func(t *testing.T) {
 		errorBuf.Reset()
-		result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false)
+		result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &defaultSandboxFactory{}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false)
 		if started {
 			t.Fatal("expected run not to start when worktree is on wrong branch")
 		}
@@ -8549,7 +8567,7 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 	})
 
 	t.Run("override reconciles branch mismatch", func(t *testing.T) {
-		result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &defaultSandboxFactory{}, nil, true, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false)
+		result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &defaultSandboxFactory{}, nil, true, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false)
 		if !started {
 			t.Fatal("expected override run to start")
 		}
