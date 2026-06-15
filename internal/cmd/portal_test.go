@@ -1083,10 +1083,12 @@ func TestPortal_BatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
 		{"display: block", "block-level element (not inline-block)"},
 		{"width: 100%", "fills the title cell"},
 		{"box-sizing: border-box", "padding stays inside the cell width"},
+		{"border-radius: 6px", "small fixed radius so wrapped lines read correctly"},
 		{"background: var(--surface-3)", "muted chip background preserved"},
 		{"color: var(--muted)", "muted chip text color preserved"},
 		{"font-size: 11px", "chip font size preserved"},
 		{"letter-spacing: 0.04em", "chip letter-spacing preserved"},
+		{"overflow-wrap: anywhere", "long issue lists break inside the chip when the cap kicks in"},
 	}
 	for _, r := range required {
 		if !strings.Contains(body, r.token) {
@@ -1095,5 +1097,88 @@ func TestPortal_BatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
 	}
 	if strings.Contains(body, "border-radius: 999px") {
 		t.Errorf(".batch-membership rule still has 999px pill radius; expected a small fixed radius so wrapped lines read correctly")
+	}
+}
+
+func TestPortal_MetaLineCSS_AllowsLongTokenToBreak(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	data, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", htmlPath, err)
+	}
+	html := string(data)
+	idx := strings.Index(html, ".meta-line")
+	if idx < 0 {
+		t.Fatalf("could not find .meta-line selector in %s", htmlPath)
+	}
+	open := strings.Index(html[idx:], "{")
+	if open < 0 {
+		t.Fatalf("could not find rule body for .meta-line in %s", htmlPath)
+	}
+	bodyStart := idx + open + 1
+	close := strings.Index(html[bodyStart:], "}")
+	if close < 0 {
+		t.Fatalf("could not find closing brace for .meta-line rule in %s", htmlPath)
+	}
+	body := html[bodyStart : bodyStart+close]
+
+	required := []struct {
+		token string
+		desc  string
+	}{
+		{"grid-template-columns: auto minmax(0, 1fr)", "value track can shrink below its min-content so the cell can be narrower than the longest token"},
+		{"overflow-wrap: anywhere", "long unbreakable run-id token can break inside the value cell"},
+		{"min-width: 0", "grid container can be narrower than its content (prevents forcing the column wider)"},
+	}
+	for _, r := range required {
+		if !strings.Contains(body, r.token) {
+			t.Errorf(".meta-line rule missing %q (%s)", r.token, r.desc)
+		}
+	}
+	if strings.Contains(body, "grid-template-columns: auto 1fr\n") || strings.Contains(body, "grid-template-columns: auto 1fr;") {
+		t.Errorf(".meta-line rule still uses 'auto 1fr' (no minmax); the 1fr track min-sizes to min-content and forces the column wider when the run-id token is long")
+	}
+	if strings.Contains(body, "max-width: 42ch") {
+		t.Errorf(".meta-line rule still caps at 42ch; the cap fights the column layout and was removed when the run-id token's break policy was fixed")
+	}
+}
+
+func TestPortal_RunColumnHasWidthCap(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	data, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", htmlPath, err)
+	}
+	html := string(data)
+	// The Run column should drive its own width up to a sane cap, so the
+	// Part-of-batch chip can sit on a single line and the meta-line's long
+	// run-id can break, instead of the column being clamped to its
+	// min-content width by sibling columns.
+	if !strings.Contains(html, `td[data-cell="title"]`) {
+		t.Fatalf("could not find td[data-cell=\"title\"] selector in %s", htmlPath)
+	}
+	idx := strings.Index(html, `td[data-cell="title"]`)
+	open := strings.Index(html[idx:], "{")
+	if open < 0 {
+		t.Fatalf("could not find rule body for td[data-cell=\"title\"] in %s", htmlPath)
+	}
+	bodyStart := idx + open + 1
+	close := strings.Index(html[bodyStart:], "}")
+	if close < 0 {
+		t.Fatalf("could not find closing brace for td[data-cell=\"title\"] rule in %s", htmlPath)
+	}
+	body := html[bodyStart : bodyStart+close]
+	for _, tok := range []string{"min-width: 200px", "max-width: min(480px, 50%)", "width: 480px"} {
+		if !strings.Contains(body, tok) {
+			t.Errorf("td[data-cell=\"title\"] rule missing %q", tok)
+		}
 	}
 }
