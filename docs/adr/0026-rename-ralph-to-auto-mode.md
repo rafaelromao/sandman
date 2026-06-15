@@ -1,4 +1,4 @@
-# ADR-0025: Rename Ralph to Auto Mode
+# ADR-0026: Rename Ralph to Auto Mode
 
 ## Status
 
