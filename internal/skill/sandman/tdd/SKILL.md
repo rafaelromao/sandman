@@ -5,6 +5,10 @@ description: Test-driven development with red-green-refactor loop. Use when user
 
 # Test-Driven Development
 
+## About the plan
+
+A plan is a behavior-first execution recipe stored at the top of `.sandman/task.md` under a `## Plan` heading. It lists the tracer bullet to run first, the testable interface seams, and any assumptions or risks. When a plan already exists in the task file, this skill treats it as the source of truth: it skips drafting a new plan and skips the planning subagent review, then jumps straight to tracer-bullet execution. When no plan is present, the skill falls back to the full planning flow below — exploring the codebase, designing testable interfaces, drafting the plan, and asking a subagent to review it.
+
 ## Philosophy
 
 **Core principle**: Tests should verify behavior through public interfaces, not implementation details. Code can change entirely; tests shouldn't.

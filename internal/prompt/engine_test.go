@@ -757,3 +757,9 @@ func TestDefaultPlanTemplate_EmbeddedTemplate(t *testing.T) {
 		t.Fatalf("plan template drifted\nwant:\n%s\ngot:\n%s", want, got)
 	}
 }
+
+func TestDefaultPlanTemplate_NoNextStepSubsection(t *testing.T) {
+	if strings.Contains(defaultPlanTemplate(), "### Next step") {
+		t.Fatalf("expected plan template to not contain '### Next step' subsection, got:\n%s", defaultPlanTemplate())
+	}
+}
