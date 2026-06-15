@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1049,8 +1050,12 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 	})
 }
 
-func TestPortalBatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
-	htmlPath := filepath.Join("portal.html")
+func TestPortal_BatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
 	data, err := os.ReadFile(htmlPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", htmlPath, err)
