@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/scaffold"
@@ -77,14 +78,9 @@ func readTailLines(path string, n int) []string {
 }
 
 // agentLogPath returns the canonical absolute log path for the given filename
-// under <repoRoot>/.sandman/logs/. The repo root is resolved from the current
-// working directory via filepath.Abs.
-func agentLogPath(filename string) string {
-	root, err := filepath.Abs(".")
-	if err != nil {
-		panic("agentLogPath: " + err.Error())
-	}
-	return filepath.Join(root, ".sandman", "logs", filename)
+// under the orchestrator's layout LogDir.
+func (o *Orchestrator) agentLogPath(filename string) string {
+	return filepath.Join(o.layout.LogDir, filename)
 }
 func gitTopLevel(repoPath string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
@@ -208,6 +204,11 @@ type Orchestrator struct {
 	runnableFactory         RunnableFactory
 	sandboxFactory          SandboxFactory
 	containerRuntimeFactory ContainerRuntimeFactory
+	// layout owns the on-disk paths the orchestrator writes to (logs, worktrees,
+	// event log, archive, runs). It is resolved once in NewOrchestrator from the
+	// current working directory so the orchestrator is independent of subsequent
+	// directory changes.
+	layout paths.Layout
 	// heartbeatTickInterval overrides the default 30s heartbeat tick for tests.
 	// Zero means use the default tick interval.
 	heartbeatTickInterval time.Duration
@@ -588,12 +589,17 @@ func (p *containerPool) Close() error {
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
 func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, configStore config.Store, eventLog events.EventLog) *Orchestrator {
+	root, err := filepath.Abs(".")
+	if err != nil {
+		root = "."
+	}
 	return &Orchestrator{
 		githubClient:  githubClient,
 		renderer:      renderer,
 		configStore:   configStore,
 		eventLog:      eventLog,
 		errorLog:      os.Stderr,
+		layout:        paths.NewLayout(&config.Config{}, root),
 		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
 			baseBranchSyncMu: &sync.Mutex{},
@@ -636,6 +642,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+	o.layout = paths.NewLayout(cfg, o.layout.RepoRoot)
 	retries := resolveRetries(req, cfg)
 	runIdleTimeout := resolveRunIdleTimeout(req, cfg)
 
@@ -771,7 +778,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		branches := collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog)
 		for _, branch := range branches {
-			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile)
+			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, o.layout.LogDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile)
 		}
 	}
 
@@ -1728,7 +1735,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		})
 	}
 
-	logPath := agentLogPath(fmt.Sprintf("%d.log", s.issueNumber))
+	logPath := s.o.agentLogPath(fmt.Sprintf("%d.log", s.issueNumber))
 	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
@@ -2001,7 +2008,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		_ = o.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}
 
-	logPath := agentLogPath(fmt.Sprintf("%s.log", strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(branch)))
+	logPath := s.o.agentLogPath(s.o.layout.SafeLogFilename(branch) + ".log")
 	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
 			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {

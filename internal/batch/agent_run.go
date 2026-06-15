@@ -11,6 +11,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
@@ -33,15 +34,26 @@ type AgentRun struct {
 	status                     string
 	env                        map[string]string
 	outputWriter               io.Writer
+	layout                     paths.Layout
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
+// The run uses a Layout rooted at the current working directory, matching
+// the pre-Layout behaviour for callers that have not migrated yet.
 func NewAgentRun(issue *github.Issue, branch string, sandbox sandbox.Sandbox) *AgentRun {
+	return NewAgentRunWithLayout(issue, branch, sandbox, paths.NewLayout(&config.Config{}, "."))
+}
+
+// NewAgentRunWithLayout creates an AgentRun that resolves its log directory
+// and filename through the supplied paths.Layout, so the run is rooted at
+// the layout's RepoRoot regardless of the current working directory.
+func NewAgentRunWithLayout(issue *github.Issue, branch string, sandbox sandbox.Sandbox, layout paths.Layout) *AgentRun {
 	return &AgentRun{
 		issue:   issue,
 		branch:  branch,
 		sandbox: sandbox,
 		status:  "success",
+		layout:  layout,
 	}
 }
 
@@ -66,13 +78,19 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 }
 
 // Execute runs the agent command inside the sandbox, writing prefixed output to the given writers
-// and un-prefixed output to .sandman/logs/<issue>.log.
+// and un-prefixed output to the layout's LogDir.
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	logDir := ".sandman/logs"
+	logDir := r.layout.LogDir
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)
 	}
-	logPath := filepath.Join(logDir, r.logFileName())
+	var logName string
+	if r.issue != nil {
+		logName = fmt.Sprintf("%d.log", r.issue.Number)
+	} else {
+		logName = r.layout.SafeLogFilename(r.branch) + ".log"
+	}
+	logPath := filepath.Join(logDir, logName)
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("create log file: %w", err)
@@ -241,15 +259,4 @@ func (r *AgentRun) prefixLabel() string {
 		return r.runID
 	}
 	return "prompt-only"
-}
-
-func (r *AgentRun) logFileName() string {
-	if r.issue != nil {
-		return fmt.Sprintf("%d.log", r.issue.Number)
-	}
-	name := strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(r.branch)
-	if name == "" {
-		name = "prompt-only"
-	}
-	return name + ".log"
 }

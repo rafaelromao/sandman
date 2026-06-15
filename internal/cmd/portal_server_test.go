@@ -2835,8 +2835,8 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := &portalRunsView{}
-	log17 := filepath.Join(repoRoot, ".sandman", "logs", view.sanitizePortalFilename(branch17)+".log")
-	log18 := filepath.Join(repoRoot, ".sandman", "logs", view.sanitizePortalFilename(branch18)+".log")
+	log17 := view.portalLogPath(repoRoot, 0, branch17)
+	log18 := view.portalLogPath(repoRoot, 0, branch18)
 	if err := os.WriteFile(log17, []byte("review 17 log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

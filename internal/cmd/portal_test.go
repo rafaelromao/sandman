@@ -14,6 +14,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
@@ -406,7 +407,7 @@ func TestPortalStaleCleaner_MessageSuppressedWhenNoRecoveredRuns(t *testing.T) {
 
 	t.Run("recovered>0 prints message", func(t *testing.T) {
 		buf.Reset()
-		portalRunCleanStale = func(_ []events.Event, _ events.EventLog) (int, int, error) {
+		portalRunCleanStale = func(_ paths.Layout, _ []events.Event, _ events.EventLog) (int, int, error) {
 			return 1, 0, nil
 		}
 		repoRoot := t.TempDir()
@@ -423,7 +424,7 @@ func TestPortalStaleCleaner_MessageSuppressedWhenNoRecoveredRuns(t *testing.T) {
 
 	t.Run("recovered==0, deadDirs>0 suppresses message", func(t *testing.T) {
 		buf.Reset()
-		portalRunCleanStale = func(_ []events.Event, _ events.EventLog) (int, int, error) {
+		portalRunCleanStale = func(_ paths.Layout, _ []events.Event, _ events.EventLog) (int, int, error) {
 			return 0, 1, nil
 		}
 		repoRoot := t.TempDir()
@@ -440,7 +441,7 @@ func TestPortalStaleCleaner_MessageSuppressedWhenNoRecoveredRuns(t *testing.T) {
 
 	t.Run("both zero suppresses message", func(t *testing.T) {
 		buf.Reset()
-		portalRunCleanStale = func(_ []events.Event, _ events.EventLog) (int, int, error) {
+		portalRunCleanStale = func(_ paths.Layout, _ []events.Event, _ events.EventLog) (int, int, error) {
 			return 0, 0, nil
 		}
 		repoRoot := t.TempDir()

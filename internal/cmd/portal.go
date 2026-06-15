@@ -21,6 +21,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -41,13 +42,14 @@ var portalSignalProcess = signalPortalProcess
 // portalStaleCleaner is the function invoked once per portal server
 // startup to recover stale runs and clean up dead directories.
 var portalStaleCleaner = func(repoRoot string) error {
-	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	logPath := layout.EventsLogPath
 	logPathLogger := &events.JSONLLogger{Path: logPath}
 	eventsList, err := logPathLogger.Read()
 	if err != nil {
 		return fmt.Errorf("read event log: %w", err)
 	}
-	recovered, deadDirs, err := portalRunCleanStale(eventsList, logPathLogger)
+	recovered, deadDirs, err := portalRunCleanStale(layout, eventsList, logPathLogger)
 	if err != nil {
 		return err
 	}

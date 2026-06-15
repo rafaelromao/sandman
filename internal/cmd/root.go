@@ -28,6 +28,10 @@ type Dependencies struct {
 	IsTTY            func() bool
 	GitRunner        gitRunner
 	RunActivityProbe runActivityProbe
+	// RepoRoot is the repository root the CLI commands operate on. When
+	// empty, commands fall back to the current working directory, matching
+	// the pre-Layout behaviour for callers that have not migrated.
+	RepoRoot string
 }
 
 // NewRootCmd constructs the command tree with injected dependencies.

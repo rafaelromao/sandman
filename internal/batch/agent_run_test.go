@@ -13,6 +13,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
@@ -347,6 +348,59 @@ func TestAgentRun_Execute_WritesLogFile(t *testing.T) {
 	}
 	if strings.Contains(content, "[issue-42]") {
 		t.Errorf("expected log to be un-prefixed, got %q", content)
+	}
+}
+
+func TestAgentRun_Execute_UsesLayoutLogDir_IgnoresCWD(t *testing.T) {
+	repo := t.TempDir()
+	other := t.TempDir()
+	t.Chdir(other)
+
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execStdout: "hello world\n"}
+
+	run := NewAgentRunWithLayout(issue, "sandman/42-fix-bug", sb, paths.NewLayout(&config.Config{}, repo))
+	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantPath := filepath.Join(repo, ".sandman", "logs", "42.log")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("expected log file at %s: %v", wantPath, err)
+	}
+	otherLogPath := filepath.Join(other, ".sandman", "logs", "42.log")
+	if _, err := os.Stat(otherLogPath); !os.IsNotExist(err) {
+		t.Errorf("did not expect log file under CWD %s", otherLogPath)
+	}
+}
+
+func TestAgentRun_Execute_PromptOnlyUsesSanitizedFilename(t *testing.T) {
+	repo := t.TempDir()
+	sb := &fakeSandbox{execStdout: "hello world\n"}
+
+	run := NewAgentRunWithLayout(nil, "sandman/42 foo", sb, paths.NewLayout(&config.Config{}, repo))
+	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantPath := filepath.Join(repo, ".sandman", "logs", "sandman-42-foo.log")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("expected sanitized log file at %s: %v", wantPath, err)
+	}
+}
+
+func TestAgentRun_Execute_PromptOnlyEmptyBranchUsesPromptOnly(t *testing.T) {
+	repo := t.TempDir()
+	sb := &fakeSandbox{execStdout: "hello world\n"}
+
+	run := NewAgentRunWithLayout(nil, "", sb, paths.NewLayout(&config.Config{}, repo))
+	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantPath := filepath.Join(repo, ".sandman", "logs", "prompt-only.log")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("expected prompt-only log file at %s: %v", wantPath, err)
 	}
 }
 

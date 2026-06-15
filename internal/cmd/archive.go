@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -76,12 +78,17 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 	if err != nil {
 		return fmt.Errorf("read event log: %w", err)
 	}
-	recovered, _, err := runCleanStale(eventsList, deps.EventLog)
+	repoRoot := deps.RepoRoot
+	if repoRoot == "" {
+		repoRoot = "."
+	}
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	recovered, _, err := runCleanStale(layout, eventsList, deps.EventLog)
 	if err != nil {
 		return fmt.Errorf("recover stale runs: %w", err)
 	}
 
-	dead, err := daemon.FindDeadRunBatches(".sandman")
+	dead, err := daemon.FindDeadRunBatches(layout.SandmanDir)
 	if err != nil {
 		return fmt.Errorf("scan run directories: %w", err)
 	}

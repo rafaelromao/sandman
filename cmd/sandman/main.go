@@ -54,6 +54,11 @@ func executeRoot(rootCmd *cobra.Command, stderr io.Writer, exit func(int)) {
 }
 
 func main() {
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: getwd:", err)
+		os.Exit(1)
+	}
 	cfgStore := &config.FileStore{Path: ".sandman/config.yaml"}
 	ghClient := &github.CLIClient{}
 	renderer := &prompt.Engine{}
@@ -67,6 +72,7 @@ func main() {
 		Renderer:     renderer,
 		IssuePicker:  &cmd.SimpleIssuePicker{},
 		IsTTY:        isStdoutTTY,
+		RepoRoot:     repoRoot,
 	}
 
 	rootCmd := cmd.NewRootCmd(deps)
