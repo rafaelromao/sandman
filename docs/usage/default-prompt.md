@@ -23,6 +23,8 @@ The long workflow now lives in the shared Sandman skill. This page describes the
     - Base branch: `{{BASE_BRANCH}}`
     - Review command: `{{REVIEW_COMMAND}}`
 
+    The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not switch to `{{BASE_BRANCH}}` or any other branch before exiting.
+
     ## Execution Checklist
 
     - [ ] Create branch
