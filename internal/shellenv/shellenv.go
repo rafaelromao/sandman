@@ -5,7 +5,7 @@
 // (^[A-Za-z_][A-Za-z0-9_]*$); bad keys are surfaced as a typed *InvalidKeyError
 // listing every rejection so callers can refuse the whole batch instead of
 // silently dropping dangerous entries. Values are emitted unquoted when they
-// contain only shell-safe ASCII and single-quoted with the `'\''` idiom
+// contain only shell-safe ASCII and single-quoted with the `'\”` idiom
 // otherwise, so embedded whitespace, single quotes, and other shell metachars
 // are inert when the result is handed to `sh -c`.
 package shellenv
