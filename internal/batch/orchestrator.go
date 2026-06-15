@@ -1670,7 +1670,9 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			// transient error), short-circuit to success without launching
 			// the agent again, resetting the branch, or re-rendering the
 			// prompt. The merged PR is the sole success signal for
-			// issue-driven runs (see #860).
+			// issue-driven runs (see #860). The `mergeRequired` parameter
+			// above is false in ModeContinue, so continuation replays
+			// (which intentionally bypass PR-merge checks) skip this guard.
 			if checkPRMerged(o.githubClient, branch) {
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
 			}
