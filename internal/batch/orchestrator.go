@@ -1778,7 +1778,35 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 
 	result.Status = s.emitTerminal(ctx, runID, result)
 
+	if result.Status == "success" {
+		s.reconcileWorktreeBranch(wt, branch)
+	}
+
 	return result, true
+}
+
+// reconcileWorktreeBranch returns the worktree's HEAD to the issue branch
+// when it has drifted onto some other ref (e.g. after `gh pr merge --squash
+// --delete-branch` leaves the worktree on the local base branch, or when
+// the worktree ends up on a detached HEAD). The PR merge itself succeeded
+// on GitHub, so any failure here is logged as a warning and the run still
+// returns success.
+func (s *runSession) reconcileWorktreeBranch(wt sandbox.Sandbox, branch string) {
+	o := s.o
+	expectedRef := "refs/heads/" + branch
+	if currentRef, err := sandbox.CurrentBranchRef(wt.WorkDir()); err == nil && currentRef == expectedRef {
+		return
+	}
+	if !sandbox.BranchExists(wt.RepoPath(), branch) {
+		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: branch %q was deleted; next run will recreate it\n", branch)
+		return
+	}
+	cmd := exec.Command("git", "-C", wt.WorkDir(), "checkout", "-f", branch)
+	cmd.Dir = wt.RepoPath()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: git checkout -f %s: %v\n%s\n", branch, err, out)
+		return
+	}
 }
 
 func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]int, error) {

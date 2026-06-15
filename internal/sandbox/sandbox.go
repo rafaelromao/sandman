@@ -26,6 +26,10 @@ type Sandbox interface {
 	Stop() error
 	// WorkDir returns the working directory path of the sandbox.
 	WorkDir() string
+	// RepoPath returns the parent repository path that owns the sandbox.
+	// Used to run git commands (e.g. `git checkout -f`) that must target
+	// the repo, not the worktree.
+	RepoPath() string
 	// WritePrompt writes the prompt content to the sandbox.
 	WritePrompt(content string) error
 	// Process returns the running OS process, or nil if no process is active.

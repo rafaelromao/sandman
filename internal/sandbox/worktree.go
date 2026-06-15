@@ -45,7 +45,7 @@ func (s *WorktreeSandbox) Start() error {
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
 	overrideRecreate := false
 	if s.workDirIsValidWorktree() {
-		currentRef, err := currentBranchRef(s.workDir)
+		currentRef, err := CurrentBranchRef(s.workDir)
 		if err != nil {
 			if !s.override {
 				return fmt.Errorf("worktree at %q HEAD is not on a branch: %w; re-run with --override to reconcile", s.workDir, err)
@@ -157,8 +157,8 @@ func (s *WorktreeSandbox) workDirIsValidWorktree() bool {
 	return false
 }
 
-// currentBranchRef returns the full ref that HEAD points to in the given worktree.
-func currentBranchRef(workDir string) (string, error) {
+// CurrentBranchRef returns the full ref that HEAD points to in the given worktree.
+func CurrentBranchRef(workDir string) (string, error) {
 	out, err := runGitCommand(workDir, "symbolic-ref", "--quiet", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("resolve HEAD symbolic-ref: %w\n%s", err, out)
@@ -325,6 +325,11 @@ func (s *WorktreeSandbox) WritePrompt(content string) error {
 // WorkDir returns the working directory path of the sandbox.
 func (s *WorktreeSandbox) WorkDir() string {
 	return s.workDir
+}
+
+// RepoPath returns the parent repository path that owns this sandbox.
+func (s *WorktreeSandbox) RepoPath() string {
+	return s.repoPath
 }
 
 // Process returns the running OS process, or nil if no process is active.

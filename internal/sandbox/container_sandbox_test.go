@@ -41,6 +41,10 @@ func (f *fakeWorktreeForContainer) WorkDir() string {
 	return f.workDir
 }
 
+func (f *fakeWorktreeForContainer) RepoPath() string {
+	return ""
+}
+
 func (f *fakeWorktreeForContainer) WritePrompt(content string) error {
 	f.writePromptCalled = true
 	f.writePromptContent = content
