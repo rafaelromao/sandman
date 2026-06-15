@@ -873,7 +873,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 	}
 }
 
-func TestPortal_PageMastheadMetadata_UpdatedStacksBelowRepo(t *testing.T) {
+func TestPortal_PageMastheadMetadataStacksUpdatedBelowRepo(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -908,10 +908,13 @@ func TestPortal_PageMastheadMetadata_UpdatedStacksBelowRepo(t *testing.T) {
 		t.Fatalf("page is missing the #last-updated element\n%s", content[:min(800, len(content))])
 	}
 
-	repoIdx := strings.Index(firstBlock, ">Repo<")
+	repoIdx := strings.Index(content, ">Repo<")
 	updatedIdx := strings.Index(content, ">Updated<")
 	if updatedIdx < 0 {
 		t.Fatalf("page is missing the Updated label\n%s", content[:min(800, len(content))])
+	}
+	if repoIdx < 0 {
+		t.Fatalf("page is missing the Repo label\n%s", content[:min(800, len(content))])
 	}
 	if updatedIdx <= repoIdx {
 		t.Fatalf("Updated label must appear after the Repo block in the rendered masthead\nrepoIdx=%d updatedIdx=%d", repoIdx, updatedIdx)
