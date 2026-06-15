@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // ContainerSandbox provides isolation via a container and a git worktree.
@@ -132,6 +133,7 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
 func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	cmd := s.execFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
@@ -148,6 +150,7 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 // ExecInteractive runs a command inside the container attached to the user's terminal.
 func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) error {
 	cmd := s.execFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
