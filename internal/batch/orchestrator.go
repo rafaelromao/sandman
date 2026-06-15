@@ -2150,9 +2150,9 @@ func isMissingBranchError(err error, out []byte) bool {
 // non-nil and true, the function runs the auto-recovery flow described in
 // ADR-0027 (stranded-worktree first, then base-branch checkout).
 //
-// `strandedReconcile` is nil preserves today's belt-and-suspenders
-// behaviour (the failure is logged and the function continues); false
-// is the explicit opt-out (`--no-reconcile-stranded`).
+// When `strandedReconcile` is nil, today's belt-and-suspenders behaviour
+// is preserved (the failure is logged and the function continues);
+// false is the explicit opt-out (`--no-reconcile-stranded`).
 //
 // `baseBranch` is the branch the function falls back to when no stranded
 // worktree is found; when empty, the fallback path is skipped.
