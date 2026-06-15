@@ -2576,14 +2576,93 @@ func TestRunBatch_AbortsUpfrontWhenAnyBranchExists(t *testing.T) {
 	if !strings.Contains(err.Error(), `git branch -D <branch>`) {
 		t.Fatalf("expected delete hint in error, got %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), `--override`) {
-		t.Fatalf("expected override hint in error, got %q", err.Error())
+	if !strings.Contains(err.Error(), "#450: no prior run — use --override") {
+		t.Fatalf("expected #450 per-issue override guidance, got %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), `--continue`) {
-		t.Fatalf("expected continue hint in error, got %q", err.Error())
+	if strings.Contains(err.Error(), "or use --override to restart from scratch or --continue to resume") {
+		t.Fatalf("error should not contain the old global phrase, got %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), `use --override to restart from scratch or --continue to resume`) {
-		t.Fatalf("expected exact guidance in error, got %q", err.Error())
+	if len(factory.created) != 0 {
+		t.Fatalf("expected no runnables created, got %d", len(factory.created))
+	}
+	for issue, runnable := range factory.runnables {
+		cr := runnable.(*controlledRunnable)
+		assertNoSignal(t, cr.started, fmt.Sprintf("expected runnable %d to stay idle", issue))
+	}
+}
+
+func TestValidateBatchBranches_RecommendsCorrectFlagPerIssue(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branchWithPriorRun := BranchName(500, "Has prior run")
+	branchWithoutPriorRun := BranchName(600, "No prior run")
+	runGit(t, dir, "checkout", "-b", branchWithPriorRun)
+	runGit(t, dir, "checkout", "main")
+	runGit(t, dir, "checkout", "-b", branchWithoutPriorRun)
+	runGit(t, dir, "checkout", "main")
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			500: {Number: 500, Title: "Has prior run"},
+			600: {Number: 600, Title: "No prior run"},
+		},
+		prs: map[string]*github.PR{
+			branchWithPriorRun:    mergedPR(branchWithPriorRun, "current-sha"),
+			branchWithoutPriorRun: mergedPR(branchWithoutPriorRun, "current-sha"),
+		},
+	}
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			500: &controlledRunnable{result: AgentRunResult{IssueNumber: 500, Status: "success"}, started: make(chan struct{}), release: make(chan struct{})},
+			600: &controlledRunnable{result: AgentRunResult{IssueNumber: 600, Status: "success"}, started: make(chan struct{}), release: make(chan struct{})},
+		},
+	}
+	spyLog := &spyEventLog{
+		events: []events.Event{
+			{Type: "run.started", RunID: "run-500-1", Issue: 500, IssueRef: issueRef(500)},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = factory
+	oldBranchExists := branchExists
+	oldBranchValidationEnabled := branchValidationEnabled
+	branchExists = sandbox.BranchExists
+	branchValidationEnabled = true
+	t.Cleanup(func() {
+		branchExists = oldBranchExists
+		branchValidationEnabled = oldBranchValidationEnabled
+	})
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{500, 600}})
+	if err == nil {
+		t.Fatal("expected branch conflict error")
+	}
+
+	withPrior := fmt.Sprintf("#500 (%s)", branchWithPriorRun)
+	withoutPrior := fmt.Sprintf("#600 (%s)", branchWithoutPriorRun)
+	if !strings.Contains(err.Error(), withPrior) {
+		t.Fatalf("expected error to contain %q, got %q", withPrior, err.Error())
+	}
+	if !strings.Contains(err.Error(), withoutPrior) {
+		t.Fatalf("expected error to contain %q, got %q", withoutPrior, err.Error())
+	}
+	if !strings.Contains(err.Error(), "#500: prior run exists — use --continue") {
+		t.Fatalf("expected #500 to recommend --continue, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "#600: no prior run — use --override") {
+		t.Fatalf("expected #600 to recommend --override, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "git branch -D <branch>") {
+		t.Fatalf("expected delete hint in error, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "or use --override to restart from scratch or --continue to resume") {
+		t.Fatalf("error should not contain the old global phrase, got %q", err.Error())
 	}
 	if len(factory.created) != 0 {
 		t.Fatalf("expected no runnables created, got %d", len(factory.created))

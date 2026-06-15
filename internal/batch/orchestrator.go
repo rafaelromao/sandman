@@ -106,7 +106,14 @@ func (o *Orchestrator) validateBatchBranches(req Request) error {
 		return fmt.Errorf("resolve repo root for branch validation: %w", err)
 	}
 
-	var conflicts []string
+	priorRunByIssue := indexPriorRunsByIssue(o.eventLog)
+
+	type conflictEntry struct {
+		issueNum int
+		branch   string
+		hasPrior bool
+	}
+	var conflicts []conflictEntry
 	seenConflict := make(map[string]struct{}, len(req.Issues))
 	for _, num := range req.Issues {
 		if req.IssueMode(num) != ModeFresh {
@@ -129,7 +136,11 @@ func (o *Orchestrator) validateBatchBranches(req Request) error {
 				continue
 			}
 			seenConflict[key] = struct{}{}
-			conflicts = append(conflicts, key)
+			conflicts = append(conflicts, conflictEntry{
+				issueNum: num,
+				branch:   branch,
+				hasPrior: priorRunByIssue[num],
+			})
 		}
 	}
 
@@ -137,7 +148,72 @@ func (o *Orchestrator) validateBatchBranches(req Request) error {
 		return nil
 	}
 
-	return fmt.Errorf("refusing to start batch: branches already exist from previous runs: %s. Delete them with git branch -D <branch> or use --override to restart from scratch or --continue to resume", strings.Join(conflicts, ", "))
+	conflictLabels := make([]string, 0, len(conflicts))
+	remediations := make([]string, 0, len(conflicts))
+	for _, c := range conflicts {
+		conflictLabels = append(conflictLabels, fmt.Sprintf("#%d (%s)", c.issueNum, c.branch))
+		if c.hasPrior {
+			remediations = append(remediations, fmt.Sprintf("#%d: prior run exists — use --continue", c.issueNum))
+		} else {
+			remediations = append(remediations, fmt.Sprintf("#%d: no prior run — use --override", c.issueNum))
+		}
+	}
+
+	return fmt.Errorf(
+		"refusing to start batch: branches already exist from previous runs: %s. %s. Delete the branch with `git branch -D <branch>` (or use --override to restart from scratch).",
+		strings.Join(conflictLabels, ", "),
+		strings.Join(remediations, ". "),
+	)
+}
+
+// indexPriorRunsByIssue returns a set of issue numbers that have at least
+// one run.started or run.continued event in the event log. Such events are
+// the canonical signal that a prior AgentRun reached the execution stage
+// for the issue; run.queued alone is not sufficient because it only marks
+// scheduling intent and the run may never have started. A nil event log
+// yields an empty set.
+func indexPriorRunsByIssue(eventLog events.EventLog) map[int]bool {
+	out := map[int]bool{}
+	if eventLog == nil {
+		return out
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		return out
+	}
+	for _, e := range logs {
+		if e.Issue == 0 {
+			continue
+		}
+		if e.Type == "run.started" || e.Type == "run.continued" {
+			out[e.Issue] = true
+		}
+	}
+	return out
+}
+
+// issueHasPriorRun reports whether the event log contains a run.started or
+// run.continued event for the given issue number. Such events are the
+// canonical signal that a prior AgentRun has reached the execution stage
+// for the issue; run.queued alone is not sufficient because it only marks
+// scheduling intent and the run may never have started.
+func issueHasPriorRun(eventLog events.EventLog, issueNum int) bool {
+	if eventLog == nil {
+		return false
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		return false
+	}
+	for _, e := range logs {
+		if e.Issue != issueNum {
+			continue
+		}
+		if e.Type == "run.started" || e.Type == "run.continued" {
+			return true
+		}
+	}
+	return false
 }
 
 // Orchestrator coordinates parallel AgentRun execution.
