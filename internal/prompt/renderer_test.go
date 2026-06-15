@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestRenderer_BodyInert(t *testing.T) {
+func TestRendererBodyInert(t *testing.T) {
 	r := &Renderer{}
 	template := "Review: {{REVIEW_COMMAND}}\nBody:\n{{ISSUE_BODY}}"
 	body := "This body contains {{REVIEW_COMMAND}} injected by attacker"
@@ -26,9 +26,8 @@ func TestRenderer_BodyInert(t *testing.T) {
 	if strings.Count(result, "gh pr view") != 1 {
 		t.Errorf("operator REVIEW_COMMAND should appear exactly once, got:\n%s", result)
 	}
-	bodyInert := strings.Contains(result, body) || strings.Contains(result, "&#123;&#123;REVIEW_COMMAND&#125;&#125;")
-	if !bodyInert {
-		t.Errorf("result should preserve body literal or its escaped form, got:\n%s", result)
+	if !strings.Contains(result, "&#123;&#123;REVIEW_COMMAND&#125;&#125;") {
+		t.Errorf("body's {{REVIEW_COMMAND}} should be escaped to the inert form, got:\n%s", result)
 	}
 }
 
@@ -139,16 +138,18 @@ func TestRenderer_BodyPlaceholderNotEvaluatedAsOperator(t *testing.T) {
 }
 
 func TestRenderer_ConfigMappingPrecedence(t *testing.T) {
-	// When PromptArgs["REVIEW_COMMAND"] is set, it wins over cfg.ReviewCommand
-	// and the default. This is the historical emergent behaviour that
+	// When both cfg.ReviewCommand and PromptArgs["REVIEW_COMMAND"] are set,
+	// cfg.ReviewCommand wins. The PromptArgs value is the fallthrough that
+	// the original engine code produced after the explicit
+	// strings.ReplaceAll loop. This is the historical precedence that
 	// configMapping must preserve.
 	cfg := RenderConfig{
 		PromptArgs:    map[string]string{"REVIEW_COMMAND": "/from-prompt-arg"},
 		ReviewCommand: "/from-field",
 	}
 	mapping := configMapping(cfg)
-	if got := mapping["REVIEW_COMMAND"]; got != "/from-prompt-arg" {
-		t.Errorf("PromptArgs REVIEW_COMMAND should win, got %q", got)
+	if got := mapping["REVIEW_COMMAND"]; got != "/from-field" {
+		t.Errorf("cfg.ReviewCommand should win over PromptArgs REVIEW_COMMAND, got %q", got)
 	}
 }
 

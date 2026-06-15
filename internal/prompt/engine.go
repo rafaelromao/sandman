@@ -74,27 +74,26 @@ func issueMapping(data IssueData) map[string]string {
 
 // configMapping composes the operator-controlled substitution values for
 // the render-config keys. REVIEW_COMMAND resolution preserves the
-// historical precedence: PromptArgs["REVIEW_COMMAND"] wins over
-// cfg.ReviewCommand wins over config.DefaultReviewCommand. The other
-// keys come straight from cfg.
+// historical precedence: cfg.ReviewCommand wins over
+// PromptArgs["REVIEW_COMMAND"] wins over config.DefaultReviewCommand.
+// The other keys come straight from cfg.
 func configMapping(cfg RenderConfig) map[string]string {
-	reviewCommand := strings.TrimSpace(cfg.ReviewCommand)
-	if reviewCommand == "" {
-		reviewCommand = config.DefaultReviewCommand
-	}
 	mapping := map[string]string{
-		"REVIEW_COMMAND":   reviewCommand,
 		"CANDIDATE_ISSUES": cfg.CandidateIssues,
 		"MAX_COUNT":        fmt.Sprintf("%d", cfg.MaxCount),
-	}
-	if override, ok := cfg.PromptArgs["REVIEW_COMMAND"]; ok {
-		mapping["REVIEW_COMMAND"] = override
+		"REVIEW_COMMAND":   config.DefaultReviewCommand,
 	}
 	for k, v := range cfg.PromptArgs {
 		if k == "REVIEW_COMMAND" {
 			continue
 		}
 		mapping[k] = v
+	}
+	if v, ok := cfg.PromptArgs["REVIEW_COMMAND"]; ok {
+		mapping["REVIEW_COMMAND"] = v
+	}
+	if reviewCommand := strings.TrimSpace(cfg.ReviewCommand); reviewCommand != "" {
+		mapping["REVIEW_COMMAND"] = reviewCommand
 	}
 	return mapping
 }
