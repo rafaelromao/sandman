@@ -38,7 +38,7 @@ func newTestDeps() Dependencies {
 // newSandmanDir creates a temp dir with a live
 // .sandman/review.sock listener. The caller must t.Chdir(dir)
 // before invoking a command whose default review command is
-// "/sandman review" so the run/continue/ralph guard finds the
+// "/sandman review" so the run/continue/auto guard finds the
 // live socket. Returns the dir for tests that need to inspect it.
 func newSandmanDir(t testing.TB) string {
 	t.Helper()

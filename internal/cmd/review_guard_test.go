@@ -147,7 +147,7 @@ func TestRun_GuardBypassedWhenReviewCommandHasNoSandmanSubstring(t *testing.T) {
 	}
 }
 
-func TestRun_RalphGuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testing.T) {
+func TestRun_AutoGuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	cfg := &config.Config{Agent: "opencode", ReviewCommand: "/sandman review"}
 	deps := runGuardDeps(t, spy, cfg)
@@ -156,7 +156,7 @@ func TestRun_RalphGuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testi
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph"})
+	cmd.SetArgs([]string{"--auto"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -166,6 +166,6 @@ func TestRun_RalphGuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testi
 		t.Errorf("unexpected error message\nwant:\n%s\ngot:\n%s", reviewGuardMessage, err.Error())
 	}
 	if spy.called {
-		t.Errorf("expected batch runner NOT to be called for --ralph, but it was")
+		t.Errorf("expected batch runner NOT to be called for --auto, but it was")
 	}
 }

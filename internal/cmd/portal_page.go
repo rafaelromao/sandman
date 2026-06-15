@@ -37,7 +37,7 @@ func buildPortalPageData(repoRoot string, launchData portalLaunchFormData) (*por
 		StartDelay        int    `json:"startDelay"`
 		ContainerCapacity int    `json:"containerCapacity"`
 		MaxContainers     int    `json:"maxContainers"`
-		Ralph             int    `json:"ralph"`
+		AutoMaxCount      int    `json:"autoMaxCount"`
 	}{
 		Agent:             launchData.Agent,
 		Model:             launchData.Model,
@@ -47,7 +47,7 @@ func buildPortalPageData(repoRoot string, launchData portalLaunchFormData) (*por
 		StartDelay:        launchData.StartDelay,
 		ContainerCapacity: launchData.ContainerCapacity,
 		MaxContainers:     launchData.MaxContainers,
-		Ralph:             launchData.Ralph,
+		AutoMaxCount:      launchData.AutoMaxCount,
 	})
 	if err != nil {
 		return nil, err

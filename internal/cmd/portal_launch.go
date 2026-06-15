@@ -26,7 +26,7 @@ type portalLaunchFormData struct {
 	Issues                   string
 	Label                    string
 	Query                    string
-	Ralph                    int
+	AutoMaxCount             int
 	IncludeDependencies      bool
 	Prompt                   string
 	Template                 string
@@ -47,7 +47,7 @@ type portalLaunchRequest struct {
 	Issues              json.RawMessage `json:"issues,omitempty"`
 	Label               string          `json:"label"`
 	Query               string          `json:"query"`
-	Ralph               *int            `json:"ralph"`
+	AutoMaxCount        *int            `json:"autoMaxCount"`
 	IncludeDependencies bool            `json:"includeDependencies"`
 	Prompt              string          `json:"prompt"`
 	Template            string          `json:"template"`
@@ -75,7 +75,7 @@ type portalUnifiedLaunchRequest struct {
 	Issue               int             `json:"issue,omitempty"`
 	Label               string          `json:"label"`
 	Query               string          `json:"query"`
-	Ralph               *int            `json:"ralph"`
+	AutoMaxCount        *int            `json:"autoMaxCount"`
 	IncludeDependencies bool            `json:"includeDependencies"`
 	Prompt              string          `json:"prompt"`
 	Template            string          `json:"template"`
@@ -119,7 +119,11 @@ func loadPortalLaunchConfig(store config.Store) (*config.Config, error) {
 
 func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 	if cfg == nil {
-		cfg = &config.Config{}
+		cfg = &config.Config{AutoMaxCount: config.DefaultAutoMaxCount}
+	}
+	autoMaxCount := cfg.AutoMaxCount
+	if autoMaxCount <= 0 {
+		autoMaxCount = config.DefaultAutoMaxCount
 	}
 
 	agentName := strings.TrimSpace(cfg.DefaultAgent)
@@ -166,10 +170,10 @@ func portalLaunchDataFromConfig(cfg *config.Config) portalLaunchFormData {
 
 	return portalLaunchFormData{
 		LaunchModeOptionsHTML:    portalRadioOptionsHTML("launchMode", []portalOption{{Value: "issue-driven", Label: "Issue-driven", Selected: true}, {Value: "prompt-only", Label: "Prompt-only"}}, "issue-driven"),
-		SelectionModeOptionsHTML: portalRadioOptionsHTML("selectionMode", []portalOption{{Value: "issues", Label: "Issue numbers", Selected: true}, {Value: "label", Label: "Label"}, {Value: "query", Label: "Query"}, {Value: "ralph", Label: "Ralph Loop"}}, "issues"),
+		SelectionModeOptionsHTML: portalRadioOptionsHTML("selectionMode", []portalOption{{Value: "issues", Label: "Issue numbers", Selected: true}, {Value: "label", Label: "Label"}, {Value: "query", Label: "Query"}, {Value: "auto", Label: "Auto Mode"}}, "issues"),
 		AgentOptionsHTML:         agentOptions,
 		SandboxOptionsHTML:       portalSelectOptionsHTML([]portalOption{{Value: "podman", Label: "podman", Selected: sandbox == "podman"}, {Value: "docker", Label: "docker", Selected: sandbox == "docker"}, {Value: "worktree", Label: "worktree", Selected: sandbox == "worktree"}}, sandbox),
-		Ralph:                    1,
+		AutoMaxCount:             autoMaxCount,
 		Agent:                    agentName,
 		Model:                    model,
 		BaseBranch:               baseBranch,
@@ -267,7 +271,7 @@ func (req portalUnifiedLaunchRequest) runRequest() portalLaunchRequest {
 		Issues:              req.Issues,
 		Label:               req.Label,
 		Query:               req.Query,
-		Ralph:               req.Ralph,
+		AutoMaxCount:        req.AutoMaxCount,
 		IncludeDependencies: req.IncludeDependencies,
 		Prompt:              req.Prompt,
 		Template:            req.Template,
@@ -502,15 +506,15 @@ func buildPortalRunArgs(repoRoot string, cfg *config.Config, req portalLaunchReq
 				return nil, fmt.Errorf("query selection requires a query")
 			}
 			args = append(args, "--query", strings.TrimSpace(req.Query))
-		case "ralph":
-			ralph := 1
-			if req.Ralph != nil {
-				ralph = *req.Ralph
+		case "auto":
+			autoCount := effectiveAutoCount(0, false, cfg.AutoMaxCount)
+			if req.AutoMaxCount != nil {
+				autoCount = *req.AutoMaxCount
 			}
-			if ralph <= 0 {
-				ralph = 1
+			args = append(args, "--auto")
+			if autoCount > 0 {
+				args = append(args, "--count", strconv.Itoa(autoCount))
 			}
-			args = append(args, "--ralph", strconv.Itoa(ralph))
 			if label := strings.TrimSpace(req.Label); label != "" {
 				args = append(args, "--label", label)
 			}

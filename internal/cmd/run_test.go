@@ -2964,7 +2964,7 @@ func TestRun_PositionalSelectionWithUnsupportedQueryRejectsTruncatedSearchResult
 	}
 }
 
-func TestRun_RalphFlagDelegatesLowestIssue(t *testing.T) {
+func TestRun_AutoFlagDelegatesLowestIssue(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -2985,7 +2985,7 @@ func TestRun_RalphFlagDelegatesLowestIssue(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph"})
+	cmd.SetArgs([]string{"--auto", "--count", "1"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -3007,7 +3007,7 @@ func TestRun_RalphFlagDelegatesLowestIssue(t *testing.T) {
 	}
 }
 
-func TestRun_RalphFlagWithCountDelegatesN(t *testing.T) {
+func TestRun_AutoFlagWithCountDelegatesN(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -3029,7 +3029,7 @@ func TestRun_RalphFlagWithCountDelegatesN(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph=2"})
+	cmd.SetArgs([]string{"--auto", "--count", "2"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -3050,7 +3050,7 @@ func TestRun_RalphFlagWithCountDelegatesN(t *testing.T) {
 	}
 }
 
-func TestRun_RalphFlagWithFewerAvailableDelegatesAll(t *testing.T) {
+func TestRun_AutoFlagWithFewerAvailableDelegatesAll(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -3070,7 +3070,7 @@ func TestRun_RalphFlagWithFewerAvailableDelegatesAll(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph=5"})
+	cmd.SetArgs([]string{"--auto", "--count", "5"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -3091,7 +3091,7 @@ func TestRun_RalphFlagWithFewerAvailableDelegatesAll(t *testing.T) {
 	}
 }
 
-func TestRun_RalphFlagNoIssuesReturnsError(t *testing.T) {
+func TestRun_AutoFlagNoIssuesReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{},
@@ -3108,7 +3108,7 @@ func TestRun_RalphFlagNoIssuesReturnsError(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph"})
+	cmd.SetArgs([]string{"--auto", "--count", "1"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -3122,65 +3122,73 @@ func TestRun_RalphFlagNoIssuesReturnsError(t *testing.T) {
 	}
 }
 
-func TestRun_RalphFlagZeroCountReturnsError(t *testing.T) {
+func TestRun_AutoFlagZeroCountIsUnlimited(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A"},
+		},
+	}
 	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:    &fakeEventLog{},
-		IsTTY:       func() bool { return false },
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
 	}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph=0"})
+	cmd.SetArgs([]string{"--auto", "--count", "0"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when --ralph 0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if spy.called {
-		t.Error("expected batch runner not to be called")
+	if !spy.called {
+		t.Fatal("expected batch runner to be called (--count 0 is unlimited)")
 	}
-	if !strings.Contains(err.Error(), "--ralph count must be at least 1") {
-		t.Errorf("expected '--ralph count must be at least 1' error, got: %v", err)
+	if len(spy.req.Issues) != 1 {
+		t.Fatalf("expected 1 issue (unlimited), got %d", len(spy.req.Issues))
 	}
 }
 
-func TestRun_RalphFlagWithArgsReturnsError(t *testing.T) {
+func TestRun_AutoFlagAcceptsExplicitArgs(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, State: "open", Title: "Issue 42"},
+		},
+	}
 	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:    &fakeEventLog{},
-		IsTTY:       func() bool { return false },
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
 	}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph", "42"})
+	cmd.SetArgs([]string{"--auto", "42"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when combining --ralph with args")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if spy.called {
-		t.Error("expected batch runner not to be called")
+	if !spy.called {
+		t.Fatal("expected batch runner to be called (--auto accepts args)")
 	}
-	if !strings.Contains(err.Error(), "cannot combine --ralph with issue arguments") {
-		t.Errorf("expected mutual exclusivity error, got: %v", err)
-	}
-	var target *UsageError
-	if !errors.As(err, &target) {
-		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
+		t.Fatalf("expected [42], got %v", spy.req.Issues)
 	}
 }
 
-func TestRun_RalphFlagWithLabelUsesLabelSearch(t *testing.T) {
+func TestRun_AutoFlagWithLabelUsesLabelSearch(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -3199,7 +3207,7 @@ func TestRun_RalphFlagWithLabelUsesLabelSearch(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph", "--label", "bug"})
+	cmd.SetArgs([]string{"--auto", "--label", "bug"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -3214,7 +3222,7 @@ func TestRun_RalphFlagWithLabelUsesLabelSearch(t *testing.T) {
 	}
 }
 
-func TestRun_RalphFlagWithQueryUsesRawQuery(t *testing.T) {
+func TestRun_AutoFlagWithQueryUsesRawQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -3233,7 +3241,7 @@ func TestRun_RalphFlagWithQueryUsesRawQuery(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph", "--query", "label:bug is:open"})
+	cmd.SetArgs([]string{"--auto", "--query", "label:bug is:open"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -3248,7 +3256,7 @@ func TestRun_RalphFlagWithQueryUsesRawQuery(t *testing.T) {
 	}
 }
 
-func TestRun_RalphFlagWithLabelAndQueryReturnsError(t *testing.T) {
+func TestRun_AutoFlagWithLabelAndQueryReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
@@ -3261,7 +3269,7 @@ func TestRun_RalphFlagWithLabelAndQueryReturnsError(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph", "--label", "bug", "--query", "is:open"})
+	cmd.SetArgs([]string{"--auto", "--label", "bug", "--query", "is:open"})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -3275,39 +3283,29 @@ func TestRun_RalphFlagWithLabelAndQueryReturnsError(t *testing.T) {
 	}
 }
 
-func TestResolveRalphIssues_PriorityPromptFileSelectsSelectionPhase(t *testing.T) {
+func TestResolveAutoIssues_LegacyPriorityPromptFileIgnored(t *testing.T) {
 	sandmanDir := t.TempDir()
 	promptPath := filepath.Join(sandmanDir, "priority-selection-prompt.md")
 	if err := os.WriteFile(promptPath, []byte("test"), 0644); err != nil {
 		t.Fatalf("create prompt: %v", err)
 	}
 
-	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 1, Title: "Feature A"},
-		},
-	}
+	gh := &fakeGitHubClient{}
 
-	// Use /oc review so the review daemon guard is bypassed.
-	_, err := resolveRalphIssues(context.Background(), gh, 1, "", "", sandmanDir, "", "", &config.Config{ReviewCommand: "/oc review"})
-	if err == nil {
-		t.Fatal("expected selection phase error")
+	issues, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "resolve agent") {
-		t.Errorf("expected agent resolution error (empty config), got: %v", err)
+	if len(issues) != 1 || issues[0] != 1 {
+		t.Errorf("expected numeric-sort fallback [1], got %v", issues)
 	}
 }
 
-func TestResolveRalphIssues_PriorityPromptFileAbsentUsesNumericSort(t *testing.T) {
+func TestResolveAutoIssues_PriorityPromptFileAbsentUsesNumericSort(t *testing.T) {
 	sandmanDir := t.TempDir()
-	gh := &fakeGitHubClient{
-		searchIssuesResult: []github.Issue{
-			{Number: 3, Title: "Feature C"},
-			{Number: 1, Title: "Feature A"},
-		},
-	}
+	gh := &fakeGitHubClient{}
 
-	issues, err := resolveRalphIssues(context.Background(), gh, 1, "", "", sandmanDir, "", "", &config.Config{})
+	issues, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3452,7 +3450,7 @@ func TestRunSelectionPhase_AgentWritesSelectedIssuesAndReturnsNumbers(t *testing
 		},
 	}
 
-	got, err := runSelectionPhase(context.Background(), gh, 5, "", "", sandmanDir, "test-agent", "", cfg)
+	got, err := runSelectionPhase(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1, 2, 3})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3486,7 +3484,7 @@ func TestRunSelectionPhase_AgentFailureReturnsError(t *testing.T) {
 		},
 	}
 
-	_, err := runSelectionPhase(context.Background(), gh, 5, "", "", sandmanDir, "test-agent", "", cfg)
+	_, err := runSelectionPhase(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1})
 	if err == nil {
 		t.Fatal("expected error from agent failure")
 	}
@@ -3507,7 +3505,7 @@ func TestRunSelectionPhase_GuardFiresWhenReviewCommandContainsSandmanAndNoSocket
 		"test-agent": {Command: "true"},
 	}
 
-	_, err := runSelectionPhase(context.Background(), gh, 5, "", "", sandmanDir, "test-agent", "", cfg)
+	_, err := runSelectionPhase(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1})
 	if err == nil {
 		t.Fatal("expected error from review guard, got nil")
 	}
@@ -3537,7 +3535,7 @@ func TestSelectionPhase_FormatCandidateIssues(t *testing.T) {
 	}
 }
 
-func TestRun_RalphFlagNegativeCountReturnsError(t *testing.T) {
+func TestRun_AutoFlagNegativeCountReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := Dependencies{
 		BatchRunner: spy,
@@ -3550,21 +3548,21 @@ func TestRun_RalphFlagNegativeCountReturnsError(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph=-1"})
+	cmd.SetArgs([]string{"--auto", "--count", "-1"})
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when --ralph -1")
+		t.Fatal("expected error when --count -1")
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "--ralph count must be at least 1") {
-		t.Errorf("expected '--ralph count must be at least 1' error, got: %v", err)
+	if !strings.Contains(err.Error(), "--count must be 0 or greater") {
+		t.Errorf("expected --count validation error, got: %v", err)
 	}
 }
 
-func TestRun_RalphFlagSetsConservativeDefaults(t *testing.T) {
+func TestRun_AutoFlagSetsConservativeDefaults(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -3584,7 +3582,7 @@ func TestRun_RalphFlagSetsConservativeDefaults(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph=1"})
+	cmd.SetArgs([]string{"--auto", "--count", "1"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -3608,7 +3606,7 @@ func TestRun_RalphFlagSetsConservativeDefaults(t *testing.T) {
 	}
 }
 
-func TestRun_RalphFlagParallelOverride(t *testing.T) {
+func TestRun_AutoFlagParallelOverride(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -3628,7 +3626,7 @@ func TestRun_RalphFlagParallelOverride(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph=1", "--parallel", "4"})
+	cmd.SetArgs([]string{"--auto", "--count", "1", "--parallel", "4"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -3642,23 +3640,23 @@ func TestRun_RalphFlagParallelOverride(t *testing.T) {
 		t.Errorf("expected parallel=4, got %d", spy.req.Parallel)
 	}
 	if spy.req.ContainerCapacity != 1 {
-		t.Errorf("expected container-capacity=1 (ralph default), got %d", spy.req.ContainerCapacity)
+		t.Errorf("expected container-capacity=1 (auto default), got %d", spy.req.ContainerCapacity)
 	}
 	if spy.req.MaxContainers != 1 {
-		t.Errorf("expected max-containers=1 (ralph default), got %d", spy.req.MaxContainers)
+		t.Errorf("expected max-containers=1 (auto default), got %d", spy.req.MaxContainers)
 	}
 	if !spy.req.ContainerCapacitySet {
-		t.Error("expected ContainerCapacitySet=true when ralph defaults apply")
+		t.Error("expected ContainerCapacitySet=true when auto defaults apply")
 	}
 	if !spy.req.MaxContainersSet {
-		t.Error("expected MaxContainersSet=true when ralph defaults apply")
+		t.Error("expected MaxContainersSet=true when auto defaults apply")
 	}
 	if spy.req.Retries != 3 {
-		t.Errorf("expected retries=3 (ralph default), got %d", spy.req.Retries)
+		t.Errorf("expected retries=3 (auto default), got %d", spy.req.Retries)
 	}
 }
 
-func TestRun_RalphFlagRetriesZeroOverride(t *testing.T) {
+func TestRun_AutoFlagRetriesZeroOverride(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -3678,7 +3676,7 @@ func TestRun_RalphFlagRetriesZeroOverride(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph=1", "--retries", "0"})
+	cmd.SetArgs([]string{"--auto", "--count", "1", "--retries", "0"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -3689,14 +3687,14 @@ func TestRun_RalphFlagRetriesZeroOverride(t *testing.T) {
 		t.Fatal("expected batch runner to be called")
 	}
 	if spy.req.Parallel != 1 {
-		t.Errorf("expected parallel=1 (ralph default), got %d", spy.req.Parallel)
+		t.Errorf("expected parallel=1 (auto default), got %d", spy.req.Parallel)
 	}
 	if spy.req.Retries != 0 {
 		t.Errorf("expected retries=0 (CLI override), got %d", spy.req.Retries)
 	}
 }
 
-func TestRun_RalphFlagMaxContainersOverride(t *testing.T) {
+func TestRun_AutoFlagMaxContainersOverride(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -3716,7 +3714,7 @@ func TestRun_RalphFlagMaxContainersOverride(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--ralph=1", "--max-containers", "3"})
+	cmd.SetArgs([]string{"--auto", "--count", "1", "--max-containers", "3"})
 
 	err := cmd.Execute()
 	if err != nil {

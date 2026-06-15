@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -202,16 +201,22 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			query, _ := cmd.Flags().GetString("query")
 
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
-			ralphFlag := cmd.Flags().Lookup("ralph")
-			ralphProvided := ralphFlag != nil && ralphFlag.Changed
-			ralphCount, _ := cmd.Flags().GetInt("ralph")
-			issueSelectionProvided := len(args) > 0 || ralphProvided || label != "" || query != ""
+			autoFlag := cmd.Flags().Lookup("auto")
+			autoProvided := autoFlag != nil && autoFlag.Changed
+			countFlag := cmd.Flags().Lookup("count")
+			countProvided := countFlag != nil && countFlag.Changed
+			autoCount, _ := cmd.Flags().GetInt("count")
+			issueSelectionProvided := len(args) > 0 || autoProvided || label != "" || query != ""
 
 			if runID != "" && issueSelectionProvided {
-				return MarkUsage(fmt.Errorf("--run-id cannot be combined with issue selection, --ralph, --label, or --query"))
+				return MarkUsage(fmt.Errorf("--run-id cannot be combined with issue selection, --auto, --label, or --query"))
 			}
 
-			if ralphProvided {
+			if countProvided && autoCount < 0 {
+				return MarkUsage(fmt.Errorf("--count must be 0 or greater"))
+			}
+
+			if autoProvided {
 				includeDependencies = true
 			}
 
@@ -233,17 +238,16 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return MarkUsage(fmt.Errorf("prompt requires issue selection but no issue selection was provided"))
 				}
 			} else {
-				if ralphProvided {
-					if len(args) > 0 {
-						return MarkUsage(fmt.Errorf("cannot combine --ralph with issue arguments"))
-					}
+				if autoProvided {
 					if label != "" && query != "" {
 						return MarkUsage(fmt.Errorf("cannot combine --label with --query"))
 					}
-					if ralphCount <= 0 {
-						return MarkUsage(fmt.Errorf("--ralph count must be at least 1"))
+					effectiveCount := effectiveAutoCount(autoCount, countProvided, cfg.AutoMaxCount)
+					candidates, err := resolveAutoCandidates(cmd.Context(), githubClient, args, label, query, cmd.ErrOrStderr())
+					if err != nil {
+						return err
 					}
-					issues, err = resolveRalphIssues(cmd.Context(), githubClient, ralphCount, label, query, ".sandman", agentName, modelFlag, cfg)
+					issues, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, ".sandman", agentName, modelFlag, cfg)
 					if err != nil {
 						return err
 					}
@@ -425,7 +429,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				retries = -1
 			}
 
-			if ralphProvided {
+			if autoProvided {
 				if !parallelSet {
 					parallel = 1
 				}
@@ -679,10 +683,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
 
-	cmd.Flags().Int("ralph", 0, "Delegate the N lowest-numbered open issues labeled ready-for-agent")
-	if pf := cmd.Flags().Lookup("ralph"); pf != nil {
-		pf.NoOptDefVal = "1"
-	}
+	cmd.Flags().Bool("auto", false, "Auto Mode — let Sandman choose which issues to run, capped to --count or auto_max_count from config")
+	cmd.Flags().Int("count", 0, "Candidate cap for Auto Mode; 0 means unlimited (use auto_max_count from config when not set on the CLI)")
 
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
@@ -1035,41 +1037,121 @@ func resolveIssues(ctx context.Context, client github.Client, query string) ([]i
 	return extractIssueNumbers(ghIssues), nil
 }
 
-func resolveRalphIssues(ctx context.Context, client github.Client, count int, label, query, sandmanDir, agentName, modelFlag string, cfg *config.Config) ([]int, error) {
-	if priorityPromptFileExists(sandmanDir) {
-		return runSelectionPhase(ctx, client, count, label, query, sandmanDir, agentName, modelFlag, cfg)
-	}
-
-	searchQuery := resolveRalphQuery(label, query)
-	ghIssues, err := client.SearchIssues(searchQuery)
-	if err != nil {
-		return nil, fmt.Errorf("search issues: %w", err)
-	}
-	if len(ghIssues) == 0 {
-		return nil, fmt.Errorf("no issues ready for agent")
-	}
-
-	sort.Slice(ghIssues, func(i, j int) bool {
-		return ghIssues[i].Number < ghIssues[j].Number
-	})
-
-	if count > len(ghIssues) {
-		count = len(ghIssues)
-	}
-
-	numbers := make([]int, count)
-	for i := 0; i < count; i++ {
-		numbers[i] = ghIssues[i].Number
-	}
-	return numbers, nil
-}
-
 func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) ([]int, error) {
 	ghIssues, err := client.SearchIssues("is:open")
 	if err != nil {
 		return nil, fmt.Errorf("list open issues: %w", err)
 	}
 	return picker.Select(ghIssues)
+}
+
+// effectiveAutoCount resolves the candidate cap for Auto Mode.
+//
+// Precedence: explicit --count > cfg.AutoMaxCount (0 means unlimited) > DefaultAutoMaxCount.
+// A return value of 0 means "no cap". Negative values cannot reach this helper
+// because --count validation and Load() reject them.
+func effectiveAutoCount(cliCount int, cliCountProvided bool, cfgAutoMaxCount int) int {
+	if cliCountProvided {
+		return cliCount
+	}
+	if cfgAutoMaxCount > 0 {
+		return cfgAutoMaxCount
+	}
+	if cfgAutoMaxCount == 0 {
+		return 0
+	}
+	return config.DefaultAutoMaxCount
+}
+
+// resolveAutoCandidates returns the ordered candidate set for Auto Mode.
+//
+// Args + filter: filter the args against the label/query.
+// Args alone: filter the args to drop closed issues.
+// Filter alone: search GitHub and return the issue numbers.
+// Neither: search GitHub for ready-for-agent (the default).
+func resolveAutoCandidates(ctx context.Context, client github.Client, args []string, label, query string, stderr io.Writer) ([]int, error) {
+	if len(args) > 0 {
+		selection, orderedIssues, _, hasUnboundedEnd, err := parseIssueSelection(args)
+		if err != nil {
+			return nil, err
+		}
+		if label == "" && query == "" {
+			numbersForFilter := orderedIssues
+			if hasUnboundedEnd {
+				numbersForFilter = explicitIssueNumbers(selection)
+			}
+			candidates, err := filterClosedIssues(numbersForFilter, client.SearchIssues, client.FetchIssue, stderr)
+			if err != nil {
+				if hasUnboundedEnd && errors.Is(err, errAllExplicitClosed) {
+					return nil, nil
+				}
+				return nil, err
+			}
+			if hasUnboundedEnd {
+				seen := make(map[int]struct{}, len(candidates))
+				for _, n := range candidates {
+					seen[n] = struct{}{}
+				}
+				searchResults, err := searchIssues(ctx, client, "is:open")
+				if err != nil {
+					return nil, err
+				}
+				if len(searchResults) >= 1000 {
+					return nil, fmt.Errorf("issue selection exceeds search result limit")
+				}
+				for _, issue := range searchResults {
+					if !selection.matches(issue.Number) {
+						continue
+					}
+					if _, ok := seen[issue.Number]; ok {
+						continue
+					}
+					seen[issue.Number] = struct{}{}
+					candidates = append(candidates, issue.Number)
+				}
+			}
+			return candidates, nil
+		}
+		if querySupportsLocalFiltering(query) {
+			resolved, err := resolveIssuesLocally(client, orderedIssues, label, query)
+			if err != nil {
+				return nil, err
+			}
+			if hasUnboundedEnd {
+				searchResults, err := searchIssues(ctx, client, buildIssueQuery(label, query))
+				if err != nil {
+					return nil, err
+				}
+				if len(searchResults) >= 1000 {
+					return nil, fmt.Errorf("issue selection exceeds search result limit")
+				}
+				for _, issue := range searchResults {
+					if !selection.matches(issue.Number) || !issueMatchesFilters(&issue, label, query) {
+						continue
+					}
+					if !containsIssue(resolved, issue.Number) {
+						resolved = append(resolved, issue.Number)
+					}
+				}
+			}
+			return resolved, nil
+		}
+		searchQuery := buildIssueQuery(label, query)
+		searchResults, err := searchIssues(ctx, client, searchQuery)
+		if err != nil {
+			return nil, err
+		}
+		if len(searchResults) >= 1000 {
+			return nil, fmt.Errorf("issue selection exceeds search result limit")
+		}
+		return filterIssuesBySelection(searchResults, selection, orderedIssues, hasUnboundedEnd), nil
+	}
+	searchQuery := resolveAutoQuery(label, query)
+	searchResults, err := searchIssues(ctx, client, searchQuery)
+	if err != nil {
+		return nil, fmt.Errorf("search issues: %w", err)
+	}
+	return extractIssueNumbers(searchResults), nil
 }
 
 func printSummary(cmd *cobra.Command, result *batch.Result) {

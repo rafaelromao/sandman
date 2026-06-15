@@ -367,28 +367,31 @@ func TestRender_CandidateIssuesAndMaxCountBothSubstituted(t *testing.T) {
 }
 
 func TestDefaultPriorityPrompt_EmbeddedTemplate(t *testing.T) {
-	data, err := os.ReadFile("priority_selection_prompt.md")
+	data, err := os.ReadFile("auto_selection_prompt.md")
 	if err != nil {
-		t.Fatalf("read priority selection prompt template: %v", err)
+		t.Fatalf("read auto selection prompt template: %v", err)
 	}
 
 	want := strings.TrimSpace(string(data))
 	got := strings.TrimSpace(DefaultPriorityPrompt())
 	if got != want {
-		t.Fatalf("priority prompt drifted\nwant:\n%s\ngot:\n%s", want, got)
+		t.Fatalf("auto prompt drifted\nwant:\n%s\ngot:\n%s", want, got)
 	}
 }
 
 func TestDefaultPriorityPrompt_ContainsRequiredKeys(t *testing.T) {
 	prompt := DefaultPriorityPrompt()
 	if !strings.Contains(prompt, "{{CANDIDATE_ISSUES}}") {
-		t.Error("priority prompt missing {{CANDIDATE_ISSUES}} key")
+		t.Error("auto prompt missing {{CANDIDATE_ISSUES}} key")
 	}
 	if !strings.Contains(prompt, "{{MAX_COUNT}}") {
-		t.Error("priority prompt missing {{MAX_COUNT}} key")
+		t.Error("auto prompt missing {{MAX_COUNT}} key")
 	}
 	if !strings.Contains(prompt, ".sandman/selected-issues.json") {
-		t.Error("priority prompt missing .sandman/selected-issues.json output path")
+		t.Error("auto prompt missing .sandman/selected-issues.json output path")
+	}
+	if !strings.Contains(prompt, "Auto Mode") {
+		t.Error("auto prompt header should mention Auto Mode")
 	}
 }
 

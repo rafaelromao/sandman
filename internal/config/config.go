@@ -24,6 +24,7 @@ const (
 	DefaultMaxContainers     = 0
 	DefaultWorktreeDir       = ".sandman/worktrees"
 	DefaultSandbox           = "podman"
+	DefaultAutoMaxCount      = 50
 )
 
 // Config holds the loaded Sandman configuration.
@@ -41,6 +42,7 @@ type Config struct {
 	Retries               int              `yaml:"retries"`
 	ContainerCapacity     int              `yaml:"container_capacity"`
 	MaxContainers         int              `yaml:"max_containers"`
+	AutoMaxCount          int              `yaml:"-"`
 	WorktreeDir           string           `yaml:"worktree_dir"`
 	Sandbox               string           `yaml:"sandbox"`
 	Agents                map[string]Agent `yaml:"agents,omitempty"`
@@ -154,6 +156,7 @@ func SupportedKeys() []string {
 		"retries",
 		"container_capacity",
 		"max_containers",
+		"auto_max_count",
 		"worktree_dir",
 		"sandbox",
 		"git.base_branch",
@@ -181,6 +184,7 @@ func Load(path string) (*Config, error) {
 		Retries               *int             `yaml:"retries"`
 		ContainerCapacity     *int             `yaml:"container_capacity"`
 		MaxContainers         *int             `yaml:"max_containers"`
+		AutoMaxCount          *int             `yaml:"auto_max_count"`
 		WorktreeDir           string           `yaml:"worktree_dir"`
 		Sandbox               string           `yaml:"sandbox"`
 		Agents                map[string]Agent `yaml:"agents"`
@@ -257,6 +261,13 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("validate config: max_containers must be 0 or greater")
 	} else {
 		cfg.MaxContainers = *raw.MaxContainers
+	}
+	if raw.AutoMaxCount == nil {
+		cfg.AutoMaxCount = DefaultAutoMaxCount
+	} else if *raw.AutoMaxCount < 0 {
+		return nil, fmt.Errorf("validate config: auto_max_count must be 0 or greater")
+	} else {
+		cfg.AutoMaxCount = *raw.AutoMaxCount
 	}
 	if cfg.WorktreeDir == "" {
 		cfg.WorktreeDir = DefaultWorktreeDir
@@ -421,6 +432,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return fmt.Sprintf("%d", c.ContainerCapacity), nil
 	case "max_containers":
 		return fmt.Sprintf("%d", c.MaxContainers), nil
+	case "auto_max_count":
+		return fmt.Sprintf("%d", c.AutoMaxCount), nil
 	case "worktree_dir":
 		return c.WorktreeDir, nil
 	case "sandbox":
@@ -519,6 +532,15 @@ func (c *Config) SetValue(key, value string) error {
 			return fmt.Errorf("max_containers must be 0 or greater")
 		}
 		c.MaxContainers = n
+	case "auto_max_count":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for auto_max_count: %w", err)
+		}
+		if n < 0 {
+			return fmt.Errorf("auto_max_count must be 0 or greater")
+		}
+		c.AutoMaxCount = n
 	case "worktree_dir":
 		c.WorktreeDir = value
 	case "sandbox":

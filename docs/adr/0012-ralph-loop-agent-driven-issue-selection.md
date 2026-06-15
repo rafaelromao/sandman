@@ -2,7 +2,9 @@
 
 ## Status
 
-proposed
+superseded
+
+Superseded by [ADR-0026](0026-rename-ralph-to-auto-mode.md), which renames the Ralph Loop to Auto Mode. The original decision and its context are preserved here for historical reference.
 
 ## Context
 

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `auto_max_count` config key (default 50) and `sandman config get/set auto_max_count` round-trip. `0` means unlimited. (#896)
+- `sandman run --auto` boolean flag and `sandman run --count N` integer cap. Auto Mode accepts the same filters as regular Sandman runs (label, query, explicit issue args) and lets the agent pick which to implement up to the cap. (#896)
+
+### Added (continued)
+
 - `parallel_reviews` config key and `--parallel-reviews` init flag (default 4) controlling review-daemon concurrency. `EffectiveReviewParallel()` defaults to the constant when unset or invalid.
 - `sandman run --continue --run-id` flag for prompt-only continuation. Mirrors `sandman run --run-id`: looks up the most recent prompt-only run (`Issue: 0`) from the event log, reads the task file from its worktree, and forwards it as the prompt for the new prompt-only run. Supports the same format validation and mutual-exclusivity with issue numbers. (#784)
 - `scripts/reconcile-stranded-worktrees.sh` — standalone detection tool for stranded worktrees (prints remediation commands for the operator to run) [#733](https://github.com/rafaelromao/sandman/issues/733)
@@ -48,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `--ralph` flag (was `sandman run --ralph N`). Migrate to `sandman run --auto --count N`. The `--ralph` selection behavior is now `--auto`; the conservative defaults (`--retries=3`, `--parallel=1`, `--container-capacity=1`, `--max-containers=1`) silently apply for both. (#896)
+- `.sandman/priority-selection-prompt.md` is no longer recognized as the Auto Mode opt-in signal. Customized files are soft-migrated to `.sandman/auto-selection-prompt.md` on the next `sandman init`; the legacy file may be deleted at the operator's discretion. (#896)
 - Pi agent preset, its `~/.pi/` snapshot split (see ADR-0017), and all Pi-specific branches; users must configure a custom provider or migrate to OpenCode. See ADR-0024.
 
 ## [0.1.0] - 2026-05-09

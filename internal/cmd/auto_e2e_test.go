@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	ralphTestOwner = "rafaelromao"
-	ralphTestRepo  = "sandman"
+	autoTestOwner = "rafaelromao"
+	autoTestRepo  = "sandman"
 )
 
-func writeRalphGHShim(t *testing.T, dir string, candidatesJSON, issuesExtraJSON string) {
+func writeAutoGHShim(t *testing.T, dir string, candidatesJSON, issuesExtraJSON string) {
 	t.Helper()
 
 	script := fmt.Sprintf(`#!/bin/sh
@@ -136,7 +136,7 @@ esac
 
 printf 'unexpected gh command: %%s\n' "$*" >&2
 exit 1
-`, ralphTestOwner, ralphTestRepo, candidatesJSON, ralphTestRepo, ralphTestOwner, ralphTestOwner, ralphTestRepo, ralphTestOwner, ralphTestRepo)
+`, autoTestOwner, autoTestRepo, candidatesJSON, autoTestRepo, autoTestOwner, autoTestOwner, autoTestRepo, autoTestOwner, autoTestRepo)
 
 	script = strings.ReplaceAll(script, "__SHIM_DIR__", dir)
 	ghPath := filepath.Join(dir, "gh")
@@ -162,7 +162,7 @@ exit 1
 	}
 }
 
-func writeRalphFakeAgent(t *testing.T, dir string, selectionIssuesJSON string) {
+func writeAutoFakeAgent(t *testing.T, dir string, selectionIssuesJSON string) {
 	t.Helper()
 
 	script := fmt.Sprintf(`#!/bin/sh
@@ -188,7 +188,7 @@ exit 0
 	}
 }
 
-func setupRalphE2ETest(t *testing.T, binPath, repoDir, remoteDir string) {
+func setupAutoE2ETest(t *testing.T, binPath, repoDir, remoteDir string) {
 	t.Helper()
 	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
@@ -212,7 +212,7 @@ func setupRalphE2ETest(t *testing.T, binPath, repoDir, remoteDir string) {
 		t.Fatalf("sandman config set failed: %v", err)
 	}
 
-	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md", ".sandman/priority-selection-prompt.md"} {
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md", ".sandman/auto-selection-prompt.md"} {
 		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
 			t.Fatalf("expected scaffolded %s: %v", rel, err)
 		}
@@ -227,23 +227,23 @@ var singleIssueData = `issue-1.json
 issue-view-1.json
 {"number":1,"title":"Fix failing test","body":"Make Double(2) return 4."}`
 
-func TestRun_RalphFlow_SelectsIssueViaAgentAndRunsBatchInWorktree(t *testing.T) {
+func TestRun_AutoFlow_SelectsIssueViaAgentAndRunsBatchInWorktree(t *testing.T) {
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	remoteDir := initRunIntegrationRepoWithRemote(t, repoDir)
-	setupRalphE2ETest(t, binPath, repoDir, remoteDir)
+	setupAutoE2ETest(t, binPath, repoDir, remoteDir)
 
 	ghShimDir := t.TempDir()
-	writeRalphGHShim(t, ghShimDir, singleCandidateIssue, singleIssueData)
+	writeAutoGHShim(t, ghShimDir, singleCandidateIssue, singleIssueData)
 	prependPath(t, ghShimDir)
 
 	agentDir := t.TempDir()
-	writeRalphFakeAgent(t, agentDir, "[1]")
+	writeAutoFakeAgent(t, agentDir, "[1]")
 	prependPath(t, agentDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "run", "--ralph=1", "--sandbox", "worktree")
+	out, err := runSandmanBinary(t, binPath, repoDir, "run", "--auto", "--count", "1", "--sandbox", "worktree")
 	if err != nil {
 		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
 	}
@@ -274,23 +274,23 @@ issue-5.json
 issue-view-5.json
 {"number":5,"title":"Add login page","body":"Users need a login form."}`
 
-func TestRun_RalphSelectionFlow_AgentSelectsSubsetOfCandidates(t *testing.T) {
+func TestRun_AutoSelectionFlow_AgentSelectsSubsetOfCandidates(t *testing.T) {
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	remoteDir := initRunIntegrationRepoWithRemote(t, repoDir)
-	setupRalphE2ETest(t, binPath, repoDir, remoteDir)
+	setupAutoE2ETest(t, binPath, repoDir, remoteDir)
 
 	ghShimDir := t.TempDir()
-	writeRalphGHShim(t, ghShimDir, multiCandidateIssues, multiIssueData)
+	writeAutoGHShim(t, ghShimDir, multiCandidateIssues, multiIssueData)
 	prependPath(t, ghShimDir)
 
 	agentDir := t.TempDir()
-	writeRalphFakeAgent(t, agentDir, "[5]")
+	writeAutoFakeAgent(t, agentDir, "[5]")
 	prependPath(t, agentDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "run", "--ralph=2", "--sandbox", "worktree")
+	out, err := runSandmanBinary(t, binPath, repoDir, "run", "--auto", "--count", "2", "--sandbox", "worktree")
 	if err != nil {
 		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
 	}
@@ -300,7 +300,7 @@ func TestRun_RalphSelectionFlow_AgentSelectsSubsetOfCandidates(t *testing.T) {
 	if !strings.Contains(out, "#5  success") {
 		t.Fatalf("expected issue #5 success in summary, got:\n%s", out)
 	}
-	// Agent selected [5] from candidates [1,5]; even though --ralph=2 allows
+	// Agent selected [5] from candidates [1,5]; even though --count=2 allows
 	// up to 2, the agent chose only 1. Verify #1 was NOT run.
 	if strings.Contains(out, "#1  success") || strings.Contains(out, "#1  failure") {
 		t.Fatalf("expected issue #1 not to be in summary, got:\n%s", out)
@@ -317,23 +317,23 @@ func TestRun_RalphSelectionFlow_AgentSelectsSubsetOfCandidates(t *testing.T) {
 	}
 }
 
-func TestRun_RalphSelectionFlow_AgentSelectsMultipleIssues(t *testing.T) {
+func TestRun_AutoSelectionFlow_AgentSelectsMultipleIssues(t *testing.T) {
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	remoteDir := initRunIntegrationRepoWithRemote(t, repoDir)
-	setupRalphE2ETest(t, binPath, repoDir, remoteDir)
+	setupAutoE2ETest(t, binPath, repoDir, remoteDir)
 
 	ghShimDir := t.TempDir()
-	writeRalphGHShim(t, ghShimDir, multiCandidateIssues, multiIssueData)
+	writeAutoGHShim(t, ghShimDir, multiCandidateIssues, multiIssueData)
 	prependPath(t, ghShimDir)
 
 	agentDir := t.TempDir()
-	writeRalphFakeAgent(t, agentDir, "[1, 5]")
+	writeAutoFakeAgent(t, agentDir, "[1, 5]")
 	prependPath(t, agentDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "run", "--ralph=2", "--sandbox", "worktree")
+	out, err := runSandmanBinary(t, binPath, repoDir, "run", "--auto", "--count", "2", "--sandbox", "worktree")
 	if err != nil {
 		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
 	}
