@@ -272,6 +272,9 @@ func TestCommandServer_TranslatesAbortError(t *testing.T) {
 	if resp.Message == "" {
 		t.Fatal("expected error message to be set")
 	}
+	if resp.Message == "batch: no such issue" {
+		t.Errorf("response must not echo the upstream err.Error() verbatim, got %q", resp.Message)
+	}
 }
 
 func TestCommandServer_UnknownAction(t *testing.T) {
@@ -344,10 +347,12 @@ func TestCommandServer_StartRemovesStaleSocket(t *testing.T) {
 
 // TestCommandResponse_DecodesRecordedAbortResponse exercises the public
 // wire contract on the response side: each payload is a literal
-// recording of the bytes the Command Server writes for an abort reply,
-// and the test asserts the decoded fields round-trip. The two cases
-// cover the only Status values the daemon ever writes (ok, error) so
-// future clients can decode both shapes with confidence.
+// recording of the JSON shape the Command Server writes for an abort
+// reply, and the test asserts the decoded fields round-trip. The cases
+// cover the JSON tag shape and value space the daemon writes (ok, error
+// with the "abort_failed" stable code, and error with an
+// "invalid request" code from the unknown-action path) so future
+// clients can decode every observed shape with confidence.
 func TestCommandResponse_DecodesRecordedAbortResponse(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -360,9 +365,14 @@ func TestCommandResponse_DecodesRecordedAbortResponse(t *testing.T) {
 			CommandResponse{Status: "ok"},
 		},
 		{
-			"abort failed",
-			`{"status":"error","message":"batch: no such issue"}`,
-			CommandResponse{Status: "error", Message: "batch: no such issue"},
+			"abort failed with stable code",
+			`{"status":"error","message":"abort_failed"}`,
+			CommandResponse{Status: "error", Message: "abort_failed"},
+		},
+		{
+			"unknown action error",
+			`{"status":"error","message":"unknown action: frobnicate"}`,
+			CommandResponse{Status: "error", Message: "unknown action: frobnicate"},
 		},
 	}
 	for _, tc := range cases {
