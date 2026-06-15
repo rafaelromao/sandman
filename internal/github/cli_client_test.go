@@ -89,6 +89,25 @@ func TestCLIClient_SearchIssues_Error(t *testing.T) {
 	}
 }
 
+func TestCLIClient_SearchIssues_SortsByNumberAscending(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":921,"state":"open","title":"Newer","body":"","labels":[]},{"number":903,"state":"open","title":"Middle","body":"","labels":[]},{"number":902,"state":"open","title":"Oldest","body":"","labels":[]},{"number":904,"state":"open","title":"Just After","body":"","labels":[]}]`}}}
+	client := &CLIClient{runner: runner}
+
+	issues, err := client.SearchIssues("is:open")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 4 {
+		t.Fatalf("expected 4 issues, got %d", len(issues))
+	}
+	want := []int{902, 903, 904, 921}
+	for i, n := range want {
+		if issues[i].Number != n {
+			t.Errorf("expected issue %d at index %d, got %d", n, i, issues[i].Number)
+		}
+	}
+}
+
 func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123"}]`}}}
 	client := &CLIClient{runner: runner}

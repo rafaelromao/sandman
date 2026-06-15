@@ -231,7 +231,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						if hasUnboundedEnd {
 							numbersForFilter = explicitIssueNumbers(selection)
 						}
-						issues, err = filterClosedIssues(numbersForFilter, selection, githubClient.SearchIssues, githubClient.FetchIssue, cmd.ErrOrStderr())
+						issues, err = filterClosedIssues(numbersForFilter, githubClient.SearchIssues, githubClient.FetchIssue, cmd.ErrOrStderr())
 						if err != nil {
 							if hasUnboundedEnd && errors.Is(err, errAllExplicitClosed) {
 								issues = nil
@@ -886,15 +886,17 @@ func explicitIssueNumbers(selection issueSelection) []int {
 }
 
 // errAllExplicitClosed is returned by filterClosedIssues when every
-// explicitly-listed issue is closed and no range-sourced issues remain.
-// Callers propagate it as a plain runtime error so the usage banner is
-// suppressed in executeRoot.
+// input issue is closed. The name predates the range-vs-explicit
+// parity fix in #923 and is preserved for callers that match on it
+// via errors.Is. Callers propagate it as a plain runtime error so the
+// usage banner is suppressed in executeRoot.
 var errAllExplicitClosed = errors.New("all explicit issues are closed")
 
 // filterClosedIssues returns the subset of numbers that are still open.
-// Explicit issues (those listed by themselves outside any range) that
-// resolve to closed produce a stderr warning; range-sourced issues that
-// resolve to closed are dropped silently.
+// Every input number is treated equivalently: closed issues produce a
+// stderr warning so the operator can see why they were dropped, and a
+// fully-closed input returns errAllExplicitClosed so callers can
+// suppress the cobra usage banner.
 //
 // The implementation prefers a single repo-wide is:open search to avoid
 // one gh CLI call per issue (the per-issue fetch path was a 2x cost on
@@ -902,15 +904,14 @@ var errAllExplicitClosed = errors.New("all explicit issues are closed")
 // (1000) or fails, it falls back to per-issue fetch, where individual
 // fetch errors are logged and skipped rather than aborting the batch.
 //
-// When the input slice contains only explicit issues and all of them
-// are closed, the function returns errAllExplicitClosed so callers
-// can suppress the cobra usage banner. Pass only explicit numbers
-// (e.g. via explicitIssueNumbers) when the caller is going to extend
-// the result with its own range source.
-func filterClosedIssues(numbers []int, selection issueSelection, searchFn func(string) ([]github.Issue, error), fetchFn func(int) (*github.Issue, error), stderr io.Writer) ([]int, error) {
+// Callers extending the result with their own range source (e.g. an
+// unbounded-end range) should pass only the explicit numbers via
+// explicitIssueNumbers so the filter classifies them as a single
+// coherent batch.
+func filterClosedIssues(numbers []int, searchFn func(string) ([]github.Issue, error), fetchFn func(int) (*github.Issue, error), stderr io.Writer) ([]int, error) {
 	openSet, searchHitLimit, searchErr := loadOpenIssueSet(searchFn)
 	if searchErr == nil && !searchHitLimit {
-		filtered, allClosed := filterClosedByOpenSet(numbers, selection, openSet, stderr)
+		filtered, allClosed := filterClosedByOpenSet(numbers, openSet, stderr)
 		if allClosed {
 			return nil, errAllExplicitClosed
 		}
@@ -918,28 +919,21 @@ func filterClosedIssues(numbers []int, selection issueSelection, searchFn func(s
 	}
 
 	filtered := make([]int, 0, len(numbers))
-	closedExplicit := 0
-	totalExplicit := 0
+	closedCount := 0
 	for _, n := range numbers {
-		_, isExplicit := selection.exact[n]
-		if isExplicit {
-			totalExplicit++
-		}
 		issue, err := fetchFn(n)
 		if err != nil {
 			fmt.Fprintf(stderr, "Warning: could not fetch issue #%d: %v\n", n, err)
 			continue
 		}
 		if strings.EqualFold(issue.State, "closed") {
-			if isExplicit {
-				fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
-				closedExplicit++
-			}
+			fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
+			closedCount++
 			continue
 		}
 		filtered = append(filtered, n)
 	}
-	if len(filtered) == 0 && totalExplicit > 0 && closedExplicit > 0 {
+	if len(filtered) == 0 && closedCount > 0 {
 		return nil, errAllExplicitClosed
 	}
 	return filtered, nil
@@ -964,25 +958,18 @@ func loadOpenIssueSet(searchFn func(string) ([]github.Issue, error)) (map[int]st
 	return openSet, false, nil
 }
 
-func filterClosedByOpenSet(numbers []int, selection issueSelection, openSet map[int]struct{}, stderr io.Writer) ([]int, bool) {
+func filterClosedByOpenSet(numbers []int, openSet map[int]struct{}, stderr io.Writer) ([]int, bool) {
 	filtered := make([]int, 0, len(numbers))
-	closedExplicit := 0
-	totalExplicit := 0
+	closedCount := 0
 	for _, n := range numbers {
-		_, isExplicit := selection.exact[n]
-		if isExplicit {
-			totalExplicit++
-		}
 		if _, open := openSet[n]; !open {
-			if isExplicit {
-				fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
-				closedExplicit++
-			}
+			fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
+			closedCount++
 			continue
 		}
 		filtered = append(filtered, n)
 	}
-	if len(filtered) == 0 && totalExplicit > 0 && closedExplicit > 0 {
+	if len(filtered) == 0 && closedCount > 0 {
 		return filtered, true
 	}
 	return filtered, false
