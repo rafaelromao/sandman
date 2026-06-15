@@ -125,6 +125,7 @@ internal/
   github/                    # GitHub client interface + gh CLI implementation
   prompt/                    # Prompt template engine and renderers
   events/                    # Event log interface + JSONL implementation
+  shellenv/                  # Validated, single-quoted `sh -c` env-prefix builder
   scaffold/                  # sandman init scaffolding logic
 ```
 
