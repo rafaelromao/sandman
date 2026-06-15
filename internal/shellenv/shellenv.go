@@ -1,8 +1,13 @@
 // Package shellenv builds a shell command string with a validated, single-quoted
-// environment prefix suitable for `sh -c`. Every env-map key is checked against
-// POSIX shell-variable naming rules; bad keys are surfaced as a typed
-// InvalidKeyError so callers can reject the whole batch instead of silently
-// dropping dangerous entries.
+// environment prefix suitable for `sh -c`.
+//
+// Every env-map key is checked against POSIX shell-variable naming rules
+// (^[A-Za-z_][A-Za-z0-9_]*$); bad keys are surfaced as a typed *InvalidKeyError
+// listing every rejection so callers can refuse the whole batch instead of
+// silently dropping dangerous entries. Values are emitted unquoted when they
+// contain only shell-safe ASCII and single-quoted with the `'\”` idiom
+// otherwise, so embedded whitespace, single quotes, and other shell metachars
+// are inert when the result is handed to `sh -c`.
 package shellenv
 
 import (
@@ -95,16 +100,5 @@ type InvalidKeyError struct {
 }
 
 func (e *InvalidKeyError) Error() string {
-	return "shellenv: invalid env key(s): " + joinKeys(e.Keys)
-}
-
-func joinKeys(keys []string) string {
-	out := ""
-	for i, k := range keys {
-		if i > 0 {
-			out += ", "
-		}
-		out += k
-	}
-	return out
+	return "shellenv: invalid env key(s): " + strings.Join(e.Keys, ", ")
 }
