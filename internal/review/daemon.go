@@ -51,8 +51,8 @@ type BatchRunner interface {
 	RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error)
 }
 
-// PromptRenderer renders review prompts.
-type PromptRenderer interface {
+// Renderer renders review prompts.
+type Renderer interface {
 	RenderReview(cfg prompt.RenderConfig, data prompt.PRData) (string, error)
 }
 
@@ -61,7 +61,7 @@ type PromptRenderer interface {
 type Daemon struct {
 	BaseDir              string
 	GitHub               GitHubClient
-	Prompts              PromptRenderer
+	Prompts              Renderer
 	Runner               BatchRunner
 	Config               *config.Config
 	Broadcaster          io.Writer
@@ -79,7 +79,7 @@ type Daemon struct {
 
 // New returns a Daemon configured with the project defaults for the
 // polling interval and clock.
-func New(baseDir string, gh GitHubClient, prompts PromptRenderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer) *Daemon {
+func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer) *Daemon {
 	return &Daemon{
 		BaseDir:      baseDir,
 		GitHub:       gh,

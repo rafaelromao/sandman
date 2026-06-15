@@ -215,7 +215,7 @@ func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode stri
 		ConfigStore:    store,
 		EventLog:       &fakeEventLog{},
 		GitHubClient:   gh,
-		PromptRenderer: &prompt.Engine{},
+		Renderer: &prompt.Engine{},
 		IsTTY:          func() bool { return false },
 	}
 }

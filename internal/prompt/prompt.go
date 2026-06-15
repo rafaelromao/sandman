@@ -32,8 +32,8 @@ type PRData struct {
 	ReviewFocus string
 }
 
-// Renderer renders prompt templates with substitutions.
-type Renderer interface {
+// IssueRenderer renders prompt templates with substitutions.
+type IssueRenderer interface {
 	Render(cfg RenderConfig, data IssueData) (string, error)
 	RenderReview(cfg RenderConfig, data PRData) (string, error)
 }

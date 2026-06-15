@@ -64,7 +64,7 @@ func main() {
 		ConfigStore:    cfgStore,
 		EventLog:       eventLog,
 		GitHubClient:   ghClient,
-		PromptRenderer: renderer,
+		Renderer:       renderer,
 		IssuePicker:    &cmd.SimpleIssuePicker{},
 		IsTTY:          isStdoutTTY,
 	}

@@ -154,7 +154,7 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 		ConfigStore:    store,
 		EventLog:       &recordingEventLog{},
 		GitHubClient:   gh,
-		PromptRenderer: &prompt.Engine{},
+		Renderer: &prompt.Engine{},
 		IsTTY:          func() bool { return false },
 	}
 	return runtime, repoDir, deps, issue

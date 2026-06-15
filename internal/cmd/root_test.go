@@ -29,7 +29,7 @@ func newTestDeps() Dependencies {
 		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:       &fakeEventLog{},
 		GitHubClient:   &fakeGitHubClient{},
-		PromptRenderer: &prompt.Engine{},
+		Renderer: &prompt.Engine{},
 		IssuePicker:    &fakeIssuePicker{},
 		IsTTY:          func() bool { return false },
 	}

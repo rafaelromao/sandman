@@ -60,7 +60,7 @@ var keyPattern = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
 // issueMapping composes the operator-controlled substitution values for
 // the issue keys. ISSUE_BODY is intentionally NOT included here — the
-// body is passed as a separate argument to PromptRenderer.Render so the
+// body is passed as a separate argument to Renderer.Render so the
 // body-inert rule applies.
 func issueMapping(data IssueData) map[string]string {
 	return map[string]string{
@@ -126,7 +126,7 @@ func loadTemplate(cfg RenderConfig) (string, error) {
 // body on this path; the body-inert rule does not apply. The wrapper
 // preserves the historical "always return the partial result" contract
 // so callers can still detect unfilled placeholders in the returned
-// string, even though PromptRenderer.Render returns "" on missing keys.
+// string, even though Renderer.Render returns "" on missing keys.
 func ApplySubstitutions(template string, cfg RenderConfig) string {
 	intermediate := template
 	for k, v := range configMapping(cfg) {
@@ -153,7 +153,7 @@ func ApplyPRSubstitutions(template string, data PRData) string {
 type Engine struct{}
 
 // Render produces a prompt string from a template. It is a thin wrapper
-// over PromptRenderer.Render that composes the operator mapping from
+// over Renderer.Render that composes the operator mapping from
 // IssueData and RenderConfig and returns the renderer's error string
 // unchanged so the historical "missing substitution keys" contract is
 // preserved.
@@ -168,7 +168,7 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 		mapping[k] = v
 	}
 
-	result, _, err := (&PromptRenderer{}).Render(template, data.Body, mapping)
+	result, _, err := (&Renderer{}).Render(template, data.Body, mapping)
 	return result, err
 }
 
@@ -235,5 +235,5 @@ func MaterializePromptFile(cfg RenderConfig) error {
 	return os.WriteFile(versionPath, []byte(promptVersion), 0644)
 }
 
-// Ensure Engine implements Renderer.
-var _ Renderer = (*Engine)(nil)
+// Ensure Engine implements IssueRenderer.
+var _ IssueRenderer = (*Engine)(nil)

@@ -24,19 +24,19 @@ import (
 // characters or base64 so that the rendered prompt remains human
 // readable in logs and terminals while still being inert to the
 // placeholder regex.
-var (
+const (
 	bodyOpenEscape       = "{{"
 	bodyCloseEscape      = "}}"
 	bodyOpenNeutralised  = "&#123;&#123;"
 	bodyCloseNeutralised = "&#125;&#125;"
 )
 
-// PromptRenderer is a pure substitution function with no I/O, no global
+// Renderer is a pure substitution function with no I/O, no global
 // state, and no side effects. It is the single owner of the two-phase
 // substitution order: operator-controlled keys are applied first; the
 // issue body is substituted last with {{ and }} neutralised so body
 // literals cannot match the operator placeholder syntax.
-type PromptRenderer struct{}
+type Renderer struct{}
 
 // Render applies mapping to template, then substitutes body into
 // {{ISSUE_BODY}} as the final pass. The body is neutralised with
@@ -47,7 +47,7 @@ type PromptRenderer struct{}
 // {{ISSUE_BODY}} at most), and a non-nil error when the unfilled list
 // is non-empty. The error string is "missing substitution keys: …" to
 // match the historical Engine.Render contract.
-func (r *PromptRenderer) Render(template, body string, mapping map[string]string) (string, []string, error) {
+func (r *Renderer) Render(template, body string, mapping map[string]string) (string, []string, error) {
 	intermediate := template
 	for k, v := range mapping {
 		intermediate = strings.ReplaceAll(intermediate, "{{"+k+"}}", v)

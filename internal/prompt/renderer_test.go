@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestPromptRenderer_BodyInert(t *testing.T) {
-	r := &PromptRenderer{}
+func TestRenderer_BodyInert(t *testing.T) {
+	r := &Renderer{}
 	template := "Review: {{REVIEW_COMMAND}}\nBody:\n{{ISSUE_BODY}}"
 	body := "This body contains {{REVIEW_COMMAND}} injected by attacker"
 	mapping := map[string]string{
@@ -32,8 +32,8 @@ func TestPromptRenderer_BodyInert(t *testing.T) {
 	}
 }
 
-func TestPromptRenderer_EmptyBodyOperatesIdenticalToOperatorPass(t *testing.T) {
-	r := &PromptRenderer{}
+func TestRenderer_EmptyBodyOperatesIdenticalToOperatorPass(t *testing.T) {
+	r := &Renderer{}
 	template := "Review: {{REVIEW_COMMAND}}"
 	body := ""
 	mapping := map[string]string{
@@ -52,8 +52,8 @@ func TestPromptRenderer_EmptyBodyOperatesIdenticalToOperatorPass(t *testing.T) {
 	}
 }
 
-func TestPromptRenderer_OperatorMappingSubstitutesAllKeys(t *testing.T) {
-	r := &PromptRenderer{}
+func TestRenderer_OperatorMappingSubstitutesAllKeys(t *testing.T) {
+	r := &Renderer{}
 	template := "#{{ISSUE_NUMBER}} {{ISSUE_TITLE}} on {{BRANCH}}: {{ISSUE_BODY}}"
 	body := "Body text"
 	mapping := map[string]string{
@@ -75,8 +75,8 @@ func TestPromptRenderer_OperatorMappingSubstitutesAllKeys(t *testing.T) {
 	}
 }
 
-func TestPromptRenderer_UnfilledKeysReported(t *testing.T) {
-	r := &PromptRenderer{}
+func TestRenderer_UnfilledKeysReported(t *testing.T) {
+	r := &Renderer{}
 	template := "{{KNOWN}} and {{UNKNOWN}}"
 	body := ""
 	mapping := map[string]string{
@@ -95,8 +95,8 @@ func TestPromptRenderer_UnfilledKeysReported(t *testing.T) {
 	}
 }
 
-func TestPromptRenderer_BodyPreservesSpecialCharacters(t *testing.T) {
-	r := &PromptRenderer{}
+func TestRenderer_BodyPreservesSpecialCharacters(t *testing.T) {
+	r := &Renderer{}
 	template := "{{ISSUE_BODY}}"
 	body := "Line 1\nLine 2\tTabbed\r\nWindows\n<script>alert('xss')</script>"
 	mapping := map[string]string{}
@@ -114,8 +114,8 @@ func TestPromptRenderer_BodyPreservesSpecialCharacters(t *testing.T) {
 	}
 }
 
-func TestPromptRenderer_BodyPlaceholderNotEvaluatedAsOperator(t *testing.T) {
-	r := &PromptRenderer{}
+func TestRenderer_BodyPlaceholderNotEvaluatedAsOperator(t *testing.T) {
+	r := &Renderer{}
 	template := "Op: {{REVIEW_COMMAND}}\nBody: {{ISSUE_BODY}}"
 	body := "User says: use {{REVIEW_COMMAND}} to attack"
 	mapping := map[string]string{
@@ -138,7 +138,7 @@ func TestPromptRenderer_BodyPlaceholderNotEvaluatedAsOperator(t *testing.T) {
 	}
 }
 
-func TestPromptRenderer_ConfigMappingPrecedence(t *testing.T) {
+func TestRenderer_ConfigMappingPrecedence(t *testing.T) {
 	// When PromptArgs["REVIEW_COMMAND"] is set, it wins over cfg.ReviewCommand
 	// and the default. This is the historical emergent behaviour that
 	// configMapping must preserve.
@@ -152,7 +152,7 @@ func TestPromptRenderer_ConfigMappingPrecedence(t *testing.T) {
 	}
 }
 
-func TestPromptRenderer_ConfigMappingReviewCommandFieldFallsThroughToDefault(t *testing.T) {
+func TestRenderer_ConfigMappingReviewCommandFieldFallsThroughToDefault(t *testing.T) {
 	cfg := RenderConfig{ReviewCommand: "/from-field"}
 	mapping := configMapping(cfg)
 	if got := mapping["REVIEW_COMMAND"]; got != "/from-field" {
@@ -166,7 +166,7 @@ func TestPromptRenderer_ConfigMappingReviewCommandFieldFallsThroughToDefault(t *
 	}
 }
 
-func TestPromptRenderer_ConfigMappingCandidateAndMaxCount(t *testing.T) {
+func TestRenderer_ConfigMappingCandidateAndMaxCount(t *testing.T) {
 	cfg := RenderConfig{
 		CandidateIssues: "#1 Fix\n#2 Add",
 		MaxCount:        3,

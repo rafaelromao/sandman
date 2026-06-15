@@ -80,7 +80,7 @@ func newReviewDeps(t *testing.T, gh github.Client, cfg *config.Config, runner ba
 		ConfigStore:    &fakeStore{config: cfg},
 		EventLog:       &fakeEventLog{},
 		GitHubClient:   gh,
-		PromptRenderer: &prompt.Engine{},
+		Renderer: &prompt.Engine{},
 		IssuePicker:    &fakeIssuePicker{},
 		IsTTY:          func() bool { return false },
 	}

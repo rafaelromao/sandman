@@ -260,7 +260,7 @@ type fakeRunnable struct {
 	mu          *sync.Mutex
 }
 
-func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if f.mu != nil {
 		f.mu.Lock()
 		*f.activeCount++
@@ -534,7 +534,7 @@ type blockingRunnable struct {
 	once             sync.Once
 }
 
-func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+func (b *blockingRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if b.running != nil {
 		b.once.Do(func() { close(b.running) })
 	}
@@ -559,7 +559,7 @@ type controlledRunnable struct {
 	once     sync.Once
 }
 
-func (r *controlledRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+func (r *controlledRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if r.finished != nil {
 		defer close(r.finished)
 	}
@@ -631,7 +631,7 @@ type continuationFlowRunnable struct {
 	sb    sandbox.Sandbox
 }
 
-func (r *continuationFlowRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+func (r *continuationFlowRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if renderCfg.TaskPrompt != "" {
 		promptPath := filepath.Join(r.sb.WorkDir(), ".sandman", "task.md")
 		if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err == nil {
@@ -5251,7 +5251,7 @@ type deadContainerRunnable struct {
 	result    AgentRunResult
 }
 
-func (r *deadContainerRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+func (r *deadContainerRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if r.container != nil {
 		atomic.StoreUint32(&r.container.dead, 1)
 	}
@@ -5263,7 +5263,7 @@ type aliveCheckingRunnable struct {
 	result    AgentRunResult
 }
 
-func (r *aliveCheckingRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+func (r *aliveCheckingRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	if !containerAlive(r.container) {
 		return AgentRunResult{IssueNumber: r.result.IssueNumber, Status: "failure"}
 	}
@@ -8330,7 +8330,7 @@ type strandRunnable struct {
 	sb sandbox.Sandbox
 }
 
-func (r *strandRunnable) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+func (r *strandRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	// Create a branch in the main repo (not checked out in any worktree) and
 	// switch the worktree to it, stranding it on the wrong branch.
 	// Note: we use "wrong-branch" instead of "main" because git prevents

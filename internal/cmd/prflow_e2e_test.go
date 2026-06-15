@@ -474,7 +474,7 @@ func prFlowDeps(repoDir string) Dependencies {
 		ConfigStore:    cfgStore,
 		EventLog:       eventLog,
 		GitHubClient:   ghClient,
-		PromptRenderer: renderer,
+		Renderer: renderer,
 		IssuePicker:    &SimpleIssuePicker{},
 		IsTTY:          isStdoutTTY,
 	}
