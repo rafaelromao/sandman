@@ -128,7 +128,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				gr = newRealGitRunner(layout.RepoRoot)
 			}
 
-			staleRemoved, staleErr := daemon.CleanupStaleRunSnapshots(filepath.Join(layout.RepoRoot, ".sandman"))
+			staleRemoved, staleErr := daemon.CleanupStaleRunSnapshots(layout.SandmanDir)
 			if staleErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", staleErr)
 			}
@@ -222,5 +222,5 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 // so other long-lived commands (the portal) can invoke the same logic
 // in-process without shelling out.
 func runCleanStale(layout paths.Layout, eventsList []events.Event, log events.EventLog) (recovered, deadDirs int, err error) {
-	return daemon.RecoverStaleRuns(filepath.Join(layout.RepoRoot, ".sandman"), eventsList, log)
+	return daemon.RecoverStaleRuns(layout.SandmanDir, eventsList, log)
 }

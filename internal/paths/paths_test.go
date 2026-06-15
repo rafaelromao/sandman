@@ -14,6 +14,9 @@ func TestNewLayout_DefaultAndCustomFields(t *testing.T) {
 	if defaultLayout.RepoRoot != repoRoot {
 		t.Errorf("RepoRoot = %q, want %q", defaultLayout.RepoRoot, repoRoot)
 	}
+	if got, want := defaultLayout.SandmanDir, filepath.Join(repoRoot, ".sandman"); got != want {
+		t.Errorf("defaultLayout.SandmanDir = %q, want %q", got, want)
+	}
 	if got, want := defaultLayout.WorktreeDir, filepath.Join(repoRoot, ".sandman", "worktrees"); got != want {
 		t.Errorf("defaultLayout.WorktreeDir = %q, want %q", got, want)
 	}

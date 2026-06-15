@@ -642,6 +642,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+	o.layout = paths.NewLayout(cfg, o.layout.RepoRoot)
 	retries := resolveRetries(req, cfg)
 	runIdleTimeout := resolveRunIdleTimeout(req, cfg)
 

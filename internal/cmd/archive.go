@@ -88,7 +88,7 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 		return fmt.Errorf("recover stale runs: %w", err)
 	}
 
-	dead, err := daemon.FindDeadRunBatches(filepath.Join(layout.RepoRoot, ".sandman"))
+	dead, err := daemon.FindDeadRunBatches(layout.SandmanDir)
 	if err != nil {
 		return fmt.Errorf("scan run directories: %w", err)
 	}

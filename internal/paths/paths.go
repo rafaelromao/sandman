@@ -12,6 +12,7 @@ import (
 // and clean command stop hand-rolling filepath.Join(".sandman", ...).
 type Layout struct {
 	RepoRoot      string
+	SandmanDir    string
 	WorktreeDir   string
 	LogDir        string
 	EventsLogPath string
@@ -35,6 +36,7 @@ func NewLayout(cfg *config.Config, repoRoot string) Layout {
 	}
 	return Layout{
 		RepoRoot:      repoRoot,
+		SandmanDir:    filepath.Join(repoRoot, ".sandman"),
 		WorktreeDir:   worktreeDir,
 		LogDir:        filepath.Join(repoRoot, ".sandman", "logs"),
 		EventsLogPath: filepath.Join(repoRoot, ".sandman", "events.jsonl"),
