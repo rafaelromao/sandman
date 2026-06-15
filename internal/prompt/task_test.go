@@ -481,6 +481,41 @@ Continue.`
 	}
 }
 
+func TestBuildTaskPrompt_UpdateTaskContextPreservesPlan(t *testing.T) {
+	doc := TaskDoc{
+		Stage:     "plan-approved",
+		LastSkill: "sandman-tdd",
+		Plan:      "### Behaviors to test\n- behavior one",
+		Body:      "## Completed\nDone.\n\n## Next Step\nContinue.",
+	}
+	result := BuildTaskPrompt(doc)
+
+	if !strings.Contains(result, "## Plan") {
+		t.Fatalf("expected Update Task Context to include ## Plan section so the plan persists across overwrites, got:\n%s", result)
+	}
+	if !strings.Contains(result, "behavior one") {
+		t.Fatalf("expected Update Task Context to embed the plan body content, got:\n%s", result)
+	}
+}
+
+func TestBuildTaskPrompt_UpdateTaskContextOmitsPlanWhenAbsent(t *testing.T) {
+	doc := TaskDoc{
+		Stage:     "plan-approved",
+		LastSkill: "sandman-tdd",
+		Body:      "## Completed\nDone.\n\n## Next Step\nContinue.",
+	}
+	result := BuildTaskPrompt(doc)
+
+	uhcStart := strings.Index(result, "## Update Task Context")
+	if uhcStart == -1 {
+		t.Fatal("expected ## Update Task Context section")
+	}
+	uhc := result[uhcStart:]
+	if strings.Contains(uhc, "## Plan") {
+		t.Fatalf("expected Update Task Context to not include ## Plan when doc.Plan is empty, got:\n%s", uhc)
+	}
+}
+
 func TestParseTask_PlanSectionMissing(t *testing.T) {
 	content := `## Stage: plan-approved
 ## Last Skill: sandman-tdd
@@ -515,5 +550,28 @@ Initial implementation done.`
 	}
 	if !strings.Contains(doc.Body, "## Completed") {
 		t.Fatalf("expected Body to contain ## Completed section, got %q", doc.Body)
+	}
+}
+
+func TestParseTask_DuplicatePlanSectionKeepsFirst(t *testing.T) {
+	content := `## Stage: plan-approved
+## Plan
+first plan content
+## Completed
+done
+## Plan
+second plan content
+## Pending
+more`
+
+	doc := ParseTask(content)
+	if !strings.Contains(doc.Plan, "first plan content") {
+		t.Fatalf("expected Plan to contain the first section's content, got %q", doc.Plan)
+	}
+	if strings.Contains(doc.Plan, "second plan content") {
+		t.Fatalf("expected Plan to not absorb a second ## Plan section, got %q", doc.Plan)
+	}
+	if !strings.Contains(doc.Body, "## Pending") {
+		t.Fatalf("expected Body to contain ## Pending, got %q", doc.Body)
 	}
 }

@@ -20,6 +20,7 @@ func ParseTask(content string) TaskDoc {
 	var planLines []string
 	inHeader := true
 	inPlan := false
+	planExited := false
 	planHasContent := false
 
 	for _, line := range lines {
@@ -46,13 +47,14 @@ func ParseTask(content string) TaskDoc {
 				inHeader = false
 			}
 		}
-		if !inHeader && trimmed == "## Plan" {
+		if !inHeader && !inPlan && !planExited && trimmed == "## Plan" {
 			inPlan = true
 			continue
 		}
 		if inPlan {
 			if strings.HasPrefix(trimmed, "## ") {
 				inPlan = false
+				planExited = true
 			} else {
 				planLines = append(planLines, line)
 				if trimmed != "" {
@@ -140,6 +142,11 @@ func BuildTaskPrompt(doc TaskDoc) string {
 		} else {
 			b.WriteString("## Last Skill Status: <context>\n")
 		}
+	}
+	if doc.Plan != "" {
+		b.WriteString("## Plan\n")
+		b.WriteString(doc.Plan)
+		b.WriteString("\n\n")
 	}
 	b.WriteString("## Completed\n\n\n")
 	b.WriteString("## Pending\n\n\n")
