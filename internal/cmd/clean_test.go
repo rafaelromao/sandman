@@ -112,6 +112,7 @@ func TestClean_AllRemovesEverything(t *testing.T) {
 	}
 
 	deps := Dependencies{
+		RepoRoot:    dir,
 		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: worktreeDir}},
 		EventLog:    &fakeEventLog{},
 		GitRunner:   &fakeGitRunner{},
@@ -133,6 +134,51 @@ func TestClean_AllRemovesEverything(t *testing.T) {
 	}
 	if _, err := os.Stat(logDir); !os.IsNotExist(err) {
 		t.Errorf("expected log dir to be removed")
+	}
+}
+
+func TestClean_AllRespectsRepoRootOverCWD(t *testing.T) {
+	tempRepo := t.TempDir()
+	other := t.TempDir()
+	t.Chdir(other)
+
+	worktreeDir := filepath.Join(tempRepo, ".sandman", "worktrees")
+	logDir := filepath.Join(tempRepo, ".sandman", "logs")
+	if err := os.MkdirAll(filepath.Join(worktreeDir, "sandman", "42-fix"), 0755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		t.Fatalf("create log dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "42.log"), []byte("log"), 0644); err != nil {
+		t.Fatalf("create log: %v", err)
+	}
+
+	deps := Dependencies{
+		RepoRoot:    tempRepo,
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: worktreeDir}},
+		EventLog:    &fakeEventLog{},
+		GitRunner:   &fakeGitRunner{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(worktreeDir); !os.IsNotExist(err) {
+		t.Errorf("expected worktree dir under supplied RepoRoot to be removed")
+	}
+	if _, err := os.Stat(logDir); !os.IsNotExist(err) {
+		t.Errorf("expected log dir under supplied RepoRoot to be removed")
+	}
+	if _, err := os.Stat(filepath.Join(other, ".sandman", "logs", "42.log")); !os.IsNotExist(err) {
+		t.Errorf("did not expect CWD to be touched, but log under %s was created", other)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -25,8 +26,11 @@ type realGitRunner struct {
 	repoPath string
 }
 
-func newRealGitRunner() *realGitRunner {
-	return &realGitRunner{repoPath: "."}
+func newRealGitRunner(repoPath string) *realGitRunner {
+	if repoPath == "" {
+		repoPath = "."
+	}
+	return &realGitRunner{repoPath: repoPath}
 }
 
 func (r *realGitRunner) removeWorktree(path string) error {
@@ -113,12 +117,18 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				cfg.WorktreeDir = ".sandman/worktrees"
 			}
 
+			repoRoot := deps.RepoRoot
+			if repoRoot == "" {
+				repoRoot = "."
+			}
+			layout := paths.NewLayout(cfg, repoRoot)
+
 			gr := deps.GitRunner
 			if gr == nil {
-				gr = newRealGitRunner()
+				gr = newRealGitRunner(layout.RepoRoot)
 			}
 
-			staleRemoved, staleErr := daemon.CleanupStaleRunSnapshots(".sandman")
+			staleRemoved, staleErr := daemon.CleanupStaleRunSnapshots(filepath.Join(layout.RepoRoot, ".sandman"))
 			if staleErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", staleErr)
 			}
@@ -128,7 +138,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("read event log: %w", err)
 				}
-				recovered, deadDirs, err := runCleanStale(eventsList, deps.EventLog)
+				recovered, deadDirs, err := runCleanStale(layout, eventsList, deps.EventLog)
 				if err != nil {
 					return fmt.Errorf("recover stale runs: %w", err)
 				}
@@ -144,18 +154,18 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				runs := events.ProjectRunStates(eventsList)
 				for _, run := range runs {
 					if branch := run.Branch(); branch != "" {
-						wtPath := filepath.Join(cfg.WorktreeDir, branch)
+						wtPath := filepath.Join(layout.WorktreeDir, branch)
 						if err := gr.removeWorktree(wtPath); err != nil {
 							_ = gr.pruneAndDeleteBranch(branch)
 						}
 					}
 					if issueNum := run.IssueNumber(); issueNum > 0 {
-						_ = os.RemoveAll(filepath.Join(".sandman", "logs", fmt.Sprintf("%d.log", issueNum)))
+						_ = os.RemoveAll(filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNum)))
 					}
 				}
 				removed, _ := gr.removeOrphanBranches()
-				_ = os.RemoveAll(cfg.WorktreeDir)
-				_ = os.RemoveAll(".sandman/logs")
+				_ = os.RemoveAll(layout.WorktreeDir)
+				_ = os.RemoveAll(layout.LogDir)
 				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale branches and logs and %d stale run snapshots\n", removed, staleRemoved)
 				return nil
 			}
@@ -179,13 +189,13 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 
 				branch := run.Branch()
 				if branch != "" {
-					wtPath := filepath.Join(cfg.WorktreeDir, branch)
+					wtPath := filepath.Join(layout.WorktreeDir, branch)
 					if err := gr.removeWorktree(wtPath); err != nil {
 						_ = gr.pruneAndDeleteBranch(branch)
 					}
 				}
 				if issueNum := run.IssueNumber(); issueNum > 0 {
-					_ = os.RemoveAll(filepath.Join(".sandman", "logs", fmt.Sprintf("%d.log", issueNum)))
+					_ = os.RemoveAll(filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNum)))
 				}
 				removed++
 			}
@@ -203,13 +213,14 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 
 // runCleanStale performs the body of `sandman clean --stale` against the
 // supplied event log. It reads the events, scans `.sandman/runs/` for dead
-// batches, and emits a `run.aborted` event for every manifest issue whose
-// RunState has not reached a terminal event. Returns the number of runs
-// recovered and the number of dead directories processed.
+// batches under the supplied layout's repo root, and emits a `run.aborted`
+// event for every manifest issue whose RunState has not reached a terminal
+// event. Returns the number of runs recovered and the number of dead
+// directories processed.
 //
 // This is the same code path the `--stale` CLI flag executes, factored out
 // so other long-lived commands (the portal) can invoke the same logic
 // in-process without shelling out.
-func runCleanStale(eventsList []events.Event, log events.EventLog) (recovered, deadDirs int, err error) {
-	return daemon.RecoverStaleRuns(".sandman", eventsList, log)
+func runCleanStale(layout paths.Layout, eventsList []events.Event, log events.EventLog) (recovered, deadDirs int, err error) {
+	return daemon.RecoverStaleRuns(filepath.Join(layout.RepoRoot, ".sandman"), eventsList, log)
 }

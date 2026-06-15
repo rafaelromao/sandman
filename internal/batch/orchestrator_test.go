@@ -20,6 +20,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/testenv"
@@ -746,6 +747,9 @@ func TestReadTailLines_TrailingNewline(t *testing.T) {
 }
 
 func TestAgentLogPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	o := &Orchestrator{layout: paths.NewLayout(&config.Config{}, dir)}
 	tests := []struct {
 		name     string
 		filename string
@@ -756,7 +760,7 @@ func TestAgentLogPath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := agentLogPath(tt.filename)
+			path := o.agentLogPath(tt.filename)
 			if !filepath.IsAbs(path) {
 				t.Fatal("expected absolute path")
 			}

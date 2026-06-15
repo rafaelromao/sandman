@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 type portalEvent struct {
@@ -643,7 +645,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		portalRun.SocketPath = active.SocketPath
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 	} else if portalRun.Kind == "active" {
-		sockPath := filepath.Join(repoRoot, ".sandman", "runs", runState.RunID, "run.sock")
+		sockPath := filepath.Join(paths.NewLayout(&config.Config{}, repoRoot).RunsDir, runState.RunID, "run.sock")
 		if _, err := os.Lstat(sockPath); err == nil {
 			portalRun.SocketPath = sockPath
 			v.markCompletedIfSocketDead(&portalRun, sockPath)
@@ -797,24 +799,8 @@ func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath st
 }
 
 func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {
-	logDir := filepath.Join(repoRoot, ".sandman", "logs")
-	if issueNumber > 0 {
-		return filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))
-	}
-	branch = strings.TrimSpace(branch)
-	if branch == "" {
-		return ""
-	}
-	return filepath.Join(logDir, v.sanitizePortalFilename(branch)+".log")
-}
-
-func (v *portalRunsView) sanitizePortalFilename(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.NewReplacer("/", "-", string(os.PathSeparator), "-", " ", "-").Replace(value)
-	if value == "" {
-		return "prompt-only"
-	}
-	return value
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	return layout.PortalLogPath(issueNumber, branch)
 }
 
 func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, branch string) string {
