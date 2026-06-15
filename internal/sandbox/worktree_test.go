@@ -893,3 +893,65 @@ func TestIsBranchCheckedOutError_OnlyMatchesCheckedOutOrWorktreeMessages(t *test
 		})
 	}
 }
+
+func TestWorktreeSandbox_StartCallsReconcileStrandedFnSeam(t *testing.T) {
+	// The recovery loop is dispatched through the package-level
+	// reconcileStrandedFn seam (ADR-0027). When a `git branch -D`
+	// failure matches the "checked out at" pattern, the seam is
+	// invoked with the expected (repoPath, worktreeBase, branch,
+	// sourceBranch) tuple.
+	prev := reconcileStrandedFn
+	defer func() { reconcileStrandedFn = prev }()
+
+	var captured struct {
+		repoPath     string
+		worktreeBase string
+		branch       string
+		sourceBranch string
+		called       bool
+	}
+	reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch string) error {
+		captured.repoPath = repoPath
+		captured.worktreeBase = worktreeBase
+		captured.branch = branch
+		captured.sourceBranch = sourceBranch
+		captured.called = true
+		return nil
+	}
+
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	const branch = "sandman/42-fix-bug"
+	runGit(t, dir, "checkout", "-b", branch)
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s.SetOverride(true)
+	s.SetStrandedReconcile(true)
+
+	// The seam will silently succeed but no worktree exists yet at
+	// the worktreeBase, so the worktree-add step still fails. We
+	// only need the recovery to fire and the seam to be invoked.
+	_ = s.Start()
+
+	if !captured.called {
+		t.Fatal("expected reconcileStrandedFn seam to be called during Start")
+	}
+	if captured.repoPath != dir {
+		t.Errorf("seam repoPath: got %q, want %q", captured.repoPath, dir)
+	}
+	if captured.worktreeBase != worktreeBase {
+		t.Errorf("seam worktreeBase: got %q, want %q", captured.worktreeBase, worktreeBase)
+	}
+	if captured.branch != branch {
+		t.Errorf("seam branch: got %q, want %q", captured.branch, branch)
+	}
+	if captured.sourceBranch != "main" {
+		t.Errorf("seam sourceBranch: got %q, want %q", captured.sourceBranch, "main")
+	}
+
+	t.Cleanup(func() {
+		runGit(t, dir, "checkout", "main")
+		removeBranch(t, dir, branch)
+	})
+}

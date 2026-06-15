@@ -709,7 +709,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 	cmd.Flags().Bool("reconcile-stranded", true, "Auto-recover from a stranded worktree or main-repo branch mismatch before starting the AgentRun; pass --no-reconcile-stranded to opt out and surface the original 'branch used by worktree at' error")
 	cmd.Flags().Bool("no-reconcile-stranded", false, "Opt out of stranded-worktree auto-recovery (negative form of --reconcile-stranded)")
-	cmd.Flags().MarkHidden("no-reconcile-stranded")
 
 	cmd.Flags().Bool("override", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
 	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff and stored settings")
