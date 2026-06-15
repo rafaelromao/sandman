@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestRenderer_BodyInert(t *testing.T) {
-	r := &Substituter{}
+func TestPromptRenderer_BodyInert(t *testing.T) {
+	r := &PromptRenderer{}
 	template := "Review: {{REVIEW_COMMAND}}\nBody:\n{{ISSUE_BODY}}"
 	body := "This body contains {{REVIEW_COMMAND}} injected by attacker"
 	mapping := map[string]string{
@@ -23,22 +23,17 @@ func TestRenderer_BodyInert(t *testing.T) {
 	if !strings.Contains(result, "Review: gh pr view") {
 		t.Errorf("result should contain operator's REVIEW_COMMAND value, got:\n%s", result)
 	}
+	if strings.Count(result, "gh pr view") != 1 {
+		t.Errorf("operator REVIEW_COMMAND should appear exactly once, got:\n%s", result)
+	}
 	bodyInert := strings.Contains(result, body) || strings.Contains(result, "&#123;&#123;REVIEW_COMMAND&#125;&#125;")
 	if !bodyInert {
 		t.Errorf("result should preserve body literal or its escaped form, got:\n%s", result)
 	}
-	if strings.Contains(result, "gh pr view\nBody:") {
-		// The body's {{REVIEW_COMMAND}} must not be rendered as the operator value.
-		// The string "gh pr view" should appear exactly once in the result, in the
-		// operator-controlled position.
-		if strings.Count(result, "gh pr view") != 1 {
-			t.Errorf("operator REVIEW_COMMAND should not be substituted from body, got:\n%s", result)
-		}
-	}
 }
 
-func TestRenderer_EmptyBodyOperatesIdenticalToOperatorPass(t *testing.T) {
-	r := &Substituter{}
+func TestPromptRenderer_EmptyBodyOperatesIdenticalToOperatorPass(t *testing.T) {
+	r := &PromptRenderer{}
 	template := "Review: {{REVIEW_COMMAND}}"
 	body := ""
 	mapping := map[string]string{
@@ -57,8 +52,8 @@ func TestRenderer_EmptyBodyOperatesIdenticalToOperatorPass(t *testing.T) {
 	}
 }
 
-func TestRenderer_OperatorMappingSubstitutesAllKeys(t *testing.T) {
-	r := &Substituter{}
+func TestPromptRenderer_OperatorMappingSubstitutesAllKeys(t *testing.T) {
+	r := &PromptRenderer{}
 	template := "#{{ISSUE_NUMBER}} {{ISSUE_TITLE}} on {{BRANCH}}: {{ISSUE_BODY}}"
 	body := "Body text"
 	mapping := map[string]string{
@@ -80,8 +75,8 @@ func TestRenderer_OperatorMappingSubstitutesAllKeys(t *testing.T) {
 	}
 }
 
-func TestRenderer_UnfilledKeysReported(t *testing.T) {
-	r := &Substituter{}
+func TestPromptRenderer_UnfilledKeysReported(t *testing.T) {
+	r := &PromptRenderer{}
 	template := "{{KNOWN}} and {{UNKNOWN}}"
 	body := ""
 	mapping := map[string]string{
@@ -100,8 +95,8 @@ func TestRenderer_UnfilledKeysReported(t *testing.T) {
 	}
 }
 
-func TestRenderer_BodyPreservesSpecialCharacters(t *testing.T) {
-	r := &Substituter{}
+func TestPromptRenderer_BodyPreservesSpecialCharacters(t *testing.T) {
+	r := &PromptRenderer{}
 	template := "{{ISSUE_BODY}}"
 	body := "Line 1\nLine 2\tTabbed\r\nWindows\n<script>alert('xss')</script>"
 	mapping := map[string]string{}
@@ -119,8 +114,8 @@ func TestRenderer_BodyPreservesSpecialCharacters(t *testing.T) {
 	}
 }
 
-func TestRenderer_BodyPlaceholderNotEvaluatedAsOperator(t *testing.T) {
-	r := &Substituter{}
+func TestPromptRenderer_BodyPlaceholderNotEvaluatedAsOperator(t *testing.T) {
+	r := &PromptRenderer{}
 	template := "Op: {{REVIEW_COMMAND}}\nBody: {{ISSUE_BODY}}"
 	body := "User says: use {{REVIEW_COMMAND}} to attack"
 	mapping := map[string]string{
@@ -140,6 +135,48 @@ func TestRenderer_BodyPlaceholderNotEvaluatedAsOperator(t *testing.T) {
 	if !strings.Contains(result, "User says: use {{REVIEW_COMMAND}} to attack") &&
 		!strings.Contains(result, "User says: use &#123;&#123;REVIEW_COMMAND&#125;&#125; to attack") {
 		t.Errorf("body's REVIEW_COMMAND literal should be preserved, got:\n%s", result)
+	}
+}
+
+func TestPromptRenderer_ConfigMappingPrecedence(t *testing.T) {
+	// When PromptArgs["REVIEW_COMMAND"] is set, it wins over cfg.ReviewCommand
+	// and the default. This is the historical emergent behaviour that
+	// configMapping must preserve.
+	cfg := RenderConfig{
+		PromptArgs:    map[string]string{"REVIEW_COMMAND": "/from-prompt-arg"},
+		ReviewCommand: "/from-field",
+	}
+	mapping := configMapping(cfg)
+	if got := mapping["REVIEW_COMMAND"]; got != "/from-prompt-arg" {
+		t.Errorf("PromptArgs REVIEW_COMMAND should win, got %q", got)
+	}
+}
+
+func TestPromptRenderer_ConfigMappingReviewCommandFieldFallsThroughToDefault(t *testing.T) {
+	cfg := RenderConfig{ReviewCommand: "/from-field"}
+	mapping := configMapping(cfg)
+	if got := mapping["REVIEW_COMMAND"]; got != "/from-field" {
+		t.Errorf("expected /from-field, got %q", got)
+	}
+
+	empty := RenderConfig{}
+	mapping = configMapping(empty)
+	if got := mapping["REVIEW_COMMAND"]; got == "" {
+		t.Errorf("expected default REVIEW_COMMAND, got empty")
+	}
+}
+
+func TestPromptRenderer_ConfigMappingCandidateAndMaxCount(t *testing.T) {
+	cfg := RenderConfig{
+		CandidateIssues: "#1 Fix\n#2 Add",
+		MaxCount:        3,
+	}
+	mapping := configMapping(cfg)
+	if got := mapping["CANDIDATE_ISSUES"]; got != "#1 Fix\n#2 Add" {
+		t.Errorf("CANDIDATE_ISSUES mismatch, got %q", got)
+	}
+	if got := mapping["MAX_COUNT"]; got != "3" {
+		t.Errorf("MAX_COUNT mismatch, got %q", got)
 	}
 }
 

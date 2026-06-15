@@ -60,7 +60,7 @@ var keyPattern = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
 // issueMapping composes the operator-controlled substitution values for
 // the issue keys. ISSUE_BODY is intentionally NOT included here — the
-// body is passed as a separate argument to Substituter.Render so the
+// body is passed as a separate argument to PromptRenderer.Render so the
 // body-inert rule applies.
 func issueMapping(data IssueData) map[string]string {
 	return map[string]string{
@@ -120,13 +120,13 @@ func loadTemplate(cfg RenderConfig) (string, error) {
 }
 
 // ApplySubstitutions renders non-issue placeholders in a prompt template.
-// It is a thin wrapper around Substituter.Render that builds the operator
-// mapping from cfg and passes an empty body. The portal/selection/run
-// call sites that pre-compute a prompt for issue-selection detection have
-// no issue body on this path; the body-inert rule does not apply. The
-// wrapper preserves the historical "always return the partial result"
-// contract so callers can still detect unfilled placeholders in the
-// returned string, even though the Substituter's error path returns "".
+// It is a thin wrapper that builds the operator mapping from cfg and
+// runs it against the template. The portal/selection/run call sites
+// that pre-compute a prompt for issue-selection detection have no issue
+// body on this path; the body-inert rule does not apply. The wrapper
+// preserves the historical "always return the partial result" contract
+// so callers can still detect unfilled placeholders in the returned
+// string, even though PromptRenderer.Render returns "" on missing keys.
 func ApplySubstitutions(template string, cfg RenderConfig) string {
 	intermediate := template
 	for k, v := range configMapping(cfg) {
@@ -153,8 +153,8 @@ func ApplyPRSubstitutions(template string, data PRData) string {
 type Engine struct{}
 
 // Render produces a prompt string from a template. It is a thin wrapper
-// over Substituter.Render that composes the operator mapping from
-// IssueData and RenderConfig and returns the Substituter's error string
+// over PromptRenderer.Render that composes the operator mapping from
+// IssueData and RenderConfig and returns the renderer's error string
 // unchanged so the historical "missing substitution keys" contract is
 // preserved.
 func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
@@ -168,7 +168,7 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 		mapping[k] = v
 	}
 
-	result, _, err := (&Substituter{}).Render(template, data.Body, mapping)
+	result, _, err := (&PromptRenderer{}).Render(template, data.Body, mapping)
 	return result, err
 }
 

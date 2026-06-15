@@ -6,10 +6,24 @@ import (
 )
 
 // Body neutralisation sentinels. The body is the only string that
-// arrives from outside the operator trust boundary. Replacing {{ and }}
-// with these sentinels before the body pass ensures the body cannot
-// match the {{KEY}} placeholder syntax and the body's other content
-// (newlines, tabs, <, >) is passed through verbatim.
+// arrives from outside the operator trust boundary, so it is the only
+// input that can carry an injected {{KEY}} literal. The substitution
+// pass must therefore treat the body's {{ and }} differently from the
+// template's. We pre-escape the body's {{ and }} to HTML numeric
+// character references (&#123;&#123; / &#125;&#125;) before the body
+// pass, which:
+//
+//   - cannot match the \{\{[^{}]+\}\} placeholder regex, so the
+//     post-body unfilled-keys check cannot be tricked into seeing a
+//     body-injected placeholder as an operator key;
+//   - preserves the body's other content (newlines, tabs, <, >) verbatim
+//     so existing tests that assert byte-equal body output continue to
+//     pass.
+//
+// HTML numeric character references were chosen over zero-width
+// characters or base64 so that the rendered prompt remains human
+// readable in logs and terminals while still being inert to the
+// placeholder regex.
 var (
 	bodyOpenEscape       = "{{"
 	bodyCloseEscape      = "}}"
@@ -17,15 +31,12 @@ var (
 	bodyCloseNeutralised = "&#125;&#125;"
 )
 
-// Substituter is a pure substitution function with no I/O, no global
+// PromptRenderer is a pure substitution function with no I/O, no global
 // state, and no side effects. It is the single owner of the two-phase
 // substitution order: operator-controlled keys are applied first; the
 // issue body is substituted last with {{ and }} neutralised so body
-// literals cannot match the operator placeholder syntax. The package
-// also exposes a Renderer interface used by the rest of the codebase;
-// that interface is implemented by Engine and is satisfied by this
-// struct through Engine.Render.
-type Substituter struct{}
+// literals cannot match the operator placeholder syntax.
+type PromptRenderer struct{}
 
 // Render applies mapping to template, then substitutes body into
 // {{ISSUE_BODY}} as the final pass. The body is neutralised with
@@ -36,7 +47,7 @@ type Substituter struct{}
 // {{ISSUE_BODY}} at most), and a non-nil error when the unfilled list
 // is non-empty. The error string is "missing substitution keys: …" to
 // match the historical Engine.Render contract.
-func (s *Substituter) Render(template, body string, mapping map[string]string) (string, []string, error) {
+func (r *PromptRenderer) Render(template, body string, mapping map[string]string) (string, []string, error) {
 	intermediate := template
 	for k, v := range mapping {
 		intermediate = strings.ReplaceAll(intermediate, "{{"+k+"}}", v)
