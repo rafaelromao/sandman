@@ -5,7 +5,12 @@ set -euo pipefail
 # and internal/cmd/stranded.go for the detection logic. The Go subcommand
 # is the single source of truth for what counts as a stranded worktree.
 
-if ! command -v git >/dev/null 2>&1 || ! git rev-parse --git-dir >/dev/null 2>&1; then
+if ! command -v git >/dev/null 2>&1; then
+    echo "Error: git is not installed or not on PATH" >&2
+    exit 1
+fi
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
     echo "Error: not inside a git repository" >&2
     exit 1
 fi

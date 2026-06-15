@@ -21,6 +21,9 @@ type StrandedWorktreeInfo struct {
 // StrandedWorktree checks whether a worktree for the given branch exists under
 // worktreeBase in a stranded state (HEAD does not match the expected ref).
 // Returns the StrandedWorktreeInfo and true if stranded, zero value and false otherwise.
+//
+// worktreeBase must be an absolute path: it is compared against the absolute
+// paths reported by `git worktree list --porcelain`.
 func StrandedWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeInfo, bool) {
 	if _, err := os.Stat(worktreeBase); err != nil {
 		return StrandedWorktreeInfo{}, false
@@ -37,6 +40,9 @@ func StrandedWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeIn
 	for _, e := range entries {
 		if e.path != target {
 			continue
+		}
+		if e.prunable {
+			return StrandedWorktreeInfo{}, false
 		}
 		if e.detached || e.branch != expectedRef {
 			return StrandedWorktreeInfo{
@@ -78,6 +84,9 @@ func ListStrandedWorktrees(repoPath, worktreeBase string) []StrandedWorktreeInfo
 		if !strings.HasPrefix(e.path, prefix) {
 			continue
 		}
+		if e.prunable {
+			continue
+		}
 		dir := filepath.Base(e.path)
 		if !issueDrivenDir.MatchString(dir) {
 			continue
@@ -98,6 +107,7 @@ type worktreeEntry struct {
 	path     string
 	branch   string
 	detached bool
+	prunable bool
 }
 
 func listWorktrees(repoPath string) ([]worktreeEntry, error) {
@@ -130,6 +140,8 @@ func listWorktrees(repoPath string) ([]worktreeEntry, error) {
 			cur.branch = strings.TrimPrefix(line, "branch ")
 		case line == "detached":
 			cur.detached = true
+		case strings.HasPrefix(line, "prunable "):
+			cur.prunable = true
 		}
 	}
 	flush()

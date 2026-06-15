@@ -262,3 +262,37 @@ func TestListStrandedWorktrees_MissingBaseReturnsEmpty(t *testing.T) {
 		t.Fatalf("expected empty results when worktreeBase is missing, got %+v", results)
 	}
 }
+
+func TestStrandedWorktree_PrunableWorktreeIsNotFlagged(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/77-prunable"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	wtPath := filepath.Join(worktreeBase, branch)
+	runGit(t, repoDir, "worktree", "add", wtPath, branch)
+
+	// Manually remove the worktree directory without telling git; the
+	// entry becomes "prunable" in `git worktree list --porcelain`.
+	if err := os.RemoveAll(wtPath); err != nil {
+		t.Fatalf("remove wtPath: %v", err)
+	}
+
+	info, stranded := StrandedWorktree(repoDir, worktreeBase, branch)
+	if stranded {
+		t.Fatalf("expected prunable worktree to be skipped, got info=%+v", info)
+	}
+	if info != (StrandedWorktreeInfo{}) {
+		t.Errorf("expected zero-value info, got %+v", info)
+	}
+
+	results := ListStrandedWorktrees(repoDir, worktreeBase)
+	if len(results) != 0 {
+		t.Fatalf("expected prunable worktree to be excluded from ListStrandedWorktrees, got %+v", results)
+	}
+}
