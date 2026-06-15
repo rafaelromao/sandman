@@ -199,30 +199,6 @@ func indexPriorRunsByIssue(eventLog events.EventLog) map[int]bool {
 	return out
 }
 
-// issueHasPriorRun reports whether the event log contains a run.started or
-// run.continued event for the given issue number. Such events are the
-// canonical signal that a prior AgentRun has reached the execution stage
-// for the issue; run.queued alone is not sufficient because it only marks
-// scheduling intent and the run may never have started.
-func issueHasPriorRun(eventLog events.EventLog, issueNum int) bool {
-	if eventLog == nil {
-		return false
-	}
-	logs, err := eventLog.Read()
-	if err != nil {
-		return false
-	}
-	for _, e := range logs {
-		if e.Issue != issueNum {
-			continue
-		}
-		if e.Type == "run.started" || e.Type == "run.continued" {
-			return true
-		}
-	}
-	return false
-}
-
 // Orchestrator coordinates parallel AgentRun execution.
 type Orchestrator struct {
 	githubClient            github.Client
