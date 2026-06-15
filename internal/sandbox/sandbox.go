@@ -2,16 +2,25 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"syscall"
 )
 
-// Process represents a running OS process that can be signalled.
+// Process represents a running OS process that can be signalled and waited on.
+//
+// The sandbox package owns the only goroutine that calls the underlying
+// exec.Cmd.Wait. Callers must not call Wait themselves — they observe
+// process exit via WaitDone, which closes when the package's internal
+// Wait goroutine returns. WaitDone is the canonical exit signal;
+// supervisors should select on it (or on their own context / timeout)
+// rather than sleeping.
 type Process interface {
 	Signal(sig os.Signal) error
 	Kill() error
+	WaitDone() <-chan struct{}
 }
 
 // Sandbox provides isolation for one or more AgentRuns.
@@ -46,17 +55,24 @@ type Sandbox interface {
 	SetGitIdentity(name, email string)
 }
 
-// waitCmd waits for cmd to finish, returning ctx.Err() if the context is cancelled first.
-// When the context is cancelled, the process is killed so the wait unblocks.
-func waitCmd(ctx context.Context, cmd *exec.Cmd) error {
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
+// waitCmd waits for cmd to finish via its owning processWrapper's
+// WaitDone channel, returning ctx.Err() if the context is cancelled
+// first. When the context is cancelled, the process is killed so the
+// wait unblocks.
+//
+// waitCmd does not call cmd.Wait itself — the wrapper owns that single
+// Wait. Calling cmd.Wait twice triggers Go's "Wait was already called"
+// error. cmdWrapper is the wrapper created when cmd was started; the
+// caller passes it in so waitCmd can block on the right channel.
+func waitCmd(ctx context.Context, cmd *exec.Cmd, cmdWrapper *processWrapper) error {
+	if cmdWrapper == nil {
+		return errors.New("waitCmd: cmdWrapper is nil")
+	}
+	waitDone := cmdWrapper.WaitDone()
 
 	select {
-	case err := <-done:
-		return err
+	case <-waitDone:
+		return cmdWrapper.exitErr()
 	case <-ctx.Done():
 		if cmd.Process != nil {
 			// Kill the entire process group (negative PID) to ensure child
@@ -64,7 +80,7 @@ func waitCmd(ctx context.Context, cmd *exec.Cmd) error {
 			// are terminated, not just the immediate sh -c parent.
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
-		<-done
+		<-waitDone
 		return ctx.Err()
 	}
 }

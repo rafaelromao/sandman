@@ -16,13 +16,14 @@ import (
 // In isolated mode each sandbox owns its container; in shared mode the container
 // lifecycle is managed by the caller.
 type ContainerSandbox struct {
-	worktree      Sandbox
-	container     Container
-	binary        string
-	repoPath      string
-	ownsContainer bool
-	cmd           *exec.Cmd
-	execFn        func(name string, arg ...string) *exec.Cmd
+	worktree       Sandbox
+	container      Container
+	binary         string
+	repoPath       string
+	ownsContainer  bool
+	cmd            *exec.Cmd
+	processWrapper *processWrapper
+	execFn         func(name string, arg ...string) *exec.Cmd
 }
 
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
@@ -140,8 +141,9 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 		return fmt.Errorf("container exec start: %w", err)
 	}
 	s.cmd = cmd
+	s.processWrapper = newProcessWrapper(cmd)
 
-	if err := waitCmd(ctx, cmd); err != nil {
+	if err := waitCmd(ctx, cmd, s.processWrapper); err != nil {
 		return fmt.Errorf("container exec: %w", err)
 	}
 	return nil
@@ -155,11 +157,12 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("container exec start: %w", err)
+		return fmt.Errorf("exec start: %w", err)
 	}
 	s.cmd = cmd
+	s.processWrapper = newProcessWrapper(cmd)
 
-	if err := waitCmd(ctx, cmd); err != nil {
+	if err := waitCmd(ctx, cmd, s.processWrapper); err != nil {
 		return fmt.Errorf("container exec: %w", err)
 	}
 	return nil
@@ -194,7 +197,10 @@ func (s *ContainerSandbox) Process() Process {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return nil
 	}
-	return s.cmd.Process
+	if s.processWrapper == nil {
+		s.processWrapper = newProcessWrapper(s.cmd)
+	}
+	return s.processWrapper
 }
 
 // Ensure ContainerSandbox implements Sandbox.
