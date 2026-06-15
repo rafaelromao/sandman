@@ -171,6 +171,11 @@ func (s *ContainerSandbox) WorkDir() string {
 	return s.worktree.WorkDir()
 }
 
+// RepoPath returns the parent repository path that owns this sandbox.
+func (s *ContainerSandbox) RepoPath() string {
+	return s.repoPath
+}
+
 // WritePrompt writes the prompt content to the sandbox.
 func (s *ContainerSandbox) WritePrompt(content string) error {
 	return s.worktree.WritePrompt(content)

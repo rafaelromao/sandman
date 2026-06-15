@@ -338,6 +338,7 @@ type retrySandbox struct {
 	execCommand       string
 	execErrors        []error
 	workDir           string
+	repoPath          string
 	setOverrideCalled bool
 	setOverrideValue  bool
 	setIdentityName   string
@@ -363,6 +364,7 @@ func (s *retrySandbox) Exec(ctx context.Context, command string, stdout, stderr 
 func (s *retrySandbox) ExecInteractive(ctx context.Context, command string) error { return nil }
 func (s *retrySandbox) Stop() error                                               { return nil }
 func (s *retrySandbox) WorkDir() string                                           { return s.workDir }
+func (s *retrySandbox) RepoPath() string                                          { return s.repoPath }
 func (s *retrySandbox) WritePrompt(content string) error {
 	s.writePromptCount++
 	return nil
@@ -8168,4 +8170,188 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 			t.Fatalf("worktree HEAD on %q, want %q", got, branch)
 		}
 	})
+}
+
+// stageReconcileWorktree sets up a real git repo at workDir with a main branch,
+// creates a worktree on issueBranch, and returns the worktree's path, the parent
+// repo path, and the WorktreeSandbox. The worktree is left on issueBranch. If
+// wrongBranch is non-empty, the worktree is also configured to start on it
+// (created from main and force-checked out) so reconcileWorktreeBranch has
+// something to fix.
+func stageReconcileWorktree(t *testing.T, issueBranch, wrongBranch string) (workDir, repoPath, worktreePath string, sb sandbox.Sandbox) {
+	t.Helper()
+	workDir = t.TempDir()
+	repoPath = workDir
+	t.Chdir(workDir)
+	initGitRepo(t, workDir)
+	worktreeBase := filepath.Join(workDir, "worktrees")
+
+	// Ensure the issue branch does not already exist so the sandbox Start
+	// call does not fail. Pre-clean any leftover from a previous run.
+	exec.Command("git", "branch", "-D", issueBranch).Run()
+	exec.Command("git", "branch", "-D", wrongBranch).Run()
+
+	sb = sandbox.NewWorktreeSandbox(repoPath, worktreeBase, issueBranch, "main")
+	if err := sb.Start(); err != nil {
+		t.Fatalf("sandbox start: %v", err)
+	}
+	worktreePath = sb.WorkDir()
+
+	if wrongBranch != "" {
+		// Create wrongBranch from main and force-check it out in the worktree,
+		// mimicking what sandman-pr-merge does after `gh pr merge --squash`.
+		if out, err := exec.Command("git", "branch", wrongBranch, "main").CombinedOutput(); err != nil {
+			t.Fatalf("git branch %s: %v: %s", wrongBranch, err, out)
+		}
+		if out, err := exec.Command("git", "-C", worktreePath, "checkout", "-f", wrongBranch).CombinedOutput(); err != nil {
+			t.Fatalf("git checkout -f %s: %v: %s", wrongBranch, err, out)
+		}
+	}
+
+	t.Cleanup(func() {
+		exec.Command("git", "-C", repoPath, "worktree", "remove", "-f", worktreePath).Run()
+		exec.Command("git", "-C", repoPath, "branch", "-D", issueBranch).Run()
+		exec.Command("git", "-C", repoPath, "branch", "-D", wrongBranch).Run()
+	})
+	return workDir, repoPath, worktreePath, sb
+}
+
+func readWorktreeRef(t *testing.T, worktreePath string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = worktreePath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-parse --abbrev-ref HEAD: %v: %s", err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestReconcileWorktreeBranch_NoOpWhenCorrect(t *testing.T) {
+	branch := "sandman/42-fix-bug"
+	_, _, worktreePath, sb := stageReconcileWorktree(t, branch, "")
+
+	if got := readWorktreeRef(t, worktreePath); got != branch {
+		t.Fatalf("staging: worktree HEAD on %q, want %q", got, branch)
+	}
+
+	var errorBuf bytes.Buffer
+	s := &runSession{
+		o:        &Orchestrator{errorLog: &errorBuf},
+		branches: map[int]string{42: branch},
+	}
+
+	before := readWorktreeRef(t, worktreePath)
+	s.reconcileWorktreeBranch(sb, branch)
+	after := readWorktreeRef(t, worktreePath)
+
+	if before != branch {
+		t.Fatalf("worktree HEAD before call: got %q, want %q", before, branch)
+	}
+	if after != branch {
+		t.Errorf("worktree HEAD after call: got %q, want %q (no-op should leave HEAD unchanged)", after, branch)
+	}
+}
+
+func TestReconcileWorktreeBranch_RestoresBranch(t *testing.T) {
+	branch := "sandman/42-fix-bug"
+	wrong := "sandman/42-wrong-branch"
+	_, _, worktreePath, sb := stageReconcileWorktree(t, branch, wrong)
+
+	if got := readWorktreeRef(t, worktreePath); got != wrong {
+		t.Fatalf("staging: worktree HEAD on %q, want %q", got, wrong)
+	}
+
+	oldBranchExists := branchExists
+	branchExists = sandbox.BranchExists
+	t.Cleanup(func() { branchExists = oldBranchExists })
+
+	var errorBuf bytes.Buffer
+	s := &runSession{
+		o:        &Orchestrator{errorLog: &errorBuf},
+		branches: map[int]string{42: branch},
+	}
+
+	s.reconcileWorktreeBranch(sb, branch)
+
+	after := readWorktreeRef(t, worktreePath)
+	if after != branch {
+		t.Errorf("worktree HEAD after reconcile: got %q, want %q", after, branch)
+	}
+}
+
+func TestReconcileWorktreeBranch_LogsAndContinuesOnMissingBranch(t *testing.T) {
+	branch := "sandman/42-fix-bug"
+	wrong := "sandman/42-wrong-branch"
+	_, _, worktreePath, sb := stageReconcileWorktree(t, branch, wrong)
+
+	if got := readWorktreeRef(t, worktreePath); got != wrong {
+		t.Fatalf("staging: worktree HEAD on %q, want %q", got, wrong)
+	}
+
+	// Simulate `gh pr merge --delete-branch`: the local branch ref is gone,
+	// but the worktree is still registered on the (deleted) branch. The
+	// reconcile method must detect the missing branch and return without
+	// erroring out the run.
+	if out, err := exec.Command("git", "-C", filepath.Dir(worktreePath), "branch", "-D", branch).CombinedOutput(); err != nil {
+		t.Fatalf("delete branch: %v: %s", err, out)
+	}
+
+	oldBranchExists := branchExists
+	branchExists = sandbox.BranchExists
+	t.Cleanup(func() { branchExists = oldBranchExists })
+
+	var errorBuf bytes.Buffer
+	s := &runSession{
+		o:        &Orchestrator{errorLog: &errorBuf},
+		branches: map[int]string{42: branch},
+	}
+
+	s.reconcileWorktreeBranch(sb, branch)
+
+	logged := errorBuf.String()
+	if !strings.Contains(logged, "warning:") {
+		t.Errorf("expected a warning to be logged, got %q", logged)
+	}
+	if !strings.Contains(logged, "was deleted") {
+		t.Errorf("expected warning to mention the deleted branch, got %q", logged)
+	}
+}
+
+func TestReconcileWorktreeBranch_LogsAndContinuesOnFailure(t *testing.T) {
+	branch := "sandman/42-fix-bug"
+	wrong := "sandman/42-wrong-branch"
+	_, _, worktreePath, sb := stageReconcileWorktree(t, branch, wrong)
+
+	if got := readWorktreeRef(t, worktreePath); got != wrong {
+		t.Fatalf("staging: worktree HEAD on %q, want %q", got, wrong)
+	}
+
+	// Simulate a worktree in a state where the checkout cannot run: the
+	// worktree directory is removed after stranding. This deterministically
+	// makes `git -C <workdir> checkout -f <branch>` fail while leaving the
+	// parent repo and the branch ref intact (BranchExists returns true).
+	if err := os.RemoveAll(worktreePath); err != nil {
+		t.Fatalf("remove worktree dir: %v", err)
+	}
+
+	oldBranchExists := branchExists
+	branchExists = sandbox.BranchExists
+	t.Cleanup(func() { branchExists = oldBranchExists })
+
+	var errorBuf bytes.Buffer
+	s := &runSession{
+		o:        &Orchestrator{errorLog: &errorBuf},
+		branches: map[int]string{42: branch},
+	}
+
+	s.reconcileWorktreeBranch(sb, branch)
+
+	logged := errorBuf.String()
+	if !strings.Contains(logged, "warning:") {
+		t.Errorf("expected a warning to be logged, got %q", logged)
+	}
+	if !strings.Contains(logged, "reconcile worktree branch") {
+		t.Errorf("expected warning to mention reconcile, got %q", logged)
+	}
 }
