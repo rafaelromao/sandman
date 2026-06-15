@@ -132,7 +132,7 @@ func TestLoad_DefaultAgentDefaultsToOpenCode(t *testing.T) {
 func TestLoad_RejectsUnknownDefaultAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	content := `agent: codex
+	content := `agent: nonexistent
 git:
   base_branch: main
 `
@@ -144,7 +144,7 @@ git:
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	if !strings.Contains(err.Error(), "agent \"codex\" not found") {
+	if !strings.Contains(err.Error(), "agent \"nonexistent\" not found") {
 		t.Fatalf("expected unknown agent error, got %v", err)
 	}
 }
