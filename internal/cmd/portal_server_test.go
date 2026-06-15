@@ -873,6 +873,54 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 	}
 }
 
+func TestPortal_PageMastheadMetadataStacksUpdatedBelowRepo(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+
+	firstBlock := regexp.MustCompile(`(?s)<div class="meta-line">.*?</div>`).FindString(content)
+	if firstBlock == "" {
+		t.Fatalf("page is missing the first <div class=\"meta-line\"> block\n%s", content[:min(800, len(content))])
+	}
+	if !strings.Contains(firstBlock, ">Repo<") {
+		t.Fatalf("first meta-line block should still contain the Repo label\n%s", firstBlock)
+	}
+	if strings.Contains(firstBlock, ">Updated<") {
+		t.Fatalf("first meta-line block should not contain the Updated label; Updated must stack below Repo\n%s", firstBlock)
+	}
+
+	if !strings.Contains(content, `id="last-updated"`) {
+		t.Fatalf("page is missing the #last-updated element\n%s", content[:min(800, len(content))])
+	}
+
+	repoIdx := strings.Index(content, ">Repo<")
+	updatedIdx := strings.Index(content, ">Updated<")
+	if updatedIdx < 0 {
+		t.Fatalf("page is missing the Updated label\n%s", content[:min(800, len(content))])
+	}
+	if repoIdx < 0 {
+		t.Fatalf("page is missing the Repo label\n%s", content[:min(800, len(content))])
+	}
+	if updatedIdx <= repoIdx {
+		t.Fatalf("Updated label must appear after the Repo block in the rendered masthead\nrepoIdx=%d updatedIdx=%d", repoIdx, updatedIdx)
+	}
+}
+
 func TestPortal_PageWiresPortalViewStatePersistence(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
