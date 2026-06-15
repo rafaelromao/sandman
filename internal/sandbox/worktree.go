@@ -53,15 +53,6 @@ func (s *WorktreeSandbox) SetStrandedReconcile(enabled bool) {
 
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
-	// Resolve worktreeBase to an absolute path so the
-	// StrandedWorktree helper (and its comparison against
-	// `git worktree list --porcelain` output) works in default
-	// deployments where the configured WorktreeDir is relative.
-	if !filepath.IsAbs(s.worktreeBase) {
-		if abs, err := filepath.Abs(s.worktreeBase); err == nil {
-			s.worktreeBase = abs
-		}
-	}
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
 	overrideRecreate := false
 	if s.workDirIsValidWorktree() {

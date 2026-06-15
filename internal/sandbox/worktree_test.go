@@ -894,57 +894,34 @@ func TestIsBranchCheckedOutError_OnlyMatchesCheckedOutOrWorktreeMessages(t *test
 	}
 }
 
-func TestWorktreeSandbox_StartResolvesRelativeWorktreeBaseToAbsolute(t *testing.T) {
-	// The StrandedWorktree helper compares the worktree path against
-	// the absolute paths from `git worktree list --porcelain`, so the
-	// WorktreeSandbox must resolve a relative worktreeBase to an
-	// absolute path before invoking the helper. Otherwise the
-	// stranded-worktree detection silently never fires in default
-	// deployments where the configured WorktreeDir is relative
-	// (`.sandman/worktrees`).
+func TestStrandedWorktree_ResolvesRelativeWorktreeBase(t *testing.T) {
+	// The StrandedWorktree helper resolves a relative worktreeBase
+	// against repoPath internally, so callers can pass the configured
+	// (typically relative) WorktreeDir directly. Without this, the
+	// stranded-worktree recovery in WorktreeSandbox.Start silently
+	// never fires in default deployments where the configured
+	// WorktreeDir is relative (`.sandman/worktrees`).
 	dir := t.TempDir()
-	_ = initGitRepoWithRemote(t, dir)
-	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
-	runGit(t, dir, "push", "origin", "main")
+	initGitRepo(t, dir)
 
 	worktreeBase := ".sandman/worktrees"
-	branch := "sandman/42-fix-bug"
-	const otherBranch = "sandman/9-other"
-
 	if err := os.MkdirAll(filepath.Join(dir, worktreeBase), 0755); err != nil {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
-	runGit(t, dir, "branch", branch)
-	runGit(t, dir, "branch", otherBranch)
-	strandedPath := filepath.Join(dir, worktreeBase, branch)
-	runGit(t, dir, "worktree", "add", "--force", strandedPath, otherBranch)
-	runGit(t, dir, "checkout", branch)
 
-	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	s.SetOverride(true)
-	s.SetStrandedReconcile(true)
+	const expected = "sandman/907-foo"
+	const actual = "sandman/42-other-branch"
+	runGit(t, dir, "branch", expected)
+	runGit(t, dir, "branch", actual)
+	strandedPath := filepath.Join(dir, worktreeBase, expected)
+	runGit(t, dir, "worktree", "add", "--force", strandedPath, actual)
 
-	if err := s.Start(); err != nil {
-		t.Fatalf("expected recovery to succeed with relative worktreeBase, got: %v", err)
+	info, stranded := StrandedWorktree(dir, worktreeBase, expected)
+	if !stranded {
+		t.Fatalf("expected stranded=true for relative worktreeBase, got info=%+v", info)
 	}
-	t.Cleanup(func() {
-		_ = s.Stop()
-		// After the recovery, the fresh worktree is on `branch` (the
-		// issue branch) and `otherBranch` is checked out nowhere, so
-		// both should be deletable. Fall back to removing the worktree
-		// by hand if the recorded path is gone.
-		wtList := runGit(t, dir, "worktree", "list", "--porcelain")
-		if strings.Contains(wtList, otherBranch) {
-			// The stranded worktree was never replaced; clean it up.
-			runGit(t, dir, "worktree", "remove", "--force", filepath.Join(dir, worktreeBase, branch))
-		}
-		runGit(t, dir, "worktree", "prune")
-		removeBranch(t, dir, branch)
-		removeBranch(t, dir, otherBranch)
-	})
-
-	if _, err := os.Stat(filepath.Join(s.WorkDir(), "tracked.txt")); err != nil {
-		t.Errorf("expected tracked.txt in worktree after recovery, got: %v", err)
+	if info.Path != strandedPath {
+		t.Errorf("Path: got %q, want %q", info.Path, strandedPath)
 	}
 }
 
