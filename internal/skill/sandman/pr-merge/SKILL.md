@@ -20,9 +20,9 @@ Merge the PR only when all merge gates pass.
 1. Confirm PR is fully approved.
 2. Confirm required checks are green.
 3. Confirm GitHub reports PR mergeable.
-4. Merge with squash.
+4. Merge with squash: `gh pr merge --squash`. Do **not** pass `--delete-branch`; the local branch must remain in the worktree for downstream sandman tooling (next run, --continue, --override) per ADR-0027.
 5. Verify the PR actually merged.
-6. Delete the branch after merge.
+6. Delete the remote branch from a different worktree (e.g. the primary worktree), never from the agent's worktree: `git push origin --delete <branch>`.
 7. If approval is not achieved after 10 review cycles, leave the PR open and report final blockers.
 
 ## Stop conditions
