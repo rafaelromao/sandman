@@ -141,6 +141,9 @@ func TestCommandServer_RejectsOversizeBody(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	payload := append(raw[:len(raw)-1], append([]byte(`,"pad":"`), append(padding, []byte(`"}`)...)...)...)
+	// Write errors are expected if the server closes the conn mid-stream
+	// (which is the rejection behavior we are verifying). The decoder
+	// call below is what we assert on.
 	_, _ = conn.Write(payload)
 
 	var resp CommandResponse
@@ -157,9 +160,16 @@ func TestCommandServer_RejectsOversizeBody(t *testing.T) {
 		// server closed the connection without granting the abort.
 	}
 
-	// Give the server a brief moment in case it processed the request
-	// concurrently with the conn close.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the server's handle goroutine to finish processing the
+	// rejected request before checking the commander. Bounded by a
+	// short deadline so a regression cannot hang the test.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if len(stub.calls()) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if len(stub.calls()) != 0 {
 		t.Errorf("expected commander to be untouched for 2 MB body, got %v", stub.calls())
 	}
