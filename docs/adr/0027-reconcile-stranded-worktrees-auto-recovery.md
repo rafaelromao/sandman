@@ -1,4 +1,4 @@
-# ADR-0025: Auto-recover from stranded worktrees in `--override` and `--continue` flows
+# ADR-0027: Auto-recover from stranded worktrees in `--override` and `--continue` flows
 
 ## Status
 
@@ -6,7 +6,7 @@ proposed
 
 ## Context
 
-A *stranded worktree* is, per the `CONTEXT.md` glossary term (lines 161–162), "a sandman-managed git worktree whose HEAD points to a different branch than its directory name expects". The glossary entry currently claims that `sandman run --override reconciles them automatically` and points at `scripts/reconcile-stranded-worktrees.sh` as a standalone detection tool. That claim is only partially true.
+A *stranded worktree* is, per the `CONTEXT.md` *Stranded worktree* glossary term, "a sandman-managed git worktree whose HEAD points to a different branch than its directory name expects". The glossary entry currently claims that `sandman run --override reconciles them automatically` and points at `scripts/reconcile-stranded-worktrees.sh` as a standalone detection tool. That claim is only partially true.
 
 `sandman run --override` already cleans the worktree subdirectory under `.sandman/worktrees/` and prunes the git worktree registration, so a stranded directory that lives entirely under `.sandman/worktrees/` is recovered the next time the orchestrator starts. It does not, however, handle the case where the *main repo* itself is checked out on a `sandman/N-…` branch. When that happens, `git worktree add` fails with the "branch used by worktree at …" error and `--override` does not unblock the run. The operator has to remember to `git checkout main` (or whichever base branch applies) in the main repo before re-running.
 
@@ -14,7 +14,7 @@ The glossary promise is therefore wrong for the most common stranded state. Issu
 
 This ADR records the decision to make that auto-repair the default behaviour. It is the contract that the slices in #934–#938 collectively implement. It is filed as `proposed` so the slices can be revised against the contract, not the other way around.
 
-The auto-recovery pattern is not new. ADR-0021 (`docs/adr/0021-portal-auto-runs-clean-stale-on-startup.md`) established that the portal auto-runs `sandman clean --stale` on startup through a package-level function variable seam (`portalStaleCleaner func(string) error`) so the body is shared with the CLI flag and tests can stub the side effect. ADR-0025 reuses the same idea for the stranded-worktree case: the detection logic lives in one Go helper, the recovery loop lives in one place per call site, and tests swap the side effect through a function variable seam rather than reaching into the git CLI.
+The auto-recovery pattern is not new. ADR-0021 (`docs/adr/0021-portal-auto-runs-clean-stale-on-startup.md`) established that the portal auto-runs `sandman clean --stale` on startup through a package-level function variable seam (`portalStaleCleaner func(string) error`) so the body is shared with the CLI flag and tests can stub the side effect. ADR-0027 reuses the same idea for the stranded-worktree case: the detection logic lives in one Go helper, the recovery loop lives in one place per call site, and tests swap the side effect through a function variable seam rather than reaching into the git CLI.
 
 `--continue` is the second call site. ADR-0022 (`docs/adr/0022-replace-end-of-session-continuation-with-checkpointed-handoffs.md`) defined `--continue` as "Handoff is the persisted state; Continue is the action that reads it", with the implicit assumption that a prior AgentRun exists for the issue. Slice #934 lifts that assumption: when there is no prior run, `--continue` now falls through to `ModeOverride`, which means it will go through the same auto-recovery path as an explicit `--override`. The new behaviour, in other words, makes the "no prior run" branch of `--continue` indistinguishable from a fresh `--override` — including the stranded-worktree recovery that both flows now perform.
 
