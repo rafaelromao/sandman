@@ -11,10 +11,9 @@ import (
 
 // JSONLLogger writes events to a JSONL file.
 //
-// Log, Read, and RemoveEventsByIssue are safe to call concurrently with each
-// other. All three serialise their work through a single mutex over a
-// long-lived *os.File so that an interleaved Log between Read and the
-// rewrite in RemoveEventsByIssue cannot lose the appended line.
+// Log, Read, and RemoveEventsByIssue are safe to call concurrently with
+// each other. The mutex also gates the held *os.File that backs the
+// append and the rewrite path.
 type JSONLLogger struct {
 	Path string
 
@@ -100,12 +99,6 @@ func (l *JSONLLogger) Read() ([]Event, error) {
 }
 
 // RemoveEventsByIssue removes all events matching the given issue number.
-//
-// An event matches if its Issue field equals issueNumber, or if its
-// IssueRef pointer is non-nil and points to issueNumber. Read, filter,
-// and rewrite all happen under the same mutex over the same held file
-// handle, so a concurrent Log is either fully recorded before the
-// rewrite starts or fully recorded after it completes.
 func (l *JSONLLogger) RemoveEventsByIssue(issueNumber int) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -167,24 +160,6 @@ func (l *JSONLLogger) RemoveEventsByIssue(issueNumber int) error {
 	return nil
 }
 
-// Close releases the held *os.File. Safe to call multiple times.
-func (l *JSONLLogger) Close() error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.file == nil {
-		return nil
-	}
-	err := l.file.Close()
-	l.file = nil
-	return err
-}
-
-// openLocked returns the held *os.File, opening it on first use. The
-// caller must hold l.mu.
-//
-// If the file does not exist yet, openLocked creates it so the held
-// handle is always writable. Callers that need to read a potentially
-// absent log should check for IsNotExist before calling.
 func (l *JSONLLogger) openLocked() (*os.File, error) {
 	if l.file != nil {
 		return l.file, nil

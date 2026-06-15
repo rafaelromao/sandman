@@ -227,19 +227,9 @@ func TestJSONLLogger_RemoveEventsByIssue_FiltersByIssueRef(t *testing.T) {
 	}
 }
 
-// TestJSONLLogger_LogVsRemoveRace is the regression test for the
-// slice 6 race: N concurrent Log calls run in parallel with one
-// RemoveEventsByIssue. The post-condition is:
-//
-//  1. No event with Issue != removedIssue is lost in the race. With the
-//     pre-slice-6 implementation, an O_APPEND between Read and O_TRUNC
-//     in RemoveEventsByIssue dropped the appended line, so a non-
-//     matching RunID would be missing from the final file.
-//  2. No RunID appears more than once.
-//  3. After the concurrent batch settles, a subsequent
-//     RemoveEventsByIssue call removes any matching events that were
-//     logged after the first remove completed, leaving the warmup event
-//     and the 90 non-matching events from the 100 logs.
+// TestJSONLLogger_LogVsRemoveRace is the slice 6 regression test: N
+// concurrent Log calls run in parallel with one RemoveEventsByIssue
+// and no non-matching event is lost.
 func TestJSONLLogger_LogVsRemoveRace(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
@@ -251,16 +241,10 @@ func TestJSONLLogger_LogVsRemoveRace(t *testing.T) {
 		matchModulo  = 10
 	)
 
-	// Warm-up Log opens the held file handle before the race window
-	// starts, so the test exercises the held-handle path rather than
-	// the lazy-open path.
 	if err := logger.Log(Event{Type: "run.warmup", RunID: "warmup", Issue: 0}); err != nil {
 		t.Fatalf("warmup log: %v", err)
 	}
 
-	// expectedNonMatching is the set of RunIDs we will log that are
-	// NOT supposed to be removed. The post-condition asserts every one
-	// of these is present after the race and after a final remove.
 	expectedNonMatching := make(map[string]bool, totalLogs)
 	for i := 0; i < totalLogs; i++ {
 		if i%matchModulo == removedIssue {
@@ -308,8 +292,6 @@ func TestJSONLLogger_LogVsRemoveRace(t *testing.T) {
 		seen[e.RunID]++
 	}
 
-	// Post-condition 1: every non-matching RunID is present exactly once.
-	// A missing non-matching RunID is the original race-induced loss.
 	for id := range expectedNonMatching {
 		count := seen[id]
 		if count == 0 {
@@ -320,9 +302,6 @@ func TestJSONLLogger_LogVsRemoveRace(t *testing.T) {
 		}
 	}
 
-	// Post-condition 2: a final remove cleans up any matching events
-	// that were logged after the concurrent remove completed, leaving
-	// exactly the warmup event plus the 90 non-matching events.
 	if err := logger.RemoveEventsByIssue(removedIssue); err != nil {
 		t.Fatalf("final remove: %v", err)
 	}
