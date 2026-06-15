@@ -659,7 +659,7 @@ func TestPortal_RunFromActiveBatchIssue_MixedBatchCarriesBatchIssues(t *testing.
 	}
 }
 
-func TestPortal_RunFromActiveBatchIssue_SingleIssueCarriesSingleIssue(t *testing.T) {
+func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -687,8 +687,8 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueCarriesSingleIssue(t *testing
 
 	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, nil, nil, "", nil)
 
-	if got, want := run.BatchIssues, []int{42}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected BatchIssues %v, got %v", want, got)
+	if run.BatchIssues != nil {
+		t.Fatalf("expected BatchIssues to be omitted for single-issue batch, got %v", run.BatchIssues)
 	}
 }
 
@@ -730,13 +730,16 @@ func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
 	}
 }
 
-func TestPortal_DiscoverActiveRuns_DirNameFallback(t *testing.T) {
+func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-99-1")
+	// Run dir name implies issue 999, but no manifest exists.
+	// The portal must NOT infer issue 999 from the dir name; the
+	// instance is treated as manifest-less (prompt-only routing).
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-999-1")
 	sockPath := filepath.Join(runDir, "run.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -754,8 +757,11 @@ func TestPortal_DiscoverActiveRuns_DirNameFallback(t *testing.T) {
 	if len(active) != 1 {
 		t.Fatalf("expected 1 active instance, got %d", len(active))
 	}
-	if got, want := active[0].IssueNumbers, []int{99}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected IssueNumbers %v (from dir name), got %v", want, got)
+	if active[0].IssueNumber != 0 {
+		t.Fatalf("expected IssueNumber=0 (no manifest, no inference), got %d", active[0].IssueNumber)
+	}
+	if len(active[0].IssueNumbers) != 0 {
+		t.Fatalf("expected empty IssueNumbers when no manifest, got %v", active[0].IssueNumbers)
 	}
 }
 
@@ -777,6 +783,36 @@ func TestPortal_FilterIssueOutput_PreservesIssuePrefixes(t *testing.T) {
 	for _, banned := range []string{"[issue-854]", "unprefixed noise"} {
 		if strings.Contains(filtered, banned) {
 			t.Fatalf("expected filtered output to drop %q, got:\n%s", banned, filtered)
+		}
+	}
+}
+
+func TestPortal_SavedLogFile_KeepsIssuePrefixesIntact(t *testing.T) {
+	repoRoot := t.TempDir()
+	logsDir := filepath.Join(repoRoot, ".sandman", "logs")
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	contents := strings.Join([]string{
+		"[issue-860] 18:51:05 working on PR",
+		"[issue-854] 18:51:05 sibling work",
+		"[issue-860] 18:51:06 more PR work",
+		"",
+	}, "\n")
+	logPath := filepath.Join(logsDir, "860.log")
+	if err := os.WriteFile(logPath, []byte(contents), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// readPortalTextFile is the on-disk reader for saved logs. The
+	// portal must surface the saved log byte-for-byte (modulo ANSI
+	// stripping), so a reader looking at a mixed-batch issue can still
+	// see the sibling-issue prefixes that the file already records.
+	got := (&portalRunsView{}).readPortalTextFile(logPath)
+
+	for _, want := range []string{"[issue-860] 18:51:05 working on PR", "[issue-854] 18:51:05 sibling work", "[issue-860] 18:51:06 more PR work"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected saved log to contain %q, got:\n%s", want, got)
 		}
 	}
 }
