@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -549,6 +550,661 @@ func TestRun_RalphFlagNoLongerExists(t *testing.T) {
 	}
 	if spy.called {
 		t.Error("expected batch runner not to be called")
+	}
+}
+
+func TestRun_Auto_ExplicitPRDExpandsBeforeSelection(t *testing.T) {
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+
+	repoDir := t.TempDir()
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("create sandman dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
+		t.Fatalf("create auto-selection-prompt.md: %v", err)
+	}
+
+	agentDir := t.TempDir()
+	agentScript := `#!/bin/sh
+set -eu
+if [ ! -f .sandman/selection-prompt.md ]; then
+  echo "selection-prompt.md missing" >&2
+  exit 2
+fi
+if grep -q '^#1 ' .sandman/selection-prompt.md; then
+  echo "PRD #1 leaked into selection prompt" >&2
+  exit 3
+fi
+if ! grep -q '^#10 ' .sandman/selection-prompt.md; then
+  echo "child #10 missing from selection prompt" >&2
+  exit 4
+fi
+if ! grep -q '^#11 ' .sandman/selection-prompt.md; then
+  echo "child #11 missing from selection prompt" >&2
+  exit 5
+fi
+mkdir -p .sandman
+printf '[10, 11]\n' > .sandman/selected-issues.json
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(agentDir, "opencode"), []byte(agentScript), 0o755); err != nil {
+		t.Fatalf("write fake agent: %v", err)
+	}
+	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	reviewListener, err := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if err != nil {
+		t.Fatalf("listen review.sock: %v", err)
+	}
+	t.Cleanup(func() { _ = reviewListener.Close() })
+	go func() {
+		for {
+			c, err := reviewListener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody, State: "open"},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "open"},
+			11: {Number: 11, Title: "Child 2", Body: childBody, State: "open"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AutoMaxCount: 50}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	t.Chdir(repoDir)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto", "1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{10, 11}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	expandedIdx := strings.Index(buf.String(), "expanded PRD #1 to 2 child issues")
+	if expandedIdx < 0 {
+		t.Fatalf("expected info log about PRD expansion, got: %q", buf.String())
+	}
+}
+
+func TestRun_Auto_LabelQueryExpandsPRD(t *testing.T) {
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	regularBody := "## What\n\nA regular open issue.\n"
+
+	repoDir := t.TempDir()
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("create sandman dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
+		t.Fatalf("create auto-selection-prompt.md: %v", err)
+	}
+
+	agentDir := t.TempDir()
+	agentScript := `#!/bin/sh
+set -eu
+if [ ! -f .sandman/selection-prompt.md ]; then
+  echo "selection-prompt.md missing" >&2
+  exit 2
+fi
+if grep -q '^#1 ' .sandman/selection-prompt.md; then
+  echo "PRD #1 leaked into selection prompt" >&2
+  exit 3
+fi
+if ! grep -q '^#10 ' .sandman/selection-prompt.md; then
+  echo "child #10 missing from selection prompt" >&2
+  exit 4
+fi
+if ! grep -q '^#20 ' .sandman/selection-prompt.md; then
+  echo "regular #20 missing from selection prompt" >&2
+  exit 5
+fi
+mkdir -p .sandman
+printf '[10, 20]\n' > .sandman/selected-issues.json
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(agentDir, "opencode"), []byte(agentScript), 0o755); err != nil {
+		t.Fatalf("write fake agent: %v", err)
+	}
+	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	reviewListener, err := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if err != nil {
+		t.Fatalf("listen review.sock: %v", err)
+	}
+	t.Cleanup(func() { _ = reviewListener.Close() })
+	go func() {
+		for {
+			c, err := reviewListener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody, State: "open", Labels: []string{"bug"}},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "open", Labels: []string{"bug"}},
+			20: {Number: 20, Title: "Regular", Body: regularBody, State: "open", Labels: []string{"bug"}},
+		},
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "PRD", Body: prdBody, State: "open", Labels: []string{"bug"}},
+			{Number: 20, Title: "Regular", Body: regularBody, State: "open", Labels: []string{"bug"}},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AutoMaxCount: 50}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	t.Chdir(repoDir)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto", "--label", "bug"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{10, 20}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+}
+
+func TestRun_Auto_ExplicitArgsDedupeAfterExpansion(t *testing.T) {
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+
+	repoDir := t.TempDir()
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("create sandman dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
+		t.Fatalf("create auto-selection-prompt.md: %v", err)
+	}
+
+	agentDir := t.TempDir()
+	agentScript := `#!/bin/sh
+set -eu
+if [ ! -f .sandman/selection-prompt.md ]; then
+  echo "selection-prompt.md missing" >&2
+  exit 2
+fi
+prompt=$(cat .sandman/selection-prompt.md)
+# Count lines that begin with "#10 ": should be exactly 1 (no duplicate).
+count=$(printf '%s\n' "$prompt" | grep -c '^#10 ')
+if [ "$count" != "1" ]; then
+  echo "expected #10 exactly once in selection prompt, got count=$count" >&2
+  exit 3
+fi
+if printf '%s\n' "$prompt" | grep -q '^#1 '; then
+  echo "PRD #1 leaked into selection prompt" >&2
+  exit 4
+fi
+mkdir -p .sandman
+printf '[10]\n' > .sandman/selected-issues.json
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(agentDir, "opencode"), []byte(agentScript), 0o755); err != nil {
+		t.Fatalf("write fake agent: %v", err)
+	}
+	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	reviewListener, err := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if err != nil {
+		t.Fatalf("listen review.sock: %v", err)
+	}
+	t.Cleanup(func() { _ = reviewListener.Close() })
+	go func() {
+		for {
+			c, err := reviewListener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody, State: "open"},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "open"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AutoMaxCount: 50}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	t.Chdir(repoDir)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto", "1", "10"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{10}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+}
+
+func TestRun_Auto_CapAppliesAfterExpansion(t *testing.T) {
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n- #12\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody, State: "open"},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "open"},
+			11: {Number: 11, Title: "Child 2", Body: childBody, State: "open"},
+			12: {Number: 12, Title: "Child 3", Body: childBody, State: "open"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AutoMaxCount: 50}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto", "--count", "1", "1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	// Cap of 1 applied AFTER expansion: cap of 1 over a 3-child set yields the
+	// single smallest-numbered child (#10). The PRD #1 itself must never be in
+	// the batch.
+	if len(spy.req.Issues) != 1 {
+		t.Fatalf("expected 1 issue (cap=1 applied post-expansion), got %d: %v", len(spy.req.Issues), spy.req.Issues)
+	}
+	if spy.req.Issues[0] == 1 {
+		t.Errorf("expected the post-expansion cap to drop the PRD, but #1 made it into the batch: %v", spy.req.Issues)
+	}
+	if spy.req.Issues[0] != 10 {
+		t.Errorf("expected the smallest child #10 (numeric sort after cap), got #%d", spy.req.Issues[0])
+	}
+}
+
+func TestRun_Auto_PRDWithNoChildrenFailsBeforeSelection(t *testing.T) {
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n"
+
+	repoDir := t.TempDir()
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("create sandman dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
+		t.Fatalf("create auto-selection-prompt.md: %v", err)
+	}
+
+	agentDir := t.TempDir()
+	// If the selection phase runs, the agent writes a sentinel file. The test
+	// asserts the agent never runs.
+	agentScript := `#!/bin/sh
+set -eu
+mkdir -p .sandman
+echo "selection-ran" > .sandman/agent-ran.flag
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(agentDir, "opencode"), []byte(agentScript), 0o755); err != nil {
+		t.Fatalf("write fake agent: %v", err)
+	}
+	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if listenErr != nil {
+		t.Fatalf("listen review.sock: %v", listenErr)
+	}
+	t.Cleanup(func() { _ = reviewListener.Close() })
+	go func() {
+		for {
+			c, err := reviewListener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Empty PRD", Body: prdBody, State: "open"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AutoMaxCount: 50}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	t.Chdir(repoDir)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto", "1"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for empty PRD, got nil")
+	}
+	if !strings.Contains(err.Error(), "no child issues for PRD #1") {
+		t.Fatalf("expected 'no child issues for PRD #1' in error, got %q", err)
+	}
+	if spy.called {
+		t.Error("expected batch runner NOT to be called when PRD resolution fails")
+	}
+	if _, statErr := os.Stat(filepath.Join(sandmanDir, "agent-ran.flag")); !os.IsNotExist(statErr) {
+		t.Errorf("expected selection phase to NOT run for empty PRD, but agent-ran flag exists")
+	}
+}
+
+func TestRun_Auto_NestedPRDFailsBeforeSelection(t *testing.T) {
+	outerBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
+	innerBody := "## Problem Statement\n\nInner.\n\n## Solution\n\nInner.\n\n## User Stories\n\n1. Inner.\n\n## Parent\n\n#1\n"
+
+	repoDir := t.TempDir()
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("create sandman dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
+		t.Fatalf("create auto-selection-prompt.md: %v", err)
+	}
+
+	agentDir := t.TempDir()
+	agentScript := `#!/bin/sh
+set -eu
+mkdir -p .sandman
+echo "selection-ran" > .sandman/agent-ran.flag
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(agentDir, "opencode"), []byte(agentScript), 0o755); err != nil {
+		t.Fatalf("write fake agent: %v", err)
+	}
+	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if listenErr != nil {
+		t.Fatalf("listen review.sock: %v", listenErr)
+	}
+	t.Cleanup(func() { _ = reviewListener.Close() })
+	go func() {
+		for {
+			c, err := reviewListener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Outer PRD", Body: outerBody, State: "open"},
+			10: {Number: 10, Title: "Inner PRD", Body: innerBody, State: "open"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AutoMaxCount: 50}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	t.Chdir(repoDir)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto", "1"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for nested PRD, got nil")
+	}
+	if !strings.Contains(err.Error(), "nested PRD detected: #10") {
+		t.Fatalf("expected 'nested PRD detected: #10' in error, got %q", err)
+	}
+	if spy.called {
+		t.Error("expected batch runner NOT to be called when PRD resolution fails")
+	}
+	if _, statErr := os.Stat(filepath.Join(sandmanDir, "agent-ran.flag")); !os.IsNotExist(statErr) {
+		t.Errorf("expected selection phase to NOT run for nested PRD, but agent-ran flag exists")
+	}
+}
+
+func TestRun_Auto_NonPRDPassthroughUntouched(t *testing.T) {
+	regular42 := &github.Issue{Number: 42, State: "open", Title: "Issue 42", Body: "## What\n\nJust a regular issue."}
+	regular43 := &github.Issue{Number: 43, State: "open", Title: "Issue 43", Body: "## What\n\nJust a regular issue."}
+
+	repoDir := t.TempDir()
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("create sandman dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
+		t.Fatalf("create auto-selection-prompt.md: %v", err)
+	}
+
+	agentDir := t.TempDir()
+	agentScript := `#!/bin/sh
+set -eu
+if [ ! -f .sandman/selection-prompt.md ]; then
+  echo "selection-prompt.md missing" >&2
+  exit 2
+fi
+prompt=$(cat .sandman/selection-prompt.md)
+if ! printf '%s\n' "$prompt" | grep -q '^#42 '; then
+  echo "issue #42 missing from selection prompt" >&2
+  exit 3
+fi
+if ! printf '%s\n' "$prompt" | grep -q '^#43 '; then
+  echo "issue #43 missing from selection prompt" >&2
+  exit 4
+fi
+mkdir -p .sandman
+printf '[42, 43]\n' > .sandman/selected-issues.json
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(agentDir, "opencode"), []byte(agentScript), 0o755); err != nil {
+		t.Fatalf("write fake agent: %v", err)
+	}
+	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if listenErr != nil {
+		t.Fatalf("listen review.sock: %v", listenErr)
+	}
+	t.Cleanup(func() { _ = reviewListener.Close() })
+	go func() {
+		for {
+			c, err := reviewListener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: regular42,
+			43: regular43,
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AutoMaxCount: 50}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	t.Chdir(repoDir)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto", "42", "43"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{42, 43}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+}
+
+func TestRun_Auto_ExpandedListReachesDependencyResolver(t *testing.T) {
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n- #12\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody, State: "open"},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "open"},
+			11: {Number: 11, Title: "Child 2", Body: childBody, State: "open"},
+			12: {Number: 12, Title: "Child 3", Body: childBody, State: "open"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AutoMaxCount: 50}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto", "1", "10", "11", "12"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	// Expected: PRD #1 replaced with children [10, 11, 12]; explicit args
+	// [10, 11, 12] are the same children; result is [10, 11, 12] with no PRD
+	// and no duplicates. This is the slice passed into the dependency
+	// resolver and ends up in req.Issues.
+	got := spy.req.Issues
+	want := []int{10, 11, 12}
+	if len(got) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, got)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, got[i])
+		}
+	}
+	for _, n := range got {
+		if n == 1 {
+			t.Errorf("expected PRD #1 to NOT be in req.Issues, but it is: %v", got)
+		}
+	}
+	seen := make(map[int]struct{}, len(got))
+	for _, n := range got {
+		if _, dup := seen[n]; dup {
+			t.Errorf("expected no duplicates in req.Issues, got %v", got)
+		}
+		seen[n] = struct{}{}
 	}
 }
 
