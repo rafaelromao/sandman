@@ -25,10 +25,10 @@ import (
 // readable in logs and terminals while still being inert to the
 // placeholder regex.
 const (
-	bodyOpenEscape       = "{{"
-	bodyCloseEscape      = "}}"
-	bodyOpenNeutralised  = "&#123;&#123;"
-	bodyCloseNeutralised = "&#125;&#125;"
+	bodyOpenSource  = "{{"
+	bodyCloseSource = "}}"
+	bodyOpenEscape  = "&#123;&#123;"
+	bodyCloseEscape = "&#125;&#125;"
 )
 
 // Renderer is a pure substitution function with no I/O, no global
@@ -53,8 +53,8 @@ func (r *Renderer) Render(template, body string, mapping map[string]string) (str
 		intermediate = strings.ReplaceAll(intermediate, "{{"+k+"}}", v)
 	}
 
-	neutralisedBody := strings.ReplaceAll(body, bodyOpenEscape, bodyOpenNeutralised)
-	neutralisedBody = strings.ReplaceAll(neutralisedBody, bodyCloseEscape, bodyCloseNeutralised)
+	neutralisedBody := strings.ReplaceAll(body, bodyOpenSource, bodyOpenEscape)
+	neutralisedBody = strings.ReplaceAll(neutralisedBody, bodyCloseSource, bodyCloseEscape)
 	result := strings.ReplaceAll(intermediate, "{{ISSUE_BODY}}", neutralisedBody)
 
 	unfilled := keyPattern.FindAllString(result, -1)
