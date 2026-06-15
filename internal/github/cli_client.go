@@ -570,7 +570,7 @@ func (c *CLIClient) SearchIssues(query string) ([]Issue, error) {
 			Labels: labelNames(payload.Labels),
 		})
 	}
-	sort.Slice(issues, func(i, j int) bool {
+	sort.SliceStable(issues, func(i, j int) bool {
 		return issues[i].Number < issues[j].Number
 	})
 	return issues, nil
