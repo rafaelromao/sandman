@@ -31,8 +31,11 @@ func (s *ControlSocket) Path() string {
 }
 
 func (s *ControlSocket) Start() error {
-	if err := os.MkdirAll(s.dir, 0755); err != nil {
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
+	}
+	if err := os.Chmod(s.dir, 0o700); err != nil {
+		return fmt.Errorf("chmod run dir: %w", err)
 	}
 
 	sockPath := s.Path()
@@ -40,6 +43,10 @@ func (s *ControlSocket) Start() error {
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return fmt.Errorf("create control socket: %w", err)
+	}
+	if err := os.Chmod(sockPath, 0o600); err != nil {
+		listener.Close()
+		return fmt.Errorf("chmod control socket: %w", err)
 	}
 	s.listener = listener
 

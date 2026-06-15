@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +31,182 @@ func (s *fakeCommander) calls() []int {
 	out := make([]int, len(s.abortCalls))
 	copy(out, s.abortCalls)
 	return out
+}
+
+func TestCommandServer_AbortFailureReturnsStableCode(t *testing.T) {
+	dir := t.TempDir()
+	stub := &fakeCommander{abortErr: errors.New("upstream-internal-sentinel-do-not-leak")}
+	server := NewCommandServer(dir, stub)
+	if err := server.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer server.Stop()
+
+	conn, err := net.Dial("unix", CommandSocketPath(dir))
+	if err != nil {
+		t.Fatalf("dial cmd.sock: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+
+	req := CommandRequest{Action: "abort", Issue: 42}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+
+	var resp CommandResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "error" {
+		t.Errorf("expected status=error, got %+v", resp)
+	}
+	if resp.Message == "upstream-internal-sentinel-do-not-leak" {
+		t.Errorf("response must not echo upstream err.Error() verbatim, got %q", resp.Message)
+	}
+	if !strings.Contains(resp.Message, "abort_failed") {
+		t.Errorf("expected stable error code in response, got %q", resp.Message)
+	}
+}
+
+func TestCommandServer_RejectsUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	stub := &fakeCommander{}
+	server := NewCommandServer(dir, stub)
+	if err := server.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer server.Stop()
+
+	conn, err := net.Dial("unix", CommandSocketPath(dir))
+	if err != nil {
+		t.Fatalf("dial cmd.sock: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+
+	// Well-formed JSON, but includes a field the server does not declare.
+	body := []byte(`{"action":"abort","issue":42,"bogus":true}`)
+	if _, err := conn.Write(body); err != nil {
+		t.Fatalf("write body: %v", err)
+	}
+
+	var resp CommandResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "error" {
+		t.Errorf("expected status=error for unknown field, got %+v", resp)
+	}
+	if len(stub.calls()) != 0 {
+		t.Errorf("expected commander to be untouched, got %v", stub.calls())
+	}
+}
+
+func TestCommandServer_RejectsOversizeBody(t *testing.T) {
+	dir := t.TempDir()
+	stub := &fakeCommander{}
+	server := NewCommandServer(dir, stub)
+	if err := server.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer server.Stop()
+
+	conn, err := net.Dial("unix", CommandSocketPath(dir))
+	if err != nil {
+		t.Fatalf("dial cmd.sock: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	closeGuard := time.AfterFunc(3*time.Second, func() { _ = conn.Close() })
+	defer closeGuard.Stop()
+
+	// 2 MB body: well over the 1 MB LimitReader cap. The server is
+	// expected to reject the request without invoking the commander
+	// and without producing a successful "ok" response.
+	const bodySize = 2 * 1024 * 1024
+	padding := make([]byte, bodySize)
+	for i := range padding {
+		padding[i] = 'a'
+	}
+	oversize := CommandRequest{Action: "abort", Issue: 42}
+	raw, err := json.Marshal(oversize)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	payload := append(raw[:len(raw)-1], append([]byte(`,"pad":"`), append(padding, []byte(`"}`)...)...)...)
+	// Write errors are expected if the server closes the conn mid-stream
+	// (which is the rejection behavior we are verifying). The decoder
+	// call below is what we assert on.
+	_, _ = conn.Write(payload)
+
+	var resp CommandResponse
+	dec := json.NewDecoder(conn)
+	dec.DisallowUnknownFields()
+	decodeErr := dec.Decode(&resp)
+	switch {
+	case decodeErr == nil:
+		if resp.Status == "ok" {
+			t.Errorf("expected rejection of 2 MB body, got status=ok: %+v", resp)
+		}
+	default:
+		// A read/decode error is an acceptable form of rejection: the
+		// server closed the connection without granting the abort.
+	}
+
+	// Wait for the server's handle goroutine to finish processing the
+	// rejected request before checking the commander. Bounded by a
+	// short deadline so a regression cannot hang the test.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if len(stub.calls()) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(stub.calls()) != 0 {
+		t.Errorf("expected commander to be untouched for 2 MB body, got %v", stub.calls())
+	}
+}
+
+func TestCommandServer_StartSetsSocketMode0600(t *testing.T) {
+	dir := t.TempDir()
+	server := NewCommandServer(dir, &fakeCommander{})
+	if err := server.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer server.Stop()
+
+	info, err := os.Stat(CommandSocketPath(dir))
+	if err != nil {
+		t.Fatalf("stat cmd.sock: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("cmd.sock mode = %o, want 0o600", got)
+	}
+}
+
+func TestCommandServer_StartSetsRunDirMode0700(t *testing.T) {
+	dir := t.TempDir()
+	server := NewCommandServer(dir, &fakeCommander{})
+	if err := server.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer server.Stop()
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat run dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("run dir mode = %o, want 0o700", got)
+	}
 }
 
 func TestCommandServer_DispatchesAbortAndWritesResponse(t *testing.T) {
@@ -94,6 +271,9 @@ func TestCommandServer_TranslatesAbortError(t *testing.T) {
 	}
 	if resp.Message == "" {
 		t.Fatal("expected error message to be set")
+	}
+	if resp.Message == "batch: no such issue" {
+		t.Errorf("response must not echo the upstream err.Error() verbatim, got %q", resp.Message)
 	}
 }
 
@@ -167,10 +347,12 @@ func TestCommandServer_StartRemovesStaleSocket(t *testing.T) {
 
 // TestCommandResponse_DecodesRecordedAbortResponse exercises the public
 // wire contract on the response side: each payload is a literal
-// recording of the bytes the Command Server writes for an abort reply,
-// and the test asserts the decoded fields round-trip. The two cases
-// cover the only Status values the daemon ever writes (ok, error) so
-// future clients can decode both shapes with confidence.
+// recording of the JSON shape the Command Server writes for an abort
+// reply, and the test asserts the decoded fields round-trip. The cases
+// cover the JSON tag shape and value space the daemon writes (ok, error
+// with the "abort_failed" stable code, and error with an
+// "invalid request" code from the unknown-action path) so future
+// clients can decode every observed shape with confidence.
 func TestCommandResponse_DecodesRecordedAbortResponse(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -183,9 +365,14 @@ func TestCommandResponse_DecodesRecordedAbortResponse(t *testing.T) {
 			CommandResponse{Status: "ok"},
 		},
 		{
-			"abort failed",
-			`{"status":"error","message":"batch: no such issue"}`,
-			CommandResponse{Status: "error", Message: "batch: no such issue"},
+			"abort failed with stable code",
+			`{"status":"error","message":"abort_failed"}`,
+			CommandResponse{Status: "error", Message: "abort_failed"},
+		},
+		{
+			"unknown action error",
+			`{"status":"error","message":"unknown action: frobnicate"}`,
+			CommandResponse{Status: "error", Message: "unknown action: frobnicate"},
 		},
 	}
 	for _, tc := range cases {

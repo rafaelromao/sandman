@@ -3,9 +3,11 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // IssueCommander is the seam the command socket uses to abort a single
@@ -13,6 +15,11 @@ import (
 type IssueCommander interface {
 	AbortIssue(issueNumber int) error
 }
+
+const (
+	maxCommandRequestBytes = 1 << 20
+	commandReadDeadline    = 5 * time.Second
+)
 
 // CommandRequest is the JSON wire format the Command Server accepts from
 // external clients on the cmd.sock Unix socket at
@@ -37,11 +44,12 @@ type CommandRequest struct {
 // casually — every field and tag below is observable on the wire. The
 // Daemon Process is the only writer; the Portal (and any future client)
 // decodes it. Any change to the JSON field shape is a wire-format break
-// for every client. Status is "ok" on success and "error" on failure;
-// Message is populated when Status is "error" and is treated as
-// human-readable (not a stable identifier). The Command Server is
-// distinct from the Control Socket at run.sock, which streams daemon
-// output to Attach clients.
+// for every client. Status is "ok" on success and "error" on failure.
+// When Status is "error", Message carries a stable machine-readable
+// code (currently "invalid request", "unknown action: <name>", or
+// "abort_failed") so clients can branch on it without parsing free-form
+// text. The Command Server is distinct from the Control Socket at
+// run.sock, which streams daemon output to Attach clients.
 type CommandResponse struct {
 	Status  string `json:"status"`
 	Message string `json:"message,omitempty"`
@@ -72,14 +80,21 @@ func NewCommandServer(dir string, commander IssueCommander) *CommandServer {
 // Start creates the command socket and begins accepting connections.
 // It removes any stale socket at the same path before listening.
 func (s *CommandServer) Start() error {
-	if err := os.MkdirAll(s.dir, 0755); err != nil {
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
+	}
+	if err := os.Chmod(s.dir, 0o700); err != nil {
+		return fmt.Errorf("chmod run dir: %w", err)
 	}
 	sockPath := CommandSocketPath(s.dir)
 	_ = os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return fmt.Errorf("create command socket: %w", err)
+	}
+	if err := os.Chmod(sockPath, 0o600); err != nil {
+		listener.Close()
+		return fmt.Errorf("chmod command socket: %w", err)
 	}
 	s.listener = listener
 	go s.acceptLoop()
@@ -111,15 +126,21 @@ func (s *CommandServer) acceptLoop() {
 
 func (s *CommandServer) handle(conn net.Conn) {
 	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(commandReadDeadline)); err != nil {
+		writeResponse(conn, CommandResponse{Status: "error", Message: "invalid request"})
+		return
+	}
+	dec := json.NewDecoder(io.LimitReader(conn, maxCommandRequestBytes))
+	dec.DisallowUnknownFields()
 	var req CommandRequest
-	if err := json.NewDecoder(conn).Decode(&req); err != nil {
+	if err := dec.Decode(&req); err != nil {
 		writeResponse(conn, CommandResponse{Status: "error", Message: "invalid request"})
 		return
 	}
 	switch req.Action {
 	case "abort":
 		if err := s.commander.AbortIssue(req.Issue); err != nil {
-			writeResponse(conn, CommandResponse{Status: "error", Message: err.Error()})
+			writeResponse(conn, CommandResponse{Status: "error", Message: "abort_failed"})
 			return
 		}
 		writeResponse(conn, CommandResponse{Status: "ok"})

@@ -23,6 +23,42 @@ func TestControlSocket_StartCreatesSocket(t *testing.T) {
 	info.Close()
 }
 
+func TestControlSocket_StartSetsSocketMode0600(t *testing.T) {
+	dir := t.TempDir()
+	sock := NewControlSocket(dir, NewBroadcaster())
+
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	defer sock.Stop()
+
+	info, err := os.Stat(filepath.Join(dir, "run.sock"))
+	if err != nil {
+		t.Fatalf("stat socket: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("socket mode = %o, want 0o600", got)
+	}
+}
+
+func TestControlSocket_StartSetsRunDirMode0700(t *testing.T) {
+	dir := t.TempDir()
+	sock := NewControlSocket(dir, NewBroadcaster())
+
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	defer sock.Stop()
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat run dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("run dir mode = %o, want 0o700", got)
+	}
+}
+
 func TestControlSocket_CustomFilename(t *testing.T) {
 	dir := t.TempDir()
 	sock := NewControlSocketWithName(dir, "review.sock", NewBroadcaster())
@@ -40,6 +76,24 @@ func TestControlSocket_CustomFilename(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(dir, "run.sock")); err == nil {
 		t.Fatalf("default run.sock should not exist when custom name is used")
+	}
+}
+
+func TestControlSocket_StartWithCustomNameSetsSocketMode0600(t *testing.T) {
+	dir := t.TempDir()
+	sock := NewControlSocketWithName(dir, "review.sock", NewBroadcaster())
+
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	defer sock.Stop()
+
+	info, err := os.Stat(filepath.Join(dir, "review.sock"))
+	if err != nil {
+		t.Fatalf("stat socket: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("socket mode = %o, want 0o600", got)
 	}
 }
 
