@@ -2146,19 +2146,14 @@ func isMissingBranchError(err error, out []byte) bool {
 // for a given issue. It is idempotent — missing artifacts do not cause errors.
 //
 // When `git branch -D <branch>` from the main-repo cwd fails because the
-// branch is currently checked out somewhere (git reports "checked out
-// at …" when the main repo holds the branch, or "used by worktree at …"
-// when a different worktree holds it) and `strandedReconcile` is non-nil
-// and true, the function auto-recovers by:
-//  1. Detecting a stranded worktree at <worktreeBase>/<branch> via
-//     sandbox.StrandedWorktree, and if present, deleting the branch
-//     from inside that worktree's cwd; or
-//  2. If no stranded worktree exists, `git checkout -f <baseBranch>` in
-//     the main repo and retrying the delete.
+// branch is currently checked out somewhere, and `strandedReconcile` is
+// non-nil and true, the function runs the auto-recovery flow described in
+// ADR-0027 (stranded-worktree first, then base-branch checkout).
 //
-// `strandedReconcile` is a tri-state: nil preserves today's
-// belt-and-suspenders behaviour (the failure is logged and the function
-// continues); false is the explicit opt-out (`--no-reconcile-stranded`).
+// `strandedReconcile` is nil preserves today's belt-and-suspenders
+// behaviour (the failure is logged and the function continues); false
+// is the explicit opt-out (`--no-reconcile-stranded`).
+//
 // `baseBranch` is the branch the function falls back to when no stranded
 // worktree is found; when empty, the fallback path is skipped.
 func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool) {

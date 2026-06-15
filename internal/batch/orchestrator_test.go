@@ -7535,8 +7535,11 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 			t.Errorf("expected branch %q to be deleted, rev-parse succeeded: %s", branch, out)
 		}
 		// The main repo must have ended up on the base branch.
-		if cur, err := runGitOut(dir, "rev-parse", "--abbrev-ref", "HEAD"); err != nil || strings.TrimSpace(cur) != "main" {
-			t.Errorf("expected main repo to be on base branch %q after recovery, got %q (err=%v)", "main", cur, err)
+		headCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+		headCmd.Dir = dir
+		headOut, err := headCmd.CombinedOutput()
+		if err != nil || strings.TrimSpace(string(headOut)) != "main" {
+			t.Errorf("expected main repo to be on base branch %q after recovery, got %q (err=%v)", "main", strings.TrimSpace(string(headOut)), err)
 		}
 		// No error must be logged.
 		if strings.Contains(logBuf.String(), "error:") {
@@ -7603,13 +7606,6 @@ func TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders(t *tes
 	if !strings.Contains(logBuf.String(), "error:") {
 		t.Errorf("expected an error log when strandedReconcile is false, got:\n%s", logBuf.String())
 	}
-}
-
-func runGitOut(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	return string(out), err
 }
 
 func TestOrchestrator_EmitsRunQueuedEventWhenBlocked(t *testing.T) {

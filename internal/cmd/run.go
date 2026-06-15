@@ -702,7 +702,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
 	cmd.Flags().Bool("override", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
-	cmd.Flags().Bool("reconcile-stranded", true, "Auto-recover when the main repo is checked out on a sandman/N-… branch that needs to be deleted under --override (or when the sandbox path trips on the same condition); set to false with --no-reconcile-stranded to opt out")
+	cmd.Flags().Bool("reconcile-stranded", true, "Auto-recover stranded worktrees before the run starts (default true; use --no-reconcile-stranded to opt out)")
 	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff and stored settings")
 
 	return cmd
