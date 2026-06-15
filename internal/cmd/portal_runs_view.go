@@ -51,6 +51,12 @@ type portalRun struct {
 	// the same (IssueNumber, BatchKey) so a current active row is never hidden
 	// by a historical aborted row from another batch.
 	BatchKey string `json:"batchKey,omitempty"`
+	// BatchIssues carries the full ordered list of issues in the batch the
+	// row came from. Populated for active-batch derived rows; omitted for
+	// historical or prompt-only runs. When len(BatchIssues) > 1 the row is
+	// part of a mixed batch and must not be mistaken for a private
+	// single-issue run.
+	BatchIssues []int `json:"batchIssues,omitempty"`
 	// IssueTitle carries the human-readable GitHub issue title from the event
 	// payload (added by issue #833). Empty for historical or prompt-only runs.
 	IssueTitle string `json:"issueTitle,omitempty"`
@@ -282,18 +288,22 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun,
 		}
 		runDir := filepath.Dir(instance.SocketPath)
 		manifest, manifestErr := daemon.ReadManifest(runDir)
-		issueNumber, _ := v.parseRunDirIssue(instance.Name)
 		prNumber, _ := v.parseRunDirPR(instance.Name)
 		issueNumbers := []int(nil)
+		issueNumber := 0
 		startedAt := info.ModTime()
+		// Issue identity is taken from the batch manifest only. The
+		// directory name (e.g. run-NNN-<ts>) is not consulted, so a
+		// mixed batch can no longer be mistaken for a private
+		// single-issue run by reading the sibling issue's dir name.
 		if manifestErr == nil {
 			issueNumbers = append(issueNumbers, manifest.Issues...)
 			if !manifest.CreatedAt.IsZero() {
 				startedAt = manifest.CreatedAt
 			}
 		}
-		if len(issueNumbers) == 0 && issueNumber > 0 {
-			issueNumbers = []int{issueNumber}
+		if len(issueNumbers) > 0 {
+			issueNumber = issueNumbers[0]
 		}
 		active = append(active, portalActiveRun{
 			Key:          instance.Name,
@@ -400,6 +410,11 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, ""),
 		Log:         "Queued. Waiting to start.",
 		BatchKey:    active.Key,
+	}
+	// Only surface batch membership for mixed batches. A single-issue
+	// batch is not interesting to surface and would add payload noise.
+	if len(active.IssueNumbers) > 1 {
+		run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 	}
 	if state != nil {
 		run.Key = state.RunID
@@ -812,21 +827,6 @@ func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, 
 		return ""
 	}
 	return "/api/logs?path=" + url.QueryEscape(relPath)
-}
-
-func (v *portalRunsView) parseRunDirIssue(name string) (int, bool) {
-	if !strings.HasPrefix(name, "run-") {
-		return 0, false
-	}
-	parts := strings.Split(strings.TrimPrefix(name, "run-"), "-")
-	if len(parts) < 2 {
-		return 0, false
-	}
-	n, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, false
-	}
-	return n, true
 }
 
 func (v *portalRunsView) parseRunDirPR(name string) (int, bool) {

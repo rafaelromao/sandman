@@ -66,7 +66,20 @@
     meta.classList.add('meta-line', 'mono');
     meta.textContent = helpers.renderRunMeta(run);
     wrap.appendChild(meta);
+    const batchMembership = renderBatchMembership(run);
+    if (batchMembership) wrap.appendChild(batchMembership);
     td.appendChild(wrap);
+  }
+
+  function renderBatchMembership(run) {
+    const issues = Array.isArray(run && run.batchIssues) ? run.batchIssues : [];
+    if (issues.length <= 1) return null;
+    const span = global.document.createElement('span');
+    span.classList.add('batch-membership', 'mono');
+    span.setAttribute('data-batch-membership', '1');
+    const labels = issues.map((n) => '#' + n);
+    span.textContent = 'Part of batch: ' + labels.join(', ');
+    return span;
   }
 
   function buildBadgeCell(td, run, helpers) {
