@@ -8,10 +8,18 @@ import (
 	"syscall"
 )
 
-// Process represents a running OS process that can be signalled.
+// Process represents a running OS process that can be signalled and waited on.
+//
+// The sandbox package owns the only goroutine that calls the underlying
+// exec.Cmd.Wait. Callers must not call Wait themselves — they observe
+// process exit via WaitDone, which closes when the package's internal
+// Wait goroutine returns. WaitDone is the canonical exit signal;
+// supervisors should select on it (or on their own context / timeout)
+// rather than sleeping.
 type Process interface {
 	Signal(sig os.Signal) error
 	Kill() error
+	WaitDone() <-chan struct{}
 }
 
 // Sandbox provides isolation for one or more AgentRuns.

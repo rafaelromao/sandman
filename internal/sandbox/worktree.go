@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -23,6 +24,8 @@ type WorktreeSandbox struct {
 	gitName           string
 	gitEmail          string
 	cmd               *exec.Cmd
+	processWrapper    *processWrapper
+	processOnce       sync.Once
 	errorLog          io.Writer
 }
 
@@ -375,7 +378,13 @@ func (s *WorktreeSandbox) Process() Process {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return nil
 	}
-	return s.cmd.Process
+	s.processOnce.Do(func() {
+		s.processWrapper = newProcessWrapper(s.cmd)
+	})
+	if s.processWrapper == nil {
+		return nil
+	}
+	return s.processWrapper
 }
 
 // Ensure WorktreeSandbox implements Sandbox.

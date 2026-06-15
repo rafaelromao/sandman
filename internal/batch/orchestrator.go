@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode"
 
@@ -234,6 +233,17 @@ type Orchestrator struct {
 
 	issueCancelsMu sync.Mutex
 	issueCancels   map[int]context.CancelFunc
+
+	// activeMu guards activeRuns and the supervisor done-channel
+	// slice. activeRuns maps the issue number (or 0 for prompt-only
+	// runs) to the sandbox currently running it. The supervisor slice
+	// captures the done channels of the per-session superviseShutdown
+	// goroutines so RunBatch can fan in on real process exit. Both
+	// fields are shared by every execute and executePromptOnly call
+	// and share a single mutex.
+	activeMu               sync.Mutex
+	activeRuns             map[int]sandbox.Sandbox
+	shutdownSupervisorDone []<-chan struct{}
 }
 
 // defaultLookupGHToken shells out to `gh auth token` and returns the
@@ -598,8 +608,32 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		runSessionOpts: runSessionOptions{
 			baseBranchSyncMu: &sync.Mutex{},
 		},
-		issueCancels: make(map[int]context.CancelFunc),
+		issueCancels:           make(map[int]context.CancelFunc),
+		activeRuns:             make(map[int]sandbox.Sandbox),
+		shutdownSupervisorDone: nil,
 	}
+}
+
+// trackShutdownSupervisor records a done channel returned by
+// superviseShutdown so RunBatch can fan in on the actual process exit.
+func (o *Orchestrator) trackShutdownSupervisor(done <-chan struct{}) {
+	o.activeMu.Lock()
+	o.shutdownSupervisorDone = append(o.shutdownSupervisorDone, done)
+	o.activeMu.Unlock()
+}
+
+// snapshotShutdownSupervisors returns a copy of the current supervisor
+// done-channel list. RunBatch calls this when ctx fires so it can
+// wait on a fixed snapshot of the in-flight runs.
+func (o *Orchestrator) snapshotShutdownSupervisors() []<-chan struct{} {
+	o.activeMu.Lock()
+	defer o.activeMu.Unlock()
+	if len(o.shutdownSupervisorDone) == 0 {
+		return nil
+	}
+	out := make([]<-chan struct{}, len(o.shutdownSupervisorDone))
+	copy(out, o.shutdownSupervisorDone)
+	return out
 }
 
 // AbortIssue cancels the context of a single in-flight AgentRun, leaving
@@ -628,6 +662,27 @@ func (o *Orchestrator) unregisterIssueCancel(issueNumber int) {
 	o.issueCancelsMu.Lock()
 	delete(o.issueCancels, issueNumber)
 	o.issueCancelsMu.Unlock()
+}
+
+// registerActiveRun stores sb under the given key in the shared
+// activeRuns map. The shutdownSupervisorDone channel is captured by
+// RunBatch's fan-in goroutine so the batch-wide wait completes only
+// after every per-session supervisor has reported the real exit.
+func (o *Orchestrator) registerActiveRun(key int, sb sandbox.Sandbox) {
+	o.activeMu.Lock()
+	if o.activeRuns == nil {
+		o.activeRuns = make(map[int]sandbox.Sandbox)
+	}
+	o.activeRuns[key] = sb
+	o.activeMu.Unlock()
+}
+
+func (o *Orchestrator) unregisterActiveRun(key int) {
+	o.activeMu.Lock()
+	if o.activeRuns != nil {
+		delete(o.activeRuns, key)
+	}
+	o.activeMu.Unlock()
 }
 
 // RunBatch executes the requested AgentRuns in parallel.
@@ -805,11 +860,21 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		completed[num] = make(chan struct{})
 	}
 
-	var activeMu sync.Mutex
-	activeRuns := make(map[int]sandbox.Sandbox)
 	batchIdentityResolver := newBatchIdentityResolver(o, ".")
 
-	// Graceful shutdown: on context cancel, SIGTERM all processes, wait 10s, then SIGKILL.
+	// Reset the per-batch supervisor set so leftover entries from a
+	// previous RunBatch call on the same orchestrator do not stall
+	// this batch's fan-in.
+	o.activeMu.Lock()
+	o.shutdownSupervisorDone = nil
+	o.activeMu.Unlock()
+
+	// Graceful shutdown: each per-session supervisor (spawned in
+	// execute / executePromptOnly) owns the signal/kill of its own
+	// process. This batch-wide goroutine only fans in: once ctx
+	// fires, it waits for every supervisor's done channel to close,
+	// so RunBatch returns as soon as every process is actually gone
+	// instead of after a wall-clock sleep.
 	shutdownDone := make(chan struct{})
 	defer close(shutdownDone)
 
@@ -820,28 +885,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return
 		}
 
-		timeout := o.runSessionOpts.killTimeout
-		if timeout == 0 {
-			timeout = 10 * time.Second
+		for _, done := range o.snapshotShutdownSupervisors() {
+			<-done
 		}
-
-		activeMu.Lock()
-		for _, sb := range activeRuns {
-			if p := sb.Process(); p != nil {
-				p.Signal(syscall.SIGTERM)
-			}
-		}
-		activeMu.Unlock()
-
-		time.Sleep(timeout)
-
-		activeMu.Lock()
-		for _, sb := range activeRuns {
-			if p := sb.Process(); p != nil {
-				p.Kill()
-			}
-		}
-		activeMu.Unlock()
 	}()
 
 	// Start-order lock: serializes ready goroutines in spawn order when
@@ -997,7 +1043,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 
-			res, started := o.runSingle(issueCtx, issueNum, cfg, agentName, agentCfg, mode == ModeContinue, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, activeRuns, &activeMu, policy.sandboxFactory, policy.containerAlloc, mode == ModeOverride, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile)
+			res, started := o.runSingle(issueCtx, issueNum, cfg, agentName, agentCfg, mode == ModeContinue, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, policy.sandboxFactory, policy.containerAlloc, mode == ModeOverride, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -1295,8 +1341,6 @@ type runSession struct {
 	branches                   map[int]string
 	renderCfg                  prompt.RenderConfig
 	outputWriter               io.Writer
-	activeRuns                 map[int]sandbox.Sandbox
-	activeMu                   *sync.Mutex
 	sbFactory                  SandboxFactory
 	containerAlloc             containerAllocator
 	baseBranch                 string
@@ -1539,7 +1583,7 @@ func (s *runSession) runOnce(
 
 // runSingle runs a single issue-driven AgentRun. It builds a runSession and
 // delegates to (*runSession).execute.
-func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, activeRuns map[int]sandbox.Sandbox, activeMu *sync.Mutex, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool) (AgentRunResult, bool) {
 	s := &runSession{
 		o:           o,
 		issueNumber: num,
@@ -1560,8 +1604,6 @@ func (o *Orchestrator) runSingle(ctx context.Context, num int, cfg *config.Confi
 		branches:                   branches,
 		renderCfg:                  renderCfg,
 		outputWriter:               outputWriter,
-		activeRuns:                 activeRuns,
-		activeMu:                   activeMu,
 		sbFactory:                  sbFactory,
 		containerAlloc:             containerAlloc,
 		baseBranch:                 baseBranch,
@@ -1636,39 +1678,30 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return res, false
 	}
 
-	s.activeMu.Lock()
-	s.activeRuns[s.issueNumber] = wt
-	s.activeMu.Unlock()
-	defer func() {
-		s.activeMu.Lock()
-		delete(s.activeRuns, s.issueNumber)
-		s.activeMu.Unlock()
-	}()
+	o.registerActiveRun(s.issueNumber, wt)
+	defer o.unregisterActiveRun(s.issueNumber)
 
-	issueShutdownDone := make(chan struct{})
-	defer close(issueShutdownDone)
+	// Pre-register the supervisor's done channel with the batch-wide
+	// fan-in BEFORE spawning the supervisor, so a session that
+	// started just before ctx fired cannot race the snapshot taken
+	// by RunBatch's fan-in goroutine. The fan-in waits on this
+	// channel directly; the supervisor closes it when it has
+	// finished shutting the process down.
+	supervisorDone := make(chan struct{})
+	o.trackShutdownSupervisor(supervisorDone)
+	sessionDone := make(chan struct{})
 	go func() {
+		defer close(supervisorDone)
 		select {
 		case <-ctx.Done():
-		case <-issueShutdownDone:
-			return
-		}
-
-		timeout := s.opts.killTimeout
-		if timeout == 0 {
-			timeout = 10 * time.Second
-		}
-
-		if p := wt.Process(); p != nil {
-			p.Signal(syscall.SIGINT)
-		}
-
-		time.Sleep(timeout)
-
-		if p := wt.Process(); p != nil {
-			p.Kill()
+			if proc := wt.Process(); proc != nil {
+				done := superviseShutdown(context.Background(), proc, s.opts.killTimeout)
+				<-done
+			}
+		case <-sessionDone:
 		}
 	}()
+	defer close(sessionDone)
 
 	if o.eventLog != nil {
 		promptSourceType := "current"
@@ -1939,25 +1972,28 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 	}
 
-	activeRuns := map[int]sandbox.Sandbox{0: wt}
-	shutdownDone := make(chan struct{})
-	defer close(shutdownDone)
+	o.registerActiveRun(0, wt)
+	defer o.unregisterActiveRun(0)
+
+	// Pre-register the supervisor's done channel with the batch-wide
+	// fan-in before spawning the supervisor, so a session that
+	// started just before ctx fired cannot race the snapshot taken
+	// by RunBatch's fan-in goroutine.
+	supervisorDone := make(chan struct{})
+	o.trackShutdownSupervisor(supervisorDone)
+	sessionDone := make(chan struct{})
 	go func() {
+		defer close(supervisorDone)
 		select {
 		case <-ctx.Done():
-		case <-shutdownDone:
-			return
-		}
-
-		if p := wt.Process(); p != nil {
-			p.Signal(syscall.SIGTERM)
-		}
-		time.Sleep(10 * time.Second)
-		if p := wt.Process(); p != nil {
-			p.Kill()
+			if proc := wt.Process(); proc != nil {
+				done := superviseShutdown(context.Background(), proc, s.opts.killTimeout)
+				<-done
+			}
+		case <-sessionDone:
 		}
 	}()
-	defer func() { delete(activeRuns, 0) }()
+	defer close(sessionDone)
 
 	runID := s.runID
 	if runID == "" {

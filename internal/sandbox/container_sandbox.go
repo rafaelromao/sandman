@@ -9,19 +9,22 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // ContainerSandbox provides isolation via a container and a git worktree.
 // In isolated mode each sandbox owns its container; in shared mode the container
 // lifecycle is managed by the caller.
 type ContainerSandbox struct {
-	worktree      Sandbox
-	container     Container
-	binary        string
-	repoPath      string
-	ownsContainer bool
-	cmd           *exec.Cmd
-	execFn        func(name string, arg ...string) *exec.Cmd
+	worktree       Sandbox
+	container      Container
+	binary         string
+	repoPath       string
+	ownsContainer  bool
+	cmd            *exec.Cmd
+	processWrapper *processWrapper
+	processOnce    sync.Once
+	execFn         func(name string, arg ...string) *exec.Cmd
 }
 
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
@@ -191,7 +194,13 @@ func (s *ContainerSandbox) Process() Process {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return nil
 	}
-	return s.cmd.Process
+	s.processOnce.Do(func() {
+		s.processWrapper = newProcessWrapper(s.cmd)
+	})
+	if s.processWrapper == nil {
+		return nil
+	}
+	return s.processWrapper
 }
 
 // Ensure ContainerSandbox implements Sandbox.

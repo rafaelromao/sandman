@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -18,6 +19,7 @@ import (
 )
 
 type fakeProcess struct {
+	mu            sync.Mutex
 	sigTermCalled bool
 	killCalled    bool
 	killed        chan struct{}
@@ -28,6 +30,8 @@ func makeFakeProcess() *fakeProcess {
 }
 
 func (p *fakeProcess) Signal(sig os.Signal) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if sig == syscall.SIGTERM {
 		p.sigTermCalled = true
 	}
@@ -35,18 +39,46 @@ func (p *fakeProcess) Signal(sig os.Signal) error {
 }
 
 func (p *fakeProcess) Kill() error {
+	p.mu.Lock()
 	p.killCalled = true
-	if p.killed != nil {
+	killed := p.killed
+	p.mu.Unlock()
+	if killed != nil {
 		select {
-		case <-p.killed:
+		case <-killed:
 		default:
-			close(p.killed)
+			close(killed)
 		}
 	}
 	return nil
 }
 
+func (p *fakeProcess) WaitDone() <-chan struct{} {
+	if p.killed == nil {
+		p.killed = make(chan struct{})
+	}
+	return p.killed
+}
+
+// sigTermObserved returns true if Signal(SIGTERM) has been called. Safe
+// to read concurrently with Signal/Kill.
+func (p *fakeProcess) sigTermObserved() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sigTermCalled
+}
+
+// killObserved returns true if Kill has been called. Safe to read
+// concurrently with Signal/Kill.
+func (p *fakeProcess) killObserved() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.killCalled
+}
+
 type fakeSandbox struct {
+	mu sync.Mutex
+
 	startCalled        bool
 	startErr           error
 	writePromptCalled  bool
@@ -71,26 +103,37 @@ type fakeSandbox struct {
 }
 
 func (f *fakeSandbox) Start() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.startCalled = true
 	return f.startErr
 }
 func (f *fakeSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	f.mu.Lock()
 	f.execCalled = true
 	f.execCommand = command
-	if stdout != nil && f.execStdout != "" {
-		stdout.Write([]byte(f.execStdout))
+	stdoutStr := f.execStdout
+	stderrStr := f.execStderr
+	execErr := f.execError
+	f.mu.Unlock()
+	if stdout != nil && stdoutStr != "" {
+		stdout.Write([]byte(stdoutStr))
 	}
-	if stderr != nil && f.execStderr != "" {
-		stderr.Write([]byte(f.execStderr))
+	if stderr != nil && stderrStr != "" {
+		stderr.Write([]byte(stderrStr))
 	}
-	return f.execError
+	return execErr
 }
 func (f *fakeSandbox) ExecInteractive(ctx context.Context, command string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.execInteractiveCalled = true
 	f.execCommand = command
 	return f.execError
 }
 func (f *fakeSandbox) Stop() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.stopCalled = true
 	return nil
 }
@@ -102,6 +145,8 @@ func (f *fakeSandbox) RepoPath() string {
 	return filepath.Dir(f.workDir)
 }
 func (f *fakeSandbox) WritePrompt(content string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.writePromptCalled = true
 	f.writePromptContent = content
 	return f.writePromptError
@@ -113,14 +158,20 @@ func (f *fakeSandbox) Process() sandbox.Process {
 	return f.process
 }
 func (f *fakeSandbox) SetOverride(override bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.setOverrideCalled = true
 	f.setOverrideValue = override
 }
 func (f *fakeSandbox) SetStrandedReconcile(enabled bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.setStrandedReconcileCalled = true
 	f.setStrandedReconcileValue = enabled
 }
 func (f *fakeSandbox) SetGitIdentity(name, email string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.setIdentityName = name
 	f.setIdentityEmail = email
 }
