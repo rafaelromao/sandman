@@ -3,9 +3,11 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // IssueCommander is the seam the command socket uses to abort a single
@@ -72,14 +74,21 @@ func NewCommandServer(dir string, commander IssueCommander) *CommandServer {
 // Start creates the command socket and begins accepting connections.
 // It removes any stale socket at the same path before listening.
 func (s *CommandServer) Start() error {
-	if err := os.MkdirAll(s.dir, 0755); err != nil {
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
+	}
+	if err := os.Chmod(s.dir, 0o700); err != nil {
+		return fmt.Errorf("chmod run dir: %w", err)
 	}
 	sockPath := CommandSocketPath(s.dir)
 	_ = os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return fmt.Errorf("create command socket: %w", err)
+	}
+	if err := os.Chmod(sockPath, 0o600); err != nil {
+		listener.Close()
+		return fmt.Errorf("chmod command socket: %w", err)
 	}
 	s.listener = listener
 	go s.acceptLoop()
@@ -111,15 +120,21 @@ func (s *CommandServer) acceptLoop() {
 
 func (s *CommandServer) handle(conn net.Conn) {
 	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		writeResponse(conn, CommandResponse{Status: "error", Message: "invalid request"})
+		return
+	}
+	dec := json.NewDecoder(io.LimitReader(conn, 1<<20))
+	dec.DisallowUnknownFields()
 	var req CommandRequest
-	if err := json.NewDecoder(conn).Decode(&req); err != nil {
+	if err := dec.Decode(&req); err != nil {
 		writeResponse(conn, CommandResponse{Status: "error", Message: "invalid request"})
 		return
 	}
 	switch req.Action {
 	case "abort":
 		if err := s.commander.AbortIssue(req.Issue); err != nil {
-			writeResponse(conn, CommandResponse{Status: "error", Message: err.Error()})
+			writeResponse(conn, CommandResponse{Status: "error", Message: "abort_failed"})
 			return
 		}
 		writeResponse(conn, CommandResponse{Status: "ok"})
