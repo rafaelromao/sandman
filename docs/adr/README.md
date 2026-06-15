@@ -66,3 +66,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0022 | Replace end-of-session continuation with checkpointed handoffs | superseded |
 | 0023 | Handoff points to rendered prompt and tracks last skill | superseded |
 | 0024 | Remove Pi agent support | accepted |
+| 0025 | Auto-recover from stranded worktrees in `--override` and `--continue` flows | proposed |
