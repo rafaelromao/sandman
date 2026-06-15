@@ -142,6 +142,59 @@ func TestProjectRunStates_LegacyCancelledEventStillProjectsAsAborted(t *testing.
 	}
 }
 
+func TestProjectRunStates_UnfinishedRunHasEmptyStatus(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-active", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if !run.IsActive() {
+		t.Fatal("expected unfinished run to be active")
+	}
+	if got := run.Status(); got != "" {
+		t.Fatalf("expected empty status for unfinished run, got %q", got)
+	}
+}
+
+func TestProjectRunStates_UnknownPayloadStatusRoundTripsThroughStatus(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	t.Run("named unknown status round-trips verbatim", func(t *testing.T) {
+		runs := ProjectRunStates([]Event{
+			{Type: "run.started", Timestamp: startedAt, RunID: "run-quirky", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix"}},
+			{Type: "run.finished", Timestamp: finishedAt, RunID: "run-quirky", Issue: 99, Payload: map[string]any{"status": "timeout", "branch": "sandman/99-fix"}},
+		})
+
+		if len(runs) != 1 {
+			t.Fatalf("expected 1 run, got %d", len(runs))
+		}
+		if got := runs[0].Status(); got != "timeout" {
+			t.Fatalf("expected payload status to round-trip verbatim, got %q", got)
+		}
+	})
+
+	t.Run("missing status key maps to empty string", func(t *testing.T) {
+		runs := ProjectRunStates([]Event{
+			{Type: "run.started", Timestamp: startedAt, RunID: "run-nokey", Issue: 100, Payload: map[string]any{"branch": "sandman/100-fix"}},
+			{Type: "run.finished", Timestamp: finishedAt, RunID: "run-nokey", Issue: 100, Payload: map[string]any{"branch": "sandman/100-fix"}},
+		})
+
+		if len(runs) != 1 {
+			t.Fatalf("expected 1 run, got %d", len(runs))
+		}
+		if got := runs[0].Status(); got != "" {
+			t.Fatalf("expected empty status when payload has no status key, got %q", got)
+		}
+	})
+}
+
 func TestProjectRunStates_ReviewRunLabel(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
