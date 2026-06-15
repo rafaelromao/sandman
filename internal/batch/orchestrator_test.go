@@ -7304,7 +7304,7 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, io.Discard)
+	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, io.Discard, "main", nil)
 
 	// Worktree removed
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
@@ -7340,7 +7340,7 @@ func TestClearIssueArtifacts_Idempotent(t *testing.T) {
 	initGitRepo(t, dir)
 
 	el := &spyEventLog{}
-	ClearIssueArtifacts(42, "sandman/42-nonexistent", ".sandman/worktrees", ".sandman/logs", el, io.Discard)
+	ClearIssueArtifacts(42, "sandman/42-nonexistent", ".sandman/worktrees", ".sandman/logs", el, io.Discard, "main", nil)
 }
 
 func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
@@ -7381,7 +7381,7 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 	}
 
 	el := &spyEventLog{}
-	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, io.Discard)
+	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, io.Discard, "main", nil)
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected orphan worktree dir to be removed, got err=%v", err)
@@ -7415,7 +7415,7 @@ func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, "sandman/42-fix-bug", ".sandman/worktrees", ".sandman/logs", el, io.Discard)
+	ClearIssueArtifacts(42, "sandman/42-fix-bug", ".sandman/worktrees", ".sandman/logs", el, io.Discard, "main", nil)
 
 	// Issue 99 branch should still exist
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/sandman/99-fix-bug")
@@ -7440,6 +7440,176 @@ func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 	if !found99 {
 		t.Error("expected events for issue 99 to remain")
 	}
+}
+
+// TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo stages both
+// recovery paths added by #938. When `git branch -D` from the main repo fails
+// with "used by worktree at" (the main repo is checked out on the target
+// branch) and `strandedReconcile` is true, the function must auto-recover
+// so that the branch is gone and no error is logged. The issue's
+// `TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo` contract
+// is satisfied by these two subtests; the nil/false belt-and-suspenders
+// behaviours are covered by TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders
+// and TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders.
+func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) {
+	branch := "sandman/42-fix-bug"
+	otherBranch := "sandman/99-other-branch"
+
+	t.Run("recovers via stranded worktree", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Chdir(dir)
+		initGitRepo(t, dir)
+
+		worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+		if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+			t.Fatalf("mkdir worktree base: %v", err)
+		}
+
+		// Stage: a stranded worktree exists at <worktreeBase>/<branch>
+		// but its HEAD is on `otherBranch` (created via `git worktree
+		// add --force`). The main repo is then checked out on the
+		// target branch, which is what triggers the "used by worktree
+		// at" error from `git branch -D` in the main repo cwd.
+		runGit(t, dir, "branch", branch)
+		runGit(t, dir, "branch", otherBranch)
+		wtPath := filepath.Join(worktreeDir, branch)
+		runGit(t, dir, "worktree", "add", "--force", wtPath, otherBranch)
+		runGit(t, dir, "checkout", "--quiet", branch)
+
+		logDir := filepath.Join(dir, ".sandman", "logs")
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			t.Fatalf("mkdir logs: %v", err)
+		}
+
+		el := &spyEventLog{}
+		logBuf := &bytes.Buffer{}
+
+		trueVal := true
+		ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, logBuf, "main", &trueVal)
+
+		// The branch must be gone from the main repo.
+		revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
+		if out, err := revCmd.CombinedOutput(); err == nil {
+			t.Errorf("expected branch %q to be deleted, rev-parse succeeded: %s", branch, out)
+		}
+		// No error must be logged.
+		if strings.Contains(logBuf.String(), "error:") {
+			t.Errorf("expected no error log on the stranded-worktree recovery path, got:\n%s", logBuf.String())
+		}
+	})
+
+	t.Run("recovers via base-branch checkout when no stranded worktree", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Chdir(dir)
+		initGitRepo(t, dir)
+
+		worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+		if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+			t.Fatalf("mkdir worktree base: %v", err)
+		}
+
+		// Stage: the main repo is checked out on the target branch,
+		// there is NO stranded worktree at <worktreeBase>/<branch>.
+		// `git branch -D <branch>` from the main repo cwd will still
+		// fail with "used by worktree at" (because the main repo IS
+		// the worktree holding that branch). Recovery must take the
+		// base-branch-checkout path: `git checkout -f main` then
+		// `git branch -D <branch>`.
+		runGit(t, dir, "branch", branch)
+		runGit(t, dir, "checkout", "--quiet", branch)
+
+		logDir := filepath.Join(dir, ".sandman", "logs")
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			t.Fatalf("mkdir logs: %v", err)
+		}
+
+		el := &spyEventLog{}
+		logBuf := &bytes.Buffer{}
+
+		trueVal := true
+		ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, logBuf, "main", &trueVal)
+
+		// The branch must be gone.
+		revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
+		if out, err := revCmd.CombinedOutput(); err == nil {
+			t.Errorf("expected branch %q to be deleted, rev-parse succeeded: %s", branch, out)
+		}
+		// The main repo must have ended up on the base branch.
+		if cur, err := runGitOut(dir, "rev-parse", "--abbrev-ref", "HEAD"); err != nil || strings.TrimSpace(cur) != "main" {
+			t.Errorf("expected main repo to be on base branch %q after recovery, got %q (err=%v)", "main", cur, err)
+		}
+		// No error must be logged.
+		if strings.Contains(logBuf.String(), "error:") {
+			t.Errorf("expected no error log on the base-branch-checkout recovery path, got:\n%s", logBuf.String())
+		}
+	})
+}
+
+// TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders asserts that
+// when `strandedReconcile` is nil, today's belt-and-suspenders behaviour is
+// preserved: the delete failure is logged, the function continues, and the
+// branch is NOT auto-recovered (it stays so the operator can fix it).
+func TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := "sandman/42-fix-bug"
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "checkout", "--quiet", branch)
+
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	logDir := filepath.Join(dir, ".sandman", "logs")
+	el := &spyEventLog{}
+	logBuf := &bytes.Buffer{}
+
+	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, logBuf, "main", nil)
+
+	// The branch should still exist (no recovery ran).
+	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
+	if out, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("expected branch %q to still exist when strandedReconcile is nil, rev-parse failed: %s", branch, out)
+	}
+	if !strings.Contains(logBuf.String(), "error:") {
+		t.Errorf("expected an error log when strandedReconcile is nil, got:\n%s", logBuf.String())
+	}
+}
+
+// TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders
+// asserts that an explicit `strandedReconcile=false` preserves today's
+// belt-and-suspenders behaviour (the opt-out gate from --no-reconcile-stranded).
+func TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := "sandman/42-fix-bug"
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "checkout", "--quiet", branch)
+
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	logDir := filepath.Join(dir, ".sandman", "logs")
+	el := &spyEventLog{}
+	logBuf := &bytes.Buffer{}
+
+	falseVal := false
+	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, logBuf, "main", &falseVal)
+
+	// The branch should still exist (no recovery ran).
+	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
+	if out, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("expected branch %q to still exist when strandedReconcile is false, rev-parse failed: %s", branch, out)
+	}
+	if !strings.Contains(logBuf.String(), "error:") {
+		t.Errorf("expected an error log when strandedReconcile is false, got:\n%s", logBuf.String())
+	}
+}
+
+func runGitOut(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 func TestOrchestrator_EmitsRunQueuedEventWhenBlocked(t *testing.T) {

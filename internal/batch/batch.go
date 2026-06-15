@@ -62,8 +62,17 @@ type Request struct {
 	MaxContainersSet           bool
 	Override                   bool
 	DangerouslySkipPermissions *bool
-	PromptConfig               prompt.RenderConfig
-	OutputWriter               io.Writer
+	// StrandedReconcile enables auto-recovery when a batch starts on a main
+	// repo that is checked out on a `sandman/N-…` branch and the `--override`
+	// pre-clean step (ClearIssueArtifacts) or the sandbox path
+	// (WorktreeSandbox.Start) trips on `git branch -D` refusing with
+	// "used by worktree at …". Tri-state: nil preserves today's
+	// belt-and-suspenders error; false is the explicit opt-out
+	// (`--no-reconcile-stranded`); true enables auto-recovery
+	// (`--reconcile-stranded`, default).
+	StrandedReconcile *bool
+	PromptConfig      prompt.RenderConfig
+	OutputWriter      io.Writer
 	// RunDir is the per-batch run directory (typically `.sandman/runs/<run-id>`)
 	// under which container config snapshots are stored for the lifetime of
 	// the batch. When empty, snapshots fall back to a temp directory.
