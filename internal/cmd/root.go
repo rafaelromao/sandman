@@ -59,6 +59,7 @@ execution, and event logging for automated coding workflows.`,
 	root.AddCommand(NewPortalCmd(deps))
 	root.AddCommand(NewReviewCmd(deps))
 	root.AddCommand(NewArchiveCmd(deps))
+	root.AddCommand(NewStrandedCmd(deps))
 
 	return root
 }
