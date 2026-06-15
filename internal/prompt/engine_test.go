@@ -744,3 +744,16 @@ func TestRender_IssuePathDoesNotConsumePRKeys(t *testing.T) {
 		t.Errorf("error should mention PR_NUMBER, got: %v", err)
 	}
 }
+
+func TestDefaultPlanTemplate_EmbeddedTemplate(t *testing.T) {
+	data, err := os.ReadFile("plan-template.md")
+	if err != nil {
+		t.Fatalf("read plan template file: %v", err)
+	}
+
+	want := strings.TrimSpace(string(data))
+	got := strings.TrimSpace(defaultPlanTemplate())
+	if got != want {
+		t.Fatalf("plan template drifted\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}

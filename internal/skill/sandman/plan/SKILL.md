@@ -70,7 +70,7 @@ Turn issue context into a concise, behavior-first plan:
 
 ## Plan output shape
 
-Use this shape inside `.sandman/task.md`:
+Use this shape inside `.sandman/task.md`. The canonical template is at `internal/prompt/plan-template.md`:
 
 ```md
 ## Plan
