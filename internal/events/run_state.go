@@ -115,20 +115,32 @@ func (r RunState) IsActive() bool {
 
 // Status returns the terminal status from the finished event.
 func (r RunState) Status() string {
-	if r.Finished == nil {
-		return ""
+	return runStatusFromFinished(r.Finished).String()
+}
+
+// runStatusFromFinished maps a finished event to the corresponding
+// RunStatus, preserving the exact input→string contract the portal
+// and orchestrator rely on. An unfinished run maps to RunStatusZero
+// (String() == ""); a run.blocked event maps to RunStatusBlocked; a
+// run.queued event to RunStatusQueued; run.aborted and legacy
+// run.cancelled events to RunStatusAborted; any other type (typically
+// run.finished) reads the payload's status field verbatim, mapping
+// named strings to their named constants and unknown strings to
+// RunStatusUnknown (which String()-round-trips the raw value).
+func runStatusFromFinished(finished *Event) RunStatus {
+	if finished == nil {
+		return RunStatusZero
 	}
-	if r.Finished.Type == "run.blocked" {
-		return "blocked"
+	switch finished.Type {
+	case "run.blocked":
+		return RunStatusBlocked
+	case "run.queued":
+		return RunStatusQueued
+	case "run.aborted", "run.cancelled":
+		return RunStatusAborted
 	}
-	if r.Finished.Type == "run.queued" {
-		return "queued"
-	}
-	if r.Finished.Type == "run.aborted" || r.Finished.Type == "run.cancelled" {
-		return "aborted"
-	}
-	status, _ := r.Finished.Payload["status"].(string)
-	return status
+	status, _ := finished.Payload["status"].(string)
+	return RunStatusFromPayload(status)
 }
 
 // Branch returns the run branch from the first event that recorded one.
