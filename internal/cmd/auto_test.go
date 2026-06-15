@@ -553,7 +553,7 @@ func TestRun_RalphFlagNoLongerExists(t *testing.T) {
 	}
 }
 
-func TestRun_Auto_ExplicitPRDExpandsBeforeSelection(t *testing.T) {
+func TestRun_AutoFlag_ExplicitPRDExpandsBeforeSelection(t *testing.T) {
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 
@@ -654,7 +654,7 @@ exit 0
 	}
 }
 
-func TestRun_Auto_LabelQueryExpandsPRD(t *testing.T) {
+func TestRun_AutoFlag_LabelQueryExpandsPRD(t *testing.T) {
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 	regularBody := "## What\n\nA regular open issue.\n"
@@ -756,7 +756,7 @@ exit 0
 	}
 }
 
-func TestRun_Auto_ExplicitArgsDedupeAfterExpansion(t *testing.T) {
+func TestRun_AutoFlag_ExplicitArgsDedupeAfterExpansion(t *testing.T) {
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 
@@ -851,7 +851,7 @@ exit 0
 	}
 }
 
-func TestRun_Auto_CapAppliesAfterExpansion(t *testing.T) {
+func TestRun_AutoFlag_CapAppliesAfterExpansion(t *testing.T) {
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n- #12\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 
@@ -898,7 +898,7 @@ func TestRun_Auto_CapAppliesAfterExpansion(t *testing.T) {
 	}
 }
 
-func TestRun_Auto_PRDWithNoChildrenFailsBeforeSelection(t *testing.T) {
+func TestRun_AutoFlag_PRDWithNoChildrenFailsBeforeSelection(t *testing.T) {
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n"
 
 	repoDir := t.TempDir()
@@ -976,7 +976,7 @@ exit 0
 	}
 }
 
-func TestRun_Auto_NestedPRDFailsBeforeSelection(t *testing.T) {
+func TestRun_AutoFlag_NestedPRDFailsBeforeSelection(t *testing.T) {
 	outerBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
 	innerBody := "## Problem Statement\n\nInner.\n\n## Solution\n\nInner.\n\n## User Stories\n\n1. Inner.\n\n## Parent\n\n#1\n"
 
@@ -1054,7 +1054,7 @@ exit 0
 	}
 }
 
-func TestRun_Auto_NonPRDPassthroughUntouched(t *testing.T) {
+func TestRun_AutoFlag_NonPRDPassthroughUntouched(t *testing.T) {
 	regular42 := &github.Issue{Number: 42, State: "open", Title: "Issue 42", Body: "## What\n\nJust a regular issue."}
 	regular43 := &github.Issue{Number: 43, State: "open", Title: "Issue 43", Body: "## What\n\nJust a regular issue."}
 
@@ -1147,7 +1147,7 @@ exit 0
 	}
 }
 
-func TestRun_Auto_ExpandedListReachesDependencyResolver(t *testing.T) {
+func TestRun_AutoFlag_ExpandedListReachesBatchRunner(t *testing.T) {
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n- #12\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 
@@ -1205,6 +1205,108 @@ func TestRun_Auto_ExpandedListReachesDependencyResolver(t *testing.T) {
 			t.Errorf("expected no duplicates in req.Issues, got %v", got)
 		}
 		seen[n] = struct{}{}
+	}
+}
+
+func TestRun_AutoFlag_QueryFilterExpandsPRD(t *testing.T) {
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	regularBody := "## What\n\nA regular open issue.\n"
+
+	repoDir := t.TempDir()
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("create sandman dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
+		t.Fatalf("create auto-selection-prompt.md: %v", err)
+	}
+
+	agentDir := t.TempDir()
+	agentScript := `#!/bin/sh
+set -eu
+if [ ! -f .sandman/selection-prompt.md ]; then
+  echo "selection-prompt.md missing" >&2
+  exit 2
+fi
+if grep -q '^#1 ' .sandman/selection-prompt.md; then
+  echo "PRD #1 leaked into selection prompt" >&2
+  exit 3
+fi
+if ! grep -q '^#10 ' .sandman/selection-prompt.md; then
+  echo "child #10 missing from selection prompt" >&2
+  exit 4
+fi
+if ! grep -q '^#30 ' .sandman/selection-prompt.md; then
+  echo "regular #30 missing from selection prompt" >&2
+  exit 5
+fi
+mkdir -p .sandman
+printf '[10, 30]\n' > .sandman/selected-issues.json
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(agentDir, "opencode"), []byte(agentScript), 0o755); err != nil {
+		t.Fatalf("write fake agent: %v", err)
+	}
+	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if listenErr != nil {
+		t.Fatalf("listen review.sock: %v", listenErr)
+	}
+	t.Cleanup(func() { _ = reviewListener.Close() })
+	go func() {
+		for {
+			c, err := reviewListener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody, State: "open"},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "open"},
+			30: {Number: 30, Title: "Regular", Body: regularBody, State: "open"},
+		},
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "PRD", Body: prdBody, State: "open"},
+			{Number: 30, Title: "Regular", Body: regularBody, State: "open"},
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AutoMaxCount: 50}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	t.Chdir(repoDir)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto", "--query", "label:bug is:open"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{10, 30}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
 	}
 }
 

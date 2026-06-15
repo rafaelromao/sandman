@@ -1047,9 +1047,6 @@ func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) (
 	return picker.Select(ghIssues)
 }
 
-// effectiveAutoCount resolves the candidate cap for Auto Mode.
-//
-// Precedence: explicit --count > cfg.AutoMaxCount (0 means unlimited) > DefaultAutoMaxCount.
 // expandPRDs runs the PRD resolver on the input issue list and returns the
 // expanded list. Empty input short-circuits to avoid wasted fetches. Any PRD
 // resolution error is wrapped as a regular command error (not a usage error)
