@@ -1705,3 +1705,58 @@ if (!SandmanPortalDiff) throw new Error('SandmanPortalDiff missing');
 		t.Logf("script output: %s", out)
 	}
 }
+
+func TestPortalDiffCreateRunRow_MixedBatchSurfacesBatchMembership(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = {
+  key: 'a',
+  kind: 'active',
+  status: 'running',
+  issueLabel: '#860',
+  issueNumber: 860,
+  batchKey: 'run-999-1',
+  batchIssues: [860, 854],
+  runId: 'r1',
+};
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+const titleCell = created.row.querySelector('[data-cell="title"]');
+if (!titleCell) throw new Error('expected title cell');
+const wrap = titleCell.children[0];
+if (!wrap) throw new Error('expected title wrap');
+const marker = wrap.querySelector('.batch-membership');
+if (!marker) throw new Error('expected batch-membership element, got ' + wrap.outerHTML);
+const text = marker.textContent || '';
+if (!text.includes('860') || !text.includes('854')) {
+  throw new Error('expected marker to list both issues 860 and 854, got ' + JSON.stringify(text));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffCreateRunRow_SingleIssueOmitsBatchMembership(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = {
+  key: 'a',
+  kind: 'active',
+  status: 'running',
+  issueLabel: '#42',
+  issueNumber: 42,
+  batchKey: 'run-42-1',
+  batchIssues: [42],
+  runId: 'r1',
+};
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+const titleCell = created.row.querySelector('[data-cell="title"]');
+if (!titleCell) throw new Error('expected title cell');
+const wrap = titleCell.children[0];
+const marker = wrap.querySelector('.batch-membership');
+if (marker) throw new Error('expected no batch-membership for single issue, got ' + marker.outerHTML);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}

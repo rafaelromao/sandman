@@ -51,6 +51,12 @@ type portalRun struct {
 	// the same (IssueNumber, BatchKey) so a current active row is never hidden
 	// by a historical aborted row from another batch.
 	BatchKey string `json:"batchKey,omitempty"`
+	// BatchIssues carries the full ordered list of issues in the batch the
+	// row came from. Populated for active-batch derived rows; omitted for
+	// historical or prompt-only runs. When len(BatchIssues) > 1 the row is
+	// part of a mixed batch and must not be mistaken for a private
+	// single-issue run.
+	BatchIssues []int `json:"batchIssues,omitempty"`
 	// IssueTitle carries the human-readable GitHub issue title from the event
 	// payload (added by issue #833). Empty for historical or prompt-only runs.
 	IssueTitle string `json:"issueTitle,omitempty"`
@@ -282,9 +288,10 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun,
 		}
 		runDir := filepath.Dir(instance.SocketPath)
 		manifest, manifestErr := daemon.ReadManifest(runDir)
-		issueNumber, _ := v.parseRunDirIssue(instance.Name)
+		dirIssueNumber, _ := v.parseRunDirIssue(instance.Name)
 		prNumber, _ := v.parseRunDirPR(instance.Name)
 		issueNumbers := []int(nil)
+		issueNumber := 0
 		startedAt := info.ModTime()
 		if manifestErr == nil {
 			issueNumbers = append(issueNumbers, manifest.Issues...)
@@ -292,8 +299,11 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun,
 				startedAt = manifest.CreatedAt
 			}
 		}
-		if len(issueNumbers) == 0 && issueNumber > 0 {
-			issueNumbers = []int{issueNumber}
+		if len(issueNumbers) > 0 {
+			issueNumber = issueNumbers[0]
+		} else if dirIssueNumber > 0 {
+			issueNumbers = []int{dirIssueNumber}
+			issueNumber = dirIssueNumber
 		}
 		active = append(active, portalActiveRun{
 			Key:          instance.Name,
@@ -388,6 +398,7 @@ func (v *portalRunsView) stateStartsInBatch(timestamp, batchStart time.Time) boo
 
 func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, liveOutput string, eventsByRun map[string][]portalEvent) portalRun {
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
+	batchIssues := append([]int(nil), active.IssueNumbers...)
 	run := portalRun{
 		Key:         fmt.Sprintf("%s-issue-%d", active.Key, issueNumber),
 		Kind:        "active",
@@ -400,6 +411,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, ""),
 		Log:         "Queued. Waiting to start.",
 		BatchKey:    active.Key,
+		BatchIssues: batchIssues,
 	}
 	if state != nil {
 		run.Key = state.RunID

@@ -6,10 +6,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -618,5 +620,203 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 
 	if run.IssueTitle != "Fix login bug" {
 		t.Fatalf("expected IssueTitle %q, got %q", "Fix login bug", run.IssueTitle)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_MixedBatchCarriesBatchIssues(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	startedAt := time.Now().Add(-2 * time.Minute)
+	active := portalActiveRun{
+		Key:          "run-860-123",
+		Dir:          sockDir,
+		SocketPath:   sockPath,
+		IssueNumbers: []int{860, 854},
+		StartedAt:    startedAt,
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 860, nil, nil, "", nil)
+
+	if got, want := run.BatchIssues, []int{860, 854}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected BatchIssues %v, got %v", want, got)
+	}
+	if run.BatchKey != active.Key {
+		t.Fatalf("expected BatchKey %q, got %q", active.Key, run.BatchKey)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_SingleIssueCarriesSingleIssue(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	startedAt := time.Now().Add(-1 * time.Minute)
+	active := portalActiveRun{
+		Key:          "run-42-1",
+		Dir:          sockDir,
+		SocketPath:   sockPath,
+		IssueNumbers: []int{42},
+		StartedAt:    startedAt,
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, nil, nil, "", nil)
+
+	if got, want := run.BatchIssues, []int{42}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected BatchIssues %v, got %v", want, got)
+	}
+}
+
+func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Dir name implies issue 999, but the manifest lists [42, 43] —
+	// the portal must take issue identity from the manifest.
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-999-1")
+	sockPath := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42, 43}, CreatedAt: time.Now().Add(-2 * time.Minute)}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("discoverActiveRuns: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active instance, got %d", len(active))
+	}
+	if got, want := active[0].IssueNumbers, []int{42, 43}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected IssueNumbers %v (from manifest), got %v", want, got)
+	}
+	if active[0].IssueNumber != 42 {
+		t.Fatalf("expected IssueNumber=42 (manifest's first), got %d (dir name inference leaked through)", active[0].IssueNumber)
+	}
+}
+
+func TestPortal_DiscoverActiveRuns_DirNameFallback(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-99-1")
+	sockPath := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("discoverActiveRuns: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active instance, got %d", len(active))
+	}
+	if got, want := active[0].IssueNumbers, []int{99}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected IssueNumbers %v (from dir name), got %v", want, got)
+	}
+}
+
+func TestPortal_FilterIssueOutput_PreservesIssuePrefixes(t *testing.T) {
+	live := strings.Join([]string{
+		"[issue-860] 18:51:05 working on PR",
+		"[issue-854] 18:51:05 sibling work",
+		"unprefixed noise",
+		"[issue-860] 18:51:06 more PR work",
+	}, "\n")
+
+	filtered := (&portalRunsView{}).filterPortalIssueOutput(live, 860)
+
+	for _, want := range []string{"[issue-860] 18:51:05 working on PR", "[issue-860] 18:51:06 more PR work"} {
+		if !strings.Contains(filtered, want) {
+			t.Fatalf("expected filtered output to contain %q, got:\n%s", want, filtered)
+		}
+	}
+	for _, banned := range []string{"[issue-854]", "unprefixed noise"} {
+		if strings.Contains(filtered, banned) {
+			t.Fatalf("expected filtered output to drop %q, got:\n%s", banned, filtered)
+		}
+	}
+}
+
+func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-2 * time.Minute)
+
+	// Dir name suggests issue 999, but the manifest lists [860, 854] —
+	// the JSON payload for the portal must reflect the manifest.
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-999-1")
+	sockPath := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{860, 854}, CreatedAt: batchStartedAt}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %#v", len(runs), runs)
+	}
+	for _, run := range runs {
+		if got, want := run.BatchIssues, []int{860, 854}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("issue %d: expected BatchIssues %v, got %v", run.IssueNumber, want, got)
+		}
+		if run.BatchKey == "" {
+			t.Fatalf("issue %d: expected BatchKey to be set", run.IssueNumber)
+		}
 	}
 }
