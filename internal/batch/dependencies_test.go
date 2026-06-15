@@ -252,6 +252,10 @@ func (c *fetchIssueErrorClient) ListPRComments(number int) ([]github.PRComment, 
 	return nil, nil
 }
 
+func (c *fetchIssueErrorClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+	return nil, nil
+}
+
 func (c *fetchIssueErrorClient) RepoName() (string, error) {
 	return "owner/repo", nil
 }

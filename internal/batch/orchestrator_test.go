@@ -134,12 +134,16 @@ func (r *retryRenderer) RenderReview(cfg prompt.RenderConfig, data prompt.PRData
 }
 
 type fakeGitHubClient struct {
-	issues       map[int]*github.Issue
-	fetchRelease map[int]<-chan struct{}
-	prs          map[string]*github.PR
-	err          error
-	findPRErr    error
-	findPRHook   func()
+	issues             map[int]*github.Issue
+	fetchRelease       map[int]<-chan struct{}
+	prs                map[string]*github.PR
+	err                error
+	findPRErr          error
+	findPRHook         func()
+	searchIssuesResult []github.Issue
+	searchIssuesError  error
+	searchCalls        []string
+	issueComments      map[int][]github.IssueComment
 }
 
 func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
@@ -167,6 +171,13 @@ func (f *fakeGitHubClient) FetchPR(number int) (*github.PR, error) {
 }
 
 func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
+	f.searchCalls = append(f.searchCalls, query)
+	if f.searchIssuesError != nil {
+		return nil, f.searchIssuesError
+	}
+	if f.searchIssuesResult != nil {
+		return f.searchIssuesResult, nil
+	}
 	return nil, nil
 }
 
@@ -200,6 +211,13 @@ func (f *fakeGitHubClient) ListOpenPRs() ([]github.PR, error) {
 
 func (f *fakeGitHubClient) ListPRComments(number int) ([]github.PRComment, error) {
 	return nil, nil
+}
+
+func (f *fakeGitHubClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+	if f.issueComments == nil {
+		return nil, nil
+	}
+	return f.issueComments[number], nil
 }
 
 func (f *fakeGitHubClient) RepoName() (string, error) {

@@ -329,6 +329,57 @@ func (c *CLIClient) ListPRComments(number int) ([]PRComment, error) {
 	return comments, nil
 }
 
+// ListIssueComments fetches issue conversation comments for the given
+// issue number via the GitHub REST API. These are the comments posted on
+// the issue (not on a PR), used by PRD expansion to discover child issue
+// references that live in the conversation rather than the issue body.
+func (c *CLIClient) ListIssueComments(number int) ([]IssueComment, error) {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=%s&sort=created&direction=asc", owner, repo, number, prCommentPageSize)
+	cmd := c.command("gh", "api", path, "--paginate")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh api issue comments: %w\n%s", err, out)
+	}
+
+	if len(bytes.TrimSpace(out)) == 0 {
+		return nil, nil
+	}
+
+	var payloads []prCommentPayload
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for {
+		var page []prCommentPayload
+		if err := dec.Decode(&page); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("parse issue comments: %w", err)
+		}
+		payloads = append(payloads, page...)
+	}
+
+	comments := make([]IssueComment, 0, len(payloads))
+	for _, payload := range payloads {
+		var createdAt time.Time
+		if payload.CreatedAt != "" {
+			if t, err := time.Parse(time.RFC3339, payload.CreatedAt); err == nil {
+				createdAt = t
+			}
+		}
+		comments = append(comments, IssueComment{
+			ID:        strconv.FormatInt(payload.ID, 10),
+			Body:      payload.Body,
+			CreatedAt: createdAt,
+		})
+	}
+	return comments, nil
+}
+
 func (c *CLIClient) fetchIssuePayload(owner, repo string, number int) (issuePayload, error) {
 	cmd := c.command("gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number))
 	out, err := cmd.CombinedOutput()

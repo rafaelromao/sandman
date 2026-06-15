@@ -124,6 +124,10 @@ func (f *fakeGitHubClient) ListPRComments(number int) ([]github.PRComment, error
 	return nil, nil
 }
 
+func (f *fakeGitHubClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+	return nil, nil
+}
+
 func (f *fakeGitHubClient) RepoName() (string, error) {
 	return "owner/repo", nil
 }
@@ -359,6 +363,128 @@ func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
 		}
 	}
+}
+
+func TestRun_ExpandsPRDBeforeBatchRunner(t *testing.T) {
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody},
+			10: {Number: 10, Title: "Child 1", Body: childBody},
+			11: {Number: 11, Title: "Child 2", Body: childBody},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{10, 11}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if !strings.Contains(buf.String(), "expanded PRD #1 to 2 child issues") {
+		t.Errorf("expected info log about PRD expansion, got: %q", buf.String())
+	}
+}
+
+func TestRun_FailsWhenPRDHasNoChildren(t *testing.T) {
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Empty PRD", Body: prdBody},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+	}
+
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"1"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for PRD with no children, got nil")
+	}
+	if !strings.Contains(err.Error(), "no child issues for PRD #1") {
+		t.Fatalf("expected 'no child issues for PRD #1' in error, got %q", err)
+	}
+	if spy.called {
+		t.Error("expected batch runner NOT to be called when PRD resolution fails")
+	}
+}
+
+func TestCachedGitHubClient_ListIssueComments_CachesResult(t *testing.T) {
+	count := 0
+	delegate := &countingCommentsClient{
+		comments: []github.IssueComment{{Body: "first"}},
+		fetch: func() {
+			count++
+		},
+	}
+
+	c := newCachedGitHubClient(delegate)
+	got, err := c.ListIssueComments(42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Body != "first" {
+		t.Fatalf("unexpected first fetch: %v", got)
+	}
+	if count != 1 {
+		t.Fatalf("expected delegate to be called once, got %d", count)
+	}
+	// Second call should hit the cache, not the delegate.
+	got, err = c.ListIssueComments(42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Body != "first" {
+		t.Fatalf("unexpected cached fetch: %v", got)
+	}
+	if count != 1 {
+		t.Fatalf("expected delegate to still have been called once, got %d", count)
+	}
+}
+
+type countingCommentsClient struct {
+	github.Client
+	comments []github.IssueComment
+	fetch    func()
+}
+
+func (c *countingCommentsClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+	if c.fetch != nil {
+		c.fetch()
+	}
+	return c.comments, nil
 }
 
 func TestRun_MultipleIssuesInvokesBatchRunner(t *testing.T) {
