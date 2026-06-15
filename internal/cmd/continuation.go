@@ -254,6 +254,13 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		dangerouslySkipPerm = &val
 	}
 
+	strandedReconcileFlag := cmd.Flags().Lookup("reconcile-stranded")
+	var strandedReconcile *bool
+	if strandedReconcileFlag != nil && strandedReconcileFlag.Changed {
+		val, _ := cmd.Flags().GetBool("reconcile-stranded")
+		strandedReconcile = &val
+	}
+
 	baseBranch := strings.TrimSpace(baseBranches[firstIssue])
 	if flag := cmd.Flags().Lookup("base-branch"); flag != nil && flag.Changed {
 		baseBranch, _ = cmd.Flags().GetString("base-branch")
@@ -293,6 +300,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		MaxContainers:              maxContainers,
 		MaxContainersSet:           maxContainersSet,
 		DangerouslySkipPermissions: dangerouslySkipPerm,
+		StrandedReconcile:          strandedReconcile,
 		PromptConfig: prompt.RenderConfig{
 			Branch:           promptOnlyBranch,
 			TaskPrompt:       taskPromptContent,

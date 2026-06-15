@@ -771,7 +771,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		branches := collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog)
 		for _, branch := range branches {
-			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog)
+			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, filepath.Join(".sandman", "logs"), o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile)
 		}
 	}
 
@@ -2144,7 +2144,19 @@ func isMissingBranchError(err error, out []byte) bool {
 
 // ClearIssueArtifacts removes worktree, branch, logs, and event log entries
 // for a given issue. It is idempotent — missing artifacts do not cause errors.
-func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog, logWriter io.Writer) {
+//
+// When `git branch -D <branch>` from the main-repo cwd fails because the
+// branch is currently checked out somewhere, and `strandedReconcile` is
+// non-nil and true, the function runs the auto-recovery flow described in
+// ADR-0027 (stranded-worktree first, then base-branch checkout).
+//
+// When `strandedReconcile` is nil, today's belt-and-suspenders behaviour
+// is preserved (the failure is logged and the function continues);
+// false is the explicit opt-out (`--no-reconcile-stranded`).
+//
+// `baseBranch` is the branch the function falls back to when no stranded
+// worktree is found; when empty, the fallback path is skipped.
+func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool) {
 	wtPath := filepath.Join(worktreeDir, branch)
 
 	// Remove worktree (may fail if already removed — idempotent)
@@ -2157,7 +2169,19 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, log
 
 	// Delete branch (may fail if already deleted — idempotent)
 	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchError(err, out) {
-		fmt.Fprintf(logWriter, "error: delete branch %s for issue %d: %v: %s\n", branch, issueNumber, err, out)
+		if strandedReconcile != nil && *strandedReconcile {
+			recoverBranchDeleteFromMainRepo(logWriter, branch, worktreeDir, baseBranch)
+			// Retry the delete from the main repo. If the recovery
+			// succeeded the branch is already gone (and `git branch -D`
+			// will report "not found", suppressed by
+			// isMissingBranchError); if recovery failed, surface the
+			// original failure.
+			if retryOut, retryErr := exec.Command("git", "branch", "-D", branch).CombinedOutput(); retryErr != nil && !isMissingBranchError(retryErr, retryOut) {
+				fmt.Fprintf(logWriter, "error: delete branch %s for issue %d: %v: %s\n", branch, issueNumber, retryErr, retryOut)
+			}
+		} else {
+			fmt.Fprintf(logWriter, "error: delete branch %s for issue %d: %v: %s\n", branch, issueNumber, err, out)
+		}
 	}
 
 	// Belt-and-suspenders: if the worktree directory still exists on disk
@@ -2177,6 +2201,40 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, log
 		if err := eventLog.RemoveEventsByIssue(issueNumber); err != nil {
 			fmt.Fprintf(logWriter, "error: remove events for issue %d: %v\n", issueNumber, err)
 		}
+	}
+}
+
+// recoverBranchDeleteFromMainRepo attempts to unstick `git branch -D <branch>`
+// when the main repo is itself checked out on `branch`. It mirrors the
+// recovery strategy from WorktreeSandbox.Start (issue #937):
+//  1. Detect a stranded worktree at <worktreeBase>/<branch>; if present,
+//     delete the branch from inside that worktree's cwd (which bypasses
+//     the main-repo guard).
+//  2. Otherwise, if `baseBranch` is set, `git checkout -f <baseBranch>` in
+//     the main repo so the branch can be deleted.
+//
+// On failure at any step, a warning is logged. The caller retries the
+// delete after this returns.
+func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase, baseBranch string) {
+	absBase, err := filepath.Abs(worktreeBase)
+	if err != nil {
+		fmt.Fprintf(logWriter, "warning: resolve worktree base for stranded recovery: %v\n", err)
+		return
+	}
+	if info, stranded := sandbox.StrandedWorktree(".", absBase, branch); stranded {
+		delCmd := exec.Command("git", "branch", "-D", branch)
+		delCmd.Dir = info.Path
+		if out, err := delCmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(logWriter, "warning: delete branch %s from stranded worktree %s: %v: %s\n", branch, info.Path, err, out)
+		}
+		return
+	}
+	if strings.TrimSpace(baseBranch) == "" {
+		fmt.Fprintf(logWriter, "warning: cannot recover branch %s — main repo is checked out on it, no stranded worktree found, and no base branch configured\n", branch)
+		return
+	}
+	if out, err := exec.Command("git", "checkout", "-f", baseBranch).CombinedOutput(); err != nil {
+		fmt.Fprintf(logWriter, "warning: git checkout -f %s to recover branch %s: %v: %s\n", baseBranch, branch, err, out)
 	}
 }
 
