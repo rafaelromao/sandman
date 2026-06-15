@@ -39,6 +39,13 @@ const (
 // portal compare against. Use the Is* predicate methods to branch on
 // them, not direct == comparisons — the predicate methods stay correct
 // even if the underlying discriminant evolves.
+//
+// Note: RunStatusZero and RunStatusFromPayload("") both String() to ""
+// and both report IsTerminal() == false, but they are distinct values.
+// RunStatusZero represents the unfinished/unset state; RunStatusUnknown
+// (with raw=="") represents a finished run whose payload had no
+// status key. Today no consumer distinguishes them; a future IsZero()
+// predicate would.
 var (
 	RunStatusZero    = RunStatus{code: runStatusCodeZero}
 	RunStatusSuccess = RunStatus{code: runStatusCodeSuccess}
