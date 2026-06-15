@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 190 28" role="img" aria-label="Built with Sandman">
+  <title>Built with Sandman</title>
+  <a href="https://github.com/rafaelromao/sandman">
+    <defs>
+      <clipPath id="c">
+        <rect width="190" height="28" rx="4"/>
+      </clipPath>
+    </defs>
+    <g clip-path="url(#c)">
+      <rect width="29" height="28" fill="#D8B26E"/>
+      <rect x="28" width="162" height="28" fill="#F2EEE3"/>
+      <g stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none" transform="translate(5, 1)">
+        <path d="M 18 1.5 L 7 1.5 A 7.5 7.5 0 0 0 -0.5 9 A 7.5 7.5 0 0 0 7 16.5 L 13 16.5 A 2.5 2.5 0 0 1 15.5 19 A 2.5 2.5 0 0 1 13 21.5 L 2 21.5"/>
+        <path d="M 18 4 L 7 4 A 5 5 0 0 0 2 9 A 5 5 0 0 0 7 14 L 13 14 A 5 5 0 0 1 18 19 A 5 5 0 0 1 13 24 L 2 24"/>
+        <path d="M 18 6.5 L 7 6.5 A 2.5 2.5 0 0 0 4.5 9 A 2.5 2.5 0 0 0 7 11.5 L 13 11.5 A 7.5 7.5 0 0 1 20.5 19 A 7.5 7.5 0 0 1 13 26.5 L 2 26.5"/>
+      </g>
+      <text x="109" y="18" font-family="'Helvetica Neue','Segoe UI',Arial,sans-serif" font-size="12" font-weight="600" fill="#444444" text-anchor="middle">Built with Sandman</text>
+    </g>
+  </a>
+</svg>

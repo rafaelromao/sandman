@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1520 420">
+<rect width="1520" height="420" rx="18" fill="#0B1228"/>
+<rect x="1.5" y="1.5" width="1517" height="417" rx="16.5" fill="none" stroke="#222B45" stroke-width="3"/>
+<g><circle cx="1108" cy="96" r="1.6" fill="#E9EDF6" opacity="0.48"/><circle cx="1145" cy="100" r="1.0" fill="#E9EDF6" opacity="0.51"/><circle cx="1228" cy="125" r="0.9" fill="#E9EDF6" opacity="0.40"/><circle cx="862" cy="127" r="1.4" fill="#E9EDF6" opacity="0.27"/><circle cx="1468" cy="146" r="1.4" fill="#E9EDF6" opacity="0.56"/><circle cx="907" cy="30" r="1.3" fill="#E9EDF6" opacity="0.28"/><circle cx="929" cy="58" r="0.8" fill="#E9EDF6" opacity="0.48"/><circle cx="1100" cy="131" r="1.3" fill="#E9EDF6" opacity="0.57"/><circle cx="1140" cy="109" r="1.2" fill="#E9EDF6" opacity="0.39"/><circle cx="1478" cy="149" r="1.6" fill="#E9EDF6" opacity="0.60"/><circle cx="1014" cy="56" r="1.1" fill="#E9EDF6" opacity="0.29"/><circle cx="1321" cy="77" r="1.6" fill="#E9EDF6" opacity="0.44"/><circle cx="1451" cy="131" r="0.8" fill="#E9EDF6" opacity="0.35"/><circle cx="1419" cy="85" r="1.7" fill="#E9EDF6" opacity="0.45"/><circle cx="850" cy="105" r="1.5" fill="#E9EDF6" opacity="0.38"/><circle cx="859" cy="69" r="1.7" fill="#E9EDF6" opacity="0.63"/><circle cx="880" cy="58" r="0.9" fill="#E9EDF6" opacity="0.28"/><circle cx="1342" cy="50" r="1.3" fill="#E9EDF6" opacity="0.47"/><circle cx="930" cy="117" r="0.9" fill="#E9EDF6" opacity="0.57"/><circle cx="879" cy="79" r="1.0" fill="#E9EDF6" opacity="0.38"/><circle cx="1460" cy="126" r="1.1" fill="#E9EDF6" opacity="0.69"/><circle cx="943" cy="76" r="1.6" fill="#E9EDF6" opacity="0.57"/><circle cx="868" cy="149" r="1.0" fill="#E9EDF6" opacity="0.38"/><circle cx="1325" cy="68" r="1.1" fill="#E9EDF6" opacity="0.29"/><circle cx="861" cy="99" r="1.0" fill="#E9EDF6" opacity="0.55"/><circle cx="1053" cy="83" r="1.7" fill="#E9EDF6" opacity="0.49"/></g>
+<circle cx="1118" cy="76" r="24" fill="#E9C98A"/><circle cx="1130" cy="68" r="22" fill="#0B1228"/>
+<path d="M 830 290 L 950 195 L 1040 252 L 1140 178 L 1255 262 L 1350 215 L 1455 280 L 1518 252 L 1518 330 L 830 330 Z" fill="#0E1734" opacity="0.85"/>
+<path d="M 980 310 L 1090 240 L 1190 300 L 1300 248 L 1410 310 L 1518 275 L 1518 345 L 980 345 Z" fill="#0A0F22"/>
+<g transform="translate(20 28) scale(1.09)"><g fill="none" stroke="#D8B26E" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+<path d="M 245 14 L 115 14 A 91 91 0 0 0 24 105 A 91 91 0 0 0 115 196 L 205 196 A 19 19 0 0 1 224 215 A 19 19 0 0 1 205 234 L 75 234" stroke-dasharray="0.00 19.00 0.00 19.00 0.00 19.00 9.00 19.00 525.58 19.00 9.00 19.00 0.00 19.00 0.00 19.00 0.00 4000.00"/>
+<path d="M 245 32 L 115 32 A 73 73 0 0 0 42 105 A 73 73 0 0 0 115 178 L 205 178 A 37 37 0 0 1 242 215 A 37 37 0 0 1 205 252 L 75 252" stroke-dasharray="0.00 19.00 0.00 19.00 0.00 19.00 9.00 19.00 525.58 19.00 9.00 19.00 0.00 19.00 0.00 19.00 0.00 4000.00"/>
+<path d="M 245 50 L 115 50 A 55 55 0 0 0 60 105 A 55 55 0 0 0 115 160 L 205 160 A 55 55 0 0 1 260 215 A 55 55 0 0 1 205 270 L 75 270" stroke-dasharray="0.00 19.00 0.00 19.00 0.00 19.00 9.00 19.00 525.58 19.00 9.00 19.00 0.00 19.00 0.00 19.00 0.00 4000.00"/>
+<path d="M 245 68 L 115 68 A 37 37 0 0 0 78 105 A 37 37 0 0 0 115 142 L 205 142 A 73 73 0 0 1 278 215 A 73 73 0 0 1 205 288 L 75 288" stroke-dasharray="0.00 19.00 0.00 19.00 0.00 19.00 9.00 19.00 525.58 19.00 9.00 19.00 0.00 19.00 0.00 19.00 0.00 4000.00"/>
+<path d="M 245 86 L 115 86 A 19 19 0 0 0 96 105 A 19 19 0 0 0 115 124 L 205 124 A 91 91 0 0 1 296 215 A 91 91 0 0 1 205 306 L 75 306" stroke-dasharray="0.00 19.00 0.00 19.00 0.00 19.00 9.00 19.00 525.58 19.00 9.00 19.00 0.00 19.00 0.00 19.00 0.00 4000.00"/>
+</g>
+<g><circle cx="264" cy="14" r="3.2" fill="#D8B26E" opacity="0.65"/><circle cx="56" cy="234" r="3.2" fill="#D8B26E" opacity="0.65"/><circle cx="264" cy="32" r="3.2" fill="#D8B26E" opacity="0.65"/><circle cx="56" cy="252" r="3.2" fill="#D8B26E" opacity="0.65"/><circle cx="264" cy="50" r="3.2" fill="#D8B26E" opacity="0.65"/><circle cx="56" cy="270" r="3.2" fill="#D8B26E" opacity="0.65"/><circle cx="264" cy="68" r="3.2" fill="#D8B26E" opacity="0.65"/><circle cx="56" cy="288" r="3.2" fill="#D8B26E" opacity="0.65"/><circle cx="264" cy="86" r="3.2" fill="#D8B26E" opacity="0.65"/><circle cx="56" cy="306" r="3.2" fill="#D8B26E" opacity="0.65"/></g></g>
+<text x="390" y="118" font-family="'Space Mono','Courier New',monospace" font-weight="700" font-size="64" letter-spacing="13" fill="#F2EEE3" text-anchor="start">SANDMAN</text>
+<text x="392" y="162" font-family="'Space Mono','Courier New',monospace" font-size="26" fill="#E9C98A" text-anchor="start">Sleep while your agents code.</text>
+<text x="392" y="200" font-family="'Space Mono','Courier New',monospace" font-size="19" fill="#94A3B8">AFK coding agents orchestration</text>
+<text x="392" y="226" font-family="'Space Mono','Courier New',monospace" font-size="19" fill="#94A3B8">in isolated sandboxes.</text>
+<rect x="390" y="252" width="330" height="50" rx="9" fill="#0D1530" stroke="#222B45" stroke-width="1.5"/>
+<text x="410" y="284" font-family="'Space Mono','Courier New',monospace" font-size="21" fill="#22C55E">$ sandman run 42 43</text>
+<text x="700" y="283" font-family="'Space Mono','Courier New',monospace" font-size="16" fill="#94A3B8">&#8942;</text>
+<path d="M 1020 250 L 1078 250 Q 1090 250 1090 238 L 1090 180 Q 1090 168 1102 168 L 1212 168" fill="none" stroke="#E9C98A" stroke-width="2.5" opacity="0.85"/>
+<circle cx="1218" cy="168" r="4.5" fill="#E9C98A"/>
+<path d="M 1228 163 L 1237 168 L 1228 173 Z" fill="#E9C98A"/>
+<rect x="1248" y="149" width="228" height="38" rx="8" fill="#0D1530" stroke="#222B45" stroke-width="1.5"/>
+<text x="1266" y="174" font-family="'Space Mono','Courier New',monospace" font-size="18" fill="#94A3B8">#42</text>
+<text x="1320" y="174" font-family="'Space Mono','Courier New',monospace" font-size="18" fill="#22C55E">+ completed</text>
+<path d="M 1020 262 L 1102 262 Q 1114 262 1114 250 L 1114 226 Q 1114 214 1126 214 L 1212 214" fill="none" stroke="#E9C98A" stroke-width="2.5" opacity="0.85"/>
+<circle cx="1218" cy="214" r="4.5" fill="#E9C98A"/>
+<path d="M 1228 209 L 1237 214 L 1228 219 Z" fill="#E9C98A"/>
+<rect x="1248" y="195" width="228" height="38" rx="8" fill="#0D1530" stroke="#222B45" stroke-width="1.5"/>
+<text x="1266" y="220" font-family="'Space Mono','Courier New',monospace" font-size="18" fill="#94A3B8">#43</text>
+<text x="1320" y="220" font-family="'Space Mono','Courier New',monospace" font-size="18" fill="#22C55E">+ completed</text>
+<path d="M 1020 274 L 1131 274 Q 1138 274 1138 267 L 1138 267 Q 1138 260 1145 260 L 1212 260" fill="none" stroke="#4CC9F0" stroke-width="2.5" opacity="0.85"/>
+<circle cx="1218" cy="260" r="4.5" fill="#4CC9F0"/>
+<path d="M 1228 255 L 1237 260 L 1228 265 Z" fill="#4CC9F0"/>
+<rect x="1248" y="241" width="228" height="38" rx="8" fill="#0D1530" stroke="#222B45" stroke-width="1.5"/>
+<text x="1266" y="266" font-family="'Space Mono','Courier New',monospace" font-size="18" fill="#94A3B8">#44</text>
+<text x="1320" y="266" font-family="'Space Mono','Courier New',monospace" font-size="18" fill="#4CC9F0">+ running</text>
+<path d="M 1020 286 L 1152 286 Q 1162 286 1162 296 L 1162 296 Q 1162 306 1172 306 L 1212 306" fill="none" stroke="#A78BFA" stroke-width="2.5" opacity="0.85"/>
+<circle cx="1218" cy="306" r="4.5" fill="#A78BFA"/>
+<path d="M 1228 301 L 1237 306 L 1228 311 Z" fill="#A78BFA"/>
+<rect x="1248" y="287" width="228" height="38" rx="8" fill="#0D1530" stroke="#222B45" stroke-width="1.5"/>
+<text x="1266" y="312" font-family="'Space Mono','Courier New',monospace" font-size="18" fill="#94A3B8">#45</text>
+<text x="1320" y="312" font-family="'Space Mono','Courier New',monospace" font-size="18" fill="#A78BFA">+ queued</text>
+<circle cx="400" cy="352" r="15" fill="none" stroke="#2B3554" stroke-width="1.5"/>
+<g transform="translate(400 352) scale(0.9)"><circle r="7" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle r="2" fill="#C9D2E4"/></g>
+<text x="424" y="357" font-family="'Space Mono','Courier New',monospace" font-size="15" fill="#C9D2E4">Issues</text>
+<path d="M 489.6 352 h 16 m -5 -4 l 5 4 l -5 4" fill="none" stroke="#94A3B8" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="535.6" cy="352" r="15" fill="none" stroke="#2B3554" stroke-width="1.5"/>
+<g transform="translate(535.6 352) scale(0.9)"><path d="M 0 -8 L 7 -4 L 7 4 L 0 8 L -7 4 L -7 -4 Z" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M -7 -4 L 0 0 L 7 -4 M 0 0 L 0 8" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="559.6" y="357" font-family="'Space Mono','Courier New',monospace" font-size="15" fill="#C9D2E4">Sandbox</text>
+<path d="M 633.8000000000001 352 h 16 m -5 -4 l 5 4 l -5 4" fill="none" stroke="#94A3B8" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="679.8000000000001" cy="352" r="15" fill="none" stroke="#2B3554" stroke-width="1.5"/>
+<g transform="translate(679.8000000000001 352) scale(0.9)"><rect x="-7" y="-5" width="14" height="11" rx="3" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M 0 -5 L 0 -9" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cy="-9.5" r="1.3" fill="#C9D2E4"/><circle cx="-3" cy="0.5" r="1.4" fill="#C9D2E4"/><circle cx="3" cy="0.5" r="1.4" fill="#C9D2E4"/></g>
+<text x="703.8000000000001" y="357" font-family="'Space Mono','Courier New',monospace" font-size="15" fill="#C9D2E4">Agents</text>
+<path d="M 769.4000000000001 352 h 16 m -5 -4 l 5 4 l -5 4" fill="none" stroke="#94A3B8" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="815.4000000000001" cy="352" r="15" fill="none" stroke="#2B3554" stroke-width="1.5"/>
+<g transform="translate(815.4000000000001 352) scale(0.9)"><path d="M -4 -5 L -8 0 L -4 5 M 4 -5 L 8 0 L 4 5 M 1.5 -7 L -1.5 7" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="839.4000000000001" y="357" font-family="'Space Mono','Courier New',monospace" font-size="15" fill="#C9D2E4">Code</text>
+<path d="M 887.8000000000001 352 h 16 m -5 -4 l 5 4 l -5 4" fill="none" stroke="#94A3B8" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="933.8000000000001" cy="352" r="15" fill="none" stroke="#2B3554" stroke-width="1.5"/>
+<g transform="translate(933.8000000000001 352) scale(0.9)"><path d="M -7 -7 H 7 Q 9 -7 9 -5 V 3 Q 9 5 7 5 H 0 L -4 9 V 5 H -7 Q -9 5 -9 3 V -5 Q -9 -7 -7 -7 Z" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M -4 -2 H 4 M -4 1.5 H 1" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="957.8000000000001" y="357" font-family="'Space Mono','Courier New',monospace" font-size="15" fill="#C9D2E4">Review</text>
+<path d="M 1023.4000000000001 352 h 16 m -5 -4 l 5 4 l -5 4" fill="none" stroke="#94A3B8" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="1069.4" cy="352" r="15" fill="none" stroke="#2B3554" stroke-width="1.5"/>
+<g transform="translate(1069.4 352) scale(0.9)"><circle cx="-6" cy="-6" r="2.6" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="-6" cy="6" r="2.6" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="6" r="2.6" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M -6 -3.4 V 3.4 M -3.4 -6 H 0 Q 6 -6 6 0 V 3.4" fill="none" stroke="#C9D2E4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="1093.4" y="357" font-family="'Space Mono','Courier New',monospace" font-size="15" fill="#C9D2E4">PR</text>
+<path d="M 400 392 H 678.9000000000001" stroke="#3A4663" stroke-width="1.5" stroke-dasharray="6 6" fill="none"/>
+<path d="M 888.9000000000001 392 H 1167.8000000000002" stroke="#3A4663" stroke-width="1.5" stroke-dasharray="6 6" fill="none"/>
+<text x="783.9000000000001" y="397" font-family="'Space Mono','Courier New',monospace" font-size="15" fill="#94A3B8" text-anchor="middle">Complete Workflow</text>
+</svg>
