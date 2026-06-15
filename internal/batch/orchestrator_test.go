@@ -1037,6 +1037,10 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	}
 
 	pr := &github.PR{Number: 42, State: "closed", Merged: false, HeadRefName: branch}
+	// Flip Merged only on the post-attempt check after the retry has run
+	// (third FindPRByBranch call), so the pre-retry guard on the second call
+	// does not short-circuit the retry before the continuation prompt is
+	// rendered.
 	var findPRCalls int
 	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
 	renderer := &retryRenderer{result: "rendered prompt"}
@@ -1049,7 +1053,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 			prs:    map[string]*github.PR{branch: pr},
 			findPRHook: func() {
 				findPRCalls++
-				if findPRCalls >= 2 {
+				if findPRCalls >= 3 {
 					pr.Merged = true
 				}
 			},
@@ -1129,6 +1133,9 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 	}
 
 	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
+	// Flip Merged only after the retry has run (third FindPRByBranch call)
+	// so the pre-retry guard on the second call does not short-circuit the
+	// retry before the empty task template is rendered.
 	var findPRCalls int
 	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
 	renderer := &retryRenderer{result: "rendered prompt"}
@@ -1141,7 +1148,7 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 			prs:    map[string]*github.PR{branch: pr},
 			findPRHook: func() {
 				findPRCalls++
-				if findPRCalls >= 2 {
+				if findPRCalls >= 3 {
 					pr.Merged = true
 				}
 			},
@@ -1381,6 +1388,63 @@ func TestRunSingle_RetryWithMergedPRKeepsRetryCount(t *testing.T) {
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1 (PR merged on first attempt)", result.RetriesTotal)
+	}
+}
+
+// When the agent fails on attempt 0 but the PR is merged before the retry,
+// the pre-retry guard must detect the merge, skip the agent launch, branch
+// reset, and prompt render, and return a success result.
+func TestRunSingle_PreRetryGuardShortCircuitsOnMergedPR(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+
+	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
+	var findPRCalls int
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "failure", Branch: branch},
+	}}
+	renderer := &retryRenderer{result: "rendered prompt"}
+	var resetCalls int
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: pr},
+			findPRHook: func() {
+				findPRCalls++
+				if findPRCalls >= 2 {
+					pr.Merged = true
+				}
+			},
+		},
+		renderer:        renderer,
+		sandboxFactory:  &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}},
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+	}
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		resetCalls++
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, map[int]sandbox.Sandbox{}, &sync.Mutex{}, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}, nil, false, "main", nil, 0, 0, 2, 0, "", 0, false, 0, false, false)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success (pre-retry guard should short-circuit on merged PR)", result.Status)
+	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1 (agent ran once; guard short-circuited the retry)", result.RetriesTotal)
+	}
+	if len(resultFactory.created) != 1 {
+		t.Fatalf("agent launches = %d, want 1 (pre-retry guard must not launch the agent on attempt 1)", len(resultFactory.created))
+	}
+	if resetCalls != 0 {
+		t.Fatalf("retry reset calls = %d, want 0 (pre-retry guard must not reset the branch)", resetCalls)
 	}
 }
 
@@ -1648,6 +1712,9 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	}
 
 	pr := &github.PR{Number: 42, State: "closed", Merged: false, HeadRefName: branch}
+	// Flip Merged only on the post-attempt check after both attempts have
+	// run (third FindPRByBranch call) so the pre-retry guard does not
+	// short-circuit the retry before the second attempt logs its counter.
 	var findPRCalls int
 	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
 	log := &spyEventLog{}
@@ -1660,7 +1727,7 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 			prs:    map[string]*github.PR{branch: pr},
 			findPRHook: func() {
 				findPRCalls++
-				if findPRCalls >= 2 {
+				if findPRCalls >= 3 {
 					pr.Merged = true
 				}
 			},
