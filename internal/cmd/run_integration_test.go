@@ -211,12 +211,12 @@ func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode stri
 
 	runner := batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil)
 	return Dependencies{
-		BatchRunner:    runner,
-		ConfigStore:    store,
-		EventLog:       &fakeEventLog{},
-		GitHubClient:   gh,
-		Renderer: &prompt.Engine{},
-		IsTTY:          func() bool { return false },
+		BatchRunner:  runner,
+		ConfigStore:  store,
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		Renderer:     &prompt.Engine{},
+		IsTTY:        func() bool { return false },
 	}
 }
 

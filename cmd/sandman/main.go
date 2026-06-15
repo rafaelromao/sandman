@@ -60,13 +60,13 @@ func main() {
 	eventLog := &events.JSONLLogger{Path: ".sandman/events.jsonl"}
 
 	deps := cmd.Dependencies{
-		BatchRunner:    batch.NewOrchestrator(ghClient, renderer, cfgStore, eventLog),
-		ConfigStore:    cfgStore,
-		EventLog:       eventLog,
-		GitHubClient:   ghClient,
-		Renderer:       renderer,
-		IssuePicker:    &cmd.SimpleIssuePicker{},
-		IsTTY:          isStdoutTTY,
+		BatchRunner:  batch.NewOrchestrator(ghClient, renderer, cfgStore, eventLog),
+		ConfigStore:  cfgStore,
+		EventLog:     eventLog,
+		GitHubClient: ghClient,
+		Renderer:     renderer,
+		IssuePicker:  &cmd.SimpleIssuePicker{},
+		IsTTY:        isStdoutTTY,
 	}
 
 	rootCmd := cmd.NewRootCmd(deps)

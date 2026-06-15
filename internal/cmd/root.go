@@ -23,7 +23,7 @@ type Dependencies struct {
 	ConfigStore      config.Store
 	EventLog         events.EventLog
 	GitHubClient     github.Client
-	Renderer   prompt.IssueRenderer
+	Renderer         prompt.IssueRenderer
 	IssuePicker      IssuePicker
 	IsTTY            func() bool
 	GitRunner        gitRunner

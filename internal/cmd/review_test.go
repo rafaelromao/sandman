@@ -76,13 +76,13 @@ func (s *spyBatchRunnerMultiCapture) requests() []batch.Request {
 func newReviewDeps(t *testing.T, gh github.Client, cfg *config.Config, runner batch.Runner) Dependencies {
 	t.Helper()
 	return Dependencies{
-		BatchRunner:    runner,
-		ConfigStore:    &fakeStore{config: cfg},
-		EventLog:       &fakeEventLog{},
-		GitHubClient:   gh,
-		Renderer: &prompt.Engine{},
-		IssuePicker:    &fakeIssuePicker{},
-		IsTTY:          func() bool { return false },
+		BatchRunner:  runner,
+		ConfigStore:  &fakeStore{config: cfg},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+		Renderer:     &prompt.Engine{},
+		IssuePicker:  &fakeIssuePicker{},
+		IsTTY:        func() bool { return false },
 	}
 }
 
