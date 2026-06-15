@@ -5,12 +5,14 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -144,6 +146,72 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 	}
 	if aborted[0].Issue != 1 {
 		t.Fatalf("expected run.aborted for issue 1, got %#v", aborted[0])
+	}
+}
+
+func TestPortal_E2E_MixedBatchShowsBatchMembershipAndKeepsIssuePrefixes(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("skip e2e in CI")
+	}
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := shortTempDir(t)
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	ghShimDir := t.TempDir()
+	writeFakeGHShim(t, ghShimDir)
+	prependPath(t, ghShimDir)
+
+	portalURL := startPortalBinary(t, binPath, repoDir, ghShimDir)
+	waitForPortalReady(t, portalURL)
+
+	runDir := createMixedBatchRunSocket(t, repoDir, "run-mixed-1")
+	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
+
+	waitForRunCount(t, portalURL, 2)
+
+	runs := fetchPortalRuns(t, portalURL)
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d: %#v", len(runs), runs)
+	}
+	byIssue := portalRunsByIssue(runs)
+	for _, want := range []int{860, 854} {
+		if _, ok := byIssue[want]; !ok {
+			t.Fatalf("expected issue %d in runs, got %#v", want, runs)
+		}
+	}
+
+	wantBatchKey := filepath.Base(runDir)
+	for _, issue := range []int{860, 854} {
+		run := byIssue[issue]
+		if run.BatchKey != wantBatchKey {
+			t.Fatalf("issue %d: expected BatchKey %q, got %q", issue, wantBatchKey, run.BatchKey)
+		}
+		if got, want := run.BatchIssues, []int{860, 854}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("issue %d: expected BatchIssues %v, got %v", issue, want, got)
+		}
+	}
+
+	for _, issue := range []int{860, 854} {
+		run := byIssue[issue]
+		ownPrefix := fmt.Sprintf("[issue-%d]", issue)
+		if !strings.Contains(run.Log, ownPrefix) {
+			t.Fatalf("issue %d: expected own prefix %q in log, got:\n%s", issue, ownPrefix, run.Log)
+		}
+	}
+	for _, issue := range []int{860, 854} {
+		run := byIssue[issue]
+		for _, other := range []int{860, 854} {
+			if other == issue {
+				continue
+			}
+			otherPrefix := fmt.Sprintf("[issue-%d]", other)
+			if strings.Contains(run.Log, otherPrefix) {
+				t.Fatalf("issue %d: log leaked sibling prefix %q:\n%s", issue, otherPrefix, run.Log)
+			}
+		}
 	}
 }
 
@@ -375,6 +443,49 @@ func createPromptOnlyRunSocket(t *testing.T, repoDir, runName string, issueNumbe
 				return
 			}
 			_, _ = conn.Write([]byte("prompt output\n"))
+			_ = conn.Close()
+		}
+	}()
+
+	return runDir
+}
+
+// createMixedBatchRunSocket reproduces the exact mixed-batch shape from
+// issues 854/860: a single run directory whose batch.json lists both
+// issues and whose run.sock streams prefixed lines for each. It writes
+// to the socket only — no .sandman/logs/<issue>.log is created — so
+// the assertion exercises the live-socket filter path, not the
+// saved-file reader.
+func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
+	t.Helper()
+
+	runDir := filepath.Join(repoDir, ".sandman", "runs", runName)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("create run dir: %v", err)
+	}
+
+	manifest := daemon.BatchManifest{
+		Issues:    []int{860, 854},
+		CreatedAt: time.Now(),
+	}
+	if err := daemon.WriteManifest(runDir, manifest); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	ln, err := net.Listen("unix", filepath.Join(runDir, "run.sock"))
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	payload := "[issue-860] 18:51:05 working on PR\n[issue-854] 18:51:05 sibling work\n"
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = conn.Write([]byte(payload))
 			_ = conn.Close()
 		}
 	}()
