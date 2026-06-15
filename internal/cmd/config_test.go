@@ -267,6 +267,7 @@ git:
 		"retries: 3",
 		"container_capacity: 7",
 		"max_containers: 2",
+		"auto_max_count: 50",
 		"worktree_dir: /tmp/wt",
 		"sandbox: worktree",
 		"git.base_branch: trunk",

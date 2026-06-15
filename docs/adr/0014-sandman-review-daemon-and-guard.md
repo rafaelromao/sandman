@@ -30,7 +30,7 @@ Rationale: keeps the daemon simple and lets the prompt control the posting forma
 
 ### Control-socket guard
 
-When the configured `review_command` contains `/sandman`, the `sandman run`, `sandman run --continue`, and `--ralph` selection commands check for a control socket at `.sandman/review.sock` **before** executing. If the socket is missing, the command fails with a clear message.
+When the configured `review_command` contains `/sandman`, the `sandman run`, `sandman run --continue`, and `--auto` selection commands check for a control socket at `.sandman/review.sock` **before** executing. If the socket is missing, the command fails with a clear message.
 
 This prevents the following failure mode:
 1. User runs `sandman run` with default config

@@ -303,10 +303,17 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("write prompt.md: %w", err)
 	}
 
-	priorityPromptPath := filepath.Join(sandmanDir, "priority-selection-prompt.md")
-	if _, err := os.Stat(priorityPromptPath); os.IsNotExist(err) {
-		if err := os.WriteFile(priorityPromptPath, []byte(prompt.DefaultPriorityPrompt()), 0644); err != nil {
-			return fmt.Errorf("write priority-selection-prompt.md: %w", err)
+	autoPromptPath := filepath.Join(sandmanDir, "auto-selection-prompt.md")
+	legacyPromptPath := filepath.Join(sandmanDir, "priority-selection-prompt.md")
+	if _, err := os.Stat(autoPromptPath); os.IsNotExist(err) {
+		if legacyData, err := os.ReadFile(legacyPromptPath); err == nil {
+			if err := os.WriteFile(autoPromptPath, legacyData, 0644); err != nil {
+				return fmt.Errorf("write auto-selection-prompt.md: %w", err)
+			}
+		} else {
+			if err := os.WriteFile(autoPromptPath, []byte(prompt.DefaultPriorityPrompt()), 0644); err != nil {
+				return fmt.Errorf("write auto-selection-prompt.md: %w", err)
+			}
 		}
 	}
 

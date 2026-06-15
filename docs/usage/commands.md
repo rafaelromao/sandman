@@ -42,7 +42,7 @@ Issue-driven runs require at least one selection mode. `--prompt` and `--templat
 | Issue range | `sandman run 42:45` | Range expression `start:end` (inclusive). `:45` starts from 1, `42:` is unbounded end |
 | `--label` | `sandman run --label ready-for-agent` | All open issues with the given label |
 | `--query` | `sandman run --query "label:bug is:open"` | GitHub search query |
-| `--ralph` | `sandman run --ralph 3` | N lowest-numbered open issues labeled `ready-for-agent` |
+| `--auto` | `sandman run --auto --count 3` | Auto Mode — Sandman selects up to `--count` issues from the candidate pool, or the `auto_max_count` config default if no count is given |
 | Interactive picker | `sandman run` (in a TTY) | Opens a numbered list of open issues to select from |
 
 Positional arguments (numbers and ranges) can be combined with `--label` and `--query`; Sandman resolves finite issue selections locally and uses search only when it needs to expand open-ended ranges or evaluate a query that cannot be matched locally.
@@ -57,14 +57,15 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--base-branch` | config `git.base_branch` (`main`) | Base branch to fetch from origin before each `AgentRun` starts |
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = unlimited, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
-| `--retries` | `0` | Number of times to retry a failed run; `--ralph` sets this to `3` silently |
+| `--retries` | `0` | Number of times to retry a failed run; `--auto` sets this to `3` silently |
 | `--override` | `false` | Clear artifacts before running (deletes prior worktree, logs, and events; force-checkout worktree to expected branch on mismatch or detached HEAD) |
 | `--continue` | `false` | Accepted placeholder for future continuation behavior; no-op for now |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
 | `--query` | — | Select issues by GitHub search query |
-| `--ralph` | — | Select N lowest-numbered open `ready-for-agent` issues |
+| `--auto` | — | Auto Mode — let Sandman choose which issues to run, capped to `--count` or `auto_max_count` from config |
+| `--count` | `0` | Candidate cap for Auto Mode; `0` means unlimited when `--auto` is set |
 | `--prompt` | — | Inline prompt template (overrides file-based templates) |
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
@@ -74,10 +75,11 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 
 ### Flag interactions
 
-- `--ralph` is mutually exclusive with issue arguments, `--label`, and `--query`
-- `--ralph N` silently sets `--retries=3`; the run summary shows "(3 retries)" on failure
+- `--auto` accepts the same filters as regular Sandman runs (`--label`, `--query`, or explicit issue args). It is mutually exclusive with combining `--label` and `--query` together (the same restriction regular runs have)
+- `--auto` silently sets `--retries=3` and applies conservative defaults (`--parallel=1`, `--container-capacity=1`, `--max-containers=1`) when those flags are not provided; the run summary shows "(3 retries)" on failure
+- `--count N` (or `auto_max_count: N` in config) caps the candidate pool to `N`; `0` means unlimited
 - Positional arguments (numbers and ranges) can be combined with `--label` or `--query` — finite selections are resolved locally; open-ended ranges and unsupported queries still use GitHub search
-- If `--prompt` or `--template` is used with no issue arguments, `--label`, `--query`, or `--ralph`, and the final selected prompt omits `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`, Sandman enters prompt-only mode and skips GitHub issue lookup
+- If `--prompt` or `--template` is used with no issue arguments, `--label`, `--query`, or `--auto`, and the final selected prompt omits `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`, Sandman enters prompt-only mode and skips GitHub issue lookup
 - If any issue selection is provided, Sandman stays in issue-driven mode even when `--prompt` or `--template` is set
 - `run` preserves worktrees by default; use `sandman clean` to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes

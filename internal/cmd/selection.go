@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/batch"
@@ -16,12 +17,12 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
-func priorityPromptFileExists(sandmanDir string) bool {
-	_, err := os.Stat(filepath.Join(sandmanDir, "priority-selection-prompt.md"))
+func autoPromptFileExists(sandmanDir string) bool {
+	_, err := os.Stat(filepath.Join(sandmanDir, "auto-selection-prompt.md"))
 	return err == nil
 }
 
-func resolveRalphQuery(label, query string) string {
+func resolveAutoQuery(label, query string) string {
 	if query != "" {
 		return query
 	}
@@ -31,24 +32,28 @@ func resolveRalphQuery(label, query string) string {
 	return "label:ready-for-agent is:open"
 }
 
-func runSelectionPhase(ctx context.Context, client github.Client, count int, label, query, sandmanDir, agentName, modelFlag string, cfg *config.Config) ([]int, error) {
+func runSelectionPhase(ctx context.Context, client github.Client, count int, label, query, sandmanDir, agentName, modelFlag string, cfg *config.Config, candidates []int) ([]int, error) {
 	if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
 		return nil, err
 	}
-	searchQuery := resolveRalphQuery(label, query)
-	ghIssues, err := client.SearchIssues(searchQuery)
+	candidateIssues, err := fetchCandidateIssues(ctx, client, candidates, label, query)
 	if err != nil {
-		return nil, fmt.Errorf("search candidate issues: %w", err)
+		return nil, err
 	}
-	if len(ghIssues) == 0 {
+	if len(candidateIssues) == 0 {
 		return nil, fmt.Errorf("no candidate issues found")
 	}
 
-	candidates := formatCandidateIssues(ghIssues)
+	candidateText := formatCandidateIssues(candidateIssues)
+
+	effectiveCount := count
+	if effectiveCount <= 0 {
+		effectiveCount = len(candidateIssues)
+	}
 
 	promptText := prompt.ApplySubstitutions(prompt.DefaultPriorityPrompt(), prompt.RenderConfig{
-		CandidateIssues: candidates,
-		MaxCount:        count,
+		CandidateIssues: candidateText,
+		MaxCount:        effectiveCount,
 	})
 
 	promptPath := filepath.Join(sandmanDir, "selection-prompt.md")
@@ -79,7 +84,37 @@ func runSelectionPhase(ctx context.Context, client github.Client, count int, lab
 		return nil, fmt.Errorf("selection agent failed with stderr: %s: %w", strings.TrimSpace(stderrBuf.String()), err)
 	}
 
-	return readSelectedIssues(sandmanDir, count)
+	return readSelectedIssues(sandmanDir, effectiveCount)
+}
+
+func fetchCandidateIssues(ctx context.Context, client github.Client, candidates []int, label, query string) ([]github.Issue, error) {
+	_ = ctx
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	issues := make([]github.Issue, 0, len(candidates))
+	seen := make(map[int]struct{}, len(candidates))
+	for _, n := range candidates {
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		issue, err := client.FetchIssue(n)
+		if err != nil {
+			return nil, fmt.Errorf("fetch candidate issue #%d: %w", n, err)
+		}
+		if issue == nil {
+			continue
+		}
+		if label != "" && !issueHasLabel(issue.Labels, label) {
+			continue
+		}
+		if query != "" && !issueMatchesFilters(issue, label, query) {
+			continue
+		}
+		issues = append(issues, *issue)
+	}
+	return issues, nil
 }
 
 func readSelectedIssues(sandmanDir string, maxCount int) ([]int, error) {
@@ -100,11 +135,30 @@ func readSelectedIssues(sandmanDir string, maxCount int) ([]int, error) {
 		return nil, fmt.Errorf("agent selected no issues")
 	}
 
-	if len(selected) > maxCount {
+	if maxCount > 0 && len(selected) > maxCount {
 		selected = selected[:maxCount]
 	}
 
 	return selected, nil
+}
+
+func resolveAutoIssues(ctx context.Context, client github.Client, count int, candidates []int, sandmanDir, agentName, modelFlag string, cfg *config.Config) ([]int, error) {
+	if autoPromptFileExists(sandmanDir) {
+		return runSelectionPhase(ctx, client, count, "", "", sandmanDir, agentName, modelFlag, cfg, candidates)
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no issues ready for agent")
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i] < candidates[j]
+	})
+
+	if count > 0 && count < len(candidates) {
+		candidates = candidates[:count]
+	}
+	return candidates, nil
 }
 
 func resolveModelFlag(modelFlag, preset string) string {

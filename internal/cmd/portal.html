@@ -1696,7 +1696,7 @@
         issues: '',
         label: '',
         query: '',
-        ralph: '',
+        autoMaxCount: '',
         runPane: 'run',
         includeDependencies: false,
         prompt: '',
@@ -1916,7 +1916,7 @@
           if (sm === 'issues') return commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || '') + '">');
           if (sm === 'label') return commandField('Label', '<input name="label" type="text" placeholder="ready-for-agent" value="' + escapeHTML(state.label || '') + '">');
           if (sm === 'query') return commandField('Query', '<input name="query" type="text" placeholder="is:open label:ready-for-agent" value="' + escapeHTML(state.query || '') + '">');
-          if (sm === 'ralph') return commandField('Number of issues for Ralph Loop', '<input name="ralph" type="number" min="1" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.ralph || 1)) + '" value="' + escapeHTML(state.ralph || '') + '">');
+          if (sm === 'auto') return commandField('Number of issues for Auto Mode', '<input name="autoMaxCount" type="number" min="0" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.autoMaxCount || 50)) + '" value="' + escapeHTML(state.autoMaxCount || '') + '">');
           return '';
         })();
         return commandSection('Scope', [
@@ -1993,8 +1993,8 @@
             cmd += 'run --label ' + s.label;
           } else if (sm === 'query' && s.query) {
             cmd += 'run --query "' + s.query.replace(/"/g, '\\"') + '"';
-          } else if (sm === 'ralph') {
-            cmd += 'run --ralph ' + (s.ralph || String(launchDefaults.ralph || 1));
+          } else if (sm === 'auto') {
+            cmd += 'run --auto ' + (s.autoMaxCount || String(launchDefaults.autoMaxCount || 50));
             if (s.label) cmd += ' --label ' + s.label;
             if (s.query) cmd += ' --query "' + s.query.replace(/"/g, '\\"') + '"';
           }
@@ -2148,7 +2148,7 @@
         setValue('issues', state.issues || '');
         setValue('label', state.label || '');
         setValue('query', state.query || '');
-        setValue('ralph', state.ralph || '');
+        setValue('autoMaxCount', state.autoMaxCount || '');
         setValue('includeDependencies', state.includeDependencies);
         setValue('prompt', state.prompt || '');
         setValue('template', state.template || '');
@@ -2196,7 +2196,7 @@
           issues: getVal('issues', ''),
           label: getVal('label', ''),
           query: getVal('query', ''),
-          ralph: getVal('ralph', ''),
+          autoMaxCount: getVal('autoMaxCount', ''),
           includeDependencies: getCheck('includeDependencies'),
           prompt: getVal('prompt', ''),
           template: getVal('template', ''),
@@ -2358,8 +2358,8 @@
         if (state.model) payload.model = state.model;
         if (state.baseBranch) payload.baseBranch = state.baseBranch;
         if (state.sandbox) payload.sandbox = state.sandbox;
-        const ralph = maybeInt(state.ralph);
-        if (ralph != null) payload.ralph = ralph;
+        const autoMaxCount = maybeInt(state.autoMaxCount);
+        if (autoMaxCount != null) payload.autoMaxCount = autoMaxCount;
         const parallel = maybeInt(state.parallel);
         if (parallel != null) payload.parallel = parallel;
         const startDelay = maybeInt(state.startDelay);
@@ -2375,7 +2375,7 @@
           if (payload.selectionMode === 'issues' && !String(payload.issues || '').trim()) throw new Error('run requires issue numbers');
           if (payload.selectionMode === 'label' && !String(payload.label || '').trim()) throw new Error('run requires a label');
           if (payload.selectionMode === 'query' && !String(payload.query || '').trim()) throw new Error('run requires a query');
-          if (payload.selectionMode === 'ralph' && payload.ralph == null) payload.ralph = launchDefaults.ralph || 1;
+          if (payload.selectionMode === 'auto' && payload.autoMaxCount == null) payload.autoMaxCount = launchDefaults.autoMaxCount || 50;
         }
         return payload;
       }

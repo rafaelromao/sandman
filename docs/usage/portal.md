@@ -146,7 +146,7 @@ Selection fields are only shown in `issue-driven` mode.
 | `issues` | Pass issue numbers directly |
 | `label` | Select issues with a GitHub label |
 | `query` | Select issues using a GitHub query |
-| `ralph` | Run Ralph Loop — an integer count for iterative processing, optionally filtered by label and/or query |
+| `auto` | Run Auto Mode — an integer count for iterative processing, optionally filtered by label and/or query |
 
 ### Form fields
 

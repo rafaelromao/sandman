@@ -63,10 +63,10 @@ Selects issues matching a GitHub search query. Any valid GitHub issue search que
 ## Running the next N issues
 
 ```bash
-sandman run --ralph 3
+sandman run --auto --count 3
 ```
 
-Selects the 3 lowest-numbered open issues labeled `ready-for-agent`. This is useful for CI/CD pipelines or automated triage workflows.
+Auto Mode: Sandman selects up to 3 issues from the candidate pool (default `ready-for-agent` label) and runs them. Use `--label X` or `--query "..."` to scope the candidate set, or pass explicit issue numbers as the candidate pool. `auto_max_count` in config controls the default cap (50); set to `0` for unlimited.
 
 ## Running without an issue
 

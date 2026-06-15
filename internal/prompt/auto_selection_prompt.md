@@ -1,6 +1,6 @@
-# Priority Selection
+# Auto Mode Selection
 
-You are in a Ralph Loop — prioritize and select issues for an AFK coding agent to implement.
+You are running in Auto Mode — prioritize and select issues for an AFK coding agent to implement.
 
 Select up to **{{MAX_COUNT}}** issues from the candidates below.
 

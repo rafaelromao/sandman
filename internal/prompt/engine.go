@@ -19,7 +19,7 @@ var defaultPrompt string
 //go:embed default_pr_review_prompt.md
 var defaultPRReviewPrompt string
 
-//go:embed priority_selection_prompt.md
+//go:embed auto_selection_prompt.md
 var prioritySelectionPrompt string
 
 //go:embed plan-template.md

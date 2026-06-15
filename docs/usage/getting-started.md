@@ -59,7 +59,7 @@ This scaffolds the `.sandman/` directory with:
 - **`.sandman/config.yaml`** — Sandman configuration with the selected default agent preset
 - **`.sandman/Dockerfile`** — Container image definition for container-backed sandboxing
 - **`.sandman/prompt.md`** — Project Prompt Template seeded from Sandman's Default Task Prompt
-- **`.sandman/priority-selection-prompt.md`** — Priority selection prompt for Ralph Loop issue prioritization
+- **`.sandman/auto-selection-prompt.md`** — Auto Mode selection prompt used when `--auto` is enabled
 
 Sandman also installs the shared `sandman` skill folder into `~/.agents/skills/sandman/` if it does not already exist.
 
@@ -107,7 +107,7 @@ Sandman will:
 5. Stream agent output to the terminal, prefixed with `[#42]`
 6. Log structured events to `.sandman/events.jsonl`
 
-If you want a prompt-only run instead, use `--prompt` or `--template` with no issue arguments, `--label`, `--query`, or `--ralph`, and omit issue placeholders like `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`:
+If you want a prompt-only run instead, use `--prompt` or `--template` with no issue arguments, `--label`, or `--query`, and omit issue placeholders like `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`:
 
 ```bash
 sandman run --base-branch main --prompt "Return only OK."

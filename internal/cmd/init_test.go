@@ -51,8 +51,8 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "prompt.md")); err != nil {
 		t.Errorf("prompt.md not created: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".sandman", "priority-selection-prompt.md")); err != nil {
-		t.Errorf("priority-selection-prompt.md not created: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "auto-selection-prompt.md")); err != nil {
+		t.Errorf("auto-selection-prompt.md not created: %v", err)
 	}
 }
 
@@ -407,15 +407,15 @@ func TestInit_PrioritySelectionPromptNotOverwrittenOnSecondRun(t *testing.T) {
 		t.Fatalf("first init: %v", err)
 	}
 
-	priorityPath := filepath.Join(dir, ".sandman", "priority-selection-prompt.md")
-	originalData, err := os.ReadFile(priorityPath)
+	autoPath := filepath.Join(dir, ".sandman", "auto-selection-prompt.md")
+	originalData, err := os.ReadFile(autoPath)
 	if err != nil {
-		t.Fatalf("read priority-selection-prompt.md: %v", err)
+		t.Fatalf("read auto-selection-prompt.md: %v", err)
 	}
 
 	customContent := string(originalData) + "\n# Custom modification\n"
-	if err := os.WriteFile(priorityPath, []byte(customContent), 0644); err != nil {
-		t.Fatalf("modify priority-selection-prompt.md: %v", err)
+	if err := os.WriteFile(autoPath, []byte(customContent), 0644); err != nil {
+		t.Fatalf("modify auto-selection-prompt.md: %v", err)
 	}
 
 	var out2 bytes.Buffer
@@ -429,12 +429,12 @@ func TestInit_PrioritySelectionPromptNotOverwrittenOnSecondRun(t *testing.T) {
 		t.Fatal("expected error when declining overwrite")
 	}
 
-	dataAfter, err := os.ReadFile(priorityPath)
+	dataAfter, err := os.ReadFile(autoPath)
 	if err != nil {
-		t.Fatalf("read priority-selection-prompt.md after: %v", err)
+		t.Fatalf("read auto-selection-prompt.md after: %v", err)
 	}
 	if got := string(dataAfter); got != customContent {
-		t.Fatalf("priority-selection-prompt.md was overwritten\nwant:\n%s\ngot:\n%s", customContent, got)
+		t.Fatalf("auto-selection-prompt.md was overwritten\nwant:\n%s\ngot:\n%s", customContent, got)
 	}
 }
 
