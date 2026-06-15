@@ -470,13 +470,13 @@ func prFlowDeps(repoDir string) Dependencies {
 	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 
 	return Dependencies{
-		BatchRunner:    batch.NewOrchestrator(ghClient, renderer, cfgStore, eventLog),
-		ConfigStore:    cfgStore,
-		EventLog:       eventLog,
-		GitHubClient:   ghClient,
-		PromptRenderer: renderer,
-		IssuePicker:    &SimpleIssuePicker{},
-		IsTTY:          isStdoutTTY,
+		BatchRunner:  batch.NewOrchestrator(ghClient, renderer, cfgStore, eventLog),
+		ConfigStore:  cfgStore,
+		EventLog:     eventLog,
+		GitHubClient: ghClient,
+		Renderer:     renderer,
+		IssuePicker:  &SimpleIssuePicker{},
+		IsTTY:        isStdoutTTY,
 	}
 }
 

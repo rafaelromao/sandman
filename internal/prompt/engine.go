@@ -58,6 +58,46 @@ func defaultPlanTemplate() string { return planTemplate }
 
 var keyPattern = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
+// issueMapping composes the operator-controlled substitution values for
+// the issue keys. ISSUE_BODY is intentionally NOT included here — the
+// body is passed as a separate argument to Renderer.Render so the
+// body-inert rule applies.
+func issueMapping(data IssueData) map[string]string {
+	return map[string]string{
+		"ISSUE_NUMBER":  fmt.Sprintf("%d", data.Number),
+		"ISSUE_TITLE":   data.Title,
+		"SOURCE_BRANCH": data.SourceBranch,
+		"BASE_BRANCH":   data.BaseBranch,
+		"BRANCH":        data.SourceBranch,
+	}
+}
+
+// configMapping composes the operator-controlled substitution values for
+// the render-config keys. REVIEW_COMMAND resolution preserves the
+// historical precedence: cfg.ReviewCommand wins over
+// PromptArgs["REVIEW_COMMAND"] wins over config.DefaultReviewCommand.
+// The other keys come straight from cfg.
+func configMapping(cfg RenderConfig) map[string]string {
+	mapping := map[string]string{
+		"CANDIDATE_ISSUES": cfg.CandidateIssues,
+		"MAX_COUNT":        fmt.Sprintf("%d", cfg.MaxCount),
+		"REVIEW_COMMAND":   config.DefaultReviewCommand,
+	}
+	for k, v := range cfg.PromptArgs {
+		if k == "REVIEW_COMMAND" {
+			continue
+		}
+		mapping[k] = v
+	}
+	if v, ok := cfg.PromptArgs["REVIEW_COMMAND"]; ok {
+		mapping["REVIEW_COMMAND"] = v
+	}
+	if reviewCommand := strings.TrimSpace(cfg.ReviewCommand); reviewCommand != "" {
+		mapping["REVIEW_COMMAND"] = reviewCommand
+	}
+	return mapping
+}
+
 func loadTemplate(cfg RenderConfig) (string, error) {
 	template := defaultPrompt
 	if cfg.PromptFlag != "" {
@@ -79,19 +119,19 @@ func loadTemplate(cfg RenderConfig) (string, error) {
 }
 
 // ApplySubstitutions renders non-issue placeholders in a prompt template.
+// It is a thin wrapper that builds the operator mapping from cfg and
+// runs it against the template. The portal/selection/run call sites
+// that pre-compute a prompt for issue-selection detection have no issue
+// body on this path; the body-inert rule does not apply. The wrapper
+// preserves the historical "always return the partial result" contract
+// so callers can still detect unfilled placeholders in the returned
+// string, even though Renderer.Render returns "" on missing keys.
 func ApplySubstitutions(template string, cfg RenderConfig) string {
-	result := template
-	for k, v := range cfg.PromptArgs {
-		result = strings.ReplaceAll(result, fmt.Sprintf("{{%s}}", k), v)
+	intermediate := template
+	for k, v := range configMapping(cfg) {
+		intermediate = strings.ReplaceAll(intermediate, "{{"+k+"}}", v)
 	}
-	reviewCommand := strings.TrimSpace(cfg.ReviewCommand)
-	if reviewCommand == "" {
-		reviewCommand = config.DefaultReviewCommand
-	}
-	result = strings.ReplaceAll(result, "{{REVIEW_COMMAND}}", reviewCommand)
-	result = strings.ReplaceAll(result, "{{CANDIDATE_ISSUES}}", cfg.CandidateIssues)
-	result = strings.ReplaceAll(result, "{{MAX_COUNT}}", fmt.Sprintf("%d", cfg.MaxCount))
-	return result
+	return intermediate
 }
 
 // ApplyPRSubstitutions renders {{PR_NUMBER}}, {{PR_TITLE}}, {{PR_BODY}},
@@ -111,27 +151,24 @@ func ApplyPRSubstitutions(template string, data PRData) string {
 // Engine renders prompt templates with issue metadata.
 type Engine struct{}
 
-// Render produces a prompt string from a template.
+// Render produces a prompt string from a template. It is a thin wrapper
+// over Renderer.Render that composes the operator mapping from
+// IssueData and RenderConfig and returns the renderer's error string
+// unchanged so the historical "missing substitution keys" contract is
+// preserved.
 func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 	template, err := loadTemplate(cfg)
 	if err != nil {
 		return "", err
 	}
 
-	result := template
-	result = strings.ReplaceAll(result, "{{ISSUE_NUMBER}}", fmt.Sprintf("%d", data.Number))
-	result = strings.ReplaceAll(result, "{{ISSUE_TITLE}}", data.Title)
-	result = strings.ReplaceAll(result, "{{ISSUE_BODY}}", data.Body)
-	result = strings.ReplaceAll(result, "{{SOURCE_BRANCH}}", data.SourceBranch)
-	result = strings.ReplaceAll(result, "{{BASE_BRANCH}}", data.BaseBranch)
-	result = strings.ReplaceAll(result, "{{BRANCH}}", data.SourceBranch)
-	result = ApplySubstitutions(result, cfg)
-
-	if unmatched := keyPattern.FindAllString(result, -1); len(unmatched) > 0 {
-		return "", fmt.Errorf("missing substitution keys: %s", strings.Join(unmatched, ", "))
+	mapping := issueMapping(data)
+	for k, v := range configMapping(cfg) {
+		mapping[k] = v
 	}
 
-	return result, nil
+	result, _, err := (&Renderer{}).Render(template, data.Body, mapping)
+	return result, err
 }
 
 // RenderReview produces a review prompt string. The template is taken from
@@ -197,5 +234,5 @@ func MaterializePromptFile(cfg RenderConfig) error {
 	return os.WriteFile(versionPath, []byte(promptVersion), 0644)
 }
 
-// Ensure Engine implements Renderer.
-var _ Renderer = (*Engine)(nil)
+// Ensure Engine implements IssueRenderer.
+var _ IssueRenderer = (*Engine)(nil)

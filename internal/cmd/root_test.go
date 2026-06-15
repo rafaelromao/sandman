@@ -25,13 +25,13 @@ import (
 // Dependencies or set ReviewCommand: "/oc review" explicitly.
 func newTestDeps() Dependencies {
 	return Dependencies{
-		BatchRunner:    &fakeBatchRunner{},
-		ConfigStore:    &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:       &fakeEventLog{},
-		GitHubClient:   &fakeGitHubClient{},
-		PromptRenderer: &prompt.Engine{},
-		IssuePicker:    &fakeIssuePicker{},
-		IsTTY:          func() bool { return false },
+		BatchRunner:  &fakeBatchRunner{},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: &fakeGitHubClient{},
+		Renderer:     &prompt.Engine{},
+		IssuePicker:  &fakeIssuePicker{},
+		IsTTY:        func() bool { return false },
 	}
 }
 

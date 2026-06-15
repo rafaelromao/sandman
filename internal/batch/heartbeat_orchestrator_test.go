@@ -36,7 +36,7 @@ type heartbeatStallRunnable struct {
 	ran     int
 }
 
-func (r *heartbeatStallRunnable) Run(ctx context.Context, _ prompt.Renderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+func (r *heartbeatStallRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
 	r.once.Do(func() {
 		if err := os.MkdirAll(filepath.Dir(r.logPath), 0755); err == nil {
 			if f, err := os.OpenFile(r.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {

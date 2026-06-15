@@ -252,7 +252,7 @@ type startOrderRunnable struct {
 	factory *startOrderRunnableFactory
 }
 
-func (r *startOrderRunnable) Run(ctx context.Context, _ prompt.Renderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+func (r *startOrderRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
 	r.factory.recordStart(r.result.IssueNumber)
 	return r.result
 }

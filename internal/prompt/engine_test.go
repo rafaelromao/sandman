@@ -252,6 +252,25 @@ func TestRender_ReviewCommandFieldOverridesDefault(t *testing.T) {
 	}
 }
 
+func TestRender_ReviewCommandFieldWinsOverPromptArgs(t *testing.T) {
+	engine := &Engine{}
+	cfg := RenderConfig{
+		PromptFlag:    "review={{REVIEW_COMMAND}}",
+		ReviewCommand: "/field review",
+		PromptArgs:    map[string]string{"REVIEW_COMMAND": "/from-prompt-arg"},
+	}
+	data := IssueData{Number: 1}
+
+	result, err := engine.Render(cfg, data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result != "review=/field review" {
+		t.Fatalf("expected cfg.ReviewCommand to win over PromptArgs, got:\n%s", result)
+	}
+}
+
 func TestRender_EmptyValues(t *testing.T) {
 	engine := &Engine{}
 	cfg := RenderConfig{

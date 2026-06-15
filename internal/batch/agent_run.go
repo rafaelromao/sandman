@@ -46,7 +46,7 @@ func NewAgentRun(issue *github.Issue, branch string, sandbox sandbox.Sandbox) *A
 }
 
 // Prepare renders the prompt for the issue and writes it to the sandbox.
-func (r *AgentRun) Prepare(renderer prompt.Renderer, cfg prompt.RenderConfig) error {
+func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfig) error {
 	issue := r.issueData()
 	rendered, err := renderer.Render(cfg, prompt.IssueData{
 		Number:       issue.Number,
@@ -99,7 +99,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 }
 
 // Run executes the full lifecycle of the AgentRun and returns the result.
-func (r *AgentRun) Run(ctx context.Context, renderer prompt.Renderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	renderedPromptFile := renderCfg.RenderedPromptFile
 	if renderedPromptFile == "" {
 		renderedPromptFile = filepath.Join(".", ".sandman", "task.md")

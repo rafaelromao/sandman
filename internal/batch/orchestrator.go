@@ -202,7 +202,7 @@ func indexPriorRunsByIssue(eventLog events.EventLog) map[int]bool {
 // Orchestrator coordinates parallel AgentRun execution.
 type Orchestrator struct {
 	githubClient            github.Client
-	renderer                prompt.Renderer
+	renderer                prompt.IssueRenderer
 	configStore             config.Store
 	eventLog                events.EventLog
 	runnableFactory         RunnableFactory
@@ -587,7 +587,7 @@ func (p *containerPool) Close() error {
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
-func NewOrchestrator(githubClient github.Client, renderer prompt.Renderer, configStore config.Store, eventLog events.EventLog) *Orchestrator {
+func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, configStore config.Store, eventLog events.EventLog) *Orchestrator {
 	return &Orchestrator{
 		githubClient:  githubClient,
 		renderer:      renderer,

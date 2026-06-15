@@ -150,12 +150,12 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: &issue}}
 	store := &fakeStore{config: depsCfg}
 	deps = Dependencies{
-		BatchRunner:    batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
-		ConfigStore:    store,
-		EventLog:       &recordingEventLog{},
-		GitHubClient:   gh,
-		PromptRenderer: &prompt.Engine{},
-		IsTTY:          func() bool { return false },
+		BatchRunner:  batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		ConfigStore:  store,
+		EventLog:     &recordingEventLog{},
+		GitHubClient: gh,
+		Renderer:     &prompt.Engine{},
+		IsTTY:        func() bool { return false },
 	}
 	return runtime, repoDir, deps, issue
 }

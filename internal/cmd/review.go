@@ -131,7 +131,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "repo=%s agent=%s model=%s\n", repoName, reviewAgentName, reviewModel)
 
-	rendered, err := deps.PromptRenderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
+	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
 		Number: pr.Number,
 		Title:  pr.Title,
 		Body:   pr.Body,
@@ -247,7 +247,7 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	socketDir := ".sandman"
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
-	d := review.New(socketDir, deps.GitHubClient, deps.PromptRenderer, deps.BatchRunner, cfg, broadcaster)
+	d := review.New(socketDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster)
 	d.Sandbox = sandbox
 	d.ContainerCapacity = cc
 	d.ContainerCapacitySet = ccSet
