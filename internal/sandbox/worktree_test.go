@@ -721,3 +721,268 @@ func TestWorktreeSandbox_OverrideReconcileDetachedHead(t *testing.T) {
 		t.Errorf("expected HEAD to be on sandman/42-fix-bug after force-checkout, got %q", headRef)
 	}
 }
+
+func TestWorktreeSandbox_StartPreservesErrorWhenReconcileDisabled(t *testing.T) {
+	// The main repo is checked out on the very branch we need to delete.
+	// `git branch -D` from the main-repo cwd refuses with the
+	// "Cannot delete branch ... checked out at ..." error. With
+	// --no-reconcile-stranded, that error must surface unchanged.
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	const branch = "sandman/42-fix-bug"
+	runGit(t, dir, "checkout", "-b", branch)
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), branch, "main")
+	s.SetOverride(true)
+	s.SetStrandedReconcile(false)
+
+	err := s.Start()
+	if err == nil {
+		t.Fatal("expected error when main repo is checked out on branch and reconcile is disabled")
+	}
+	if !strings.Contains(err.Error(), "delete stale branch") {
+		t.Errorf("expected error to mention 'delete stale branch', got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), branch) {
+		t.Errorf("expected error to mention branch %q, got %q", branch, err.Error())
+	}
+
+	t.Cleanup(func() {
+		runGit(t, dir, "checkout", "main")
+		removeBranch(t, dir, branch)
+	})
+}
+
+func TestWorktreeSandbox_RecoversFromMainRepoBranch_StrandedWorktreePath(t *testing.T) {
+	// The main repo is checked out on the branch we need to delete. A
+	// stranded worktree lives at <worktreeBase>/<branch> on a different
+	// branch. Start() should detect the stranded worktree, run
+	// `git -C <strandedPath> branch -D <branch>` from inside the worktree,
+	// and then create the worktree as normal.
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	branch := "sandman/42-fix-bug"
+	const otherBranch = "sandman/9-other"
+
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "branch", otherBranch)
+	strandedPath := filepath.Join(worktreeBase, branch)
+	runGit(t, dir, "worktree", "add", "--force", strandedPath, otherBranch)
+
+	runGit(t, dir, "checkout", branch)
+
+	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s.SetOverride(true)
+	s.SetStrandedReconcile(true)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("expected stranded-worktree recovery to succeed, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, branch)
+		removeBranch(t, dir, otherBranch)
+	})
+
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "tracked.txt")); err != nil {
+		t.Errorf("expected tracked.txt in worktree after recovery, got: %v", err)
+	}
+	headRef := runGit(t, s.WorkDir(), "symbolic-ref", "HEAD")
+	if !strings.Contains(headRef, branch) {
+		t.Errorf("expected worktree HEAD to be on %q, got %q", branch, headRef)
+	}
+	mainHeadRef := runGit(t, dir, "symbolic-ref", "HEAD")
+	if !strings.Contains(mainHeadRef, "main") {
+		t.Errorf("expected main repo to be back on main after recovery, got %q", mainHeadRef)
+	}
+}
+
+func TestWorktreeSandbox_RecoversFromMainRepoBranch_MainRepoCheckoutPath(t *testing.T) {
+	// The main repo is checked out on the branch we need to delete, and
+	// there is NO stranded worktree at <worktreeBase>/<branch>. Start()
+	// should force-checkout the source branch in the main repo and
+	// retry the delete, then create the worktree as normal.
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	branch := "sandman/42-fix-bug"
+
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "checkout", branch)
+
+	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s.SetOverride(true)
+	s.SetStrandedReconcile(true)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("expected main-repo-checkout recovery to succeed, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "tracked.txt")); err != nil {
+		t.Errorf("expected tracked.txt in worktree after recovery, got: %v", err)
+	}
+	headRef := runGit(t, s.WorkDir(), "symbolic-ref", "HEAD")
+	if !strings.Contains(headRef, branch) {
+		t.Errorf("expected worktree HEAD to be on %q, got %q", branch, headRef)
+	}
+	mainHeadRef := runGit(t, dir, "symbolic-ref", "HEAD")
+	if !strings.Contains(mainHeadRef, "main") {
+		t.Errorf("expected main repo to be back on main after recovery, got %q", mainHeadRef)
+	}
+}
+
+func TestIsBranchCheckedOutError_OnlyMatchesCheckedOutOrWorktreeMessages(t *testing.T) {
+	// The recovery loop must only trigger on the "checked out at" /
+	// "used by worktree at" patterns. A generic branch-deletion error
+	// (for example, a permission denied, a missing ref, or an I/O
+	// failure) must not be classified as recoverable, otherwise the
+	// recovery loop would silently swallow unrelated failures.
+	cases := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{
+			name: "modern checked out message",
+			out:  "error: Cannot delete branch 'sandman/42-fix-bug' checked out at '/tmp/repo'\n",
+			want: true,
+		},
+		{
+			name: "legacy used by worktree message",
+			out:  "error: cannot delete branch 'sandman/42-fix-bug' used by worktree at '/tmp/repo'\n",
+			want: true,
+		},
+		{
+			name: "branch not found",
+			out:  "error: branch 'sandman/42-fix-bug' not found.\n",
+			want: false,
+		},
+		{
+			name: "permission denied",
+			out:  "error: cannot remove '.git/refs/heads/sandman/42-fix-bug': Permission denied\n",
+			want: false,
+		},
+		{
+			name: "empty output",
+			out:  "",
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isBranchCheckedOutError([]byte(tc.out)); got != tc.want {
+				t.Errorf("isBranchCheckedOutError(%q) = %v, want %v", tc.out, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStrandedWorktree_ResolvesRelativeWorktreeBase(t *testing.T) {
+	// The StrandedWorktree helper resolves a relative worktreeBase
+	// against repoPath internally, so callers can pass the configured
+	// (typically relative) WorktreeDir directly. Without this, the
+	// stranded-worktree recovery in WorktreeSandbox.Start silently
+	// never fires in default deployments where the configured
+	// WorktreeDir is relative (`.sandman/worktrees`).
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	worktreeBase := ".sandman/worktrees"
+	if err := os.MkdirAll(filepath.Join(dir, worktreeBase), 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	const expected = "sandman/907-foo"
+	const actual = "sandman/42-other-branch"
+	runGit(t, dir, "branch", expected)
+	runGit(t, dir, "branch", actual)
+	strandedPath := filepath.Join(dir, worktreeBase, expected)
+	runGit(t, dir, "worktree", "add", "--force", strandedPath, actual)
+
+	info, stranded := StrandedWorktree(dir, worktreeBase, expected)
+	if !stranded {
+		t.Fatalf("expected stranded=true for relative worktreeBase, got info=%+v", info)
+	}
+	if info.Path != strandedPath {
+		t.Errorf("Path: got %q, want %q", info.Path, strandedPath)
+	}
+}
+
+func TestWorktreeSandbox_StartCallsReconcileStrandedFnSeam(t *testing.T) {
+	// The recovery loop is dispatched through the package-level
+	// reconcileStrandedFn seam (ADR-0027). When a `git branch -D`
+	// failure matches the "checked out at" pattern, the seam is
+	// invoked with the expected (repoPath, worktreeBase, branch,
+	// sourceBranch) tuple.
+	prev := reconcileStrandedFn
+	defer func() { reconcileStrandedFn = prev }()
+
+	var captured struct {
+		repoPath     string
+		worktreeBase string
+		branch       string
+		sourceBranch string
+		called       bool
+	}
+	reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch string) error {
+		captured.repoPath = repoPath
+		captured.worktreeBase = worktreeBase
+		captured.branch = branch
+		captured.sourceBranch = sourceBranch
+		captured.called = true
+		return nil
+	}
+
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	const branch = "sandman/42-fix-bug"
+	runGit(t, dir, "checkout", "-b", branch)
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s.SetOverride(true)
+	s.SetStrandedReconcile(true)
+
+	// The seam will silently succeed but no worktree exists yet at
+	// the worktreeBase, so the worktree-add step still fails. We
+	// only need the recovery to fire and the seam to be invoked.
+	_ = s.Start()
+
+	if !captured.called {
+		t.Fatal("expected reconcileStrandedFn seam to be called during Start")
+	}
+	if captured.repoPath != dir {
+		t.Errorf("seam repoPath: got %q, want %q", captured.repoPath, dir)
+	}
+	if captured.worktreeBase != worktreeBase {
+		t.Errorf("seam worktreeBase: got %q, want %q", captured.worktreeBase, worktreeBase)
+	}
+	if captured.branch != branch {
+		t.Errorf("seam branch: got %q, want %q", captured.branch, branch)
+	}
+	if captured.sourceBranch != "main" {
+		t.Errorf("seam sourceBranch: got %q, want %q", captured.sourceBranch, "main")
+	}
+
+	t.Cleanup(func() {
+		runGit(t, dir, "checkout", "main")
+		removeBranch(t, dir, branch)
+	})
+}

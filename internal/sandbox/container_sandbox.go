@@ -58,6 +58,11 @@ func (s *ContainerSandbox) SetOverride(override bool) {
 	s.worktree.SetOverride(override)
 }
 
+// SetStrandedReconcile forwards stranded-worktree auto-recovery to the underlying worktree.
+func (s *ContainerSandbox) SetStrandedReconcile(enabled bool) {
+	s.worktree.SetStrandedReconcile(enabled)
+}
+
 func (s *ContainerSandbox) containerWorkDir() string {
 	wd := s.worktree.WorkDir()
 	rel, err := filepath.Rel(s.repoPath, wd)

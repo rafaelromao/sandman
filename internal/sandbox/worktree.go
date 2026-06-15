@@ -13,16 +13,17 @@ import (
 
 // WorktreeSandbox provides isolation via git worktree only.
 type WorktreeSandbox struct {
-	repoPath     string
-	worktreeBase string
-	branch       string
-	sourceBranch string
-	override     bool
-	workDir      string
-	gitName      string
-	gitEmail     string
-	cmd          *exec.Cmd
-	errorLog     io.Writer
+	repoPath          string
+	worktreeBase      string
+	branch            string
+	sourceBranch      string
+	override          bool
+	strandedReconcile bool
+	workDir           string
+	gitName           string
+	gitEmail          string
+	cmd               *exec.Cmd
+	errorLog          io.Writer
 }
 
 // NewWorktreeSandbox creates a WorktreeSandbox for the given repo and branch.
@@ -38,6 +39,16 @@ func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *Wo
 // SetOverride enables override behavior for orphan worktree recovery.
 func (s *WorktreeSandbox) SetOverride(override bool) {
 	s.override = override
+}
+
+// SetStrandedReconcile enables or disables auto-recovery from stranded
+// worktrees during Start. When enabled (the default), a "git branch -D"
+// failure with the "checked out at" error is recovered by either
+// deleting the branch from a stranded worktree's cwd or by force-checking
+// out the base branch in the main repo. When disabled, the original
+// error surfaces unchanged.
+func (s *WorktreeSandbox) SetStrandedReconcile(enabled bool) {
+	s.strandedReconcile = enabled
 }
 
 // Start initializes the worktree.
@@ -69,6 +80,27 @@ func (s *WorktreeSandbox) Start() error {
 	}
 overrideCleanup:
 	if s.override {
+		// Capture stranded-worktree state up front so the recovery
+		// loop can attempt the `git -C <strandedPath> branch -D`
+		// strategy from inside the worktree's cwd before the
+		// override block prunes the worktree registration.
+		strandedPath := ""
+		if s.strandedReconcile {
+			if info, stranded := StrandedWorktree(s.repoPath, s.worktreeBase, s.branch); stranded {
+				strandedPath = info.Path
+			}
+		}
+
+		if strandedPath != "" {
+			delCmd := exec.Command("git", "branch", "-D", s.branch)
+			delCmd.Dir = strandedPath
+			if out, err := delCmd.CombinedOutput(); err == nil {
+				strandedPath = ""
+			} else if !isBranchCheckedOutError(out) {
+				return fmt.Errorf("delete branch from stranded worktree at %q: %w\n%s", strandedPath, err, out)
+			}
+		}
+
 		if overrideRecreate {
 			removeCmd := exec.Command("git", "worktree", "remove", "--force", s.workDir)
 			removeCmd.Dir = s.repoPath
@@ -89,7 +121,13 @@ overrideCleanup:
 			delCmd := exec.Command("git", "branch", "-D", s.branch)
 			delCmd.Dir = s.repoPath
 			if out, err := delCmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, err, out)
+				if s.strandedReconcile && isBranchCheckedOutError(out) {
+					if recErr := s.reconcileStrandedBranch(); recErr != nil {
+						return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, recErr, out)
+					}
+				} else {
+					return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, err, out)
+				}
 			}
 		}
 	}
@@ -342,3 +380,55 @@ func (s *WorktreeSandbox) Process() Process {
 
 // Ensure WorktreeSandbox implements Sandbox.
 var _ Sandbox = (*WorktreeSandbox)(nil)
+
+// reconcileStrandedFn is the function variable seam for the stranded-worktree
+// recovery loop. It is invoked by WorktreeSandbox.Start when the initial
+// `git branch -D` fails with a "checked out at" error and reconciliation is
+// enabled. The default implementation calls the real recovery logic;
+// tests can substitute a stub to record the call and return success
+// without spawning a real git repo. See ADR-0027 for the pattern.
+var reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch string) error {
+	return defaultReconcileStrandedBranch(repoPath, worktreeBase, branch, sourceBranch)
+}
+
+// defaultReconcileStrandedBranch is the default implementation of the
+// recovery loop. It force-checks out sourceBranch in repoPath and
+// retries the branch delete. Exposed as a free function so the
+// function-variable seam can be substituted independently of the
+// receiver-bound method on WorktreeSandbox.
+func defaultReconcileStrandedBranch(repoPath, worktreeBase, branch, sourceBranch string) error {
+	checkoutCmd := exec.Command("git", "checkout", "-f", sourceBranch)
+	checkoutCmd.Dir = repoPath
+	if out, err := checkoutCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("checkout -f %s in main repo: %w\n%s", sourceBranch, err, out)
+	}
+	delCmd := exec.Command("git", "branch", "-D", branch)
+	delCmd.Dir = repoPath
+	if out, err := delCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("delete stale branch %q after force-checkout: %w\n%s", branch, err, out)
+	}
+	return nil
+}
+
+// isBranchCheckedOutError reports whether the given git output indicates
+// the branch cannot be deleted because it is checked out somewhere
+// (e.g. the main repo or another worktree). Matches both "Cannot delete
+// branch 'X' checked out at '...'" and the older "cannot delete branch
+// 'X' used by worktree at '...'" wording.
+func isBranchCheckedOutError(out []byte) bool {
+	msg := string(out)
+	return strings.Contains(msg, "checked out at") || strings.Contains(msg, "used by worktree at")
+}
+
+// reconcileStrandedBranch attempts to remove the stale branch after the
+// initial "git branch -D" failed because the branch is checked out
+// somewhere. The caller has already attempted the stranded-worktree
+// strategy (delete from the stranded worktree's cwd) and removed any
+// stale worktree registration; the recovery path here is therefore
+// the "main repo on the branch" case, dispatched through the
+// package-level reconcileStrandedFn seam (see ADR-0027).
+//
+// Returns nil on success, or a non-nil error on hard failure.
+func (s *WorktreeSandbox) reconcileStrandedBranch() error {
+	return reconcileStrandedFn(s.repoPath, s.worktreeBase, s.branch, s.sourceBranch)
+}

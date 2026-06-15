@@ -876,6 +876,66 @@ func TestRun_NoOverrideAlias(t *testing.T) {
 	}
 }
 
+func TestRun_ReconcileStrandedDefaultTrue(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spy.req.StrandedReconcile != nil {
+		t.Errorf("expected StrandedReconcile to be nil (default true) when --reconcile-stranded is not passed, got %v", *spy.req.StrandedReconcile)
+	}
+}
+
+func TestRun_NoReconcileStrandedSetsFalse(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--no-reconcile-stranded", "42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spy.req.StrandedReconcile == nil {
+		t.Fatal("expected StrandedReconcile to be set when --no-reconcile-stranded is passed")
+	}
+	if *spy.req.StrandedReconcile {
+		t.Errorf("expected StrandedReconcile to be false, got true")
+	}
+}
+
+func TestRun_ReconcileStrandedExplicitTrueSetsTrue(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--reconcile-stranded=true", "42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spy.req.StrandedReconcile == nil {
+		t.Fatal("expected StrandedReconcile to be set when --reconcile-stranded=true is passed")
+	}
+	if !*spy.req.StrandedReconcile {
+		t.Errorf("expected StrandedReconcile to be true, got false")
+	}
+}
+
 func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) {
 	tests := []struct {
 		name      string

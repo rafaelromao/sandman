@@ -37,6 +37,10 @@ type Sandbox interface {
 	// SetOverride enables override behavior for orphan worktree recovery.
 	// Must be safe to call before Start.
 	SetOverride(override bool)
+	// SetStrandedReconcile enables or disables auto-recovery from a
+	// stranded worktree or a "branch used by worktree at" error during
+	// Start. Must be safe to call before Start.
+	SetStrandedReconcile(enabled bool)
 	// SetGitIdentity configures the identity Sandman should write to worktree-local git config.
 	// Must be safe to call before Start.
 	SetGitIdentity(name, email string)

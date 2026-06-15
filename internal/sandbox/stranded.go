@@ -22,9 +22,13 @@ type StrandedWorktreeInfo struct {
 // worktreeBase in a stranded state (HEAD does not match the expected ref).
 // Returns the StrandedWorktreeInfo and true if stranded, zero value and false otherwise.
 //
-// worktreeBase must be an absolute path: it is compared against the absolute
-// paths reported by `git worktree list --porcelain`.
+// worktreeBase is resolved against repoPath when it is a relative
+// path, so callers can pass the configured WorktreeDir (typically
+// `.sandman/worktrees`) without pre-resolving it to an absolute path.
 func StrandedWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeInfo, bool) {
+	if !filepath.IsAbs(worktreeBase) {
+		worktreeBase = filepath.Join(repoPath, worktreeBase)
+	}
 	if _, err := os.Stat(worktreeBase); err != nil {
 		return StrandedWorktreeInfo{}, false
 	}

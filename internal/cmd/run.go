@@ -456,14 +456,19 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				dangerouslySkipPerm = &val
 			}
 
-			strandedReconcileFlag := cmd.Flags().Lookup("reconcile-stranded")
-			strandedReconcileSet := strandedReconcileFlag != nil && strandedReconcileFlag.Changed
-			var strandedReconcile *bool
-			if strandedReconcileSet {
+			reconcileStrandedFlag := cmd.Flags().Lookup("reconcile-stranded")
+			noReconcileStrandedFlag := cmd.Flags().Lookup("no-reconcile-stranded")
+			reconcileStrandedSet := reconcileStrandedFlag != nil && reconcileStrandedFlag.Changed
+			noReconcileStrandedSet := noReconcileStrandedFlag != nil && noReconcileStrandedFlag.Changed
+			var reconcileStranded *bool
+			if reconcileStrandedSet {
 				val, _ := cmd.Flags().GetBool("reconcile-stranded")
-				strandedReconcile = &val
+				reconcileStranded = &val
+			} else if noReconcileStrandedSet {
+				val, _ := cmd.Flags().GetBool("no-reconcile-stranded")
+				val = !val
+				reconcileStranded = &val
 			}
-
 			modes := make(map[int]batch.IssueMode)
 			previousRunIDs := make(map[int]string)
 			branches := make(map[int]string)
@@ -561,7 +566,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				MaxContainers:              maxContainers,
 				MaxContainersSet:           maxContainersSet,
 				DangerouslySkipPermissions: dangerouslySkipPerm,
-				StrandedReconcile:          strandedReconcile,
+				StrandedReconcile:          reconcileStranded,
 				PromptConfig: prompt.RenderConfig{
 					PromptFlag:       promptFlag,
 					TemplateFlag:     templateFlag,
@@ -703,6 +708,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 	cmd.Flags().Bool("override", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
 	cmd.Flags().Bool("reconcile-stranded", true, "Auto-recover stranded worktrees when the main repo is checked out on a sandman/N-… branch (use --no-reconcile-stranded to disable)")
+	cmd.Flags().Bool("no-reconcile-stranded", false, "Opt out of stranded-worktree auto-recovery (negative form of --reconcile-stranded)")
 	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff and stored settings")
 
 	return cmd
