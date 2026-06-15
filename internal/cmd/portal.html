@@ -460,12 +460,13 @@
       margin-top: 10px;
       display: grid;
       grid-auto-flow: column;
-      grid-template-columns: auto 1fr;
+      grid-template-columns: auto minmax(0, 1fr);
       gap: 4px 10px;
       align-items: baseline;
       color: var(--muted);
       font-size: 12px;
-      max-width: 42ch;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .meta-line span {
       text-transform: uppercase;
@@ -488,6 +489,7 @@
       color: var(--muted);
       font-size: 11px;
       letter-spacing: 0.04em;
+      overflow-wrap: anywhere;
     }
     .eyebrow {
       display: inline-flex;
@@ -674,6 +676,21 @@
       background: var(--surface-2);
       padding: 0;
     }
+    /* The Run column drives its own width up to a sane cap so the
+       Part-of-batch chip can sit on a single line and the long
+       unbreakable run-id token in the meta-line can break instead of
+       forcing the column wider than its natural share. */
+    tbody td[data-cell="title"] {
+      min-width: 200px;
+      max-width: min(480px, 50%);
+      width: 480px;
+    }
+    /* Long unbreakable tokens (long run-id, long branch, long issue
+       title) must not force the column wider than the table can afford.
+       min-width:0 on the flex child lets the parent shrink; overflow-
+       wrap:anywhere lets the browser break inside the token. */
+    .run-title, td.mono { min-width: 0; }
+    .mono { overflow-wrap: anywhere; }
     .run-title {
       display: flex;
       flex-direction: column;
