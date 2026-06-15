@@ -1,7 +1,6 @@
 package paths
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -53,18 +52,4 @@ func (l Layout) SafeLogFilename(branch string) string {
 		return "prompt-only"
 	}
 	return name
-}
-
-// PortalLogPath returns the canonical log path for the portal to display,
-// given the issue number (0 for prompt-only) and the branch. For prompt-only
-// runs the branch is sanitized via SafeLogFilename. Returns "" when the
-// prompt-only branch is empty.
-func (l Layout) PortalLogPath(issueNumber int, branch string) string {
-	if issueNumber > 0 {
-		return filepath.Join(l.LogDir, fmt.Sprintf("%d.log", issueNumber))
-	}
-	if strings.TrimSpace(branch) == "" {
-		return ""
-	}
-	return filepath.Join(l.LogDir, l.SafeLogFilename(branch)+".log")
 }

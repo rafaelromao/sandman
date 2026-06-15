@@ -34,6 +34,19 @@ func TestNewLayout_DefaultAndCustomFields(t *testing.T) {
 	if got, want := customLayout.WorktreeDir, filepath.Join(repoRoot, "custom", "wt"); got != want {
 		t.Errorf("customLayout.WorktreeDir = %q, want %q", got, want)
 	}
+
+	absLayout := NewLayout(&config.Config{WorktreeDir: "/abs/worktrees"}, repoRoot)
+	if got, want := absLayout.WorktreeDir, "/abs/worktrees"; got != want {
+		t.Errorf("absLayout.WorktreeDir = %q, want %q", got, want)
+	}
+}
+
+func TestNewLayout_NilConfig(t *testing.T) {
+	repoRoot := t.TempDir()
+	l := NewLayout(nil, repoRoot)
+	if got, want := l.WorktreeDir, filepath.Join(repoRoot, ".sandman", "worktrees"); got != want {
+		t.Errorf("WorktreeDir with nil cfg = %q, want %q", got, want)
+	}
 }
 
 func TestSafeLogFilename_Slashes(t *testing.T) {

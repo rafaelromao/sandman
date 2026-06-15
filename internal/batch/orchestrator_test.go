@@ -904,6 +904,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: pr}},
 		renderer:     renderer,
 		errorLog:     io.Discard,
+		layout:       paths.NewLayout(&config.Config{}, workDir),
 		sandboxFactory: &retrySandboxFactory{
 			sandbox: rtSandbox,
 		},
@@ -1025,6 +1026,7 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, findPRErr: errors.New("lookup failed")},
 		renderer:     renderer,
 		errorLog:     io.Discard,
+		layout:       paths.NewLayout(&config.Config{}, workDir),
 		sandboxFactory: &retrySandboxFactory{
 			sandbox: rtSandbox,
 		},
@@ -1879,6 +1881,7 @@ func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
 		},
 		renderer: &spyPromptRenderer{result: "rendered prompt"},
 		errorLog: io.Discard,
+		layout:   paths.NewLayout(&config.Config{}, workDir),
 		sandboxFactory: &fakeSandboxFactory{
 			sandbox: rtSandbox,
 		},
@@ -1921,6 +1924,7 @@ func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
 	o := &Orchestrator{
 		renderer:       &noopRenderer{},
 		errorLog:       io.Discard,
+		layout:         paths.NewLayout(&config.Config{}, workDir),
 		sandboxFactory: &fakeSandboxFactory{sandbox: rtSandbox},
 		runnableFactory: &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
 			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: rtSandbox.WorkDir()}

@@ -21,10 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
-	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 type portalTestOutput struct {
@@ -2837,9 +2835,8 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := &portalRunsView{}
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	log17 := layout.PortalLogPath(0, branch17)
-	log18 := layout.PortalLogPath(0, branch18)
+	log17 := view.portalLogPath(repoRoot, 0, branch17)
+	log18 := view.portalLogPath(repoRoot, 0, branch18)
 	if err := os.WriteFile(log17, []byte("review 17 log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

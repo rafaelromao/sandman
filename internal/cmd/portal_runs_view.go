@@ -800,7 +800,14 @@ func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath st
 
 func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	return layout.PortalLogPath(issueNumber, branch)
+	if issueNumber > 0 {
+		return filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNumber))
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return ""
+	}
+	return filepath.Join(layout.LogDir, layout.SafeLogFilename(branch)+".log")
 }
 
 func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, branch string) string {

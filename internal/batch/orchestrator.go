@@ -78,19 +78,9 @@ func readTailLines(path string, n int) []string {
 }
 
 // agentLogPath returns the canonical absolute log path for the given filename
-// under the orchestrator's layout LogDir. When the layout is not initialised
-// (legacy tests that build an Orchestrator literal directly), it falls back
-// to the current working directory's .sandman/logs/.
+// under the orchestrator's layout LogDir.
 func (o *Orchestrator) agentLogPath(filename string) string {
-	logDir := o.layout.LogDir
-	if logDir == "" {
-		root, err := filepath.Abs(".")
-		if err != nil {
-			root = "."
-		}
-		logDir = filepath.Join(root, ".sandman", "logs")
-	}
-	return filepath.Join(logDir, filename)
+	return filepath.Join(o.layout.LogDir, filename)
 }
 func gitTopLevel(repoPath string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")

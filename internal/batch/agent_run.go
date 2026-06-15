@@ -84,7 +84,13 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)
 	}
-	logPath := filepath.Join(logDir, r.logFileName())
+	var logName string
+	if r.issue != nil {
+		logName = fmt.Sprintf("%d.log", r.issue.Number)
+	} else {
+		logName = r.layout.SafeLogFilename(r.branch) + ".log"
+	}
+	logPath := filepath.Join(logDir, logName)
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("create log file: %w", err)
@@ -253,11 +259,4 @@ func (r *AgentRun) prefixLabel() string {
 		return r.runID
 	}
 	return "prompt-only"
-}
-
-func (r *AgentRun) logFileName() string {
-	if r.issue != nil {
-		return fmt.Sprintf("%d.log", r.issue.Number)
-	}
-	return r.layout.SafeLogFilename(r.branch) + ".log"
 }
