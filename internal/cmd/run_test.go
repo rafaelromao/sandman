@@ -1132,8 +1132,8 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	if got := spy.req.IssueMode(42); got != batch.ModeContinue {
 		t.Fatalf("expected issue 42 continue mode, got %v", got)
 	}
-	if got := spy.req.IssueMode(43); got != batch.ModeFresh {
-		t.Fatalf("expected issue 43 fresh mode, got %v", got)
+	if got := spy.req.IssueMode(43); got != batch.ModeOverride {
+		t.Fatalf("expected issue 43 override mode (promoted from --continue), got %v", got)
 	}
 	if spy.req.PreviousRunIDs[42] != "run-42-prev" {
 		t.Fatalf("expected issue 42 previous run replay, got %q", spy.req.PreviousRunIDs[42])
@@ -1146,6 +1146,9 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	}
 	if _, ok := spy.req.Branches[43]; ok {
 		t.Fatalf("expected issue 43 to have no branch replay, got %q", spy.req.Branches[43])
+	}
+	if got := strings.Count(buf.String(), "[--continue] promoting #43 to override (no prior started/continued run)"); got != 1 {
+		t.Fatalf("expected exactly one promotion log line for issue 43, got %d\noutput:\n%s", got, buf.String())
 	}
 }
 
@@ -1172,10 +1175,13 @@ func TestRun_ContinueFlag_NoPreviousPromptOnlyRun_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestRun_ContinueFlag_NoPriorRunErrors(t *testing.T) {
+func TestRun_ContinueFlag_NoPriorRunPromotesToOverride(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
 	deps.EventLog = &fakeEventLog{events: []events.Event{}}
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Fix bug"},
+	}}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1187,8 +1193,11 @@ func TestRun_ContinueFlag_NoPriorRunErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := spy.req.IssueMode(42); got != batch.ModeFresh {
-		t.Fatalf("expected ModeFresh when no prior run exists, got %v", got)
+	if got := spy.req.IssueMode(42); got != batch.ModeOverride {
+		t.Fatalf("expected ModeOverride when no prior run exists under --continue, got %v", got)
+	}
+	if got := strings.Count(buf.String(), "[--continue] promoting #42 to override (no prior started/continued run)"); got != 1 {
+		t.Fatalf("expected exactly one promotion log line, got %d\noutput:\n%s", got, buf.String())
 	}
 }
 
