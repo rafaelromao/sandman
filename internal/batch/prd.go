@@ -12,23 +12,24 @@ import (
 
 // PRDResolver resolves PRD issues to their child issues during batch preparation.
 type PRDResolver struct {
-	client     github.Client
-	infoWriter io.Writer
-	sectionREs []*regexp.Regexp
+	client        github.Client
+	warningWriter io.Writer
+	sectionREs    []*regexp.Regexp
 }
 
 // NewPRDResolver returns a resolver that expands any PRD issues in the input
-// into their child issues. The info writer receives one line per expanded PRD.
-func NewPRDResolver(client github.Client, infoWriter io.Writer) *PRDResolver {
-	if infoWriter == nil {
-		infoWriter = os.Stderr
+// into their child issues. The warning writer receives one line per expansion
+// or per dropped candidate.
+func NewPRDResolver(client github.Client, warningWriter io.Writer) *PRDResolver {
+	if warningWriter == nil {
+		warningWriter = os.Stderr
 	}
 	required := []string{"Problem Statement", "Solution", "User Stories"}
 	sectionREs := make([]*regexp.Regexp, len(required))
 	for i, name := range required {
 		sectionREs[i] = regexp.MustCompile(`(?im)^##\s+` + regexp.QuoteMeta(name) + `\s*$`)
 	}
-	return &PRDResolver{client: client, infoWriter: infoWriter, sectionREs: sectionREs}
+	return &PRDResolver{client: client, warningWriter: warningWriter, sectionREs: sectionREs}
 }
 
 // IsPRD reports whether the body contains the three required PRD sections
@@ -53,12 +54,17 @@ func (r *PRDResolver) IsPRD(body string) bool {
 //   - any FetchIssue error encountered while loading a candidate child
 func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) {
 	unique := uniqueIssues(issues)
-	seen := make(map[int]struct{}, len(unique))
 	out := make([]int, 0, len(unique))
-	for _, num := range unique {
-		if _, ok := seen[num]; ok {
-			continue
+	seen := make(map[int]struct{}, len(unique))
+	addUnique := func(n int) bool {
+		if _, ok := seen[n]; ok {
+			return false
 		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+		return true
+	}
+	for _, num := range unique {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -70,8 +76,7 @@ func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) 
 			return nil, fmt.Errorf("fetch issue #%d: not found", num)
 		}
 		if !r.IsPRD(issue.Body) {
-			seen[num] = struct{}{}
-			out = append(out, num)
+			addUnique(num)
 			continue
 		}
 		children, err := r.resolvePRDChildren(ctx, num, issue.Body)
@@ -79,13 +84,9 @@ func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) 
 			return nil, err
 		}
 		for _, child := range children {
-			if _, ok := seen[child]; ok {
-				continue
-			}
-			seen[child] = struct{}{}
-			out = append(out, child)
+			addUnique(child)
 		}
-		fmt.Fprintf(r.infoWriter, "expanded PRD #%d to %d child issues\n", num, len(children))
+		fmt.Fprintf(r.warningWriter, "expanded PRD #%d to %d child issues\n", num, len(children))
 	}
 	return out, nil
 }
@@ -112,7 +113,7 @@ func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body s
 		}
 		ref, ok := ExtractParentReference(childIssue.Body)
 		if !ok || ref != parent {
-			fmt.Fprintf(r.infoWriter, "candidate #%d is not a child of PRD #%d, skipping\n", child, parent)
+			fmt.Fprintf(r.warningWriter, "candidate #%d is not a child of PRD #%d, skipping\n", child, parent)
 			continue
 		}
 		accepted = append(accepted, child)
@@ -124,11 +125,14 @@ func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body s
 }
 
 func (r *PRDResolver) collectCandidates(parent int, body string) []int {
+	order := make([]int, 0)
 	seen := make(map[int]struct{})
-	var order []int
 	add := func(nums []int) {
 		for _, n := range nums {
-			if _, ok := seen[n]; ok || n == parent {
+			if n == parent {
+				continue
+			}
+			if _, ok := seen[n]; ok {
 				continue
 			}
 			seen[n] = struct{}{}
@@ -140,15 +144,16 @@ func (r *PRDResolver) collectCandidates(parent int, body string) []int {
 		for _, c := range comments {
 			add(ExtractIssueReferences(c.Body))
 		}
+	} else {
+		fmt.Fprintf(r.warningWriter, "warning: could not list comments for PRD #%d: %v\n", parent, err)
 	}
 	if len(order) == 0 {
 		if results, err := r.client.SearchIssues(prdSearchToken(parent)); err == nil {
 			for _, issue := range results {
-				if issue.Number == parent {
-					continue
-				}
 				add([]int{issue.Number})
 			}
+		} else {
+			fmt.Fprintf(r.warningWriter, "warning: mention search for PRD #%d failed: %v\n", parent, err)
 		}
 	}
 	return order

@@ -44,6 +44,18 @@ _Avoid_: synthetic issue run.
 The component that fetches issues, extracts their BlockedBy relationships, validates the dependency graph (detecting cycles and missing blockers), and produces a topologically sorted ResolvedBatch.
 _Avoid_: scheduler, planner.
 
+**PRD** (Product Requirements Document):
+A GitHub issue whose body contains the H2 sections `## Problem Statement`, `## Solution`, and `## User Stories`. A PRD is a container for a set of vertical slices; Sandman recognizes it structurally and resolves it into its child issues before execution. Detection is body-based, not label-based.
+_Avoid_: spec, epic, umbrella issue.
+
+**PRDResolver**:
+The component that detects PRD issues, discovers their child issues (from the body, comments, and a fallback mention search), verifies each candidate by its `## Parent` backlink, and replaces the PRD with its accepted children in the input batch. Runs in `sandman run` after issue selection and before `DependencyResolver.Resolve`. A PRD with no accepted children fails the resolution; a child that is itself a PRD (nested PRD) also fails.
+_Avoid_: PRD expander, PRD flattener.
+
+**`## Parent` backlink**:
+A H2 section in an issue body of the form `## Parent` followed by either `#N` shorthand or a full GitHub issue URL (`https://github.com/<owner>/<repo>/issues/N`). A candidate child of PRD `#N` is accepted only when its `## Parent` section cites `#N`.
+_Avoid_: parent reference, parent link, parent header.
+
 **Batch**:
 The set of AgentRuns triggered by a single `sandman run` invocation. Coordinated for parallel execution with a concurrency limit; prompt-only runs may execute without issue lookup and may emit null-issue run entries.
 _Avoid_: Batch run, invocation.
@@ -213,6 +225,7 @@ _Avoid_: Continuation context (legacy filename), continuation file.
 - An **Issue** may have **BlockedBy** relationships to other **Issues**
 - A **DependencyResolver** produces a **ResolvedBatch** from a set of **Issues**
 - An **Orchestrator** executes a **ResolvedBatch**, respecting **BlockedBy** ordering
+- A **PRDResolver** runs before a **DependencyResolver**, replacing any **PRD** in the input with its child **Issues** so the orchestrator never sees the PRD itself
 - An **AgentRun** may be **blocked** if any of its in-batch **BlockedBy** issues did not finish with status `success`, or if any of its external **BlockedBy** issues is still open on GitHub when the run is about to start
 - A **Sandbox** provides isolation for one or more **AgentRuns**
 - In `sandbox: worktree`, each **AgentRun** gets its own **Sandbox** (a **WorktreeSandbox**)
