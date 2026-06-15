@@ -106,7 +106,9 @@ func (o *Orchestrator) validateBatchBranches(req Request) error {
 		return fmt.Errorf("resolve repo root for branch validation: %w", err)
 	}
 
-	var conflicts []string
+	priorRunByIssue := indexPriorRunsByIssue(o.eventLog)
+
+	var conflicts []branchConflict
 	seenConflict := make(map[string]struct{}, len(req.Issues))
 	for _, num := range req.Issues {
 		if req.IssueMode(num) != ModeFresh {
@@ -129,7 +131,11 @@ func (o *Orchestrator) validateBatchBranches(req Request) error {
 				continue
 			}
 			seenConflict[key] = struct{}{}
-			conflicts = append(conflicts, key)
+			conflicts = append(conflicts, branchConflict{
+				issueNum: num,
+				branch:   branch,
+				hasPrior: priorRunByIssue[num],
+			})
 		}
 	}
 
@@ -137,7 +143,60 @@ func (o *Orchestrator) validateBatchBranches(req Request) error {
 		return nil
 	}
 
-	return fmt.Errorf("refusing to start batch: branches already exist from previous runs: %s. Delete them with git branch -D <branch> or use --override to restart from scratch or --continue to resume", strings.Join(conflicts, ", "))
+	conflictLabels := make([]string, 0, len(conflicts))
+	remediations := make([]string, 0, len(conflicts))
+	for _, c := range conflicts {
+		conflictLabels = append(conflictLabels, fmt.Sprintf("#%d (%s)", c.issueNum, c.branch))
+		if c.hasPrior {
+			remediations = append(remediations, fmt.Sprintf("#%d: prior run exists — use --continue", c.issueNum))
+		} else {
+			remediations = append(remediations, fmt.Sprintf("#%d: no prior run — use --override", c.issueNum))
+		}
+	}
+
+	return fmt.Errorf(
+		"refusing to start batch: branches already exist from previous runs: %s. %s. Delete the branch with `git branch -D <branch>` or use --override to restart from scratch.",
+		strings.Join(conflictLabels, ", "),
+		strings.Join(remediations, ". "),
+	)
+}
+
+// branchConflict is one issue/branch pair that the pre-flight branch
+// validator rejected, paired with whether the event log already records a
+// prior run.started/run.continued for that issue. The prior-run flag drives
+// the per-issue remediation hint in the returned error.
+type branchConflict struct {
+	issueNum int
+	branch   string
+	hasPrior bool
+}
+
+// indexPriorRunsByIssue returns a set of issue numbers that have at least
+// one run.started or run.continued event in the event log. Such events are
+// the canonical signal that a prior AgentRun reached the execution stage
+// for the issue; run.queued alone is not sufficient because it only marks
+// scheduling intent and the run may never have started. A nil event log
+// yields an empty set; a read error yields an empty set so the caller
+// biases toward --override (matching the long-standing behaviour of
+// collectIssueBranches on the same failure mode).
+func indexPriorRunsByIssue(eventLog events.EventLog) map[int]bool {
+	out := map[int]bool{}
+	if eventLog == nil {
+		return out
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		return out
+	}
+	for _, e := range logs {
+		if e.Issue == 0 {
+			continue
+		}
+		if e.Type == "run.started" || e.Type == "run.continued" {
+			out[e.Issue] = true
+		}
+	}
+	return out
 }
 
 // Orchestrator coordinates parallel AgentRun execution.
@@ -1719,7 +1778,35 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 
 	result.Status = s.emitTerminal(ctx, runID, result)
 
+	if result.Status == "success" {
+		s.reconcileWorktreeBranch(wt, branch)
+	}
+
 	return result, true
+}
+
+// reconcileWorktreeBranch returns the worktree's HEAD to the issue branch
+// when it has drifted onto some other ref (e.g. after `gh pr merge --squash
+// --delete-branch` leaves the worktree on the local base branch, or when
+// the worktree ends up on a detached HEAD). The PR merge itself succeeded
+// on GitHub, so any failure here is logged as a warning and the run still
+// returns success.
+func (s *runSession) reconcileWorktreeBranch(wt sandbox.Sandbox, branch string) {
+	o := s.o
+	expectedRef := "refs/heads/" + branch
+	if currentRef, err := sandbox.CurrentBranchRef(wt.WorkDir()); err == nil && currentRef == expectedRef {
+		return
+	}
+	if !sandbox.BranchExists(wt.RepoPath(), branch) {
+		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: branch %q was deleted; next run will recreate it\n", branch)
+		return
+	}
+	cmd := exec.Command("git", "-C", wt.WorkDir(), "checkout", "-f", branch)
+	cmd.Dir = wt.RepoPath()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: git checkout -f %s: %v\n%s\n", branch, err, out)
+		return
+	}
 }
 
 func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]int, error) {

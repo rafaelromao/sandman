@@ -858,8 +858,11 @@ func TestRun_FreshRunErrorsWhenBranchAlreadyExists(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when branch already exists")
 	}
-	if !strings.Contains(err.Error(), "--override") || !strings.Contains(err.Error(), "--continue") {
-		t.Fatalf("expected branch-conflict guidance, got %v", err)
+	if !strings.Contains(err.Error(), "#42: no prior run — use --override") {
+		t.Fatalf("expected per-issue override guidance, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "git branch -D <branch>") {
+		t.Fatalf("expected branch deletion hint, got %v", err)
 	}
 }
 

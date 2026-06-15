@@ -93,6 +93,12 @@ func (f *fakeSandbox) Stop() error {
 	return nil
 }
 func (f *fakeSandbox) WorkDir() string { return f.workDir }
+func (f *fakeSandbox) RepoPath() string {
+	if f.workDir == "" {
+		return ""
+	}
+	return filepath.Dir(f.workDir)
+}
 func (f *fakeSandbox) WritePrompt(content string) error {
 	f.writePromptCalled = true
 	f.writePromptContent = content
