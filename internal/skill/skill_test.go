@@ -262,7 +262,7 @@ func TestSandmanPlanSkill_OutputShapeNoNextStep(t *testing.T) {
 	if strings.Contains(text, "### Next step") {
 		t.Errorf("expected sandman-plan SKILL.md to not contain '### Next step' in the plan output shape, got:\n%s", text)
 	}
-	if strings.Contains(text, "## Plan output shape") == false {
+	if !strings.Contains(text, "## Plan output shape") {
 		t.Fatal("expected sandman-plan SKILL.md to contain a 'Plan output shape' section")
 	}
 }
