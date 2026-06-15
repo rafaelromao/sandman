@@ -62,11 +62,13 @@ type Request struct {
 	MaxContainersSet           bool
 	Override                   bool
 	DangerouslySkipPermissions *bool
-	// StrandedReconcile controls whether WorktreeSandbox.Start should
-	// auto-recover from a stranded worktree or a "branch used by worktree
-	// at" error from the main-repo cwd. nil means the orchestrator
-	// applies the default (true). A non-nil false opts out and surfaces
-	// the original error unchanged.
+	// StrandedReconcile enables auto-recovery from a stranded worktree
+	// when a batch starts on a main repo that is checked out on a
+	// `sandman/N-…` branch (see ADR-0027 and the *Stranded worktree*
+	// glossary entry in CONTEXT.md). Threaded from the
+	// `--reconcile-stranded` / `--no-reconcile-stranded` flags; nil
+	// preserves today's belt-and-suspenders behaviour, false is the
+	// explicit opt-out, true enables auto-recovery.
 	StrandedReconcile *bool
 	PromptConfig      prompt.RenderConfig
 	OutputWriter      io.Writer

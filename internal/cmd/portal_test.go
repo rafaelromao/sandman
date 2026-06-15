@@ -856,3 +856,195 @@ func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
 		}
 	}
 }
+
+// TestPortal_ReviewRunLifecycle drives the full compute() pipeline for
+// review runs across their lifecycle, end-to-end. The slices mirror the
+// scenarios in issue #859:
+//
+//  1. active review run with live socket          → "reviewing"
+//  2. completed review run (daemon restarted)     → completed, review flag preserved
+//  3. review run reconstructed from event log only → completed, review flag preserved
+//  4. prompt-only run unaffected                   → "running", "prompt-only"
+//
+// All four share the public compute() seam used by the HTTP handler
+// (portal.go:277-279), so they exercise discovery + event projection +
+// dedup + sort together — not just the lower-level runFrom* helpers.
+func TestPortal_ReviewRunLifecycle(t *testing.T) {
+	t.Run("active socket shows reviewing", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
+		sockPath := filepath.Join(runDir, "run.sock")
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+
+		startedAt := time.Now().Add(-5 * time.Minute)
+		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+		})
+
+		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+		if err != nil {
+			t.Fatalf("compute: %v", err)
+		}
+		if len(runs) != 1 {
+			t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+		}
+		got := runs[0]
+		if got.Kind != "active" {
+			t.Fatalf("expected kind 'active' for live review socket, got %q", got.Kind)
+		}
+		if got.Status != "reviewing" {
+			t.Fatalf("expected status 'reviewing' for live review socket, got %q", got.Status)
+		}
+		if !got.Review {
+			t.Fatal("expected Review=true for active review run")
+		}
+		if got.PRNumber != 42 {
+			t.Fatalf("expected PRNumber=42, got %d", got.PRNumber)
+		}
+		if got.IssueLabel != "PR42" {
+			t.Fatalf("expected IssueLabel 'PR42', got %q", got.IssueLabel)
+		}
+	})
+
+	t.Run("dead socket after restart", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// Stale run dir: socket file present but no listener — simulates
+		// the portal rescanning the repo after a daemon restart.
+		runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
+		sockPath := filepath.Join(runDir, "run.sock")
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ln.Close()
+
+		startedAt := time.Now().Add(-5 * time.Minute)
+		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+			{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
+		})
+
+		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+		if err != nil {
+			t.Fatalf("compute: %v", err)
+		}
+		if len(runs) != 1 {
+			t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+		}
+		got := runs[0]
+		if got.Kind != "completed" {
+			t.Fatalf("expected kind 'completed' for dead-socket review run, got %q", got.Kind)
+		}
+		if got.Status != "success" {
+			t.Fatalf("expected status 'success' for finished review run, got %q", got.Status)
+		}
+		if !got.Review {
+			t.Fatal("expected Review=true for completed review run")
+		}
+		if got.PRNumber != 42 {
+			t.Fatalf("expected PRNumber=42 on completed review run, got %d", got.PRNumber)
+		}
+		if got.IssueLabel != "PR42" {
+			t.Fatalf("expected IssueLabel 'PR42' on completed review run, got %q", got.IssueLabel)
+		}
+	})
+
+	t.Run("event log only keeps review metadata", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// No .sandman/runs/PR42 directory on disk — the portal must
+		// still surface the run from the event log alone.
+		startedAt := time.Now().Add(-5 * time.Minute)
+		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+			{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
+		})
+
+		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+		if err != nil {
+			t.Fatalf("compute: %v", err)
+		}
+		if len(runs) != 1 {
+			t.Fatalf("expected 1 row from event log only, got %d: %#v", len(runs), runs)
+		}
+		got := runs[0]
+		if got.Kind != "completed" {
+			t.Fatalf("expected kind 'completed' for event-log-only review run, got %q", got.Kind)
+		}
+		if got.Status != "success" {
+			t.Fatalf("expected status 'success' for event-log-only review run, got %q", got.Status)
+		}
+		if !got.Review {
+			t.Fatal("expected Review=true for event-log-only review run")
+		}
+		if got.PRNumber != 42 {
+			t.Fatalf("expected PRNumber=42 for event-log-only review run, got %d", got.PRNumber)
+		}
+		if got.IssueLabel != "PR42" {
+			t.Fatalf("expected IssueLabel 'PR42' for event-log-only review run, got %q", got.IssueLabel)
+		}
+	})
+
+	t.Run("prompt only run unaffected", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// run-<ts> dir with live socket and no event log entries —
+		// the portal must keep treating it as an in-flight prompt-only
+		// run, not confuse it with a review run.
+		runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-999-1")
+		sockPath := filepath.Join(runDir, "run.sock")
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+
+		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+		if err != nil {
+			t.Fatalf("compute: %v", err)
+		}
+		if len(runs) != 1 {
+			t.Fatalf("expected 1 row for prompt-only run, got %d: %#v", len(runs), runs)
+		}
+		got := runs[0]
+		if got.Kind != "active" {
+			t.Fatalf("expected kind 'active' for prompt-only run with live socket, got %q", got.Kind)
+		}
+		if got.Status != "running" {
+			t.Fatalf("expected status 'running' for prompt-only run, got %q", got.Status)
+		}
+		if got.Review {
+			t.Fatal("expected Review=false for prompt-only run")
+		}
+		if got.IssueLabel != "prompt-only" {
+			t.Fatalf("expected IssueLabel 'prompt-only', got %q", got.IssueLabel)
+		}
+	})
+}

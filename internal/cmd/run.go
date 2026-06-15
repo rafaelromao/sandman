@@ -469,7 +469,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				val = !val
 				reconcileStranded = &val
 			}
-
 			modes := make(map[int]batch.IssueMode)
 			previousRunIDs := make(map[int]string)
 			branches := make(map[int]string)
@@ -711,6 +710,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("no-reconcile-stranded", false, "Opt out of stranded-worktree auto-recovery (negative form of --reconcile-stranded)")
 
 	cmd.Flags().Bool("override", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
+	cmd.Flags().Bool("reconcile-stranded", true, "Auto-recover stranded worktrees when the main repo is checked out on a sandman/N-… branch (use --no-reconcile-stranded to disable)")
 	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff and stored settings")
 
 	return cmd
