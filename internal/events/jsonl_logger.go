@@ -32,7 +32,7 @@ func (l *JSONLLogger) Log(event Event) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	f, err := l.openLocked()
+	f, err := l.ensureOpen()
 	if err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func (l *JSONLLogger) Read() ([]Event, error) {
 		return nil, fmt.Errorf("stat event log: %w", err)
 	}
 
-	f, err := l.openLocked()
+	f, err := l.ensureOpen()
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (l *JSONLLogger) RemoveEventsByIssue(issueNumber int) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	f, err := l.openLocked()
+	f, err := l.ensureOpen()
 	if err != nil {
 		return err
 	}
@@ -160,7 +160,7 @@ func (l *JSONLLogger) RemoveEventsByIssue(issueNumber int) error {
 	return nil
 }
 
-func (l *JSONLLogger) openLocked() (*os.File, error) {
+func (l *JSONLLogger) ensureOpen() (*os.File, error) {
 	if l.file != nil {
 		return l.file, nil
 	}
