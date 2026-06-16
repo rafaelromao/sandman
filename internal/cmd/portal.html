@@ -488,7 +488,6 @@
       color: var(--muted);
       font-size: 11px;
       letter-spacing: 0.04em;
-      overflow-wrap: anywhere;
     }
     /* The Part-of-batch chip lives in a sibling <tr class="batch-row">
        with a single colspan=7 cell, so it can stretch the full table
@@ -703,13 +702,14 @@
        wrap:anywhere lets the browser break inside the token. */
     .run-title, td.mono { min-width: 0; }
     .mono { overflow-wrap: anywhere; }
-    /* Issue Title and Branch cells hold long descriptive text that
-       would otherwise wrap to many lines and force the run row to
-       200+px tall. Clamp them to one line with ellipsis; the full
-       value is still in the DOM and the user can expand the run to
-       see the detail panel's Issues / Branch fields. */
+    /* Issue Title, Branch, and Started cells hold long descriptive
+       text that would otherwise wrap to many lines and force the run
+       row to 200+px tall. Clamp them to one line with ellipsis; the
+       full value is still in the DOM and the user can expand the run
+       to see the detail panel for the complete record. */
     tbody td[data-cell="issue-title"],
-    tbody td[data-cell="branch"] {
+    tbody td[data-cell="branch"],
+    tbody td[data-cell="started"] {
       max-width: 0;
       white-space: nowrap;
       overflow: hidden;

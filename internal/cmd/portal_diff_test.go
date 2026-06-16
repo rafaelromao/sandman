@@ -1611,7 +1611,7 @@ func sharedMockBody() string {
       log.push(['replaceChildren', nodes.length]);
     },
     querySelectorAll(sel) {
-      const m = sel.match(/^(\[|tr\.detail-row\[|tr\.batch-row\[|tr\[)data-(run-key|detail-for|batch-for)="([^"]+)"\]$/);
+      const m = sel.match(/^(\[|tr\.detail-row\[|tr[^\[]+\[|tr\[)data-(run-key|detail-for|batch-for)="([^"]+)"\]$/);
       if (!m) return [];
       const attr = 'data-' + m[2];
       const value = m[3];
@@ -1657,6 +1657,7 @@ function makeMockRow() {
   const log = [];
   const row = {
     tagName: 'TR',
+    nodeType: 1,
     children: [],
     dataset: {},
     classList: { _set: new Set(), add(...cs) { for (const c of cs) { this._set.add(c); log.push(['class+', c]); } }, remove(...cs) { for (const c of cs) { this._set.delete(c); log.push(['class-', c]); } }, contains(c) { return this._set.has(c); }, toggle(c, force) { if (force === true) this._set.add(c); else if (force === false) this._set.delete(c); else if (this._set.has(c)) this._set.delete(c); else this._set.add(c); log.push(['class^', c]); } },
@@ -1757,6 +1758,22 @@ function makeMockRow() {
   });
   Object.defineProperty(row, 'lastChild', {
     get() { return this.children.length ? this.children[this.children.length - 1] : null; },
+  });
+  Object.defineProperty(row, 'nextSibling', {
+    get() {
+      const p = this.parentNode;
+      if (!p || !p.children) return null;
+      const idx = p.children.indexOf(this);
+      return idx >= 0 && idx + 1 < p.children.length ? p.children[idx + 1] : null;
+    },
+  });
+  Object.defineProperty(row, 'previousSibling', {
+    get() {
+      const p = this.parentNode;
+      if (!p || !p.children) return null;
+      const idx = p.children.indexOf(this);
+      return idx > 0 ? p.children[idx - 1] : null;
+    },
   });
   return row;
 }
@@ -2094,6 +2111,73 @@ const batchRowIdx = Array.prototype.indexOf.call(body.children, batchRow);
 if (batchRowIdx !== dataRowIdx + 1) {
   throw new Error('expected batch-row immediately after data row, got dataRow=' + dataRowIdx + ' batchRow=' + batchRowIdx);
 }
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateCells_AddsBatchRowWhenBatchIssuesAppear(t *testing.T) {
+	js := `const body = makeMockBody();
+const runOld = {
+  key: 'a',
+  runId: 'r1',
+  kind: 'active',
+  status: 'running',
+  issueLabel: '#42',
+  issueNumber: 42,
+  batchKey: 'run-42-1',
+  batchIssues: null,
+};
+const runNew = Object.assign({}, runOld, { batchIssues: [42, 43] });
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) {
+  throw new Error('expected no batch-row on initial run with no batchIssues');
+}
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (!batchRow) throw new Error('expected batch-row to be added by updateRunRowCells');
+const chip = batchRow.querySelector('.batch-membership');
+if (!chip) throw new Error('expected batch-membership chip in new batch-row');
+const text = (chip.textContent || '');
+if (!text.includes('#42') || !text.includes('#43')) {
+  throw new Error('expected chip to list #42 and #43, got ' + JSON.stringify(text));
+}
+const dataRowIdx = Array.prototype.indexOf.call(body.children, created.row);
+const batchRowIdx = Array.prototype.indexOf.call(body.children, batchRow);
+if (batchRowIdx !== dataRowIdx + 1) {
+  throw new Error('expected new batch-row immediately after data row, got dataRow=' + dataRowIdx + ' batchRow=' + batchRowIdx);
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateCells_RemovesBatchRowWhenBatchIssuesClear(t *testing.T) {
+	js := `const body = makeMockBody();
+const runOld = {
+  key: 'a',
+  runId: 'r1',
+  kind: 'active',
+  status: 'running',
+  issueLabel: '#42',
+  issueNumber: 42,
+  batchKey: 'run-42-1',
+  batchIssues: [42, 43],
+};
+const runNew = Object.assign({}, runOld, { batchIssues: [42] });
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
+if (!body.querySelector('tr.batch-row[data-batch-for="a"]')) {
+  throw new Error('expected initial batch-row for multi-issue run');
+}
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (batchRow) throw new Error('expected batch-row to be removed when batchIssues drops to single issue');
 console.log('PASS');
 `
 	runNodeScript(t, js)
