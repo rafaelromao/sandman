@@ -286,6 +286,21 @@ func TestPortal_ReviewRunShowsReviewingStatus(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, runID := range []string{"run-review-1", "run-normal-1"} {
+		runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		sockPath := filepath.Join(runDir, "run.sock")
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+	}
 
 	startedAt := time.Now().Add(-10 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
