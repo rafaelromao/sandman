@@ -633,7 +633,6 @@
     const label = existing.querySelector('.badge-label') || existing.children[1];
     if (label && label.textContent !== reason) {
       setText(label, reason);
-      mutationCount += 1;
     }
   }
 

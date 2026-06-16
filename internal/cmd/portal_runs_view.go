@@ -644,12 +644,6 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Events:      eventsByRun[match.instance.Key],
 		BatchKey:    match.instance.Key,
 	}
-	// Only an active review run reaches this branch without a state
-	// (auto-select phases never expose a live socket), so the chip
-	// label can be set directly here.
-	if review {
-		run.Reason = "review"
-	}
 	v.markCompletedIfSocketDead(&run, run.SocketPath)
 	return run
 }

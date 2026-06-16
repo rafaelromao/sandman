@@ -2058,6 +2058,35 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffCreateRunRow_KindChipRendersBeforeBatchMembership(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = {
+  key: 'a',
+  runId: 'r1',
+  kind: 'active',
+  status: 'running',
+  issueLabel: '#42',
+  issueNumber: 42,
+  batchKey: 'run-42-1',
+  batchIssues: [42, 43],
+  reason: 'auto-select',
+};
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+const wrap = created.row.querySelector('[data-cell="title"]').children[0];
+const chip = wrap.querySelector('.kind-chip');
+const membership = wrap.querySelector('.batch-membership');
+if (!chip) throw new Error('expected kind chip');
+if (!membership) throw new Error('expected batch-membership');
+const chipIdx = Array.prototype.indexOf.call(wrap.children, chip);
+const membershipIdx = Array.prototype.indexOf.call(wrap.children, membership);
+if (chipIdx >= membershipIdx) throw new Error('expected kind chip (' + chipIdx + ') to render before batch-membership (' + membershipIdx + ')');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateCells_ReasonChangeSwapsChipKind(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: 'PR42', reason: 'review' };
