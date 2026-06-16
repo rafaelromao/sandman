@@ -697,9 +697,9 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 		IssueNumbers: []int{962, 960, 961},
 		StartedAt:    queuedAt.Add(-time.Second),
 	}
-	blocked := &events.Event{
-		Type:      "run.blocked",
-		Timestamp: blockedAt,
+	queued := &events.Event{
+		Type:      "run.queued",
+		Timestamp: queuedAt,
 		RunID:     "run-962-1",
 		Issue:     962,
 		Payload: map[string]any{
@@ -707,8 +707,17 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 			"issue_title": "[slice 3] Add dependencies path",
 		},
 	}
+	blocked := &events.Event{
+		Type:      "run.blocked",
+		Timestamp: blockedAt,
+		RunID:     "run-962-1",
+		Issue:     962,
+		Payload: map[string]any{
+			"blocked_by": []int{960, 961},
+		},
+	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 962, nil, blocked, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 962, nil, blocked, queued, "", nil)
 
 	if run.Status != "blocked" {
 		t.Fatalf("expected Status %q, got %q", "blocked", run.Status)
