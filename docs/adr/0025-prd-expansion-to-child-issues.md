@@ -63,14 +63,26 @@ using the same `DependencyResolver`-style seam that already lives in
    `TestPRDResolver_FallsBackToSearch`). Within each source,
    references are deduped; across sources the first occurrence wins.
    The PRD itself is excluded from the candidate set.
-3. **Parent verification** — For each candidate, the resolver fetches
-   the candidate and parses its `## Parent` section. Candidates
+3. **Parent verification** — For each candidate, the resolver fetches the
+   candidate and parses its `## Parent` section. Candidates
    whose parent reference does not resolve to the originating PRD
    are dropped with a stderr warning. URLs and `#N` shorthand are
    both accepted.
-4. **Nested-PRD rejection** — For each accepted candidate, the
-   resolver re-applies `IsPRD`. A candidate that is itself a PRD
-   fails the resolution with `nested PRD detected: #<child>`.
+3a. **User-typed input is authoritative** (#1036) — `Resolve` builds
+   a `userInputSet` from the deduped input slice and threads it into
+   `resolvePRDChildren`. Candidates whose number is in `userInputSet`
+   skip `FetchIssue`, the `IsPRD` re-check, and the `## Parent`
+   verification, and skip the parent-mismatch stderr warning. The
+   relaxation exists so that a mixed batch (e.g. a PRD alongside
+   prose-mentioned sibling issues, or a user-typed PRD nested in
+   another PRD's body) is not aborted by harvest-time filters. The
+   authored `## Parent` body convention remains the contract for
+   *authored* parent-child relationships; the relaxation applies only
+   to numbers the user typed into the input.
+4. **Nested-PRD rejection** — For each harvested (non-user-typed)
+   candidate, the resolver re-applies `IsPRD`. A candidate that is
+   itself a PRD fails the resolution with
+   `nested PRD detected: #<child>`.
 5. **No-children rejection** — A PRD whose accepted-child set is
    empty (no candidates, or every candidate dropped at step 3) fails
    the resolution with `no child issues for PRD #<n>`.

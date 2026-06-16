@@ -364,6 +364,87 @@ func TestPRDResolver_DropsCandidatesWithoutMatchingParent(t *testing.T) {
 	}
 }
 
+func TestPRDResolver_AcceptsUserTypedNestedPRD(t *testing.T) {
+	// #1 is a PRD whose body lists #2 as a candidate child, and #2 is itself
+	// a nested PRD. The user typed both. The resolver must accept the
+	// user-typed #2 without tripping the nested-PRD check, accept the
+	// user-typed #1's expansion to #2, and then process #2 (a PRD itself)
+	// which cites #1 as its parent — also a user-typed candidate accepted
+	// via the same bypass.
+	outerBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n\n## Child Issues\n\n- #2 nested\n"
+	innerBody := "## Parent\n\n#1\n\n## Problem Statement\n\nInner problem.\n\n## Solution\n\nInner solution.\n\n## User Stories\n\n1. Inner story.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Outer PRD", Body: outerBody},
+			2: {Number: 2, Title: "Inner PRD", Body: innerBody},
+		},
+	}
+
+	r := NewPRDResolver(client, nil)
+	got, err := r.Resolve(context.Background(), []int{1, 2})
+	if err != nil {
+		t.Fatalf("expected user-typed nested PRD to be accepted, got error: %v", err)
+	}
+	if !equalInts(got, []int{2, 1}) {
+		t.Fatalf("expected [2 1], got %v", got)
+	}
+}
+
+func TestPRDResolver_AcceptsUserTypedNumberWithoutParent(t *testing.T) {
+	// #1 is a PRD whose body lists #99 as a candidate. #99 is a regular
+	// issue with no ## Parent backlink. The user typed both #1 and #99.
+	// The resolver must accept the user-typed #99 inside #1's harvest
+	// (skipping the parent-mismatch check), so #1 expands successfully
+	// and the final output is [99]. The parent-mismatch warning MUST NOT
+	// be emitted for a user-typed candidate.
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #99 unrelated\n"
+	childBody99 := "## What to build\n\nStandalone work.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody},
+			99: {Number: 99, Title: "Standalone", Body: childBody99},
+		},
+	}
+
+	var warnBuf bytes.Buffer
+	r := NewPRDResolver(client, &warnBuf)
+	got, err := r.Resolve(context.Background(), []int{1, 99})
+	if err != nil {
+		t.Fatalf("expected user-typed non-child to be accepted, got error: %v", err)
+	}
+	if !equalInts(got, []int{99}) {
+		t.Fatalf("expected [99], got %v", got)
+	}
+	if strings.Contains(warnBuf.String(), "candidate #99 is not a child of PRD #1") {
+		t.Errorf("expected no 'candidate #99 is not a child' warning for user-typed #99, got: %q", warnBuf.String())
+	}
+}
+
+func TestPRDResolver_AcceptsUserTypedNumberInMixedBatch(t *testing.T) {
+	// #1 is a PRD with one authored child #10. The user types [1, 42]:
+	// #42 is a standalone regular issue that is not a child of #1. The
+	// PRD must expand to its real child #10, and the user-typed #42 must
+	// pass through unchanged, preserving input order [10, 42].
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10 child\n"
+	childBody10 := "## Parent\n\n#1\n\n## What\n\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody},
+			10: {Number: 10, Title: "Child", Body: childBody10},
+			42: {Number: 42, Title: "Standalone", Body: "## What\n\nStandalone.\n"},
+		},
+	}
+
+	r := NewPRDResolver(client, nil)
+	got, err := r.Resolve(context.Background(), []int{1, 42})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 42}) {
+		t.Fatalf("expected [10 42], got %v", got)
+	}
+}
+
 func TestPRDResolver_PropagatesChildFetchError(t *testing.T) {
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10 child\n"
 	client := &fetchIssueErrorClient{

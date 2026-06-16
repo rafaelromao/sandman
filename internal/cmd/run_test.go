@@ -427,7 +427,7 @@ func TestRun_ExpandsPRDBeforeBatchRunner(t *testing.T) {
 			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
 		}
 	}
-	if !strings.Contains(buf.String(), "expanded PRD #1 to 2 child issues") {
+	if !strings.Contains(buf.String(), "expanded PRD #1 to 2 accepted children") {
 		t.Errorf("expected info log about PRD expansion, got: %q", buf.String())
 	}
 }

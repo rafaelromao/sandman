@@ -813,7 +813,7 @@ exit 0
 			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
 		}
 	}
-	expandedIdx := strings.Index(buf.String(), "expanded PRD #1 to 2 child issues")
+	expandedIdx := strings.Index(buf.String(), "expanded PRD #1 to 2 accepted children")
 	if expandedIdx < 0 {
 		t.Fatalf("expected info log about PRD expansion, got: %q", buf.String())
 	}
