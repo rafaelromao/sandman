@@ -489,7 +489,6 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.Events = eventsByRun[state.RunID]
 		run.LogPath = v.portalLogPath(repoRoot, issueNumber, state.Branch())
 		run.LogURL = v.portalLogDownloadURL(repoRoot, issueNumber, state.Branch())
-		run.Reason = reasonForRun(*state)
 		if state.Finished != nil {
 			finishedAt := state.Finished.Timestamp
 			run.FinishedAt = &finishedAt
