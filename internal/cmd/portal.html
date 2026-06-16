@@ -478,6 +478,13 @@
       color: var(--muted);
       font-weight: 400;
     }
+    tbody tr.batch-row td {
+      padding: 0 14px 6px;
+      border-bottom: none;
+    }
+    tbody tr.run-row + tr.batch-row td {
+      padding-top: 0;
+    }
     .batch-membership {
       display: block;
       width: 100%;
@@ -488,19 +495,23 @@
       color: var(--muted);
       font-size: 11px;
       letter-spacing: 0.04em;
+      overflow-wrap: anywhere;
     }
-    /* The Part-of-batch chip lives in a sibling <tr class="batch-row">
-       with a single colspan=7 cell, so it can stretch the full table
-       width without forcing the title column wider. The chip stays
-       visually attached to its run row by a 1px top border that
-       mirrors the row's bottom border. */
-    tbody tr.batch-row td {
-      background: var(--surface);
-      padding: 0 14px 10px;
-      border-bottom: 1px solid var(--border);
+    .context-row td {
+      padding: 0 12px 4px;
+      border: none;
     }
-    tbody tr.run-row + tr.batch-row td {
-      border-top: 1px solid var(--border);
+    .context-chip {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--surface-3);
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      overflow-wrap: anywhere;
     }
     .eyebrow {
       display: inline-flex;
@@ -702,19 +713,6 @@
        wrap:anywhere lets the browser break inside the token. */
     .run-title, td.mono { min-width: 0; }
     .mono { overflow-wrap: anywhere; }
-    /* Issue Title, Branch, and Started cells hold long descriptive
-       text that would otherwise wrap to many lines and force the run
-       row to 200+px tall. Clamp them to one line with ellipsis; the
-       full value is still in the DOM and the user can expand the run
-       to see the detail panel for the complete record. */
-    tbody td[data-cell="issue-title"],
-    tbody td[data-cell="branch"],
-    tbody td[data-cell="started"] {
-      max-width: 0;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
     .run-title {
       display: flex;
       flex-direction: column;
@@ -750,6 +748,8 @@
     .badge.running .dot { background: var(--accent); }
     .badge.reviewing { background: color-mix(in oklch, oklch(0.65 0.16 285) 18%, var(--surface)); border-color: color-mix(in oklch, oklch(0.65 0.16 285) 30%, var(--border)); }
     .badge.reviewing .dot { background: oklch(0.65 0.16 285); }
+    .badge.auto-selecting { background: color-mix(in oklch, var(--accent) 12%, var(--surface)); border-color: color-mix(in oklch, var(--accent) 24%, var(--border)); }
+    .badge.auto-selecting .dot { background: var(--accent); }
     .badge.active { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 30%, var(--border)); }
     .badge.active .dot { background: var(--accent); }
     .badge.success { background: color-mix(in oklch, var(--success) 12%, var(--surface)); border-color: color-mix(in oklch, var(--success) 24%, var(--border)); }
@@ -760,14 +760,6 @@
     .badge.warning .dot { background: var(--warning); }
     .badge.aborted { background: color-mix(in oklch, var(--muted) 12%, var(--surface)); border-color: color-mix(in oklch, var(--muted) 24%, var(--border)); }
     .badge.aborted .dot { background: var(--muted); }
-    .badge.auto-select, .badge.review {
-      background: color-mix(in oklch, var(--surface-3) 70%, var(--surface));
-      color: var(--text);
-      border-color: color-mix(in oklch, var(--accent) 24%, var(--border));
-      font-weight: 600;
-      letter-spacing: 0.02em;
-    }
-    .badge.auto-select .dot, .badge.review .dot { background: var(--accent); }
     .retry-chip {
       display: inline-flex;
       align-items: center;
