@@ -191,6 +191,18 @@ _Avoid_: Tail, follow.
 A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the current repository's `.sandman/runs/` tree on each poll, shows active and recent Sandman instances, and exposes a typed preset launcher for repo-scoped Sandman commands. It does not manage daemon lifecycle.
 _Avoid_: dashboard, monitor, control panel.
 
+**Reviewing**:
+The in-flight portal status for an active review run (a run whose `run.started` event carried `payload.review = true`). Displayed in the status badge as `● reviewing`. The `Status` field is set to `"reviewing"` by `statusOrDefault` when `active && isReview` is true. Terminal review runs use `success`, `failure`, or `aborted` like any other run.
+_Avoid_: reviewing status, review-in-progress.
+
+**Auto-selecting**:
+The in-flight portal status for an active auto-select run (a run whose `run.started` event carried `payload.run_kind = "auto-select"`). Displayed in the status badge as `● auto-selecting`. The `Status` field is set to `"auto-selecting"` by `statusOrDefault` when `active && isAutoSelect` is true. Terminal auto-select runs use `success`, `failure`, or `aborted` like any other run.
+_Avoid_: selecting, auto-select status.
+
+**Candidates**:
+The list of issue numbers considered by the auto-select agent during the selection phase. Emitted in `run.started` as `payload.candidates` and projected into `portalRun.Candidates`. The portal renders this as a secondary-row chip (`Auto-select candidates: #N, #N`) for active and terminal auto-select runs. The final *selected* subset is emitted in `run.finished.payload.selected` and surfaced in the agent log, not in the chip.
+_Avoid_: candidate list, selection candidates.
+
 **Continue**:
 The `--continue` flag on `sandman run` re-runs the latest AgentRun for one or more issues while reusing each issue's prior branch, base branch, agent, and review command. Continuation reads the existing `.sandman/task.md` directly rather than rendering a fresh prompt. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. `--continue` keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. When `.sandman/task.md` is present in the worktree, the resumed run consumes it instead of starting from a blank prompt.
 _Avoid_: Retry.

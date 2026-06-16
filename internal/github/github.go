@@ -1,6 +1,11 @@
 package github
 
-import "time"
+import (
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
 
 // Issue holds metadata fetched from GitHub.
 type Issue struct {
@@ -22,6 +27,22 @@ type PR struct {
 	Merged      bool
 	HeadRefName string
 	HeadRefOid  string
+}
+
+var prIssueLinkRe = regexp.MustCompile(`(?i)(?:fixes|closes|resolves)\s+#(\d+)`)
+
+// LinkedIssueNumber returns the first issue number referenced by a
+// Fixes/Closes/Resolves keyword in the PR body, or 0 if none is found.
+func (pr *PR) LinkedIssueNumber() int {
+	if pr.Body == "" {
+		return 0
+	}
+	if m := prIssueLinkRe.FindStringSubmatch(pr.Body); len(m) > 1 {
+		if n, err := strconv.Atoi(strings.TrimSpace(m[1])); err == nil {
+			return n
+		}
+	}
+	return 0
 }
 
 // PRComment holds a PR conversation comment fetched from the GitHub REST API.

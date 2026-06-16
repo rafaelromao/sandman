@@ -478,11 +478,33 @@
       color: var(--muted);
       font-weight: 400;
     }
+    tbody tr.batch-row td {
+      padding: 0 14px 6px;
+      border-bottom: none;
+    }
+    tbody tr.run-row + tr.batch-row td {
+      padding-top: 0;
+    }
     .batch-membership {
       display: block;
       width: 100%;
       box-sizing: border-box;
-      margin-top: 6px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--surface-3);
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      overflow-wrap: anywhere;
+    }
+    .context-row td {
+      padding: 0 12px 4px;
+      border: none;
+    }
+    .context-chip {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
       padding: 2px 8px;
       border-radius: 6px;
       background: var(--surface-3);
@@ -726,6 +748,8 @@
     .badge.running .dot { background: var(--accent); }
     .badge.reviewing { background: color-mix(in oklch, oklch(0.65 0.16 285) 18%, var(--surface)); border-color: color-mix(in oklch, oklch(0.65 0.16 285) 30%, var(--border)); }
     .badge.reviewing .dot { background: oklch(0.65 0.16 285); }
+    .badge.auto-selecting { background: color-mix(in oklch, var(--accent) 12%, var(--surface)); border-color: color-mix(in oklch, var(--accent) 24%, var(--border)); }
+    .badge.auto-selecting .dot { background: var(--accent); }
     .badge.active { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 30%, var(--border)); }
     .badge.active .dot { background: var(--accent); }
     .badge.success { background: color-mix(in oklch, var(--success) 12%, var(--surface)); border-color: color-mix(in oklch, var(--success) 24%, var(--border)); }
@@ -736,14 +760,6 @@
     .badge.warning .dot { background: var(--warning); }
     .badge.aborted { background: color-mix(in oklch, var(--muted) 12%, var(--surface)); border-color: color-mix(in oklch, var(--muted) 24%, var(--border)); }
     .badge.aborted .dot { background: var(--muted); }
-    .badge.auto-select, .badge.review {
-      background: color-mix(in oklch, var(--surface-3) 70%, var(--surface));
-      color: var(--text);
-      border-color: color-mix(in oklch, var(--accent) 24%, var(--border));
-      font-weight: 600;
-      letter-spacing: 0.02em;
-    }
-    .badge.auto-select .dot, .badge.review .dot { background: var(--accent); }
     .retry-chip {
       display: inline-flex;
       align-items: center;

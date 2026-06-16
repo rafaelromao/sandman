@@ -28,6 +28,7 @@
       badgeClass: h.statusClass(run),
       badgeLabel: run.status || (run.kind === 'active' ? 'running' : 'completed'),
       reason: (run.reason === 'auto-select' || run.reason === 'review') ? run.reason : '',
+      contextText: contextText(run),
       startedText: h.formatTime(run.startedAt),
       durationText: h.formatDuration(run.duration),
       branchText: h.formatBranch(run),
@@ -67,11 +68,70 @@
     meta.classList.add('meta-line', 'mono');
     meta.textContent = helpers.renderRunMeta(run);
     wrap.appendChild(meta);
-    const reasonChip = buildReasonChip(run.reason);
-    if (reasonChip) wrap.appendChild(reasonChip);
     const batchMembership = renderBatchMembership(run);
     if (batchMembership) wrap.appendChild(batchMembership);
     td.appendChild(wrap);
+  }
+
+  function contextText(run) {
+    if (run.reason === 'review' && run.prNumber > 0) {
+      const issuePart = run.issueNumber > 0 ? ' for issue #' + run.issueNumber : '';
+      return 'Reviewing PR #' + run.prNumber + issuePart;
+    }
+    if (run.reason === 'auto-select' && Array.isArray(run.candidates) && run.candidates.length > 0) {
+      return 'Auto-select candidates: ' + run.candidates.map((n) => '#' + n).join(', ');
+    }
+    return '';
+  }
+
+  function buildContextRow(run) {
+    const text = contextText(run);
+    if (!text) return null;
+    const tr = global.document.createElement('tr');
+    tr.classList.add('context-row');
+    tr.setAttribute('data-context-for', run.key);
+    const td = global.document.createElement('td');
+    td.setAttribute('colspan', '7');
+    const chip = global.document.createElement('span');
+    chip.classList.add('context-chip', 'mono');
+    chip.textContent = text;
+    td.appendChild(chip);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function contextRowOf(body, runKey) {
+    return body.querySelector('tr.context-row[data-context-for="' + runKey + '"]');
+  }
+
+  function reconcileContextRow(body, dataRow, oldRun, newRun) {
+    const oldText = contextText(oldRun);
+    const newText = contextText(newRun);
+    if (oldText === newText) return;
+    const existing = contextRowOf(body, newRun.key);
+    if (!newText) {
+      if (existing) {
+        body.removeChild(existing);
+        mutationCount += 1;
+      }
+      return;
+    }
+    if (existing) {
+      const chip = existing.querySelector('.context-chip');
+      if (chip) {
+        setText(chip, newText);
+      }
+      return;
+    }
+    const fresh = buildContextRow(newRun);
+    if (!fresh) return;
+    const nextRow = dataRow.nextElementSibling;
+    if (nextRow && (nextRow.classList.contains('detail-row') || nextRow.classList.contains('context-row'))) {
+      body.insertBefore(fresh, nextRow);
+    } else {
+      body.insertBefore(fresh, dataRow.nextSibling);
+    }
+    mutationCount += 1;
   }
 
   function renderBatchMembership(run) {
@@ -176,7 +236,10 @@
     const actionsCell = makeRowCell('actions', tr);
     buildActionsCell(actionsCell, run, opts);
 
-    return tr;
+    const contextTr = buildContextRow(run);
+    if (contextTr) body.appendChild(contextTr);
+
+    return { row: tr, contextRow: contextTr };
   }
 
   function buildTabsRow(panel, run, tabName) {
@@ -552,14 +615,14 @@
   }
 
   function insertRunRow(body, run, opts) {
-    const tr = buildDataRow(body, run, opts);
-    setRowData(tr, run);
+    const built = buildDataRow(body, run, opts);
+    setRowData(built.row, run);
     let detailTr = null;
     if (opts.expandedKey === run.key) {
       detailTr = buildDetailRow(body, run, opts);
       setDetailData(detailTr, run);
     }
-    return { row: tr, detailRow: detailTr };
+    return { row: built.row, contextRow: built.contextRow, detailRow: detailTr };
   }
 
   function setText(node, text) {
@@ -598,57 +661,6 @@
     if (oldSnap.metaText !== newSnap.metaText && meta) {
       setText(meta, newSnap.metaText);
     }
-    if (oldSnap.reason === newSnap.reason) return;
-    reconcileReasonChip(wrap, newSnap.reason);
-  }
-
-  function reconcileReasonChip(wrap, reason) {
-    const existing = wrap.querySelector('.kind-chip');
-    const wantChip = reason === 'auto-select' || reason === 'review';
-    if (!wantChip) {
-      if (existing) {
-        wrap.removeChild(existing);
-        mutationCount += 1;
-      }
-      return;
-    }
-    if (!existing) {
-      const chip = buildReasonChip(reason);
-      // Insert after name and meta (children[0] and [1]) so the
-      // chip sits before any batch-membership child.
-      const insertBefore = wrap.children[2] || null;
-      if (insertBefore) {
-        wrap.insertBefore(chip, insertBefore);
-      } else {
-        wrap.appendChild(chip);
-      }
-      mutationCount += 1;
-      return;
-    }
-    if (existing.getAttribute('data-reason') !== reason) {
-      setClass(existing, existing.getAttribute('data-reason'), false);
-      setClass(existing, reason, true);
-      setAttr(existing, 'data-reason', reason);
-    }
-    const label = existing.querySelector('.badge-label') || existing.children[1];
-    if (label && label.textContent !== reason) {
-      setText(label, reason);
-    }
-  }
-
-  function buildReasonChip(reason) {
-    if (reason !== 'auto-select' && reason !== 'review') return null;
-    const span = global.document.createElement('span');
-    span.classList.add('badge', 'kind-chip', reason);
-    setAttr(span, 'data-reason', reason);
-    const dot = global.document.createElement('span');
-    dot.classList.add('dot');
-    span.appendChild(dot);
-    const label = global.document.createElement('span');
-    label.classList.add('badge-label');
-    label.textContent = reason;
-    span.appendChild(label);
-    return span;
   }
 
   function updateBadgeCell(cell, oldSnap, newSnap) {
@@ -728,6 +740,9 @@
     const actionsCell = cellOf(row, 'actions');
     if (actionsCell) updateActionsCell(actionsCell, newRun, opts);
 
+    const body = row.parentNode;
+    if (body) reconcileContextRow(body, row, oldRun, newRun);
+
     setRowData(row, newRun);
     return { mutated: mutationCount > before, cells: mutationCount - before };
   }
@@ -735,10 +750,15 @@
   function removeRunRow(body, key) {
     const dataRow = dataRowOf(body, key);
     const detail = detailRowOf(body, key);
+    const ctx = contextRowOf(body, key);
     let removed = 0;
     if (dataRow) {
       body.removeChild(dataRow);
       clearRowData(dataRow);
+      removed += 1;
+    }
+    if (ctx) {
+      body.removeChild(ctx);
       removed += 1;
     }
     if (detail) {
@@ -773,6 +793,7 @@
       if (!child.getAttribute) continue;
       if (child.getAttribute('data-run-key')) continue;
       if (child.getAttribute('data-detail-for')) continue;
+      if (child.getAttribute('data-context-for')) continue;
       body.removeChild(child);
     }
 
@@ -793,6 +814,11 @@
           clearDetailData(detail);
           removed += 1;
         }
+        const ctx = contextRowOf(body, key);
+        if (ctx) {
+          body.removeChild(ctx);
+          removed += 1;
+        }
         body.removeChild(dataRow);
         clearRowData(dataRow);
         removed += 1;
@@ -801,6 +827,8 @@
       const oldRun = getRowData(dataRow) || newRun;
       const r = updateRunRowCells(dataRow, oldRun, newRun, opts);
       if (r.mutated) updated += 1;
+
+      reconcileContextRow(body, dataRow, oldRun, newRun);
 
       const wantDetail = opts.expandedKey === key;
       const detail = detailRowOf(body, key);
@@ -834,6 +862,13 @@
         body.insertBefore(dataRow, body.children[pos] || null);
       }
       pos += 1;
+      const ctx = contextRowOf(body, run.key);
+      if (ctx) {
+        if (body.children[pos] !== ctx) {
+          body.insertBefore(ctx, body.children[pos] || null);
+        }
+        pos += 1;
+      }
       const detail = detailRowOf(body, run.key);
       if (detail) {
         if (body.children[pos] !== detail) {

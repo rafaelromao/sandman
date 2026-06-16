@@ -66,6 +66,10 @@ type portalRun struct {
 	// auto-select and review runs; empty for issue-driven and prompt-only
 	// runs.
 	Reason string `json:"reason,omitempty"`
+	// Candidates carries the issue numbers considered by the auto-select
+	// agent during the selection phase. Populated from run.started
+	// payload.candidates; omitted for non-auto-select runs.
+	Candidates []int `json:"candidates,omitempty"`
 	// RetriesTotal is the number of retry attempts the orchestrator allowed
 	// for the run. Omitted when the run has not finished.
 	RetriesTotal int `json:"retriesTotal,omitempty"`
@@ -477,7 +481,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	if state != nil {
 		run.Key = state.RunID
 		run.RunID = state.RunID
-		run.Status = v.statusOrDefault(state.Status(), state.IsActive(), state.IsReview())
+		run.Status = v.statusOrDefault(state.Status(), state.IsActive(), state.IsReview(), state.IsAutoSelect())
 		if run.Status == "aborted" {
 			run.Kind = "completed"
 		}
@@ -683,7 +687,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Key:          runID,
 		RunID:        runID,
 		Kind:         v.kindForRun(runState),
-		Status:       v.statusOrDefault(status, runState.IsActive(), runState.IsReview()),
+		Status:       v.statusOrDefault(status, runState.IsActive(), runState.IsReview(), runState.IsAutoSelect()),
 		IssueLabel:   issueLabel,
 		IssueNumber:  issueNumber,
 		IssueTitle:   v.issueTitleFromPayload(runState.Started.Payload),
@@ -703,6 +707,13 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	if review, pr := v.reviewContext(runState); review {
 		portalRun.Review = true
 		portalRun.PRNumber = pr
+		if issueNum := v.reviewIssueNumber(runState.Started.Payload); issueNum > 0 {
+			portalRun.IssueNumber = issueNum
+			portalRun.IssueLabel = fmt.Sprintf("#%d", issueNum)
+		}
+	}
+	if candidates := v.candidatesFromPayload(runState.Started.Payload); len(candidates) > 0 {
+		portalRun.Candidates = candidates
 	}
 	if status == "blocked" {
 		portalRun.Log = v.portalBlockedMessage(runState.Finished.Payload)
@@ -720,7 +731,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			v.markCompletedIfSocketDead(&portalRun, sockPath)
 		} else {
 			portalRun.Kind = "completed"
-			portalRun.Status = v.statusOrDefault(runState.Status(), false, runState.IsReview())
+			portalRun.Status = v.statusOrDefault(runState.Status(), false, runState.IsReview(), runState.IsAutoSelect())
 		}
 	}
 	return portalRun
@@ -758,10 +769,13 @@ func chipReasonForActiveInstance(instance portalActiveRun) string {
 	return ""
 }
 
-func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bool) string {
+func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bool, isAutoSelect bool) string {
 	status = strings.TrimSpace(status)
 	if active && isReview {
 		return "reviewing"
+	}
+	if active && isAutoSelect {
+		return "auto-selecting"
 	}
 	if active {
 		return "running"
@@ -859,6 +873,55 @@ func (v *portalRunsView) reviewPRNumber(payload map[string]any) int {
 		return int(n)
 	}
 	return 0
+}
+
+// reviewIssueNumber reads the issue_number field from a review run's
+// payload. Returns 0 when the field is absent (older event logs).
+func (v *portalRunsView) reviewIssueNumber(payload map[string]any) int {
+	if payload == nil {
+		return 0
+	}
+	raw, ok := payload["issue_number"]
+	if !ok {
+		return 0
+	}
+	switch n := raw.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
+}
+
+// candidatesFromPayload reads the candidates field from an auto-select
+// run's payload. Returns nil when the field is absent.
+func (v *portalRunsView) candidatesFromPayload(payload map[string]any) []int {
+	if payload == nil {
+		return nil
+	}
+	raw, ok := payload["candidates"]
+	if !ok {
+		return nil
+	}
+	switch values := raw.(type) {
+	case []int:
+		return append([]int(nil), values...)
+	case []any:
+		candidates := make([]int, 0, len(values))
+		for _, value := range values {
+			switch n := value.(type) {
+			case float64:
+				candidates = append(candidates, int(n))
+			case int:
+				candidates = append(candidates, n)
+			}
+		}
+		return candidates
+	}
+	return nil
 }
 
 // issueTitleFromPayload reads the issue_title field from a payload.

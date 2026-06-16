@@ -395,6 +395,11 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
+	var reviewIssueNumber int
+	if pr, err := d.GitHub.FetchPR(prNumber); err == nil {
+		reviewIssueNumber = pr.LinkedIssueNumber()
+	}
+
 	runID := fmt.Sprintf("PR%d", prNumber)
 	runDir := daemon.RunDir(d.BaseDir, nil, runID)
 
@@ -426,6 +431,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		OutputWriter: d.Broadcaster,
 		Review:       true,
 		PRNumber:     prNumber,
+		IssueNumber:  reviewIssueNumber,
 		ReviewFocus:  focus,
 		RunID:        runID,
 		RunDir:       runDir,
