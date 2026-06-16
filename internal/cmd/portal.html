@@ -742,6 +742,10 @@
     .badge.warning .dot { background: var(--warning); }
     .badge.aborted { background: color-mix(in oklch, var(--muted) 12%, var(--surface)); border-color: color-mix(in oklch, var(--muted) 24%, var(--border)); }
     .badge.aborted .dot { background: var(--muted); }
+    .badge.archived { background: color-mix(in oklch, var(--muted) 14%, var(--surface-2)); border-color: color-mix(in oklch, var(--muted) 28%, var(--border)); color: var(--muted); }
+    .badge.archived .dot { background: var(--muted); }
+    tbody tr.run-row.row-archived td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
+    tbody tr.run-row.row-archived .run-title .name { color: color-mix(in oklch, var(--muted) 60%, var(--text)); }
     .retry-chip {
       display: inline-flex;
       align-items: center;

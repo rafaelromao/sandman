@@ -2275,3 +2275,155 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalDiffCreateRunRow_ArchivedAddsRowClass asserts that a run
+// with archived=true gets a "row-archived" class on the row so the
+// archived treatment is styleable independently of normal rows.
+func TestPortalDiffCreateRunRow_ArchivedAddsRowClass(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#42', archived: true };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+if (!created.row.classList.contains('row-archived')) {
+  throw new Error('expected row-archived class on archived row, got classes: ' + Array.from(created.row.classList._set).join(','));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffCreateRunRow_ArchivedRendersArchivedBadge asserts that
+// a run with archived=true carries a ".badge.archived" element with the
+// "Archived" label in the badge cell, alongside the status badge.
+func TestPortalDiffCreateRunRow_ArchivedRendersArchivedBadge(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#42', archived: true };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+const badgeCell = created.row.querySelector('[data-cell="badge"]');
+if (!badgeCell) throw new Error('expected badge cell');
+const badges = badgeCell.querySelectorAll('.badge');
+let archived = null;
+for (const b of badges) {
+  if (b.classList.contains('archived')) { archived = b; break; }
+}
+if (!archived) throw new Error('expected .badge.archived in badge cell, got badges: ' + badges.length);
+const label = archived.querySelector('.badge-label');
+if (!label) throw new Error('expected .badge-label on .badge.archived');
+if (label.textContent !== 'Archived') throw new Error('expected badge label "Archived", got ' + JSON.stringify(label.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffCreateRunRow_NonArchivedOmitsArchivedTreatment asserts
+// the default archived:false (or missing) does NOT add row-archived or
+// .badge.archived; only the status badge is rendered.
+func TestPortalDiffCreateRunRow_NonArchivedOmitsArchivedTreatment(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#42', archived: false };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+if (created.row.classList.contains('row-archived')) {
+  throw new Error('expected no row-archived class on non-archived row');
+}
+const badgeCell = created.row.querySelector('[data-cell="badge"]');
+if (!badgeCell) throw new Error('expected badge cell');
+const archived = badgeCell.querySelector('.badge.archived');
+if (archived) throw new Error('expected no .badge.archived in badge cell for non-archived run, got: ' + badgeCell.outerHTML);
+const badges = badgeCell.querySelectorAll('.badge');
+let statusFound = false;
+for (const b of badges) {
+  if (b.classList.contains('success')) { statusFound = true; break; }
+}
+if (!statusFound) throw new Error('expected normal .badge.success to still render, got: ' + badgeCell.outerHTML);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffUpdateCells_ArchivedToggleUpdatesRowAndBadge asserts
+// that toggling archived from false->true (and back) updates the
+// existing row in place: adds/removes row-archived class and adds/
+// removes the .badge.archived element, without rebuilding the row.
+func TestPortalDiffUpdateCells_ArchivedToggleUpdatesRowAndBadge(t *testing.T) {
+	js := `const body = makeMockBody();
+const runOld = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#42', archived: false };
+const runNew = Object.assign({}, runOld, { archived: true });
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
+const beforeRow = created.row;
+const beforeBadgeCell = created.row.querySelector('[data-cell="badge"]');
+SandmanPortalDiff.resetCounters();
+const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
+if (!result.mutated) throw new Error('expected mutated=true on archived false->true');
+if (body.children.indexOf(beforeRow) < 0) throw new Error('expected row identity preserved on toggle (row replaced)');
+if (!created.row.classList.contains('row-archived')) {
+  throw new Error('expected row-archived class added after toggle');
+}
+const badgeCellAfter = created.row.querySelector('[data-cell="badge"]');
+if (badgeCellAfter !== beforeBadgeCell) throw new Error('expected badge cell identity preserved');
+let foundArchived = false;
+for (const b of badgeCellAfter.querySelectorAll('.badge')) {
+  if (b.classList.contains('archived')) { foundArchived = true; break; }
+}
+if (!foundArchived) throw new Error('expected .badge.archived added after toggle');
+
+// Toggle back to non-archived.
+const runNew2 = Object.assign({}, runNew, { archived: false });
+SandmanPortalDiff.resetCounters();
+const result2 = SandmanPortalDiff.updateRunRowCells(created.row, runNew, runNew2, opts);
+if (!result2.mutated) throw new Error('expected mutated=true on archived true->false');
+if (created.row.classList.contains('row-archived')) {
+  throw new Error('expected row-archived class removed after toggle back');
+}
+let stillArchived = false;
+for (const b of created.row.querySelector('[data-cell="badge"]').querySelectorAll('.badge')) {
+  if (b.classList.contains('archived')) { stillArchived = true; break; }
+}
+if (stillArchived) throw new Error('expected .badge.archived removed after toggle back');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffDiffRuns_ArchivedPreservesRowIdentityAcrossPolls
+// asserts that across two consecutive diffRuns calls (a polling
+// refresh), an archived row keeps the same DOM node identity, the
+// row-archived class, and the .badge.archived element.
+func TestPortalDiffDiffRuns_ArchivedPreservesRowIdentityAcrossPolls(t *testing.T) {
+	js := `const body = makeMockBody();
+const runs = [
+  { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#42', archived: true },
+];
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+const firstRow = body.querySelector('tr[data-run-key="a"]');
+if (!firstRow) throw new Error('expected first row');
+if (!firstRow.classList.contains('row-archived')) throw new Error('expected row-archived on first render');
+let firstArchived = false;
+for (const b of firstRow.querySelector('[data-cell="badge"]').querySelectorAll('.badge')) {
+  if (b.classList.contains('archived')) { firstArchived = true; break; }
+}
+if (!firstArchived) throw new Error('expected .badge.archived on first render');
+
+// Second poll: same data, expect the same DOM node to be reused.
+SandmanPortalDiff.diffRuns(body, runs, opts);
+const secondRow = body.querySelector('tr[data-run-key="a"]');
+if (!secondRow) throw new Error('expected second row');
+if (secondRow !== firstRow) throw new Error('expected same DOM node identity across polls (row was rebuilt)');
+if (!secondRow.classList.contains('row-archived')) throw new Error('expected row-archived preserved on second render');
+let secondArchived = false;
+for (const b of secondRow.querySelector('[data-cell="badge"]').querySelectorAll('.badge')) {
+  if (b.classList.contains('archived')) { secondArchived = true; break; }
+}
+if (!secondArchived) throw new Error('expected .badge.archived preserved on second render');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
