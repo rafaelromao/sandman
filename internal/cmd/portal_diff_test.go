@@ -1611,7 +1611,7 @@ func sharedMockBody() string {
       log.push(['replaceChildren', nodes.length]);
     },
     querySelectorAll(sel) {
-      const m = sel.match(/^(\[|tr\.detail-row\[|tr\[)data-(run-key|detail-for)="([^"]+)"\]$/);
+      const m = sel.match(/^(\[|tr\.detail-row\[|tr\.batch-row\[|tr\[)data-(run-key|detail-for|batch-for)="([^"]+)"\]$/);
       if (!m) return [];
       const attr = 'data-' + m[2];
       const value = m[3];
@@ -1905,10 +1905,13 @@ const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 const titleCell = created.row.querySelector('[data-cell="title"]');
 if (!titleCell) throw new Error('expected title cell');
-const wrap = titleCell.children[0];
-if (!wrap) throw new Error('expected title wrap');
-const marker = wrap.querySelector('.batch-membership');
-if (!marker) throw new Error('expected batch-membership element, got ' + wrap.outerHTML);
+if (titleCell.querySelector('.batch-membership')) {
+  throw new Error('batch-membership must not live inside the title cell');
+}
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (!batchRow) throw new Error('expected sibling tr.batch-row[data-batch-for="a"]');
+const marker = batchRow.querySelector('.batch-membership');
+if (!marker) throw new Error('expected batch-membership element in batch-row, got ' + batchRow.outerHTML);
 const text = marker.textContent || '';
 if (!text.includes('860') || !text.includes('854')) {
   throw new Error('expected marker to list both issues 860 and 854, got ' + JSON.stringify(text));
@@ -1935,9 +1938,11 @@ const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 const titleCell = created.row.querySelector('[data-cell="title"]');
 if (!titleCell) throw new Error('expected title cell');
-const wrap = titleCell.children[0];
-const marker = wrap.querySelector('.batch-membership');
-if (marker) throw new Error('expected no batch-membership for single issue, got ' + marker.outerHTML);
+if (titleCell.querySelector('.batch-membership')) {
+  throw new Error('batch-membership must not live inside the title cell');
+}
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (batchRow) throw new Error('expected no batch-row for single issue, got ' + batchRow.outerHTML);
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -2058,7 +2063,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffCreateRunRow_KindChipRendersBeforeBatchMembership(t *testing.T) {
+func TestPortalDiffCreateRunRow_KindChipRendersInTitleAndBatchRowFollowsRunRow(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = {
   key: 'a',
@@ -2076,12 +2081,19 @@ const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 const wrap = created.row.querySelector('[data-cell="title"]').children[0];
 const chip = wrap.querySelector('.kind-chip');
-const membership = wrap.querySelector('.batch-membership');
-if (!chip) throw new Error('expected kind chip');
-if (!membership) throw new Error('expected batch-membership');
-const chipIdx = Array.prototype.indexOf.call(wrap.children, chip);
-const membershipIdx = Array.prototype.indexOf.call(wrap.children, membership);
-if (chipIdx >= membershipIdx) throw new Error('expected kind chip (' + chipIdx + ') to render before batch-membership (' + membershipIdx + ')');
+if (!chip) throw new Error('expected kind chip in title wrap');
+if (wrap.querySelector('.batch-membership')) {
+  throw new Error('batch-membership must not be a child of the title wrap');
+}
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (!batchRow) throw new Error('expected sibling tr.batch-row');
+const membership = batchRow.querySelector('.batch-membership');
+if (!membership) throw new Error('expected batch-membership in batch-row');
+const dataRowIdx = Array.prototype.indexOf.call(body.children, created.row);
+const batchRowIdx = Array.prototype.indexOf.call(body.children, batchRow);
+if (batchRowIdx !== dataRowIdx + 1) {
+  throw new Error('expected batch-row immediately after data row, got dataRow=' + dataRowIdx + ' batchRow=' + batchRowIdx);
+}
 console.log('PASS');
 `
 	runNodeScript(t, js)

@@ -482,7 +482,6 @@
       display: block;
       width: 100%;
       box-sizing: border-box;
-      margin-top: 6px;
       padding: 2px 8px;
       border-radius: 6px;
       background: var(--surface-3);
@@ -490,6 +489,19 @@
       font-size: 11px;
       letter-spacing: 0.04em;
       overflow-wrap: anywhere;
+    }
+    /* The Part-of-batch chip lives in a sibling <tr class="batch-row">
+       with a single colspan=7 cell, so it can stretch the full table
+       width without forcing the title column wider. The chip stays
+       visually attached to its run row by a 1px top border that
+       mirrors the row's bottom border. */
+    tbody tr.batch-row td {
+      background: var(--surface);
+      padding: 0 14px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    tbody tr.run-row + tr.batch-row td {
+      border-top: 1px solid var(--border);
     }
     .eyebrow {
       display: inline-flex;
@@ -691,6 +703,18 @@
        wrap:anywhere lets the browser break inside the token. */
     .run-title, td.mono { min-width: 0; }
     .mono { overflow-wrap: anywhere; }
+    /* Issue Title and Branch cells hold long descriptive text that
+       would otherwise wrap to many lines and force the run row to
+       200+px tall. Clamp them to one line with ellipsis; the full
+       value is still in the DOM and the user can expand the run to
+       see the detail panel's Issues / Branch fields. */
+    tbody td[data-cell="issue-title"],
+    tbody td[data-cell="branch"] {
+      max-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .run-title {
       display: flex;
       flex-direction: column;

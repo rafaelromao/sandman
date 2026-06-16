@@ -49,12 +49,6 @@ const visualFixtureRowsJS = `
     const name = document.createElement('span'); name.classList.add('name'); name.textContent = rowSpec.issueLabel || rowSpec.key; wrap.appendChild(name);
     const meta = document.createElement('span'); meta.classList.add('meta-line', 'mono');
     meta.textContent = rowSpec.metaText; wrap.appendChild(meta);
-    if (rowSpec.batchIssues && rowSpec.batchIssues.length > 1) {
-      const chip = document.createElement('span'); chip.classList.add('batch-membership', 'mono');
-      chip.setAttribute('data-batch-membership', '1');
-      chip.textContent = 'Part of batch: ' + rowSpec.batchIssues.map(n => '#' + n).join(', ');
-      wrap.appendChild(chip);
-    }
     title.appendChild(wrap);
     const badge = td('badge');
     const b = document.createElement('span'); b.classList.add('badge', rowSpec.status);
@@ -67,7 +61,23 @@ const visualFixtureRowsJS = `
     const br = td('branch'); br.classList.add('mono'); br.textContent = rowSpec.branch;
     const ac = td('actions'); ac.classList.add('run-actions');
     const btn = document.createElement('button'); btn.classList.add('action-btn','danger'); btn.textContent = 'Abort'; ac.appendChild(btn);
-    return tr;
+    const batchTr = buildBatchRow(rowSpec);
+    return batchTr ? [tr, batchTr] : tr;
+  }
+
+  function buildBatchRow(rowSpec) {
+    if (!rowSpec.batchIssues || rowSpec.batchIssues.length <= 1) return null;
+    const batchTr = document.createElement('tr');
+    batchTr.classList.add('batch-row');
+    batchTr.setAttribute('data-batch-for', rowSpec.key);
+    const btd = document.createElement('td');
+    btd.setAttribute('colspan', '7');
+    const chip = document.createElement('span'); chip.classList.add('batch-membership', 'mono');
+    chip.setAttribute('data-batch-membership', '1');
+    chip.textContent = 'Part of batch: ' + rowSpec.batchIssues.map(n => '#' + n).join(', ');
+    btd.appendChild(chip);
+    batchTr.appendChild(btd);
+    return batchTr;
   }
 
   const rows = [
@@ -76,7 +86,11 @@ const visualFixtureRowsJS = `
     { issueLabel: '#962', key: 'c', metaText: 'ID run-962-178153673100000000 \u00b7 #962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: '[slice 3] Add internal/orchestrator dependencies path', branch: '\u2014', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
   ];
   const body = document.getElementById('runs-body');
-  rows.forEach(r => body.appendChild(buildRow(r)));
+  rows.forEach(r => {
+    const out = buildRow(r);
+    if (Array.isArray(out)) out.forEach(node => body.appendChild(node));
+    else body.appendChild(out);
+  });
 
   /* Inject the dump <pre> synchronously (no rAF) so chromium's --dump-dom
      always sees it, regardless of when the snapshot fires. The dump is
@@ -89,15 +103,17 @@ const visualFixtureRowsJS = `
     body.querySelectorAll('tr.run-row').forEach((tr, i) => {
       const t = tr.querySelector('[data-cell="title"]');
       const meta = tr.querySelector('.meta-line');
-      const chip = tr.querySelector('.batch-membership');
       const it = tr.querySelector('[data-cell="issue-title"]');
       const br = tr.querySelector('[data-cell="branch"]');
+      const batchTr = tr.nextElementSibling && tr.nextElementSibling.classList && tr.nextElementSibling.classList.contains('batch-row') ? tr.nextElementSibling : null;
+      const chip = batchTr ? batchTr.querySelector('.batch-membership') : null;
       const rect = (el) => el ? { w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) } : null;
       out.rows.push({
         idx: i,
         titleCell: rect(t),
         meta: rect(meta),
         chip: rect(chip),
+        batchRow: batchTr ? rect(batchTr) : null,
         issueTitle: rect(it),
         branch: rect(br),
         innerWidthTitleCell: t ? t.clientWidth : null,
