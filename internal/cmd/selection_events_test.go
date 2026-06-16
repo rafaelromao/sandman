@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,8 @@ import (
 func findAutoSelectEvents(log *recordingEventLog) (started, finished *events.Event) {
 	for i := range log.events {
 		e := log.events[i]
-		if !strings.HasPrefix(e.RunID, "auto-select-") {
+		kind, _ := e.Payload["run_kind"].(string)
+		if kind != "auto-select" {
 			continue
 		}
 		if e.Type == "run.started" && started == nil {
@@ -32,7 +34,8 @@ func findAutoSelectEvents(log *recordingEventLog) (started, finished *events.Eve
 func autoSelectEventOrder(log *recordingEventLog) []string {
 	out := make([]string, 0, len(log.events))
 	for _, e := range log.events {
-		if strings.HasPrefix(e.RunID, "auto-select-") {
+		kind, _ := e.Payload["run_kind"].(string)
+		if kind == "auto-select" {
 			out = append(out, e.Type)
 		}
 	}
@@ -70,24 +73,18 @@ func TestRunSelectionPhaseWithEvents_EmitsRunStartedBeforeAgentAndFinishedAfterO
 
 	started, finished := findAutoSelectEvents(log)
 	if started == nil {
-		t.Fatal("expected a run.started event with auto-select-* RunID")
+		t.Fatal("expected a run.started event with auto-select kind")
 	}
 	if finished == nil {
-		t.Fatal("expected a run.finished event with auto-select-* RunID")
+		t.Fatal("expected a run.finished event with auto-select kind")
 	}
 	if started.RunID != finished.RunID {
 		t.Fatalf("expected same RunID on started and finished, got started=%q finished=%q", started.RunID, finished.RunID)
 	}
-	if !strings.HasPrefix(started.RunID, "auto-select-") {
-		t.Fatalf("expected RunID to start with auto-select-, got %q", started.RunID)
-	}
-	tsStr := strings.TrimPrefix(started.RunID, "auto-select-")
-	ts, parseErr := parseUnixMillis(tsStr)
-	if parseErr != nil {
-		t.Fatalf("expected RunID to encode a unix-ms timestamp, got %q (err: %v)", started.RunID, parseErr)
-	}
-	if ts < before || ts > after {
-		t.Fatalf("expected RunID timestamp in [%d, %d], got %d", before, after, ts)
+	expectedPrefix := "auto-select-" + strconv.FormatInt(before, 10)
+	expectedPrefixLater := "auto-select-" + strconv.FormatInt(after, 10)
+	if started.RunID < expectedPrefix || started.RunID > expectedPrefixLater {
+		t.Fatalf("expected RunID in [%q, %q], got %q", expectedPrefix, expectedPrefixLater, started.RunID)
 	}
 	if got := autoSelectEventOrder(log); len(got) != 2 || got[0] != "run.started" || got[1] != "run.finished" {
 		t.Fatalf("expected exactly one run.started followed by one run.finished, got %v", got)
@@ -284,18 +281,4 @@ func TestRunSelectionPhaseWithEvents_NoCandidateIssuesEmitsNoRunStarted(t *testi
 	if finished != nil {
 		t.Fatalf("expected no run.finished event for pre-flight failure, got %+v", finished)
 	}
-}
-
-func parseUnixMillis(s string) (int64, error) {
-	var n int64
-	if s == "" {
-		return 0, fmt.Errorf("empty timestamp")
-	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, fmt.Errorf("non-digit in timestamp %q", s)
-		}
-		n = n*10 + int64(c-'0')
-	}
-	return n, nil
 }
