@@ -29,7 +29,7 @@ type PR struct {
 	HeadRefOid  string
 }
 
-var prIssueLinkRe = regexp.MustCompile(`(?i)(?:fixes|closes|resolves)\s+#(\d+)`)
+var prIssueLinkRe = regexp.MustCompile(`\b(?i)(?:fixes|closes|resolves)\s+#(\d+)`)
 
 // LinkedIssueNumber returns the first issue number referenced by a
 // Fixes/Closes/Resolves keyword in the PR body, or 0 if none is found.

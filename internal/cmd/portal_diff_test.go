@@ -2074,9 +2074,9 @@ const run = {
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
-const wrap = created.row.querySelector('[data-cell="title"]').children[0];
-const membership = wrap.querySelector('.batch-membership');
-if (!membership) throw new Error('expected batch-membership in title wrap');
+if (created.row.querySelector('[data-cell="title"]').querySelector('.batch-membership')) {
+  throw new Error('batch-membership must not live inside the title cell for auto-select runs');
+}
 const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
 if (!ctxRow) throw new Error('expected context row for auto-select');
 const chip = ctxRow.querySelector('.context-chip');

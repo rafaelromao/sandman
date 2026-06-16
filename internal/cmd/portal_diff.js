@@ -68,8 +68,10 @@
     meta.classList.add('meta-line', 'mono');
     meta.textContent = helpers.renderRunMeta(run);
     wrap.appendChild(meta);
-    const batchMembership = renderBatchMembership(run);
-    if (batchMembership) wrap.appendChild(batchMembership);
+    if (!run.reason || (run.reason !== 'auto-select' && run.reason !== 'review')) {
+      const batchMembership = renderBatchMembership(run);
+      if (batchMembership) wrap.appendChild(batchMembership);
+    }
     td.appendChild(wrap);
   }
 
@@ -126,7 +128,7 @@
     const fresh = buildContextRow(newRun);
     if (!fresh) return;
     const nextRow = dataRow.nextElementSibling;
-    if (nextRow && (nextRow.classList.contains('detail-row') || nextRow.classList.contains('context-row'))) {
+    if (nextRow && (nextRow.classList.contains('detail-row') || nextRow.classList.contains('context-row') || nextRow.classList.contains('batch-row'))) {
       body.insertBefore(fresh, nextRow);
     } else {
       body.insertBefore(fresh, dataRow.nextSibling);
