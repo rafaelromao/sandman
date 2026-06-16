@@ -7,15 +7,18 @@ import (
 )
 
 type portalCommandLaunchRequest struct {
-	Preset      string `json:"preset"`
-	Issue       int    `json:"issue,omitempty"`
-	Issues      []int  `json:"issues,omitempty"`
-	Prompt      string `json:"prompt,omitempty"`
-	CleanMode   string `json:"cleanMode,omitempty"`
-	Confirmed   bool   `json:"confirmed,omitempty"`
-	ConfigMode  string `json:"configMode,omitempty"`
-	ConfigKey   string `json:"configKey,omitempty"`
-	ConfigValue string `json:"configValue,omitempty"`
+	Preset               string `json:"preset"`
+	Issue                int    `json:"issue,omitempty"`
+	Issues               []int  `json:"issues,omitempty"`
+	Prompt               string `json:"prompt,omitempty"`
+	CleanMode            string `json:"cleanMode,omitempty"`
+	Confirmed            bool   `json:"confirmed,omitempty"`
+	ConfigMode           string `json:"configMode,omitempty"`
+	ConfigKey            string `json:"configKey,omitempty"`
+	ConfigValue          string `json:"configValue,omitempty"`
+	ArchiveMode          string `json:"archiveMode,omitempty"`
+	ArchiveRunID         string `json:"archiveRunId,omitempty"`
+	ArchiveOlderThanDays string `json:"archiveOlderThanDays,omitempty"`
 }
 
 func buildPortalCommandArgs(req portalCommandLaunchRequest) ([]string, error) {
@@ -71,7 +74,40 @@ func buildPortalCommandArgs(req portalCommandLaunchRequest) ([]string, error) {
 		default:
 			return nil, fmt.Errorf("unknown config mode %q", req.ConfigMode)
 		}
+	case "archive":
+		if !req.Confirmed {
+			return nil, fmt.Errorf("archive preset requires confirmation")
+		}
+		return buildPortalArchiveArgs(req)
 	default:
 		return nil, fmt.Errorf("unknown preset %q", req.Preset)
+	}
+}
+
+func buildPortalArchiveArgs(req portalCommandLaunchRequest) ([]string, error) {
+	switch strings.TrimSpace(req.ArchiveMode) {
+	case "run":
+		id := strings.TrimSpace(req.ArchiveRunID)
+		if id == "" {
+			return nil, fmt.Errorf("archive run preset requires a run id")
+		}
+		return []string{"archive", "run", id}, nil
+	case "older-than":
+		raw := strings.TrimSpace(req.ArchiveOlderThanDays)
+		if raw == "" {
+			return nil, fmt.Errorf("archive older-than preset requires a day count")
+		}
+		days, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, fmt.Errorf("archive older-than days %q is not a non-negative integer", raw)
+		}
+		if days < 0 {
+			return nil, fmt.Errorf("archive older-than days %d is negative; must be non-negative", days)
+		}
+		return []string{"archive", "older-than", strconv.Itoa(days)}, nil
+	case "stale":
+		return []string{"archive", "stale"}, nil
+	default:
+		return nil, fmt.Errorf("unknown archive mode %q", req.ArchiveMode)
 	}
 }
