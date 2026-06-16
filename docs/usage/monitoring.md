@@ -47,7 +47,7 @@ Emitted when an agent run begins. `run.continued` replays stored `agent`, `model
 |-------|-------------|
 | `run_kind` | Optional taxonomy tag. `"auto-select"` for the auto-select selection phase driven by `sandman run --auto` (and the portal "Auto Mode" preset); `"review"` is signalled via the boolean `review` field. Issue-driven and prompt-only runs leave it absent. |
 | `count` | Optional candidate cap for `run_kind: "auto-select"` runs. |
-| `query` | Optional resolved GitHub search query used to find candidates for `run_kind: "auto-select"` runs. |
+| `query` | Resolved GitHub search query used to find candidates for `run_kind: "auto-select"` runs. Defaults to `label:ready-for-agent is:open` when no `--label` or `--query` flag was provided. |
 | `candidates` | Optional list of issue numbers considered for `run_kind: "auto-select"` runs. |
 
 #### `run.queued`
