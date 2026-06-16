@@ -562,11 +562,9 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	}
 	status := "running"
 	review := false
-	reason := ""
 	if prNumber > 0 {
 		status = "reviewing"
 		review = true
-		reason = "review"
 	}
 	logPath := v.portalLogPath(repoRoot, issueNumber, "")
 	run := portalRun{
@@ -578,7 +576,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		IssueNumber: issueNumber,
 		Review:      review,
 		PRNumber:    prNumber,
-		Reason:      reason,
+		Reason:      chipReasonForActiveInstance(match.instance),
 		StartedAt:   startedAt,
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
@@ -685,6 +683,17 @@ func chipReasonForRunKind(runKind string) string {
 	default:
 		return ""
 	}
+}
+
+// chipReasonForActiveInstance derives the reason chip for a row projected
+// from an active socket that has not yet been matched to a RunState in
+// the event log. The only signal available is the live instance metadata;
+// a PR-bearing socket is a review run, anything else has no chip.
+func chipReasonForActiveInstance(instance portalActiveRun) string {
+	if instance.PRNumber > 0 {
+		return "review"
+	}
+	return ""
 }
 
 func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bool) string {

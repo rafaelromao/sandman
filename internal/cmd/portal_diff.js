@@ -555,6 +555,7 @@
     if (oldSnap.metaText !== newSnap.metaText && meta) {
       setText(meta, newSnap.metaText);
     }
+    if (oldSnap.reason === newSnap.reason && oldSnap.reasonText === newSnap.reasonText) return;
     reconcileReasonChip(wrap, newSnap.reason, newSnap.reasonText);
   }
 
@@ -584,8 +585,7 @@
     if (existing.getAttribute('data-reason') !== reason) {
       setClass(existing, existing.getAttribute('data-reason'), false);
       setClass(existing, reason, true);
-      existing.setAttribute('data-reason', reason);
-      mutationCount += 1;
+      setAttr(existing, 'data-reason', reason);
     }
     const label = existing.querySelector('.badge-label') || existing.children[1];
     if (label && label.textContent !== reasonText) {
