@@ -1140,12 +1140,12 @@ func TestPortal_PageExposesArchivedFilter(t *testing.T) {
 	for _, want := range []string{
 		`id="archived-toggle"`,
 		`Archived`,
-		`showArchived: false`,
-		`archivedToggle.addEventListener`,
+		`showArchived: persistedPortalState.showArchived === true`,
 		`showArchived: state.showArchived`,
-		`run.archived`,
-		`state.showArchived`,
-		`state.runs.filter(shouldShowRun)`,
+		`archivedToggle.addEventListener('change'`,
+		`archivedToggle.checked = state.showArchived`,
+		`if (!state.showArchived && run.archived) return false;`,
+		`const visibleRuns = state.runs.filter(shouldShowRun)`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
