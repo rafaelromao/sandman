@@ -78,7 +78,7 @@ using the same `DependencyResolver`-style seam that already lives in
    a `userInputSet` from the deduped input slice and threads it into
    `resolvePRDChildren`. Candidates whose number is in `userInputSet`
    skip `FetchIssue`, the `IsPRD` re-check, and the `## Parent`
-   verification, and skip the parent-mismatch stderr warning. The
+   verification. The
    relaxation exists so that a mixed batch (e.g. a PRD alongside
    prose-mentioned sibling issues, or a user-typed PRD nested in
    another PRD's body) is not aborted by harvest-time filters. The
