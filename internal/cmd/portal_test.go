@@ -983,6 +983,50 @@ func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
 	}
 }
 
+func TestPortal_DiscoverActiveRuns_SkipsDeadSocketFromFinishedBatch(t *testing.T) {
+	// Long test names push t.TempDir() paths over the 108-byte Unix
+	// socket limit, so create a short temp dir under /tmp directly.
+	repoRoot, err := os.MkdirTemp("/tmp", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed a run dir with a dead socket file and a batch.json listing
+	// one issue. The listener exists only so the socket file persists
+	// on disk with the socket bit set; the liveness probe is stubbed
+	// to false so the listener's actual dialability is irrelevant.
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+	sockPath := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: time.Now().Add(-2 * time.Minute)}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	originalProbe := portalRunLivenessProbe
+	portalRunLivenessProbe = func(string) bool { return false }
+	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
+
+	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot)
+	if err != nil {
+		t.Fatalf("discoverActiveRuns: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("expected no active instance for a finished batch with a dead socket, got %#v", active)
+	}
+}
+
 func TestPortal_FilterIssueOutput_PreservesIssuePrefixes(t *testing.T) {
 	live := strings.Join([]string{
 		"[issue-860] 18:51:05 working on PR",

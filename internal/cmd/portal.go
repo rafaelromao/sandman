@@ -45,6 +45,9 @@ var portalRunAborter = abortPortalRun
 var portalPeerPID = resolvePortalPeerPID
 var portalSignalProcess = signalPortalProcess
 
+// portalRunLivenessProbe is a package-level var so tests can substitute it.
+var portalRunLivenessProbe = daemon.IsRunActive
+
 // portalStaleCleaner is the function invoked once per portal server
 // startup to recover stale runs and clean up dead directories.
 var portalStaleCleaner = func(repoRoot string) error {
@@ -579,9 +582,18 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		sockPath := filepath.Join(runsDir, entry.Name(), "run.sock")
+		runDir := filepath.Join(runsDir, entry.Name())
+		sockPath := filepath.Join(runDir, "run.sock")
 		info, err := os.Lstat(sockPath)
 		if err != nil || info.IsDir() || info.Mode()&os.ModeSocket == 0 {
+			continue
+		}
+		// A finished batch leaves a run.sock inode on disk with the
+		// socket bit set, but the process that owned it is gone. Lstat
+		// only checks file existence, not whether the socket is actually
+		// connectable, so we probe the run dir for a live daemon and skip
+		// entries that no longer have one.
+		if !portalRunLivenessProbe(runDir) {
 			continue
 		}
 		instances = append(instances, portalInstance{Name: entry.Name(), SocketPath: sockPath})

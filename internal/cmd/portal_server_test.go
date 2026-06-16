@@ -118,6 +118,88 @@ func TestPortal_IgnoresNonSocketRunFiles(t *testing.T) {
 	}
 }
 
+func TestPortal_IgnoresStaleSocketRunFiles(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A finished batch leaves a run.sock inode with the socket bit set on
+	// disk, but the process that owned it is gone. The portal must not
+	// treat this as an active instance. The listener below exists only
+	// so the socket file persists on disk with the socket bit set; the
+	// liveness probe is stubbed to false so the listener's actual
+	// dialability is irrelevant.
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-stale-1")
+	sockPath := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	originalProbe := portalRunLivenessProbe
+	portalRunLivenessProbe = func(string) bool { return false }
+	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
+
+	instances, err := discoverPortalInstances(repoRoot)
+	if err != nil {
+		t.Fatalf("discover instances: %v", err)
+	}
+	if len(instances) != 0 {
+		t.Fatalf("expected no instances for stale socket (no listener), got %#v", instances)
+	}
+}
+
+func TestPortal_RunsAPI_OmitsRowsForFinishedBatchWithDeadSocket(t *testing.T) {
+	// Long test names push t.TempDir() paths over the 108-byte Unix
+	// socket limit, so create a short temp dir under /tmp directly.
+	repoRoot, err := os.MkdirTemp("/tmp", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed a finished batch: a run.sock inode, a batch.json listing
+	// two issues, and no run.started events for either issue. The
+	// listener exists only so the socket file persists on disk with
+	// the socket bit set; the liveness probe is stubbed to false so
+	// the listener's actual dialability is irrelevant.
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+	sockPath := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42, 43}, CreatedAt: time.Now().Add(-2 * time.Minute)}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	originalProbe := portalRunLivenessProbe
+	portalRunLivenessProbe = func(string) bool { return false }
+	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
+
+	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+	if len(runs) != 0 {
+		t.Fatalf("expected no rows for a finished batch with a dead socket, got %#v", runs)
+	}
+}
+
 func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
