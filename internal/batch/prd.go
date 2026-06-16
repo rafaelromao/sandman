@@ -54,6 +54,10 @@ func (r *PRDResolver) IsPRD(body string) bool {
 //   - any FetchIssue error encountered while loading a candidate child
 func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) {
 	unique := uniqueIssues(issues)
+	userInputSet := make(map[int]struct{}, len(unique))
+	for _, num := range unique {
+		userInputSet[num] = struct{}{}
+	}
 	out := make([]int, 0, len(unique))
 	seen := make(map[int]struct{}, len(unique))
 	addUnique := func(n int) bool {
@@ -79,7 +83,7 @@ func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) 
 			addUnique(num)
 			continue
 		}
-		children, err := r.resolvePRDChildren(ctx, num, issue.Body)
+		children, err := r.resolvePRDChildren(ctx, num, issue.Body, userInputSet)
 		if err != nil {
 			return nil, err
 		}
@@ -91,7 +95,7 @@ func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) 
 	return out, nil
 }
 
-func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body string) ([]int, error) {
+func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body string, userInputSet map[int]struct{}) ([]int, error) {
 	candidates := r.collectCandidates(parent, body)
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no child issues for PRD #%d", parent)
@@ -100,6 +104,10 @@ func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body s
 	for _, child := range candidates {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if _, ok := userInputSet[child]; ok {
+			accepted = append(accepted, child)
+			continue
 		}
 		childIssue, err := r.client.FetchIssue(child)
 		if err != nil {

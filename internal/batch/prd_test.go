@@ -364,6 +364,89 @@ func TestPRDResolver_DropsCandidatesWithoutMatchingParent(t *testing.T) {
 	}
 }
 
+func TestPRDResolver_AcceptsUserTypedNestedPRD(t *testing.T) {
+	// User-typed #1 is an outer PRD. Its body lists #2 as a candidate child
+	// ("## Child Issues: - #2"), but #2 is itself a nested PRD. The user also
+	// typed #2. Today, the nested-PRD check inside #1's harvest aborts the
+	// whole batch with "nested PRD detected: #2". With the fix, the user-typed
+	// #2 is accepted as a candidate of #1 (bypass), #2 is then processed as a
+	// PRD itself, and its body (which cites ## Parent: #1) produces #1 as a
+	// candidate that is also user-typed and accepted via the bypass.
+	outerBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n\n## Child Issues\n\n- #2 nested\n"
+	innerBody := "## Parent\n\n#1\n\n## Problem Statement\n\nInner problem.\n\n## Solution\n\nInner solution.\n\n## User Stories\n\n1. Inner story.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Outer PRD", Body: outerBody},
+			2: {Number: 2, Title: "Inner PRD", Body: innerBody},
+		},
+	}
+
+	r := NewPRDResolver(client, nil)
+	got, err := r.Resolve(context.Background(), []int{1, 2})
+	if err != nil {
+		t.Fatalf("expected user-typed nested PRD to be accepted, got error: %v", err)
+	}
+	if !equalInts(got, []int{2, 1}) {
+		t.Fatalf("expected [2 1], got %v", got)
+	}
+}
+
+func TestPRDResolver_AcceptsUserTypedNumberWithoutParent(t *testing.T) {
+	// User-typed #1 is a PRD whose body lists #99 as a candidate. #99 is a
+	// regular issue with NO ## Parent backlink. The user also typed #99.
+	// Today, the harvest emits "candidate #99 is not a child of PRD #1,
+	// skipping" and the harvest yields zero accepted children, so Resolve
+	// errors with "no child issues for PRD #1". With the fix, the user-typed
+	// #99 is accepted as a candidate of #1 (bypass), no warning is emitted,
+	// and Resolve returns [99].
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #99 unrelated\n"
+	childBody99 := "## What to build\n\nStandalone work.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody},
+			99: {Number: 99, Title: "Standalone", Body: childBody99},
+		},
+	}
+
+	var warnBuf bytes.Buffer
+	r := NewPRDResolver(client, &warnBuf)
+	got, err := r.Resolve(context.Background(), []int{1, 99})
+	if err != nil {
+		t.Fatalf("expected user-typed non-child to be accepted, got error: %v", err)
+	}
+	if !equalInts(got, []int{99}) {
+		t.Fatalf("expected [99], got %v", got)
+	}
+	if strings.Contains(warnBuf.String(), "candidate #99 is not a child of PRD #1") {
+		t.Errorf("expected no 'candidate #99 is not a child' warning for user-typed #99, got: %q", warnBuf.String())
+	}
+}
+
+func TestPRDResolver_AcceptsUserTypedNumberInMixedBatch(t *testing.T) {
+	// User types [1, 42]. #1 is a PRD with one authored child #10. #42 is a
+	// standalone regular issue (not a child of #1). After the fix, the PRD
+	// expansion yields [10] (real child) and the user-typed #42 passes through,
+	// preserving input order: [10, 42].
+	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10 child\n"
+	childBody10 := "## Parent\n\n#1\n\n## What\n\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "PRD", Body: prdBody},
+			10: {Number: 10, Title: "Child", Body: childBody10},
+			42: {Number: 42, Title: "Standalone", Body: "## What\n\nStandalone.\n"},
+		},
+	}
+
+	r := NewPRDResolver(client, nil)
+	got, err := r.Resolve(context.Background(), []int{1, 42})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 42}) {
+		t.Fatalf("expected [10 42], got %v", got)
+	}
+}
+
 func TestPRDResolver_PropagatesChildFetchError(t *testing.T) {
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10 child\n"
 	client := &fetchIssueErrorClient{

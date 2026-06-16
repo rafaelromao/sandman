@@ -63,17 +63,32 @@ using the same `DependencyResolver`-style seam that already lives in
    `TestPRDResolver_FallsBackToSearch`). Within each source,
    references are deduped; across sources the first occurrence wins.
    The PRD itself is excluded from the candidate set.
-3. **Parent verification** — For each candidate, the resolver fetches
-   the candidate and parses its `## Parent` section. Candidates
+3. **Parent verification** — For each candidate, the resolver fetches the
+   candidate and parses its `## Parent` section. Candidates
    whose parent reference does not resolve to the originating PRD
    are dropped with a stderr warning. URLs and `#N` shorthand are
-   both accepted.
+   both accepted. Candidates present in the user-typed input list
+   skip this check (see §3a).
 4. **Nested-PRD rejection** — For each accepted candidate, the
    resolver re-applies `IsPRD`. A candidate that is itself a PRD
    fails the resolution with `nested PRD detected: #<child>`.
+   Candidates present in the user-typed input list skip this check
+   (see §3a).
 5. **No-children rejection** — A PRD whose accepted-child set is
    empty (no candidates, or every candidate dropped at step 3) fails
    the resolution with `no child issues for PRD #<n>`.
+
+3a. **User-typed input is authoritative** (#1036) — `Resolve` builds
+   a `userInputSet` from the deduped input slice and threads it into
+   `resolvePRDChildren`. Candidates whose number is in `userInputSet`
+   are added to `accepted` without `FetchIssue`, `IsPRD`, or
+   `## Parent` checks, and without a stderr warning. The relaxation
+   exists so that a mixed batch (e.g. a PRD alongside prose-mentioned
+   sibling issues, or a user-typed PRD nested in another PRD's body)
+   is not aborted by harvest-time filters. Authored parent-child
+   relationships (`## Parent` / `## Child Issues`) remain the
+   contract for *authored* parent-child relationships; the relaxation
+   applies only to user-typed numbers.
 6. **Replacement and dedup** — The resolver walks the input issue
    list and replaces each PRD with its accepted children in the
    original order. The PRD itself is not in the output. Duplicates
