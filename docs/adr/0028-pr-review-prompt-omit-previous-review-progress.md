@@ -15,7 +15,7 @@ The rule appeared in the prompt from PR #922 onwards, but on PR #1018 the model 
 
 ## Decision
 
-Verification close-out for the Slice 1 + Slice 2 fix lands as a no-op diff against `main`: the prompt file, the guard test, and the negative-framed format-spec bullet are all already present in `origin/main` (commit `8e05c9e` at the time of writing). The close-out is the act of pinning the regression guard and recording the verification result.
+Verification close-out for the Slice 1 + Slice 2 fix lands as a no-op diff against `main`: the prompt file, the guard test, and the negative-framed format-spec bullet are all already present in `origin/main` (verification-time snapshot was commit `8e05c9e`; `origin/main` has since moved on with commits orthogonal to the prompt content — the cited SHA is a verification-time snapshot, not a merge target). The close-out is the act of pinning the regression guard and recording the verification result.
 
 The static-prompt guard test (`engine_test.go:653`) pins the following three phrases:
 
