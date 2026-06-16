@@ -176,6 +176,26 @@ func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe) error 
 	return nil
 }
 
+// archivePortalRun relocates a run directory from <repoRoot>/.sandman/runs/<id>
+// to <repoRoot>/.sandman/archive/<id>. It is the repo-root-aware counterpart
+// of runArchiveRun used by the portal HTTP endpoint, so the same move
+// semantics back both the CLI and the portal. Callers are expected to
+// validate the run's existence, liveness, and that the archive target is
+// free before invoking it; the handler in portal.go performs those checks
+// and surfaces typed errors, leaving this helper to do only the move.
+func archivePortalRun(repoRoot, id string) error {
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
+		return fmt.Errorf("create archive dir: %w", err)
+	}
+	runDir := filepath.Join(layout.RunsDir, id)
+	dest := filepath.Join(layout.ArchiveDir, id)
+	if err := os.Rename(runDir, dest); err != nil {
+		return fmt.Errorf("move run dir: %w", err)
+	}
+	return nil
+}
+
 func runArchiveOlderThan(cmd *cobra.Command, daysArg string) error {
 	days, err := strconv.Atoi(daysArg)
 	if err != nil {

@@ -1718,6 +1718,7 @@
     const apiPath = "{{.RefreshPath}}";
     const commandsPath = "{{.CommandsPath}}";
     const abortPath = "/api/runs/abort";
+    const archivePath = "/api/runs/archive";
     let pollInterval = {{.PollInterval}};
     const settingsToggle = document.getElementById('settings-toggle');
     const settingsOverlay = document.getElementById('settings-overlay');
@@ -2542,6 +2543,40 @@
       }
     }
 
+    async function archiveRun(button, runId, label) {
+      const previousLabel = button ? button.textContent : '';
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Archiving...';
+      }
+      try {
+        const res = await fetch(archivePath, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runId }),
+        });
+        const text = await res.text();
+        let body;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          body = {};
+        }
+        if (!res.ok) throw new Error(body.error || body.message || text.trim() || 'archive failed');
+        errorBanner.style.display = 'none';
+        errorBanner.textContent = '';
+        await refresh();
+      } catch (err) {
+        errorBanner.textContent = 'Archive failed: ' + err.message;
+        errorBanner.style.display = 'block';
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = previousLabel || 'Archive';
+        }
+      }
+    }
+
     function renderCommandItem(command) {
       const isOpen = state.commandExpandedId === command.id;
       const klass = statusClass(command);
@@ -2693,6 +2728,13 @@
       return true;
     }
 
+    function isRunArchivable(run) {
+      if (!run || run.kind !== 'completed') return false;
+      if (run.archived) return false;
+      if (!run.runId) return false;
+      return true;
+    }
+
     function render() {
       syncStatusOptions(state.runs);
       normalizePortalViewState();
@@ -2712,10 +2754,12 @@
           renderRunMeta: renderRunMeta,
           renderTerminalContent: renderTerminalContent,
           isRunAbortable: isRunAbortable,
+          isRunArchivable: isRunArchivable,
           highlightJSON: SandmanPortalDiff.highlightJSON,
         },
         abortReservations: abortReservations,
         abortSupported: abortSupported,
+        archiveSupported: true,
         expandedKey: state.expandedRunKey,
         tabs: state.tabs,
       };
@@ -2909,6 +2953,14 @@
           const label = findRunByKey(runKey)?.issueLabel || 'this run';
           if (typeof window.confirm === 'function' && !window.confirm('Abort ' + label + '?')) return;
           abortRun(button, runKey, issue);
+          return;
+        }
+        if (action === 'archive-run') {
+          event.preventDefault();
+          const runId = button.getAttribute('data-run-id') || findRunByKey(runKey)?.runId || runKey;
+          const label = findRunByKey(runKey)?.issueLabel || 'this run';
+          if (typeof window.confirm === 'function' && !window.confirm('Archive ' + label + '? This moves the run directory to .sandman/archive/.')) return;
+          archiveRun(button, runId, label);
           return;
         }
         if (action === 'set-tab') {

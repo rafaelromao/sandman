@@ -36,6 +36,7 @@
       branchText: h.formatBranch(run),
       issueTitleText: h.formatIssueTitle(run),
       canAbort: opts.abortSupported !== false && h.isRunAbortable(run, opts.abortReservations),
+      canArchive: opts.archiveSupported !== false && h.isRunArchivable(run),
       ariaExpanded: String(opts.expandedKey === run.key),
     };
   }
@@ -196,6 +197,16 @@
       btn.textContent = 'Abort';
       td.appendChild(btn);
     }
+    if (reserveArchiveButton(run, opts)) {
+      const btn = global.document.createElement('button');
+      btn.setAttribute('type', 'button');
+      btn.classList.add('action-btn');
+      btn.setAttribute('data-action', 'archive-run');
+      btn.setAttribute('data-run-key', run.key);
+      if (run.runId) btn.setAttribute('data-run-id', run.runId);
+      btn.textContent = 'Archive';
+      td.appendChild(btn);
+    }
   }
 
   function reserveAbortButton(run, opts) {
@@ -206,6 +217,19 @@
     const reservationKey = String(run.key || '') + ':' + String(run.issueNumber != null ? run.issueNumber : '');
     if (reservations.has(reservationKey)) return false;
     reservations.add(reservationKey);
+    return true;
+  }
+
+  // reserveArchiveButton keeps the Archive button off rows that are
+  // either still active or already archived. The button is hidden for
+  // non-completed runs (no archive allowed) and for completed runs
+  // whose Archived flag is true. archiveSupported defaults to true;
+  // pass {archiveSupported: false} to disable the button cluster
+  // entirely (e.g. tests or alternate portals).
+  function reserveArchiveButton(run, opts) {
+    if (!run) return false;
+    if (!opts || opts.archiveSupported === false) return false;
+    if (!opts.helpers || !opts.helpers.isRunArchivable(run)) return false;
     return true;
   }
 
@@ -721,7 +745,9 @@
   function updateActionsCell(cell, run, opts) {
     const wantAbort = reserveAbortButton(run, opts);
     const hasAbort = !!cell.querySelector('button[data-action="abort-run"]');
-    if (wantAbort === hasAbort) {
+    const wantArchive = reserveArchiveButton(run, opts);
+    const hasArchive = !!cell.querySelector('button[data-action="archive-run"]');
+    if (wantAbort === hasAbort && wantArchive === hasArchive) {
       return;
     }
     while (cell.firstChild) cell.removeChild(cell.firstChild);
@@ -733,6 +759,16 @@
       btn.setAttribute('data-run-key', run.key);
       if (run.issueNumber != null) btn.setAttribute('data-issue', String(run.issueNumber));
       btn.textContent = 'Abort';
+      cell.appendChild(btn);
+    }
+    if (wantArchive) {
+      const btn = global.document.createElement('button');
+      btn.setAttribute('type', 'button');
+      btn.classList.add('action-btn');
+      btn.setAttribute('data-action', 'archive-run');
+      btn.setAttribute('data-run-key', run.key);
+      if (run.runId) btn.setAttribute('data-run-id', run.runId);
+      btn.textContent = 'Archive';
       cell.appendChild(btn);
     }
     mutationCount += 1;
