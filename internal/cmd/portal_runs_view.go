@@ -62,11 +62,9 @@ type portalRun struct {
 	// IssueTitle carries the human-readable GitHub issue title from the event
 	// payload (added by issue #833). Empty for historical or prompt-only runs.
 	IssueTitle string `json:"issueTitle,omitempty"`
-	// Reason carries the run-kind taxonomy (auto-select, review, prompt-only,
-	// issue) projected from RunState.RunKind(). It is the data plumbing for
-	// the slice-2 chip rendering and is used by slice-3 persistence tests to
-	// assert that an auto-select or review row keeps its terminal status
-	// alongside its reason. Empty for regular issue-driven runs.
+	// Reason is the run-kind label rendered in the chip column for
+	// auto-select and review runs; empty for issue-driven and prompt-only
+	// runs.
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -129,13 +127,12 @@ func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]p
 	}
 
 	matchedActive := v.matchActiveRuns(promptActive, activeStates)
-	// Slice 3: when a prompt-only active instance (review or auto-select
-	// run dir on disk) has no matching active state, the daemon may have
-	// already emitted run.finished for the same RunID. Match the instance
-	// to that terminal state so the user sees the real terminal status
-	// instead of "running" / "reviewing" persisting after the daemon has
-	// finished. This is the only way the dedup pass below can collapse
-	// the active and terminal rows into one.
+	// Unmatched prompt-only instances whose RunID has a terminal state in
+	// the event log adopt that state, so the dedup below collapses the
+	// active and terminal rows into one. Without this pass, an
+	// auto-select or review daemon that emits run.finished while its
+	// socket is still alive would leave the row stuck on "running" /
+	// "reviewing" forever.
 	for i := range matchedActive {
 		if matchedActive[i].state != nil {
 			continue
@@ -228,11 +225,11 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 // dedupRunGroup collapses duplicate rows for one issue within one batch.
 // It first strips queued and blocked rows when any other row exists, then
 // applies runPriority (aborted > active > blocked > queued > other) and
-// breaks ties by latest StartedAt. The slice-3 persistence contract is
-// enforced upstream in compute() (active instances are matched to
-// terminal states for the same RunID), not by reordering the dedup
-// priorities, so two unrelated terminal rows for the same issue (e.g.,
-// a recovered failure and a fresh success) still surface as two rows.
+// breaks ties by latest StartedAt. The active vs terminal reconciliation
+// for the same RunID happens in compute() before this pass; this helper
+// stays untouched so unrelated terminal rows for the same issue (e.g.,
+// a recovered failure plus a fresh success) continue to surface as two
+// rows.
 func (v *portalRunsView) dedupRunGroup(runs []portalRun) []portalRun {
 	if len(runs) <= 1 {
 		return runs
@@ -612,11 +609,9 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Events:      eventsByRun[match.instance.Key],
 		BatchKey:    match.instance.Key,
 	}
-	// Active review runs (live socket, no state yet) report Review=true and
-	// must carry the matching Reason so the row is consistent with the
-	// terminal state once the run.finished event arrives. Auto-select and
-	// other run kinds stay empty here because they cannot be active without
-	// a matching state.
+	// Only an active review run reaches this branch without a state
+	// (auto-select phases never expose a live socket), so the chip
+	// label can be set directly here.
 	if review {
 		run.Reason = "review"
 	}
@@ -705,12 +700,10 @@ func (v *portalRunsView) kindForRun(runState events.RunState) string {
 	return "completed"
 }
 
-// reasonForRun returns the data-field value of the row's Reason for the
-// slice-2 chip rendering and slice-3 persistence tests. Only the two run
-// kinds that ship a chip ("auto-select" and "review") return a non-empty
-// string; every other run kind (issue-driven, prompt-only, continuation,
-// override, recovered) returns the empty string so the JSON contract
-// stays clean and the field is omitted from the wire payload.
+// reasonForRun returns the run-kind label rendered by the slice-2 chip
+// column; an empty string means "no chip". Auto-select wins over review
+// when both predicates match (defensive; the event log keeps them
+// disjoint in practice).
 func reasonForRun(runState events.RunState) string {
 	if runState.IsAutoSelect() {
 		return "auto-select"

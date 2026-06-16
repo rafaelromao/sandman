@@ -464,7 +464,8 @@ func TestPortal_Polling_AutoSelectFailureIsNotRewritten(t *testing.T) {
 // TestPortal_Polling_ReviewSuccessPreservesReviewFlagAndReason is the
 // polling-style integration test for a review run that finishes
 // successfully. The event-log-only path (no run dir) is the simpler
-// half of the contract.
+// half of the contract, and the test polls twice to confirm the
+// terminal status persists across repeated reads.
 func TestPortal_Polling_ReviewSuccessPreservesReviewFlagAndReason(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -473,38 +474,61 @@ func TestPortal_Polling_ReviewSuccessPreservesReviewFlagAndReason(t *testing.T) 
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
-	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{
-			"review": true, "pr_number": 42, "branch": "sandman/review-PR42",
-		}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Payload: map[string]any{
-			"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42",
-		}},
-	})
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	log := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
+	if err := log.Log(events.Event{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{
+		"review": true, "pr_number": 42, "branch": "sandman/review-PR42",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Log(events.Event{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Payload: map[string]any{
+		"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42",
+	}}); err != nil {
+		t.Fatal(err)
+	}
 
-	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	assertTerminal := func(label string, runs []portalRun) {
+		if len(runs) != 1 {
+			for i, r := range runs {
+				t.Logf("%s row %d: Status=%q Kind=%q Reason=%q RunID=%q", label, i, r.Status, r.Kind, r.Reason, r.RunID)
+			}
+			t.Fatalf("%s: expected 1 row, got %d", label, len(runs))
+		}
+		got := runs[0]
+		if got.Status != "success" {
+			t.Fatalf("%s: Status = %q, want %q", label, got.Status, "success")
+		}
+		if got.Reason != "review" {
+			t.Fatalf("%s: Reason = %q, want %q", label, got.Reason, "review")
+		}
+		if !got.Review {
+			t.Fatalf("%s: Review = false, want true", label)
+		}
+		if got.PRNumber != 42 {
+			t.Fatalf("%s: PRNumber = %d, want 42", label, got.PRNumber)
+		}
+		if got.IssueLabel != "PR42" {
+			t.Fatalf("%s: IssueLabel = %q, want %q", label, got.IssueLabel, "PR42")
+		}
+	}
+
+	// Poll 1: terminal status on first read.
+	first, err := (&portalRunsView{}).compute(repoRoot, log)
 	if err != nil {
-		t.Fatalf("compute: %v", err)
+		t.Fatalf("poll 1: %v", err)
 	}
-	if len(runs) != 1 {
-		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	assertTerminal("poll 1", first)
+
+	// Poll 2: terminal status persists on a fresh compute(). The user
+	// contract is "indefinitely", so a single read is not enough to
+	// pin it.
+	second, err := (&portalRunsView{}).compute(repoRoot, log)
+	if err != nil {
+		t.Fatalf("poll 2: %v", err)
 	}
-	got := runs[0]
-	if got.Status != "success" {
-		t.Fatalf("Status = %q, want %q", got.Status, "success")
-	}
-	if got.Reason != "review" {
-		t.Fatalf("Reason = %q, want %q", got.Reason, "review")
-	}
-	if !got.Review {
-		t.Fatal("Review = false, want true")
-	}
-	if got.PRNumber != 42 {
-		t.Fatalf("PRNumber = %d, want 42", got.PRNumber)
-	}
-	if got.IssueLabel != "PR42" {
-		t.Fatalf("IssueLabel = %q, want %q", got.IssueLabel, "PR42")
-	}
+	assertTerminal("poll 2", second)
 }
 
 // TestPortal_Polling_ReviewLiveSocketStillShowsTerminalSuccess is the
