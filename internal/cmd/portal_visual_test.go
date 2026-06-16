@@ -410,3 +410,47 @@ func TestPortal_Visual_NoHorizontalScrollAt1280px(t *testing.T) {
 		}
 	}
 }
+
+// TestPortal_Visual_RunRowStaysShortOnMobileViewport asserts that at a
+// narrow viewport the run row does not stretch tall because of long
+// issue-title or branch cells. Before the fix, those cells wrapped to
+// multiple lines and forced the row to ~285px. The fix applies
+// white-space:nowrap + overflow:hidden + text-overflow:ellipsis so
+// they stay on a single line.
+//
+// Chromium's headless mode has a minimum window width of ~500px, so we
+// use 500x720 as the narrowest we can test.
+func TestPortal_Visual_RunRowStaysShortOnMobileViewport(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("skip visual in CI")
+	}
+	fixture := buildVisualFixture(t)
+	dump := renderVisual(t, fixture, 500, 720)
+	if dump.Viewport != 500 {
+		t.Fatalf("expected viewport 500, got %d", dump.Viewport)
+	}
+	var row *visualRow
+	for i := range dump.Rows {
+		if dump.Rows[i].Idx == 0 {
+			row = &dump.Rows[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatalf("row 0 missing from dump: %+v", dump.Rows)
+	}
+	if row.TitleCell == nil {
+		t.Fatalf("row 0 missing titleCell rect")
+	}
+	// Title cell should be at most 120px tall on a narrow viewport.
+	if row.TitleCell.H > 120 {
+		t.Errorf("title cell height %d on 500px viewport; expected <= 120", row.TitleCell.H)
+	}
+	// Issue-title and branch cells should be on a single line (height ~17px).
+	if row.IssueTitle != nil && row.IssueTitle.H > 25 {
+		t.Errorf("issue-title cell height %d on 500px viewport; expected <= 25", row.IssueTitle.H)
+	}
+	if row.Branch != nil && row.Branch.H > 25 {
+		t.Errorf("branch cell height %d on 500px viewport; expected <= 25", row.Branch.H)
+	}
+}
