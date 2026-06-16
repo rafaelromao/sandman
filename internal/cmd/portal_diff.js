@@ -138,45 +138,6 @@
     mutationCount += 1;
   }
 
-  function reconcileBatchRow(body, dataRow, oldRun, newRun) {
-    const oldBatchText = batchText(oldRun);
-    const newBatchText = batchText(newRun);
-    if (oldBatchText === newBatchText) return;
-    const existing = batchRowOf(body, newRun.key);
-    if (!newBatchText) {
-      if (existing) {
-        body.removeChild(existing);
-        mutationCount += 1;
-      }
-      return;
-    }
-    if (existing) {
-      const chip = existing.querySelector('.batch-membership');
-      if (chip) {
-        setText(chip, newBatchText);
-      }
-      return;
-    }
-    const fresh = buildBatchRow(newRun);
-    if (!fresh) return;
-    const anchor = nextSiblingAnchorRow(dataRow);
-    if (anchor) {
-      body.insertBefore(fresh, anchor);
-    } else {
-      body.appendChild(fresh);
-    }
-    mutationCount += 1;
-  }
-
-  function nextSiblingAnchorRow(row) {
-    let n = row.nextElementSibling;
-    while (n) {
-      if (n.classList && (n.classList.contains('detail-row') || n.classList.contains('run-row'))) return n;
-      n = n.nextElementSibling;
-    }
-    return null;
-  }
-
   function renderBatchMembership(run) {
     const issues = Array.isArray(run && run.batchIssues) ? run.batchIssues : [];
     if (issues.length <= 1) return null;
@@ -186,37 +147,6 @@
     const labels = issues.map((n) => '#' + n);
     span.textContent = 'Part of batch: ' + labels.join(', ');
     return span;
-  }
-
-  function batchIssues(run) {
-    return Array.isArray(run && run.batchIssues) ? run.batchIssues : [];
-  }
-
-  function batchText(run) {
-    const issues = batchIssues(run);
-    if (issues.length <= 1) return '';
-    return 'Part of batch: ' + issues.map((n) => '#' + n).join(', ');
-  }
-
-  function buildBatchRow(run) {
-    const text = batchText(run);
-    if (!text) return null;
-    const tr = global.document.createElement('tr');
-    tr.classList.add('batch-row');
-    tr.setAttribute('data-batch-for', run.key);
-    const td = global.document.createElement('td');
-    td.setAttribute('colspan', '7');
-    const chip = global.document.createElement('span');
-    chip.classList.add('batch-membership', 'mono');
-    chip.setAttribute('data-batch-membership', '1');
-    chip.textContent = text;
-    td.appendChild(chip);
-    tr.appendChild(td);
-    return tr;
-  }
-
-  function batchRowOf(body, runKey) {
-    return body.querySelector('tr.batch-row[data-batch-for="' + runKey + '"]');
   }
 
   function buildBadgeCell(td, run, helpers) {
@@ -313,10 +243,7 @@
     const contextTr = buildContextRow(run);
     if (contextTr) body.appendChild(contextTr);
 
-    const batchTr = buildBatchRow(run);
-    if (batchTr) body.appendChild(batchTr);
-
-    return { row: tr, contextRow: contextTr, batchRow: batchTr };
+    return { row: tr, contextRow: contextTr };
   }
 
   function buildTabsRow(panel, run, tabName) {
@@ -699,7 +626,7 @@
       detailTr = buildDetailRow(body, run, opts);
       setDetailData(detailTr, run);
     }
-    return { row: built.row, contextRow: built.contextRow, batchRow: built.batchRow, detailRow: detailTr };
+    return { row: built.row, contextRow: built.contextRow, detailRow: detailTr };
   }
 
   function setText(node, text) {
@@ -738,8 +665,8 @@
     if (oldSnap.metaText !== newSnap.metaText && meta) {
       setText(meta, newSnap.metaText);
     }
-    if (oldSnap.reason !== newSnap.reason) {
-      reconcileReasonChip(wrap, newSnap.reason);
+    if ((oldSnap.batchIssuesLen <= 1) !== (newSnap.batchIssuesLen <= 1) || oldSnap.reason !== newSnap.reason) {
+      reconcileBatchMembership(wrap, newRun);
     }
   }
 
@@ -768,48 +695,6 @@
     if (existing.textContent !== chip.textContent) {
       setText(existing, chip.textContent);
     }
-  }
-
-  function reconcileReasonChip(wrap, reason) {
-    const existing = wrap.querySelector('.kind-chip');
-    const wantChip = reason === 'auto-select' || reason === 'review';
-    if (!wantChip) {
-      if (existing) {
-        wrap.removeChild(existing);
-        mutationCount += 1;
-      }
-      return;
-    }
-    if (!existing) {
-      const chip = buildReasonChip(reason);
-      wrap.appendChild(chip);
-      mutationCount += 1;
-      return;
-    }
-    if (existing.getAttribute('data-reason') !== reason) {
-      setClass(existing, existing.getAttribute('data-reason'), false);
-      setClass(existing, reason, true);
-      setAttr(existing, 'data-reason', reason);
-    }
-    const label = existing.querySelector('.badge-label') || existing.children[1];
-    if (label && label.textContent !== reason) {
-      setText(label, reason);
-    }
-  }
-
-  function buildReasonChip(reason) {
-    if (reason !== 'auto-select' && reason !== 'review') return null;
-    const span = global.document.createElement('span');
-    span.classList.add('badge', 'kind-chip', reason);
-    setAttr(span, 'data-reason', reason);
-    const dot = global.document.createElement('span');
-    dot.classList.add('dot');
-    span.appendChild(dot);
-    const label = global.document.createElement('span');
-    label.classList.add('badge-label');
-    label.textContent = reason;
-    span.appendChild(label);
-    return span;
   }
 
   function updateBadgeCell(cell, oldSnap, newSnap) {
@@ -890,10 +775,7 @@
     if (actionsCell) updateActionsCell(actionsCell, newRun, opts);
 
     const body = row.parentNode;
-    if (body) {
-      reconcileContextRow(body, row, oldRun, newRun);
-      reconcileBatchRow(body, row, oldRun, newRun);
-    }
+    if (body) reconcileContextRow(body, row, oldRun, newRun);
 
     setRowData(row, newRun);
     return { mutated: mutationCount > before, cells: mutationCount - before };
@@ -903,15 +785,10 @@
     const dataRow = dataRowOf(body, key);
     const detail = detailRowOf(body, key);
     const ctx = contextRowOf(body, key);
-    const batch = batchRowOf(body, key);
     let removed = 0;
     if (dataRow) {
       body.removeChild(dataRow);
       clearRowData(dataRow);
-      removed += 1;
-    }
-    if (batch) {
-      body.removeChild(batch);
       removed += 1;
     }
     if (ctx) {
@@ -977,11 +854,6 @@
           body.removeChild(ctx);
           removed += 1;
         }
-        const batch = batchRowOf(body, key);
-        if (batch) {
-          body.removeChild(batch);
-          removed += 1;
-        }
         body.removeChild(dataRow);
         clearRowData(dataRow);
         removed += 1;
@@ -990,9 +862,6 @@
       const oldRun = getRowData(dataRow) || newRun;
       const r = updateRunRowCells(dataRow, oldRun, newRun, opts);
       if (r.mutated) updated += 1;
-
-      reconcileContextRow(body, dataRow, oldRun, newRun);
-      reconcileBatchRow(body, dataRow, oldRun, newRun);
 
       const wantDetail = opts.expandedKey === key;
       const detail = detailRowOf(body, key);
@@ -1030,13 +899,6 @@
       if (ctx) {
         if (body.children[pos] !== ctx) {
           body.insertBefore(ctx, body.children[pos] || null);
-        }
-        pos += 1;
-      }
-      const batch = batchRowOf(body, run.key);
-      if (batch) {
-        if (body.children[pos] !== batch) {
-          body.insertBefore(batch, body.children[pos] || null);
         }
         pos += 1;
       }
