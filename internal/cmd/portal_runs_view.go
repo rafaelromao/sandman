@@ -483,6 +483,10 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.Log = v.portalBlockedMessage(blocked.Payload)
 		run.IssueTitle = v.issueTitleFromPayload(blocked.Payload)
 	}
+	// Fallback precedence: the state branch returns early above, the
+	// blocked branch may set a title from run.blocked's payload, and only
+	// when both leave IssueTitle empty do we backfill from the most recent
+	// run.queued event for this issue.
 	if run.IssueTitle == "" && queued != nil {
 		run.IssueTitle = v.issueTitleFromPayload(queued.Payload)
 	}
