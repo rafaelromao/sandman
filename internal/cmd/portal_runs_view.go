@@ -72,6 +72,13 @@ type portalRun struct {
 	// RetriesDone is the number of retry attempts the run actually consumed.
 	// Omitted when the run has not finished.
 	RetriesDone int `json:"retriesDone,omitempty"`
+	// Archived is true when a completed run's directory has been
+	// relocated from .sandman/runs/<run-id> to .sandman/archive/<run-id>
+	// by `sandman archive`. The field is always present in JSON so the
+	// /api/runs contract carries an "archived" key for every row.
+	// Active runs are never marked archived, even when an archive
+	// directory with the matching RunID happens to exist on disk.
+	Archived bool `json:"archived"`
 }
 
 type portalActiveRun struct {
@@ -174,6 +181,16 @@ func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]p
 	}
 
 	runs = v.dedupRuns(runs)
+	for i := range runs {
+		// Active runs are never marked archived, even if a directory
+		// matching the run ID happens to exist under .sandman/archive.
+		// Skipping the disk probe for active rows also keeps the hot
+		// path allocation-free when the portal polls every few seconds.
+		if runs[i].Kind != "completed" {
+			continue
+		}
+		runs[i].Archived = v.isRunArchived(repoRoot, runs[i].RunID)
+	}
 	sort.SliceStable(runs, func(i, j int) bool {
 		if runs[i].Kind != runs[j].Kind {
 			return runs[i].Kind == "active"
@@ -893,6 +910,23 @@ func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath st
 	if !v.isSocketAlive(socketPath) {
 		run.Kind = "completed"
 	}
+}
+
+// isRunArchived reports whether runID's directory currently lives under
+// .sandman/archive instead of .sandman/runs. A non-empty RunID that
+// matches no directory on disk returns false; only a present directory
+// counts as archived, so transient or half-moved state never lights up
+// the flag.
+func (v *portalRunsView) isRunArchived(repoRoot, runID string) bool {
+	if runID == "" {
+		return false
+	}
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	info, err := os.Stat(filepath.Join(layout.ArchiveDir, runID))
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {
