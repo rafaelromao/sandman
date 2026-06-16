@@ -387,6 +387,66 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *tes
 	}
 }
 
+func TestPortal_RunFromState_MarksCompletedWhenRunDirMissing(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "run-missing-1",
+		Started: events.Event{
+			Timestamp: started,
+			Payload:   map[string]any{},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+
+	if run.Kind != "completed" {
+		t.Fatalf("expected kind 'completed' for unmatched active state with missing run dir, got %q", run.Kind)
+	}
+	if run.Status != "completed" {
+		t.Fatalf("expected status 'completed' for unmatched active state with missing run dir, got %q", run.Status)
+	}
+}
+
+func TestPortal_RunFromState_MarksCompletedWhenRunDirExistsButSocketMissing(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runsDir := filepath.Join(repoRoot, ".sandman", "runs", "run-missing-sock-1")
+	if err := os.MkdirAll(runsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "run-missing-sock-1",
+		Started: events.Event{
+			Timestamp: started,
+			Payload:   map[string]any{},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+
+	if run.Kind != "completed" {
+		t.Fatalf("expected kind 'completed' for unmatched active state with present run dir but missing socket, got %q", run.Kind)
+	}
+	if run.Status != "completed" {
+		t.Fatalf("expected status 'completed' for unmatched active state with present run dir but missing socket, got %q", run.Status)
+	}
+}
+
 func TestPortal_DefaultPortFlag(t *testing.T) {
 	cmd := NewPortalCmd(Dependencies{})
 	port, err := cmd.Flags().GetInt("port")
@@ -1516,7 +1576,26 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		root := repoRoot(t)
+		runDir := filepath.Join(root, ".sandman", "runs", "PR42")
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		sockDir, err := os.MkdirTemp("", "rs")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+		extSock := filepath.Join(sockDir, "s.sock")
+		ln, err := net.Listen("unix", extSock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		if err := os.Symlink(extSock, filepath.Join(runDir, "run.sock")); err != nil {
+			t.Fatal(err)
+		}
+		run := (&portalRunsView{}).runFromState(root, state, nil, nil)
 		if run.Reason != "review" {
 			t.Fatalf("expected Reason 'review', got %q", run.Reason)
 		}
