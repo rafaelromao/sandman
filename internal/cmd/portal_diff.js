@@ -23,6 +23,7 @@
     const h = opts.helpers;
     return {
       kind: run.kind || '',
+      archived: !!(run && run.archived),
       nameText: run.issueLabel || run.key,
       metaText: h.renderRunMeta(run),
       badgeClass: h.statusClass(run),
@@ -231,7 +232,18 @@
     labelSpan.textContent = label;
     badge.appendChild(labelSpan);
     td.appendChild(badge);
+    if (run.archived) appendArchivedBadge(td);
     appendRetryChip(td, run);
+  }
+
+  function appendArchivedBadge(td) {
+    const badge = global.document.createElement('span');
+    badge.classList.add('badge', 'archived');
+    const labelSpan = global.document.createElement('span');
+    labelSpan.classList.add('badge-label');
+    labelSpan.textContent = 'Archived';
+    badge.appendChild(labelSpan);
+    td.appendChild(badge);
   }
 
   function appendRetryChip(td, run) {
@@ -305,6 +317,7 @@
     const tr = body.insertRow();
     tr.classList.add('run-row');
     if (run.kind) tr.classList.add(run.kind);
+    if (run.archived) tr.classList.add('row-archived');
     tr.setAttribute('data-action', 'toggle-run');
     tr.setAttribute('data-run-key', run.key);
     tr.setAttribute('role', 'button');
@@ -775,6 +788,27 @@
         setText(labelSpan, newSnap.badgeLabel);
       }
     }
+    if (oldSnap.archived !== newSnap.archived) {
+      reconcileArchivedBadge(cell, newSnap.archived);
+    }
+  }
+
+  function reconcileArchivedBadge(cell, archived) {
+    let existing = null;
+    for (const child of cell.querySelectorAll('.badge')) {
+      if (child.classList.contains('archived')) { existing = child; break; }
+    }
+    if (archived) {
+      if (!existing) {
+        appendArchivedBadge(cell);
+        mutationCount += 1;
+      }
+      return;
+    }
+    if (existing) {
+      cell.removeChild(existing);
+      mutationCount += 1;
+    }
   }
 
   function updateMonoCell(cell, newText) {
@@ -823,6 +857,9 @@
     if (oldSnap.kind !== newSnap.kind) {
       setClass(row, oldSnap.kind, false);
       setClass(row, newSnap.kind, true);
+    }
+    if (oldSnap.archived !== newSnap.archived) {
+      setClass(row, 'row-archived', newSnap.archived);
     }
     const currentAria = row.getAttribute('aria-expanded');
     const desiredAria = newSnap.ariaExpanded;
