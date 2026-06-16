@@ -66,8 +66,14 @@ using the same `DependencyResolver`-style seam that already lives in
 3. **Parent verification** — For each candidate, the resolver fetches the
    candidate and parses its `## Parent` section. Candidates
    whose parent reference does not resolve to the originating PRD
-   are dropped with a stderr warning. URLs and `#N` shorthand are
-   both accepted.
+   are dropped from the accepted set. URLs and `#N` shorthand are
+   both accepted. The per-candidate stderr warning that previously
+   announced each drop was removed in #1039: with the user-typed-wins
+   relaxation in step 3a, the warning became operator noise
+   (prose cross-references in PRD bodies are routinely not
+   authored children, and the per-PRD `expanded PRD #N to M accepted
+   children` summary already accounts for the drop). The filtering
+   contract is unchanged; only the operator-facing log line is gone.
 3a. **User-typed input is authoritative** (#1036) — `Resolve` builds
    a `userInputSet` from the deduped input slice and threads it into
    `resolvePRDChildren`. Candidates whose number is in `userInputSet`

@@ -350,8 +350,7 @@ func TestPRDResolver_FiltersHarvestedCandidatesWithoutMatchingParent(t *testing.
 		},
 	}
 
-	var infoBuf bytes.Buffer
-	r := NewPRDResolver(client, &infoBuf)
+	r := NewPRDResolver(client, nil)
 	got, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
