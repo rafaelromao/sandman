@@ -45,10 +45,7 @@ var portalRunAborter = abortPortalRun
 var portalPeerPID = resolvePortalPeerPID
 var portalSignalProcess = signalPortalProcess
 
-// portalRunLivenessProbe reports whether the run directory at runPath is
-// owned by a live daemon. It defaults to daemon.IsRunActive and is a
-// package-level seam so tests can substitute a deterministic answer
-// without having to fork a child process to hold a real listener open.
+// portalRunLivenessProbe is a package-level var so tests can substitute it.
 var portalRunLivenessProbe = daemon.IsRunActive
 
 // portalStaleCleaner is the function invoked once per portal server

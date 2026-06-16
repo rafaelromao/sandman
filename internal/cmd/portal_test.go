@@ -996,8 +996,9 @@ func TestPortal_DiscoverActiveRuns_SkipsDeadSocketFromFinishedBatch(t *testing.T
 	}
 
 	// Seed a run dir with a dead socket file and a batch.json listing
-	// one issue. The portal must not surface an active instance for it,
-	// even though the socket inode still exists on disk.
+	// one issue. The listener exists only so the socket file persists
+	// on disk with the socket bit set; the liveness probe is stubbed
+	// to false so the listener's actual dialability is irrelevant.
 	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
 	sockPath := filepath.Join(runDir, "run.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {

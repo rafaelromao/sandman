@@ -126,9 +126,10 @@ func TestPortal_IgnoresStaleSocketRunFiles(t *testing.T) {
 
 	// A finished batch leaves a run.sock inode with the socket bit set on
 	// disk, but the process that owned it is gone. The portal must not
-	// treat this as an active instance. We swap the liveness probe so the
-	// test does not have to fork a child process to hold a real listener
-	// open while also guaranteeing that no dial succeeds.
+	// treat this as an active instance. The listener below exists only
+	// so the socket file persists on disk with the socket bit set; the
+	// liveness probe is stubbed to false so the listener's actual
+	// dialability is irrelevant.
 	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-stale-1")
 	sockPath := filepath.Join(runDir, "run.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
@@ -165,11 +166,11 @@ func TestPortal_RunsAPI_OmitsRowsForFinishedBatchWithDeadSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Seed a finished batch: a run.sock inode (dead listener), a
-	// batch.json listing two issues, and no run.started events for
-	// either issue. The portal must not surface rows for those
-	// issues — without the liveness filter, the manifest's issues
-	// would be rendered as "active" rows attached to a dead socket.
+	// Seed a finished batch: a run.sock inode, a batch.json listing
+	// two issues, and no run.started events for either issue. The
+	// listener exists only so the socket file persists on disk with
+	// the socket bit set; the liveness probe is stubbed to false so
+	// the listener's actual dialability is irrelevant.
 	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
 	sockPath := filepath.Join(runDir, "run.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
