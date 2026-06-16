@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -31,6 +32,11 @@ const (
 	portalReadTimeout        = 250 * time.Millisecond
 	portalAbortTimeout       = 5 * time.Second
 	portalSocketProbeTimeout = 100 * time.Millisecond
+	portalDefaultHost        = "127.0.0.1"
+	portalReadHeaderTimeout  = 10 * time.Second
+	portalWriteTimeout       = 30 * time.Second
+	portalIdleTimeout        = 2 * time.Minute
+	portalMaxBodyBytes       = 1 << 20
 )
 
 var portalANSISequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -69,12 +75,20 @@ type portalInstance struct {
 
 // NewPortalCmd creates the portal command.
 func NewPortalCmd(deps Dependencies) *cobra.Command {
+	defaultHost := portalDefaultHost
+	if envHost := strings.TrimSpace(os.Getenv("SANDMAN_PORTAL_HOST")); envHost != "" {
+		defaultHost = envHost
+	}
 	cmd := &cobra.Command{
 		Use:   "portal",
 		Short: "Serve a local portal for current Sandman runs",
-		Long:  "Serve a portal for the current repository and poll .sandman/runs for live Sandman instances.",
+		Long:  "Serve a portal for the current repository and poll .sandman/runs for live Sandman instances. By default the server binds to 127.0.0.1; pass --host or set SANDMAN_PORTAL_HOST to opt in to a different interface (e.g. 0.0.0.0).",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port, err := cmd.Flags().GetInt("port")
+			if err != nil {
+				return err
+			}
+			host, err := cmd.Flags().GetString("host")
 			if err != nil {
 				return err
 			}
@@ -97,11 +111,12 @@ func NewPortalCmd(deps Dependencies) *cobra.Command {
 			ctx, stop := signalContext(cmd.Context())
 			defer stop()
 
-			return runPortalServer(ctx, repoRoot, port, cmd.OutOrStdout(), launchData, cfg)
+			return runPortalServer(ctx, repoRoot, port, host, cmd.OutOrStdout(), launchData, cfg)
 		},
 	}
 
-	cmd.Flags().Int("port", 5000, "Port to bind on 0.0.0.0")
+	cmd.Flags().Int("port", 5000, "Port to bind on the chosen host")
+	cmd.Flags().String("host", defaultHost, "Host/interface to bind on (default 127.0.0.1; use 0.0.0.0 to expose on all interfaces, or set SANDMAN_PORTAL_HOST)")
 	return cmd
 }
 
@@ -121,10 +136,14 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 	return ctx, cancel
 }
 
-func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writer, launchData portalLaunchFormData, cfg *config.Config) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+func runPortalServer(ctx context.Context, repoRoot string, port int, host string, out io.Writer, launchData portalLaunchFormData, cfg *config.Config) error {
+	bindHost := strings.TrimSpace(host)
+	if bindHost == "" {
+		bindHost = portalDefaultHost
+	}
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", bindHost, port))
 	if err != nil {
-		return fmt.Errorf("bind portal on 0.0.0.0:%d: %w", port, err)
+		return fmt.Errorf("bind portal on %s:%d: %w", bindHost, port, err)
 	}
 	defer listener.Close()
 
@@ -134,11 +153,11 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 		actualPort = tcpAddr.Port
 	}
 
-	if _, err := fmt.Fprintf(out, "Portal listening on http://0.0.0.0:%d\n", actualPort); err != nil {
+	if _, err := fmt.Fprintf(out, "Portal listening on http://%s:%d\n", bindHost, actualPort); err != nil {
 		return fmt.Errorf("write portal address: %w", err)
 	}
 
-	server := &http.Server{Handler: newPortalHandler(repoRoot, launchData, cfg)}
+	server := newPortalHTTPServer(repoRoot, launchData, cfg)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Serve(listener)
@@ -159,6 +178,19 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, out io.Writ
 			return nil
 		}
 		return fmt.Errorf("serve portal: %w", err)
+	}
+}
+
+// newPortalHTTPServer constructs the hardened HTTP server that backs the
+// portal command. The exported factory is the testable seam: tests assert that
+// the timeouts are configured without having to drive a real connection.
+func newPortalHTTPServer(repoRoot string, launchData portalLaunchFormData, cfg *config.Config) *http.Server {
+	return &http.Server{
+		Handler:           newPortalHandler(repoRoot, launchData, cfg),
+		ReadTimeout:       portalReadHeaderTimeout,
+		ReadHeaderTimeout: portalReadHeaderTimeout,
+		WriteTimeout:      portalWriteTimeout,
+		IdleTimeout:       portalIdleTimeout,
 	}
 }
 
@@ -305,7 +337,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			RunKey string `json:"runKey"`
 			Issue  int    `json:"issue"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, portalMaxBodyBytes)).Decode(&req); err != nil {
 			writeJSONError(w, "invalid run payload", http.StatusBadRequest)
 			return
 		}
@@ -345,31 +377,31 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			return
 		}
 
-		cleanPath := filepath.Clean(relPath)
-		if filepath.IsAbs(cleanPath) || strings.HasPrefix(cleanPath, "..") {
-			http.Error(w, "invalid path", http.StatusBadRequest)
-			return
-		}
-
 		logDir := filepath.Join(repoRoot, ".sandman", "logs")
-		fullPath := filepath.Join(repoRoot, cleanPath)
-		relToLogs, err := filepath.Rel(logDir, fullPath)
-		if err != nil || strings.HasPrefix(relToLogs, "..") {
+		// Strip the legacy ".sandman/logs" prefix so the URL contract stays
+		// the same, but the file is served from an fs.FS rooted at logDir.
+		// http.ServeFileFS rejects requests where r.URL.Path contains a
+		// ".." element, so any path that escapes the log directory is
+		// refused. Missing files inside the directory get a 404.
+		logPrefix := filepath.Join(".sandman", "logs")
+		name := strings.TrimPrefix(relPath, logPrefix)
+		name = strings.TrimPrefix(name, string(filepath.Separator))
+		if name == "" {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+		if filepath.IsAbs(name) {
 			http.Error(w, "invalid path", http.StatusBadRequest)
 			return
 		}
 
-		if _, err := os.Stat(fullPath); err != nil {
-			if os.IsNotExist(err) {
-				http.NotFound(w, r)
-				return
-			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		info, err := fs.Stat(os.DirFS(logDir), name)
+		if err != nil {
+			http.NotFound(w, r)
 			return
 		}
-
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(fullPath)))
-		http.ServeFile(w, r, fullPath)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", info.Name()))
+		http.ServeFileFS(w, r, os.DirFS(logDir), name)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -475,7 +507,7 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 	}
 
 	var resp daemon.CommandResponse
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(conn, portalMaxBodyBytes)).Decode(&resp); err != nil {
 		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not read abort response for run %q", runKey)}
 	}
 	if resp.Status == "error" {
