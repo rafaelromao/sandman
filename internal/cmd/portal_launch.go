@@ -69,31 +69,34 @@ type portalLaunchResponse struct {
 }
 
 type portalUnifiedLaunchRequest struct {
-	Command             string          `json:"command"`
-	LaunchMode          string          `json:"launchMode"`
-	SelectionMode       string          `json:"selectionMode"`
-	Issues              json.RawMessage `json:"issues,omitempty"`
-	Issue               int             `json:"issue,omitempty"`
-	Label               string          `json:"label"`
-	Query               string          `json:"query"`
-	AutoMaxCount        *int            `json:"autoMaxCount"`
-	IncludeDependencies bool            `json:"includeDependencies"`
-	Prompt              string          `json:"prompt"`
-	Template            string          `json:"template"`
-	PromptArgs          string          `json:"promptArgs"`
-	Agent               string          `json:"agent"`
-	Model               string          `json:"model"`
-	BaseBranch          string          `json:"baseBranch"`
-	Parallel            *int            `json:"parallel"`
-	StartDelay          *int            `json:"startDelay"`
-	ContainerCapacity   *int            `json:"containerCapacity"`
-	MaxContainers       *int            `json:"maxContainers"`
-	Sandbox             string          `json:"sandbox"`
-	CleanMode           string          `json:"cleanMode,omitempty"`
-	Confirmed           bool            `json:"confirmed,omitempty"`
-	ConfigMode          string          `json:"configMode,omitempty"`
-	ConfigKey           string          `json:"configKey,omitempty"`
-	ConfigValue         string          `json:"configValue,omitempty"`
+	Command              string          `json:"command"`
+	LaunchMode           string          `json:"launchMode"`
+	SelectionMode        string          `json:"selectionMode"`
+	Issues               json.RawMessage `json:"issues,omitempty"`
+	Issue                int             `json:"issue,omitempty"`
+	Label                string          `json:"label"`
+	Query                string          `json:"query"`
+	AutoMaxCount         *int            `json:"autoMaxCount"`
+	IncludeDependencies  bool            `json:"includeDependencies"`
+	Prompt               string          `json:"prompt"`
+	Template             string          `json:"template"`
+	PromptArgs           string          `json:"promptArgs"`
+	Agent                string          `json:"agent"`
+	Model                string          `json:"model"`
+	BaseBranch           string          `json:"baseBranch"`
+	Parallel             *int            `json:"parallel"`
+	StartDelay           *int            `json:"startDelay"`
+	ContainerCapacity    *int            `json:"containerCapacity"`
+	MaxContainers        *int            `json:"maxContainers"`
+	Sandbox              string          `json:"sandbox"`
+	CleanMode            string          `json:"cleanMode,omitempty"`
+	Confirmed            bool            `json:"confirmed,omitempty"`
+	ConfigMode           string          `json:"configMode,omitempty"`
+	ConfigKey            string          `json:"configKey,omitempty"`
+	ConfigValue          string          `json:"configValue,omitempty"`
+	ArchiveMode          string          `json:"archiveMode,omitempty"`
+	ArchiveRunID         string          `json:"archiveRunId,omitempty"`
+	ArchiveOlderThanDays string          `json:"archiveOlderThanDays,omitempty"`
 }
 
 type portalOption struct {
@@ -290,13 +293,16 @@ func (req portalUnifiedLaunchRequest) runRequest() portalLaunchRequest {
 
 func (req portalUnifiedLaunchRequest) commandRequest() portalCommandLaunchRequest {
 	launchReq := portalCommandLaunchRequest{
-		Preset:      req.Command,
-		Prompt:      req.Prompt,
-		CleanMode:   req.CleanMode,
-		Confirmed:   req.Confirmed,
-		ConfigMode:  req.ConfigMode,
-		ConfigKey:   req.ConfigKey,
-		ConfigValue: req.ConfigValue,
+		Preset:               req.Command,
+		Prompt:               req.Prompt,
+		CleanMode:            req.CleanMode,
+		Confirmed:            req.Confirmed,
+		ConfigMode:           req.ConfigMode,
+		ConfigKey:            req.ConfigKey,
+		ConfigValue:          req.ConfigValue,
+		ArchiveMode:          req.ArchiveMode,
+		ArchiveRunID:         req.ArchiveRunID,
+		ArchiveOlderThanDays: req.ArchiveOlderThanDays,
 	}
 	var issues []int
 	if req.Issues != nil {

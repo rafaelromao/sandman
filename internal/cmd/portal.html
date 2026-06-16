@@ -1615,6 +1615,7 @@
                     <option value="history">History</option>
                     <option value="clean">Clean</option>
                     <option value="config">Config</option>
+                    <option value="archive">Archive</option>
                   </select>
                 </label>
                 <button id="command-form-toggle" class="command-form-toggle" type="button" aria-expanded="true" aria-controls="command-form-body" aria-label="Toggle command options">
@@ -1780,6 +1781,7 @@
       continue: { issue: '', issues: '', prompt: '' },
       clean: { cleanMode: 'success', confirmed: false },
       config: { configMode: 'get', configKey: '', configValue: '' },
+      archive: { archiveMode: 'run', archiveRunId: '', archiveOlderThanDays: '', confirmed: false },
       status: {},
       history: {},
     };
@@ -2084,6 +2086,14 @@
       } else if (type === 'config') {
         cmd += 'config ' + (s.configMode || 'get') + ' ' + (s.configKey || '?');
         if (s.configMode === 'set' && s.configValue) cmd += ' "' + s.configValue.replace(/"/g, '\\"') + '"';
+      } else if (type === 'archive') {
+        const mode = s.archiveMode || 'run';
+        cmd += 'archive ' + mode;
+        if (mode === 'run') {
+          cmd += ' ' + (s.archiveRunId || '?');
+        } else if (mode === 'older-than') {
+          cmd += ' ' + (s.archiveOlderThanDays || '?');
+        }
       }
       return cmd;
     }
@@ -2151,6 +2161,24 @@
       ].join(''));
     }
 
+    function renderArchiveCommandBody(state) {
+      const mode = state.archiveMode || 'run';
+      const isRun = mode === 'run';
+      const isOlderThan = mode === 'older-than';
+      const isStale = mode === 'stale';
+      const isBulk = isOlderThan || isStale;
+      return commandSection('Archive', [
+        commandNote('Move run directories to .sandman/archive. ' + (isBulk ? 'Bulk modes touch every matching run — confirm before executing.' : 'Pick a mode, then supply the inputs that mode requires.')),
+        '<div class="command-grid two">',
+        commandField('Mode', '<select name="archiveMode"><option value="run"' + (isRun ? ' selected' : '') + '>Run</option><option value="older-than"' + (isOlderThan ? ' selected' : '') + '>Older than</option><option value="stale"' + (isStale ? ' selected' : '') + '>Stale</option></select>'),
+        isRun ? commandField('Run id', '<input name="archiveRunId" type="text" placeholder="run-42" value="' + escapeHTML(state.archiveRunId || '') + '">') : '',
+        isOlderThan ? commandField('Days', '<input name="archiveOlderThanDays" type="number" min="0" step="1" placeholder="7" value="' + escapeHTML(state.archiveOlderThanDays || '') + '">') : '',
+        isStale ? commandNote('No additional inputs required. Recovers stale runs and archives dead-and-terminal runs.') : '',
+        commandField('Confirm', '<label class="launch-radio"><input name="confirmed" type="checkbox"' + (state.confirmed ? ' checked' : '') + '> Confirm archive</label>'),
+        '</div>',
+      ].join(''));
+    }
+
     function renderCommandPanelBody(type) {
       const state = commandState[type] || {};
       if (!commandPanelBody) return;
@@ -2167,6 +2195,8 @@
         commandPanelBody.innerHTML = renderCleanCommandBody(state);
       } else if (type === 'config') {
         commandPanelBody.innerHTML = renderConfigCommandBody(state);
+      } else if (type === 'archive') {
+        commandPanelBody.innerHTML = renderArchiveCommandBody(state);
       }
       applyCommandFieldState(type, state);
       updateExecuteSummary();
@@ -2239,6 +2269,11 @@
         setValue('configMode', state.configMode || 'get');
         setValue('configKey', state.configKey || '');
         setValue('configValue', state.configValue || '');
+      } else if (type === 'archive') {
+        setValue('archiveMode', state.archiveMode || 'run');
+        setValue('archiveRunId', state.archiveRunId || '');
+        setValue('archiveOlderThanDays', state.archiveOlderThanDays || '');
+        setValue('confirmed', state.confirmed);
       }
     }
 
@@ -2298,6 +2333,14 @@
           configMode: getVal('configMode', 'get'),
           configKey: getVal('configKey', ''),
           configValue: getVal('configValue', ''),
+        };
+      }
+      if (type === 'archive') {
+        return {
+          archiveMode: getVal('archiveMode', 'run'),
+          archiveRunId: getVal('archiveRunId', ''),
+          archiveOlderThanDays: getVal('archiveOlderThanDays', ''),
+          confirmed: getCheck('confirmed'),
         };
       }
       return commandState[type] || {};
@@ -2468,6 +2511,21 @@
         if (payload.configMode === 'set') {
           if (!String(state.configValue || '').trim()) throw new Error('config set requires a value');
           payload.configValue = state.configValue || '';
+        }
+        return payload;
+      }
+      if (type === 'archive') {
+        const mode = state.archiveMode || 'run';
+        if (!state.confirmed) throw new Error('archive requires confirmation');
+        const payload = { command: 'archive', archiveMode: mode, confirmed: true };
+        if (mode === 'run') {
+          if (!String(state.archiveRunId || '').trim()) throw new Error('archive run requires a run id');
+          payload.archiveRunId = state.archiveRunId || '';
+        } else if (mode === 'older-than') {
+          const days = String(state.archiveOlderThanDays || '').trim();
+          if (!days) throw new Error('archive older-than requires a day count');
+          if (!/^\d+$/.test(days)) throw new Error('archive older-than days must be a non-negative integer');
+          payload.archiveOlderThanDays = days;
         }
         return payload;
       }

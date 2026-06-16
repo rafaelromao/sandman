@@ -270,7 +270,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 					return
 				}
 				resp = command
-			case "status", "history", "clean", "config":
+			case "status", "history", "clean", "config", "archive":
 				commandReq := req.commandRequest()
 				commandReq.Preset = req.Command
 				args, err = buildPortalCommandArgs(commandReq)
