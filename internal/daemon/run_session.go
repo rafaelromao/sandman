@@ -53,6 +53,7 @@ func NewRunSession(baseDir, runID string) *RunSession {
 	return &RunSession{
 		baseDir:     baseDir,
 		runID:       runID,
+		runDir:      RunDir(baseDir, nil, runID),
 		broadcaster: NewBroadcaster(),
 	}
 }
@@ -60,11 +61,10 @@ func NewRunSession(baseDir, runID string) *RunSession {
 // RunDir returns the run directory this session will own. It is
 // available before Prepare (it is just a path computation) so callers
 // can wire it into batch.Request.RunDir without waiting for the boot
-// to complete.
+// to complete. RunDir is not safe for concurrent use; the session is
+// expected to be constructed, queried, and torn down by a single
+// goroutine.
 func (s *RunSession) RunDir() string {
-	if s.runDir == "" {
-		s.runDir = RunDir(s.baseDir, nil, s.runID)
-	}
 	return s.runDir
 }
 
@@ -123,7 +123,7 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 // matches the boot order in reverse:
 //
 //  1. CommandServer.Stop (if started)
-//  2. ControlSocket.Stop (also closes the broadcaster)
+//  2. ControlSocket.Stop (which also closes the broadcaster)
 //  3. Remove the run directory
 //
 // Removing the run directory last is intentional: the listeners must
@@ -141,9 +141,6 @@ func (s *RunSession) Close() error {
 	}
 	if s.ctlSocket != nil {
 		_ = s.ctlSocket.Stop()
-	}
-	if s.broadcaster != nil {
-		s.broadcaster.Close()
 	}
 	if s.runDir != "" {
 		_ = os.RemoveAll(s.runDir)
