@@ -5,7 +5,7 @@
   let storageKey = DEFAULT_STORAGE_KEY;
 
   function defaultState() {
-    return { expandedRunKey: null, tabs: {}, commandFormCollapsed: false };
+    return { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false };
   }
 
   function readStorage() {
@@ -45,6 +45,7 @@
       expandedRunKey: cleanKey(current.expandedRunKey),
       tabs: cleanTabs(current.tabs),
       commandFormCollapsed: typeof current.commandFormCollapsed === 'boolean' ? current.commandFormCollapsed : false,
+      showArchived: typeof current.showArchived === 'boolean' ? current.showArchived : false,
     };
   }
 
