@@ -166,10 +166,7 @@ func (r RunState) Duration() time.Duration {
 	return r.Finished.Timestamp.Sub(r.Started.Timestamp).Round(time.Second)
 }
 
-// RetriesTotal returns the configured retry count recorded on the terminal
-// run.finished (or run.aborted) payload, or 0 when the run has not finished,
-// the payload predates the run-idle-timeout enrichment, or the value
-// cannot be coerced to an integer.
+// RetriesTotal returns the configured retry count from the finished payload.
 func (r RunState) RetriesTotal() int {
 	if r.Finished == nil {
 		return 0
@@ -178,10 +175,7 @@ func (r RunState) RetriesTotal() int {
 	return v
 }
 
-// RetriesDone returns the retry iterations actually executed, recorded on
-// the terminal run.finished (or run.aborted) payload, or 0 when the run has
-// not finished, the payload predates the run-idle-timeout enrichment, or
-// the value cannot be coerced to an integer.
+// RetriesDone returns the retry iterations actually executed from the finished payload.
 func (r RunState) RetriesDone() int {
 	if r.Finished == nil {
 		return 0
