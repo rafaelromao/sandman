@@ -783,6 +783,9 @@ func TestDaemon_ListOpenPRsErrorIsLogged(t *testing.T) {
 // If the fixture regresses to a raw *bytes.Buffer (issue #1034), the race
 // detector will fail this test.
 func TestDaemon_BroadcasterFixtureIsSafeUnderRace(t *testing.T) {
+	// Each iteration re-creates the fixture via newDaemonForTest so a
+	// stale writer from a previous iteration cannot poison the next
+	// iteration's buf assertion.
 	for i := 0; i < 5; i++ {
 		gh := &fakeGH{listErr: errList}
 		runner := &capturedRequest{}
@@ -806,7 +809,7 @@ func TestDaemon_BroadcasterFixtureIsSafeUnderRace(t *testing.T) {
 			if strings.Contains(buf.String(), "list open PRs") {
 				break
 			}
-			time.Sleep(time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 		}
 		cancel()
 		<-done
@@ -818,10 +821,9 @@ func TestDaemon_BroadcasterFixtureIsSafeUnderRace(t *testing.T) {
 }
 
 // TestLockedBuffer_ConcurrentWriteAndRead pins the contract of lockedBuffer:
-// concurrent writers do not lose bytes, concurrent readers do not see
-// torn or racy data, and Bytes() returns an independent copy of the
-// underlying buffer (so callers can mutate the result without aliasing
-// the internal bytes.Buffer's view).
+// concurrent writers do not lose bytes, and Bytes() returns an independent
+// copy of the underlying buffer (so callers can mutate the result without
+// aliasing the internal bytes.Buffer's view).
 func TestLockedBuffer_ConcurrentWriteAndRead(t *testing.T) {
 	const (
 		writers       = 8
