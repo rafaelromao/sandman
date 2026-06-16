@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -145,6 +147,54 @@ func TestJSONLLogger_ReadEmptyFile(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("expected 0 events, got %d", len(got))
+	}
+}
+
+func TestJSONLLogger_ReadSkipsMalformedLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	good := Event{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-good", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}}
+	goodLine, err := json.Marshal(good)
+	if err != nil {
+		t.Fatalf("marshal good: %v", err)
+	}
+	// A torn line left behind by a cross-process write race: a
+	// fragment with no opening brace. Pre-O_APPEND fixes the daemon
+	// produced these when two daemons hit the log simultaneously.
+	tornLine := []byte(`tection","model":"minimax-coding-plan/MiniMax-M2.7","prompt_source_type":"current","review_command":"@codex review"}}`)
+
+	contents := append([]byte{}, goodLine...)
+	contents = append(contents, '\n')
+	contents = append(contents, tornLine...)
+	contents = append(contents, '\n')
+	if err := os.WriteFile(path, contents, 0644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	logger := &JSONLLogger{Path: path}
+	got, err := logger.Read()
+	if err != nil {
+		t.Fatalf("read with malformed line: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 event after skipping malformed line, got %d", len(got))
+	}
+	if got[0].RunID != "run-good" {
+		t.Errorf("expected run-good, got %q", got[0].RunID)
+	}
+
+	// RemoveEventsByIssue must also tolerate a torn line so a stuck
+	// cleanup can still rewrite the log around it.
+	if err := logger.RemoveEventsByIssue(1); err != nil {
+		t.Fatalf("remove with malformed line: %v", err)
+	}
+	got, err = logger.Read()
+	if err != nil {
+		t.Fatalf("read after remove: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 events after remove, got %d", len(got))
 	}
 }
 
@@ -328,6 +378,171 @@ func TestJSONLLogger_LogVsRemoveRace(t *testing.T) {
 	for _, e := range got {
 		if e.Issue == removedIssue && e.RunID != "warmup" {
 			t.Errorf("matching event %q still in file after final remove", e.RunID)
+		}
+	}
+}
+
+// jsonlCrossProcessChildFlag is the env var a forked child reads to
+// discover its worker id, event count, payload size, and shared file
+// path. The child writes that many events and exits.
+const jsonlCrossProcessChildFlag = "SANDMAN_JSONL_CROSS_PROCESS_CHILD"
+
+func TestJSONLLogger_CrossProcessConcurrentAppendIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	const (
+		workers       = 6
+		eventsPerWork = 200
+		payloadSize   = 7000
+	)
+	// Mix one long-payload worker (mimics a PR-review run.started) with
+	// short-payload workers (mimic normal issue runs). Without an
+	// atomic cross-process append, the long writer's chunk can be
+	// interleaved with a short writer's line and produce a torn record.
+	mix := func(id int) (count int, payload string) {
+		if id == 0 {
+			return eventsPerWork, strings.Repeat("a", payloadSize)
+		}
+		return eventsPerWork, "short"
+	}
+
+	expected := workers * eventsPerWork
+	ready := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		count, payload := mix(i)
+		// Each worker blocks on a private "go" file. Parent writes 1
+		// byte to every worker's go file after the ready channel is
+		// closed, so all workers start hammering the shared log
+		// within a small scheduling window.
+		goPath := filepath.Join(dir, fmt.Sprintf("go-%d", i))
+		if err := os.WriteFile(goPath, nil, 0644); err != nil {
+			t.Fatalf("create go file: %v", err)
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=^TestJSONLLogger_CrossProcessChild$")
+		cmd.Env = append(os.Environ(),
+			jsonlCrossProcessChildFlag+"=1",
+			"SANDMAN_JSONL_PATH="+path,
+			"SANDMAN_JSONL_WORKER_ID="+strconv.Itoa(i),
+			"SANDMAN_JSONL_COUNT="+strconv.Itoa(count),
+			"SANDMAN_JSONL_PAYLOAD="+payload,
+			"SANDMAN_JSONL_GO_FILE="+goPath,
+		)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start worker %d: %v", i, err)
+		}
+		go func(i int, goPath string) {
+			defer wg.Done()
+			<-ready
+			// Signal "go" by writing a single byte to the worker's
+			// go file. The child polls for any change to the file's
+			// mtime/size, so a write of any length works.
+			f, err := os.OpenFile(goPath, os.O_WRONLY, 0644)
+			if err != nil {
+				errs <- fmt.Errorf("worker %d open go: %w", i, err)
+				return
+			}
+			if _, err := f.Write([]byte("go")); err != nil {
+				_ = f.Close()
+				errs <- fmt.Errorf("worker %d signal: %w", i, err)
+				return
+			}
+			_ = f.Close()
+			if err := cmd.Wait(); err != nil {
+				errs <- fmt.Errorf("worker %d: %w", i, err)
+			}
+		}(i, goPath)
+	}
+
+	close(ready)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("%v", err)
+	}
+
+	// Every line in the file must be valid JSON. A torn record from a
+	// cross-process write race surfaces here as a json decode error
+	// tied to the offset where the second writer overwrote the first.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read shared log: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != expected {
+		t.Fatalf("expected %d lines, got %d", expected, len(lines))
+	}
+	seen := make(map[string]int, expected)
+	for i, line := range lines {
+		var e Event
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("line %d invalid JSON (%d bytes): %v\nline: %q", i+1, len(line), err, line)
+		}
+		if e.Type != "run.started" {
+			t.Errorf("line %d unexpected type %q", i+1, e.Type)
+		}
+		seen[e.RunID]++
+	}
+	for i := 0; i < workers; i++ {
+		count, _ := mix(i)
+		for k := 0; k < count; k++ {
+			id := fmt.Sprintf("w%d-r%d", i, k)
+			if seen[id] != 1 {
+				t.Errorf("expected run_id %q exactly once, got %d", id, seen[id])
+			}
+		}
+	}
+}
+
+// TestJSONLLogger_CrossProcessChild is the worker entry point invoked
+// by TestJSONLLogger_CrossProcessConcurrentAppendIsAtomic. It is
+// hidden from the regular test run by its leading TestJSONL prefix
+// gate; exec.Command invokes it directly.
+func TestJSONLLogger_CrossProcessChild(t *testing.T) {
+	if os.Getenv(jsonlCrossProcessChildFlag) != "1" {
+		t.Skip("cross-process worker; only runs when " + jsonlCrossProcessChildFlag + "=1")
+	}
+	path := os.Getenv("SANDMAN_JSONL_PATH")
+	workerID, err := strconv.Atoi(os.Getenv("SANDMAN_JSONL_WORKER_ID"))
+	if err != nil {
+		t.Fatalf("worker id: %v", err)
+	}
+	count, err := strconv.Atoi(os.Getenv("SANDMAN_JSONL_COUNT"))
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	payload := os.Getenv("SANDMAN_JSONL_PAYLOAD")
+	// Wait for the parent's "go" signal: poll the go file every 5ms
+	// until its size is non-zero.
+	goFile := os.Getenv("SANDMAN_JSONL_GO_FILE")
+	if goFile == "" {
+		t.Fatalf("SANDMAN_JSONL_GO_FILE not set")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		info, err := os.Stat(goFile)
+		if err == nil && info.Size() > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	logger := &JSONLLogger{Path: path}
+	for k := 0; k < count; k++ {
+		e := Event{
+			Type:      "run.started",
+			Timestamp: time.Now(),
+			RunID:     fmt.Sprintf("w%d-r%d", workerID, k),
+			Issue:     workerID,
+			Payload:   map[string]any{"branch": "sandman/cross-process", "payload": payload},
+		}
+		if err := logger.Log(e); err != nil {
+			t.Fatalf("log %d/%d: %v", k, count, err)
 		}
 	}
 }

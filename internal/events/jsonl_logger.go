@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -12,8 +13,11 @@ import (
 // JSONLLogger writes events to a JSONL file.
 //
 // Log, Read, and RemoveEventsByIssue are safe to call concurrently with
-// each other. The mutex also gates the held *os.File that backs the
-// append and the rewrite path.
+// each other. The mutex serialises in-process callers; the underlying
+// file is opened with O_APPEND so the kernel guarantees that
+// concurrent writes from different processes (e.g. multiple sandman
+// daemons writing to the same repo-scoped log) never interleave
+// bytes from a single Log call.
 type JSONLLogger struct {
 	Path string
 
@@ -91,7 +95,13 @@ func (l *JSONLLogger) Read() ([]Event, error) {
 		}
 		var e Event
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
-			return nil, fmt.Errorf("unmarshal event line: %w", err)
+			// A single torn line should not poison the whole read
+			// (and take down the portal). Drop it with a warning so
+			// the rest of the log stays usable; the next Log call
+			// from a healthy daemon will append after the EOF and
+			// the bad line stays quarantined above the new tail.
+			log.Printf("events: skipping malformed event line (%d bytes): %v", len(line), err)
+			continue
 		}
 		events = append(events, e)
 	}
@@ -129,7 +139,11 @@ func (l *JSONLLogger) RemoveEventsByIssue(issueNumber int) error {
 			}
 			var e Event
 			if err := json.Unmarshal([]byte(line), &e); err != nil {
-				return fmt.Errorf("unmarshal event line: %w", err)
+				// Mirror Read's tolerance so a torn line does not
+				// block RemoveEventsByIssue from rewriting the log
+				// around it.
+				log.Printf("events: skipping malformed event line during remove (%d bytes): %v", len(line), err)
+				continue
 			}
 			if e.Issue == issueNumber {
 				continue
@@ -164,7 +178,15 @@ func (l *JSONLLogger) ensureOpen() (*os.File, error) {
 	if l.file != nil {
 		return l.file, nil
 	}
-	f, err := os.OpenFile(l.Path, os.O_RDWR|os.O_CREATE, 0644)
+	// O_APPEND is mandatory: multiple sandman daemons (and the portal)
+	// can write to the same repo-scoped events.jsonl. Without
+	// O_APPEND, write(2) goes at the FD's current position, which is
+	// independent per process, so two processes' writes interleave
+	// at the byte level and tear every line longer than a single
+	// pipe-sized write. O_APPEND makes the kernel position every
+	// write at the current EOF atomically, which is exactly the
+	// guarantee a JSONL log needs.
+	f, err := os.OpenFile(l.Path, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open event log: %w", err)
 	}
