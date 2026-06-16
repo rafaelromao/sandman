@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -258,7 +259,7 @@ func portalCheckedAttr(checked bool) string {
 
 func parsePortalUnifiedLaunchRequest(r *http.Request) (portalUnifiedLaunchRequest, error) {
 	var req portalUnifiedLaunchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, portalMaxBodyBytes)).Decode(&req); err != nil {
 		return portalUnifiedLaunchRequest{}, fmt.Errorf("parse launch request: %w", err)
 	}
 	return req, nil

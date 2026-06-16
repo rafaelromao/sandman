@@ -1690,6 +1690,48 @@ func TestPortal_DownloadsLogFiles(t *testing.T) {
 	}
 }
 
+func TestPortal_LogsRejectsPathTraversal(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Place a sensitive file outside the log directory that a path-traversal
+	// request would otherwise reveal.
+	if err := os.WriteFile(filepath.Join(repoRoot, "secret.txt"), []byte("TOP-SECRET"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	cases := []string{
+		filepath.Join("..", "secret.txt"),
+		filepath.Join("..", "..", "etc", "passwd"),
+		"../secret.txt",
+	}
+	for _, p := range cases {
+		href := "/api/logs?path=" + url.QueryEscape(p)
+		resp, err := http.Get(server.URL + href)
+		if err != nil {
+			t.Fatalf("request for %q: %v", p, err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read body for %q: %v", p, readErr)
+		}
+		if resp.StatusCode == http.StatusOK && strings.Contains(string(body), "TOP-SECRET") {
+			t.Fatalf("path traversal %q leaked secret: status=%d body=%q", p, resp.StatusCode, body)
+		}
+		if resp.StatusCode < 400 || resp.StatusCode >= 500 {
+			t.Fatalf("path traversal %q should yield 4xx, got %d (body=%q)", p, resp.StatusCode, body)
+		}
+	}
+}
+
 func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1704,16 +1746,167 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- runPortalServer(ctx, t.TempDir(), port, out, portalLaunchFormData{}, nil)
+		errCh <- runPortalServer(ctx, t.TempDir(), port, portalDefaultHost, out, portalLaunchFormData{}, nil)
 	}()
 
 	select {
 	case err := <-errCh:
-		if err == nil || !strings.Contains(err.Error(), "bind portal on 0.0.0.0") {
-			t.Fatalf("expected bind error on wildcard bind, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "bind portal on "+portalDefaultHost) {
+			t.Fatalf("expected bind error on loopback bind, got %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for bind failure")
+	}
+}
+
+func TestPortal_CommandsRejectsOversizedBody(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prevStart := portalStartCommand
+	t.Cleanup(func() { portalStartCommand = prevStart })
+	portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
+		return &portalCommandResult{}
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	oversized := strings.Repeat("a", 2*1024*1024)
+	body := `{"command":"status","prompt":"` + oversized + `"}`
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 400 || resp.StatusCode >= 500 {
+		t.Fatalf("expected 4xx for oversized body, got %d", resp.StatusCode)
+	}
+}
+
+func TestPortal_AbortRejectsOversizedBody(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prevAbort := portalRunAborter
+	t.Cleanup(func() { portalRunAborter = prevAbort })
+	portalRunAborter = func(context.Context, string, string, int) error {
+		return nil
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	oversized := strings.Repeat("a", 2*1024*1024)
+	body := `{"runKey":"run-1","issue":1,"padding":"` + oversized + `"}`
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/abort", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 400 || resp.StatusCode >= 500 {
+		t.Fatalf("expected 4xx for oversized body, got %d", resp.StatusCode)
+	}
+}
+
+func TestPortal_HTTPServerHasReadWriteIdleTimeouts(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := newPortalHTTPServer(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	if server.ReadTimeout == 0 {
+		t.Fatal("expected ReadTimeout to be set on portal http.Server, got zero")
+	}
+	if server.ReadHeaderTimeout == 0 {
+		t.Fatal("expected ReadHeaderTimeout to be set on portal http.Server, got zero")
+	}
+	if server.WriteTimeout == 0 {
+		t.Fatal("expected WriteTimeout to be set on portal http.Server, got zero")
+	}
+	if server.IdleTimeout == 0 {
+		t.Fatal("expected IdleTimeout to be set on portal http.Server, got zero")
+	}
+	if server.ReadTimeout != portalReadHeaderTimeout {
+		t.Fatalf("expected ReadTimeout to match portalReadHeaderTimeout (%s), got %s", portalReadHeaderTimeout, server.ReadTimeout)
+	}
+	if server.WriteTimeout != portalWriteTimeout {
+		t.Fatalf("expected WriteTimeout to match portalWriteTimeout (%s), got %s", portalWriteTimeout, server.WriteTimeout)
+	}
+	if server.IdleTimeout != portalIdleTimeout {
+		t.Fatalf("expected IdleTimeout to match portalIdleTimeout (%s), got %s", portalIdleTimeout, server.IdleTimeout)
+	}
+}
+
+func TestPortal_DefaultHostIsLoopback(t *testing.T) {
+	if portalDefaultHost != "127.0.0.1" {
+		t.Fatalf("expected portalDefaultHost to be %q, got %q", "127.0.0.1", portalDefaultHost)
+	}
+}
+
+func TestPortal_OptInWildcardBind(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := newPortalTestOutput()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runPortalServer(ctx, repoRoot, 0, "0.0.0.0", out, portalLaunchFormData{}, nil)
+	}()
+
+	select {
+	case <-out.ready:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("timed out waiting for portal startup")
+	}
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("unexpected portal stop error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for portal shutdown")
+		}
+	}()
+
+	match := regexp.MustCompile(`http://0\.0\.0\.0:(\d+)`).FindStringSubmatch(out.String())
+	if len(match) != 2 {
+		t.Fatalf("expected banner to report 0.0.0.0 bind when --host 0.0.0.0 is passed, got %q", out.String())
+	}
+	port, err := strconv.Atoi(match[1])
+	if err != nil {
+		t.Fatalf("parse startup port: %v", err)
+	}
+
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/instances", port))
+	if err != nil {
+		t.Fatalf("portal request via loopback failed: %v", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from wildcard-bound portal, got %d", resp.StatusCode)
 	}
 }
 
@@ -1727,7 +1920,7 @@ func TestPortal_PrintListeningURL(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runPortalServer(ctx, repoRoot, 0, out, portalLaunchFormData{}, nil)
+		done <- runPortalServer(ctx, repoRoot, 0, portalDefaultHost, out, portalLaunchFormData{}, nil)
 	}()
 
 	select {
@@ -1737,7 +1930,7 @@ func TestPortal_PrintListeningURL(t *testing.T) {
 		t.Fatal("timed out waiting for portal startup")
 	}
 
-	match := regexp.MustCompile(`http://0\.0\.0\.0:(\d+)`).FindStringSubmatch(out.String())
+	match := regexp.MustCompile(`http://127\.0\.0\.1:(\d+)`).FindStringSubmatch(out.String())
 	if len(match) != 2 {
 		cancel()
 		t.Fatalf("startup output missing listening URL: %q", out.String())
