@@ -913,13 +913,19 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		wg.Add(1)
 		runID := generateRunID(num)
 		if o.eventLog != nil && (len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
+			queuedPayload := map[string]any{"blocked_by": dependencies[num]}
+			if o.githubClient != nil {
+				if issue, err := o.githubClient.FetchIssue(num); err == nil && issue != nil {
+					queuedPayload["issue_title"] = issue.Title
+				}
+			}
 			_ = o.eventLog.Log(events.Event{
 				Type:      "run.queued",
 				Timestamp: time.Now(),
 				RunID:     runID,
 				Issue:     num,
 				IssueRef:  issueRef(num),
-				Payload:   map[string]any{"blocked_by": dependencies[num]},
+				Payload:   queuedPayload,
 			})
 		}
 		go func(idx, issueNum int, blockers []int, turn int, runID string) {

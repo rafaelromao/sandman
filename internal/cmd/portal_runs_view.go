@@ -335,7 +335,8 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 			state = nil
 		}
 		blocked := v.latestBlockedEventForIssue(eventList, issueNumber, batchStart)
-		runs = append(runs, v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, liveOutput, eventsByRun))
+		queued := v.latestQueuedEventForIssue(eventList, issueNumber, batchStart)
+		runs = append(runs, v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, liveOutput, eventsByRun))
 		if state != nil && state.RunID != "" {
 			usedRunIDs[state.RunID] = struct{}{}
 		}
@@ -379,6 +380,24 @@ func (v *portalRunsView) latestBlockedEventForIssue(eventList []events.Event, is
 	return latest
 }
 
+func (v *portalRunsView) latestQueuedEventForIssue(eventList []events.Event, issueNumber int, batchStart time.Time) *events.Event {
+	var latest *events.Event
+	for i := range eventList {
+		event := eventList[i]
+		if event.Type != "run.queued" || event.Issue != issueNumber {
+			continue
+		}
+		if !v.eventBelongsToBatch(event.Timestamp, batchStart) {
+			continue
+		}
+		if latest == nil || event.Timestamp.After(latest.Timestamp) {
+			copy := event
+			latest = &copy
+		}
+	}
+	return latest
+}
+
 func (v *portalRunsView) eventBelongsToBatch(timestamp, batchStart time.Time) bool {
 	if batchStart.IsZero() {
 		return true
@@ -398,7 +417,7 @@ func (v *portalRunsView) stateStartsInBatch(timestamp, batchStart time.Time) boo
 	return !timestamp.Before(batchStart)
 }
 
-func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, liveOutput string, eventsByRun map[string][]portalEvent) portalRun {
+func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, queued *events.Event, liveOutput string, eventsByRun map[string][]portalEvent) portalRun {
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
 	run := portalRun{
 		Key:         fmt.Sprintf("%s-issue-%d", active.Key, issueNumber),
@@ -462,6 +481,10 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.StartedAt = blocked.Timestamp
 		run.Events = []portalEvent{{Type: blocked.Type, Timestamp: blocked.Timestamp, Payload: blocked.Payload}}
 		run.Log = v.portalBlockedMessage(blocked.Payload)
+		run.IssueTitle = v.issueTitleFromPayload(blocked.Payload)
+	}
+	if run.IssueTitle == "" && queued != nil {
+		run.IssueTitle = v.issueTitleFromPayload(queued.Payload)
 	}
 	v.markCompletedIfSocketDead(&run, run.SocketPath)
 	return run

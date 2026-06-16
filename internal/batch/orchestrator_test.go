@@ -7707,6 +7707,68 @@ func TestOrchestrator_EmitsRunQueuedEventWhenBlocked(t *testing.T) {
 	waitForSignal(t, done, "expected batch to complete")
 }
 
+func TestOrchestrator_QueuedEventCarriesIssueTitle(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+		},
+	}
+
+	blockerStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+
+	spyLog := &spyEventLog{}
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42: &controlledRunnable{
+				result:  AgentRunResult{IssueNumber: 42, Status: "success"},
+				started: blockerStarted,
+				release: releaseBlocker,
+			},
+			100: &controlledRunnable{
+				result: AgentRunResult{IssueNumber: 100, Status: "success"},
+			},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{
+			Issues:       []int{42, 100},
+			Dependencies: map[int][]int{100: {42}},
+			Parallel:     2,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+
+	var queuedEvent *events.Event
+	for i := range spyLog.events {
+		if spyLog.events[i].Type == "run.queued" && spyLog.events[i].Issue == 100 {
+			queuedEvent = &spyLog.events[i]
+			break
+		}
+	}
+	if queuedEvent == nil {
+		t.Fatal("expected run.queued event for blocked issue 100")
+	}
+	if got := queuedEvent.Payload["issue_title"]; got != "Dependent" {
+		t.Fatalf("queued issue_title = %#v, want %q", got, "Dependent")
+	}
+
+	close(releaseBlocker)
+	waitForSignal(t, done, "expected batch to complete")
+}
+
 func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
