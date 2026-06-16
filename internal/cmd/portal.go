@@ -48,6 +48,15 @@ var portalSignalProcess = signalPortalProcess
 // portalRunLivenessProbe is a package-level var so tests can substitute it.
 var portalRunLivenessProbe = daemon.IsRunActive
 
+// portalRunArchiver moves a run directory from .sandman/runs/<id> to
+// .sandman/archive/<id>. It is a package-level var so tests can substitute
+// a deterministic move without touching the real filesystem. The default
+// delegates to archivePortalRun, which keeps the portal and the CLI on a
+// single move implementation. The handler performs the liveness check and
+// destination collision check before invoking the archiver, so this var
+// only needs to perform the move.
+var portalRunArchiver = archivePortalRun
+
 // portalStaleCleaner is the function invoked once per portal server
 // startup to recover stale runs and clean up dead directories.
 var portalStaleCleaner = func(repoRoot string) error {
@@ -369,6 +378,39 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(map[string]any{"runKey": req.RunKey, "issue": req.Issue, "status": "aborted", "scope": "issue"})
 	})
+	mux.HandleFunc("/api/runs/archive", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			RunID string `json:"runId"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, portalMaxBodyBytes)).Decode(&req); err != nil {
+			writeJSONError(w, "invalid archive payload", http.StatusBadRequest)
+			return
+		}
+		req.RunID = strings.TrimSpace(req.RunID)
+		if req.RunID == "" {
+			writeJSONError(w, "missing runId", http.StatusBadRequest)
+			return
+		}
+
+		if err := archivePortalRunHandler(repoRoot, req.RunID); err != nil {
+			var archiveErr *portalArchiveError
+			if errors.As(err, &archiveErr) {
+				writeJSONError(w, archiveErr.message, archiveErr.status)
+				return
+			}
+			writeJSONError(w, "archive failed", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]any{"runId": req.RunID, "status": "archived"})
+	})
 	mux.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -448,6 +490,61 @@ type portalAbortError struct {
 }
 
 func (e *portalAbortError) Error() string { return e.message }
+
+type portalArchiveError struct {
+	status  int
+	message string
+}
+
+func (e *portalArchiveError) Error() string { return e.message }
+
+// portalRunDir returns the absolute run directory path for a given
+// repo root and run id. The HTTP handler uses it to drive the liveness
+// and "already archived" checks before invoking the archiver.
+func portalRunDir(repoRoot, runID string) string {
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	return filepath.Join(layout.RunsDir, runID)
+}
+
+// portalArchiveDir returns the absolute archive directory path for a
+// given repo root and run id.
+func portalArchiveDir(repoRoot, runID string) string {
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	return filepath.Join(layout.ArchiveDir, runID)
+}
+
+// archivePortalRunHandler performs the daemon-liveness and destination
+// collision checks, then hands off to portalRunArchiver. The function
+// returns portalArchiveError values so the HTTP handler can map each
+// failure mode to a specific status code; the archiver itself is only
+// invoked on the happy path.
+func archivePortalRunHandler(repoRoot, runID string) error {
+	runDir := portalRunDir(repoRoot, runID)
+	if _, err := os.Stat(runDir); err != nil {
+		if os.IsNotExist(err) {
+			return &portalArchiveError{status: http.StatusNotFound, message: fmt.Sprintf("run %q not found in .sandman/runs/", runID)}
+		}
+		return &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("stat run dir: %v", err)}
+	}
+
+	if portalRunLivenessProbe(runDir) {
+		return &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is still active; stop the daemon before archiving", runID)}
+	}
+
+	archiveDir := portalArchiveDir(repoRoot, runID)
+	if info, err := os.Stat(archiveDir); err == nil {
+		if info.IsDir() {
+			return &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("archive %q already exists", runID)}
+		}
+	} else if !os.IsNotExist(err) {
+		return &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("stat archive target: %v", err)}
+	}
+
+	if err := portalRunArchiver(repoRoot, runID); err != nil {
+		return &portalArchiveError{status: http.StatusInternalServerError, message: err.Error()}
+	}
+	return nil
+}
 
 // abortPortalRun sends an abort command to the run's cmd.sock for a single issue row.
 func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber int) error {

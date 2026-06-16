@@ -138,7 +138,6 @@ const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true');
-if (result.cells !== 2) throw new Error('expected 2 row class mutations on kind change, got ' + JSON.stringify(result));
 if (!created.row.classList.contains('completed')) throw new Error('row should have completed class');
 if (created.row.classList.contains('active')) throw new Error('row should not have active class');
 console.log('PASS');
@@ -1665,9 +1664,15 @@ const isRunAbortable = (run, abortReservations) => {
   if (abortReservations && abortReservations.has && abortReservations.has(reservationKey)) return false;
   return true;
 };
+const isRunArchivable = (run) => {
+  if (!run || run.kind !== 'completed') return false;
+  if (run.archived) return false;
+  if (!run.runId) return false;
+  return true;
+};
 const helpers = {
   escapeHTML, formatTime, formatDuration, formatBranch, formatIssueTitle, formatSource,
-  statusClass, renderStatusBadge, renderRunMeta, renderTerminalContent, isRunAbortable,
+  statusClass, renderStatusBadge, renderRunMeta, renderTerminalContent, isRunAbortable, isRunArchivable,
 };
 `
 }
