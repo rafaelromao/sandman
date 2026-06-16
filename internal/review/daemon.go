@@ -23,7 +23,7 @@ import (
 // PollingInterval is the default interval at which the daemon scans open PRs
 // for /sandman review comments. It is exported so tests and the CLI can
 // reference the same constant.
-const PollingInterval = 60 * time.Second
+const PollingInterval = 30 * time.Second
 
 // Clock returns the current time. Inject a custom clock in tests to avoid
 // time-based dependencies.
