@@ -617,7 +617,14 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	if !sb.execCalled {
 		t.Fatal("expected Exec to be called")
 	}
-	wantPrefix := "export API_KEY='sk-test123'; export MODEL='gpt-4'; opencode run .sandman/task.md"
+	// shellenv.Build only quotes values that contain shell-special
+	// characters; safe alphanumeric env values (letters, digits,
+	// dash, dot, slash, colon, plus, comma, at, equals, underscore)
+	// appear unquoted in the exported command. This is shell-safe
+	// and matches the typed-enum contract, but it is a visible
+	// change from the historical "always single-quoted" output the
+	// pre-slice-7 applyAgentEnv produced.
+	wantPrefix := "export API_KEY=sk-test123; export MODEL=gpt-4; opencode run .sandman/task.md"
 	if sb.execCommand != wantPrefix {
 		t.Errorf("exec command:\ngot:  %q\nwant: %q", sb.execCommand, wantPrefix)
 	}
@@ -825,5 +832,25 @@ func TestAgentRun_Run_PreservesUserOpencodePermissionOverride(t *testing.T) {
 	}
 	if !strings.HasPrefix(sb.execCommand, "export OPENCODE_PERMISSION='") {
 		t.Fatalf("expected user OPENCODE_PERMISSION to be preserved, got:\n%s", sb.execCommand)
+	}
+}
+
+func TestAgentRun_Run_InvalidEnvKeyFails(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.env = map[string]string{
+		"FOO; rm -rf /": "danger",
+	}
+
+	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{})
+
+	if res.Status != "failure" {
+		t.Errorf("expected failure for invalid env key, got %s", res.Status)
+	}
+	if sb.execCalled {
+		t.Error("expected Exec not to be called when env validation fails")
 	}
 }

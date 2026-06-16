@@ -121,7 +121,7 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	}
 	var results []github.Issue
 	for _, issue := range f.issues {
-		if !strings.EqualFold(issue.State, "closed") {
+		if !github.IsIssueClosed(issue) {
 			results = append(results, *issue)
 		}
 	}

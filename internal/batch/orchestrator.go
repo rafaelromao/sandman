@@ -21,6 +21,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/scaffold"
+	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
 func generateRunID(issueNum int) string {
@@ -973,10 +974,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				mu.Lock()
 				status := statuses[blocker]
 				mu.Unlock()
-				switch status {
-				case "aborted":
+				blockerStatus := events.RunStatusFromPayload(status)
+				switch {
+				case blockerStatus.IsAborted():
 					abortedBy = append(abortedBy, blocker)
-				case "success":
+				case blockerStatus.IsSuccess():
 				default:
 					stillBlockedBy = append(stillBlockedBy, blocker)
 				}
@@ -1068,10 +1070,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			mu.Lock()
 			results[idx] = res
 			statuses[issueNum] = res.Status
-			if res.Status == "failure" {
+			resStatus := events.RunStatusFromPayload(res.Status)
+			if resStatus.IsFailure() {
 				failureCount++
 			}
-			if res.Status == "aborted" {
+			if resStatus.IsAborted() {
 				abortedCount++
 			}
 			mu.Unlock()
@@ -1503,7 +1506,7 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 	result := fn()
 	cancelHeartbeat()
 	<-heartbeatDone
-	if abortedByHeartbeat && result.Status != "success" {
+	if abortedByHeartbeat && !events.RunStatusFromPayload(result.Status).IsSuccess() {
 		result.Status = "aborted"
 	}
 	return result
@@ -1583,7 +1586,7 @@ func (s *runSession) runOnce(
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptRenderCfg, errResult := prepareAttempt(attempt)
 		if errResult != nil {
-			return *errResult, errResult.Status == "success"
+			return *errResult, events.RunStatusFromPayload(errResult.Status).IsSuccess()
 		}
 
 		if attempt > 0 {
@@ -1619,7 +1622,7 @@ func (s *runSession) runOnce(
 
 		if mergeRequired {
 			prMerged := checkPRMerged(o.githubClient, branch)
-			if result.Status == "aborted" {
+			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue
 			}
 			if prMerged {
@@ -1631,7 +1634,7 @@ func (s *runSession) runOnce(
 			}
 			result.Status = "failure"
 		} else {
-			if result.Status == "success" {
+			if events.RunStatusFromPayload(result.Status).IsSuccess() {
 				break
 			}
 		}
@@ -1881,7 +1884,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 
 	result.Status = s.emitTerminal(ctx, runID, result)
 
-	if result.Status == "success" {
+	if events.RunStatusFromPayload(result.Status).IsSuccess() {
 		s.reconcileWorktreeBranch(wt, branch)
 	}
 
@@ -1928,7 +1931,7 @@ func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]
 		if err != nil {
 			return nil, fmt.Errorf("fetch blocker issue %d: %w", blocker, err)
 		}
-		if !isClosedIssue(issue) {
+		if !github.IsIssueClosed(issue) {
 			blockedBy = append(blockedBy, blocker)
 		}
 	}
@@ -1942,7 +1945,7 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 	}
 
 	var output bytes.Buffer
-	command := fmt.Sprintf("git reset --hard && git checkout -f -B %s %s && git clean -fd", shellQuote(branch), shellQuote(baseBranch))
+	command := fmt.Sprintf("git reset --hard && git checkout -f -B %s %s && git clean -fd", shellenv.Quote(branch), shellenv.Quote(baseBranch))
 	if err := sb.Exec(ctx, command, &output, &output); err != nil {
 		return fmt.Errorf("reset retry branch: %w\n%s", err, output.String())
 	}
@@ -1955,10 +1958,11 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
-	if result.Status == "aborted" {
+	resultStatus := events.RunStatusFromPayload(result.Status)
+	if resultStatus.IsAborted() {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run aborted: %w", ErrAborted)
 	}
-	if result.Status != "success" {
+	if !resultStatus.IsSuccess() {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
 	return &Result{Runs: []AgentRunResult{result}}, nil
@@ -2156,10 +2160,12 @@ func promptOnlyBranch(cfg prompt.RenderConfig) string {
 func terminalRunEvent(ctx context.Context, status string) (string, string) {
 	eventType := "run.finished"
 	terminalStatus := status
-	if terminalStatus == "" {
+	terminalCode := events.RunStatusFromPayload(terminalStatus)
+	if terminalCode.String() == "" {
 		terminalStatus = "failure"
+		terminalCode = events.RunStatusFailure
 	}
-	if ctx.Err() != nil && terminalStatus != "success" {
+	if ctx.Err() != nil && !terminalCode.IsSuccess() {
 		eventType = "run.aborted"
 		terminalStatus = "aborted"
 	}
