@@ -493,6 +493,17 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.Events = eventsByRun[state.RunID]
 		run.LogPath = v.portalLogPath(repoRoot, issueNumber, state.Branch())
 		run.LogURL = v.portalLogDownloadURL(repoRoot, issueNumber, state.Branch())
+		if review, pr := v.reviewContext(*state); review {
+			run.Review = true
+			run.PRNumber = pr
+			if issueNum := v.reviewIssueNumber(state.Started.Payload); issueNum > 0 {
+				run.IssueNumber = issueNum
+				run.IssueLabel = fmt.Sprintf("#%d", issueNum)
+			}
+		}
+		if candidates := v.candidatesFromPayload(state.Started.Payload); len(candidates) > 0 {
+			run.Candidates = candidates
+		}
 		if state.Finished != nil {
 			finishedAt := state.Finished.Timestamp
 			run.FinishedAt = &finishedAt
@@ -705,7 +716,6 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		RetriesDone:  runState.RetriesDone(),
 	}
 	if review, pr := v.reviewContext(runState); review {
-		portalRun.Review = true
 		portalRun.PRNumber = pr
 		if issueNum := v.reviewIssueNumber(runState.Started.Payload); issueNum > 0 {
 			portalRun.IssueNumber = issueNum

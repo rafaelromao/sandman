@@ -398,6 +398,8 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	var reviewIssueNumber int
 	if pr, err := d.GitHub.FetchPR(prNumber); err == nil {
 		reviewIssueNumber = pr.LinkedIssueNumber()
+	} else {
+		d.logf("fetch PR %d: %v (issue_number will not be set)", prNumber, err)
 	}
 
 	runID := fmt.Sprintf("PR%d", prNumber)

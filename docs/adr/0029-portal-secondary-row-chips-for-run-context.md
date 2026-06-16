@@ -1,14 +1,14 @@
-# ADR-0028: Portal secondary-row chips for run context
+# ADR-0029: Portal secondary-row chips for run context
 
-Issue #973 introduced a small inline status-pill chip (`.badge.kind-chip`) to label `auto-select` and `review` runs. This was a misinterpretation — the chip used status-pill visual language (dot + label, same family as the `● running` / `● reviewing` badge) for a semantic label, and was redundant with the adjacent status badge. The chip should have followed the existing `Part of Batch` chip pattern: a full-width muted block in a secondary row, carrying the *subject* of the run rather than the *category*.
+Issue #973 introduced a small inline status-pill chip (`.badge.kind-chip`) to label `auto-select` and `review` runs. This was a misinterpretation — the chip used status-pill visual language (dot + label, same family as the `● running` / `● reviewing` badge) for a semantic label, and was redundant with the adjacent status badge. The chip should have followed — and this ADR introduces — the same pattern as the `Part of Batch` chip: a full-width muted block in a secondary row, carrying the *subject* of the run rather than the *category*.
 
 ## Decision
 
-Three mutually exclusive chips, each rendered in a secondary `tr.batch-row` below the run row, using the existing `Part of Batch` muted block style (`display: block`, `var(--surface-3)`, `var(--muted)` text, `border-radius: 6px`):
+Three mutually exclusive chips, each rendered in a secondary `tr.context-row` below the run row, using the same muted block style as the existing `Part of Batch` chip (`display: block`, `var(--surface-3)`, `var(--muted)` text, `border-radius: 6px`):
 
 | Run kind | Secondary-row chip text | Data source |
 |---|---|---|
-| Issue in batch (>1 issues) | `Part of batch: #N, #N` | `portalRun.BatchIssues` |
+| Issue in batch (>1 issues) | `Part of batch: #N, #N` | `portalRun.BatchIssues` *(inline in title cell for now; pending #1055)* |
 | Review | `Reviewing PR #N for issue #M` | `portalRun.PRNumber` + issue lookup |
 | Auto-select | `Auto-select candidates: #N, #N` | `portalRun.Candidates` (new field) |
 | Regular issue / prompt-only / continuation | *(no chip)* | — |

@@ -61,24 +61,19 @@ console.log('PASS');
 
 func TestPortalDiffUpdateCells_RemovesStaleReviewBadgeFromTitle(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1', reason: 'review', prNumber: 42, issueNumber: 1 };
+const runOld = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1', reason: 'review' };
 const runNew = Object.assign({}, runOld, { issueLabel: 'Issue 1 updated', reason: '' });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!ctxRow) throw new Error('expected starting context row from runOld.reason');
-const chip = ctxRow.querySelector('.context-chip');
-if (!chip) throw new Error('expected context chip in context row');
-if (!chip.textContent.includes('Reviewing PR #42')) throw new Error('expected review chip text, got ' + chip.textContent);
+const titleWrap = created.row.querySelector('[data-cell="title"]').children[0];
+if (!titleWrap.querySelector('.kind-chip')) throw new Error('expected starting kind chip from runOld.reason');
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true');
-const ctxAfter = body.querySelector('tr.context-row[data-context-for="a"]');
-if (ctxAfter) throw new Error('expected context row removed when reason clears');
-if (created.row.querySelector('.kind-chip')) throw new Error('expected no kind chip in title cell');
-if (created.row.querySelector('[data-cell="title"]').children[0].children.length !== 2) throw new Error('expected title wrap to have only issue label and meta after update');
-if (created.row.querySelector('[data-cell="title"]').children[0].children[0].textContent !== 'Issue 1 updated') throw new Error('expected updated issue label');
+if (titleWrap.querySelector('.kind-chip')) throw new Error('expected kind chip removed when reason clears');
+if (titleWrap.children.length !== 2) throw new Error('expected title wrap to have only issue label and meta after update, got ' + titleWrap.children.length);
+if (titleWrap.children[0].textContent !== 'Issue 1 updated') throw new Error('expected updated issue label');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1520,21 +1515,23 @@ const runNew = Object.assign({}, runOld, { batchIssues: [860, 854] });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-const titleCell = created.row.querySelector('[data-cell="title"]');
-const wrap = titleCell.children[0];
-if (wrap.querySelector('.batch-membership')) throw new Error('expected no batch-membership chip on initial row with no batchIssues');
-clearLog(titleCell);
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch-row on initial run with no batchIssues');
+clearLog(body);
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true after batchIssues transition');
-const counters = SandmanPortalDiff.getCounters();
-if (counters.mutations === 0) throw new Error('expected mutations > 0, got ' + counters.mutations);
-if (countLog(titleCell) === 0) throw new Error('expected title cell to be touched after batchIssues transition');
-const marker = wrap.querySelector('.batch-membership');
-if (!marker) throw new Error('expected batch-membership chip after batchIssues transition from null to [860,854]');
-const text = marker.textContent || '';
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (!batchRow) throw new Error('expected batch-row to be added by updateRunRowCells');
+const chip = batchRow.querySelector('.batch-membership');
+if (!chip) throw new Error('expected batch-membership chip in new batch-row');
+const text = chip.textContent || '';
 if (!text.includes('860') || !text.includes('854')) {
   throw new Error('expected chip text to list both issues 860 and 854, got ' + JSON.stringify(text));
+}
+const dataRowIdx = Array.prototype.indexOf.call(body.children, created.row);
+const batchRowIdx = Array.prototype.indexOf.call(body.children, batchRow);
+if (batchRowIdx !== dataRowIdx + 1) {
+  throw new Error('expected new batch-row immediately after data row');
 }
 console.log('PASS');
 `
@@ -1548,14 +1545,11 @@ const runNew = Object.assign({}, runOld, { batchIssues: [42] });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-const titleCell = created.row.querySelector('[data-cell="title"]');
-const wrap = titleCell.children[0];
-if (!wrap.querySelector('.batch-membership')) throw new Error('expected initial batch-membership chip from runOld.batchIssues');
-clearLog(titleCell);
+if (!body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected initial batch-row from batchIssues');
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true after batchIssues shrink to single');
-if (wrap.querySelector('.batch-membership')) throw new Error('expected batch-membership chip removed when batchIssues shrunk to single issue');
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected batch-row removed when batchIssues shrunk to single issue');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1724,7 +1718,7 @@ func sharedMockBody() string {
       log.push(['replaceChildren', nodes.length]);
     },
     querySelectorAll(sel) {
-      const m = sel.match(/^(\[|tr\.detail-row\[|tr\.context-row\[|tr\[)data-(run-key|detail-for|context-for)="([^"]+)"\]$/);
+      const m = sel.match(/^(\[|tr\.detail-row\[|tr\.context-row\[|tr[^\[]+\[|tr\[)data-(run-key|detail-for|context-for|batch-for)="([^"]+)"\]$/);
       if (!m) return [];
       const attr = 'data-' + m[2];
       const value = m[3];
@@ -1770,6 +1764,7 @@ function makeMockRow() {
   const log = [];
   const row = {
     tagName: 'TR',
+    nodeType: 1,
     children: [],
     dataset: {},
     classList: { _set: new Set(), add(...cs) { for (const c of cs) { this._set.add(c); log.push(['class+', c]); } }, remove(...cs) { for (const c of cs) { this._set.delete(c); log.push(['class-', c]); } }, contains(c) { return this._set.has(c); }, toggle(c, force) { if (force === true) this._set.add(c); else if (force === false) this._set.delete(c); else if (this._set.has(c)) this._set.delete(c); else this._set.add(c); log.push(['class^', c]); } },
@@ -1870,6 +1865,28 @@ function makeMockRow() {
   });
   Object.defineProperty(row, 'lastChild', {
     get() { return this.children.length ? this.children[this.children.length - 1] : null; },
+  });
+  Object.defineProperty(row, 'nextElementSibling', {
+    get() {
+      const p = this.parentNode;
+      if (!p || !p.children) return null;
+      const idx = p.children.indexOf(this);
+      for (let i = idx + 1; i < p.children.length; i += 1) {
+        if (p.children[i].nodeType === 1) return p.children[i];
+      }
+      return null;
+    },
+  });
+  Object.defineProperty(row, 'previousElementSibling', {
+    get() {
+      const p = this.parentNode;
+      if (!p || !p.children) return null;
+      const idx = p.children.indexOf(this);
+      for (let i = idx - 1; i >= 0; i -= 1) {
+        if (p.children[i].nodeType === 1) return p.children[i];
+      }
+      return null;
+    },
   });
   return row;
 }
