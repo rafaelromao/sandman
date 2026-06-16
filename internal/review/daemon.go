@@ -395,6 +395,13 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
+	var reviewIssueNumber int
+	if pr, err := d.GitHub.FetchPR(prNumber); err == nil {
+		reviewIssueNumber = pr.LinkedIssueNumber()
+	} else {
+		d.logf("fetch PR %d: %v (issue_number will not be set)", prNumber, err)
+	}
+
 	runID := fmt.Sprintf("PR%d", prNumber)
 
 	// Boot the per-PR run session. The review daemon path does not
@@ -430,6 +437,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		OutputWriter: d.Broadcaster,
 		Review:       true,
 		PRNumber:     prNumber,
+		IssueNumber:  reviewIssueNumber,
 		ReviewFocus:  focus,
 		RunID:        runID,
 		RunDir:       rs.RunDir(),

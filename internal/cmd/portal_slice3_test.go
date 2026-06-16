@@ -173,31 +173,33 @@ func TestPortal_Compute_ReasonTableForAllRunKinds(t *testing.T) {
 func TestPortal_StatusOrDefault_PreservesTerminalStatusesForAutoSelectAndReview(t *testing.T) {
 	v := &portalRunsView{}
 	cases := []struct {
-		name     string
-		status   string
-		active   bool
-		isReview bool
-		want     string
+		name         string
+		status       string
+		active       bool
+		isReview     bool
+		isAutoSelect bool
+		want         string
 	}{
-		{"auto-select success stays success", "success", false, false, "success"},
-		{"auto-select failure stays failure", "failure", false, false, "failure"},
-		{"review success stays success", "success", false, true, "success"},
-		{"review failure stays failure", "failure", false, true, "failure"},
-		{"aborted stays aborted", "aborted", false, false, "aborted"},
+		{"auto-select success stays success", "success", false, false, false, "success"},
+		{"auto-select failure stays failure", "failure", false, false, false, "failure"},
+		{"review success stays success", "success", false, true, false, "success"},
+		{"review failure stays failure", "failure", false, true, false, "failure"},
+		{"aborted stays aborted", "aborted", false, false, false, "aborted"},
 
 		// The fallback path still has to work for the genuine "no
 		// status key on the finished event" case.
-		{"empty status falls back to completed", "", false, false, "completed"},
+		{"empty status falls back to completed", "", false, false, false, "completed"},
 
 		// Active-run override takes precedence over the status string.
-		{"active review stays reviewing", "", true, true, "reviewing"},
-		{"active non-review stays running", "ignored", true, false, "running"},
+		{"active review stays reviewing", "", true, true, false, "reviewing"},
+		{"active auto-select stays auto-selecting", "", true, false, true, "auto-selecting"},
+		{"active non-review stays running", "ignored", true, false, false, "running"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := v.statusOrDefault(tc.status, tc.active, tc.isReview)
+			got := v.statusOrDefault(tc.status, tc.active, tc.isReview, tc.isAutoSelect)
 			if got != tc.want {
-				t.Fatalf("statusOrDefault(%q, %v, %v) = %q, want %q", tc.status, tc.active, tc.isReview, got, tc.want)
+				t.Fatalf("statusOrDefault(%q, %v, %v, %v) = %q, want %q", tc.status, tc.active, tc.isReview, tc.isAutoSelect, got, tc.want)
 			}
 		})
 	}
