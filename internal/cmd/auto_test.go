@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -54,6 +55,170 @@ func TestRun_AutoFlag_NoCount_UsesConfigDefault(t *testing.T) {
 	}
 	if gh.searchIssuesQuery != "label:ready-for-agent is:open" {
 		t.Errorf("expected search query 'label:ready-for-agent is:open', got %q", gh.searchIssuesQuery)
+	}
+}
+
+func TestRun_AutoFlag_EmitsAutoSelectEventsForAgentDrivenPath(t *testing.T) {
+	sandmanDir := t.TempDir()
+	t.Chdir(sandmanDir)
+	if err := os.MkdirAll(".sandman", 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	promptPath := filepath.Join(".sandman", "auto-selection-prompt.md")
+	if err := os.WriteFile(promptPath, []byte("priority prompt"), 0644); err != nil {
+		t.Fatalf("create priority prompt: %v", err)
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A", Body: "A", Labels: []string{"bug"}},
+			{Number: 2, Title: "Feature B", Body: "B", Labels: []string{"bug"}},
+		},
+	}
+	log := &recordingEventLog{}
+	cfg := &config.Config{
+		Agent:         "opencode",
+		ReviewCommand: "/oc review",
+		AutoMaxCount:  5,
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"opencode": {
+			Command: fmt.Sprintf("echo '[1, 2]' > %s/selected-issues.json", filepath.Join(sandmanDir, ".sandman")),
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: cfg},
+		EventLog:     log,
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+
+	started, finished := findAutoSelectEvents(log)
+	if started == nil {
+		t.Fatal("expected a run.started event with auto-select-* RunID")
+	}
+	if finished == nil {
+		t.Fatal("expected a run.finished event with auto-select-* RunID")
+	}
+	if started.RunID != finished.RunID {
+		t.Fatalf("expected same RunID on started and finished, got %q vs %q", started.RunID, finished.RunID)
+	}
+	if got := autoSelectEventOrder(log); len(got) != 2 || got[0] != "run.started" || got[1] != "run.finished" {
+		t.Fatalf("expected run.started before run.finished, got %v", got)
+	}
+	if status, _ := finished.Payload["status"].(string); status != "success" {
+		t.Fatalf("expected finished status == success, got %v", finished.Payload["status"])
+	}
+	selected, ok := finished.Payload["selected"].([]int)
+	if !ok || len(selected) != 2 || selected[0] != 1 || selected[1] != 2 {
+		t.Fatalf("expected finished selected [1, 2], got %v", finished.Payload["selected"])
+	}
+}
+
+func TestRun_AutoFlag_AgentFailurePropagatesErrorAndEmitsFailureFinished(t *testing.T) {
+	sandmanDir := t.TempDir()
+	t.Chdir(sandmanDir)
+	if err := os.MkdirAll(".sandman", 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	promptPath := filepath.Join(".sandman", "auto-selection-prompt.md")
+	if err := os.WriteFile(promptPath, []byte("priority prompt"), 0644); err != nil {
+		t.Fatalf("create priority prompt: %v", err)
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{{Number: 1, Title: "Feature A"}},
+	}
+	log := &recordingEventLog{}
+	cfg := &config.Config{Agent: "opencode", ReviewCommand: "/oc review", AutoMaxCount: 5}
+	cfg.AgentProviders = map[string]config.Agent{
+		"opencode": {Command: "exit 1"},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: cfg},
+		EventLog:     log,
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error from agent failure")
+	}
+	if !strings.Contains(err.Error(), "selection agent failed") {
+		t.Fatalf("expected agent-failure error to propagate, got: %v", err)
+	}
+	if spy.called {
+		t.Fatal("expected batch runner NOT to be called when selection phase fails")
+	}
+
+	started, finished := findAutoSelectEvents(log)
+	if started == nil {
+		t.Fatal("expected a run.started event with auto-select-* RunID")
+	}
+	if finished == nil {
+		t.Fatal("expected a run.finished event with auto-select-* RunID")
+	}
+	if status, _ := finished.Payload["status"].(string); status != "failure" {
+		t.Fatalf("expected finished status == failure, got %v", finished.Payload["status"])
+	}
+	if reason, _ := finished.Payload["reason"].(string); reason == "" {
+		t.Fatal("expected non-empty reason on failure")
+	}
+}
+
+func TestRun_AutoFlag_NumericFallbackPathEmitsNoAutoSelectEvents(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A"},
+			{Number: 2, Title: "Feature B"},
+		},
+	}
+	log := &recordingEventLog{}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:     log,
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if started, finished := findAutoSelectEvents(log); started != nil || finished != nil {
+		t.Fatalf("expected no auto-select events on numeric-fallback path, got started=%+v finished=%+v", started, finished)
 	}
 }
 
@@ -1323,7 +1488,7 @@ func TestResolveAutoIssues_PriorityPromptFileSelectsSelectionPhase(t *testing.T)
 		},
 	}
 
-	_, err := resolveAutoIssues(context.Background(), gh, 1, []int{1}, sandmanDir, "", "", &config.Config{ReviewCommand: "/oc review"})
+	_, err := resolveAutoIssues(context.Background(), gh, 1, []int{1}, sandmanDir, "", "", &config.Config{ReviewCommand: "/oc review"}, "", nil)
 	if err == nil {
 		t.Fatal("expected selection phase error")
 	}
@@ -1341,7 +1506,7 @@ func TestResolveAutoIssues_AutoPromptFileAbsentUsesNumericSort(t *testing.T) {
 		},
 	}
 
-	issues, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{})
+	issues, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1379,7 +1544,7 @@ func TestResolveAutoIssues_UnlimitedCap(t *testing.T) {
 		},
 	}
 
-	issues, err := resolveAutoIssues(context.Background(), gh, 0, []int{1}, sandmanDir, "", "", &config.Config{})
+	issues, err := resolveAutoIssues(context.Background(), gh, 0, []int{1}, sandmanDir, "", "", &config.Config{}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

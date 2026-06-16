@@ -196,7 +196,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					if err != nil {
 						return err
 					}
-					issues, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, ".sandman", agentName, modelFlag, cfg)
+					resolvedQuery := resolveAutoQuery(label, query)
+					issues, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, ".sandman", agentName, modelFlag, cfg, resolvedQuery, deps.EventLog)
 					if err != nil {
 						return err
 					}
