@@ -1441,11 +1441,36 @@ func TestPortal_BatchRowCSS_RendersAsSecondaryRowUnderRunRow(t *testing.T) {
 		t.Fatalf("read %s: %v", htmlPath, err)
 	}
 	html := string(data)
-	for _, sel := range []string{"tbody tr.batch-row td", "tbody tr.run-row + tr.batch-row td"} {
-		idx := strings.Index(html, sel)
+	for _, tc := range []struct {
+		sel   string
+		props []string
+	}{
+		{"tbody tr.batch-row td", []string{"border-bottom: none"}},
+		{"tbody tr.run-row + tr.batch-row td", []string{"padding-top: 0"}},
+		{"tbody tr.run-row:hover + tr.batch-row td", []string{"background:"}},
+		{"tbody tr.run-row.active + tr.batch-row td", []string{"background:"}},
+	} {
+		idx := strings.Index(html, tc.sel)
 		if idx < 0 {
-			t.Errorf("expected %s rule in %s", sel, htmlPath)
+			t.Errorf("expected %s rule in %s", tc.sel, htmlPath)
 			continue
+		}
+		open := strings.Index(html[idx:], "{")
+		if open < 0 {
+			t.Errorf("expected rule body for %s", tc.sel)
+			continue
+		}
+		bodyStart := idx + open + 1
+		close := strings.Index(html[bodyStart:], "}")
+		if close < 0 {
+			t.Errorf("expected closing brace for %s rule", tc.sel)
+			continue
+		}
+		body := html[bodyStart : bodyStart+close]
+		for _, prop := range tc.props {
+			if !strings.Contains(body, prop) {
+				t.Errorf("%s rule missing %q", tc.sel, prop)
+			}
 		}
 	}
 }

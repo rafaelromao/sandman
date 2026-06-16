@@ -59,25 +59,23 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffUpdateCells_RemovesStaleReviewBadgeFromTitle(t *testing.T) {
+func TestPortalDiffUpdateCells_RemovesStaleReviewBadgeFromContextRow(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1', reason: 'review' };
+const runOld = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1', reason: 'review', prNumber: 42, issueNumber: 1 };
 const runNew = Object.assign({}, runOld, { issueLabel: 'Issue 1 updated', reason: '' });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-const titleCell = created.row.querySelector('[data-cell="title"]');
-const titleWrap = titleCell ? titleCell.children[0] : null;
-console.log('titleCell:', titleCell ? 'found' : 'null');
-console.log('titleWrap:', titleWrap ? 'found' : 'null');
-if (titleWrap) console.log('titleWrap children:', titleWrap.children.length);
-if (titleWrap) { for (let i = 0; i < titleWrap.children.length; i++) { console.log('  child ' + i + ':', titleWrap.children[i].classList ? titleWrap.children[i].classList._set : 'no classList'); } }
-if (!titleWrap.querySelector('.kind-chip')) throw new Error('expected starting kind chip from runOld.reason');
+const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
+if (!ctxRow) throw new Error('expected context row for review run');
+const chip = ctxRow.querySelector('.context-chip');
+if (!chip) throw new Error('expected context chip');
+if (!chip.textContent.includes('Reviewing PR #42')) throw new Error('expected review chip text');
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true');
-if (titleWrap.querySelector('.kind-chip')) throw new Error('expected kind chip removed when reason clears');
-if (titleWrap.children.length !== 2) throw new Error('expected title wrap to have only issue label and meta after update, got ' + titleWrap.children.length);
+if (body.querySelector('tr.context-row[data-context-for="a"]')) throw new Error('expected context row removed when reason clears');
+const titleWrap = created.row.querySelector('[data-cell="title"]').children[0];
 if (titleWrap.children[0].textContent !== 'Issue 1 updated') throw new Error('expected updated issue label');
 console.log('PASS');
 `

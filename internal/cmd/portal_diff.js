@@ -69,8 +69,6 @@
     meta.classList.add('meta-line', 'mono');
     meta.textContent = helpers.renderRunMeta(run);
     wrap.appendChild(meta);
-    const chip = buildReasonChip(run.reason);
-    if (chip) wrap.appendChild(chip);
     td.appendChild(wrap);
   }
 
@@ -724,51 +722,6 @@
     if (oldSnap.metaText !== newSnap.metaText && meta) {
       setText(meta, newSnap.metaText);
     }
-    if (oldSnap.reason !== newSnap.reason) {
-      reconcileReasonChip(wrap, newSnap.reason);
-    }
-  }
-
-  function reconcileReasonChip(wrap, reason) {
-    const existing = wrap.querySelector('.kind-chip');
-    const wantChip = reason === 'auto-select' || reason === 'review';
-    if (!wantChip) {
-      if (existing) {
-        wrap.removeChild(existing);
-        mutationCount += 1;
-      }
-      return;
-    }
-    if (!existing) {
-      const chip = buildReasonChip(reason);
-      wrap.appendChild(chip);
-      mutationCount += 1;
-      return;
-    }
-    if (existing.getAttribute('data-reason') !== reason) {
-      setClass(existing, existing.getAttribute('data-reason'), false);
-      setClass(existing, reason, true);
-      setAttr(existing, 'data-reason', reason);
-    }
-    const label = existing.querySelector('.badge-label') || existing.children[1];
-    if (label && label.textContent !== reason) {
-      setText(label, reason);
-    }
-  }
-
-  function buildReasonChip(reason) {
-    if (reason !== 'auto-select' && reason !== 'review') return null;
-    const span = global.document.createElement('span');
-    span.classList.add('badge', 'kind-chip', reason);
-    setAttr(span, 'data-reason', reason);
-    const dot = global.document.createElement('span');
-    dot.classList.add('dot');
-    span.appendChild(dot);
-    const label = global.document.createElement('span');
-    label.classList.add('badge-label');
-    label.textContent = reason;
-    span.appendChild(label);
-    return span;
   }
 
   function updateBadgeCell(cell, oldSnap, newSnap) {

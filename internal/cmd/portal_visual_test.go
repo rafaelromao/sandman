@@ -49,12 +49,6 @@ const visualFixtureRowsJS = `
     const name = document.createElement('span'); name.classList.add('name'); name.textContent = rowSpec.issueLabel || rowSpec.key; wrap.appendChild(name);
     const meta = document.createElement('span'); meta.classList.add('meta-line', 'mono');
     meta.textContent = rowSpec.metaText; wrap.appendChild(meta);
-    if (rowSpec.batchIssues && rowSpec.batchIssues.length > 1) {
-      const chip = document.createElement('span'); chip.classList.add('batch-membership', 'mono');
-      chip.setAttribute('data-batch-membership', '1');
-      chip.textContent = 'Part of batch: ' + rowSpec.batchIssues.map(n => '#' + n).join(', ');
-      wrap.appendChild(chip);
-    }
     title.appendChild(wrap);
     const badge = td('badge');
     const b = document.createElement('span'); b.classList.add('badge', rowSpec.status);
@@ -67,6 +61,18 @@ const visualFixtureRowsJS = `
     const br = td('branch'); br.classList.add('mono'); br.textContent = rowSpec.branch;
     const ac = td('actions'); ac.classList.add('run-actions');
     const btn = document.createElement('button'); btn.classList.add('action-btn','danger'); btn.textContent = 'Abort'; ac.appendChild(btn);
+    if (rowSpec.batchIssues && rowSpec.batchIssues.length > 1) {
+      const batchTr = document.createElement('tr');
+      batchTr.classList.add('batch-row');
+      const batchTd = document.createElement('td');
+      batchTd.setAttribute('colspan', '7');
+      const chip = document.createElement('span'); chip.classList.add('batch-membership', 'mono');
+      chip.setAttribute('data-batch-membership', '1');
+      chip.textContent = 'Part of batch: ' + rowSpec.batchIssues.map(n => '#' + n).join(', ');
+      batchTd.appendChild(chip);
+      batchTr.appendChild(batchTd);
+      tr.parentNode.insertBefore(batchTr, tr.nextSibling);
+    }
     return tr;
   }
 
@@ -93,6 +99,9 @@ const visualFixtureRowsJS = `
       const it = tr.querySelector('[data-cell="issue-title"]');
       const br = tr.querySelector('[data-cell="branch"]');
       const rect = (el) => el ? { w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) } : null;
+      const batchRow = tr.nextElementSibling && tr.nextElementSibling.classList.contains('batch-row') ? tr.nextElementSibling : null;
+      const batchChip = batchRow ? batchRow.querySelector('.batch-membership') : null;
+      const batchTd = batchRow ? batchRow.querySelector('td') : null;
       out.rows.push({
         idx: i,
         titleCell: rect(t),
@@ -101,6 +110,8 @@ const visualFixtureRowsJS = `
         issueTitle: rect(it),
         branch: rect(br),
         innerWidthTitleCell: t ? t.clientWidth : null,
+        batchRow: rect(batchTd),
+        batchTdInnerWidth: batchTd ? batchTd.clientWidth : null,
       });
     });
     const pre = document.createElement('pre');
@@ -187,6 +198,8 @@ type visualRow struct {
 	IssueTitle          *visualRect `json:"issueTitle"`
 	Branch              *visualRect `json:"branch"`
 	InnerWidthTitleCell *int        `json:"innerWidthTitleCell"`
+	BatchRow            *visualRect `json:"batchRow"`
+	BatchTdInnerWidth   *int        `json:"batchTdInnerWidth"`
 }
 
 type visualDump struct {
@@ -426,6 +439,10 @@ func TestPortal_Visual_RunRowStaysShortOnMobileViewport(t *testing.T) {
 	// Title cell should be at most 120px tall on a narrow viewport.
 	if row.TitleCell.H > 120 {
 		t.Errorf("title cell height %d on 500px viewport; expected <= 120", row.TitleCell.H)
+	}
+	// Batch-row td should be at most 40px tall (single-line chip).
+	if row.BatchRow != nil && row.BatchRow.H > 40 {
+		t.Errorf("batch-row td height %d on 500px viewport; expected <= 40", row.BatchRow.H)
 	}
 	// Issue-title and branch cells should be on a single line (height ~17px).
 	if row.IssueTitle != nil && row.IssueTitle.H > 25 {
