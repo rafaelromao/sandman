@@ -38,14 +38,30 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 2. **Wait for CI**
 
-  Poll until status is `pass`. If `fail`:
+  Run this single deterministic bash loop as one standalone command (do NOT pipe through `tail`/`head`/`&&` and do NOT use `gh pr checks --watch` — the loop below is the only mechanism; the model must not invent its own polling). The loop polls `gh pr checks` every 20 seconds and exits the moment CI reaches a terminal state. This is the lock that prevents the 15-minute model-side gap observed when the agent chose `--watch` and then took minutes to fire the next command.
+
+  ```bash
+  while true; do
+    states=$(gh pr checks <N> --repo <owner/repo> --json name,state \
+      --jq '.[] | select(.state != "skipped") | .state' 2>/dev/null)
+    if echo "$states" | grep -q '^fail$'; then
+      echo "CI failed:"; gh pr checks <N> --repo <owner/repo>; exit 1
+    fi
+    if [ -n "$states" ] && ! echo "$states" | grep -qv '^pass$'; then
+      break
+    fi
+    sleep 20
+  done
+  ```
+
+  If the loop exits non-zero (CI `fail`):
 
     - If there are merge conflicts, load the `sandman-back-merge` skill and merge the base branch into the local branch.
     - Read the failed job logs to identify the root cause.
     - Fix the error in the codebase.
     - Run local tests/formatting to verify the fix.
     - Commit and push: `git add -A && git commit -m "fix: resolve CI failure" && git push`
-    - **Repeat Step 2** (wait for CI again).
+    - **Repeat Step 2** (re-run the loop above).
 
 3. **Delegate review to the PR Review Agent**
 
@@ -58,9 +74,25 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
   ```
   **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
-4. **Wait for review** (timeout: 10 minutes)
+4. **Wait for review** (timeout: 30 minutes)
 
-  Poll every 30–60s. On **every** poll iteration you MUST run all three commands below — never skip one. Run each command as a fully separate, standalone invocation — do NOT chain commands in any way, including with `&&`, `||`, `;`, pipes (`|`), or subshells. Each command must be executed on its own so its full output is captured before processing the next one.
+  Poll on this **explicit cadence** — the model must NOT invent its own sleep durations. Use the sleep values below in order; after the sixth sleep, stop and report to the user (timeout reached):
+
+  | Iteration | Sleep before this poll |
+  |-----------|------------------------|
+  | 1         | (no sleep — first poll fires immediately after the `gh pr comment` post) |
+  | 2         | `sleep 30`             |
+  | 3         | `sleep 60`             |
+  | 4         | `sleep 60`             |
+  | 5         | `sleep 90`             |
+  | 6         | `sleep 90`             |
+  | 7         | `sleep 120`            |
+
+  Total budget: 30 + 60 + 60 + 90 + 90 + 120 = **450s = 7.5 min worst-case** between the `/sandman review` post and the poll that detects the response, inside a **30 min overall ceiling**. The cadence is chosen to fit the 2-10 min typical review-agent runtime and to bound the response-detection latency.
+
+  **Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment whose author is not the agent itself (i.e., the review agent has started responding), the very next sleep MUST be ≤ 60s. The 90s and 120s sleeps are only allowed when no new comment has been observed since the request was posted. This is the lock that prevents a 5-minute sleep from missing a response that arrived during the sleep.
+
+  On **every** poll iteration you MUST run all three commands below — never skip one. Run each command as a fully separate, standalone invocation — do NOT chain commands in any way, including with `&&`, `||`, `;`, pipes (`|`), or subshells. Each command must be executed on its own so its full output is captured before processing the next one.
 
   After every poll, print a counter line in this exact format (the agent must read this counter out loud to the user on every iteration and include the final iteration's counter in the final report):
 
@@ -92,7 +124,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
   **Self-check (run after every poll, before classifying state):**
   If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COMMAND}}` is already pending without response, post a follow-up PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. If a request is already pending, skip — do not pile on. This guarantees that a reviewer who only posts a top-level conversation comment is never silently dropped.
 
-  Read every new PR Review Agent comment from all three sources, including inline file comments. Do not overlook comments attached to a file diff instead of the top-level conversation. Treat any requested concrete change in an inline file comment as actionable feedback. If no reviewer response arrives within 10 minutes, stop and report to the user.
+  Read every new PR Review Agent comment from all three sources, including inline file comments. Do not overlook comments attached to a file diff instead of the top-level conversation. Treat any requested concrete change in an inline file comment as actionable feedback. If no reviewer response arrives within 30 minutes, stop and report to the user.
 
 5. **Read and classify feedback**
 
