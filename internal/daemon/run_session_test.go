@@ -1,0 +1,248 @@
+package daemon
+
+import (
+	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// mustParseTime parses an RFC3339 timestamp or fails the test.
+func mustParseTime(t *testing.T, s string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatalf("parse time %q: %v", s, err)
+	}
+	return parsed
+}
+
+// stubCommander is a minimal IssueCommander used by RunSession tests.
+type stubCommander struct {
+	abortErr error
+}
+
+func (s *stubCommander) AbortIssue(issueNumber int) error { return s.abortErr }
+
+// TestRunSession_Prepare_CreatesRunDirManifestAndSockets is the unit-level
+// companion to the integration test in internal/cmd. It exercises the
+// RunSession boot in isolation: Prepare must produce the run directory,
+// the batch manifest, run.sock, and (when a commander is provided)
+// cmd.sock — in that order — and Close must clean up afterwards.
+func TestRunSession_Prepare_CreatesRunDirManifestAndSockets(t *testing.T) {
+	dir := t.TempDir()
+	rs := NewRunSession(dir, "test-run-1")
+
+	manifest := BatchManifest{Issues: []int{42}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
+
+	if err := rs.Prepare(manifest, &stubCommander{}); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	t.Cleanup(func() { _ = rs.Close() })
+
+	if rs.RunDir() == "" {
+		t.Fatal("RunDir() must be non-empty after Prepare")
+	}
+	wantRunDir := filepath.Join(dir, "runs", "test-run-1")
+	if rs.RunDir() != wantRunDir {
+		t.Errorf("RunDir = %q, want %q", rs.RunDir(), wantRunDir)
+	}
+
+	// Run directory exists.
+	runDirInfo, err := os.Stat(rs.RunDir())
+	if err != nil {
+		t.Fatalf("stat run dir: %v", err)
+	}
+	if !runDirInfo.IsDir() {
+		t.Fatalf("run dir %s is not a directory", rs.RunDir())
+	}
+
+	// Batch manifest exists and decodes back to the same payload.
+	manifestData, err := os.ReadFile(filepath.Join(rs.RunDir(), "batch.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	got, err := ReadManifest(rs.RunDir())
+	if err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+	if len(got.Issues) != 1 || got.Issues[0] != 42 {
+		t.Errorf("manifest issues = %v, want [42]", got.Issues)
+	}
+	if !strings.Contains(string(manifestData), `"issues":[42]`) {
+		t.Errorf("manifest payload missing issues: %s", manifestData)
+	}
+
+	// run.sock and cmd.sock exist and are live.
+	runSock := filepath.Join(rs.RunDir(), "run.sock")
+	if conn, err := net.Dial("unix", runSock); err != nil {
+		t.Fatalf("dial run.sock: %v", err)
+	} else {
+		conn.Close()
+	}
+	cmdSock := filepath.Join(rs.RunDir(), "cmd.sock")
+	if conn, err := net.Dial("unix", cmdSock); err != nil {
+		t.Fatalf("dial cmd.sock: %v", err)
+	} else {
+		conn.Close()
+	}
+}
+
+// TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil covers the
+// review-daemon path: when the caller passes a nil commander, the boot
+// must skip the cmd.sock step cleanly. run.sock and batch.json must
+// still be present.
+func TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil(t *testing.T) {
+	dir := t.TempDir()
+	rs := NewRunSession(dir, "review-run-1")
+	t.Cleanup(func() { _ = rs.Close() })
+
+	manifest := BatchManifest{Issues: []int{}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
+	if err := rs.Prepare(manifest, nil); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	if _, err := net.Dial("unix", filepath.Join(rs.RunDir(), "run.sock")); err != nil {
+		t.Fatalf("run.sock must be live when commander is nil: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rs.RunDir(), "cmd.sock")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("cmd.sock must NOT exist when commander is nil, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rs.RunDir(), "batch.json")); err != nil {
+		t.Errorf("batch.json must exist when commander is nil: %v", err)
+	}
+}
+
+// TestRunSession_Prepare_PropagatesControlSocketError asserts that when
+// ControlSocket.Start fails, Prepare returns a wrapped ErrStepControlSocket
+// error. We force the failure by making the runDir a non-empty
+// directory whose only entry is itself — a loop. ControlSocket.Start
+// then calls Chmod on the run dir, but a non-empty directory whose
+// only entry is the runDir itself is a pathological state we
+// simulate by creating a child directory that consumes the inode: the
+// run.sock path can then be created (it's a file, not a directory),
+// but net.Listen("unix", "<dir>/run.sock") refuses to bind because
+// the run.sock path is a non-empty directory.
+//
+// The cleanest portable trick is to pre-create the run.sock path as
+// a non-empty directory. MkdirAll(<dir>) is happy, but
+// net.Listen("unix", <dir>/run.sock) where <dir>/run.sock is a
+// non-empty directory fails with EADDRINUSE / "address already in use".
+func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
+	dir := t.TempDir()
+	rs := NewRunSession(dir, "failing-run-1")
+	t.Cleanup(func() { _ = rs.Close() })
+
+	// Pre-create the run.sock path as a non-empty directory. MkdirAll
+	// on the run dir is happy; the manifest write is happy; but
+	// net.Listen on a path that is an existing non-empty directory
+	// fails.
+	runDir := filepath.Join(dir, "runs", "failing-run-1")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runSockPath := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runSockPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runSockPath, "blocker"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest := BatchManifest{Issues: []int{1}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
+	err := rs.Prepare(manifest, nil)
+	if err == nil {
+		t.Fatal("Prepare must fail when run.sock cannot be bound")
+	}
+	if !errors.Is(err, ErrStepControlSocket) {
+		t.Errorf("Prepare error = %v, want wrap of ErrStepControlSocket", err)
+	}
+}
+
+// TestRunSession_Close_RemovesRunDirAndStopsListeners asserts idempotent
+// teardown: calling Close removes the run dir, stops the broadcaster,
+// and is safe to call a second time.
+func TestRunSession_Close_RemovesRunDirAndStopsListeners(t *testing.T) {
+	dir := t.TempDir()
+	rs := NewRunSession(dir, "closing-run-1")
+
+	manifest := BatchManifest{Issues: []int{42}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
+	if err := rs.Prepare(manifest, &stubCommander{}); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	runDir := rs.RunDir()
+
+	if err := rs.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if _, err := os.Stat(runDir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("run dir must be removed after Close, stat err = %v", err)
+	}
+	if _, err := net.Dial("unix", filepath.Join(runDir, "run.sock")); err == nil {
+		t.Errorf("run.sock must be gone after Close")
+	}
+
+	// Idempotent: a second Close is a no-op and does not error.
+	if err := rs.Close(); err != nil {
+		t.Errorf("second Close must be a no-op, got %v", err)
+	}
+}
+
+// TestRunSession_Prepare_PropagatesMkdirError asserts that when the
+// run directory cannot be created (parent path is a non-directory),
+// Prepare returns a wrapped ErrStepMkdir error and the run dir is
+// NOT created.
+func TestRunSession_Prepare_PropagatesMkdirError(t *testing.T) {
+	dir := t.TempDir()
+	// Pre-create .sandman/runs as a regular file so MkdirAll
+	// returns "not a directory" for any runDir underneath.
+	if err := os.MkdirAll(filepath.Join(dir, "sandman-stub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runsPath := filepath.Join(dir, "runs")
+	if err := os.WriteFile(runsPath, []byte("blocker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(runsPath) })
+
+	rs := NewRunSession(dir, "mkdir-fail-run")
+	t.Cleanup(func() { _ = rs.Close() })
+
+	manifest := BatchManifest{Issues: []int{1}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
+	err := rs.Prepare(manifest, nil)
+	if err == nil {
+		t.Fatal("Prepare must fail when MkdirAll cannot create runDir")
+	}
+	if !errors.Is(err, ErrStepMkdir) {
+		t.Errorf("Prepare error = %v, want wrap of ErrStepMkdir", err)
+	}
+}
+
+// nilCommander is a concrete IssueCommander whose pointer is nil.
+// The only safe way to detect this is via reflect.ValueOf().IsNil();
+// a plain `commander != nil` returns true for a typed-nil interface.
+type nilCommander struct{}
+
+func (*nilCommander) AbortIssue(int) error { return nil }
+
+// TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil guards the
+// reflect-based nil check in Prepare. A typed-nil IssueCommander
+// (e.g. `var c IssueCommander = (*nilCommander)(nil)`) must NOT
+// trigger the cmd.sock step, because calling its method would panic.
+func TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil(t *testing.T) {
+	dir := t.TempDir()
+	rs := NewRunSession(dir, "typed-nil-run-1")
+	t.Cleanup(func() { _ = rs.Close() })
+
+	var commander IssueCommander = (*nilCommander)(nil)
+	manifest := BatchManifest{Issues: []int{1}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
+	if err := rs.Prepare(manifest, commander); err != nil {
+		t.Fatalf("Prepare must succeed for typed-nil commander: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rs.RunDir(), "cmd.sock")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("cmd.sock must NOT exist for typed-nil commander, stat err = %v", err)
+	}
+}
