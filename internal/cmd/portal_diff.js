@@ -665,13 +665,20 @@
     if (oldSnap.metaText !== newSnap.metaText && meta) {
       setText(meta, newSnap.metaText);
     }
-    if ((oldSnap.batchIssuesLen <= 1) !== (newSnap.batchIssuesLen <= 1)) {
+    if ((oldSnap.batchIssuesLen <= 1) !== (newSnap.batchIssuesLen <= 1) || oldSnap.reason !== newSnap.reason) {
       reconcileBatchMembership(wrap, newRun);
     }
   }
 
   function reconcileBatchMembership(wrap, run) {
     const existing = wrap.querySelector('.batch-membership');
+    if (run.reason === 'auto-select' || run.reason === 'review') {
+      if (existing) {
+        wrap.removeChild(existing);
+        mutationCount += 1;
+      }
+      return;
+    }
     const chip = renderBatchMembership(run);
     if (!chip) {
       if (existing) {

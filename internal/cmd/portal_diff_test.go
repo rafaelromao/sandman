@@ -1563,7 +1563,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateCells_ZeroMutationsWhenBatchIssuesUnchanged(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'auto-select', runId: 'r1', reason: 'auto-select', batchIssues: [42, 43] };
+const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'auto-select', runId: 'r1', reason: 'auto-select', batchIssues: [42, 43], candidates: [42, 43] };
 const runNew = Object.assign({}, runOld);
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -1574,9 +1574,7 @@ if (result.cells !== 0) throw new Error('expected 0 cell mutations on unchanged 
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations !== 0) throw new Error('expected 0 mutations on unchanged run with reason and batchIssues, got ' + JSON.stringify(counters));
 const titleCell = created.row.querySelector('[data-cell="title"]');
-const wrap = titleCell.children[0];
-if (!wrap.querySelector('.batch-membership')) throw new Error('batch-membership chip should remain when batchIssues unchanged');
-if (!wrap.querySelector('.kind-chip')) throw new Error('kind-chip should remain when reason unchanged');
+if (titleCell.querySelector('.batch-membership')) throw new Error('batch-membership should not be in title cell for auto-select runs');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1585,19 +1583,18 @@ console.log('PASS');
 func TestPortalDiffUpdateCells_KindChipRendersBeforeBatchMembershipOnUpdate(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'auto-select', runId: 'r1' };
-const runNew = Object.assign({}, runOld, { reason: 'auto-select', batchIssues: [42, 43] });
+const runNew = Object.assign({}, runOld, { reason: 'auto-select', batchIssues: [42, 43], candidates: [42, 43] });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
 SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
-const wrap = created.row.querySelector('[data-cell="title"]').children[0];
-const kindChip = wrap.querySelector('.kind-chip');
-const batchChip = wrap.querySelector('.batch-membership');
-if (!kindChip) throw new Error('expected kind-chip after update');
-if (!batchChip) throw new Error('expected batch-membership after update');
-const kindIdx = Array.prototype.indexOf.call(wrap.children, kindChip);
-const batchIdx = Array.prototype.indexOf.call(wrap.children, batchChip);
-if (kindIdx >= batchIdx) throw new Error('expected kind-chip (' + kindIdx + ') to render before batch-membership (' + batchIdx + ')');
+const titleCell = created.row.querySelector('[data-cell="title"]');
+if (titleCell.querySelector('.batch-membership')) throw new Error('batch-membership should not be in title cell for auto-select runs');
+const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
+if (!ctxRow) throw new Error('expected context row for auto-select');
+const chip = ctxRow.querySelector('.context-chip');
+if (!chip) throw new Error('expected context chip');
+if (!chip.textContent.includes('Auto-select candidates:')) throw new Error('expected auto-select candidates text');
 console.log('PASS');
 `
 	runNodeScript(t, js)
