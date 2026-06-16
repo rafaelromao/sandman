@@ -68,6 +68,8 @@ func TestPortal_EventPayloadCSS_NoTintedBackgroundOrSeparator(t *testing.T) {
 	}{
 		{"background:", "no tinted background — payload must inherit the panel surface like .event-head"},
 		{"background :", "no tinted background — payload must inherit the panel surface like .event-head"},
+		{"background-color:", "no tinted background — payload must inherit the panel surface like .event-head"},
+		{"background-color :", "no tinted background — payload must inherit the panel surface like .event-head"},
 		{"border-bottom", "no separator between head and payload"},
 		{"border-top", "no separator between head and payload"},
 		{"border:", "no separator between head and payload"},
