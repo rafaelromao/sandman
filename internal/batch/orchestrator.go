@@ -2125,10 +2125,12 @@ func promptOnlyBranch(cfg prompt.RenderConfig) string {
 func terminalRunEvent(ctx context.Context, status string) (string, string) {
 	eventType := "run.finished"
 	terminalStatus := status
-	if terminalStatus == "" {
+	terminalCode := events.RunStatusFromPayload(terminalStatus)
+	if terminalCode.String() == "" {
 		terminalStatus = "failure"
+		terminalCode = events.RunStatusFailure
 	}
-	if ctx.Err() != nil && terminalStatus != "success" {
+	if ctx.Err() != nil && !terminalCode.IsSuccess() {
 		eventType = "run.aborted"
 		terminalStatus = "aborted"
 	}

@@ -617,6 +617,13 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	if !sb.execCalled {
 		t.Fatal("expected Exec to be called")
 	}
+	// shellenv.Build only quotes values that contain shell-special
+	// characters; safe alphanumeric env values (letters, digits,
+	// dash, dot, slash, colon, plus, comma, at, equals, underscore)
+	// appear unquoted in the exported command. This is shell-safe
+	// and matches the typed-enum contract, but it is a visible
+	// change from the historical "always single-quoted" output the
+	// pre-slice-7 applyAgentEnv produced.
 	wantPrefix := "export API_KEY=sk-test123; export MODEL=gpt-4; opencode run .sandman/task.md"
 	if sb.execCommand != wantPrefix {
 		t.Errorf("exec command:\ngot:  %q\nwant: %q", sb.execCommand, wantPrefix)
