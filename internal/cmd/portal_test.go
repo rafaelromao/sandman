@@ -1430,6 +1430,26 @@ func TestPortal_BatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
 	}
 }
 
+func TestPortal_BatchRowCSS_RendersAsSecondaryRowUnderRunRow(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	data, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", htmlPath, err)
+	}
+	html := string(data)
+	for _, sel := range []string{"tbody tr.batch-row td", "tbody tr.run-row + tr.batch-row td"} {
+		idx := strings.Index(html, sel)
+		if idx < 0 {
+			t.Errorf("expected %s rule in %s", sel, htmlPath)
+			continue
+		}
+	}
+}
+
 func TestPortal_MetaLineCSS_AllowsLongTokenToBreak(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {

@@ -21,7 +21,6 @@
 
   function snapshotCellState(run, opts) {
     const h = opts.helpers;
-    const batchIssues = Array.isArray(run && run.batchIssues) ? run.batchIssues : [];
     return {
       kind: run.kind || '',
       nameText: run.issueLabel || run.key,
@@ -30,7 +29,7 @@
       badgeLabel: run.status || (run.kind === 'active' ? 'running' : 'completed'),
       reason: (run.reason === 'auto-select' || run.reason === 'review') ? run.reason : '',
       contextText: contextText(run),
-      batchIssuesLen: batchIssues.length,
+      batchText: batchText(run),
       startedText: h.formatTime(run.startedAt),
       durationText: h.formatDuration(run.duration),
       branchText: h.formatBranch(run),
@@ -173,17 +172,6 @@
       n = n.nextElementSibling;
     }
     return null;
-  }
-
-  function renderBatchMembership(run) {
-    const issues = Array.isArray(run && run.batchIssues) ? run.batchIssues : [];
-    if (issues.length <= 1) return null;
-    const span = global.document.createElement('span');
-    span.classList.add('batch-membership', 'mono');
-    span.setAttribute('data-batch-membership', '1');
-    const labels = issues.map((n) => '#' + n);
-    span.textContent = 'Part of batch: ' + labels.join(', ');
-    return span;
   }
 
   function batchIssues(run) {
@@ -741,33 +729,6 @@
     }
   }
 
-  function reconcileBatchMembership(wrap, run) {
-    const existing = wrap.querySelector('.batch-membership');
-    if (run.reason === 'auto-select' || run.reason === 'review') {
-      if (existing) {
-        wrap.removeChild(existing);
-        mutationCount += 1;
-      }
-      return;
-    }
-    const chip = renderBatchMembership(run);
-    if (!chip) {
-      if (existing) {
-        wrap.removeChild(existing);
-        mutationCount += 1;
-      }
-      return;
-    }
-    if (!existing) {
-      wrap.appendChild(chip);
-      mutationCount += 1;
-      return;
-    }
-    if (existing.textContent !== chip.textContent) {
-      setText(existing, chip.textContent);
-    }
-  }
-
   function reconcileReasonChip(wrap, reason) {
     const existing = wrap.querySelector('.kind-chip');
     const wantChip = reason === 'auto-select' || reason === 'review';
@@ -988,9 +949,6 @@
       const oldRun = getRowData(dataRow) || newRun;
       const r = updateRunRowCells(dataRow, oldRun, newRun, opts);
       if (r.mutated) updated += 1;
-
-      reconcileContextRow(body, dataRow, oldRun, newRun);
-      reconcileBatchRow(body, dataRow, oldRun, newRun);
 
       const wantDetail = opts.expandedKey === key;
       const detail = detailRowOf(body, key);
