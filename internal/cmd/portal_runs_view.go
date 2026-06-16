@@ -62,6 +62,13 @@ type portalRun struct {
 	// IssueTitle carries the human-readable GitHub issue title from the event
 	// payload (added by issue #833). Empty for historical or prompt-only runs.
 	IssueTitle string `json:"issueTitle,omitempty"`
+	// Reason surfaces the why-was-this-run-started taxonomy from the projected
+	// RunState's RunKind(): "auto-select" for auto-select phase runs,
+	// "review" for review-agent runs, "" otherwise. The portal renders it as
+	// a small inline chip in the Run column. omitempty so issue-driven,
+	// prompt-only, continuation, and override runs keep the existing
+	// /api/runs JSON contract.
+	Reason string `json:"reason,omitempty"`
 }
 
 type portalActiveRun struct {
@@ -427,6 +434,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		}
 		run.Branch = state.Branch()
 		run.IssueTitle = v.issueTitleFromPayload(state.Started.Payload)
+		run.Reason = chipReasonForRunKind(state.RunKind())
 		run.StartedAt = state.Started.Timestamp
 		run.Duration = v.durationForRun(*state)
 		run.Events = eventsByRun[state.RunID]
@@ -554,9 +562,11 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	}
 	status := "running"
 	review := false
+	reason := ""
 	if prNumber > 0 {
 		status = "reviewing"
 		review = true
+		reason = "review"
 	}
 	logPath := v.portalLogPath(repoRoot, issueNumber, "")
 	run := portalRun{
@@ -568,6 +578,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		IssueNumber: issueNumber,
 		Review:      review,
 		PRNumber:    prNumber,
+		Reason:      reason,
 		StartedAt:   startedAt,
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
@@ -630,6 +641,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Log:         logContent,
 		Events:      eventsByRun[runID],
 		Review:      runState.IsReview(),
+		Reason:      chipReasonForRunKind(runState.RunKind()),
 	}
 	if review, pr := v.reviewContext(runState); review {
 		portalRun.Review = true
@@ -659,6 +671,20 @@ func (v *portalRunsView) kindForRun(runState events.RunState) string {
 		return "active"
 	}
 	return "completed"
+}
+
+// chipReasonForRunKind maps a RunState's RunKind taxonomy value to the
+// chip text the portal renders in the Run column. Only "auto-select" and
+// "review" earn a chip; every other kind (issue, prompt-only) returns ""
+// so the omitempty JSON tag preserves the existing /api/runs contract for
+// those runs.
+func chipReasonForRunKind(runKind string) string {
+	switch runKind {
+	case "auto-select", "review":
+		return runKind
+	default:
+		return ""
+	}
 }
 
 func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bool) string {

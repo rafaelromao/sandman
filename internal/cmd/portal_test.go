@@ -917,6 +917,9 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		if got.IssueLabel != "PR42" {
 			t.Fatalf("expected IssueLabel 'PR42', got %q", got.IssueLabel)
 		}
+		if got.Reason != "review" {
+			t.Fatalf("expected Reason 'review' for active review run, got %q", got.Reason)
+		}
 	})
 
 	t.Run("dead socket after restart", func(t *testing.T) {
@@ -967,6 +970,9 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		if got.IssueLabel != "PR42" {
 			t.Fatalf("expected IssueLabel 'PR42' on completed review run, got %q", got.IssueLabel)
 		}
+		if got.Reason != "review" {
+			t.Fatalf("expected Reason 'review' on completed review run, got %q", got.Reason)
+		}
 	})
 
 	t.Run("event log only keeps review metadata", func(t *testing.T) {
@@ -1005,6 +1011,9 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		}
 		if got.IssueLabel != "PR42" {
 			t.Fatalf("expected IssueLabel 'PR42' for event-log-only review run, got %q", got.IssueLabel)
+		}
+		if got.Reason != "review" {
+			t.Fatalf("expected Reason 'review' for event-log-only review run, got %q", got.Reason)
 		}
 	})
 
@@ -1180,6 +1189,320 @@ func TestPortal_RunColumnHasWidthCap(t *testing.T) {
 	for _, tok := range []string{"min-width: 200px", "max-width: min(480px, 50%)", "width: 480px"} {
 		if !strings.Contains(body, tok) {
 			t.Errorf("td[data-cell=\"title\"] rule missing %q", tok)
+		}
+	}
+}
+
+func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
+	repoRoot := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+
+	t.Run("auto-select success run", func(t *testing.T) {
+		startedAt := time.Now().Add(-2 * time.Minute)
+		state := events.RunState{
+			RunID: "auto-select-1700000000000",
+			Started: events.Event{
+				Timestamp: startedAt,
+				Payload:   map[string]any{"run_kind": "auto-select", "branch": "sandman/auto-select"},
+			},
+			Finished: &events.Event{
+				Timestamp: startedAt.Add(1 * time.Minute),
+				Payload:   map[string]any{"run_kind": "auto-select", "status": "success", "selected": []int{42, 43}},
+			},
+		}
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		if run.Reason != "auto-select" {
+			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
+		}
+		if run.Status != "success" {
+			t.Fatalf("expected Status 'success', got %q", run.Status)
+		}
+	})
+
+	t.Run("auto-select failure run", func(t *testing.T) {
+		startedAt := time.Now().Add(-2 * time.Minute)
+		state := events.RunState{
+			RunID: "auto-select-1700000001000",
+			Started: events.Event{
+				Timestamp: startedAt,
+				Payload:   map[string]any{"run_kind": "auto-select", "branch": "sandman/auto-select"},
+			},
+			Finished: &events.Event{
+				Timestamp: startedAt.Add(1 * time.Minute),
+				Payload:   map[string]any{"run_kind": "auto-select", "status": "failure", "reason": "no candidates"},
+			},
+		}
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		if run.Reason != "auto-select" {
+			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
+		}
+		if run.Status != "failure" {
+			t.Fatalf("expected Status 'failure', got %q", run.Status)
+		}
+	})
+
+	t.Run("in-flight review run", func(t *testing.T) {
+		startedAt := time.Now().Add(-1 * time.Minute)
+		state := events.RunState{
+			RunID: "PR42",
+			Started: events.Event{
+				Timestamp: startedAt,
+				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"},
+			},
+		}
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		if run.Reason != "review" {
+			t.Fatalf("expected Reason 'review', got %q", run.Reason)
+		}
+		if run.Status != "reviewing" {
+			t.Fatalf("expected Status 'reviewing' (active review run), got %q", run.Status)
+		}
+		if run.IssueLabel != "PR42" {
+			t.Fatalf("expected IssueLabel 'PR42', got %q", run.IssueLabel)
+		}
+	})
+
+	t.Run("finished success review run", func(t *testing.T) {
+		startedAt := time.Now().Add(-5 * time.Minute)
+		state := events.RunState{
+			RunID: "PR42",
+			Started: events.Event{
+				Timestamp: startedAt,
+				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"},
+			},
+			Finished: &events.Event{
+				Timestamp: startedAt.Add(2 * time.Minute),
+				Payload:   map[string]any{"review": true, "status": "success", "branch": "sandman/review-PR42"},
+			},
+		}
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		if run.Reason != "review" {
+			t.Fatalf("expected Reason 'review', got %q", run.Reason)
+		}
+		if run.Status != "success" {
+			t.Fatalf("expected Status 'success', got %q", run.Status)
+		}
+		if run.IssueLabel != "PR42" {
+			t.Fatalf("expected IssueLabel 'PR42', got %q", run.IssueLabel)
+		}
+	})
+
+	t.Run("finished failure review run", func(t *testing.T) {
+		startedAt := time.Now().Add(-5 * time.Minute)
+		state := events.RunState{
+			RunID: "PR42",
+			Started: events.Event{
+				Timestamp: startedAt,
+				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"},
+			},
+			Finished: &events.Event{
+				Timestamp: startedAt.Add(2 * time.Minute),
+				Payload:   map[string]any{"review": true, "status": "failure", "branch": "sandman/review-PR42"},
+			},
+		}
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		if run.Reason != "review" {
+			t.Fatalf("expected Reason 'review', got %q", run.Reason)
+		}
+		if run.Status != "failure" {
+			t.Fatalf("expected Status 'failure', got %q", run.Status)
+		}
+		if run.IssueLabel != "PR42" {
+			t.Fatalf("expected IssueLabel 'PR42', got %q", run.IssueLabel)
+		}
+	})
+
+	t.Run("regular issue-driven run has empty Reason", func(t *testing.T) {
+		startedAt := time.Now().Add(-3 * time.Minute)
+		state := events.RunState{
+			RunID: "run-42-1",
+			Started: events.Event{
+				Timestamp: startedAt,
+				Issue:     42,
+				Payload:   map[string]any{"branch": "sandman/issue-42"},
+			},
+			Finished: &events.Event{
+				Timestamp: startedAt.Add(1 * time.Minute),
+				Issue:     42,
+				Payload:   map[string]any{"branch": "sandman/issue-42", "status": "success"},
+			},
+		}
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		if run.Reason != "" {
+			t.Fatalf("expected empty Reason for issue-driven run, got %q", run.Reason)
+		}
+		if run.IssueLabel != "#42" {
+			t.Fatalf("expected IssueLabel '#42', got %q", run.IssueLabel)
+		}
+	})
+
+	t.Run("prompt-only run has empty Reason", func(t *testing.T) {
+		startedAt := time.Now().Add(-1 * time.Minute)
+		state := events.RunState{
+			RunID: "run-prompt-1",
+			Started: events.Event{
+				Timestamp: startedAt,
+				Payload:   map[string]any{"branch": "sandman/prompt"},
+			},
+		}
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		if run.Reason != "" {
+			t.Fatalf("expected empty Reason for prompt-only run, got %q", run.Reason)
+		}
+		if run.IssueLabel != "prompt-only" {
+			t.Fatalf("expected IssueLabel 'prompt-only', got %q", run.IssueLabel)
+		}
+	})
+}
+
+func TestPortal_ActiveMatch_ReasonDerivedFromSocket(t *testing.T) {
+	shortSock := func(t *testing.T) (string, string) {
+		t.Helper()
+		dir, err := os.MkdirTemp("", "p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sockPath := filepath.Join(dir, "s.sock")
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		return dir, sockPath
+	}
+
+	t.Run("unmatched PR active socket has Reason review", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, sockPath := shortSock(t)
+
+		match := portalRunMatch{
+			instance: portalActiveRun{
+				Key:        "PR42",
+				SocketPath: sockPath,
+				PRNumber:   42,
+				ModTime:    time.Now().Add(-1 * time.Minute),
+			},
+		}
+
+		run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil)
+		if run.Reason != "review" {
+			t.Fatalf("expected Reason 'review' for unmatched PR socket, got %q", run.Reason)
+		}
+	})
+
+	t.Run("unmatched prompt-only active socket has empty Reason", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, sockPath := shortSock(t)
+
+		match := portalRunMatch{
+			instance: portalActiveRun{
+				Key:        "run-99-1",
+				SocketPath: sockPath,
+				ModTime:    time.Now().Add(-1 * time.Minute),
+			},
+		}
+
+		run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil)
+		if run.Reason != "" {
+			t.Fatalf("expected empty Reason for prompt-only active socket, got %q", run.Reason)
+		}
+	})
+}
+
+func TestPortal_ActiveBatchIssue_ReasonFromState(t *testing.T) {
+	t.Run("active batch row with auto-select state has Reason auto-select", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		sockDir, sockPath := func() (string, string) {
+			d, err := os.MkdirTemp("", "s")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sp := filepath.Join(d, "s.sock")
+			ln, err := net.Listen("unix", sp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = ln.Close() })
+			return d, sp
+		}()
+
+		active := portalActiveRun{
+			Key:        "auto-select-1700000000000",
+			Dir:        sockDir,
+			SocketPath: sockPath,
+			StartedAt:  time.Now().Add(-1 * time.Minute),
+		}
+
+		startedAt := time.Now().Add(-1 * time.Minute)
+		state := &events.RunState{
+			RunID: "auto-select-1700000000000",
+			Started: events.Event{
+				Timestamp: startedAt,
+				Payload:   map[string]any{"run_kind": "auto-select", "branch": "sandman/auto-select"},
+			},
+		}
+
+		// Active batch issue path requires an issue number; pass 0 to
+		// surface the auto-select run whose only event is the auto-select
+		// run itself. The row's Key/RunID are taken from the state.
+		run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 0, state, nil, "", nil)
+		if run.Reason != "auto-select" {
+			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
+		}
+	})
+}
+
+func TestPortal_ReasonChipCSS_DefinesAutoSelectAndReviewVariants(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	data, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", htmlPath, err)
+	}
+	html := string(data)
+
+	for _, sel := range []string{".badge.auto-select", ".badge.review"} {
+		idx := strings.Index(html, sel)
+		if idx < 0 {
+			t.Fatalf("could not find %s selector in %s", sel, htmlPath)
+		}
+		open := strings.Index(html[idx:], "{")
+		if open < 0 {
+			t.Fatalf("could not find rule body for %s in %s", sel, htmlPath)
+		}
+		bodyStart := idx + open + 1
+		close := strings.Index(html[bodyStart:], "}")
+		if close < 0 {
+			t.Fatalf("could not find closing brace for %s rule in %s", sel, htmlPath)
+		}
+		body := html[bodyStart : bodyStart+close]
+		if !strings.Contains(body, "background:") {
+			t.Errorf("%s rule missing background declaration", sel)
+		}
+		if !strings.Contains(body, "color:") {
+			t.Errorf("%s rule missing color declaration", sel)
+		}
+		if !strings.Contains(body, "border") {
+			t.Errorf("%s rule missing border declaration", sel)
 		}
 	}
 }
