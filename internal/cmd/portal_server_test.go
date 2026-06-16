@@ -1765,12 +1765,6 @@ func TestPortal_CommandsRejectsOversizedBody(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prevStart := portalStartCommand
-	t.Cleanup(func() { portalStartCommand = prevStart })
-	portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
-		return &portalCommandResult{}
-	}
-
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
 	defer server.Close()
 

@@ -380,8 +380,9 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 		logDir := filepath.Join(repoRoot, ".sandman", "logs")
 		// Strip the legacy ".sandman/logs" prefix so the URL contract stays
 		// the same, but the file is served from an fs.FS rooted at logDir.
-		// http.ServeFileFS rejects paths that escape the root (it uses
-		// fs.ValidPath under the hood) and returns 404 for missing files.
+		// http.ServeFileFS rejects requests where r.URL.Path contains a
+		// ".." element, so any path that escapes the log directory is
+		// refused. Missing files inside the directory get a 404.
 		logPrefix := filepath.Join(".sandman", "logs")
 		name := strings.TrimPrefix(relPath, logPrefix)
 		name = strings.TrimPrefix(name, string(filepath.Separator))
