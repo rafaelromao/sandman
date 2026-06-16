@@ -18,7 +18,7 @@ vet:
 
 test:
 	@echo "Running tests..."
-	go test -v ./...
+	go test -race -v ./...
 
 test-scripts:
 	@echo "Running script smoke tests..."

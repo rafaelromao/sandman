@@ -50,6 +50,18 @@ type fakeGitHubClient struct {
 	searchIssuesError  error
 }
 
+func (f *fakeGitHubClient) setIssueState(number int, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	prev, ok := f.issues[number]
+	if !ok {
+		return
+	}
+	updated := *prev
+	updated.State = state
+	f.issues[number] = &updated
+}
+
 func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
 	f.mu.Lock()
 	if f.fetchCount == nil {
@@ -72,14 +84,20 @@ func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
 	if release != nil && count > threshold {
 		<-release
 	}
-	if issue, ok := f.issues[number]; ok {
+	f.mu.Lock()
+	issue, ok := f.issues[number]
+	f.mu.Unlock()
+	if ok {
 		return issue, nil
 	}
 	return &github.Issue{Number: number}, nil
 }
 
 func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
-	if issue, ok := f.issues[number]; ok {
+	f.mu.Lock()
+	issue, ok := f.issues[number]
+	f.mu.Unlock()
+	if ok {
 		return issue.BlockedBy, nil
 	}
 	return nil, nil
@@ -90,11 +108,15 @@ func (f *fakeGitHubClient) FetchPR(number int) (*github.PR, error) {
 }
 
 func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
+	f.mu.Lock()
 	f.searchIssuesQuery = query
 	if f.searchIssuesResult != nil || f.searchIssuesError != nil {
-		return f.searchIssuesResult, f.searchIssuesError
+		result, errResult := f.searchIssuesResult, f.searchIssuesError
+		f.mu.Unlock()
+		return result, errResult
 	}
 	if f.issues == nil {
+		f.mu.Unlock()
 		return nil, fmt.Errorf("fake: search not configured")
 	}
 	var results []github.Issue
@@ -103,6 +125,7 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 			results = append(results, *issue)
 		}
 	}
+	f.mu.Unlock()
 	return results, nil
 }
 
@@ -487,6 +510,48 @@ func (c *countingCommentsClient) ListIssueComments(number int) ([]github.IssueCo
 	return c.comments, nil
 }
 
+func TestCachedGitHubClient_DelegatesNonCachedMethods(t *testing.T) {
+	delegate := &countingCommentsClient{comments: []github.IssueComment{{Body: "x"}}}
+	var editCalled bool
+	delegate.Client = &stubClient{
+		repo:      "rafaelromao/sandman",
+		editError: nil,
+		onEdit:    func() { editCalled = true },
+	}
+
+	c := newCachedGitHubClient(delegate)
+
+	got, err := c.RepoName()
+	if err != nil {
+		t.Fatalf("RepoName() error: %v", err)
+	}
+	if got != "rafaelromao/sandman" {
+		t.Fatalf("RepoName() = %q, want %q", got, "rafaelromao/sandman")
+	}
+
+	if err := c.EditComment("c1", "body"); err != nil {
+		t.Fatalf("EditComment() error: %v", err)
+	}
+	if !editCalled {
+		t.Fatal("expected EditComment to delegate to underlying client")
+	}
+}
+
+type stubClient struct {
+	github.Client
+	repo      string
+	editError error
+	onEdit    func()
+}
+
+func (s *stubClient) RepoName() (string, error) { return s.repo, nil }
+func (s *stubClient) EditComment(commentID, body string) error {
+	if s.onEdit != nil {
+		s.onEdit()
+	}
+	return s.editError
+}
+
 func TestRun_MultipleIssuesInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
@@ -830,6 +895,9 @@ func TestRun_OverrideFalseByDefault(t *testing.T) {
 }
 
 func TestRun_FreshRunErrorsWhenBranchAlreadyExists(t *testing.T) {
+	if !podmanAvailable(t) {
+		return
+	}
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initRunIntegrationRepo(t, dir)

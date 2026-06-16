@@ -367,9 +367,9 @@ touch "$state_dir/$issue.done"
 	}()
 
 	waitForPath(t, filepath.Join(dir, ".sandman", "chain", "7.done"))
-	client.issues[7].State = "closed"
+	client.setIssueState(7, "closed")
 	waitForPath(t, filepath.Join(dir, ".sandman", "chain", "42.done"))
-	client.issues[42].State = "closed"
+	client.setIssueState(42, "closed")
 
 	result := <-resultCh
 	out, err := result.out, result.err
@@ -1403,11 +1403,11 @@ esac
 
 	go func() {
 		waitForPath(t, filepath.Join(dir, ".sandman", "dag", "blocker-finish-42"))
-		client.issues[42].State = "closed"
+		client.setIssueState(42, "closed")
 	}()
 	go func() {
 		waitForPath(t, filepath.Join(dir, ".sandman", "dag", "blocker-finish-43"))
-		client.issues[43].State = "closed"
+		client.setIssueState(43, "closed")
 	}()
 
 	resultCh := make(chan struct {

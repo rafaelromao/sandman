@@ -132,14 +132,37 @@ func (c *capturedRequest) RunBatch(ctx context.Context, req batch.Request) (*bat
 	return &batch.Result{}, nil
 }
 
-func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *config.Config) (*Daemon, *bytes.Buffer, string) {
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+func (l *lockedBuffer) Bytes() []byte {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]byte(nil), l.buf.Bytes()...)
+}
+
+func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *config.Config) (*Daemon, *lockedBuffer, string) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Chdir(dir)
-	var buf bytes.Buffer
-	d := New(dir, gh, &prompt.Engine{}, runner, cfg, &buf)
+	buf := &lockedBuffer{}
+	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf)
 	d.PollInterval = 0
-	return d, &buf, dir
+	return d, buf, dir
 }
 
 // TestDaemon_ProcessPRCommentsSortedByCreatedAt verifies that only the

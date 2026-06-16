@@ -599,8 +599,7 @@ func startPortalRun(ctx context.Context, repoRoot string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve sandman executable: %w", err)
 	}
-	_ = ctx
-	cmd := exec.CommandContext(context.Background(), exe, args...)
+	cmd := exec.CommandContext(ctx, exe, args...)
 	cmd.Dir = repoRoot
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start sandman run: %w", err)

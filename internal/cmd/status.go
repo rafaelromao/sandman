@@ -42,7 +42,7 @@ func NewStatusCmd(log events.EventLog) *cobra.Command {
 			fmt.Fprintln(cmd.OutOrStdout(), "Active runs:")
 			for _, run := range active {
 				elapsed := time.Since(run.Started.Timestamp).Round(time.Second)
-				fmt.Fprintf(cmd.OutOrStdout(), "  %s  elapsed %s\n", formatRunStateIssueLabel(run), elapsed)
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s  elapsed %s\n", run.IssueLabel(), elapsed)
 			}
 			return nil
 		},

@@ -33,7 +33,7 @@ func NewHistoryCmd(log events.EventLog) *cobra.Command {
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Completed runs:")
 			for _, run := range completed {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s  %s\n", formatRunStateIssueLabel(run), run.Status(), run.Duration(), run.Branch())
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s  %s\n", run.IssueLabel(), run.Status(), run.Duration(), run.Branch())
 			}
 			return nil
 		},
