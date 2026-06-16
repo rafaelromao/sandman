@@ -132,6 +132,11 @@ func (c *capturedRequest) RunBatch(ctx context.Context, req batch.Request) (*bat
 	return &batch.Result{}, nil
 }
 
+// lockedBuffer is a goroutine-safe wrapper around bytes.Buffer used as the
+// Daemon.Broadcaster fixture in tests. The daemon writes from a background
+// goroutine while the test reads buf.String() to assert on log output;
+// bytes.Buffer is not safe for concurrent use, and wiring a raw
+// *bytes.Buffer here regresses issue #1034 under `go test -race`.
 type lockedBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -767,6 +772,103 @@ func TestDaemon_ListOpenPRsErrorIsLogged(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "list open PRs") {
 		t.Errorf("expected log to mention list open PRs, got %q", buf.String())
+	}
+}
+
+// TestDaemon_BroadcasterFixtureIsSafeUnderRace locks in the contract that
+// the Broadcaster slot wired by newDaemonForTest is safe for concurrent
+// use by the daemon goroutine and the test goroutine under `go test -race`.
+// The test runs the daemon's Run loop, drives it via Trigger to log a line,
+// and reads buf.String() from the test goroutine while writes are in flight.
+// If the fixture regresses to a raw *bytes.Buffer (issue #1034), the race
+// detector will fail this test.
+func TestDaemon_BroadcasterFixtureIsSafeUnderRace(t *testing.T) {
+	// Each iteration re-creates the fixture via newDaemonForTest so a
+	// stale writer from a previous iteration cannot poison the next
+	// iteration's buf assertion.
+	for i := 0; i < 5; i++ {
+		gh := &fakeGH{listErr: errList}
+		runner := &capturedRequest{}
+		d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
+			DefaultReviewAgent: "opencode",
+			DefaultReviewModel: "m",
+		})
+
+		trigger := make(chan struct{}, 1)
+		d.Trigger = trigger
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			_ = d.Run(ctx)
+			close(done)
+		}()
+
+		trigger <- struct{}{}
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if strings.Contains(buf.String(), "list open PRs") {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		cancel()
+		<-done
+
+		if !strings.Contains(buf.String(), "list open PRs") {
+			t.Fatalf("iteration %d: expected log to mention list open PRs, got %q", i, buf.String())
+		}
+	}
+}
+
+// TestLockedBuffer_ConcurrentWriteAndRead pins the contract of lockedBuffer:
+// concurrent writers do not lose bytes, and Bytes() returns an independent
+// copy of the underlying buffer (so callers can mutate the result without
+// aliasing the internal bytes.Buffer's view).
+func TestLockedBuffer_ConcurrentWriteAndRead(t *testing.T) {
+	const (
+		writers       = 8
+		bytesPerWrite = 32
+	)
+	buf := &lockedBuffer{}
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for w := 0; w < writers; w++ {
+		w := w
+		go func() {
+			defer wg.Done()
+			payload := bytes.Repeat([]byte{byte('a' + w)}, bytesPerWrite)
+			for i := 0; i < 50; i++ {
+				if _, err := buf.Write(payload); err != nil {
+					t.Errorf("writer %d: %v", w, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	got := buf.String()
+	if len(got) != writers*50*bytesPerWrite {
+		t.Fatalf("string length = %d, want %d (writes were lost or duplicated)", len(got), writers*50*bytesPerWrite)
+	}
+	counts := make(map[byte]int, writers)
+	for i := 0; i < len(got); i++ {
+		counts[got[i]]++
+	}
+	for w := 0; w < writers; w++ {
+		key := byte('a' + w)
+		if counts[key] != 50*bytesPerWrite {
+			t.Errorf("byte %q count = %d, want %d", key, counts[key], 50*bytesPerWrite)
+		}
+	}
+
+	b := buf.Bytes()
+	if len(b) != writers*50*bytesPerWrite {
+		t.Fatalf("Bytes() length = %d, want %d", len(b), writers*50*bytesPerWrite)
+	}
+	b[0] = 'X'
+	if buf.Bytes()[0] == 'X' {
+		t.Fatal("Bytes() must return a copy; mutating the result aliased the internal buffer")
 	}
 }
 
