@@ -849,6 +849,17 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
 	}
+	// Status filter still uses the static "All statuses" option; chips must
+	// not add new baked-in option values (issue #977 acceptance criterion:
+	// status filter dropdown is unchanged).
+	if !strings.Contains(content, `<option value="all">All statuses</option>`) {
+		t.Fatalf("page missing the static 'All statuses' status-filter option\n%s", content[:min(800, len(content))])
+	}
+	for _, banned := range []string{`value="retried"`, `value="retry"`, `value="retries"`} {
+		if strings.Contains(content, banned) {
+			t.Fatalf("page should not bake a new status filter option %q\n%s", banned, content[:min(800, len(content))])
+		}
+	}
 	// The data-action attributes live in the diff helper now.
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -1028,6 +1039,101 @@ func TestPortal_SyntaxHighlightingHasNoSizeCutoff(t *testing.T) {
 	}
 	if strings.Contains(content, "value.length > 12000") {
 		t.Fatalf("page should not contain old size cutoff condition")
+	}
+}
+
+func TestPortal_PageExposesCommandPanelMobileFullWidth(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	if !strings.Contains(content, `@media (max-width: 760px)`) {
+		t.Fatalf("page missing the 760px media query\n%s", content[:1000])
+	}
+	if !strings.Contains(content, `.commands-panel,
+      .settings-panel {
+        width: 100vw;
+        border-left: 0;
+      }`) {
+		t.Fatalf("page missing the commands-panel mobile full-width rule\n%s", content[:1000])
+	}
+}
+
+func TestPortal_PageExposesRetryChipStyles(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+
+	// .retry-chip must use the --warning color tokens, render in 11px
+	// uppercase letter-spacing, and sit inside the data-cell="badge" cell
+	// without adding extra vertical padding.
+	chipBlock := regexp.MustCompile(`(?s)\.retry-chip\s*\{[^}]*\}`).FindString(content)
+	if chipBlock == "" {
+		t.Fatalf("page is missing the .retry-chip CSS block\n%s", content[:1000])
+	}
+	if !strings.Contains(chipBlock, "var(--warning)") {
+		t.Fatalf(".retry-chip block must reference var(--warning), got: %s", chipBlock)
+	}
+	if !strings.Contains(chipBlock, "11px") {
+		t.Fatalf(".retry-chip block must declare an 11px font-size, got: %s", chipBlock)
+	}
+	if !strings.Contains(chipBlock, "uppercase") {
+		t.Fatalf(".retry-chip block must declare uppercase letter-spacing, got: %s", chipBlock)
+	}
+}
+
+func TestPortal_PageExposesRetryEventCardStyles(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	for _, want := range []string{".retry-event-card", ".retry-log", ".retry-event-line"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing %q CSS hook\n%s", want, content[:1000])
+		}
 	}
 }
 

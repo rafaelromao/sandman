@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"log"
 	"net"
 	"os"
@@ -580,6 +581,119 @@ func TestPortal_RunFromState_EmptyIssueTitleWhenMissing(t *testing.T) {
 
 	if run.IssueTitle != "" {
 		t.Fatalf("expected empty IssueTitle, got %q", run.IssueTitle)
+	}
+}
+
+func TestPortal_PortalRunJSONIncludesRetriesFieldsWhenFinished(t *testing.T) {
+	run := portalRun{
+		Key:          "run-1-1",
+		RunID:        "run-1-1",
+		Kind:         "completed",
+		Status:       "success",
+		IssueLabel:   "#42",
+		IssueNumber:  42,
+		StartedAt:    time.Now().Add(-2 * time.Minute),
+		RetriesTotal: 3,
+		RetriesDone:  2,
+	}
+
+	data, err := json.Marshal(run)
+	if err != nil {
+		t.Fatalf("marshal portalRun: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal portalRun: %v", err)
+	}
+	if got, _ := payload["retriesTotal"].(float64); got != 3 {
+		t.Fatalf("expected retriesTotal=3 in payload, got %v (raw: %s)", payload["retriesTotal"], data)
+	}
+	if got, _ := payload["retriesDone"].(float64); got != 2 {
+		t.Fatalf("expected retriesDone=2 in payload, got %v (raw: %s)", payload["retriesDone"], data)
+	}
+}
+
+func TestPortal_PortalRunJSONOmitsRetriesFieldsWhenZero(t *testing.T) {
+	run := portalRun{
+		Key:         "run-1-1",
+		RunID:       "run-1-1",
+		Kind:        "completed",
+		Status:      "success",
+		IssueLabel:  "#42",
+		IssueNumber: 42,
+		StartedAt:   time.Now().Add(-2 * time.Minute),
+	}
+
+	data, err := json.Marshal(run)
+	if err != nil {
+		t.Fatalf("marshal portalRun: %v", err)
+	}
+
+	if strings.Contains(string(data), "retriesTotal") {
+		t.Fatalf("expected retriesTotal to be omitted, got %s", data)
+	}
+	if strings.Contains(string(data), "retriesDone") {
+		t.Fatalf("expected retriesDone to be omitted, got %s", data)
+	}
+}
+
+func TestPortal_RunFromState_PopulatesRetriesFromFinishedPayload(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	runState := events.RunState{
+		RunID: "run-1",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{"branch": "sandman/42-fix"},
+		},
+		Finished: &events.Event{
+			Timestamp: finishedAt,
+			Payload: map[string]any{
+				"status":        "success",
+				"branch":        "sandman/42-fix",
+				"retries_total": 3,
+				"retries_done":  2,
+			},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+
+	if run.RetriesTotal != 3 {
+		t.Fatalf("expected RetriesTotal=3, got %d", run.RetriesTotal)
+	}
+	if run.RetriesDone != 2 {
+		t.Fatalf("expected RetriesDone=2, got %d", run.RetriesDone)
+	}
+}
+
+func TestPortal_RunFromState_LeavesRetriesZeroWhenActive(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runState := events.RunState{
+		RunID: "run-active",
+		Started: events.Event{
+			Timestamp: time.Now().Add(-30 * time.Second),
+			Payload:   map[string]any{"branch": "sandman/42-fix"},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+
+	if run.RetriesTotal != 0 {
+		t.Fatalf("expected RetriesTotal=0 for active run, got %d", run.RetriesTotal)
+	}
+	if run.RetriesDone != 0 {
+		t.Fatalf("expected RetriesDone=0 for active run, got %d", run.RetriesDone)
 	}
 }
 

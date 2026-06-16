@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -442,6 +443,164 @@ const badge = badgeCell.children[0];
 if (!badge) throw new Error('expected badge span');
 if (!badge.classList.contains('badge')) throw new Error('expected badge class');
 if (!badge.classList.contains('aborted')) throw new Error('expected aborted class');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildBadgeCell_RetryChipPresentWhenRetriesDoneGreaterThanZero(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', retriesTotal: 3, retriesDone: 2 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const badgeCell = row.querySelector('[data-cell="badge"]');
+if (!badgeCell) throw new Error('expected badge cell');
+const chip = badgeCell.querySelector('.retry-chip');
+if (!chip) throw new Error('expected .retry-chip in badge cell when retriesDone=2');
+if (chip.textContent !== '\u21bb 2 retries') throw new Error('expected chip text "\u21bb 2 retries", got ' + JSON.stringify(chip.textContent));
+if (chip.getAttribute('title') !== 'retried 2 of 3 attempts \u2014 see Events tab') throw new Error('expected chip title "retried 2 of 3 attempts \u2014 see Events tab", got ' + JSON.stringify(chip.getAttribute('title')));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildBadgeCell_RetryChipUsesSingularWhenRetriesDoneIsOne(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', retriesTotal: 1, retriesDone: 1 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const badgeCell = row.querySelector('[data-cell="badge"]');
+const chip = badgeCell.querySelector('.retry-chip');
+if (!chip) throw new Error('expected .retry-chip in badge cell when retriesDone=1');
+if (chip.textContent !== '\u21bb 1 retry') throw new Error('expected chip text "\u21bb 1 retry", got ' + JSON.stringify(chip.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildBadgeCell_RetryChipAbsentWhenRetriesDoneZero(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', retriesTotal: 0, retriesDone: 0 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const badgeCell = row.querySelector('[data-cell="badge"]');
+const chip = badgeCell.querySelector('.retry-chip');
+if (chip) throw new Error('expected NO .retry-chip in badge cell when retriesDone=0, got text: ' + JSON.stringify(chip.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildEventsContent_RunRetryRendersRetryCard(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', events: [
+  { type: 'run.retry', timestamp: 1700000000000, payload: { attempt: 2, max_attempts: 3, previous_status: 'failure', last_log_lines: ['[orchestrator] sandbox error', '[orchestrator] retrying'] } }
+] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+if (!detailRow) throw new Error('expected detail row');
+const card = detailRow.querySelector('.retry-event-card');
+if (!card) throw new Error('expected .retry-event-card in events tab for run.retry');
+if (card.textContent.indexOf('attempt 2 of 3') === -1) throw new Error('expected "attempt 2 of 3" in card, got: ' + card.textContent);
+if (card.textContent.indexOf('previous_status: failure') === -1) throw new Error('expected "previous_status: failure" in card, got: ' + card.textContent);
+const logPre = card.querySelector('pre.retry-log');
+if (!logPre) throw new Error('expected pre.retry-log in card');
+if (logPre.textContent.indexOf('[orchestrator] sandbox error') === -1) throw new Error('expected last_log_lines text in log pre, got: ' + logPre.textContent);
+if (logPre.textContent.indexOf('[orchestrator] retrying') === -1) throw new Error('expected second last_log_line in log pre, got: ' + logPre.textContent);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildEventsContent_RunIdleTimeoutRendersRetryCard(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'aborted', issueLabel: '#42', runId: 'r1', events: [
+  { type: 'run.idle_timeout', timestamp: 1700000000000, payload: { attempt: 1, max_attempts: 3, idle_seconds: 300, last_log_lines: ['[orchestrator] idle for 5m'] } }
+] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+if (!detailRow) throw new Error('expected detail row');
+const card = detailRow.querySelector('.retry-event-card');
+if (!card) throw new Error('expected .retry-event-card in events tab for run.idle_timeout');
+if (card.textContent.indexOf('attempt 1 of 3') === -1) throw new Error('expected "attempt 1 of 3" in card, got: ' + card.textContent);
+const logPre = card.querySelector('pre.retry-log');
+if (!logPre) throw new Error('expected pre.retry-log in idle_timeout card');
+if (logPre.textContent.indexOf('[orchestrator] idle for 5m') === -1) throw new Error('expected last_log_lines text in log pre, got: ' + logPre.textContent);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildEventsContent_OtherEventTypesKeepRawPayloadRender(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', events: [
+  { type: 'run.started', timestamp: 1700000000000, payload: { branch: 'main' } }
+] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+if (!detailRow) throw new Error('expected detail row');
+const card = detailRow.querySelector('.retry-event-card');
+if (card) throw new Error('did not expect .retry-event-card for run.started');
+const rawPre = detailRow.querySelector('pre.event-payload');
+if (!rawPre) throw new Error('expected pre.event-payload for run.started raw render');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalJSONToHTMLRender_RetryChipPresentWhenRetriesDoneGreaterThanZero(t *testing.T) {
+	// Simulate the server-emitted /api/runs row JSON: a finished run with
+	// retriesTotal: 3, retriesDone: 2. Feed that JSON-shaped object through
+	// the full portal diff render path and assert the rendered HTML carries
+	// the retry chip with the correct text and title.
+	serverJSON := []byte(`[{"key":"a","runId":"a","kind":"completed","status":"success","issueLabel":"#42","issueNumber":42,"retriesTotal":3,"retriesDone":2,"startedAt":"2025-01-01T12:00:00Z"}]`)
+	var runs []map[string]any
+	if err := json.Unmarshal(serverJSON, &runs); err != nil {
+		t.Fatalf("unmarshal server JSON: %v", err)
+	}
+	js := `const body = makeMockBody();
+const runs = ` + string(serverJSON) + `;
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+const row = body.children[0];
+if (!row) throw new Error('expected data row');
+const chip = row.querySelector('.retry-chip');
+if (!chip) throw new Error('expected .retry-chip in row when server JSON has retriesDone=2');
+if (chip.textContent !== '\u21bb 2 retries') throw new Error('expected chip text "\u21bb 2 retries", got ' + JSON.stringify(chip.textContent));
+if (chip.getAttribute('title') !== 'retried 2 of 3 attempts \u2014 see Events tab') throw new Error('expected chip title "retried 2 of 3 attempts \u2014 see Events tab", got ' + JSON.stringify(chip.getAttribute('title')));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalJSONToHTMLRender_RetryChipAbsentWhenRetriesDoneZero(t *testing.T) {
+	// Clean run, retriesDone=0: chip must not appear in the rendered row.
+	serverJSON := []byte(`[{"key":"a","runId":"a","kind":"completed","status":"success","issueLabel":"#42","issueNumber":42,"startedAt":"2025-01-01T12:00:00Z"}]`)
+	if err := json.Unmarshal(serverJSON, new([]interface{})); err != nil {
+		t.Fatalf("unmarshal server JSON: %v", err)
+	}
+	js := `const body = makeMockBody();
+const runs = ` + string(serverJSON) + `;
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+const row = body.children[0];
+if (!row) throw new Error('expected data row');
+const chip = row.querySelector('.retry-chip');
+if (chip) throw new Error('expected NO .retry-chip in row when server JSON has no retriesDone, got: ' + JSON.stringify(chip.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
