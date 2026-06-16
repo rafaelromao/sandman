@@ -2959,7 +2959,6 @@
           event.preventDefault();
           const runId = button.getAttribute('data-run-id') || findRunByKey(runKey)?.runId || runKey;
           const label = findRunByKey(runKey)?.issueLabel || 'this run';
-          if (typeof window.confirm === 'function' && !window.confirm('Archive ' + label + '? This moves the run directory to .sandman/archive/.')) return;
           archiveRun(button, runId, label);
           return;
         }

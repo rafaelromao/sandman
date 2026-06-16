@@ -176,20 +176,30 @@ func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe) error 
 	return nil
 }
 
-// archivePortalRun relocates a run directory from <repoRoot>/.sandman/runs/<id>
-// to <repoRoot>/.sandman/archive/<id>. It is the repo-root-aware counterpart
+// archivePortalRun relocates a run directory from <repoRoot>/.sandman/runs/<runID>
+// to <repoRoot>/.sandman/archive/<runID>. It is the repo-root-aware counterpart
 // of runArchiveRun used by the portal HTTP endpoint, so the same move
 // semantics back both the CLI and the portal. Callers are expected to
 // validate the run's existence, liveness, and that the archive target is
 // free before invoking it; the handler in portal.go performs those checks
 // and surfaces typed errors, leaving this helper to do only the move.
-func archivePortalRun(repoRoot, id string) error {
+//
+// As a defensive guard the helper refuses to clobber a pre-existing
+// archive target — the move is the only side effect, and a second caller
+// skipping the precondition check would otherwise silently overwrite the
+// earlier archive.
+func archivePortalRun(repoRoot, runID string) error {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	runDir := filepath.Join(layout.RunsDir, runID)
+	dest := filepath.Join(layout.ArchiveDir, runID)
+	if info, err := os.Stat(dest); err == nil && info.IsDir() {
+		return fmt.Errorf("archive %q already exists", runID)
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat archive target: %w", err)
+	}
 	if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
-	runDir := filepath.Join(layout.RunsDir, id)
-	dest := filepath.Join(layout.ArchiveDir, id)
 	if err := os.Rename(runDir, dest); err != nil {
 		return fmt.Errorf("move run dir: %w", err)
 	}
