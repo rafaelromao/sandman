@@ -32,16 +32,16 @@ func TestEffectiveParallel_CapCalculation(t *testing.T) {
 		want              int
 	}{
 		{"parallel=4 capacity=4 max=0 auto", 4, 4, 0, 4},
-		{"parallel=4 capacity=2 max=0 auto allows full parallel", 4, 2, 0, 4},
+		{"parallel=4 capacity=2 max=0 auto", 4, 2, 0, 4},
 		{"parallel=4 capacity=2 max=2 explicit totals 4", 4, 2, 2, 4},
 		{"parallel=4 capacity=4 max=1 explicit totals 4", 4, 4, 1, 4},
 		{"parallel=4 capacity=2 max=1 explicit caps to 2", 4, 2, 1, 2},
 		{"parallel=0 capacity=4 max=0 unlimited stays 0", 0, 4, 0, 0},
 		{"parallel=0 capacity=4 max=2 unlimited stays 0", 0, 4, 2, 0},
-		{"parallel=8 capacity=4 max=0 auto allows full parallel", 8, 4, 0, 8},
-		{"parallel=8 capacity=2 max=0 auto allows full parallel", 8, 2, 0, 8},
-		{"parallel=1 capacity=100 max=0 auto over-provisioned", 1, 100, 0, 1},
-		{"parallel=6 capacity=1 max=0 auto one container per run", 6, 1, 0, 6},
+		{"parallel=8 capacity=4 max=0 auto", 8, 4, 0, 8},
+		{"parallel=8 capacity=2 max=0 auto", 8, 2, 0, 8},
+		{"parallel=1 capacity=100 max=0 auto", 1, 100, 0, 1},
+		{"parallel=6 capacity=1 max=0 auto", 6, 1, 0, 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

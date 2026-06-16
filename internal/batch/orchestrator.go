@@ -332,12 +332,12 @@ func newBatchStartGate(parallel int, delay time.Duration) *batchStartGate {
 
 // effectiveParallelCap returns the effective parallel concurrency after applying
 // the container pool capacity cap. In auto mode (maxContainers == 0) the pool
-// creates containers on demand, so the total slot budget is
-// parallel * containerCapacity: one container per concurrent run, each
-// hosting up to containerCapacity AgentRuns. In explicit-cap mode the budget
-// is containerCapacity * maxContainers. The parallel == 0 (unlimited)
-// semantics are preserved: an unlimited parallel request is never capped down
-// to a finite number.
+// creates containers on demand, so the cap never throttles below the requested
+// parallel: each concurrent run gets its own container (each hosting up to
+// containerCapacity AgentRuns). In explicit-cap mode the budget is
+// containerCapacity * maxContainers, and parallel is capped to that total.
+// The parallel == 0 (unlimited) semantics are preserved: an unlimited parallel
+// request is never capped down to a finite number.
 func effectiveParallelCap(parallel, containerCapacity, maxContainers int) int {
 	if parallel == 0 {
 		return 0

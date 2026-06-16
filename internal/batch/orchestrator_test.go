@@ -6260,7 +6260,7 @@ func TestRunBatch_MaxContainersLimitRestrictsSharedContainerConcurrency(t *testi
 	}
 }
 
-func TestRunBatch_MaxContainersAutoStartsMinimumContainers(t *testing.T) {
+func TestRunBatch_MaxContainersAutoSpawnsContainersForCapacity(t *testing.T) {
 	dir := t.TempDir()
 	dockerPath := filepath.Join(dir, "docker")
 	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
