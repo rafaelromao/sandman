@@ -196,6 +196,7 @@ func newPortalHTTPServer(repoRoot string, launchData portalLaunchFormData, cfg *
 
 func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *config.Config) http.Handler {
 	launcher, launcherErr := newPortalLauncher(repoRoot)
+	staleCleaner := portalStaleCleaner
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/commands", func(w http.ResponseWriter, r *http.Request) {
 		if launcherErr != nil {
@@ -425,7 +426,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 				log.Printf("portal: stale cleanup panicked: %v", r)
 			}
 		}()
-		if err := portalStaleCleaner(repoRoot); err != nil {
+		if err := staleCleaner(repoRoot); err != nil {
 			log.Printf("portal: stale cleanup failed: %v", err)
 		}
 	}()

@@ -247,3 +247,27 @@ func TestBroadcaster_CloseClosesAllClients(t *testing.T) {
 	}
 	conn.Close()
 }
+
+func TestBroadcaster_CloseWaitsForClientGoroutines(t *testing.T) {
+	b := NewBroadcaster()
+
+	reader, writer := net.Pipe()
+	defer reader.Close()
+	b.AddClient(writer)
+
+	done := make(chan struct{})
+	go func() {
+		b.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Broadcaster.Close did not return within 2s; client goroutine likely leaked")
+	}
+
+	if _, err := reader.Read(make([]byte, 1)); err == nil {
+		t.Fatal("expected client.run to close the connection after Close")
+	}
+}

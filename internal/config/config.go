@@ -447,9 +447,33 @@ func (c *Config) GetValue(key string) (string, error) {
 	}
 }
 
+type intSetField struct {
+	name      string
+	allowZero bool
+	target    func(*Config) *int
+}
+
+var intSetFields = []intSetField{
+	{name: "parallel", allowZero: false, target: func(c *Config) *int { return &c.DefaultParallel }},
+	{name: "parallel_reviews", allowZero: false, target: func(c *Config) *int { return &c.DefaultReviewParallel }},
+	{name: "start_delay", allowZero: true, target: func(c *Config) *int { return &c.StartDelay }},
+	{name: "run_idle_timeout", allowZero: true, target: func(c *Config) *int { return &c.RunIdleTimeout }},
+	{name: "retries", allowZero: true, target: func(c *Config) *int { return &c.Retries }},
+	{name: "container_capacity", allowZero: true, target: func(c *Config) *int { return &c.ContainerCapacity }},
+	{name: "max_containers", allowZero: true, target: func(c *Config) *int { return &c.MaxContainers }},
+	{name: "auto_max_count", allowZero: true, target: func(c *Config) *int { return &c.AutoMaxCount }},
+}
+
 // SetValue updates a config field by its dot-notation key.
 func (c *Config) SetValue(key, value string) error {
-	switch strings.ToLower(key) {
+	normalized := strings.ToLower(key)
+	for _, field := range intSetFields {
+		if normalized != field.name {
+			continue
+		}
+		return setIntField(c, field, value)
+	}
+	switch normalized {
 	case "agent":
 		if _, err := c.ResolveAgentProvider(strings.TrimSpace(value)); err != nil {
 			return err
@@ -469,78 +493,6 @@ func (c *Config) SetValue(key, value string) error {
 		c.BuildTools = value
 	case "review_command":
 		c.ReviewCommand = value
-	case "parallel":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid value for parallel: %w", err)
-		}
-		if n <= 0 {
-			return fmt.Errorf("parallel must be greater than 0")
-		}
-		c.DefaultParallel = n
-	case "parallel_reviews":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid value for parallel_reviews: %w", err)
-		}
-		if n <= 0 {
-			return fmt.Errorf("parallel_reviews must be greater than 0")
-		}
-		c.DefaultReviewParallel = n
-	case "start_delay":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid value for start_delay: %w", err)
-		}
-		if n < 0 {
-			return fmt.Errorf("start_delay must be 0 or greater")
-		}
-		c.StartDelay = n
-	case "run_idle_timeout":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid value for run_idle_timeout: %w", err)
-		}
-		if n < 0 {
-			return fmt.Errorf("run_idle_timeout must be 0 or greater")
-		}
-		c.RunIdleTimeout = n
-	case "retries":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid value for retries: %w", err)
-		}
-		if n < 0 {
-			return fmt.Errorf("retries must be 0 or greater")
-		}
-		c.Retries = n
-	case "container_capacity":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid value for container_capacity: %w", err)
-		}
-		if n < 0 {
-			return fmt.Errorf("container_capacity must be 0 or greater")
-		}
-		c.ContainerCapacity = n
-	case "max_containers":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid value for max_containers: %w", err)
-		}
-		if n < 0 {
-			return fmt.Errorf("max_containers must be 0 or greater")
-		}
-		c.MaxContainers = n
-	case "auto_max_count":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid value for auto_max_count: %w", err)
-		}
-		if n < 0 {
-			return fmt.Errorf("auto_max_count must be 0 or greater")
-		}
-		c.AutoMaxCount = n
 	case "worktree_dir":
 		c.WorktreeDir = value
 	case "sandbox":
@@ -552,6 +504,22 @@ func (c *Config) SetValue(key, value string) error {
 	default:
 		return fmt.Errorf("unknown config key: %s", key)
 	}
+	return nil
+}
+
+func setIntField(c *Config, field intSetField, value string) error {
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("invalid value for %s: %w", field.name, err)
+	}
+	if field.allowZero {
+		if n < 0 {
+			return fmt.Errorf("%s must be 0 or greater", field.name)
+		}
+	} else if n <= 0 {
+		return fmt.Errorf("%s must be greater than 0", field.name)
+	}
+	*field.target(c) = n
 	return nil
 }
 

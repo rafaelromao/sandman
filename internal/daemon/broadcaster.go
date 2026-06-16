@@ -14,6 +14,7 @@ type Broadcaster struct {
 	clients map[*broadcastClient]struct{}
 	closed  bool
 	dropped int64
+	runWG   sync.WaitGroup
 }
 
 type broadcastClient struct {
@@ -79,9 +80,13 @@ func (b *Broadcaster) AddClient(conn net.Conn) {
 	}
 	client := &broadcastClient{conn: conn, ch: make(chan []byte, 64), replay: append([]byte(nil), b.buffer.Bytes()...)}
 	b.clients[client] = struct{}{}
+	b.runWG.Add(1)
 	b.mu.Unlock()
 
-	go client.run(b)
+	go func() {
+		defer b.runWG.Done()
+		client.run(b)
+	}()
 }
 
 func (b *Broadcaster) Close() {
@@ -101,6 +106,7 @@ func (b *Broadcaster) Close() {
 	for _, client := range clients {
 		client.close()
 	}
+	b.runWG.Wait()
 }
 
 func (b *Broadcaster) removeClient(client *broadcastClient) {

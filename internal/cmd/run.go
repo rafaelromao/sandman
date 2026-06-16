@@ -23,7 +23,7 @@ import (
 )
 
 type cachedGitHubClient struct {
-	client   github.Client
+	github.Client
 	mu       sync.Mutex
 	issues   map[int]*github.Issue
 	comments map[int][]github.IssueComment
@@ -31,103 +31,48 @@ type cachedGitHubClient struct {
 
 func newCachedGitHubClient(client github.Client) *cachedGitHubClient {
 	return &cachedGitHubClient{
-		client:   client,
+		Client:   client,
 		issues:   make(map[int]*github.Issue),
 		comments: make(map[int][]github.IssueComment),
 	}
 }
 
 func (c *cachedGitHubClient) FetchIssue(number int) (*github.Issue, error) {
-	c.mu.Lock()
-	if issue, ok := c.issues[number]; ok {
-		c.mu.Unlock()
-		return issue, nil
-	}
-	c.mu.Unlock()
-
-	issue, err := c.client.FetchIssue(number)
-	if err != nil || issue == nil {
-		return issue, err
-	}
-
-	c.mu.Lock()
-	c.issues[number] = issue
-	c.mu.Unlock()
-	return issue, nil
-}
-
-func (c *cachedGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
-	return c.client.FetchIssueDependencies(number)
-}
-
-func (c *cachedGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
-	return c.client.SearchIssues(query)
-}
-
-func (c *cachedGitHubClient) FetchPR(number int) (*github.PR, error) {
-	return c.client.FetchPR(number)
-}
-
-func (c *cachedGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
-	return c.client.FindPRByBranch(branch)
-}
-
-func (c *cachedGitHubClient) ListOpenPRs() ([]github.PR, error) {
-	return c.client.ListOpenPRs()
-}
-
-func (c *cachedGitHubClient) ListPRComments(number int) ([]github.PRComment, error) {
-	return c.client.ListPRComments(number)
+	return getOrFill(&c.mu, c.issues, number, func() (*github.Issue, error) {
+		return c.Client.FetchIssue(number)
+	})
 }
 
 func (c *cachedGitHubClient) ListIssueComments(number int) ([]github.IssueComment, error) {
-	c.mu.Lock()
-	if cached, ok := c.comments[number]; ok {
-		c.mu.Unlock()
-		return cached, nil
-	}
-	c.mu.Unlock()
+	return getOrFill(&c.mu, c.comments, number, func() ([]github.IssueComment, error) {
+		comments, err := c.Client.ListIssueComments(number)
+		if err != nil {
+			return nil, err
+		}
+		if comments == nil {
+			comments = []github.IssueComment{}
+		}
+		return comments, nil
+	})
+}
 
-	comments, err := c.client.ListIssueComments(number)
+func getOrFill[K comparable, V any](mu *sync.Mutex, cache map[K]V, key K, fill func() (V, error)) (V, error) {
+	mu.Lock()
+	if v, ok := cache[key]; ok {
+		mu.Unlock()
+		return v, nil
+	}
+	mu.Unlock()
+
+	v, err := fill()
 	if err != nil {
-		return nil, err
+		var zero V
+		return zero, err
 	}
-	if comments == nil {
-		comments = []github.IssueComment{}
-	}
-
-	c.mu.Lock()
-	c.comments[number] = comments
-	c.mu.Unlock()
-	return comments, nil
-}
-
-func (c *cachedGitHubClient) RepoName() (string, error) {
-	return c.client.RepoName()
-}
-
-func (c *cachedGitHubClient) EditComment(commentID, body string) error {
-	return c.client.EditComment(commentID, body)
-}
-
-func (c *cachedGitHubClient) EditPRBody(prNumber int, body string) error {
-	return c.client.EditPRBody(prNumber, body)
-}
-
-func (c *cachedGitHubClient) AddCommentReaction(commentID, content string) (string, error) {
-	return c.client.AddCommentReaction(commentID, content)
-}
-
-func (c *cachedGitHubClient) AddIssueReaction(issueNumber int, content string) (string, error) {
-	return c.client.AddIssueReaction(issueNumber, content)
-}
-
-func (c *cachedGitHubClient) RemoveCommentReaction(commentID, reactionID string) error {
-	return c.client.RemoveCommentReaction(commentID, reactionID)
-}
-
-func (c *cachedGitHubClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
-	return c.client.RemoveIssueReaction(issueNumber, reactionID)
+	mu.Lock()
+	cache[key] = v
+	mu.Unlock()
+	return v, nil
 }
 
 // NewRunCmd creates the run command.
