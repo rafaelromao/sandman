@@ -2281,3 +2281,37 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+func TestPortalDiffCreateRunRow_SuppressesBatchRowWhenReasonIsReview(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', runId: 'r1', kind: 'active', status: 'running', issueLabel: '#42', issueNumber: 42, batchKey: 'run-42-1', batchIssues: [1, 2, 3], reason: 'review', prNumber: 42 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch-row for review run with batchIssues');
+const ctx = body.querySelector('tr.context-row[data-context-for="a"]');
+if (!ctx) throw new Error('expected context-row for review run');
+const chip = ctx.querySelector('.context-chip');
+if (!chip) throw new Error('expected context chip');
+if (!chip.textContent.includes('Reviewing PR #42')) throw new Error('expected review text');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffCreateRunRow_SuppressesBatchRowWhenReasonIsAutoSelect(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: 'auto-select', candidates: [1, 2, 3], batchIssues: [1, 2, 3], reason: 'auto-select' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch-row for auto-select run with batchIssues');
+const ctx = body.querySelector('tr.context-row[data-context-for="a"]');
+if (!ctx) throw new Error('expected context-row for auto-select run');
+const chip = ctx.querySelector('.context-chip');
+if (!chip) throw new Error('expected context chip');
+if (!chip.textContent.includes('Auto-select candidates:')) throw new Error('expected auto-select text');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}

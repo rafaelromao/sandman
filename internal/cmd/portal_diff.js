@@ -166,7 +166,7 @@
   function nextSiblingAnchorRow(row) {
     let n = row.nextElementSibling;
     while (n) {
-      if (n.classList && (n.classList.contains('detail-row') || n.classList.contains('run-row'))) return n;
+      if (n.classList && (n.classList.contains('detail-row') || n.classList.contains('run-row') || n.classList.contains('context-row'))) return n;
       n = n.nextElementSibling;
     }
     return null;
@@ -179,6 +179,7 @@
   function batchText(run) {
     const issues = batchIssues(run);
     if (issues.length <= 1) return '';
+    if (run.reason === 'review' || run.reason === 'auto-select') return '';
     return 'Part of batch: ' + issues.map((n) => '#' + n).join(', ');
   }
 
