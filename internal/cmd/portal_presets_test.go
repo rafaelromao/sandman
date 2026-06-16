@@ -83,6 +83,7 @@ func TestBuildPortalCommandArgsArchiveRunPreset(t *testing.T) {
 		Preset:       "archive",
 		ArchiveMode:  "run",
 		ArchiveRunID: "abc",
+		Confirmed:    true,
 	})
 	if err != nil {
 		t.Fatalf("build command args: %v", err)
@@ -114,6 +115,7 @@ func TestBuildPortalCommandArgsArchiveOlderThanPreset(t *testing.T) {
 		Preset:               "archive",
 		ArchiveMode:          "older-than",
 		ArchiveOlderThanDays: "7",
+		Confirmed:            true,
 	})
 	if err != nil {
 		t.Fatalf("build command args: %v", err)
@@ -166,6 +168,7 @@ func TestBuildPortalCommandArgsArchiveStalePreset(t *testing.T) {
 	args, err := buildPortalCommandArgs(portalCommandLaunchRequest{
 		Preset:      "archive",
 		ArchiveMode: "stale",
+		Confirmed:   true,
 	})
 	if err != nil {
 		t.Fatalf("build command args: %v", err)
@@ -186,8 +189,23 @@ func TestBuildPortalCommandArgsArchiveUnknownMode(t *testing.T) {
 	_, err := buildPortalCommandArgs(portalCommandLaunchRequest{
 		Preset:      "archive",
 		ArchiveMode: "bogus",
+		Confirmed:   true,
 	})
 	if err == nil {
 		t.Fatal("expected archive preset to reject unknown mode")
+	}
+}
+
+func TestBuildPortalCommandArgsArchiveRequiresConfirmation(t *testing.T) {
+	cases := []portalCommandLaunchRequest{
+		{Preset: "archive", ArchiveMode: "run", ArchiveRunID: "abc"},
+		{Preset: "archive", ArchiveMode: "older-than", ArchiveOlderThanDays: "7"},
+		{Preset: "archive", ArchiveMode: "stale"},
+	}
+	for _, req := range cases {
+		_, err := buildPortalCommandArgs(req)
+		if err == nil {
+			t.Fatalf("expected archive preset to require confirmation (mode=%q)", req.ArchiveMode)
+		}
 	}
 }

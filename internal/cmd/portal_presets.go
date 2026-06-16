@@ -75,6 +75,9 @@ func buildPortalCommandArgs(req portalCommandLaunchRequest) ([]string, error) {
 			return nil, fmt.Errorf("unknown config mode %q", req.ConfigMode)
 		}
 	case "archive":
+		if !req.Confirmed {
+			return nil, fmt.Errorf("archive preset requires confirmation")
+		}
 		return buildPortalArchiveArgs(req)
 	default:
 		return nil, fmt.Errorf("unknown preset %q", req.Preset)

@@ -1716,9 +1716,9 @@ func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
 		{name: "history", body: `{"command":"history"}`, want: []string{"history"}},
 		{name: "clean", body: `{"command":"clean","cleanMode":"failed","confirmed":true}`, want: []string{"clean", "--failed"}},
 		{name: "config", body: `{"command":"config","configMode":"set","configKey":"agent","configValue":"opencode"}`, want: []string{"config", "set", "agent", "opencode"}},
-		{name: "archive-run", body: `{"command":"archive","archiveMode":"run","archiveRunId":"abc"}`, want: []string{"archive", "run", "abc"}},
-		{name: "archive-older-than", body: `{"command":"archive","archiveMode":"older-than","archiveOlderThanDays":"7"}`, want: []string{"archive", "older-than", "7"}},
-		{name: "archive-stale", body: `{"command":"archive","archiveMode":"stale"}`, want: []string{"archive", "stale"}},
+		{name: "archive-run", body: `{"command":"archive","archiveMode":"run","archiveRunId":"abc","confirmed":true}`, want: []string{"archive", "run", "abc"}},
+		{name: "archive-older-than", body: `{"command":"archive","archiveMode":"older-than","archiveOlderThanDays":"7","confirmed":true}`, want: []string{"archive", "older-than", "7"}},
+		{name: "archive-stale", body: `{"command":"archive","archiveMode":"stale","confirmed":true}`, want: []string{"archive", "stale"}},
 	}
 
 	for _, tc := range cases {
@@ -1850,7 +1850,7 @@ func TestPortal_CommandsEndpointReturnsJSONErrors(t *testing.T) {
 			return &portalCommandResult{}
 		}
 
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"archive","archiveMode":"bogus"}`))
+		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"archive","archiveMode":"bogus","confirmed":true}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1898,6 +1898,32 @@ func TestPortal_CommandsEndpointReturnsJSONErrors(t *testing.T) {
 		}
 		if body.Error != "exec: not found" {
 			t.Fatalf("expected 'exec: not found', got %q", body.Error)
+		}
+	})
+
+	t.Run("archive without confirmation", func(t *testing.T) {
+		prevStart := portalStartCommand
+		t.Cleanup(func() { portalStartCommand = prevStart })
+		portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
+			return &portalCommandResult{}
+		}
+
+		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"archive","archiveMode":"stale"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", resp.StatusCode)
+		}
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error == "" {
+			t.Fatal("expected non-empty error message for unconfirmed archive")
 		}
 	})
 }
