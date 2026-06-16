@@ -62,12 +62,9 @@ type portalRun struct {
 	// IssueTitle carries the human-readable GitHub issue title from the event
 	// payload. Empty for historical or prompt-only runs.
 	IssueTitle string `json:"issueTitle,omitempty"`
-	// Reason surfaces the why-was-this-run-started taxonomy from the projected
-	// RunState's RunKind(): "auto-select" for auto-select phase runs,
-	// "review" for review-agent runs, "" otherwise. The portal renders it as
-	// a small inline chip in the Run column. omitempty so issue-driven,
-	// prompt-only, continuation, and override runs keep the existing
-	// /api/runs JSON contract.
+	// Reason is the run-kind label rendered in the chip column for
+	// auto-select and review runs; empty for issue-driven and prompt-only
+	// runs.
 	Reason string `json:"reason,omitempty"`
 	// RetriesTotal is the number of retry attempts the orchestrator allowed
 	// for the run. Omitted when the run has not finished.
@@ -136,6 +133,29 @@ func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]p
 	}
 
 	matchedActive := v.matchActiveRuns(promptActive, activeStates)
+	// Unmatched prompt-only instances whose RunID has a terminal state in
+	// the event log adopt that state, so the dedup below collapses the
+	// active and terminal rows into one. Without this pass, an
+	// auto-select or review daemon that emits run.finished while its
+	// socket is still alive would leave the row stuck on "running" /
+	// "reviewing" forever.
+	for i := range matchedActive {
+		if matchedActive[i].state != nil {
+			continue
+		}
+		for j := range runStates {
+			if runStates[j].RunID != matchedActive[i].instance.Key {
+				continue
+			}
+			if _, ok := consumedRunIDs[runStates[j].RunID]; ok {
+				continue
+			}
+			state := runStates[j]
+			matchedActive[i].state = &state
+			consumedRunIDs[state.RunID] = struct{}{}
+			break
+		}
+	}
 	for _, match := range matchedActive {
 		run := v.runFromActiveMatch(repoRoot, match, eventsByRun)
 		runs = append(runs, run)
@@ -211,7 +231,11 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 // dedupRunGroup collapses duplicate rows for one issue within one batch.
 // It first strips queued and blocked rows when any other row exists, then
 // applies runPriority (aborted > active > blocked > queued > other) and
-// breaks ties by latest StartedAt.
+// breaks ties by latest StartedAt. The active vs terminal reconciliation
+// for the same RunID happens in compute() before this pass; this helper
+// stays untouched so unrelated terminal rows for the same issue (e.g.,
+// a recovered failure plus a fresh success) continue to surface as two
+// rows.
 func (v *portalRunsView) dedupRunGroup(runs []portalRun) []portalRun {
 	if len(runs) <= 1 {
 		return runs
@@ -459,12 +483,13 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		}
 		run.Branch = state.Branch()
 		run.IssueTitle = v.issueTitleFromPayload(state.Started.Payload)
-		run.Reason = chipReasonForRunKind(state.RunKind())
+		run.Reason = reasonForRun(*state)
 		run.StartedAt = state.Started.Timestamp
 		run.Duration = v.durationForRun(*state)
 		run.Events = eventsByRun[state.RunID]
 		run.LogPath = v.portalLogPath(repoRoot, issueNumber, state.Branch())
 		run.LogURL = v.portalLogDownloadURL(repoRoot, issueNumber, state.Branch())
+		run.Reason = reasonForRun(*state)
 		if state.Finished != nil {
 			finishedAt := state.Finished.Timestamp
 			run.FinishedAt = &finishedAt
@@ -619,6 +644,12 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Events:      eventsByRun[match.instance.Key],
 		BatchKey:    match.instance.Key,
 	}
+	// Only an active review run reaches this branch without a state
+	// (auto-select phases never expose a live socket), so the chip
+	// label can be set directly here.
+	if review {
+		run.Reason = "review"
+	}
 	v.markCompletedIfSocketDead(&run, run.SocketPath)
 	return run
 }
@@ -672,7 +703,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Log:          logContent,
 		Events:       eventsByRun[runID],
 		Review:       runState.IsReview(),
-		Reason:       chipReasonForRunKind(runState.RunKind()),
+		Reason:       reasonForRun(runState),
 		RetriesTotal: runState.RetriesTotal(),
 		RetriesDone:  runState.RetriesDone(),
 	}
@@ -706,18 +737,18 @@ func (v *portalRunsView) kindForRun(runState events.RunState) string {
 	return "completed"
 }
 
-// chipReasonForRunKind maps a RunState's RunKind taxonomy value to the
-// chip text the portal renders in the Run column. Only "auto-select" and
-// "review" earn a chip; every other kind (issue, prompt-only) returns ""
-// so the omitempty JSON tag preserves the existing /api/runs contract for
-// those runs.
-func chipReasonForRunKind(runKind string) string {
-	switch runKind {
-	case "auto-select", "review":
-		return runKind
-	default:
-		return ""
+// reasonForRun returns the run-kind label rendered by the slice-2 chip
+// column; an empty string means "no chip". Auto-select wins over review
+// when both predicates match (defensive; the event log keeps them
+// disjoint in practice).
+func reasonForRun(runState events.RunState) string {
+	if runState.IsAutoSelect() {
+		return "auto-select"
 	}
+	if runState.IsReview() {
+		return "review"
+	}
+	return ""
 }
 
 // chipReasonForActiveInstance derives the reason chip for a row projected
