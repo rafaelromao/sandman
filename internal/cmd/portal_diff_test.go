@@ -61,17 +61,19 @@ console.log('PASS');
 
 func TestPortalDiffUpdateCells_RemovesStaleReviewBadgeFromTitle(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1', reason: 'review' };
+const runOld = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1', reason: 'review', prNumber: 42, issueNumber: 1 };
 const runNew = Object.assign({}, runOld, { issueLabel: 'Issue 1 updated', reason: '' });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-const titleWrap = created.row.querySelector('[data-cell="title"]').children[0];
-if (!titleWrap.querySelector('.kind-chip')) throw new Error('expected starting kind chip from runOld.reason');
+const titleCell = created.row.querySelector('[data-cell="title"]');
+const titleWrap = titleCell ? titleCell.children[0] : null;
+const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
+if (!ctxRow) throw new Error('expected context row from runOld.reason');
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true');
-if (titleWrap.querySelector('.kind-chip')) throw new Error('expected kind chip removed when reason clears');
+if (body.querySelector('tr.context-row[data-context-for="a"]')) throw new Error('expected context row removed when reason clears');
 if (titleWrap.children.length !== 2) throw new Error('expected title wrap to have only issue label and meta after update, got ' + titleWrap.children.length);
 if (titleWrap.children[0].textContent !== 'Issue 1 updated') throw new Error('expected updated issue label');
 console.log('PASS');
@@ -1602,10 +1604,10 @@ const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, runs, opts);
 const row = body.children[0];
-const titleCell = row.querySelector('[data-cell="title"]');
-const wrap = titleCell.children[0];
-const marker = wrap.querySelector('.batch-membership');
-if (!marker) throw new Error('expected batch-membership element from server JSON with batchIssues=[42,43]');
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (!batchRow) throw new Error('expected batch-row from server JSON with batchIssues=[42,43]');
+const marker = batchRow.querySelector('.batch-membership');
+if (!marker) throw new Error('expected batch-membership element in batch-row, got ' + (batchRow ? batchRow.outerHTML : 'no batchRow'));
 const text = marker.textContent || '';
 if (!text.includes('42') || !text.includes('43')) {
   throw new Error('expected chip text to list both issues 42 and 43, got ' + JSON.stringify(text));
@@ -2035,10 +2037,13 @@ const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 const titleCell = created.row.querySelector('[data-cell="title"]');
 if (!titleCell) throw new Error('expected title cell');
-const wrap = titleCell.children[0];
-if (!wrap) throw new Error('expected title wrap');
-const marker = wrap.querySelector('.batch-membership');
-if (!marker) throw new Error('expected batch-membership element, got ' + wrap.outerHTML);
+if (titleCell.querySelector('.batch-membership')) {
+  throw new Error('batch-membership must not live inside the title cell');
+}
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (!batchRow) throw new Error('expected sibling tr.batch-row[data-batch-for="a"]');
+const marker = batchRow.querySelector('.batch-membership');
+if (!marker) throw new Error('expected batch-membership element in batch-row, got ' + batchRow.outerHTML);
 const text = marker.textContent || '';
 if (!text.includes('860') || !text.includes('854')) {
   throw new Error('expected marker to list both issues 860 and 854, got ' + JSON.stringify(text));
