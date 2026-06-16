@@ -156,7 +156,16 @@
     if (!fresh) return;
     const anchor = nextSiblingAnchorRow(dataRow);
     if (anchor) {
-      body.insertBefore(fresh, anchor);
+      if (anchor.classList && anchor.classList.contains('context-row') && anchor.getAttribute('data-context-for') === newRun.key) {
+        const next = anchor.nextElementSibling;
+        if (next) {
+          body.insertBefore(fresh, next);
+        } else {
+          body.appendChild(fresh);
+        }
+      } else {
+        body.insertBefore(fresh, anchor);
+      }
     } else {
       body.appendChild(fresh);
     }

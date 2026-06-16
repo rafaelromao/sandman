@@ -106,7 +106,7 @@ const visualFixtureRowsJS = `
         idx: i,
         titleCell: rect(t),
         meta: rect(meta),
-        chip: rect(chip),
+        chip: rect(batchChip || chip),
         issueTitle: rect(it),
         branch: rect(br),
         innerWidthTitleCell: t ? t.clientWidth : null,

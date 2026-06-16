@@ -1447,8 +1447,8 @@ func TestPortal_BatchRowCSS_RendersAsSecondaryRowUnderRunRow(t *testing.T) {
 	}{
 		{"tbody tr.batch-row td", []string{"border-bottom: none"}},
 		{"tbody tr.run-row + tr.batch-row td", []string{"padding-top: 0"}},
-		{"tbody tr.run-row:hover ~ tr.batch-row td", []string{"background:"}},
-		{"tbody tr.run-row.active ~ tr.batch-row td", []string{"background:"}},
+		{"tbody tr.run-row:hover + tr.batch-row td", []string{"background:"}},
+		{"tbody tr.run-row.active + tr.batch-row td", []string{"background:"}},
 	} {
 		idx := strings.Index(html, tc.sel)
 		if idx < 0 {
