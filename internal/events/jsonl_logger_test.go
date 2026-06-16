@@ -1,6 +1,7 @@
 package events
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -195,6 +196,179 @@ func TestJSONLLogger_ReadSkipsMalformedLine(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("expected 0 events after remove, got %d", len(got))
+	}
+}
+
+// TestJSONLLogger_ReadQuarantinesMalformedLines is the regression test
+// for the user-reported log spam: when events.jsonl contains lines
+// left behind by a pre-O_APPEND cross-process write race, every Read
+// and RemoveEventsByIssue would re-warn on the same bytes. Read must
+// quarantine the bad lines to a sidecar so the next Read does not
+// re-warn on the same bytes. Read never replaces the main log
+// (replacing it via os.Rename would unlink the inode other daemons
+// have opened via O_APPEND); the rewrite is the responsibility of
+// RemoveEventsByIssue, which truncates the existing in-process file
+// descriptor.
+func TestJSONLLogger_ReadQuarantinesMalformedLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	good := Event{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-good", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}}
+	goodLine, err := json.Marshal(good)
+	if err != nil {
+		t.Fatalf("marshal good: %v", err)
+	}
+	// A 153-byte torn line that looks like a run.queued whose tail was
+	// collided with a concurrent run.finished: the parser sees
+	// `ftru...` (state "false", got "t" instead of "a").
+	tornA := []byte(`{"type":"run.queued","timestamp":"2026-06-16T17:00:36-03:00","run_id":"run-1055-x","issue":1055,"payload":{"blocked_by":[1042]ftrue_padding_padding_padxx`)
+	// A 3235-byte torn line that begins with a fragment of a previous
+	// run's payload, missing its opening brace.
+	tornB := append([]byte(`e context window. Restrict searches to the cwd or explicit sub-paths within it; use the Glob/Grep tools which already scope to the project by default.\n","retries":0,"review":true,"review_focus":"","sandbox":"podman","start_delay":0}}`), bytes.Repeat([]byte(" "), 3001)...)
+
+	contents := append([]byte{}, goodLine...)
+	contents = append(contents, '\n')
+	contents = append(contents, tornA...)
+	contents = append(contents, '\n')
+	contents = append(contents, tornB...)
+	contents = append(contents, '\n')
+	if err := os.WriteFile(path, contents, 0644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	// Pin the sizes to match the original error log: 153 and 3235.
+	if len(tornA) != 153 {
+		t.Fatalf("tornA must be 153 bytes to mirror the original error, got %d", len(tornA))
+	}
+	if len(tornB) != 3235 {
+		t.Fatalf("tornB must be 3235 bytes to mirror the original error, got %d", len(tornB))
+	}
+
+	logger := &JSONLLogger{Path: path}
+	got, err := logger.Read()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(got) != 1 || got[0].RunID != "run-good" {
+		t.Fatalf("expected 1 valid event (run-good), got %d: %+v", len(got), got)
+	}
+
+	// The sidecar must hold both torn lines so the user can inspect
+	// them. Order is preserved by Read.
+	side, err := os.ReadFile(path + ".malformed")
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	sideLines := strings.Split(strings.TrimRight(string(side), "\n"), "\n")
+	if len(sideLines) != 2 {
+		t.Fatalf("expected 2 quarantined lines, got %d: %q", len(sideLines), side)
+	}
+	if sideLines[0] != string(tornA) || sideLines[1] != string(tornB) {
+		t.Errorf("sidecar lines do not match originals\nwant: %q / %q\ngot:  %q / %q", tornA, tornB, sideLines[0], sideLines[1])
+	}
+
+	// The main log is left intact: Read does not replace it (replacing
+	// it would unlink the inode other daemons have opened).
+	main, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read main log: %v", err)
+	}
+	if !strings.Contains(string(main), string(tornA)) || !strings.Contains(string(main), string(tornB)) {
+		t.Fatalf("main log should still hold the torn lines (Read does not rewrite): %q", main)
+	}
+	if !strings.Contains(string(main), "run-good") {
+		t.Fatalf("main log lost the valid event during read: %q", main)
+	}
+
+	// A second Read must be idempotent: the same torn lines are
+	// detected again, but filterAlreadyQuarantined skips them, so
+	// the sidecar does not grow and no extra "skipping" log lines
+	// are produced.
+	got, err = logger.Read()
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if len(got) != 1 || got[0].RunID != "run-good" {
+		t.Fatalf("second read expected 1 event, got %d", len(got))
+	}
+	side2, err := os.ReadFile(path + ".malformed")
+	if err != nil {
+		t.Fatalf("read sidecar again: %v", err)
+	}
+	if string(side) != string(side2) {
+		t.Errorf("sidecar grew on a no-op read: was %d bytes, now %d", len(side), len(side2))
+	}
+}
+
+// TestJSONLLogger_RemoveQuarantinesMalformedLines ensures the cleanup
+// path (RemoveEventsByIssue) also routes torn lines to the sidecar
+// instead of dropping them silently. It also asserts the rewrite is
+// idempotent on a second pass: the sidecar does not grow and the
+// main log stays the same size.
+func TestJSONLLogger_RemoveQuarantinesMalformedLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	good := Event{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-good", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}}
+	goodLine, err := json.Marshal(good)
+	if err != nil {
+		t.Fatalf("marshal good: %v", err)
+	}
+	torn := []byte(`{"type":"run.queued","timestamp":"2026-06-16T17:00:36-03:00","run_id":"run-x","issue":99,"payload":{"blocked_by":[1]ftrue`)
+
+	contents := append([]byte{}, goodLine...)
+	contents = append(contents, '\n')
+	contents = append(contents, torn...)
+	contents = append(contents, '\n')
+	if err := os.WriteFile(path, contents, 0644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	logger := &JSONLLogger{Path: path}
+	if err := logger.RemoveEventsByIssue(99); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	// The torn line must land in the sidecar even though Remove
+	// discards it from the rewrite.
+	side, err := os.ReadFile(path + ".malformed")
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	if !strings.Contains(string(side), string(torn)) {
+		t.Errorf("torn line missing from sidecar: %q", side)
+	}
+	main, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read main: %v", err)
+	}
+	if strings.Contains(string(main), string(torn)) {
+		t.Errorf("torn line still in main log: %q", main)
+	}
+	if !strings.Contains(string(main), "run-good") {
+		t.Errorf("valid event lost during remove: %q", main)
+	}
+
+	// Idempotency: a second Remove on the same issue touches
+	// nothing (the issue is already gone), the sidecar does not
+	// grow, and the main log is byte-identical.
+	sideLenBefore := len(side)
+	mainBefore := append([]byte(nil), main...)
+	if err := logger.RemoveEventsByIssue(99); err != nil {
+		t.Fatalf("second remove: %v", err)
+	}
+	side2, err := os.ReadFile(path + ".malformed")
+	if err != nil {
+		t.Fatalf("read sidecar again: %v", err)
+	}
+	if len(side2) != sideLenBefore {
+		t.Errorf("sidecar grew on a no-op remove: was %d bytes, now %d", sideLenBefore, len(side2))
+	}
+	main2, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read main again: %v", err)
+	}
+	if !bytes.Equal(main2, mainBefore) {
+		t.Errorf("main log changed on a no-op remove\nwas: %q\nnow: %q", mainBefore, main2)
 	}
 }
 
