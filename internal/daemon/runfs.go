@@ -218,7 +218,24 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 
 	var recovered int
 	recoveredRunIDs := make(map[string]struct{})
+	emitOrphan := func(run events.RunState, issueNumber int) error {
+		issueRef := issueNumber
+		event := events.Event{
+			Type:     "run.aborted",
+			RunID:    run.RunID,
+			Issue:    issueNumber,
+			IssueRef: &issueRef,
+			Payload:  map[string]any{"recovered": true},
+		}
+		if err := log.Log(event); err != nil {
+			return fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
+		}
+		recovered++
+		recoveredRunIDs[run.RunID] = struct{}{}
+		return nil
+	}
 	for _, batch := range dead {
+		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
 				if _, ok := recoveredRunIDs[run.RunID]; ok {
@@ -230,19 +247,19 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
 					continue
 				}
-				issueRef := issueNumber
-				event := events.Event{
-					Type:     "run.aborted",
-					RunID:    run.RunID,
-					Issue:    issueNumber,
-					IssueRef: &issueRef,
-					Payload:  map[string]any{"recovered": true},
+				// A candidate is covered by this batch when its start
+				// falls at or before the batch's last terminal event. A
+				// candidate that started after the batch's last terminal
+				// is an orphan from a later batch. A dead batch with no
+				// terminal events has no activity to anchor the
+				// candidate — treat the run as an orphan from the moment
+				// the batch was created.
+				if !latestTerminal.IsZero() && !run.Started.Timestamp.After(latestTerminal) {
+					continue
 				}
-				if err := log.Log(event); err != nil {
-					return recovered, len(dead), fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
+				if err := emitOrphan(run, issueNumber); err != nil {
+					return recovered, len(dead), err
 				}
-				recovered++
-				recoveredRunIDs[run.RunID] = struct{}{}
 			}
 		}
 	}
@@ -269,6 +286,36 @@ func isSupersedingRun(r events.RunState) bool {
 		return false
 	}
 	return true
+}
+
+// latestTerminalForIssues returns the latest real terminal timestamp
+// across all runs in byIssue whose issue appears in issues. A real
+// terminal event is run.finished, run.aborted, or run.cancelled (the
+// kinds that signal actual work completed or was stopped). Queued and
+// blocked placeholders are excluded — they are not real completions,
+// just records of work that never started. The zero time is returned
+// when no real terminal event exists for any of the issues, which
+// signals that the batch is dead but no issue ever reached a real
+// terminal state — the candidate (with a non-zero Started.Timestamp)
+// is then strictly after the batch's last activity and is an orphan.
+func latestTerminalForIssues(issues []int, byIssue map[int][]events.RunState) time.Time {
+	var latest time.Time
+	for _, issue := range issues {
+		for _, run := range byIssue[issue] {
+			if run.Finished == nil {
+				continue
+			}
+			switch run.Finished.Type {
+			case "run.finished", "run.aborted", "run.cancelled":
+			default:
+				continue
+			}
+			if run.Finished.Timestamp.After(latest) {
+				latest = run.Finished.Timestamp
+			}
+		}
+	}
+	return latest
 }
 
 // buildSupersededIssues returns a set of issue numbers for which a queued or
@@ -319,6 +366,14 @@ func buildSupersededIssues(runs []events.RunState) map[int]bool {
 // superseded by actual work — the batch was destroyed, not completed).
 func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}) (int, error) {
 	runs := events.ProjectRunStates(eventsList)
+
+	byIssue := make(map[int][]events.RunState)
+	for _, run := range runs {
+		issue := run.IssueNumber()
+		if issue > 0 {
+			byIssue[issue] = append(byIssue[issue], run)
+		}
+	}
 
 	// Collect all batch manifests under runs/ (both live and dead dirs).
 	type batchInfo struct {
@@ -394,12 +449,39 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 					continue
 				}
 			}
+			// A run that started before the batch was created predates
+			// this batch entirely — the batch cannot cover it.
+			if !b.manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(b.manifest.CreatedAt) {
+				continue
+			}
 			// Zero CreatedAt means we can't determine the window —
 			// conservatively assume this batch might cover the run.
-			if b.manifest.CreatedAt.IsZero() || !run.Started.Timestamp.Before(b.manifest.CreatedAt) {
+			if b.manifest.CreatedAt.IsZero() {
 				hasBatch = true
 				break
 			}
+			// A live batch may still be processing the issue — assume
+			// it covers the run regardless of timestamps.
+			if IsRunActive(b.dir) {
+				hasBatch = true
+				break
+			}
+			// A dead batch covers the run only when the run's start
+			// falls at or before the batch's last terminal event. A run
+			// that started after the batch's last terminal is an orphan
+			// from a later batch, not a stale run from this one. A dead
+			// batch with no terminal events has no activity to anchor
+			// the candidate — treat the run as an orphan from the
+			// moment the batch was created.
+			latestTerminal := latestTerminalForIssues(b.manifest.Issues, byIssue)
+			if latestTerminal.IsZero() {
+				continue
+			}
+			if run.Started.Timestamp.After(latestTerminal) {
+				continue
+			}
+			hasBatch = true
+			break
 		}
 		if hasBatch {
 			continue

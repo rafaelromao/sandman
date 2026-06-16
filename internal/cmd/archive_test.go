@@ -774,9 +774,9 @@ func TestArchiveStale_MixedStatusDeadBatchEmitsAbortedAndArchives(t *testing.T) 
 	}
 
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(5 * time.Minute)},
 		{Type: "run.started", RunID: "run-43", Issue: 43, Timestamp: createdAt.Add(5 * time.Minute)},
 		{Type: "run.finished", RunID: "run-43", Issue: 43, Timestamp: createdAt.Add(10 * time.Minute), Payload: map[string]any{"status": "success"}},
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(20 * time.Minute)},
 	}}
 	deps := newTestDeps()
 	deps.EventLog = log
