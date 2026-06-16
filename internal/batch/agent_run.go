@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -14,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
 // AgentRun orchestrates the lifecycle of a single agent execution for an issue.
@@ -147,7 +147,11 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		r.status = "failure"
 		return r.Result()
 	}
-	renderedCmd = r.applyAgentEnv(renderedCmd)
+	renderedCmd, err = r.prependEnv(renderedCmd)
+	if err != nil {
+		r.status = "failure"
+		return r.Result()
+	}
 
 	if err := r.Execute(ctx, renderedCmd, os.Stdout, os.Stderr); err != nil {
 		r.status = "failure"
@@ -156,44 +160,29 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	return r.Result()
 }
 
-func (r *AgentRun) applyAgentEnv(command string) string {
+// prependEnv returns command prefixed with `export KEY=VALUE; ...` entries
+// for r.env. The opencode permission skip rule still applies: the
+// OPENCODE_PERMISSION entry is dropped when the opencode preset is in
+// "builtin" mode and the rendered command does not request
+// --dangerously-skip-permissions. The *shellenv.InvalidKeyError returned
+// by shellenv.Build is propagated unchanged so the caller can surface a
+// typed failure.
+func (r *AgentRun) prependEnv(command string) (string, error) {
 	if len(r.env) == 0 {
-		return command
+		return command, nil
 	}
 	applyOpencodePermission := strings.Contains(command, "--dangerously-skip-permissions")
-
-	keys := make([]string, 0, len(r.env))
-	for key := range r.env {
+	filtered := make(map[string]string, len(r.env))
+	for key, value := range r.env {
 		if key == "OPENCODE_PERMISSION" && r.opencodePermissionMode == "builtin" && !applyOpencodePermission {
 			continue
 		}
-		keys = append(keys, key)
+		filtered[key] = value
 	}
-	if len(keys) == 0 {
-		return command
+	if len(filtered) == 0 {
+		return command, nil
 	}
-	sort.Strings(keys)
-
-	var b strings.Builder
-	for i, key := range keys {
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString("export ")
-		b.WriteString(key)
-		b.WriteByte('=')
-		b.WriteString(shellQuote(r.env[key]))
-	}
-	b.WriteString("; ")
-	b.WriteString(command)
-	return b.String()
-}
-
-func shellQuote(value string) string {
-	if value == "" {
-		return "''"
-	}
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+	return shellenv.Build(filtered, command)
 }
 
 func (r *AgentRun) writeTaskPrompt(renderedPromptFile, content string) error {
@@ -227,9 +216,13 @@ func (r *AgentRun) modelFlag(command string) string {
 // Result returns the current outcome of the AgentRun.
 func (r *AgentRun) Result() AgentRunResult {
 	issue := r.issueData()
+	var issueRefPtr *int
+	if r.issue != nil {
+		issueRefPtr = issueRef(issue.Number)
+	}
 	return AgentRunResult{
 		IssueNumber:  issue.Number,
-		Issue:        r.issuePointer(),
+		Issue:        issueRefPtr,
 		Status:       r.status,
 		Branch:       r.branch,
 		WorktreePath: r.sandbox.WorkDir(),
@@ -241,14 +234,6 @@ func (r *AgentRun) issueData() github.Issue {
 		return *r.issue
 	}
 	return github.Issue{}
-}
-
-func (r *AgentRun) issuePointer() *int {
-	if r.issue == nil {
-		return nil
-	}
-	n := r.issue.Number
-	return &n
 }
 
 func (r *AgentRun) prefixLabel() string {

@@ -79,6 +79,18 @@ func renderValue(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
+// Quote always emits value as a single-quoted shell token, using the
+// `'\”` idiom to escape embedded single quotes. Use it when constructing
+// shell command arguments that must be quoted regardless of the
+// value's contents (for example, a branch name interpolated into a
+// `git` invocation). For env-map values, prefer Build.
+func Quote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
 func isSafeUnquoted(s string) bool {
 	for _, r := range s {
 		switch {

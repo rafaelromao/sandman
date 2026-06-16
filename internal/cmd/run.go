@@ -929,7 +929,7 @@ func filterClosedIssues(numbers []int, searchFn func(string) ([]github.Issue, er
 			fmt.Fprintf(stderr, "Warning: could not fetch issue #%d: %v\n", n, err)
 			continue
 		}
-		if strings.EqualFold(issue.State, "closed") {
+		if github.IsIssueClosed(issue) {
 			fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
 			closedCount++
 			continue

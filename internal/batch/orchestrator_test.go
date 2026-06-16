@@ -23,6 +23,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/shellenv"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -8480,7 +8481,7 @@ func TestOrchestrator_ResetRetryBranch_Command(t *testing.T) {
 	}
 
 	expected := fmt.Sprintf("git reset --hard && git checkout -f -B %s %s && git clean -fd",
-		shellQuote("sandman/42-fix-bug"), shellQuote("main"))
+		shellenv.Quote("sandman/42-fix-bug"), shellenv.Quote("main"))
 	if sb.execCommand != expected {
 		t.Errorf("expected exec command %q, got %q", expected, sb.execCommand)
 	}
