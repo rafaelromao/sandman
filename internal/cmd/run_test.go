@@ -432,6 +432,100 @@ func TestRun_ExpandsPRDBeforeBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRun_MixedPRDAndNonChildIssues(t *testing.T) {
+	// Regression for #1038 — see ADR-0025 §3a. The original failure
+	// mode was `resolve PRDs: nested PRD detected: #982` when running
+	// `sandman run 972:977 982 990 994:1001`.
+	prd982Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSlices tracked in #972, #973, #974.\n\n## Child Issues\n\n- #984 child\n- #985 child\n- #986 child\n- #987 child\n- #988 child\n- #989 child\n"
+	prd990Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSee parent #982.\n"
+	childBody := "## Parent\n\n#982\n\n## What\n\n"
+	sliceBody := "## What\n\nJust a slice.\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			972:  {Number: 972, Title: "Slice 972", Body: sliceBody},
+			973:  {Number: 973, Title: "Slice 973", Body: sliceBody},
+			974:  {Number: 974, Title: "Slice 974", Body: sliceBody},
+			975:  {Number: 975, Title: "Slice 975", Body: sliceBody},
+			976:  {Number: 976, Title: "Slice 976", Body: sliceBody},
+			977:  {Number: 977, Title: "Slice 977", Body: sliceBody},
+			980:  {Number: 980, Title: "Slice 980", Body: sliceBody},
+			982:  {Number: 982, Title: "Outer PRD", Body: prd982Body},
+			984:  {Number: 984, Title: "Child 984", Body: childBody},
+			985:  {Number: 985, Title: "Child 985", Body: childBody},
+			986:  {Number: 986, Title: "Child 986", Body: childBody},
+			987:  {Number: 987, Title: "Child 987", Body: childBody},
+			988:  {Number: 988, Title: "Child 988", Body: childBody},
+			989:  {Number: 989, Title: "Child 989", Body: childBody},
+			990:  {Number: 990, Title: "Cross-referencing PRD", Body: prd990Body},
+			994:  {Number: 994, Title: "Issue 994", Body: sliceBody},
+			995:  {Number: 995, Title: "Issue 995", Body: sliceBody},
+			996:  {Number: 996, Title: "Issue 996", Body: sliceBody},
+			997:  {Number: 997, Title: "Issue 997", Body: sliceBody},
+			998:  {Number: 998, Title: "Issue 998", Body: sliceBody},
+			999:  {Number: 999, Title: "Issue 999", Body: sliceBody},
+			1000: {Number: 1000, Title: "Issue 1000", Body: sliceBody},
+			1001: {Number: 1001, Title: "Issue 1001", Body: sliceBody},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: gh,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"972:977", "982", "990", "994:1001"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+
+	gotSet := make(map[int]struct{}, len(spy.req.Issues))
+	for _, n := range spy.req.Issues {
+		gotSet[n] = struct{}{}
+	}
+	// Slices 972..977 are user-typed non-PRD issues; they pass through.
+	for _, n := range []int{972, 973, 974, 975, 976, 977} {
+		if _, ok := gotSet[n]; !ok {
+			t.Errorf("expected user-typed slice #%d in resolved list, got %v", n, spy.req.Issues)
+		}
+	}
+	// #982 is added via #990's expansion (its only harvested candidate
+	// is #982, which is in userInputSet and accepted unconditionally).
+	if _, ok := gotSet[982]; !ok {
+		t.Errorf("expected #982 in resolved list (via #990's expansion), got %v", spy.req.Issues)
+	}
+	// Issues 994..1001 are user-typed non-PRD issues; they pass through.
+	for _, n := range []int{994, 995, 996, 997, 998, 999, 1000, 1001} {
+		if _, ok := gotSet[n]; !ok {
+			t.Errorf("expected user-typed #%d in resolved list, got %v", n, spy.req.Issues)
+		}
+	}
+	// #982's authored children #984..#989 have ## Parent and pass the
+	// harvest filter.
+	for _, n := range []int{984, 985, 986, 987, 988, 989} {
+		if _, ok := gotSet[n]; !ok {
+			t.Errorf("expected authored child #%d in resolved list, got %v", n, spy.req.Issues)
+		}
+	}
+	// No PRD candidate-mismatch warning on stderr.
+	if strings.Contains(buf.String(), "candidate #") && strings.Contains(buf.String(), "not a child") {
+		t.Errorf("expected no 'candidate not a child' warning on stderr, got: %q", buf.String())
+	}
+	// No nested-PRD error on stderr.
+	if strings.Contains(buf.String(), "nested PRD") {
+		t.Errorf("expected no 'nested PRD' warning on stderr, got: %q", buf.String())
+	}
+}
+
 func TestRun_FailsWhenPRDHasNoChildren(t *testing.T) {
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n"
 	gh := &fakeGitHubClient{
