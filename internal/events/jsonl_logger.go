@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -90,8 +89,18 @@ func (l *JSONLLogger) Read() ([]Event, error) {
 
 	events, bad := parseLogLines(string(buf))
 	if len(bad) > 0 {
-		if err := l.quarantineAndRewrite(buf, bad); err != nil {
-			log.Printf("events: failed to quarantine %d malformed line(s): %v", len(bad), err)
+		// Quarantine only — never replace the main log from Read.
+		// Renaming the main log would unlink the inode that other
+		// sandman daemons opened via O_APPEND, leaving their next
+		// Log() writing to a file no reader can see by name
+		// (a "ghost" tail). The rewrite is the responsibility of
+		// RemoveEventsByIssue, which truncates the existing
+		// in-process file descriptor instead of replacing it.
+		if err := l.quarantineMalformed(bad); err != nil {
+			return events, fmt.Errorf("quarantine %d malformed line(s): %w", len(bad), err)
+		}
+		for _, line := range bad {
+			log.Printf("events: skipping malformed event line (%d bytes)", len(line))
 		}
 	}
 	return events, nil
@@ -127,64 +136,16 @@ func parseLogLines(raw string) ([]Event, [][]byte) {
 	return events, bad
 }
 
-// quarantineAndRewrite moves the malformed lines into a sidecar file
-// and rewrites the main log without them. The sidecar preserves the
-// raw bytes for forensic inspection while ensuring the next Read does
-// not re-encounter the same corruption.
-//
-// Quarantine path: <Path>.malformed. Each call appends to the sidecar
-// so multiple quarantines accumulate instead of overwriting prior
-// forensic data.
-//
-// The rewrite uses an atomic temp-file + rename so a crash mid-rewrite
-// cannot leave a half-written events.jsonl behind. The temp file lives
-// in the same directory as the log so the rename(2) stays on a single
-// filesystem.
-func (l *JSONLLogger) quarantineAndRewrite(raw []byte, bad [][]byte) error {
-	for _, line := range bad {
-		log.Printf("events: skipping malformed event line (%d bytes)", len(line))
-	}
-	if err := l.quarantineMalformed(bad); err != nil {
-		return err
-	}
-
-	kept := stripLines(raw, bad)
-	tmp, err := os.CreateTemp(filepath.Dir(l.Path), filepath.Base(l.Path)+".rewrite-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create rewrite temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpName) }
-	if len(kept) > 0 {
-		if _, err := tmp.Write(kept); err != nil {
-			_ = tmp.Close()
-			cleanup()
-			return fmt.Errorf("write rewrite temp file: %w", err)
-		}
-		if err := tmp.Sync(); err != nil {
-			_ = tmp.Close()
-			cleanup()
-			return fmt.Errorf("sync rewrite temp file: %w", err)
-		}
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return fmt.Errorf("close rewrite temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, l.Path); err != nil {
-		cleanup()
-		return fmt.Errorf("rename rewrite temp file: %w", err)
-	}
-	if l.file != nil {
-		_ = l.file.Close()
-		l.file = nil
-	}
-	return nil
-}
-
 // quarantineMalformed appends bad lines to the .malformed sidecar.
-// Used by RemoveEventsByIssue, which rewrites the main log via
-// Truncate and only needs the sidecar write (no file replacement).
+// Called by Read (quarantine-only, no main-log rewrite) and by
+// RemoveEventsByIssue, which truncates the existing in-process file
+// descriptor in addition to the sidecar write.
+//
+// Sidecar path: <Path>.malformed. Each call appends to the sidecar
+// so multiple quarantines accumulate instead of overwriting prior
+// forensic data. The sidecar is never trimmed by the logger; the
+// operator is responsible for rolling it over if it grows without
+// bound.
 func (l *JSONLLogger) quarantineMalformed(bad [][]byte) error {
 	sidecar := l.Path + ".malformed"
 	side, err := os.OpenFile(sidecar, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
@@ -197,48 +158,14 @@ func (l *JSONLLogger) quarantineMalformed(bad [][]byte) error {
 			return fmt.Errorf("append to quarantine sidecar: %w", err)
 		}
 	}
+	if err := side.Sync(); err != nil {
+		_ = side.Close()
+		return fmt.Errorf("sync quarantine sidecar: %w", err)
+	}
 	if err := side.Close(); err != nil {
 		return fmt.Errorf("close quarantine sidecar: %w", err)
 	}
 	return nil
-}
-
-// stripLines returns raw with every line in bad removed. Lines are
-// matched by full-content equality; malformed lines from the same
-// log are guaranteed unique in practice (each torn line is a one-off
-// collision of concurrent writes) but if duplicates exist we drop all
-// occurrences so a future Read cannot regress.
-//
-// Only trailing newlines are stripped from the buffer; per-line
-// trailing whitespace is part of the line identity and must be
-// preserved so a torn line that ends in spaces is dropped in full.
-func stripLines(raw []byte, bad [][]byte) []byte {
-	if len(bad) == 0 {
-		return raw
-	}
-	drop := make(map[string]struct{}, len(bad))
-	for _, line := range bad {
-		drop[string(line)] = struct{}{}
-	}
-	trimmed := strings.TrimRight(string(raw), "\n")
-	if trimmed == "" {
-		return nil
-	}
-	var out []byte
-	for _, line := range strings.Split(trimmed, "\n") {
-		if _, ok := drop[line]; ok {
-			continue
-		}
-		if len(out) > 0 {
-			out = append(out, '\n')
-		}
-		out = append(out, line...)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	out = append(out, '\n')
-	return out
 }
 
 // RemoveEventsByIssue removes all events matching the given issue number.

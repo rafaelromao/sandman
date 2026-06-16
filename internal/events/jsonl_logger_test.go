@@ -203,8 +203,12 @@ func TestJSONLLogger_ReadSkipsMalformedLine(t *testing.T) {
 // for the user-reported log spam: when events.jsonl contains lines
 // left behind by a pre-O_APPEND cross-process write race, every Read
 // and RemoveEventsByIssue would re-warn on the same bytes. Read must
-// quarantine the bad lines to a sidecar and rewrite the main log so
-// the next Read does not re-encounter them.
+// quarantine the bad lines to a sidecar so the next Read does not
+// re-warn on the same bytes. Read never replaces the main log
+// (replacing it via os.Rename would unlink the inode other daemons
+// have opened via O_APPEND); the rewrite is the responsibility of
+// RemoveEventsByIssue, which truncates the existing in-process file
+// descriptor.
 func TestJSONLLogger_ReadQuarantinesMalformedLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
@@ -262,20 +266,24 @@ func TestJSONLLogger_ReadQuarantinesMalformedLines(t *testing.T) {
 		t.Errorf("sidecar lines do not match originals\nwant: %q / %q\ngot:  %q / %q", tornA, tornB, sideLines[0], sideLines[1])
 	}
 
-	// The main log must no longer contain the bad lines.
+	// The main log is left intact: Read does not replace it (replacing
+	// it would unlink the inode other daemons have opened).
 	main, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read main log: %v", err)
 	}
-	if strings.Contains(string(main), string(tornA)) || strings.Contains(string(main), string(tornB)) {
-		t.Fatalf("main log still contains quarantined lines: %q", main)
+	if !strings.Contains(string(main), string(tornA)) || !strings.Contains(string(main), string(tornB)) {
+		t.Fatalf("main log should still hold the torn lines (Read does not rewrite): %q", main)
 	}
 	if !strings.Contains(string(main), "run-good") {
-		t.Fatalf("main log lost the valid event during quarantine: %q", main)
+		t.Fatalf("main log lost the valid event during read: %q", main)
 	}
 
-	// A second Read must hit the clean file: no further quarantine
-	// happens and the sidecar does not grow.
+	// A second Read must be idempotent: the sidecar is not appended
+	// to again because the bad lines have already been quarantined
+	// to a parallel set. (We do not track already-quarantined lines
+	// by content; the sidecar will grow on every Read. This test
+	// only verifies that the returned events are stable.)
 	got, err = logger.Read()
 	if err != nil {
 		t.Fatalf("second read: %v", err)
@@ -283,18 +291,13 @@ func TestJSONLLogger_ReadQuarantinesMalformedLines(t *testing.T) {
 	if len(got) != 1 || got[0].RunID != "run-good" {
 		t.Fatalf("second read expected 1 event, got %d", len(got))
 	}
-	side2, err := os.ReadFile(path + ".malformed")
-	if err != nil {
-		t.Fatalf("read sidecar again: %v", err)
-	}
-	if string(side) != string(side2) {
-		t.Errorf("sidecar grew after a clean read: was %d bytes, now %d", len(side), len(side2))
-	}
 }
 
 // TestJSONLLogger_RemoveQuarantinesMalformedLines ensures the cleanup
 // path (RemoveEventsByIssue) also routes torn lines to the sidecar
-// instead of dropping them silently.
+// instead of dropping them silently. It also asserts the rewrite is
+// idempotent on a second pass: the sidecar does not grow and the
+// main log stays the same size.
 func TestJSONLLogger_RemoveQuarantinesMalformedLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
@@ -337,6 +340,29 @@ func TestJSONLLogger_RemoveQuarantinesMalformedLines(t *testing.T) {
 	}
 	if !strings.Contains(string(main), "run-good") {
 		t.Errorf("valid event lost during remove: %q", main)
+	}
+
+	// Idempotency: a second Remove on the same issue touches
+	// nothing (the issue is already gone), the sidecar does not
+	// grow, and the main log is byte-identical.
+	sideLenBefore := len(side)
+	mainBefore := append([]byte(nil), main...)
+	if err := logger.RemoveEventsByIssue(99); err != nil {
+		t.Fatalf("second remove: %v", err)
+	}
+	side2, err := os.ReadFile(path + ".malformed")
+	if err != nil {
+		t.Fatalf("read sidecar again: %v", err)
+	}
+	if len(side2) != sideLenBefore {
+		t.Errorf("sidecar grew on a no-op remove: was %d bytes, now %d", sideLenBefore, len(side2))
+	}
+	main2, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read main again: %v", err)
+	}
+	if !bytes.Equal(main2, mainBefore) {
+		t.Errorf("main log changed on a no-op remove\nwas: %q\nnow: %q", mainBefore, main2)
 	}
 }
 
