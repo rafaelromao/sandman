@@ -271,12 +271,16 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 	}
 
 	// Local is at or ahead of remote — nothing to do.
-	if ok, _ := gitMergeBaseIsAncestor(repoPath, remoteHash, localHash); ok {
+	if ok, err := gitMergeBaseIsAncestor(repoPath, remoteHash, localHash); err != nil {
+		return fmt.Errorf("sync base branch %q: check if remote is ancestor of local: %w", sourceBranch, err)
+	} else if ok {
 		return nil
 	}
 
 	// Local is behind remote — fast-forward.
-	if ok, _ := gitMergeBaseIsAncestor(repoPath, localHash, remoteHash); ok {
+	if ok, err := gitMergeBaseIsAncestor(repoPath, localHash, remoteHash); err != nil {
+		return fmt.Errorf("sync base branch %q: check if local is ancestor of remote: %w", sourceBranch, err)
+	} else if ok {
 		if out, err := runGitCommand(repoPath, "update-ref", localRef, remoteHash, localHash); err != nil {
 			return fmt.Errorf("sync base branch %q: fast-forward: %w\n%s", sourceBranch, err, out)
 		}
