@@ -121,7 +121,6 @@ func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body s
 		}
 		ref, ok := ExtractParentReference(childIssue.Body)
 		if !ok || ref != parent {
-			fmt.Fprintf(r.warningWriter, "candidate #%d is not a child of PRD #%d, skipping\n", child, parent)
 			continue
 		}
 		accepted = append(accepted, child)

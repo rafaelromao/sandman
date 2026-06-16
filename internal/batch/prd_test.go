@@ -338,7 +338,7 @@ func TestPRDResolver_DiscoversChildrenFromComments(t *testing.T) {
 	}
 }
 
-func TestPRDResolver_DropsCandidatesWithoutMatchingParent(t *testing.T) {
+func TestPRDResolver_FiltersHarvestedCandidatesWithoutMatchingParent(t *testing.T) {
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10 mentions parent\n- #11 cites a different parent\n"
 	childBody10 := "## Parent\n\n#1\n\n## What\n\n"
 	childBody11 := "## Parent\n\n#999\n\n## What\n\n"
@@ -358,9 +358,6 @@ func TestPRDResolver_DropsCandidatesWithoutMatchingParent(t *testing.T) {
 	}
 	if !equalInts(got, []int{10}) {
 		t.Fatalf("expected [10], got %v", got)
-	}
-	if !strings.Contains(infoBuf.String(), "candidate #11 is not a child of PRD #1") {
-		t.Errorf("expected info log about dropping #11, got: %q", infoBuf.String())
 	}
 }
 
@@ -395,8 +392,7 @@ func TestPRDResolver_AcceptsUserTypedNumberWithoutParent(t *testing.T) {
 	// issue with no ## Parent backlink. The user typed both #1 and #99.
 	// The resolver must accept the user-typed #99 inside #1's harvest
 	// (skipping the parent-mismatch check), so #1 expands successfully
-	// and the final output is [99]. The parent-mismatch warning MUST NOT
-	// be emitted for a user-typed candidate.
+	// and the final output is [99].
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #99 unrelated\n"
 	childBody99 := "## What to build\n\nStandalone work.\n"
 	client := &fakeGitHubClient{
@@ -406,17 +402,13 @@ func TestPRDResolver_AcceptsUserTypedNumberWithoutParent(t *testing.T) {
 		},
 	}
 
-	var warnBuf bytes.Buffer
-	r := NewPRDResolver(client, &warnBuf)
+	r := NewPRDResolver(client, nil)
 	got, err := r.Resolve(context.Background(), []int{1, 99})
 	if err != nil {
 		t.Fatalf("expected user-typed non-child to be accepted, got error: %v", err)
 	}
 	if !equalInts(got, []int{99}) {
 		t.Fatalf("expected [99], got %v", got)
-	}
-	if strings.Contains(warnBuf.String(), "candidate #99 is not a child of PRD #1") {
-		t.Errorf("expected no 'candidate #99 is not a child' warning for user-typed #99, got: %q", warnBuf.String())
 	}
 }
 
