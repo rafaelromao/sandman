@@ -1411,13 +1411,14 @@ func TestPortal_BatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
 		desc  string
 	}{
 		{"display: block", "block-level element (not inline-block)"},
-		{"width: 100%", "fills the batch-row cell"},
+		{"width: 100%", "fills the title cell"},
 		{"box-sizing: border-box", "padding stays inside the cell width"},
 		{"border-radius: 6px", "small fixed radius so wrapped lines read correctly"},
 		{"background: var(--surface-3)", "muted chip background preserved"},
 		{"color: var(--muted)", "muted chip text color preserved"},
 		{"font-size: 11px", "chip font size preserved"},
 		{"letter-spacing: 0.04em", "chip letter-spacing preserved"},
+		{"overflow-wrap: anywhere", "long issue lists break inside the chip when the cap kicks in"},
 	}
 	for _, r := range required {
 		if !strings.Contains(body, r.token) {
@@ -1426,26 +1427,6 @@ func TestPortal_BatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
 	}
 	if strings.Contains(body, "border-radius: 999px") {
 		t.Errorf(".batch-membership rule still has 999px pill radius; expected a small fixed radius so wrapped lines read correctly")
-	}
-}
-
-func TestPortal_BatchRowCSS_RendersAsSecondaryRowUnderRunRow(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate test file")
-	}
-	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
-	data, err := os.ReadFile(htmlPath)
-	if err != nil {
-		t.Fatalf("read %s: %v", htmlPath, err)
-	}
-	html := string(data)
-	for _, sel := range []string{"tbody tr.batch-row td", "tbody tr.run-row + tr.batch-row td"} {
-		idx := strings.Index(html, sel)
-		if idx < 0 {
-			t.Errorf("expected %s rule in %s", sel, htmlPath)
-			continue
-		}
 	}
 }
 

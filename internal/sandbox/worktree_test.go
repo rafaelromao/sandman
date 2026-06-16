@@ -194,7 +194,7 @@ func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) 
 	}
 }
 
-func TestSyncBaseBranchFailsWhenBaseBranchCannotFastForward(t *testing.T) {
+func TestSyncBaseBranchFailsWhenDiverged(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
 	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
@@ -211,15 +211,47 @@ func TestSyncBaseBranchFailsWhenBaseBranchCannotFastForward(t *testing.T) {
 	runGit(t, seedDir, "push", "origin", "main")
 
 	if err := SyncBaseBranch(localDir, "main"); err == nil {
-		t.Fatal("expected sync failure when default branch cannot fast-forward")
-	} else if !strings.Contains(err.Error(), "sync default branch") {
-		t.Fatalf("expected sync error, got %v", err)
+		t.Fatal("expected sync failure when local and remote have diverged")
+	} else if !strings.Contains(err.Error(), "diverged") {
+		t.Fatalf("expected diverged error, got %v", err)
 	}
 
 	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 
 	if _, err := os.Stat(s.WorkDir()); !os.IsNotExist(err) {
 		t.Fatalf("expected no worktree to be created, got %v", err)
+	}
+}
+
+func TestSyncBaseBranchAheadOfRemote(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+	// Add a commit locally that exists only on local, not on remote.
+	commitGitFile(t, localDir, "local-only.txt", "local\n", "local ahead")
+
+	if err := SyncBaseBranch(localDir, "main"); err != nil {
+		t.Fatalf("expected sync to succeed when local is ahead of remote, got: %v", err)
+	}
+}
+
+func TestSyncBaseBranchAtSameCommit(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+
+	if err := SyncBaseBranch(localDir, "main"); err != nil {
+		t.Fatalf("expected sync to succeed when local equals remote, got: %v", err)
 	}
 }
 

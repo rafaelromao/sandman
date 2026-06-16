@@ -265,20 +265,42 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 	localHash, err := gitRevParse(repoPath, "--verify", localRef)
 	if err != nil {
 		if out, updateErr := runGitCommand(repoPath, "update-ref", localRef, remoteHash); updateErr != nil {
-			return fmt.Errorf("sync default branch %q: %w\n%s", sourceBranch, updateErr, out)
+			return fmt.Errorf("sync base branch %q: create local branch: %w\n%s", sourceBranch, updateErr, out)
 		}
 		return nil
 	}
 
-	if out, err := runGitCommand(repoPath, "merge-base", "--is-ancestor", localHash, remoteHash); err != nil {
-		return fmt.Errorf("sync default branch %q: %w\n%s", sourceBranch, err, out)
+	// Local is at or ahead of remote — nothing to do.
+	if ok, err := gitMergeBaseIsAncestor(repoPath, remoteHash, localHash); err != nil {
+		return fmt.Errorf("sync base branch %q: check if remote is ancestor of local: %w", sourceBranch, err)
+	} else if ok {
+		return nil
 	}
 
-	if out, err := runGitCommand(repoPath, "update-ref", localRef, remoteHash, localHash); err != nil {
-		return fmt.Errorf("sync default branch %q: %w\n%s", sourceBranch, err, out)
+	// Local is behind remote — fast-forward.
+	if ok, err := gitMergeBaseIsAncestor(repoPath, localHash, remoteHash); err != nil {
+		return fmt.Errorf("sync base branch %q: check if local is ancestor of remote: %w", sourceBranch, err)
+	} else if ok {
+		if out, err := runGitCommand(repoPath, "update-ref", localRef, remoteHash, localHash); err != nil {
+			return fmt.Errorf("sync base branch %q: fast-forward: %w\n%s", sourceBranch, err, out)
+		}
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("sync base branch %q: local branch %s has diverged from %s", sourceBranch, localHash[:7], remoteHash[:7])
+}
+
+func gitMergeBaseIsAncestor(dir, a, b string) (bool, error) {
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", a, b)
+	cmd.Dir = dir
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }
 
 func runGitCommand(dir string, args ...string) ([]byte, error) {

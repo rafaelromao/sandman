@@ -84,6 +84,10 @@ type Request struct {
 	// PRNumber is the GitHub PR number being reviewed. Only meaningful
 	// when Review is true. Implementation runs leave it zero.
 	PRNumber int
+	// IssueNumber is the GitHub issue number associated with the review
+	// PR. Only meaningful when Review is true. The orchestrator emits it
+	// in run.started payload so the portal can populate the review chip.
+	IssueNumber int
 	// ReviewFocus is the free-form text that followed `/sandman review`
 	// in the trigger comment. May be empty. Only meaningful when Review
 	// is true.

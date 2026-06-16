@@ -49,6 +49,12 @@ const visualFixtureRowsJS = `
     const name = document.createElement('span'); name.classList.add('name'); name.textContent = rowSpec.issueLabel || rowSpec.key; wrap.appendChild(name);
     const meta = document.createElement('span'); meta.classList.add('meta-line', 'mono');
     meta.textContent = rowSpec.metaText; wrap.appendChild(meta);
+    if (rowSpec.batchIssues && rowSpec.batchIssues.length > 1) {
+      const chip = document.createElement('span'); chip.classList.add('batch-membership', 'mono');
+      chip.setAttribute('data-batch-membership', '1');
+      chip.textContent = 'Part of batch: ' + rowSpec.batchIssues.map(n => '#' + n).join(', ');
+      wrap.appendChild(chip);
+    }
     title.appendChild(wrap);
     const badge = td('badge');
     const b = document.createElement('span'); b.classList.add('badge', rowSpec.status);
@@ -61,23 +67,7 @@ const visualFixtureRowsJS = `
     const br = td('branch'); br.classList.add('mono'); br.textContent = rowSpec.branch;
     const ac = td('actions'); ac.classList.add('run-actions');
     const btn = document.createElement('button'); btn.classList.add('action-btn','danger'); btn.textContent = 'Abort'; ac.appendChild(btn);
-    const batchTr = buildBatchRow(rowSpec);
-    return batchTr ? [tr, batchTr] : tr;
-  }
-
-  function buildBatchRow(rowSpec) {
-    if (!rowSpec.batchIssues || rowSpec.batchIssues.length <= 1) return null;
-    const batchTr = document.createElement('tr');
-    batchTr.classList.add('batch-row');
-    batchTr.setAttribute('data-batch-for', rowSpec.key);
-    const btd = document.createElement('td');
-    btd.setAttribute('colspan', '7');
-    const chip = document.createElement('span'); chip.classList.add('batch-membership', 'mono');
-    chip.setAttribute('data-batch-membership', '1');
-    chip.textContent = 'Part of batch: ' + rowSpec.batchIssues.map(n => '#' + n).join(', ');
-    btd.appendChild(chip);
-    batchTr.appendChild(btd);
-    return batchTr;
+    return tr;
   }
 
   const rows = [
@@ -86,11 +76,7 @@ const visualFixtureRowsJS = `
     { issueLabel: '#962', key: 'c', metaText: 'ID run-962-178153673100000000 \u00b7 #962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: '[slice 3] Add internal/orchestrator dependencies path', branch: '\u2014', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
   ];
   const body = document.getElementById('runs-body');
-  rows.forEach(r => {
-    const out = buildRow(r);
-    if (Array.isArray(out)) out.forEach(node => body.appendChild(node));
-    else body.appendChild(out);
-  });
+  rows.forEach(r => body.appendChild(buildRow(r)));
 
   /* Inject the dump <pre> synchronously (no rAF) so chromium's --dump-dom
      always sees it, regardless of when the snapshot fires. The dump is
@@ -103,19 +89,15 @@ const visualFixtureRowsJS = `
     body.querySelectorAll('tr.run-row').forEach((tr, i) => {
       const t = tr.querySelector('[data-cell="title"]');
       const meta = tr.querySelector('.meta-line');
+      const chip = tr.querySelector('.batch-membership');
       const it = tr.querySelector('[data-cell="issue-title"]');
       const br = tr.querySelector('[data-cell="branch"]');
-      const batchTr = tr.nextElementSibling && tr.nextElementSibling.classList && tr.nextElementSibling.classList.contains('batch-row') ? tr.nextElementSibling : null;
-      const chip = batchTr ? batchTr.querySelector('.batch-membership') : null;
-      const batchTd = batchTr ? batchTr.querySelector('td') : null;
       const rect = (el) => el ? { w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) } : null;
       out.rows.push({
         idx: i,
         titleCell: rect(t),
         meta: rect(meta),
         chip: rect(chip),
-        batchRow: batchTr ? rect(batchTr) : null,
-        batchTdInnerWidth: batchTd ? batchTd.clientWidth : null,
         issueTitle: rect(it),
         branch: rect(br),
         innerWidthTitleCell: t ? t.clientWidth : null,
@@ -202,8 +184,6 @@ type visualRow struct {
 	TitleCell           *visualRect `json:"titleCell"`
 	Meta                *visualRect `json:"meta"`
 	Chip                *visualRect `json:"chip"`
-	BatchRow            *visualRect `json:"batchRow"`
-	BatchTdInnerWidth   *int        `json:"batchTdInnerWidth"`
 	IssueTitle          *visualRect `json:"issueTitle"`
 	Branch              *visualRect `json:"branch"`
 	InnerWidthTitleCell *int        `json:"innerWidthTitleCell"`
@@ -328,22 +308,23 @@ func TestPortal_Visual_BatchMembershipFillsRunCellAndWraps(t *testing.T) {
 	if row == nil {
 		t.Fatalf("row 0 missing from dump: %+v", dump.Rows)
 	}
-	if row.BatchRow == nil {
-		t.Fatalf("row 0 missing batch-row sibling (test data has batchIssues > 1)")
-	}
 	if row.Chip == nil {
-		t.Fatalf("row 0 missing .batch-membership chip inside batch-row")
+		t.Fatalf("row 0 missing .batch-membership chip (test data has batchIssues > 1)")
 	}
-	if row.BatchTdInnerWidth == nil {
-		t.Fatalf("row 0 missing batchTdInnerWidth")
+	// Chip fills the cell content area: with box-sizing: border-box and
+	// width: 100% the chip should equal the cell's content width (which is
+	// clientWidth minus the 14px left/right padding declared on tbody td).
+	if row.InnerWidthTitleCell == nil {
+		t.Fatalf("row 0 missing innerWidthTitleCell")
 	}
-	innerW := *row.BatchTdInnerWidth - 28
+	innerW := *row.InnerWidthTitleCell - 28
 	if row.Chip.W < innerW-2 || row.Chip.W > innerW+2 {
-		t.Errorf("chip width %d != batch-row content width %d (want within 2px)", row.Chip.W, innerW)
+		t.Errorf("chip width %d != cell content width %d (want within 2px)", row.Chip.W, innerW)
 	}
-	// Chip should be a single line since the batch-row spans all columns.
-	if row.Chip.H > 25 {
-		t.Errorf("chip height %d implies 2+ wrapped lines; expected 1 (height ~20px)", row.Chip.H)
+	// Chip should be at most 2 lines for an 8-issue batch at 480px cap
+	// (1 line for <=7 issues, 2 lines for 8+). 3+ lines was the bug.
+	if row.Chip.H > 40 {
+		t.Errorf("chip height %d implies 3+ wrapped lines; expected <= 2 (height <= 40px)", row.Chip.H)
 	}
 	// Run column grew to the cap, not clamped to its min-content.
 	if row.TitleCell == nil || row.TitleCell.W < 200 {

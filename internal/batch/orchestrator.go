@@ -1550,6 +1550,9 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 		event.Payload["review"] = true
 		event.Payload["pr_number"] = s.prNumber
 		event.Payload["review_focus"] = s.reviewFocus
+		if s.issueNumber > 0 {
+			event.Payload["issue_number"] = s.issueNumber
+		}
 	}
 	_ = o.eventLog.Log(event)
 	return terminalStatus
@@ -1958,7 +1961,7 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
-	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.IssueMode(0), baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, strandedReconcile, req.Review, req.PRNumber, req.ReviewFocus, req.RunID, req.PreviousRunIDs)
+	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.IssueMode(0), baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, strandedReconcile, req.Review, req.PRNumber, req.ReviewFocus, req.RunID, req.PreviousRunIDs, req.IssueNumber)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -1974,7 +1977,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 
 // runPromptOnlySingle runs a single prompt-only AgentRun. It builds a
 // runSession and delegates to (*runSession).executePromptOnly.
-func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, mode IssueMode, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string) (AgentRunResult, bool) {
+func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, mode IssueMode, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string, reviewIssueNumber int) (AgentRunResult, bool) {
 	s := &runSession{
 		o:                          o,
 		cfg:                        cfg,
@@ -2002,6 +2005,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		review:                     review,
 		prNumber:                   prNumber,
 		reviewFocus:                reviewFocus,
+		issueNumber:                reviewIssueNumber,
 		runID:                      runID,
 		parentCtx:                  ctx,
 		opts:                       o.runSessionOpts,
@@ -2104,6 +2108,9 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 			payload["review"] = true
 			payload["pr_number"] = s.prNumber
 			payload["review_focus"] = s.reviewFocus
+			if s.issueNumber > 0 {
+				payload["issue_number"] = s.issueNumber
+			}
 		}
 		eventType := "run.started"
 		if s.mode == ModeContinue {
