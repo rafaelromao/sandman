@@ -68,27 +68,11 @@
     meta.classList.add('meta-line', 'mono');
     meta.textContent = helpers.renderRunMeta(run);
     wrap.appendChild(meta);
-    const reasonChip = renderReasonChip(run);
+    const reasonChip = buildReasonChip(run.reason, run.reason);
     if (reasonChip) wrap.appendChild(reasonChip);
     const batchMembership = renderBatchMembership(run);
     if (batchMembership) wrap.appendChild(batchMembership);
     td.appendChild(wrap);
-  }
-
-  function renderReasonChip(run) {
-    const reason = run && run.reason;
-    if (reason !== 'auto-select' && reason !== 'review') return null;
-    const span = global.document.createElement('span');
-    span.classList.add('badge', 'kind-chip', reason);
-    span.setAttribute('data-reason', reason);
-    const dot = global.document.createElement('span');
-    dot.classList.add('dot');
-    span.appendChild(dot);
-    const label = global.document.createElement('span');
-    label.classList.add('badge-label');
-    label.textContent = reason;
-    span.appendChild(label);
-    return span;
   }
 
   function renderBatchMembership(run) {
@@ -611,6 +595,7 @@
   }
 
   function buildReasonChip(reason, reasonText) {
+    if (reason !== 'auto-select' && reason !== 'review') return null;
     const span = global.document.createElement('span');
     span.classList.add('badge', 'kind-chip', reason);
     span.setAttribute('data-reason', reason);

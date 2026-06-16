@@ -1318,6 +1318,36 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		}
 	})
 
+	t.Run("aborted review run", func(t *testing.T) {
+		startedAt := time.Now().Add(-5 * time.Minute)
+		state := events.RunState{
+			RunID: "PR42",
+			Started: events.Event{
+				Timestamp: startedAt,
+				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"},
+			},
+			Finished: &events.Event{
+				Timestamp: startedAt.Add(2 * time.Minute),
+				Payload:   map[string]any{"review": true, "status": "failure", "branch": "sandman/review-PR42"},
+			},
+		}
+		// Mark the row as aborted by re-issuing run.aborted. The
+		// portal layer's runFromState treats any run.aborted or
+		// run.cancelled event as terminal aborted.
+		aborted := events.Event{Type: "run.aborted", Timestamp: startedAt.Add(3 * time.Minute), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42}}
+		state.Finished = &aborted
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		if run.Reason != "review" {
+			t.Fatalf("expected Reason 'review' for aborted review run, got %q", run.Reason)
+		}
+		if run.Status != "aborted" {
+			t.Fatalf("expected Status 'aborted', got %q", run.Status)
+		}
+		if run.IssueLabel != "PR42" {
+			t.Fatalf("expected IssueLabel 'PR42' on aborted review run, got %q", run.IssueLabel)
+		}
+	})
+
 	t.Run("regular issue-driven run has empty Reason", func(t *testing.T) {
 		startedAt := time.Now().Add(-3 * time.Minute)
 		state := events.RunState{
@@ -1357,6 +1387,29 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		}
 		if run.IssueLabel != "prompt-only" {
 			t.Fatalf("expected IssueLabel 'prompt-only', got %q", run.IssueLabel)
+		}
+	})
+
+	t.Run("continuation run has empty Reason", func(t *testing.T) {
+		// A run.continued event folds into a RunState whose Started is
+		// the original run.started and Finished is unchanged. Issue-driven
+		// continuations carry the same IssueRef, so RunKind() returns
+		// "issue" and Reason must be "".
+		startedAt := time.Now().Add(-10 * time.Minute)
+		state := events.RunState{
+			RunID: "run-42-2",
+			Started: events.Event{
+				Timestamp: startedAt,
+				Issue:     42,
+				Payload:   map[string]any{"branch": "sandman/issue-42"},
+			},
+		}
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		if run.Reason != "" {
+			t.Fatalf("expected empty Reason for continuation run, got %q", run.Reason)
+		}
+		if run.IssueLabel != "#42" {
+			t.Fatalf("expected IssueLabel '#42' for continuation run, got %q", run.IssueLabel)
 		}
 	})
 }

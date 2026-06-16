@@ -1896,3 +1896,45 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+func TestPortalDiffDiffRuns_RendersAutoSelectChipFromPortalRunJSON(t *testing.T) {
+	// This test exercises the full JSON->DOM path the portal page uses
+	// for /api/runs: a portalRun-shaped JSON object (the wire format
+	// produced by the Go portalRunsView.compute pipeline and serialized
+	// to /api/runs) is fed into SandmanPortalDiff.diffRuns, which is the
+	// same entry point the page calls. We then assert on the rendered
+	// DOM the JS produces. The Go-side /api/runs JSON shape is
+	// independently covered by TestPortal_RunsEndpoint_RoundTrips*
+	// in portal_server_test.go.
+	js := `const body = makeMockBody();
+const runs = [
+  { key: 'auto-select-1700000000000', runId: 'auto-select-1700000000000', kind: 'completed', status: 'success', issueLabel: 'auto-select', reason: 'auto-select' },
+  { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', issueLabel: 'PR42', reason: 'review', review: true, prNumber: 42 },
+  { key: 'a', runId: 'r1', kind: 'active', status: 'running', issueLabel: '#42', issueNumber: 42, batchKey: 'run-42-1', batchIssues: [42] },
+];
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+
+if (body.children.length !== 3) throw new Error('expected 3 rows, got ' + body.children.length);
+
+const autoRow = body.children[0];
+const autoTitle = autoRow.querySelector('[data-cell="title"]');
+const autoChip = autoTitle.querySelector('.auto-select');
+if (!autoChip) throw new Error('expected auto-select chip in first row, no chip found');
+if ((autoChip.textContent || '').trim() !== 'auto-select') throw new Error('expected chip text auto-select, got ' + autoChip.textContent);
+
+const reviewRow = body.children[1];
+const reviewTitle = reviewRow.querySelector('[data-cell="title"]');
+const reviewChip = reviewTitle.querySelector('.review');
+if (!reviewChip) throw new Error('expected review chip in second row, no chip found');
+if ((reviewChip.textContent || '').trim() !== 'review') throw new Error('expected chip text review, got ' + reviewChip.textContent);
+
+const issueRow = body.children[2];
+const issueTitle = issueRow.querySelector('[data-cell="title"]');
+if (issueTitle.querySelector('.auto-select')) throw new Error('issue row should not have auto-select chip');
+if (issueTitle.querySelector('.review')) throw new Error('issue row should not have review chip');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
