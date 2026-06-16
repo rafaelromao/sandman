@@ -62,6 +62,12 @@ type portalRun struct {
 	// IssueTitle carries the human-readable GitHub issue title from the event
 	// payload (added by issue #833). Empty for historical or prompt-only runs.
 	IssueTitle string `json:"issueTitle,omitempty"`
+	// Reason carries the run-kind taxonomy (auto-select, review, prompt-only,
+	// issue) projected from RunState.RunKind(). It is the data plumbing for
+	// the slice-2 chip rendering and is used by slice-3 persistence tests to
+	// assert that an auto-select or review row keeps its terminal status
+	// alongside its reason. Empty for regular issue-driven runs.
+	Reason string `json:"reason,omitempty"`
 }
 
 type portalActiveRun struct {
@@ -123,6 +129,30 @@ func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]p
 	}
 
 	matchedActive := v.matchActiveRuns(promptActive, activeStates)
+	// Slice 3: when a prompt-only active instance (review or auto-select
+	// run dir on disk) has no matching active state, the daemon may have
+	// already emitted run.finished for the same RunID. Match the instance
+	// to that terminal state so the user sees the real terminal status
+	// instead of "running" / "reviewing" persisting after the daemon has
+	// finished. This is the only way the dedup pass below can collapse
+	// the active and terminal rows into one.
+	for i := range matchedActive {
+		if matchedActive[i].state != nil {
+			continue
+		}
+		for j := range runStates {
+			if runStates[j].RunID != matchedActive[i].instance.Key {
+				continue
+			}
+			if _, ok := consumedRunIDs[runStates[j].RunID]; ok {
+				continue
+			}
+			state := runStates[j]
+			matchedActive[i].state = &state
+			consumedRunIDs[state.RunID] = struct{}{}
+			break
+		}
+	}
 	for _, match := range matchedActive {
 		run := v.runFromActiveMatch(repoRoot, match, eventsByRun)
 		runs = append(runs, run)
@@ -198,7 +228,11 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 // dedupRunGroup collapses duplicate rows for one issue within one batch.
 // It first strips queued and blocked rows when any other row exists, then
 // applies runPriority (aborted > active > blocked > queued > other) and
-// breaks ties by latest StartedAt.
+// breaks ties by latest StartedAt. The slice-3 persistence contract is
+// enforced upstream in compute() (active instances are matched to
+// terminal states for the same RunID), not by reordering the dedup
+// priorities, so two unrelated terminal rows for the same issue (e.g.,
+// a recovered failure and a fresh success) still surface as two rows.
 func (v *portalRunsView) dedupRunGroup(runs []portalRun) []portalRun {
 	if len(runs) <= 1 {
 		return runs
@@ -432,6 +466,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.Events = eventsByRun[state.RunID]
 		run.LogPath = v.portalLogPath(repoRoot, issueNumber, state.Branch())
 		run.LogURL = v.portalLogDownloadURL(repoRoot, issueNumber, state.Branch())
+		run.Reason = reasonForRun(*state)
 		if state.Finished != nil {
 			finishedAt := state.Finished.Timestamp
 			run.FinishedAt = &finishedAt
@@ -577,6 +612,14 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Events:      eventsByRun[match.instance.Key],
 		BatchKey:    match.instance.Key,
 	}
+	// Active review runs (live socket, no state yet) report Review=true and
+	// must carry the matching Reason so the row is consistent with the
+	// terminal state once the run.finished event arrives. Auto-select and
+	// other run kinds stay empty here because they cannot be active without
+	// a matching state.
+	if review {
+		run.Reason = "review"
+	}
 	v.markCompletedIfSocketDead(&run, run.SocketPath)
 	return run
 }
@@ -630,6 +673,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Log:         logContent,
 		Events:      eventsByRun[runID],
 		Review:      runState.IsReview(),
+		Reason:      reasonForRun(runState),
 	}
 	if review, pr := v.reviewContext(runState); review {
 		portalRun.Review = true
@@ -659,6 +703,22 @@ func (v *portalRunsView) kindForRun(runState events.RunState) string {
 		return "active"
 	}
 	return "completed"
+}
+
+// reasonForRun returns the data-field value of the row's Reason for the
+// slice-2 chip rendering and slice-3 persistence tests. Only the two run
+// kinds that ship a chip ("auto-select" and "review") return a non-empty
+// string; every other run kind (issue-driven, prompt-only, continuation,
+// override, recovered) returns the empty string so the JSON contract
+// stays clean and the field is omitted from the wire payload.
+func reasonForRun(runState events.RunState) string {
+	if runState.IsAutoSelect() {
+		return "auto-select"
+	}
+	if runState.IsReview() {
+		return "review"
+	}
+	return ""
 }
 
 func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bool) string {
