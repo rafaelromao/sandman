@@ -145,7 +145,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil)
 
 	if run.Kind != "completed" {
 		t.Fatalf("expected kind 'completed' for run with dead socket, got %q", run.Kind)
@@ -263,7 +263,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil)
 
 	if run.Kind != "active" {
 		t.Fatalf("expected kind 'active' for run with live socket, got %q", run.Kind)
@@ -732,10 +732,112 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil)
 
 	if run.IssueTitle != "Fix login bug" {
 		t.Fatalf("expected IssueTitle %q, got %q", "Fix login bug", run.IssueTitle)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForQueued(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	queuedAt := time.Now().Add(-2 * time.Minute)
+	active := portalActiveRun{
+		Key:          "run-962-1",
+		Dir:          sockDir,
+		SocketPath:   sockPath,
+		IssueNumbers: []int{962, 960, 961},
+		StartedAt:    queuedAt.Add(-time.Second),
+	}
+	queued := &events.Event{
+		Type:      "run.queued",
+		Timestamp: queuedAt,
+		RunID:     "run-962-1",
+		Issue:     962,
+		Payload: map[string]any{
+			"blocked_by":  []int{960, 961},
+			"issue_title": "[slice 3] Add internal/orchestrator dependencies path",
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 962, nil, nil, queued, "", nil)
+
+	if run.Status != "queued" {
+		t.Fatalf("expected Status %q, got %q", "queued", run.Status)
+	}
+	if run.IssueTitle != "[slice 3] Add internal/orchestrator dependencies path" {
+		t.Fatalf("expected IssueTitle %q, got %q", "[slice 3] Add internal/orchestrator dependencies path", run.IssueTitle)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "run.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	queuedAt := time.Now().Add(-2 * time.Minute)
+	blockedAt := time.Now().Add(-1 * time.Minute)
+	active := portalActiveRun{
+		Key:          "run-962-1",
+		Dir:          sockDir,
+		SocketPath:   sockPath,
+		IssueNumbers: []int{962, 960, 961},
+		StartedAt:    queuedAt.Add(-time.Second),
+	}
+	queued := &events.Event{
+		Type:      "run.queued",
+		Timestamp: queuedAt,
+		RunID:     "run-962-1",
+		Issue:     962,
+		Payload: map[string]any{
+			"blocked_by":  []int{960, 961},
+			"issue_title": "[slice 3] Add dependencies path",
+		},
+	}
+	blocked := &events.Event{
+		Type:      "run.blocked",
+		Timestamp: blockedAt,
+		RunID:     "run-962-1",
+		Issue:     962,
+		Payload: map[string]any{
+			"blocked_by": []int{960, 961},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 962, nil, blocked, queued, "", nil)
+
+	if run.Status != "blocked" {
+		t.Fatalf("expected Status %q, got %q", "blocked", run.Status)
+	}
+	if run.IssueTitle != "[slice 3] Add dependencies path" {
+		t.Fatalf("expected IssueTitle %q, got %q", "[slice 3] Add dependencies path", run.IssueTitle)
 	}
 }
 
@@ -765,7 +867,7 @@ func TestPortal_RunFromActiveBatchIssue_MixedBatchCarriesBatchIssues(t *testing.
 		StartedAt:    startedAt,
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 860, nil, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 860, nil, nil, nil, "", nil)
 
 	if got, want := run.BatchIssues, []int{860, 854}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected BatchIssues %v, got %v", want, got)
@@ -801,7 +903,7 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 		StartedAt:    startedAt,
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, nil, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, nil, nil, nil, "", nil)
 
 	if run.BatchIssues != nil {
 		t.Fatalf("expected BatchIssues to be omitted for single-issue batch, got %v", run.BatchIssues)

@@ -2434,7 +2434,7 @@ func TestPortalRunFromActiveBatchIssue_AbortedRunHasAbortedByOperatorLog(t *test
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil)
 
 	if run.Status != "aborted" {
 		t.Fatalf("expected status 'aborted', got %q", run.Status)
