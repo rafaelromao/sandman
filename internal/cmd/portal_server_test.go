@@ -338,6 +338,75 @@ func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
 	}
 }
 
+func TestPortal_RunsEndpoint_RoundTripsReasonForReviewAndAutoSelect(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now().Add(-5 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: started, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
+		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "auto-select-1700000000000", Payload: map[string]any{"run_kind": "auto-select", "branch": "sandman/auto-select"}},
+		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "auto-select-1700000000000", Payload: map[string]any{"run_kind": "auto-select", "status": "success"}},
+		{Type: "run.started", Timestamp: started.Add(4 * time.Minute), RunID: "run-issue-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: started.Add(5 * time.Minute), RunID: "run-issue-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "status": "success"}},
+	})
+
+	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Parse the raw response so we can assert on key presence/absence
+	// without coupling to the Go struct.
+	var payload struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+
+	byRunID := make(map[string]map[string]any, len(payload.Runs))
+	for _, r := range payload.Runs {
+		rid, _ := r["runId"].(string)
+		byRunID[rid] = r
+	}
+
+	review, ok := byRunID["PR42"]
+	if !ok {
+		t.Fatal("expected PR42 in JSON")
+	}
+	if reason, _ := review["reason"].(string); reason != "review" {
+		t.Errorf("expected reason=review for PR42, got %v", review["reason"])
+	}
+
+	auto, ok := byRunID["auto-select-1700000000000"]
+	if !ok {
+		t.Fatal("expected auto-select run in JSON")
+	}
+	if reason, _ := auto["reason"].(string); reason != "auto-select" {
+		t.Errorf("expected reason=auto-select, got %v", auto["reason"])
+	}
+
+	issue, ok := byRunID["run-issue-42-1"]
+	if !ok {
+		t.Fatal("expected issue-driven run in JSON")
+	}
+	if _, hasReason := issue["reason"]; hasReason {
+		t.Errorf("expected reason key absent for issue-driven run, got %v", issue["reason"])
+	}
+}
+
 func TestPortal_CompletedReviewRunShowsTerminalStatus(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
