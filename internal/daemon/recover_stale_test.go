@@ -625,3 +625,78 @@ func TestRecoverStaleRuns_QueuedNotSupersededByAbortedStarted_Recovered(t *testi
 		t.Errorf("expected run.aborted for placeholder-42, got RunID=%q", e.RunID)
 	}
 }
+
+func TestRecoverStaleRuns_OrphanAfterFinishedBatch(t *testing.T) {
+	baseDir := t.TempDir()
+	createdAt := time.Date(2026, 6, 8, 11, 38, 0, 0, time.UTC)
+	batchFinishedAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	candidateStartedAt := time.Date(2026, 6, 8, 16, 0, 0, 0, time.UTC)
+
+	runDir := filepath.Join(baseDir, "runs", "dead-batch")
+	writeManifestFile(t, runDir, BatchManifest{
+		Issues:    []int{960, 961, 962, 963, 964, 965, 966, 967, 968},
+		CreatedAt: createdAt,
+	})
+
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.started", RunID: "run-960", Issue: 960, Timestamp: createdAt.Add(2 * time.Minute)},
+		{Type: "run.finished", RunID: "run-960", Issue: 960, Timestamp: batchFinishedAt, Payload: map[string]any{"status": "success"}},
+		{Type: "run.started", RunID: "run-964", Issue: 964, Timestamp: candidateStartedAt},
+	}
+
+	recovered, _, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 1 {
+		t.Fatalf("expected 1 recovered (candidate started after batch died), got %d", recovered)
+	}
+	if len(eventLog.logged) != 1 {
+		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
+	}
+	e := eventLog.logged[0]
+	if e.Type != "run.aborted" {
+		t.Errorf("expected run.aborted, got %q", e.Type)
+	}
+	if e.RunID != "run-964" {
+		t.Errorf("expected RunID=run-964, got %q", e.RunID)
+	}
+	if e.IssueRef == nil || *e.IssueRef != 964 {
+		t.Errorf("expected IssueRef=964, got %v", e.IssueRef)
+	}
+	if v, _ := e.Payload["recovered"].(bool); !v {
+		t.Errorf("expected payload.recovered=true, got %v", e.Payload)
+	}
+}
+
+func TestRecoverStaleRuns_CoveredWithinBatchWindow(t *testing.T) {
+	baseDir := t.TempDir()
+	createdAt := time.Date(2026, 6, 8, 11, 38, 0, 0, time.UTC)
+	batchFinishedAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	candidateStartedAt := time.Date(2026, 6, 8, 11, 50, 0, 0, time.UTC)
+
+	runDir := filepath.Join(baseDir, "runs", "dead-batch")
+	writeManifestFile(t, runDir, BatchManifest{
+		Issues:    []int{960, 961, 962, 963, 964, 965, 966, 967, 968},
+		CreatedAt: createdAt,
+	})
+
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.started", RunID: "run-960", Issue: 960, Timestamp: createdAt.Add(2 * time.Minute)},
+		{Type: "run.finished", RunID: "run-960", Issue: 960, Timestamp: batchFinishedAt, Payload: map[string]any{"status": "success"}},
+		{Type: "run.started", RunID: "run-964", Issue: 964, Timestamp: candidateStartedAt},
+	}
+
+	recovered, _, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 0 {
+		t.Fatalf("expected 0 recovered (candidate started during batch window, covered), got %d", recovered)
+	}
+	if len(eventLog.logged) != 0 {
+		t.Fatalf("expected 0 logged events, got %d", len(eventLog.logged))
+	}
+}
