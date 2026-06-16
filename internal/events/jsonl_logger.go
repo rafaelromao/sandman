@@ -251,8 +251,14 @@ func (l *JSONLLogger) RemoveEventsByIssue(issueNumber int) error {
 	}
 
 	if len(bad) > 0 {
-		if err := l.quarantineMalformed(bad); err != nil {
-			log.Printf("events: failed to quarantine %d malformed line(s) during remove: %v", len(bad), err)
+		// Apply the same dedup as Read so that a prior Read on the
+		// same dirty file does not produce duplicate sidecar entries
+		// before the truncate-rewrite cleans the main log below.
+		bad = l.filterAlreadyQuarantined(bad)
+		if len(bad) > 0 {
+			if err := l.quarantineMalformed(bad); err != nil {
+				log.Printf("events: failed to quarantine %d malformed line(s) during remove: %v", len(bad), err)
+			}
 		}
 	}
 
