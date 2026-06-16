@@ -107,7 +107,7 @@ const visualFixtureRowsJS = `
       const br = tr.querySelector('[data-cell="branch"]');
       const batchTr = tr.nextElementSibling && tr.nextElementSibling.classList && tr.nextElementSibling.classList.contains('batch-row') ? tr.nextElementSibling : null;
       const chip = batchTr ? batchTr.querySelector('.batch-membership') : null;
-      const rect = (el) => el ? { w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) } : null;
+      const rect = (el) => el ? { w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height), top: Math.round(el.getBoundingClientRect().top), left: Math.round(el.getBoundingClientRect().left) } : null;
       out.rows.push({
         idx: i,
         titleCell: rect(t),
@@ -191,8 +191,10 @@ func buildVisualFixture(t *testing.T) string {
 }
 
 type visualRect struct {
-	W int `json:"w"`
-	H int `json:"h"`
+	W    int `json:"w"`
+	H    int `json:"h"`
+	Top  int `json:"top"`
+	Left int `json:"left"`
 }
 
 type visualRow struct {
@@ -200,6 +202,7 @@ type visualRow struct {
 	TitleCell           *visualRect `json:"titleCell"`
 	Meta                *visualRect `json:"meta"`
 	Chip                *visualRect `json:"chip"`
+	BatchRow            *visualRect `json:"batchRow"`
 	IssueTitle          *visualRect `json:"issueTitle"`
 	Branch              *visualRect `json:"branch"`
 	InnerWidthTitleCell *int        `json:"innerWidthTitleCell"`
@@ -301,11 +304,13 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// TestPortal_Visual_BatchMembershipFillsRunCellAndWraps asserts the chip
-// in a row with a long batch list sits on a small number of lines and
-// the Run column grows to a sane cap instead of being clamped to its
-// min-content width.
-func TestPortal_Visual_BatchMembershipFillsRunCellAndWraps(t *testing.T) {
+// TestPortal_Visual_BatchMembershipRendersAsSecondaryRowUnderRunRow
+// asserts that the Part-of-batch chip lives in a sibling
+// <tr class="batch-row"> with a colspan=7 cell that spans the full
+// table width, and that the title cell no longer stretches to fit
+// the chip. The run row is no longer driven to 285px by the chip
+// wrapping in a 480px-cap cell.
+func TestPortal_Visual_BatchMembershipRendersAsSecondaryRowUnderRunRow(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		t.Skip("skip visual in CI")
 	}
@@ -327,26 +332,39 @@ func TestPortal_Visual_BatchMembershipFillsRunCellAndWraps(t *testing.T) {
 	if row.Chip == nil {
 		t.Fatalf("row 0 missing .batch-membership chip (test data has batchIssues > 1)")
 	}
-	// Chip fills the cell content area: with box-sizing: border-box and
-	// width: 100% the chip should equal the cell's content width (which is
-	// clientWidth minus the 14px left/right padding declared on tbody td).
-	if row.InnerWidthTitleCell == nil {
-		t.Fatalf("row 0 missing innerWidthTitleCell")
+	if row.BatchRow == nil {
+		t.Fatalf("row 0 missing batch-row rect (chip should be in a sibling tr.batch-row)")
 	}
-	innerW := *row.InnerWidthTitleCell - 28
-	if row.Chip.W < innerW-2 || row.Chip.W > innerW+2 {
-		t.Errorf("chip width %d != cell content width %d (want within 2px)", row.Chip.W, innerW)
+	// Chip fills the batch-row cell. The cell spans the full table
+	// width with the same 14px left/right padding as tbody td, so
+	// the chip width equals the table width minus 28px.
+	chipArea := row.Chip.W
+	want := dump.ScrollWidth - 28
+	if chipArea < want-2 || chipArea > want+2 {
+		t.Errorf("chip width %d != table width minus padding %d (want within 2px)", chipArea, want)
 	}
-	// Chip should be at most 2 lines for an 8-issue batch at 480px cap
-	// (1 line for <=7 issues, 2 lines for 8+). 3+ lines was the bug.
-	if row.Chip.H > 40 {
-		t.Errorf("chip height %d implies 3+ wrapped lines; expected <= 2 (height <= 40px)", row.Chip.H)
+	// The chip sits in a single line at 1280px viewport: 9 issues
+	// comfortably fit in 1252px.
+	if row.Chip.H > 30 {
+		t.Errorf("chip height %d implies wrapped lines; expected a single line (<= 30px)", row.Chip.H)
 	}
-	// Run column grew to the cap, not clamped to its min-content.
-	if row.TitleCell == nil || row.TitleCell.W < 200 {
-		t.Errorf("Run column width %v; expected >= 200 (the column cap allows it to grow)", row.TitleCell)
+	// The batch-row is positioned directly under the run row.
+	if row.TitleCell == nil {
+		t.Fatalf("row 0 missing titleCell rect")
 	}
-	if row.TitleCell != nil && row.TitleCell.W > 480 {
+	runBottom := row.TitleCell.Top + row.TitleCell.H
+	if row.BatchRow.Top < runBottom-1 || row.BatchRow.Top > runBottom+1 {
+		t.Errorf("batch-row top %d not directly under run row bottom %d", row.BatchRow.Top, runBottom)
+	}
+	// Title cell collapsed to its true content (name + meta + chip
+	// moved out). On desktop a 9-issue chip wrapping to 2 lines
+	// inside the title cell used to push the cell to 120+px; with
+	// the chip out, the cell should be <= 90px.
+	if row.TitleCell.H > 90 {
+		t.Errorf("title cell height %d implies the chip is still inside it; expected <= 90px", row.TitleCell.H)
+	}
+	// Run column still respects the 480px cap.
+	if row.TitleCell.W > 480 {
 		t.Errorf("Run column width %d > 480 cap; expected the cap to hold", row.TitleCell.W)
 	}
 }

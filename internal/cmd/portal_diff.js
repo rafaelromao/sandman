@@ -774,7 +774,7 @@
     }
     const fresh = buildBatchRow(newRun);
     if (!fresh) return;
-    const anchor = nextSiblingRunOrBatchRow(row);
+    const anchor = nextSiblingRunOrDetailRow(row);
     if (anchor) {
       body.insertBefore(fresh, anchor);
     } else {
@@ -783,7 +783,7 @@
     mutationCount += 1;
   }
 
-  function nextSiblingRunOrBatchRow(row) {
+  function nextSiblingRunOrDetailRow(row) {
     let n = row.nextElementSibling;
     while (n) {
       if (n.classList && (n.classList.contains('detail-row') || n.classList.contains('run-row'))) return n;
