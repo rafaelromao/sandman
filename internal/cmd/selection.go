@@ -36,6 +36,10 @@ func resolveAutoQuery(label, query string) string {
 }
 
 func runSelectionPhase(ctx context.Context, client github.Client, count int, sandmanDir, agentName, modelFlag string, cfg *config.Config, candidates []int) ([]int, error) {
+	// Thin wrapper kept so the existing direct-call tests in run_test.go and
+	// auto_test.go (which pre-date the event-emission seam) can keep calling
+	// runSelectionPhase. Production code paths go through
+	// runSelectionPhaseWithEvents via resolveAutoIssues.
 	return runSelectionPhaseWithEvents(ctx, client, count, sandmanDir, agentName, modelFlag, cfg, candidates, resolveAutoQuery("", ""), nil)
 }
 

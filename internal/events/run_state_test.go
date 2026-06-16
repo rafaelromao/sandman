@@ -303,6 +303,28 @@ func TestRunState_IsAutoSelect(t *testing.T) {
 	})
 }
 
+func TestProjectRunStates_AutoSelectRunIsNotLabeledPromptOnly(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "auto-select-1704110400000", Payload: map[string]any{"run_kind": "auto-select", "count": 5, "query": "label:ready-for-agent is:open", "candidates": []int{1, 2}}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "auto-select-1704110400000", Payload: map[string]any{"run_kind": "auto-select", "status": "success", "selected": []int{1, 2}}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if got := run.IssueLabel(); got == "prompt-only" {
+		t.Fatalf("expected auto-select run to NOT be labeled prompt-only, got %q", got)
+	}
+	if got := run.IssueLabel(); got != "auto-select-1704110400000" {
+		t.Fatalf("expected auto-select run IssueLabel to be the RunID %q, got %q", "auto-select-1704110400000", got)
+	}
+}
+
 func TestProjectRunStates_IdleTimeoutEventDoesNotBreakProjection(t *testing.T) {
 	idleTimeoutAt := time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC)
 	abortedAt := time.Date(2025, 1, 1, 12, 6, 0, 0, time.UTC)

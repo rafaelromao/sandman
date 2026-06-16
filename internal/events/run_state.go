@@ -64,6 +64,9 @@ func (r RunState) IssueLabel() string {
 	if r.IsReview() && r.RunID != "" {
 		return r.RunID
 	}
+	if r.IsAutoSelect() && r.RunID != "" {
+		return r.RunID
+	}
 	if r.IsPromptOnly() {
 		return "prompt-only"
 	}
