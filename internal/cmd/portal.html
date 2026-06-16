@@ -478,6 +478,19 @@
       color: var(--muted);
       font-weight: 400;
     }
+    tbody tr.batch-row td {
+      padding: 0 14px 6px;
+      border-bottom: none;
+    }
+    tbody tr.run-row + tr.batch-row td {
+      padding-top: 0;
+    }
+    tbody tr.run-row:hover + tr.batch-row td {
+      background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
+    }
+    tbody tr.run-row.active + tr.batch-row td {
+      background: color-mix(in oklch, var(--accent) 12%, var(--surface));
+    }
     .context-row td {
       padding: 0 12px 4px;
       border: none;
