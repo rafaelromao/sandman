@@ -279,17 +279,23 @@ func TestJSONLLogger_ReadQuarantinesMalformedLines(t *testing.T) {
 		t.Fatalf("main log lost the valid event during read: %q", main)
 	}
 
-	// A second Read must be idempotent: the sidecar is not appended
-	// to again because the bad lines have already been quarantined
-	// to a parallel set. (We do not track already-quarantined lines
-	// by content; the sidecar will grow on every Read. This test
-	// only verifies that the returned events are stable.)
+	// A second Read must be idempotent: the same torn lines are
+	// detected again, but filterAlreadyQuarantined skips them, so
+	// the sidecar does not grow and no extra "skipping" log lines
+	// are produced.
 	got, err = logger.Read()
 	if err != nil {
 		t.Fatalf("second read: %v", err)
 	}
 	if len(got) != 1 || got[0].RunID != "run-good" {
 		t.Fatalf("second read expected 1 event, got %d", len(got))
+	}
+	side2, err := os.ReadFile(path + ".malformed")
+	if err != nil {
+		t.Fatalf("read sidecar again: %v", err)
+	}
+	if string(side) != string(side2) {
+		t.Errorf("sidecar grew on a no-op read: was %d bytes, now %d", len(side), len(side2))
 	}
 }
 
