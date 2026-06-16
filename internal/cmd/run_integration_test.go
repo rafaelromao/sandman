@@ -1064,7 +1064,7 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 	}
 }
 
-func TestRun_DefaultSandboxFourIssuesAutoModeStartsMinimumContainersAndKeepsWorktreesSeparate(t *testing.T) {
+func TestRun_DefaultSandboxFourIssuesAutoModeSpawnsContainersForCapacityAndKeepsWorktreesSeparate(t *testing.T) {
 	if !podmanAvailable(t) {
 		return
 	}
@@ -1170,8 +1170,8 @@ sleep 1
 		}
 	}
 
-	if got := len(hostnames); got != 1 {
-		t.Fatalf("expected exactly 1 container hostname (effectiveParallel=2 cap applied in auto mode, 4 issues share 1 container with capacity=2), got %d: %v", got, hostnames)
+	if got := len(hostnames); got != 2 {
+		t.Fatalf("expected exactly 2 container hostnames (auto mode spawns one container per 2 issues with capacity=2, effectiveParallel=4), got %d: %v", got, hostnames)
 	}
 }
 

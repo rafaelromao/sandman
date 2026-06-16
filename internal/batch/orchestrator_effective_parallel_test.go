@@ -32,12 +32,16 @@ func TestEffectiveParallel_CapCalculation(t *testing.T) {
 		want              int
 	}{
 		{"parallel=4 capacity=4 max=0 auto", 4, 4, 0, 4},
-		{"parallel=4 capacity=2 max=0 auto caps to 2", 4, 2, 0, 2},
+		{"parallel=4 capacity=2 max=0 auto", 4, 2, 0, 4},
 		{"parallel=4 capacity=2 max=2 explicit totals 4", 4, 2, 2, 4},
 		{"parallel=4 capacity=4 max=1 explicit totals 4", 4, 4, 1, 4},
 		{"parallel=4 capacity=2 max=1 explicit caps to 2", 4, 2, 1, 2},
 		{"parallel=0 capacity=4 max=0 unlimited stays 0", 0, 4, 0, 0},
 		{"parallel=0 capacity=4 max=2 unlimited stays 0", 0, 4, 2, 0},
+		{"parallel=8 capacity=4 max=0 auto", 8, 4, 0, 8},
+		{"parallel=8 capacity=2 max=0 auto", 8, 2, 0, 8},
+		{"parallel=1 capacity=100 max=0 auto", 1, 100, 0, 1},
+		{"parallel=6 capacity=1 max=0 auto", 6, 1, 0, 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,11 +122,12 @@ func TestBatchStartGate_HonoursEffectiveParallelCap(t *testing.T) {
 }
 
 // TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel is a direct
-// regression guard for issue #500: the start gate must be constructed with
-// the capped effectiveParallel, not the raw parallel value. We exercise the
-// auto-mode cap (parallel=4, capacity=2, max_containers=0) and assert that
-// the batch never sees more than 2 concurrent starts despite the raw
-// parallel being 4.
+// regression guard for issue #500 and #1076: the start gate must be
+// constructed with the capped effectiveParallel, not the raw parallel value.
+// In auto mode (maxContainers=0) the cap is parallel*containerCapacity, so
+// the gate must not throttle below the requested parallel. We assert that
+// the batch reaches the full requested parallelism (peak == parallel) and
+// never exceeds it.
 func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 	requireContainerRuntime(t)
 
@@ -145,9 +150,9 @@ func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 		},
 	}
 
-	// If the gate used the raw parallel=4, the fakeRunnableFactory would
-	// record 4 concurrent runs. The cap from effectiveParallelCap(4,2,0)=2
-	// must throttle this to 2.
+	// Auto mode (max=0) with capacity=2, parallel=4: the cap should not
+	// throttle below the requested parallel of 4 (effectiveParallelCap(4,2,0)
+	// = 4 in auto mode). The factory records peak active runs.
 	factory := &fakeRunnableFactory{
 		results: []AgentRunResult{
 			{IssueNumber: 1, Status: "success"},
@@ -183,10 +188,12 @@ func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// effectiveParallel=2 caps the gate; the factory records peak active
-	// runs. If the gate were built with raw parallel=4, peak would be 4.
-	if got := factory.max; got > 2 {
-		t.Fatalf("start gate used raw parallel (peak=%d), expected effectiveParallel cap of 2", got)
+	// effectiveParallelCap(4, 2, 0) = 4 in auto mode, so the gate permits
+	// the full requested parallelism. The factory must observe peak == 4.
+	// If the gate used a stale cap of 2 (the pre-#1076 bug), peak would be
+	// <= 2 and the test would fail.
+	if got := factory.max; got != 4 {
+		t.Fatalf("start gate throttled below requested parallel (peak=%d, want 4); auto mode must allow full parallelism", got)
 	}
 }
 
