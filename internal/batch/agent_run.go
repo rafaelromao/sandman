@@ -149,6 +149,11 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	renderedCmd, err = r.prependEnv(renderedCmd)
 	if err != nil {
+		// The typed *shellenv.InvalidKeyError from shellenv.Build is
+		// intentionally not surfaced to the run result: the run is
+		// marked "failure" with a generic status. A future caller
+		// that wants per-key error reporting can inspect the typed
+		// error returned by prependEnv directly.
 		r.status = "failure"
 		return r.Result()
 	}
