@@ -113,8 +113,15 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	if got.Payload["branch"] != branch {
 		t.Errorf("run.retry branch = %v, want %q", got.Payload["branch"], branch)
 	}
-	if lines, _ := got.Payload["last_log_lines"].([]any); len(lines) == 0 {
-		t.Errorf("run.retry last_log_lines is empty, want non-empty")
+	if lines, _ := got.Payload["last_log_lines"].([]any); len(lines) != 2 {
+		t.Errorf("run.retry last_log_lines = %v (len=%d), want exactly 2 lines (\"--- run 1/3 ---\", \"--- retry 2/3 ---\") at retry time", lines, len(lines))
+	} else {
+		wantLines := []string{"--- run 1/3 ---", "--- retry 2/3 ---"}
+		for i, want := range wantLines {
+			if got, _ := lines[i].(string); got != want {
+				t.Errorf("run.retry last_log_lines[%d] = %q, want %q", i, got, want)
+			}
+		}
 	}
 
 	// Verify ordering: run.started, run.retry, run.finished (in that order
@@ -191,6 +198,7 @@ func TestRunSingle_EmitsRunRetryWithAbortedStatusAfterHeartbeatKill(t *testing.T
 		runnableFactory:       runFactory,
 		heartbeatTickInterval: heartbeatTestTick,
 		errorLog:              io.Discard,
+		layout:                paths.NewLayout(cfg, workDir),
 	}
 	o.runSessionOpts.killTimeout = 50 * time.Millisecond
 
@@ -227,6 +235,23 @@ func TestRunSingle_EmitsRunRetryWithAbortedStatusAfterHeartbeatKill(t *testing.T
 	}
 	if maxAttempts, _ := got.Payload["max_attempts"].(float64); maxAttempts != 2 {
 		t.Errorf("run.retry max_attempts = %v, want 2", got.Payload["max_attempts"])
+	}
+	// At retry time the log contains --- run 1/2 --- (from attempt 0's
+	// logRunMarkerFn), the 3 lines the stalled runnable wrote before
+	// being killed, and --- retry 2/2 --- (from attempt 1's
+	// logRetryMarkerFn in prepareAttempt). readTailLines keeps the
+	// last 3 lines, so the expected payload is the 2 trailing stall
+	// lines plus the retry marker.
+	lines, _ := got.Payload["last_log_lines"].([]any)
+	wantLines := []string{"processing step 1", "processing step 2", "--- retry 2/2 ---"}
+	if len(lines) != len(wantLines) {
+		t.Errorf("run.retry last_log_lines = %v (len=%d), want %v", lines, len(lines), wantLines)
+	} else {
+		for i, want := range wantLines {
+			if got, _ := lines[i].(string); got != want {
+				t.Errorf("run.retry last_log_lines[%d] = %q, want %q", i, got, want)
+			}
+		}
 	}
 }
 
@@ -301,7 +326,7 @@ func TestRunSingle_EmitsZeroRunRetryEventsOnSingleAttempt(t *testing.T) {
 }
 
 // TestRunPromptOnly_EmitsRunRetryBetweenAttemptsOnFailure asserts that the
-// prompt-only retry loop emits run.retry with Issue: 0 and IssueRef: nil,
+// prompt-only retry loop emits run.retry with issue: 0 in the JSON payload,
 // matching the existing prompt-only convention for run.started/run.finished.
 func TestRunPromptOnly_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	workDir := t.TempDir()
@@ -368,5 +393,67 @@ func TestRunPromptOnly_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	}
 	if got.Payload["previous_status"] != "failure" {
 		t.Errorf("run.retry previous_status = %v, want \"failure\"", got.Payload["previous_status"])
+	}
+}
+
+// TestRunPromptOnly_EmitsZeroRunRetryEventsOnSingleAttempt asserts that a
+// prompt-only run configured with retries=0 emits zero run.retry events
+// (the terminal run.finished covers the single attempt).
+func TestRunPromptOnly_EmitsZeroRunRetryEventsOnSingleAttempt(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/prompt-only-456"
+	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	eventLog := &events.JSONLLogger{Path: eventsPath}
+	o := &Orchestrator{
+		renderer: &retryRenderer{result: "rendered prompt"},
+		errorLog: io.Discard,
+		layout:   paths.NewLayout(&config.Config{}, workDir),
+		eventLog: eventLog,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{
+			{IssueNumber: 0, Status: "failure", Branch: branch},
+		}},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), branch, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "run-prompt-456", nil)
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
+	}
+
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var retryCount int
+	var foundFinished bool
+	for _, e := range logs {
+		if e.Type == "run.retry" {
+			retryCount++
+		}
+		if e.Type == "run.finished" {
+			foundFinished = true
+		}
+	}
+	if retryCount != 0 {
+		t.Errorf("expected 0 run.retry events for a 1-attempt prompt-only run, got %d (events: %v)", retryCount, logs)
+	}
+	if !foundFinished {
+		t.Errorf("expected run.finished event in event log")
 	}
 }

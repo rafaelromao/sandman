@@ -58,7 +58,7 @@ Emitted when one or more `BlockedBy` issues failed in the same batch.
 | `blocked_by` | List of issue numbers that caused the block |
 
 #### `run.retry`
-Emitted at the top of each retry iteration in the orchestrator's `for attempt` loop, between two attempts that are both actually about to run. The first attempt and the final attempt do not emit `run.retry`; the terminal `run.finished` (or `run.aborted`) covers those cases. Symmetric across the issue-driven and prompt-only retry loops; prompt-only runs use `issue: null` and `issue_ref: null` to match the existing prompt-only convention.
+Emitted at the top of each retry iteration in the orchestrator's `for attempt` loop, between two attempts that are both actually about to run. The first attempt and the final attempt do not emit `run.retry`; the terminal `run.finished` (or `run.aborted`) covers those cases. Symmetric across the issue-driven and prompt-only retry loops; prompt-only runs use `issue: null` to match the existing prompt-only convention.
 
 | Field | Description |
 |-------|-------------|

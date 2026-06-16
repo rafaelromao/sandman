@@ -1237,8 +1237,8 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 // status of the previous iteration passed through verbatim. branch is the
 // run's branch; logPath is the per-run log file the heartbeat and the retry
 // event both tail. issueNumber == 0 denotes a prompt-only run, matching the
-// existing prompt-only convention (Issue: 0, IssueRef: nil). No-op when the
-// orchestrator has no event log.
+// existing prompt-only convention (issue: 0 in the JSON payload). No-op when
+// the orchestrator has no event log.
 func (o *Orchestrator) logRetry(runID, branch string, attempt, maxAttempts int, previousStatus, logPath string, issueNumber int) {
 	if o.eventLog == nil {
 		return
