@@ -1231,6 +1231,37 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 	})
 }
 
+// logRetry writes a run.retry event at the top of a retry iteration. It is
+// called from runOnce for both the issue-driven and prompt-only loops, with
+// attempt (1-indexed, the about-to-start attempt), maxAttempts, and the
+// status of the previous iteration passed through verbatim. branch is the
+// run's branch; logPath is the per-run log file the heartbeat and the retry
+// event both tail. issueNumber == 0 denotes a prompt-only run, matching the
+// existing prompt-only convention (Issue: 0, IssueRef: nil). No-op when the
+// orchestrator has no event log.
+func (o *Orchestrator) logRetry(runID, branch string, attempt, maxAttempts int, previousStatus, logPath string, issueNumber int) {
+	if o.eventLog == nil {
+		return
+	}
+	event := events.Event{
+		Type:      "run.retry",
+		Timestamp: time.Now(),
+		RunID:     runID,
+		Issue:     issueNumber,
+		Payload: map[string]any{
+			"attempt":         attempt,
+			"max_attempts":    maxAttempts,
+			"previous_status": previousStatus,
+			"branch":          branch,
+			"last_log_lines":  readTailLines(logPath, 3),
+		},
+	}
+	if issueNumber > 0 {
+		event.IssueRef = issueRef(issueNumber)
+	}
+	_ = o.eventLog.Log(event)
+}
+
 func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 	opts := sandbox.StartOptions{}
 
@@ -1553,6 +1584,10 @@ func (s *runSession) runOnce(
 		attemptRenderCfg, errResult := prepareAttempt(attempt)
 		if errResult != nil {
 			return *errResult, errResult.Status == "success"
+		}
+
+		if attempt > 0 {
+			o.logRetry(runID, branch, attempt+1, attempts, result.Status, logPath, s.issueNumber)
 		}
 
 		runnable := factory.NewRunnable(issue, branch, wt)

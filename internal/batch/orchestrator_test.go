@@ -1279,13 +1279,19 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if len(events) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(events))
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events (run.started + run.retry + run.finished), got %d: %v", len(events), events)
 	}
-	if events[1].Type != "run.finished" {
-		t.Fatalf("expected terminal event run.finished, got %q", events[1].Type)
+	if events[0].Type != "run.started" {
+		t.Fatalf("expected first event run.started, got %q", events[0].Type)
 	}
-	if status, _ := events[1].Payload["status"].(string); status != "failure" {
+	if events[1].Type != "run.retry" {
+		t.Fatalf("expected second event run.retry, got %q", events[1].Type)
+	}
+	if events[2].Type != "run.finished" {
+		t.Fatalf("expected terminal event run.finished, got %q", events[2].Type)
+	}
+	if status, _ := events[2].Payload["status"].(string); status != "failure" {
 		t.Fatalf("expected terminal status failure, got %q", status)
 	}
 }

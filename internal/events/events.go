@@ -13,6 +13,7 @@ import (
 //	run.continued     — agent run resumed from stored context
 //	run.queued        — issue waiting on blockers or capacity
 //	run.blocked       — one or more BlockedBy issues failed in batch
+//	run.retry         — orchestrator about to start the next attempt of a retry loop
 //	run.idle_timeout  — heartbeat watchdog detected inactivity (fire-and-forget; terminal status is set on run.aborted)
 //	run.warning       — non-fatal issue during sandbox cleanup
 //	run.finished      — agent run completed successfully
