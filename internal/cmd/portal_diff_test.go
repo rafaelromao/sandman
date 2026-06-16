@@ -2276,9 +2276,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffCreateRunRow_ArchivedAddsRowClass asserts that a run
-// with archived=true gets a "row-archived" class on the row so the
-// archived treatment is styleable independently of normal rows.
 func TestPortalDiffCreateRunRow_ArchivedAddsRowClass(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#42', archived: true };
@@ -2286,16 +2283,13 @@ const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 if (!created.row.classList.contains('row-archived')) {
-  throw new Error('expected row-archived class on archived row, got classes: ' + Array.from(created.row.classList._set).join(','));
+  throw new Error('expected row-archived class on archived row');
 }
 console.log('PASS');
 `
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffCreateRunRow_ArchivedRendersArchivedBadge asserts that
-// a run with archived=true carries a ".badge.archived" element with the
-// "Archived" label in the badge cell, alongside the status badge.
 func TestPortalDiffCreateRunRow_ArchivedRendersArchivedBadge(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#42', archived: true };
@@ -2318,9 +2312,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffCreateRunRow_NonArchivedOmitsArchivedTreatment asserts
-// the default archived:false (or missing) does NOT add row-archived or
-// .badge.archived; only the status badge is rendered.
 func TestPortalDiffCreateRunRow_NonArchivedOmitsArchivedTreatment(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#42', archived: false };
@@ -2345,10 +2336,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffUpdateCells_ArchivedToggleUpdatesRowAndBadge asserts
-// that toggling archived from false->true (and back) updates the
-// existing row in place: adds/removes row-archived class and adds/
-// removes the .badge.archived element, without rebuilding the row.
 func TestPortalDiffUpdateCells_ArchivedToggleUpdatesRowAndBadge(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#42', archived: false };
@@ -2391,10 +2378,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffDiffRuns_ArchivedPreservesRowIdentityAcrossPolls
-// asserts that across two consecutive diffRuns calls (a polling
-// refresh), an archived row keeps the same DOM node identity, the
-// row-archived class, and the .badge.archived element.
 func TestPortalDiffDiffRuns_ArchivedPreservesRowIdentityAcrossPolls(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [

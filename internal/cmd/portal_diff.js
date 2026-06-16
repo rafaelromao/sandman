@@ -170,7 +170,6 @@
   function appendArchivedBadge(td) {
     const badge = global.document.createElement('span');
     badge.classList.add('badge', 'archived');
-    badge.setAttribute('data-archived-badge', '1');
     const labelSpan = global.document.createElement('span');
     labelSpan.classList.add('badge-label');
     labelSpan.textContent = 'Archived';
