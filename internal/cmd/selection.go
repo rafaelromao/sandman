@@ -9,10 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
@@ -33,6 +36,25 @@ func resolveAutoQuery(label, query string) string {
 }
 
 func runSelectionPhase(ctx context.Context, client github.Client, count int, sandmanDir, agentName, modelFlag string, cfg *config.Config, candidates []int) ([]int, error) {
+	// Thin wrapper kept so the existing direct-call tests in run_test.go and
+	// auto_test.go (which pre-date the event-emission seam) can keep calling
+	// runSelectionPhase. Production code paths go through
+	// runSelectionPhaseWithEvents via resolveAutoIssues.
+	return runSelectionPhaseWithEvents(ctx, client, count, sandmanDir, agentName, modelFlag, cfg, candidates, resolveAutoQuery("", ""), nil)
+}
+
+// runSelectionPhaseWithEvents runs the selection phase and emits a pair of
+// run.started / run.finished events to eventLog so the portal can pick the
+// auto-select run up. The RunID has the form "auto-select-<unix-ms>". The
+// run.started event is emitted only after pre-flight checks (review daemon
+// guard, candidate fetch) pass; pre-flight failures emit no run.started and
+// the underlying error is returned to the caller. run.finished is always
+// emitted when run.started was emitted, with status "success" or "failure"
+// (the latter carrying a reason string built from the returned error).
+//
+// When eventLog is nil the function behaves as the original runSelectionPhase:
+// no events are emitted and only the selected issues (or error) are returned.
+func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, count int, sandmanDir, agentName, modelFlag string, cfg *config.Config, candidates []int, query string, eventLog events.EventLog) ([]int, error) {
 	if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
 		return nil, err
 	}
@@ -77,14 +99,65 @@ func runSelectionPhase(ctx context.Context, client github.Client, count int, san
 		return nil, fmt.Errorf("render agent command: %w", err)
 	}
 
+	runID := "auto-select-" + strconv.FormatInt(time.Now().UnixMilli(), 10)
+
+	if eventLog != nil {
+		_ = eventLog.Log(events.Event{
+			Type:      "run.started",
+			Timestamp: time.Now(),
+			RunID:     runID,
+			Payload: map[string]any{
+				"run_kind":   "auto-select",
+				"count":      effectiveCount,
+				"query":      query,
+				"candidates": append([]int(nil), candidates...),
+			},
+		})
+	}
+
 	cmd := exec.CommandContext(ctx, "sh", "-c", renderedCmd)
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("selection agent failed with stderr: %s: %w", strings.TrimSpace(stderrBuf.String()), err)
+		agentErr := fmt.Errorf("selection agent failed with stderr: %s: %w", strings.TrimSpace(stderrBuf.String()), err)
+		emitAutoSelectFinished(eventLog, runID, "failure", agentErr.Error(), nil)
+		return nil, agentErr
 	}
 
-	return readSelectedIssues(sandmanDir, effectiveCount)
+	selected, err := readSelectedIssues(sandmanDir, effectiveCount)
+	if err != nil {
+		emitAutoSelectFinished(eventLog, runID, "failure", err.Error(), nil)
+		return nil, err
+	}
+	emitAutoSelectFinished(eventLog, runID, "success", "", selected)
+	return selected, nil
+}
+
+// emitAutoSelectFinished writes the run.finished event for an auto-select run.
+// When eventLog is nil this is a no-op so the function can be called from
+// both the instrumented and the legacy code paths. The reason field is
+// omitted on success; the selected field is included on success and omitted
+// on failure.
+func emitAutoSelectFinished(eventLog events.EventLog, runID, status, reason string, selected []int) {
+	if eventLog == nil {
+		return
+	}
+	payload := map[string]any{
+		"run_kind": "auto-select",
+		"status":   status,
+	}
+	if reason != "" {
+		payload["reason"] = reason
+	}
+	if status == "success" {
+		payload["selected"] = append([]int(nil), selected...)
+	}
+	_ = eventLog.Log(events.Event{
+		Type:      "run.finished",
+		Timestamp: time.Now(),
+		RunID:     runID,
+		Payload:   payload,
+	})
 }
 
 func fetchCandidateIssues(client github.Client, candidates []int) ([]github.Issue, error) {
@@ -135,9 +208,9 @@ func readSelectedIssues(sandmanDir string, maxCount int) ([]int, error) {
 	return selected, nil
 }
 
-func resolveAutoIssues(ctx context.Context, client github.Client, count int, candidates []int, sandmanDir, agentName, modelFlag string, cfg *config.Config) ([]int, error) {
+func resolveAutoIssues(ctx context.Context, client github.Client, count int, candidates []int, sandmanDir, agentName, modelFlag string, cfg *config.Config, query string, eventLog events.EventLog) ([]int, error) {
 	if autoPromptFileExists(sandmanDir) {
-		return runSelectionPhase(ctx, client, count, sandmanDir, agentName, modelFlag, cfg, candidates)
+		return runSelectionPhaseWithEvents(ctx, client, count, sandmanDir, agentName, modelFlag, cfg, candidates, query, eventLog)
 	}
 
 	if len(candidates) == 0 {
