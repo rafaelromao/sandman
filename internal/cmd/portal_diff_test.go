@@ -2275,3 +2275,64 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalDiffDiffRuns_ReviewAndAutoSelectChipsAlsoInTitleCell asserts
+// that the review/auto-select chip is rendered both in the title cell
+// (matching the visual position of the "Part of batch" chip on plain
+// issue rows) and in the legacy context-row below the data row.
+func TestPortalDiffDiffRuns_ReviewAndAutoSelectChipsAlsoInTitleCell(t *testing.T) {
+	js := `const body = makeMockBody();
+const runs = [
+  { key: 'auto-select-1700000000000', runId: 'auto-select-1700000000000', kind: 'completed', status: 'success', issueLabel: 'auto-select', reason: 'auto-select', candidates: [1, 2, 3] },
+  { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', issueLabel: 'PR42', reason: 'review', review: true, prNumber: 42, issueNumber: 1 },
+  { key: 'a', runId: 'r1', kind: 'active', status: 'running', issueLabel: '#42', issueNumber: 42, batchKey: 'run-42-1', batchIssues: [41, 42] },
+];
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+
+function chipInTitleCell(runKey) {
+  const dataRow = body.querySelector('tr[data-run-key="' + runKey + '"]');
+  if (!dataRow) throw new Error('expected data row for ' + runKey);
+  const titleCell = dataRow.querySelector('[data-cell="title"]');
+  if (!titleCell) throw new Error('expected title cell for ' + runKey);
+  return titleCell.querySelector('.context-chip');
+}
+
+const autoTitleChip = chipInTitleCell('auto-select-1700000000000');
+if (!autoTitleChip) {
+  const dataRow = body.querySelector('tr[data-run-key="auto-select-1700000000000"]');
+  const titleCell = dataRow.querySelector('[data-cell="title"]');
+  const wrap = titleCell.children[0];
+  throw new Error('expected auto-select context-chip in title cell. wrap: ' + JSON.stringify(wrap ? {
+    tag: wrap.tagName,
+    cls: wrap.className || '',
+    text: wrap.textContent || '',
+    children: wrap.children ? wrap.children.map((c) => ({
+      tag: c.tagName,
+      cls: c.className || '',
+      text: c.textContent || '',
+    })) : 'no children',
+  } : 'no wrap'));
+}
+if (!autoTitleChip.textContent.includes('Auto-select candidates: #1, #2, #3')) throw new Error('expected auto-select chip text in title, got ' + autoTitleChip.textContent);
+
+const reviewTitleChip = chipInTitleCell('PR42');
+if (!reviewTitleChip) throw new Error('expected review context-chip in title cell');
+if (!reviewTitleChip.textContent.includes('Reviewing PR #42 for issue #1')) throw new Error('expected review chip text in title, got ' + reviewTitleChip.textContent);
+
+// Plain issue rows surface the batch-membership chip, not the
+// context-chip.
+const issueTitleChip = chipInTitleCell('a');
+if (issueTitleChip) throw new Error('issue row should not have context-chip in title cell');
+const issueDataRow = body.querySelector('tr[data-run-key="a"]');
+const issueTitleCell = issueDataRow.querySelector('[data-cell="title"]');
+const issueBatchChip = issueTitleCell.querySelector('.batch-membership');
+if (!issueBatchChip) {
+  throw new Error('expected batch-membership chip on mixed-batch issue row. title cell children: ' + JSON.stringify(issueTitleCell.children.map((c) => ({tag: c.tagName, cls: c.className || '', text: c.textContent || '', children: c.children ? c.children.map((cc) => ({tag: cc.tagName, cls: cc.className || '', text: cc.textContent || ''})) : []}))));
+}
+
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}

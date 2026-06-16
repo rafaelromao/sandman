@@ -70,7 +70,17 @@
     meta.classList.add('meta-line', 'mono');
     meta.textContent = helpers.renderRunMeta(run);
     wrap.appendChild(meta);
-    if (!run.reason || (run.reason !== 'auto-select' && run.reason !== 'review')) {
+    // Render the secondary chip in the title cell so the visual
+    // position matches the batch-membership chip for plain issue
+    // rows. Review and auto-select rows surface the same kind of
+    // chip (review target, auto-select candidates) in this slot;
+    // plain rows surface the batch-membership chip. The legacy
+    // context-row is kept below the data row for backwards
+    // compatibility with existing tests and keyboard navigation.
+    const text = contextText(run);
+    if (text) {
+      wrap.appendChild(buildContextChip(text));
+    } else {
       const batchMembership = renderBatchMembership(run);
       if (batchMembership) wrap.appendChild(batchMembership);
     }
@@ -96,12 +106,16 @@
     tr.setAttribute('data-context-for', run.key);
     const td = global.document.createElement('td');
     td.setAttribute('colspan', '7');
+    td.appendChild(buildContextChip(text));
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function buildContextChip(text) {
     const chip = global.document.createElement('span');
     chip.classList.add('context-chip', 'mono');
     chip.textContent = text;
-    td.appendChild(chip);
-    tr.appendChild(td);
-    return tr;
+    return chip;
   }
 
   function contextRowOf(body, runKey) {
@@ -671,29 +685,41 @@
   }
 
   function reconcileBatchMembership(wrap, run) {
-    const existing = wrap.querySelector('.batch-membership');
-    if (run.reason === 'auto-select' || run.reason === 'review') {
-      if (existing) {
-        wrap.removeChild(existing);
+    const existingBatch = wrap.querySelector('.batch-membership');
+    const existingContext = wrap.querySelector('.context-chip');
+    const text = contextText(run);
+    if (text) {
+      if (existingBatch) {
+        wrap.removeChild(existingBatch);
         mutationCount += 1;
       }
+      if (!existingContext) {
+        wrap.appendChild(buildContextChip(text));
+        mutationCount += 1;
+      } else if (existingContext.textContent !== text) {
+        setText(existingContext, text);
+      }
       return;
+    }
+    if (existingContext) {
+      wrap.removeChild(existingContext);
+      mutationCount += 1;
     }
     const chip = renderBatchMembership(run);
     if (!chip) {
-      if (existing) {
-        wrap.removeChild(existing);
+      if (existingBatch) {
+        wrap.removeChild(existingBatch);
         mutationCount += 1;
       }
       return;
     }
-    if (!existing) {
+    if (!existingBatch) {
       wrap.appendChild(chip);
       mutationCount += 1;
       return;
     }
-    if (existing.textContent !== chip.textContent) {
-      setText(existing, chip.textContent);
+    if (existingBatch.textContent !== chip.textContent) {
+      setText(existingBatch, chip.textContent);
     }
   }
 
