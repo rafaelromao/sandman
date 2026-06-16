@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 )
 
 // RunSession owns the on-disk artifacts and the per-run sockets that must
@@ -101,7 +102,12 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 		return fmt.Errorf("%w: %v", ErrStepControlSocket, err)
 	}
 
-	if commander != nil {
+	// A typed-nil interface (e.g. `var c IssueCommander = (*T)(nil)`)
+	// is non-nil but unusable; calling cmdServer.Start with such a
+	// value would panic on the first abort request. reflect.IsNil
+	// detects the typed-nil trap by introspecting the dynamic value.
+	hasRealCommander := commander != nil && !reflect.ValueOf(commander).IsNil()
+	if hasRealCommander {
 		s.cmdServer = NewCommandServer(s.runDir, commander)
 		if err := s.cmdServer.Start(); err != nil {
 			return fmt.Errorf("%w: %v", ErrStepCommandServer, err)

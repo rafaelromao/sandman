@@ -592,14 +592,31 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			// half-bootstrapped run. Close is deferred first so it runs
 			// last: the listener stops before the run dir is removed.
 			rs := daemon.NewRunSession(".sandman", runID)
-			rs.RunDir() // bind path before any side effects
+			// The comma-ok form matters: a typed-nil interface
+			// (`var c IssueCommander = (*concrete)(nil)`) is
+			// non-nil but unusable, and `Prepare` would then
+			// call `cmdServer.Start` with a nil commander. By
+			// keeping the `ok` signal we can pass a real `nil`
+			// when the BatchRunner does not satisfy
+			// IssueCommander, and `--continue` already
+			// suppresses the cmd.sock server.
 			var commander daemon.IssueCommander
 			if !continueFlag {
-				commander, _ = deps.BatchRunner.(daemon.IssueCommander)
+				if c, ok := deps.BatchRunner.(daemon.IssueCommander); ok {
+					commander = c
+				}
 			}
 			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now()}
 			if err := rs.Prepare(manifest, commander); err != nil {
 				_ = rs.Close()
+				// A daemon without a control socket is invisible
+				// to the portal and cannot be aborted by the user,
+				// so it must not run (issue #1024 acceptance
+				// criterion: "logs a fatal error and aborts before
+				// emitting any event"). Surface the failure
+				// loudly on stderr so operators see it in their
+				// CI logs and shell history.
+				fmt.Fprintf(cmd.ErrOrStderr(), "fatal: cannot bootstrap run session: %v\n", err)
 				return err
 			}
 			defer rs.Close()

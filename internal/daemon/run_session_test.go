@@ -220,3 +220,29 @@ func TestRunSession_Prepare_PropagatesMkdirError(t *testing.T) {
 		t.Errorf("Prepare error = %v, want wrap of ErrStepMkdir", err)
 	}
 }
+
+// nilCommander is a concrete IssueCommander whose pointer is nil.
+// The only safe way to detect this is via reflect.ValueOf().IsNil();
+// a plain `commander != nil` returns true for a typed-nil interface.
+type nilCommander struct{}
+
+func (*nilCommander) AbortIssue(int) error { return nil }
+
+// TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil guards the
+// reflect-based nil check in Prepare. A typed-nil IssueCommander
+// (e.g. `var c IssueCommander = (*nilCommander)(nil)`) must NOT
+// trigger the cmd.sock step, because calling its method would panic.
+func TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil(t *testing.T) {
+	dir := t.TempDir()
+	rs := NewRunSession(dir, "typed-nil-run-1")
+	t.Cleanup(func() { _ = rs.Close() })
+
+	var commander IssueCommander = (*nilCommander)(nil)
+	manifest := BatchManifest{Issues: []int{1}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
+	if err := rs.Prepare(manifest, commander); err != nil {
+		t.Fatalf("Prepare must succeed for typed-nil commander: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rs.RunDir(), "cmd.sock")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("cmd.sock must NOT exist for typed-nil commander, stat err = %v", err)
+	}
+}
