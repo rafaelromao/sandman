@@ -1508,6 +1508,117 @@ for (const name of required) {
 	}
 }
 
+func TestPortalDiffUpdateCells_AddsBatchMembershipChipWhenBatchIssuesAppear(t *testing.T) {
+	js := `const body = makeMockBody();
+const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: '#860', issueNumber: 860, runId: 'r1' };
+const runNew = Object.assign({}, runOld, { batchIssues: [860, 854] });
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
+const titleCell = created.row.querySelector('[data-cell="title"]');
+const wrap = titleCell.children[0];
+if (wrap.querySelector('.batch-membership')) throw new Error('expected no batch-membership chip on initial row with no batchIssues');
+clearLog(titleCell);
+SandmanPortalDiff.resetCounters();
+const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
+if (!result.mutated) throw new Error('expected mutated=true after batchIssues transition');
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('expected mutations > 0, got ' + counters.mutations);
+if (countLog(titleCell) === 0) throw new Error('expected title cell to be touched after batchIssues transition');
+const marker = wrap.querySelector('.batch-membership');
+if (!marker) throw new Error('expected batch-membership chip after batchIssues transition from null to [860,854]');
+const text = marker.textContent || '';
+if (!text.includes('860') || !text.includes('854')) {
+  throw new Error('expected chip text to list both issues 860 and 854, got ' + JSON.stringify(text));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateCells_RemovesBatchMembershipChipWhenBatchIssuesShrinkToSingle(t *testing.T) {
+	js := `const body = makeMockBody();
+const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: '#42', issueNumber: 42, runId: 'r1', batchIssues: [42, 43] };
+const runNew = Object.assign({}, runOld, { batchIssues: [42] });
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
+const titleCell = created.row.querySelector('[data-cell="title"]');
+const wrap = titleCell.children[0];
+if (!wrap.querySelector('.batch-membership')) throw new Error('expected initial batch-membership chip from runOld.batchIssues');
+clearLog(titleCell);
+SandmanPortalDiff.resetCounters();
+const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
+if (!result.mutated) throw new Error('expected mutated=true after batchIssues shrink to single');
+if (wrap.querySelector('.batch-membership')) throw new Error('expected batch-membership chip removed when batchIssues shrunk to single issue');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateCells_ZeroMutationsWhenBatchIssuesUnchanged(t *testing.T) {
+	js := `const body = makeMockBody();
+const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'auto-select', runId: 'r1', reason: 'auto-select', batchIssues: [42, 43] };
+const runNew = Object.assign({}, runOld);
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
+SandmanPortalDiff.resetCounters();
+const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
+if (result.cells !== 0) throw new Error('expected 0 cell mutations on unchanged run with reason and batchIssues, got ' + JSON.stringify(result));
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations !== 0) throw new Error('expected 0 mutations on unchanged run with reason and batchIssues, got ' + JSON.stringify(counters));
+const titleCell = created.row.querySelector('[data-cell="title"]');
+const wrap = titleCell.children[0];
+if (!wrap.querySelector('.batch-membership')) throw new Error('batch-membership chip should remain when batchIssues unchanged');
+if (!wrap.querySelector('.kind-chip')) throw new Error('kind-chip should remain when reason unchanged');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateCells_KindChipRendersBeforeBatchMembershipOnUpdate(t *testing.T) {
+	js := `const body = makeMockBody();
+const runOld = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'auto-select', runId: 'r1' };
+const runNew = Object.assign({}, runOld, { reason: 'auto-select', batchIssues: [42, 43] });
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
+SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
+const wrap = created.row.querySelector('[data-cell="title"]').children[0];
+const kindChip = wrap.querySelector('.kind-chip');
+const batchChip = wrap.querySelector('.batch-membership');
+if (!kindChip) throw new Error('expected kind-chip after update');
+if (!batchChip) throw new Error('expected batch-membership after update');
+const kindIdx = Array.prototype.indexOf.call(wrap.children, kindChip);
+const batchIdx = Array.prototype.indexOf.call(wrap.children, batchChip);
+if (kindIdx >= batchIdx) throw new Error('expected kind-chip (' + kindIdx + ') to render before batch-membership (' + batchIdx + ')');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffDiffRuns_RendersBatchMembershipFromServerJSON(t *testing.T) {
+	serverJSON := []byte(`[{"key":"a","runId":"r1","kind":"active","status":"running","issueLabel":"#42","issueNumber":42,"batchKey":"run-42-1","batchIssues":[42,43],"startedAt":"2025-01-01T12:00:00Z"}]`)
+	js := `const body = makeMockBody();
+const runs = ` + string(serverJSON) + `;
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+const row = body.children[0];
+const titleCell = row.querySelector('[data-cell="title"]');
+const wrap = titleCell.children[0];
+const marker = wrap.querySelector('.batch-membership');
+if (!marker) throw new Error('expected batch-membership element from server JSON with batchIssues=[42,43]');
+const text = marker.textContent || '';
+if (!text.includes('42') || !text.includes('43')) {
+  throw new Error('expected chip text to list both issues 42 and 43, got ' + JSON.stringify(text));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func sharedMockHelpers() string {
 	return `const escapeHTML = (v) => String(v == null ? '' : v)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
