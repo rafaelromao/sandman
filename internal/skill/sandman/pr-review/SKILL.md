@@ -40,17 +40,28 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
   Run this single deterministic bash loop as one standalone command (do NOT pipe through `tail`/`head`/`&&` and do NOT use `gh pr checks --watch` — the loop below is the only mechanism; the model must not invent its own polling). The loop polls `gh pr checks` every 20 seconds and exits the moment CI reaches a terminal state. This is the lock that prevents the 15-minute model-side gap observed when the agent chose `--watch` and then took minutes to fire the next command.
 
+  > **Prerequisite**: `gh` ≥ 2.0 (released 2021) for `gh pr checks --json ... --jq`. Verify with `gh --version | awk '{print $1, $3}'` before relying on the loop. On older `gh` the `--json` flag is unknown and the loop will fail; fall back to plain `gh pr checks <N> --repo <owner/repo>` and parse the first column instead.
+
   ```bash
+  # gh pr checks --json returns state values in uppercase:
+  #   SUCCESS, FAILURE, PENDING, IN_PROGRESS, QUEUED, NEUTRAL,
+  #   CANCELLED, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE, STALE, SKIPPED.
+  # We classify each state into "fail", "pending", or "pass" and loop until
+  # no "pending" remains (with "fail" taking priority).
   while true; do
     states=$(gh pr checks <N> --repo <owner/repo> --json name,state \
-      --jq '.[] | select(.state != "skipped") | .state' 2>/dev/null)
-    if echo "$states" | grep -q '^fail$'; then
+      --jq '.[] | select(.state != "SKIPPED") | .state' 2>/dev/null)
+    if [ -z "$states" ]; then sleep 20; continue; fi
+    # Fail: bail out.
+    if echo "$states" | grep -qE '^(FAILURE|STARTUP_FAILURE|TIMED_OUT|ACTION_REQUIRED|CANCELLED)$'; then
       echo "CI failed:"; gh pr checks <N> --repo <owner/repo>; exit 1
     fi
-    if [ -n "$states" ] && ! echo "$states" | grep -qv '^pass$'; then
-      break
+    # Pending: keep waiting.
+    if echo "$states" | grep -qE '^(PENDING|IN_PROGRESS|QUEUED)$'; then
+      sleep 20; continue
     fi
-    sleep 20
+    # All remaining states are terminal non-fail (SUCCESS, NEUTRAL, STALE).
+    break
   done
   ```
 
@@ -88,7 +99,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
   | 6         | `sleep 90`             |
   | 7         | `sleep 120`            |
 
-  Total budget: 30 + 60 + 60 + 90 + 90 + 120 = **450s = 7.5 min worst-case** between the `/sandman review` post and the poll that detects the response, inside a **30 min overall ceiling**. The cadence is chosen to fit the 2-10 min typical review-agent runtime and to bound the response-detection latency.
+  Total polling budget: 30 + 60 + 60 + 90 + 90 + 120 = **450s = 7.5 min** of cumulative sleep between the `/sandman review` post and the last poll, inside a **30 min overall ceiling**. Per-poll worst-case latency is **120s** (the longest single sleep in the curve), so a response that arrives during a sleep is detected within 120s. The 7.5 min figure is the cumulative sleep if you run every iteration to its full sleep with no observed response. The cadence is chosen to fit the 2-10 min typical review-agent runtime and to bound the response-detection latency.
 
   **Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment whose author is not the agent itself (i.e., the review agent has started responding), the very next sleep MUST be ≤ 60s. The 90s and 120s sleeps are only allowed when no new comment has been observed since the request was posted. This is the lock that prevents a 5-minute sleep from missing a response that arrived during the sleep.
 
