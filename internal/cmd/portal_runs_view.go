@@ -60,15 +60,13 @@ type portalRun struct {
 	// single-issue run.
 	BatchIssues []int `json:"batchIssues,omitempty"`
 	// IssueTitle carries the human-readable GitHub issue title from the event
-	// payload (added by issue #833). Empty for historical or prompt-only runs.
+	// payload. Empty for historical or prompt-only runs.
 	IssueTitle string `json:"issueTitle,omitempty"`
-	// RetriesTotal mirrors RunState.RetriesTotal (issue #976): the number of
-	// retry attempts the orchestrator allowed for the run, read from the
-	// run.finished payload. Omitted for active (unfinished) runs because
-	// slice-2's getter returns 0 when no finished event is present.
+	// RetriesTotal is the number of retry attempts the orchestrator allowed
+	// for the run. Omitted when the run has not finished.
 	RetriesTotal int `json:"retriesTotal,omitempty"`
-	// RetriesDone mirrors RunState.RetriesDone: the number of retry attempts
-	// the run actually consumed. Omitted when the run has not finished.
+	// RetriesDone is the number of retry attempts the run actually consumed.
+	// Omitted when the run has not finished.
 	RetriesDone int `json:"retriesDone,omitempty"`
 }
 

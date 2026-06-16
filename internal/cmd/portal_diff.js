@@ -417,13 +417,13 @@
     const maxAttempts = payload.max_attempts;
     if (attempt != null && maxAttempts != null) {
       const attemptLine = global.document.createElement('div');
-      attemptLine.classList.add('retry-event-line');
+      attemptLine.classList.add('retry-line');
       attemptLine.textContent = 'attempt ' + attempt + ' of ' + maxAttempts;
       card.appendChild(attemptLine);
     }
     if (payload.previous_status != null) {
       const statusLine = global.document.createElement('div');
-      statusLine.classList.add('retry-event-line');
+      statusLine.classList.add('retry-line');
       statusLine.textContent = 'previous_status: ' + payload.previous_status;
       card.appendChild(statusLine);
     }

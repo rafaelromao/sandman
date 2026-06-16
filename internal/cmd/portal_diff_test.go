@@ -606,6 +606,29 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalJSONToHTMLRender_RetryChipUsesSingularWhenRetriesDoneIsOne(t *testing.T) {
+	// retriesDone: 1 must render the singular '↻ 1 retry' text in the chip.
+	serverJSON := []byte(`[{"key":"a","runId":"a","kind":"completed","status":"success","issueLabel":"#42","issueNumber":42,"retriesTotal":1,"retriesDone":1,"startedAt":"2025-01-01T12:00:00Z"}]`)
+	var runs []map[string]any
+	if err := json.Unmarshal(serverJSON, &runs); err != nil {
+		t.Fatalf("unmarshal server JSON: %v", err)
+	}
+	js := `const body = makeMockBody();
+const runs = ` + string(serverJSON) + `;
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+const row = body.children[0];
+if (!row) throw new Error('expected data row');
+const chip = row.querySelector('.retry-chip');
+if (!chip) throw new Error('expected .retry-chip in row when server JSON has retriesDone=1');
+if (chip.textContent !== '\u21bb 1 retry') throw new Error('expected chip text "\u21bb 1 retry", got ' + JSON.stringify(chip.textContent));
+if (chip.getAttribute('title') !== 'retried 1 of 1 attempts \u2014 see Events tab') throw new Error('expected chip title "retried 1 of 1 attempts \u2014 see Events tab", got ' + JSON.stringify(chip.getAttribute('title')));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffDiffRuns_StopButtonsHiddenWhenPlatformUnsupported(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
