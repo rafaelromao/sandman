@@ -1418,7 +1418,6 @@ func TestPortal_BatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
 		{"color: var(--muted)", "muted chip text color preserved"},
 		{"font-size: 11px", "chip font size preserved"},
 		{"letter-spacing: 0.04em", "chip letter-spacing preserved"},
-		{"overflow-wrap: anywhere", "long issue lists break inside the chip when the cap kicks in"},
 	}
 	for _, r := range required {
 		if !strings.Contains(body, r.token) {

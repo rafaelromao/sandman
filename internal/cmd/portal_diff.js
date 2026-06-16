@@ -810,11 +810,10 @@
   }
 
   function nextSiblingRunOrBatchRow(row) {
-    let n = row.nextSibling;
+    let n = row.nextElementSibling;
     while (n) {
-      if (n.nodeType !== 1) { n = n.nextSibling; continue; }
       if (n.classList && (n.classList.contains('detail-row') || n.classList.contains('run-row'))) return n;
-      n = n.nextSibling;
+      n = n.nextElementSibling;
     }
     return null;
   }
