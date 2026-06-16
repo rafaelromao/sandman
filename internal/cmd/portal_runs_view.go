@@ -218,6 +218,14 @@ func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]p
 // the same issue only dedup when they share the same BatchKey, so a current
 // active row (BatchKey=active.Key) is never hidden by a historical row
 // (BatchKey="") from a different batch.
+//
+// A review row (PRNumber > 0) is never deduped against implementation
+// rows for the same IssueNumber, because review runs and implementation
+// runs are different work even when they target the same issue. A review
+// row's IssueNumber is derived from payload["issue_number"] or from the
+// orchestrator stamping `issue: N` on the finished event, so it can
+// legitimately equal an implementation row's IssueNumber without
+// describing the same run.
 func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 	byIssue := make(map[int][]portalRun)
 	issueOrder := make([]int, 0)
@@ -234,16 +242,31 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 			result = append(result, issueRuns[0])
 			continue
 		}
-		byBatch := make(map[string][]portalRun)
-		batchOrder := make([]string, 0)
+		// Split review rows from implementation rows so a review
+		// run for the same issue never replaces a live impl row.
+		var implRuns, reviewRuns []portalRun
 		for _, run := range issueRuns {
-			if _, ok := byBatch[run.BatchKey]; !ok {
-				batchOrder = append(batchOrder, run.BatchKey)
+			if run.PRNumber > 0 || run.Review {
+				reviewRuns = append(reviewRuns, run)
+			} else {
+				implRuns = append(implRuns, run)
 			}
-			byBatch[run.BatchKey] = append(byBatch[run.BatchKey], run)
 		}
-		for _, batchKey := range batchOrder {
-			result = append(result, v.dedupRunGroup(byBatch[batchKey])...)
+		for _, group := range [][]portalRun{implRuns, reviewRuns} {
+			if len(group) == 0 {
+				continue
+			}
+			byBatch := make(map[string][]portalRun)
+			batchOrder := make([]string, 0)
+			for _, run := range group {
+				if _, ok := byBatch[run.BatchKey]; !ok {
+					batchOrder = append(batchOrder, run.BatchKey)
+				}
+				byBatch[run.BatchKey] = append(byBatch[run.BatchKey], run)
+			}
+			for _, batchKey := range batchOrder {
+				result = append(result, v.dedupRunGroup(byBatch[batchKey])...)
+			}
 		}
 	}
 	return result
