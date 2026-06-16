@@ -1870,20 +1870,26 @@ function makeMockRow() {
   Object.defineProperty(row, 'lastChild', {
     get() { return this.children.length ? this.children[this.children.length - 1] : null; },
   });
-  Object.defineProperty(row, 'nextSibling', {
+  Object.defineProperty(row, 'nextElementSibling', {
     get() {
       const p = this.parentNode;
       if (!p || !p.children) return null;
       const idx = p.children.indexOf(this);
-      return idx >= 0 && idx + 1 < p.children.length ? p.children[idx + 1] : null;
+      for (let i = idx + 1; i < p.children.length; i += 1) {
+        if (p.children[i].nodeType === 1) return p.children[i];
+      }
+      return null;
     },
   });
-  Object.defineProperty(row, 'previousSibling', {
+  Object.defineProperty(row, 'previousElementSibling', {
     get() {
       const p = this.parentNode;
       if (!p || !p.children) return null;
       const idx = p.children.indexOf(this);
-      return idx > 0 ? p.children[idx - 1] : null;
+      for (let i = idx - 1; i >= 0; i -= 1) {
+        if (p.children[i].nodeType === 1) return p.children[i];
+      }
+      return null;
     },
   });
   return row;
@@ -2289,6 +2295,49 @@ SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
 if (batchRow) throw new Error('expected batch-row to be removed when batchIssues drops to single issue');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateCells_InsertsBatchRowBetweenDataRowAndDetailRow(t *testing.T) {
+	js := `const body = makeMockBody();
+const runOld = {
+  key: 'a',
+  runId: 'r1',
+  kind: 'active',
+  status: 'running',
+  issueLabel: '#42',
+  issueNumber: 42,
+  batchKey: 'run-42-1',
+  batchIssues: null,
+};
+const runNew = Object.assign({}, runOld, { batchIssues: [42, 43] });
+const stopGroups = new Set();
+const expandedOpts = { helpers, stopGroups, expandedKey: 'a' };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, expandedOpts);
+if (!created.detailRow) throw new Error('expected detail-row for expanded run');
+const dataRowIdx = Array.prototype.indexOf.call(body.children, created.row);
+const detailRowIdx = Array.prototype.indexOf.call(body.children, created.detailRow);
+if (detailRowIdx !== dataRowIdx + 1) {
+  throw new Error('expected detail-row immediately after data-row on insert, got dataRow=' + dataRowIdx + ' detailRow=' + detailRowIdx);
+}
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) {
+  throw new Error('expected no batch-row before update');
+}
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, expandedOpts);
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (!batchRow) throw new Error('expected batch-row to be inserted by update');
+const newDataRowIdx = Array.prototype.indexOf.call(body.children, created.row);
+const newBatchRowIdx = Array.prototype.indexOf.call(body.children, batchRow);
+const newDetailRowIdx = Array.prototype.indexOf.call(body.children, created.detailRow);
+if (newBatchRowIdx !== newDataRowIdx + 1) {
+  throw new Error('expected batch-row immediately after data-row, got dataRow=' + newDataRowIdx + ' batchRow=' + newBatchRowIdx);
+}
+if (newDetailRowIdx !== newBatchRowIdx + 1) {
+  throw new Error('expected detail-row immediately after batch-row, got batchRow=' + newBatchRowIdx + ' detailRow=' + newDetailRowIdx);
+}
 console.log('PASS');
 `
 	runNodeScript(t, js)
