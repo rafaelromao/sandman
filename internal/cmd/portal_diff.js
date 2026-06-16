@@ -28,7 +28,6 @@
       badgeClass: h.statusClass(run),
       badgeLabel: run.status || (run.kind === 'active' ? 'running' : 'completed'),
       reason: (run.reason === 'auto-select' || run.reason === 'review') ? run.reason : '',
-      reasonText: (run.reason === 'auto-select' || run.reason === 'review') ? run.reason : '',
       startedText: h.formatTime(run.startedAt),
       durationText: h.formatDuration(run.duration),
       branchText: h.formatBranch(run),
@@ -68,7 +67,7 @@
     meta.classList.add('meta-line', 'mono');
     meta.textContent = helpers.renderRunMeta(run);
     wrap.appendChild(meta);
-    const reasonChip = buildReasonChip(run.reason, run.reason);
+    const reasonChip = buildReasonChip(run.reason);
     if (reasonChip) wrap.appendChild(reasonChip);
     const batchMembership = renderBatchMembership(run);
     if (batchMembership) wrap.appendChild(batchMembership);
@@ -599,11 +598,11 @@
     if (oldSnap.metaText !== newSnap.metaText && meta) {
       setText(meta, newSnap.metaText);
     }
-    if (oldSnap.reason === newSnap.reason && oldSnap.reasonText === newSnap.reasonText) return;
-    reconcileReasonChip(wrap, newSnap.reason, newSnap.reasonText);
+    if (oldSnap.reason === newSnap.reason) return;
+    reconcileReasonChip(wrap, newSnap.reason);
   }
 
-  function reconcileReasonChip(wrap, reason, reasonText) {
+  function reconcileReasonChip(wrap, reason) {
     const existing = wrap.querySelector('.kind-chip');
     const wantChip = reason === 'auto-select' || reason === 'review';
     if (!wantChip) {
@@ -614,7 +613,7 @@
       return;
     }
     if (!existing) {
-      const chip = buildReasonChip(reason, reasonText);
+      const chip = buildReasonChip(reason);
       // Insert after name and meta (children[0] and [1]) so the
       // chip sits before any batch-membership child.
       const insertBefore = wrap.children[2] || null;
@@ -632,23 +631,23 @@
       setAttr(existing, 'data-reason', reason);
     }
     const label = existing.querySelector('.badge-label') || existing.children[1];
-    if (label && label.textContent !== reasonText) {
-      setText(label, reasonText);
+    if (label && label.textContent !== reason) {
+      setText(label, reason);
       mutationCount += 1;
     }
   }
 
-  function buildReasonChip(reason, reasonText) {
+  function buildReasonChip(reason) {
     if (reason !== 'auto-select' && reason !== 'review') return null;
     const span = global.document.createElement('span');
     span.classList.add('badge', 'kind-chip', reason);
-    span.setAttribute('data-reason', reason);
+    setAttr(span, 'data-reason', reason);
     const dot = global.document.createElement('span');
     dot.classList.add('dot');
     span.appendChild(dot);
     const label = global.document.createElement('span');
     label.classList.add('badge-label');
-    label.textContent = reasonText;
+    label.textContent = reason;
     span.appendChild(label);
     return span;
   }
