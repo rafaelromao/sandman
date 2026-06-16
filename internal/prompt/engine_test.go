@@ -659,8 +659,8 @@ func TestDefaultPRReviewPrompt_ContainsOmitPreviousReviewProgressRule(t *testing
 
 	required := []string{
 		"**omit** the `## Previous review progress` section from the posted comment",
-		"`## Previous review progress` — **only include this section if previous reviews exist**",
-		"**omit this section entirely** (do not write \"No previous reviews found.\")",
+		"Do not render this section if there are no prior reviews",
+		"Do not write a placeholder such as \"No previous reviews found.\"",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {
