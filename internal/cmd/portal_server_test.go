@@ -195,10 +195,8 @@ func TestPortal_RunsAPI_OmitsRowsForFinishedBatchWithDeadSocket(t *testing.T) {
 	defer server.Close()
 
 	runs := readPortalRuns(t, server.URL)
-	for _, run := range runs {
-		if run.IssueNumber == 42 || run.IssueNumber == 43 {
-			t.Fatalf("expected no rows for issues 42 or 43 (dead batch), got %#v", run)
-		}
+	if len(runs) != 0 {
+		t.Fatalf("expected no rows for a finished batch with a dead socket, got %#v", runs)
 	}
 }
 
