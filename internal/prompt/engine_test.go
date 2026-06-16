@@ -650,6 +650,25 @@ func TestDefaultPRReviewPrompt_ContainsRequiredKeys(t *testing.T) {
 	}
 }
 
+func TestDefaultPRReviewPrompt_ContainsOmitPreviousReviewProgressRule(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	required := []string{
+		"**omit** the `## Previous review progress` section from the posted comment",
+		"`## Previous review progress` — **only include this section if previous reviews exist**",
+		"**omit this section entirely** (do not write \"No previous reviews found.\")",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must retain canonical omit-previous-review-progress phrase %q", phrase)
+		}
+	}
+}
+
 func TestApplyPRSubstitutions(t *testing.T) {
 	template := "PR #{{PR_NUMBER}}: {{PR_TITLE}}\n\n{{PR_BODY}}\n\nfocus: {{REVIEW_FOCUS}}"
 	data := PRData{
