@@ -3015,7 +3015,8 @@
         }
         if (action === 'archive-run') {
           event.preventDefault();
-          const runId = button.getAttribute('data-run-id') || findRunByKey(runKey)?.runId || runKey;
+          const runId = button.getAttribute('data-run-id') || findRunByKey(runKey)?.runId;
+          if (!runId) return;
           const label = findRunByKey(runKey)?.issueLabel || 'this run';
           archiveRun(button, runId, label);
           return;

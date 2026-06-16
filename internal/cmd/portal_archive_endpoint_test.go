@@ -386,3 +386,63 @@ func TestPortal_ArchiveEndpoint_SurfaceArchivedFlagInRunsAPI(t *testing.T) {
 		t.Fatalf("expected Archived=true after archive, got %#v", foundAfter)
 	}
 }
+
+// TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName covers the
+// contract that the events log's RunID equals the .sandman/runs/<dir>
+// directory name. A regression where the two diverge would silently 404
+// in production. This test uses a randomly-named runID (mirroring the
+// "run-<issue>-<timestamp>" format the orchestrator emits) and asserts
+// the archive endpoint succeeds against the matching directory.
+func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-e2e-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runID := "run-42-1700000000"
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "log.txt"), []byte("run output"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: started, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: started.Add(time.Minute), RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	originalProbe := portalRunLivenessProbe
+	portalRunLivenessProbe = func(string) bool { return false }
+	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
+
+	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), runID)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for runID %q, got %d: %s", runID, resp.StatusCode, body)
+	}
+
+	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
+		t.Fatalf("expected run dir %q to be gone after archive, stat err = %v", runDir, err)
+	}
+	archivedDir := filepath.Join(repoRoot, ".sandman", "archive", runID)
+	info, err := os.Stat(archivedDir)
+	if err != nil {
+		t.Fatalf("expected archive dir %q to exist, stat err = %v", archivedDir, err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected archive target to be a directory, got mode %s", info.Mode())
+	}
+	log, err := os.ReadFile(filepath.Join(archivedDir, "log.txt"))
+	if err != nil {
+		t.Fatalf("expected log.txt to follow the move: %v", err)
+	}
+	if string(log) != "run output" {
+		t.Fatalf("expected log contents to follow the move, got %q", log)
+	}
+}

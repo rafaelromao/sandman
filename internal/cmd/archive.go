@@ -179,15 +179,10 @@ func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe) error 
 // archivePortalRun relocates a run directory from <repoRoot>/.sandman/runs/<runID>
 // to <repoRoot>/.sandman/archive/<runID>. It is the repo-root-aware counterpart
 // of runArchiveRun used by the portal HTTP endpoint, so the same move
-// semantics back both the CLI and the portal. Callers are expected to
-// validate the run's existence, liveness, and that the archive target is
-// free before invoking it; the handler in portal.go performs those checks
-// and surfaces typed errors, leaving this helper to do only the move.
-//
-// As a defensive guard the helper refuses to clobber a pre-existing
-// archive target — the move is the only side effect, and a second caller
-// skipping the precondition check would otherwise silently overwrite the
-// earlier archive.
+// semantics back both the CLI and the portal. Existence and liveness
+// preconditions live with the caller (the portal handler surfaces typed
+// errors for them); this helper does the move and refuses to clobber an
+// existing archive target as a defense-in-depth guard.
 func archivePortalRun(repoRoot, runID string) error {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	runDir := filepath.Join(layout.RunsDir, runID)
