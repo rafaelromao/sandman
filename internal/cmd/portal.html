@@ -478,6 +478,19 @@
       color: var(--muted);
       font-weight: 400;
     }
+    tbody tr.batch-row td {
+      padding: 0 14px 6px;
+      border-bottom: none;
+    }
+    tbody tr.run-row + tr.batch-row td {
+      padding-top: 0;
+    }
+    tbody tr.run-row:hover + tr.batch-row td {
+      background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
+    }
+    tbody tr.run-row.active + tr.batch-row td {
+      background: color-mix(in oklch, var(--accent) 12%, var(--surface));
+    }
     .context-row td {
       padding: 0 12px 4px;
       border: none;
@@ -1695,6 +1708,10 @@
           <input id="active-batches" type="checkbox">
           Active Batches
         </label>
+        <label class="field">
+          <input id="archived-toggle" type="checkbox">
+          Archived
+        </label>
       </div>
       <div id="summary-pill" class="status-pill"><span class="dot"></span><strong>0</strong> runs visible</div>
     </section>
@@ -1734,6 +1751,7 @@
     const supportedThemes = new Set({{.SupportedThemesJSON}});
     const statusFilter = document.getElementById('status-filter');
     const activeBatchesToggle = document.getElementById('active-batches');
+    const archivedToggle = document.getElementById('archived-toggle');
     const runsBody = document.getElementById('runs-body');
     const commandsToggle = document.getElementById('commands-toggle');
     const commandsOverlay = document.getElementById('commands-overlay');
@@ -1758,7 +1776,7 @@
     }
     const portalScroll = window.SandmanPortalScroll;
     const portalDiff = window.SandmanPortalDiff;
-    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false };
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false };
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -1890,8 +1908,13 @@
       tabs: persistedPortalState.tabs || {},
       selectedStatus: 'all',
       activeBatches: false,
+      showArchived: persistedPortalState.showArchived === true,
       loading: true,
     };
+
+    if (archivedToggle) {
+      archivedToggle.checked = state.showArchived;
+    }
 
     function persistPortalViewState() {
       if (!portalState) return;
@@ -1899,6 +1922,7 @@
         expandedRunKey: state.expandedRunKey,
         tabs: state.tabs,
         commandFormCollapsed: !commandFormExpanded,
+        showArchived: state.showArchived,
       });
     }
 
@@ -2697,6 +2721,7 @@
 
     function shouldShowRun(run) {
       if (state.activeBatches && run.kind !== 'active') return false;
+      if (!state.showArchived && run.archived) return false;
       if (state.selectedStatus !== 'all' && run.status !== state.selectedStatus) return false;
       return true;
     }
@@ -3023,6 +3048,12 @@
 
     activeBatchesToggle.addEventListener('change', () => {
       state.activeBatches = activeBatchesToggle.checked;
+      render();
+    });
+
+    archivedToggle.addEventListener('change', () => {
+      state.showArchived = archivedToggle.checked;
+      persistPortalViewState();
       render();
     });
 

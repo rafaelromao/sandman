@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -194,6 +195,80 @@ func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 	// <= 2 and the test would fail.
 	if got := factory.max; got != 4 {
 		t.Fatalf("start gate throttled below requested parallel (peak=%d, want 4); auto mode must allow full parallelism", got)
+	}
+}
+
+// TestRunBatch_ParallelEightCapacityFourAutoMode_PeakAndContainerCount is the
+// end-to-end regression guard for issue #1076 and #1077. In auto container
+// mode (maxContainers=0) with parallel=8 and containerCapacity=4, the start
+// gate must permit the full requested parallelism (peak == 8) and the
+// container pool must start exactly 2 containers (8 / 4 = 2). A regression
+// on the effectiveParallelCap would surface here either as peak < 8 (start
+// gate throttling) or startCount != 2 (pool mis-sizing).
+func TestRunBatch_ParallelEightCapacityFourAutoMode_PeakAndContainerCount(t *testing.T) {
+	requireContainerRuntime(t)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	issues := make(map[int]*github.Issue, 8)
+	prs := make(map[string]*github.PR, 8)
+	results := make([]AgentRunResult, 8)
+	delays := make([]time.Duration, 8)
+	for i := 1; i <= 8; i++ {
+		issues[i] = &github.Issue{Number: i, Title: fmt.Sprintf("Issue %d", i)}
+		branch := fmt.Sprintf("sandman/%d-issue-%d", i, i)
+		prs[branch] = &github.PR{Number: i, State: "closed", Merged: true, HeadRefName: branch}
+		results[i-1] = AgentRunResult{IssueNumber: i, Status: "success"}
+		delays[i-1] = 100 * time.Millisecond
+	}
+
+	client := &fakeGitHubClient{issues: issues, prs: prs}
+
+	starter := &fakeContainerStarter{}
+	factory := &fakeRunnableFactory{
+		results: results,
+		delays:  delays,
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:             "test-agent",
+		Sandbox:           "docker",
+		WorktreeDir:       ".sandman/worktrees",
+		ContainerCapacity: 4,
+		MaxContainers:     0,
+		Git:               config.GitConfig{BaseBranch: "main"},
+		AgentProviders:    map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, nil)
+	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: starter}
+	o.runnableFactory = factory
+	o.sandboxFactory = &freshSandboxFactory{}
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Issues:               []int{1, 2, 3, 4, 5, 6, 7, 8},
+		Sandbox:              "docker",
+		Parallel:             8,
+		ContainerCapacity:    4,
+		ContainerCapacitySet: true,
+		MaxContainers:        0,
+		MaxContainersSet:     true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// effectiveParallelCap(8, 4, 0) = 8 in auto mode, so the start gate
+	// permits all 8 concurrent runs. If a regression caps the gate at
+	// containerCapacity=4 (the pre-#1076 bug), peak would be <= 4.
+	if got := factory.max; got != 8 {
+		t.Fatalf("start gate throttled below requested parallel (peak=%d, want 8); auto mode must allow full parallelism", got)
+	}
+	// In auto mode the pool spawns containers on demand up to the
+	// concurrent-run budget, capped by containerCapacity. With 8 parallel
+	// runs and capacity=4 the pool should start exactly 2 containers.
+	if got := starter.startCount; got != 2 {
+		t.Fatalf("container pool started %d containers, want 2 (parallel=8 / capacity=4)", got)
 	}
 }
 

@@ -59,22 +59,23 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffUpdateCells_RemovesStaleReviewBadgeFromTitle(t *testing.T) {
+func TestPortalDiffUpdateCells_RemovesStaleReviewBadgeFromContextRow(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1', reason: 'review', prNumber: 42, issueNumber: 1 };
 const runNew = Object.assign({}, runOld, { issueLabel: 'Issue 1 updated', reason: '' });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-const titleCell = created.row.querySelector('[data-cell="title"]');
-const titleWrap = titleCell ? titleCell.children[0] : null;
 const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!ctxRow) throw new Error('expected context row from runOld.reason');
+if (!ctxRow) throw new Error('expected context row for review run');
+const chip = ctxRow.querySelector('.context-chip');
+if (!chip) throw new Error('expected context chip');
+if (!chip.textContent.includes('Reviewing PR #42')) throw new Error('expected review chip text');
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true');
 if (body.querySelector('tr.context-row[data-context-for="a"]')) throw new Error('expected context row removed when reason clears');
-if (titleWrap.children.length !== 2) throw new Error('expected title wrap to have only issue label and meta after update, got ' + titleWrap.children.length);
+const titleWrap = created.row.querySelector('[data-cell="title"]').children[0];
 if (titleWrap.children[0].textContent !== 'Issue 1 updated') throw new Error('expected updated issue label');
 console.log('PASS');
 `
@@ -1517,17 +1518,23 @@ const runNew = Object.assign({}, runOld, { batchIssues: [860, 854] });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-if (created.row.querySelector('.batch-membership')) throw new Error('expected no batch-membership on initial run with no batchIssues');
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch-row on initial run with no batchIssues');
 clearLog(body);
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true after batchIssues transition');
-const wrap = created.row.querySelector('[data-cell="title"]').children[0];
-const marker = wrap.querySelector('.batch-membership');
-if (!marker) throw new Error('expected batch-membership chip in title wrap');
-const text = marker.textContent || '';
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (!batchRow) throw new Error('expected batch-row to be added by updateRunRowCells');
+const chip = batchRow.querySelector('.batch-membership');
+if (!chip) throw new Error('expected batch-membership chip in new batch-row');
+const text = chip.textContent || '';
 if (!text.includes('860') || !text.includes('854')) {
   throw new Error('expected chip text to list both issues 860 and 854, got ' + JSON.stringify(text));
+}
+const dataRowIdx = Array.prototype.indexOf.call(body.children, created.row);
+const batchRowIdx = Array.prototype.indexOf.call(body.children, batchRow);
+if (batchRowIdx !== dataRowIdx + 1) {
+  throw new Error('expected new batch-row immediately after data row');
 }
 console.log('PASS');
 `
@@ -1541,12 +1548,11 @@ const runNew = Object.assign({}, runOld, { batchIssues: [42] });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-const wrap = created.row.querySelector('[data-cell="title"]').children[0];
-if (!wrap.querySelector('.batch-membership')) throw new Error('expected initial batch-membership from batchIssues');
+if (!body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected initial batch-row from batchIssues');
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true after batchIssues shrink to single');
-if (wrap.querySelector('.batch-membership')) throw new Error('expected batch-membership removed when batchIssues shrunk to single issue');
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected batch-row removed when batchIssues shrunk to single issue');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1599,13 +1605,10 @@ const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, runs, opts);
 const row = body.children[0];
-if (!row) throw new Error('expected data row');
-const titleCell = row.querySelector('[data-cell="title"]');
-if (!titleCell) throw new Error('expected title cell');
-const wrap = titleCell.children[0];
-if (!wrap) throw new Error('expected title wrap');
-const marker = wrap.querySelector('.batch-membership');
-if (!marker) throw new Error('expected batch-membership element in title wrap');
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (!batchRow) throw new Error('expected batch-row from server JSON with batchIssues=[42,43]');
+const marker = batchRow.querySelector('.batch-membership');
+if (!marker) throw new Error('expected batch-membership element in batch-row, got ' + (batchRow ? batchRow.outerHTML : 'no batchRow'));
 const text = marker.textContent || '';
 if (!text.includes('42') || !text.includes('43')) {
   throw new Error('expected chip text to list both issues 42 and 43, got ' + JSON.stringify(text));
@@ -2035,10 +2038,13 @@ const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 const titleCell = created.row.querySelector('[data-cell="title"]');
 if (!titleCell) throw new Error('expected title cell');
-const wrap = titleCell.children[0];
-if (!wrap) throw new Error('expected title wrap');
-const marker = wrap.querySelector('.batch-membership');
-if (!marker) throw new Error('expected batch-membership element in title wrap');
+if (titleCell.querySelector('.batch-membership')) {
+  throw new Error('batch-membership must not live inside the title cell');
+}
+const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
+if (!batchRow) throw new Error('expected sibling tr.batch-row[data-batch-for="a"]');
+const marker = batchRow.querySelector('.batch-membership');
+if (!marker) throw new Error('expected batch-membership element in batch-row, got ' + batchRow.outerHTML);
 const text = marker.textContent || '';
 if (!text.includes('860') || !text.includes('854')) {
   throw new Error('expected marker to list both issues 860 and 854, got ' + JSON.stringify(text));
@@ -2406,6 +2412,40 @@ for (const b of secondRow.querySelector('[data-cell="badge"]').querySelectorAll(
   if (b.classList.contains('archived')) { secondArchived = true; break; }
 }
 if (!secondArchived) throw new Error('expected .badge.archived preserved on second render');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffCreateRunRow_SuppressesBatchRowWhenReasonIsReview(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', runId: 'r1', kind: 'active', status: 'running', issueLabel: '#42', issueNumber: 42, batchKey: 'run-42-1', batchIssues: [1, 2, 3], reason: 'review', prNumber: 42 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch-row for review run with batchIssues');
+const ctx = body.querySelector('tr.context-row[data-context-for="a"]');
+if (!ctx) throw new Error('expected context-row for review run');
+const chip = ctx.querySelector('.context-chip');
+if (!chip) throw new Error('expected context chip');
+if (!chip.textContent.includes('Reviewing PR #42')) throw new Error('expected review text');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffCreateRunRow_SuppressesBatchRowWhenReasonIsAutoSelect(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: 'auto-select', candidates: [1, 2, 3], batchIssues: [1, 2, 3], reason: 'auto-select' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch-row for auto-select run with batchIssues');
+const ctx = body.querySelector('tr.context-row[data-context-for="a"]');
+if (!ctx) throw new Error('expected context-row for auto-select run');
+const chip = ctx.querySelector('.context-chip');
+if (!chip) throw new Error('expected context chip');
+if (!chip.textContent.includes('Auto-select candidates:')) throw new Error('expected auto-select text');
 console.log('PASS');
 `
 	runNodeScript(t, js)
