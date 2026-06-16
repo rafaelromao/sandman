@@ -483,12 +483,12 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		}
 		run.Branch = state.Branch()
 		run.IssueTitle = v.issueTitleFromPayload(state.Started.Payload)
+		run.Reason = reasonForRun(*state)
 		run.StartedAt = state.Started.Timestamp
 		run.Duration = v.durationForRun(*state)
 		run.Events = eventsByRun[state.RunID]
 		run.LogPath = v.portalLogPath(repoRoot, issueNumber, state.Branch())
 		run.LogURL = v.portalLogDownloadURL(repoRoot, issueNumber, state.Branch())
-		run.Reason = reasonForRun(*state)
 		if state.Finished != nil {
 			finishedAt := state.Finished.Timestamp
 			run.FinishedAt = &finishedAt
@@ -633,6 +633,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		IssueNumber: issueNumber,
 		Review:      review,
 		PRNumber:    prNumber,
+		Reason:      chipReasonForActiveInstance(match.instance),
 		StartedAt:   startedAt,
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
@@ -641,12 +642,6 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Log:         v.readPortalSocketOutput(match.instance.SocketPath),
 		Events:      eventsByRun[match.instance.Key],
 		BatchKey:    match.instance.Key,
-	}
-	// Only an active review run reaches this branch without a state
-	// (auto-select phases never expose a live socket), so the chip
-	// label can be set directly here.
-	if review {
-		run.Reason = "review"
 	}
 	v.markCompletedIfSocketDead(&run, run.SocketPath)
 	return run
@@ -744,6 +739,17 @@ func reasonForRun(runState events.RunState) string {
 		return "auto-select"
 	}
 	if runState.IsReview() {
+		return "review"
+	}
+	return ""
+}
+
+// chipReasonForActiveInstance derives the reason chip for a row projected
+// from an active socket that has not yet been matched to a RunState in
+// the event log. The only signal available is the live instance metadata;
+// a PR-bearing socket is a review run, anything else has no chip.
+func chipReasonForActiveInstance(instance portalActiveRun) string {
+	if instance.PRNumber > 0 {
 		return "review"
 	}
 	return ""
