@@ -183,10 +183,11 @@ func TestRun_BatchEffectiveParallel_AutoMode(t *testing.T) {
 	assertConcurrentStarts(t, dir, issues, 2*time.Second)
 }
 
-// TestRun_BatchEffectiveParallel_CapApplies verifies the cap applies in auto
-// mode when container_capacity < parallel: only 2 run concurrently in the auto
-// container.
-func TestRun_BatchEffectiveParallel_CapApplies(t *testing.T) {
+// TestRun_BatchEffectiveParallel_AutoModeSpawnsPerCapacity verifies that
+// in auto mode (max_containers=0) with parallel=4, capacity=2, the pool
+// spawns 2 concurrent containers (4/2 = 2) and all 4 issues run
+// concurrently.
+func TestRun_BatchEffectiveParallel_AutoModeSpawnsPerCapacity(t *testing.T) {
 	issues := []int{31, 32, 33, 34}
 	out, dir := runEffectiveParallelE2E(t, issues, 4, 2, 0, prsForIssues(issues))
 	if !strings.Contains(out, "Summary: 4 succeeded") {
@@ -201,42 +202,14 @@ func TestRun_BatchEffectiveParallel_CapApplies(t *testing.T) {
 		}
 		hostnames[hostname] = struct{}{}
 	}
-	// 4 issues share 1 auto-scaled container with capacity=2 -> 1 hostname.
-	if got := len(hostnames); got != 1 {
-		t.Fatalf("expected 1 distinct container (auto mode, capacity=2), got %d: %v", got, hostnames)
+	// In auto mode with effectiveParallel=4 and capacity=2, the pool
+	// spawns 2 concurrent containers, each holding 2 runs.
+	if got := len(hostnames); got != 2 {
+		t.Fatalf("expected 2 distinct containers (auto mode, parallel=4 capacity=2), got %d: %v", got, hostnames)
 	}
 
-	// With effectiveParallel=2, the 4 issues run in 2 batches of 2. The
-	// window between the first 2 starts and the next 2 starts should be at
-	// least one sleep duration (2s), so the first and third start should
-	// be far apart.
-	starts := make([]int64, len(issues))
-	for i, issue := range issues {
-		starts[i] = readStartTimestamp(t, dir, issue)
-	}
-	// Sort by start time.
-	type pair struct {
-		issue int
-		start int64
-	}
-	pairs := make([]pair, len(issues))
-	for i, issue := range issues {
-		pairs[i] = pair{issue, starts[i]}
-	}
-	for i := 0; i < len(pairs); i++ {
-		for j := i + 1; j < len(pairs); j++ {
-			if pairs[j].start < pairs[i].start {
-				pairs[i], pairs[j] = pairs[j], pairs[i]
-			}
-		}
-	}
-	// The first 2 (in time order) and the last 2 should be separated by at
-	// least the sleep duration of the first batch (2s minus scheduling slack).
-	gap := pairs[2].start - pairs[1].start
-	if gap < int64(1*time.Second) {
-		t.Fatalf("expected at least 1s between batches (effectiveParallel=2), got %v between %d and %d\nstart order: %v",
-			time.Duration(gap), pairs[1].issue, pairs[2].issue, pairs)
-	}
+	// All 4 issues should start concurrently.
+	assertConcurrentStarts(t, dir, issues, 2*time.Second)
 }
 
 // TestRun_BatchEffectiveParallel_ExplicitMax verifies the explicit
@@ -266,10 +239,12 @@ func TestRun_BatchEffectiveParallel_ExplicitMax(t *testing.T) {
 }
 
 // TestRun_BatchEffectiveParallel_SerialByTurn verifies the effectiveParallel=1
-// path: only 1 runs at a time and FIFO order is preserved.
+// path: only 1 runs at a time and FIFO order is preserved. This uses
+// explicit max_containers=1 so the cap (capacity*max=1) forces serial
+// execution; auto mode (max=0) would now permit full parallelism.
 func TestRun_BatchEffectiveParallel_SerialByTurn(t *testing.T) {
 	issues := []int{51, 52, 53, 54}
-	out, dir := runEffectiveParallelE2E(t, issues, 4, 1, 0, prsForIssues(issues))
+	out, dir := runEffectiveParallelE2E(t, issues, 4, 1, 1, prsForIssues(issues))
 	if !strings.Contains(out, "Summary: 4 succeeded") {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}

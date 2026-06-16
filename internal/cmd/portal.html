@@ -1628,6 +1628,7 @@
                     <option value="history">History</option>
                     <option value="clean">Clean</option>
                     <option value="config">Config</option>
+                    <option value="archive">Archive</option>
                   </select>
                 </label>
                 <button id="command-form-toggle" class="command-form-toggle" type="button" aria-expanded="true" aria-controls="command-form-body" aria-label="Toggle command options">
@@ -1703,6 +1704,10 @@
           <input id="active-batches" type="checkbox">
           Active Batches
         </label>
+        <label class="field">
+          <input id="archived-toggle" type="checkbox">
+          Archived
+        </label>
       </div>
       <div id="summary-pill" class="status-pill"><span class="dot"></span><strong>0</strong> runs visible</div>
     </section>
@@ -1742,6 +1747,7 @@
     const supportedThemes = new Set({{.SupportedThemesJSON}});
     const statusFilter = document.getElementById('status-filter');
     const activeBatchesToggle = document.getElementById('active-batches');
+    const archivedToggle = document.getElementById('archived-toggle');
     const runsBody = document.getElementById('runs-body');
     const commandsToggle = document.getElementById('commands-toggle');
     const commandsOverlay = document.getElementById('commands-overlay');
@@ -1766,7 +1772,7 @@
     }
     const portalScroll = window.SandmanPortalScroll;
     const portalDiff = window.SandmanPortalDiff;
-    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false };
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false };
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -1792,6 +1798,7 @@
       continue: { issue: '', issues: '', prompt: '' },
       clean: { cleanMode: 'success', confirmed: false },
       config: { configMode: 'get', configKey: '', configValue: '' },
+      archive: { archiveMode: 'run', archiveRunId: '', archiveOlderThanDays: '', confirmed: false },
       status: {},
       history: {},
     };
@@ -1897,8 +1904,13 @@
       tabs: persistedPortalState.tabs || {},
       selectedStatus: 'all',
       activeBatches: false,
+      showArchived: persistedPortalState.showArchived === true,
       loading: true,
     };
+
+    if (archivedToggle) {
+      archivedToggle.checked = state.showArchived;
+    }
 
     function persistPortalViewState() {
       if (!portalState) return;
@@ -1906,6 +1918,7 @@
         expandedRunKey: state.expandedRunKey,
         tabs: state.tabs,
         commandFormCollapsed: !commandFormExpanded,
+        showArchived: state.showArchived,
       });
     }
 
@@ -2096,6 +2109,14 @@
       } else if (type === 'config') {
         cmd += 'config ' + (s.configMode || 'get') + ' ' + (s.configKey || '?');
         if (s.configMode === 'set' && s.configValue) cmd += ' "' + s.configValue.replace(/"/g, '\\"') + '"';
+      } else if (type === 'archive') {
+        const mode = s.archiveMode || 'run';
+        cmd += 'archive ' + mode;
+        if (mode === 'run') {
+          cmd += ' ' + (s.archiveRunId || '?');
+        } else if (mode === 'older-than') {
+          cmd += ' ' + (s.archiveOlderThanDays || '?');
+        }
       }
       return cmd;
     }
@@ -2163,6 +2184,24 @@
       ].join(''));
     }
 
+    function renderArchiveCommandBody(state) {
+      const mode = state.archiveMode || 'run';
+      const isRun = mode === 'run';
+      const isOlderThan = mode === 'older-than';
+      const isStale = mode === 'stale';
+      const isBulk = isOlderThan || isStale;
+      return commandSection('Archive', [
+        commandNote('Move run directories to .sandman/archive. ' + (isBulk ? 'Bulk modes touch every matching run — confirm before executing.' : 'Pick a mode, then supply the inputs that mode requires.')),
+        '<div class="command-grid two">',
+        commandField('Mode', '<select name="archiveMode"><option value="run"' + (isRun ? ' selected' : '') + '>Run</option><option value="older-than"' + (isOlderThan ? ' selected' : '') + '>Older than</option><option value="stale"' + (isStale ? ' selected' : '') + '>Stale</option></select>'),
+        isRun ? commandField('Run id', '<input name="archiveRunId" type="text" placeholder="run-42" value="' + escapeHTML(state.archiveRunId || '') + '">') : '',
+        isOlderThan ? commandField('Days', '<input name="archiveOlderThanDays" type="number" min="0" step="1" placeholder="7" value="' + escapeHTML(state.archiveOlderThanDays || '') + '">') : '',
+        isStale ? commandNote('No additional inputs required. Recovers stale runs and archives dead-and-terminal runs.') : '',
+        commandField('Confirm', '<label class="launch-radio"><input name="confirmed" type="checkbox"' + (state.confirmed ? ' checked' : '') + '> Confirm archive</label>'),
+        '</div>',
+      ].join(''));
+    }
+
     function renderCommandPanelBody(type) {
       const state = commandState[type] || {};
       if (!commandPanelBody) return;
@@ -2179,6 +2218,8 @@
         commandPanelBody.innerHTML = renderCleanCommandBody(state);
       } else if (type === 'config') {
         commandPanelBody.innerHTML = renderConfigCommandBody(state);
+      } else if (type === 'archive') {
+        commandPanelBody.innerHTML = renderArchiveCommandBody(state);
       }
       applyCommandFieldState(type, state);
       updateExecuteSummary();
@@ -2251,6 +2292,11 @@
         setValue('configMode', state.configMode || 'get');
         setValue('configKey', state.configKey || '');
         setValue('configValue', state.configValue || '');
+      } else if (type === 'archive') {
+        setValue('archiveMode', state.archiveMode || 'run');
+        setValue('archiveRunId', state.archiveRunId || '');
+        setValue('archiveOlderThanDays', state.archiveOlderThanDays || '');
+        setValue('confirmed', state.confirmed);
       }
     }
 
@@ -2310,6 +2356,14 @@
           configMode: getVal('configMode', 'get'),
           configKey: getVal('configKey', ''),
           configValue: getVal('configValue', ''),
+        };
+      }
+      if (type === 'archive') {
+        return {
+          archiveMode: getVal('archiveMode', 'run'),
+          archiveRunId: getVal('archiveRunId', ''),
+          archiveOlderThanDays: getVal('archiveOlderThanDays', ''),
+          confirmed: getCheck('confirmed'),
         };
       }
       return commandState[type] || {};
@@ -2483,6 +2537,21 @@
         }
         return payload;
       }
+      if (type === 'archive') {
+        const mode = state.archiveMode || 'run';
+        if (!state.confirmed) throw new Error('archive requires confirmation');
+        const payload = { command: 'archive', archiveMode: mode, confirmed: true };
+        if (mode === 'run') {
+          if (!String(state.archiveRunId || '').trim()) throw new Error('archive run requires a run id');
+          payload.archiveRunId = state.archiveRunId || '';
+        } else if (mode === 'older-than') {
+          const days = String(state.archiveOlderThanDays || '').trim();
+          if (!days) throw new Error('archive older-than requires a day count');
+          if (!/^\d+$/.test(days)) throw new Error('archive older-than days must be a non-negative integer');
+          payload.archiveOlderThanDays = days;
+        }
+        return payload;
+      }
       throw new Error('unknown command');
     }
 
@@ -2648,6 +2717,7 @@
 
     function shouldShowRun(run) {
       if (state.activeBatches && run.kind !== 'active') return false;
+      if (!state.showArchived && run.archived) return false;
       if (state.selectedStatus !== 'all' && run.status !== state.selectedStatus) return false;
       return true;
     }
@@ -2974,6 +3044,12 @@
 
     activeBatchesToggle.addEventListener('change', () => {
       state.activeBatches = activeBatchesToggle.checked;
+      render();
+    });
+
+    archivedToggle.addEventListener('change', () => {
+      state.showArchived = archivedToggle.checked;
+      persistPortalViewState();
       render();
     });
 

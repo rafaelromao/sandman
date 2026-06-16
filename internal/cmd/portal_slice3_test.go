@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -584,5 +586,162 @@ func TestPortal_Polling_ReviewLiveSocketStillShowsTerminalSuccess(t *testing.T) 
 	}
 	if got.Reason != "review" {
 		t.Fatalf("Reason = %q, want %q", got.Reason, "review")
+	}
+}
+
+// TestPortal_Compute_CompletedRunUnderArchiveDir_MarksArchived is the
+// cycle-1 tracer bullet for the Archived field. A completed run whose
+// directory has been moved under .sandman/archive/<run-id> must surface
+// Archived=true on the corresponding row, and the JSON payload must
+// carry the "archived":true key (acceptance criterion #3).
+func TestPortal_Compute_CompletedRunUnderArchiveDir_MarksArchived(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const runID = "run-id-1-archived"
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	archiveDir := filepath.Join(repoRoot, ".sandman", "archive", runID)
+	if err := os.MkdirAll(archiveDir, 0755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	got := runs[0]
+	if !got.Archived {
+		t.Fatalf("Archived = false, want true (run directory exists under .sandman/archive/%s)", runID)
+	}
+	if got.Kind != "completed" {
+		t.Fatalf("Kind = %q, want %q", got.Kind, "completed")
+	}
+
+	payload, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(payload), `"archived":true`) {
+		t.Fatalf("JSON payload missing %q: %s", `"archived":true`, payload)
+	}
+}
+
+// TestPortal_Compute_CompletedRunWithoutArchiveDir_NotArchived is the
+// cycle-2 test. A completed run whose archive directory does not exist
+// must surface Archived=false and the JSON payload must carry
+// "archived":false.
+func TestPortal_Compute_CompletedRunWithoutArchiveDir_NotArchived(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const runID = "run-id-2-not-archived"
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	got := runs[0]
+	if got.Archived {
+		t.Fatalf("Archived = true, want false (no archive directory was created)")
+	}
+	if got.Kind != "completed" {
+		t.Fatalf("Kind = %q, want %q", got.Kind, "completed")
+	}
+
+	payload, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(payload), `"archived":false`) {
+		t.Fatalf("JSON payload missing %q: %s", `"archived":false`, payload)
+	}
+}
+
+// TestPortal_Compute_ActiveRunNeverArchived is the cycle-3 test. An
+// active run (live control socket on disk) must NEVER carry the
+// Archived flag, even when an archive directory with the same RunID
+// also exists on disk. The live socket keeps the row at Kind="active"
+// so the compute() pass skips the archive lookup entirely.
+func TestPortal_Compute_ActiveRunNeverArchived(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Keep the RunID short so the resulting .sandman/runs/<id>/run.sock
+	// path stays within the typical Linux sun_path limit (108 bytes)
+	// inside the test's t.TempDir() prefix.
+	const runID = "active-archive"
+	startedAt := time.Now().Add(-5 * time.Minute)
+
+	// Live control socket under .sandman/runs/<runID>/run.sock.
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
+	sockPath := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	// The matching archive directory exists on disk. The detector must
+	// still NOT mark the row archived.
+	archiveDir := filepath.Join(repoRoot, ".sandman", "archive", runID)
+	if err := os.MkdirAll(archiveDir, 0755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+
+	// Event log carries only run.started; the run is still live.
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	got := runs[0]
+	if got.Kind != "active" {
+		t.Fatalf("Kind = %q, want %q (live socket must keep the row active)", got.Kind, "active")
+	}
+	if got.Archived {
+		t.Fatalf("Archived = true, want false (active runs are never marked archived regardless of archive dir presence)")
+	}
+
+	payload, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(payload), `"archived":false`) {
+		t.Fatalf("JSON payload missing %q: %s", `"archived":false`, payload)
 	}
 }

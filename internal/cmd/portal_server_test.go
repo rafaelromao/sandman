@@ -1118,6 +1118,41 @@ func TestPortal_PageWiresPortalViewStatePersistence(t *testing.T) {
 	}
 }
 
+func TestPortal_PageExposesArchivedFilter(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	for _, want := range []string{
+		`id="archived-toggle"`,
+		`Archived`,
+		`showArchived: persistedPortalState.showArchived === true`,
+		`showArchived: state.showArchived`,
+		`archivedToggle.addEventListener('change'`,
+		`archivedToggle.checked = state.showArchived`,
+		`if (!state.showArchived && run.archived) return false;`,
+		`const visibleRuns = state.runs.filter(shouldShowRun)`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
+		}
+	}
+}
+
 func TestPortal_PageWiresLogScrollPreservation(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -1306,6 +1341,7 @@ func TestPortal_PageExposesCommandPanelShell(t *testing.T) {
 		`value="history"`,
 		`value="clean"`,
 		`value="config"`,
+		`value="archive"`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:1000])
@@ -1715,6 +1751,9 @@ func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
 		{name: "history", body: `{"command":"history"}`, want: []string{"history"}},
 		{name: "clean", body: `{"command":"clean","cleanMode":"failed","confirmed":true}`, want: []string{"clean", "--failed"}},
 		{name: "config", body: `{"command":"config","configMode":"set","configKey":"agent","configValue":"opencode"}`, want: []string{"config", "set", "agent", "opencode"}},
+		{name: "archive-run", body: `{"command":"archive","archiveMode":"run","archiveRunId":"abc","confirmed":true}`, want: []string{"archive", "run", "abc"}},
+		{name: "archive-older-than", body: `{"command":"archive","archiveMode":"older-than","archiveOlderThanDays":"7","confirmed":true}`, want: []string{"archive", "older-than", "7"}},
+		{name: "archive-stale", body: `{"command":"archive","archiveMode":"stale","confirmed":true}`, want: []string{"archive", "stale"}},
 	}
 
 	for _, tc := range cases {
@@ -1839,6 +1878,35 @@ func TestPortal_CommandsEndpointReturnsJSONErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("unknown archive mode", func(t *testing.T) {
+		prevStart := portalStartCommand
+		t.Cleanup(func() { portalStartCommand = prevStart })
+		portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
+			return &portalCommandResult{}
+		}
+
+		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"archive","archiveMode":"bogus","confirmed":true}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+			t.Fatalf("expected application/json, got %q", ct)
+		}
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error == "" {
+			t.Fatal("expected non-empty error message for unknown archive mode")
+		}
+	})
+
 	t.Run("launch failure", func(t *testing.T) {
 		prevStart := portalStartCommand
 		t.Cleanup(func() { portalStartCommand = prevStart })
@@ -1865,6 +1933,32 @@ func TestPortal_CommandsEndpointReturnsJSONErrors(t *testing.T) {
 		}
 		if body.Error != "exec: not found" {
 			t.Fatalf("expected 'exec: not found', got %q", body.Error)
+		}
+	})
+
+	t.Run("archive without confirmation", func(t *testing.T) {
+		prevStart := portalStartCommand
+		t.Cleanup(func() { portalStartCommand = prevStart })
+		portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
+			return &portalCommandResult{}
+		}
+
+		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"archive","archiveMode":"stale"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", resp.StatusCode)
+		}
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error == "" {
+			t.Fatal("expected non-empty error message for unconfirmed archive")
 		}
 	})
 }

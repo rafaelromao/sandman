@@ -76,6 +76,13 @@ type portalRun struct {
 	// RetriesDone is the number of retry attempts the run actually consumed.
 	// Omitted when the run has not finished.
 	RetriesDone int `json:"retriesDone,omitempty"`
+	// Archived is true when a completed run's directory has been
+	// relocated from .sandman/runs/<run-id> to .sandman/archive/<run-id>
+	// by `sandman archive`. The field is always present in JSON so the
+	// /api/runs contract carries an "archived" key for every row.
+	// Active runs are never marked archived, even when an archive
+	// directory with the matching RunID happens to exist on disk.
+	Archived bool `json:"archived"`
 }
 
 type portalActiveRun struct {
@@ -178,6 +185,16 @@ func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]p
 	}
 
 	runs = v.dedupRuns(runs)
+	for i := range runs {
+		// Active runs are never marked archived, even if a directory
+		// matching the run ID happens to exist under .sandman/archive.
+		// Skipping the disk probe for active rows also keeps the hot
+		// path allocation-free when the portal polls every few seconds.
+		if runs[i].Kind != "completed" {
+			continue
+		}
+		runs[i].Archived = v.isRunArchived(repoRoot, runs[i].RunID)
+	}
 	sort.SliceStable(runs, func(i, j int) bool {
 		if runs[i].Kind != runs[j].Kind {
 			return runs[i].Kind == "active"
@@ -201,6 +218,14 @@ func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]p
 // the same issue only dedup when they share the same BatchKey, so a current
 // active row (BatchKey=active.Key) is never hidden by a historical row
 // (BatchKey="") from a different batch.
+//
+// A review row (PRNumber > 0) is never deduped against implementation
+// rows for the same IssueNumber, because review runs and implementation
+// runs are different work even when they target the same issue. A review
+// row's IssueNumber is derived from payload["issue_number"] or from the
+// orchestrator stamping `issue: N` on the finished event, so it can
+// legitimately equal an implementation row's IssueNumber without
+// describing the same run.
 func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 	byIssue := make(map[int][]portalRun)
 	issueOrder := make([]int, 0)
@@ -217,16 +242,31 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 			result = append(result, issueRuns[0])
 			continue
 		}
-		byBatch := make(map[string][]portalRun)
-		batchOrder := make([]string, 0)
+		// Split review rows from implementation rows so a review
+		// run for the same issue never replaces a live impl row.
+		var implRuns, reviewRuns []portalRun
 		for _, run := range issueRuns {
-			if _, ok := byBatch[run.BatchKey]; !ok {
-				batchOrder = append(batchOrder, run.BatchKey)
+			if run.PRNumber > 0 || run.Review {
+				reviewRuns = append(reviewRuns, run)
+			} else {
+				implRuns = append(implRuns, run)
 			}
-			byBatch[run.BatchKey] = append(byBatch[run.BatchKey], run)
 		}
-		for _, batchKey := range batchOrder {
-			result = append(result, v.dedupRunGroup(byBatch[batchKey])...)
+		for _, group := range [][]portalRun{implRuns, reviewRuns} {
+			if len(group) == 0 {
+				continue
+			}
+			byBatch := make(map[string][]portalRun)
+			batchOrder := make([]string, 0)
+			for _, run := range group {
+				if _, ok := byBatch[run.BatchKey]; !ok {
+					batchOrder = append(batchOrder, run.BatchKey)
+				}
+				byBatch[run.BatchKey] = append(byBatch[run.BatchKey], run)
+			}
+			for _, batchKey := range batchOrder {
+				result = append(result, v.dedupRunGroup(byBatch[batchKey])...)
+			}
 		}
 	}
 	return result
@@ -966,6 +1006,23 @@ func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath st
 	if !v.isSocketAlive(socketPath) {
 		run.Kind = "completed"
 	}
+}
+
+// isRunArchived reports whether runID's directory currently lives under
+// .sandman/archive instead of .sandman/runs. A non-empty RunID that
+// matches no directory on disk returns false; only a present directory
+// counts as archived, so transient or half-moved state never lights up
+// the flag.
+func (v *portalRunsView) isRunArchived(repoRoot, runID string) bool {
+	if runID == "" {
+		return false
+	}
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	info, err := os.Stat(filepath.Join(layout.ArchiveDir, runID))
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {

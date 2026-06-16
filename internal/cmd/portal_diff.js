@@ -91,12 +91,16 @@
     tr.setAttribute('data-context-for', run.key);
     const td = global.document.createElement('td');
     td.setAttribute('colspan', '7');
+    td.appendChild(buildContextChip(text));
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function buildContextChip(text) {
     const chip = global.document.createElement('span');
     chip.classList.add('context-chip', 'mono');
     chip.textContent = text;
-    td.appendChild(chip);
-    tr.appendChild(td);
-    return tr;
+    return chip;
   }
 
   function contextRowOf(body, runKey) {

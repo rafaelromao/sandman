@@ -1943,3 +1943,74 @@ func TestPortal_ReasonChipCSS_DefinesAutoSelectAndReviewVariants(t *testing.T) {
 		}
 	}
 }
+
+// TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue is the
+// regression test for the row-mixing bug. A `sandman review --issue N`
+// run stores `issue_number: N` in the run.started payload and the
+// orchestrator stamps `issue: N` on the run.finished event, so
+// RunState.IssueNumber() returns N for the review row even though its
+// RunID is `PR<k>`. The dedup pass groups rows by IssueNumber, so the
+// review row and the impl row for the same issue both end up in the
+// same dedup group. Without the fix, `dedupRunGroup` collapses them
+// into a single row that drops either the impl run or the review run
+// depending on priority (aborted > active > default).
+func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	abortedAt := startedAt.Add(2 * time.Minute)
+	reviewStartedAt := startedAt.Add(3 * time.Minute)
+	reviewFinishedAt := reviewStartedAt.Add(2 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		// Impl run for issue 1066 — aborted. Mirrors the
+		// production shape where the first attempt was aborted
+		// and the second attempt is mid-flight, leaving an
+		// aborted row in the event log.
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl"}},
+		{Type: "run.aborted", Timestamp: abortedAt, RunID: "run-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl", "status": "aborted"}},
+		// Review run for PR 1075 of issue 1066 — finished. The
+		// orchestrator stamps `issue: 1066` on the finished event
+		// (and `issue_number: 1066` in the payload), so both the
+		// event-level Issue field and the payload field point at
+		// issue 1066. This is the production shape that produced
+		// the row-mixing bug in the portal.
+		{Type: "run.started", Timestamp: reviewStartedAt, RunID: "PR1075", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR1075", "review": true, "pr_number": 1075, "issue_number": 1066}},
+		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR1075", Issue: 1066, Payload: map[string]any{"branch": "sandman/review-PR1075", "review": true, "pr_number": 1075, "issue_number": 1066, "status": "success"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var implRun, reviewRun *portalRun
+	for i := range runs {
+		switch runs[i].RunID {
+		case "run-1066-impl":
+			implRun = &runs[i]
+		case "PR1075":
+			reviewRun = &runs[i]
+		}
+	}
+	if implRun == nil {
+		t.Fatalf("expected impl row (run-1066-impl), got %d rows", len(runs))
+	}
+	if reviewRun == nil {
+		t.Fatalf("expected review row (PR1075), got %d rows", len(runs))
+	}
+	if implRun.IssueNumber != 1066 {
+		t.Fatalf("expected impl row IssueNumber=1066, got %d", implRun.IssueNumber)
+	}
+	if reviewRun.IssueNumber != 1066 {
+		t.Fatalf("expected review row IssueNumber=1066 (from issue_number payload), got %d", reviewRun.IssueNumber)
+	}
+	if reviewRun.PRNumber != 1075 {
+		t.Fatalf("expected review row PRNumber=1075, got %d", reviewRun.PRNumber)
+	}
+	if !reviewRun.Review {
+		t.Fatal("expected review row Review=true")
+	}
+}
