@@ -1526,7 +1526,7 @@ const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('expected mutations > 0, got ' + counters.mutations);
 if (countLog(titleCell) === 0) throw new Error('expected title cell to be touched after batchIssues transition');
 const marker = wrap.querySelector('.batch-membership');
-if (!marker) throw new Error('BUG VERIFIED: chip was not added by updateRunRowCells even though batchIssues changed from null to [860,854]');
+if (!marker) throw new Error('expected batch-membership chip after batchIssues transition from null to [860,854]');
 const text = marker.textContent || '';
 if (!text.includes('860') || !text.includes('854')) {
   throw new Error('expected chip text to list both issues 860 and 854, got ' + JSON.stringify(text));

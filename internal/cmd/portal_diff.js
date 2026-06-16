@@ -603,7 +603,7 @@
     if (oldSnap.reason !== newSnap.reason) {
       reconcileReasonChip(wrap, newSnap.reason);
     }
-    if (oldSnap.batchIssuesLen <= 1 !== newSnap.batchIssuesLen <= 1) {
+    if ((oldSnap.batchIssuesLen <= 1) !== (newSnap.batchIssuesLen <= 1)) {
       reconcileBatchMembership(wrap, newRun);
     }
   }
