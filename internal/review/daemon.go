@@ -396,19 +396,23 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
 	runID := fmt.Sprintf("PR%d", prNumber)
-	runDir := daemon.RunDir(d.BaseDir, nil, runID)
 
-	broadcaster := daemon.NewBroadcaster()
-	ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
-	if err := ctlSocket.Start(); err != nil {
-		return fmt.Errorf("start control socket: %w", err)
+	// Boot the per-PR run session. The review daemon path does not
+	// start a cmd.sock (the per-issue abort is a CLI-only seam), so
+	// the commander is nil and Prepare cleanly skips the
+	// CommandServer.Start step. The run dir, batch.json, and
+	// run.sock are created before run.started is emitted by the
+	// orchestrator, so a daemon killed between run.started and the
+	// agent's first output still leaves enough on disk for the
+	// portal's stale-recovery sweep to emit run.aborted (issue
+	// #1024).
+	rs := daemon.NewRunSession(d.BaseDir, runID)
+	manifest := daemon.BatchManifest{Issues: []int{}, CreatedAt: time.Now()}
+	if err := rs.Prepare(manifest, nil); err != nil {
+		_ = rs.Close()
+		return fmt.Errorf("prepare review run session: %w", err)
 	}
-	defer os.RemoveAll(runDir)
-	defer ctlSocket.Stop()
-
-	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{}, CreatedAt: time.Now()}); err != nil {
-		return fmt.Errorf("write manifest: %w", err)
-	}
+	defer rs.Close()
 
 	req := batch.Request{
 		Agent:                agentName,
@@ -428,7 +432,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		PRNumber:     prNumber,
 		ReviewFocus:  focus,
 		RunID:        runID,
-		RunDir:       runDir,
+		RunDir:       rs.RunDir(),
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return fmt.Errorf("run batch: %w", err)

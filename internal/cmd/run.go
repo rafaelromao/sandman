@@ -577,38 +577,52 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}()
 
-			runDir := daemon.RunDir(".sandman", req.Issues, runID)
-			broadcaster := daemon.NewBroadcaster()
-			ctlSocket := daemon.NewControlSocket(runDir, broadcaster)
-
 			if staleRemoved, err := daemon.CleanupStaleRunSnapshots(".sandman"); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", err)
 			} else if staleRemoved > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale run-owned config snapshots from previous runs\n", staleRemoved)
 			}
 
-			if err := ctlSocket.Start(); err != nil {
-				return err
-			}
-			defer ctlSocket.Stop()
-			defer os.RemoveAll(runDir)
-			if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now()}); err != nil {
-				return err
-			}
-
+			// Boot the run session: MkdirAll → WriteManifest →
+			// ControlSocket.Start → CommandServer.Start, in that fixed
+			// order. The daemon.RunSession helper collapses the four
+			// steps into a single call so the ordering is structural
+			// (issue #1024). A run.started event is only emitted after
+			// Prepare returns nil, so the orchestrator can never see a
+			// half-bootstrapped run. Close is deferred first so it runs
+			// last: the listener stops before the run dir is removed.
+			rs := daemon.NewRunSession(".sandman", runID)
+			// The comma-ok form matters: a typed-nil interface
+			// (`var c IssueCommander = (*concrete)(nil)`) is
+			// non-nil but unusable, and `Prepare` would then
+			// call `cmdServer.Start` with a nil commander. By
+			// keeping the `ok` signal we can pass a real `nil`
+			// when the BatchRunner does not satisfy
+			// IssueCommander, and `--continue` already
+			// suppresses the cmd.sock server.
+			var commander daemon.IssueCommander
 			if !continueFlag {
-				var cmdServer *daemon.CommandServer
-				if commander, ok := deps.BatchRunner.(daemon.IssueCommander); ok {
-					cmdServer = daemon.NewCommandServer(runDir, commander)
-					if err := cmdServer.Start(); err != nil {
-						return err
-					}
-					defer cmdServer.Stop()
+				if c, ok := deps.BatchRunner.(daemon.IssueCommander); ok {
+					commander = c
 				}
 			}
+			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now()}
+			if err := rs.Prepare(manifest, commander); err != nil {
+				_ = rs.Close()
+				// A daemon without a control socket is invisible
+				// to the portal and cannot be aborted by the user,
+				// so it must not run (issue #1024 acceptance
+				// criterion: "logs a fatal error and aborts before
+				// emitting any event"). Surface the failure
+				// loudly on stderr so operators see it in their
+				// CI logs and shell history.
+				fmt.Fprintf(cmd.ErrOrStderr(), "fatal: cannot bootstrap run session: %v\n", err)
+				return err
+			}
+			defer rs.Close()
 
-			req.OutputWriter = broadcaster
-			req.RunDir = runDir
+			req.OutputWriter = rs.Broadcaster()
+			req.RunDir = rs.RunDir()
 
 			result, err := deps.BatchRunner.RunBatch(ctx, req)
 			if result != nil {
