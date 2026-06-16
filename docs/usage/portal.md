@@ -8,11 +8,28 @@
 sandman portal
 ```
 
-By default, the portal binds to `0.0.0.0:5000`. If you need a different port, pass `--port`:
+By default, the portal binds to `127.0.0.1:5000` (loopback only) so it does not expose a dev server on every interface. If you need a different port, pass `--port`:
 
 ```bash
 sandman portal --port 5050
 ```
+
+### Expose the portal on another interface
+
+The default loopback bind keeps the portal reachable only from the same machine. To expose it on a different host or interface (for example, on all interfaces so another device on the network can reach it), pass `--host`:
+
+```bash
+sandman portal --host 0.0.0.0
+```
+
+You can also set the `SANDMAN_PORTAL_HOST` environment variable to change the default bind host before launching:
+
+```bash
+export SANDMAN_PORTAL_HOST=0.0.0.0
+sandman portal
+```
+
+`SANDMAN_PORTAL_HOST` only changes the default; an explicit `--host` flag always wins. The address printed at startup reflects the host the server is actually bound on.
 
 When the server starts, it prints the URL to open in your browser.
 

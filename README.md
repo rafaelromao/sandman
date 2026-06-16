@@ -36,7 +36,7 @@ Sandman manages the lifecycle of automated coding workflows:
 - Creates isolated sandboxes (git worktrees or containers)
 - Orchestrates parallel agent execution with dependency-aware scheduling
 - Logs structured events for observability
-- Serves a local portal for watching current repo runs in the browser
+- Serves a local portal for watching current repo runs in the browser (binds to `127.0.0.1` by default; use `--host 0.0.0.0` or `SANDMAN_PORTAL_HOST=0.0.0.0` to expose on all interfaces)
 
 ## Documentation
 

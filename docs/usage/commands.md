@@ -189,9 +189,12 @@ sandman portal [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port` | `5000` | Port to bind on `0.0.0.0` |
+| `--port` | `5000` | Port to bind on the chosen host |
+| `--host` | `127.0.0.1` (or `SANDMAN_PORTAL_HOST` if set) | Host/interface to bind on. Use `0.0.0.0` to expose on all interfaces. |
 
 The portal is repo-scoped: it scans the current repository's `.sandman/runs/` tree on each poll and shows every live Sandman instance it finds there, plus run status and logs from the event and log files. It also exposes a launcher for repo-scoped command presets.
+
+By default the server binds to `127.0.0.1` so it is not reachable from other machines. Pass `--host` (or set `SANDMAN_PORTAL_HOST`) to bind on a different interface, for example `0.0.0.0` to expose the portal on all interfaces.
 
 Use it when you want a browser view of multiple runs in the same repo and a launcher for common Sandman commands.
 
