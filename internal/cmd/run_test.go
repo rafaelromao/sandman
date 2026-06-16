@@ -50,9 +50,6 @@ type fakeGitHubClient struct {
 	searchIssuesError  error
 }
 
-func (f *fakeGitHubClient) Lock()   { f.mu.Lock() }
-func (f *fakeGitHubClient) Unlock() { f.mu.Unlock() }
-
 func (f *fakeGitHubClient) setIssueState(number int, state string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
