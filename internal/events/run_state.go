@@ -1,7 +1,9 @@
 package events
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -200,6 +202,24 @@ func (r RunState) Duration() time.Duration {
 	return r.Finished.Timestamp.Sub(r.Started.Timestamp).Round(time.Second)
 }
 
+// RetriesTotal returns the configured retry count from the finished payload.
+func (r RunState) RetriesTotal() int {
+	if r.Finished == nil {
+		return 0
+	}
+	v, _ := payloadInt(r.Finished.Payload, "retries_total")
+	return v
+}
+
+// RetriesDone returns the retry iterations actually executed from the finished payload.
+func (r RunState) RetriesDone() int {
+	if r.Finished == nil {
+		return 0
+	}
+	v, _ := payloadInt(r.Finished.Payload, "retries_done")
+	return v
+}
+
 func payloadString(payload map[string]any, key string) (string, bool) {
 	if payload == nil {
 		return "", false
@@ -227,4 +247,44 @@ func payloadBool(payload map[string]any, key string) (bool, bool) {
 		return b == "true", true
 	}
 	return false, false
+}
+
+func payloadInt(payload map[string]any, key string) (int, bool) {
+	if payload == nil {
+		return 0, false
+	}
+	v, ok := payload[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		if n > int64(math.MaxInt) || n < int64(math.MinInt) {
+			return 0, false
+		}
+		return int(n), true
+	case float64:
+		if math.IsNaN(n) || math.IsInf(n, 0) {
+			return 0, false
+		}
+		if n != math.Trunc(n) {
+			return 0, false
+		}
+		if n > float64(math.MaxInt) || n < float64(math.MinInt) {
+			return 0, false
+		}
+		return int(n), true
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		if i > int64(math.MaxInt) || i < int64(math.MinInt) {
+			return 0, false
+		}
+		return int(i), true
+	}
+	return 0, false
 }
