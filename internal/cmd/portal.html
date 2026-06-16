@@ -744,6 +744,47 @@
       letter-spacing: 0.02em;
     }
     .badge.auto-select .dot, .badge.review .dot { background: var(--accent); }
+    .retry-chip {
+      display: inline-flex;
+      align-items: center;
+      margin-left: auto;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in oklch, var(--warning) 36%, var(--border));
+      background: color-mix(in oklch, var(--warning) 12%, var(--surface-2));
+      color: var(--warning);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .retry-event-card {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px 12px;
+      margin-top: 6px;
+      border-radius: 10px;
+      border: 1px solid color-mix(in oklch, var(--warning) 28%, var(--border));
+      background: color-mix(in oklch, var(--warning) 8%, var(--surface-2));
+      color: var(--text);
+      font-size: 12.5px;
+    }
+    .retry-event-card .retry-line {
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+    }
+    .retry-log {
+      margin: 0;
+      padding: 8px 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: color-mix(in oklch, var(--bg) 72%, var(--surface-2));
+      border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: var(--text);
+    }
     .action-btn, .tab-btn {
       display: inline-flex;
       align-items: center;

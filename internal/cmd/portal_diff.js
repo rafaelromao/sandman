@@ -99,6 +99,20 @@
     labelSpan.textContent = label;
     badge.appendChild(labelSpan);
     td.appendChild(badge);
+    appendRetryChip(td, run);
+  }
+
+  function appendRetryChip(td, run) {
+    const done = Number(run && run.retriesDone ? run.retriesDone : 0);
+    if (!done) return;
+    const total = Number(run && run.retriesTotal ? run.retriesTotal : 0);
+    const label = done === 1 ? '\u21bb 1 retry' : '\u21bb ' + done + ' retries';
+    const tooltip = 'retried ' + done + ' of ' + total + ' attempts \u2014 see Events tab';
+    const chip = global.document.createElement('span');
+    chip.classList.add('retry-chip');
+    chip.setAttribute('title', tooltip);
+    chip.textContent = label;
+    td.appendChild(chip);
   }
 
   function buildMonoCell(td, text, extraClass) {
@@ -384,7 +398,9 @@
         time.textContent = formatEventTime(event.timestamp);
         head.appendChild(time);
         row.appendChild(head);
-        if (event.payload && Object.keys(event.payload).length) {
+        if (event.type === 'run.retry' || event.type === 'run.idle_timeout') {
+          row.appendChild(buildRetryEventCard(event));
+        } else if (event.payload && Object.keys(event.payload).length) {
           const pre = global.document.createElement('pre');
           pre.classList.add('event-payload');
           pre.innerHTML = highlightJSON(JSON.stringify(event.payload, null, 2));
@@ -395,6 +411,34 @@
       section.appendChild(list);
     }
     content.appendChild(section);
+  }
+
+  function buildRetryEventCard(event) {
+    const card = global.document.createElement('div');
+    card.classList.add('retry-event-card');
+    const payload = event && event.payload ? event.payload : {};
+    const attempt = payload.attempt;
+    const maxAttempts = payload.max_attempts;
+    if (attempt != null && maxAttempts != null) {
+      const attemptLine = global.document.createElement('div');
+      attemptLine.classList.add('retry-line');
+      attemptLine.textContent = 'attempt ' + attempt + ' of ' + maxAttempts;
+      card.appendChild(attemptLine);
+    }
+    if (payload.previous_status != null) {
+      const statusLine = global.document.createElement('div');
+      statusLine.classList.add('retry-line');
+      statusLine.textContent = 'previous_status: ' + payload.previous_status;
+      card.appendChild(statusLine);
+    }
+    const lines = Array.isArray(payload.last_log_lines) ? payload.last_log_lines : [];
+    if (lines.length) {
+      const pre = global.document.createElement('pre');
+      pre.classList.add('retry-log');
+      pre.textContent = lines.join('\n');
+      card.appendChild(pre);
+    }
+    return card;
   }
 
   function buildDetailsContent(content, run, helpers) {
