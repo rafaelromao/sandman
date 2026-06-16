@@ -64,7 +64,7 @@ Emitted at the top of each retry iteration in the orchestrator's `for attempt` l
 |-------|-------------|
 | `attempt` | 1-indexed; matches the heartbeat's attempt indexing |
 | `max_attempts` | Total attempts the run was budgeted for (`retries + 1`) |
-| `previous_status` | `result.Status` from the previous iteration, verbatim (`failure` or `aborted` in practice) |
+| `previous_status` | `result.Status` from the previous iteration, verbatim (`failure` or `aborted` in practice; the spec's `idle_timeout` value is unreachable today because `withHeartbeat` flips non-success to `aborted` before the next attempt's `run.retry` fires) |
 | `branch` | Branch the run is operating on |
 | `last_log_lines` | `["line 1", "line 2", "line 3"]` — Up to 3 trailing lines from the agent log at retry time |
 
