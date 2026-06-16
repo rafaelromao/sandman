@@ -60,7 +60,7 @@ type portalRun struct {
 	// single-issue run.
 	BatchIssues []int `json:"batchIssues,omitempty"`
 	// IssueTitle carries the human-readable GitHub issue title from the event
-	// payload (added by issue #833). Empty for historical or prompt-only runs.
+	// payload. Empty for historical or prompt-only runs.
 	IssueTitle string `json:"issueTitle,omitempty"`
 	// Reason surfaces the why-was-this-run-started taxonomy from the projected
 	// RunState's RunKind(): "auto-select" for auto-select phase runs,
@@ -69,6 +69,12 @@ type portalRun struct {
 	// prompt-only, continuation, and override runs keep the existing
 	// /api/runs JSON contract.
 	Reason string `json:"reason,omitempty"`
+	// RetriesTotal is the number of retry attempts the orchestrator allowed
+	// for the run. Omitted when the run has not finished.
+	RetriesTotal int `json:"retriesTotal,omitempty"`
+	// RetriesDone is the number of retry attempts the run actually consumed.
+	// Omitted when the run has not finished.
+	RetriesDone int `json:"retriesDone,omitempty"`
 }
 
 type portalActiveRun struct {
@@ -625,23 +631,25 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 
 	portalRun := portalRun{
-		Key:         runID,
-		RunID:       runID,
-		Kind:        v.kindForRun(runState),
-		Status:      v.statusOrDefault(status, runState.IsActive(), runState.IsReview()),
-		IssueLabel:  issueLabel,
-		IssueNumber: issueNumber,
-		IssueTitle:  v.issueTitleFromPayload(runState.Started.Payload),
-		Branch:      branch,
-		StartedAt:   startedAt,
-		FinishedAt:  finishedAt,
-		Duration:    v.durationForRun(runState),
-		LogPath:     logPath,
-		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, branch),
-		Log:         logContent,
-		Events:      eventsByRun[runID],
-		Review:      runState.IsReview(),
-		Reason:      chipReasonForRunKind(runState.RunKind()),
+		Key:          runID,
+		RunID:        runID,
+		Kind:         v.kindForRun(runState),
+		Status:       v.statusOrDefault(status, runState.IsActive(), runState.IsReview()),
+		IssueLabel:   issueLabel,
+		IssueNumber:  issueNumber,
+		IssueTitle:   v.issueTitleFromPayload(runState.Started.Payload),
+		Branch:       branch,
+		StartedAt:    startedAt,
+		FinishedAt:   finishedAt,
+		Duration:     v.durationForRun(runState),
+		LogPath:      logPath,
+		LogURL:       v.portalLogDownloadURL(repoRoot, issueNumber, branch),
+		Log:          logContent,
+		Events:       eventsByRun[runID],
+		Review:       runState.IsReview(),
+		Reason:       chipReasonForRunKind(runState.RunKind()),
+		RetriesTotal: runState.RetriesTotal(),
+		RetriesDone:  runState.RetriesDone(),
 	}
 	if review, pr := v.reviewContext(runState); review {
 		portalRun.Review = true
