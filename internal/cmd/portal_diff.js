@@ -21,6 +21,7 @@
 
   function snapshotCellState(run, opts) {
     const h = opts.helpers;
+    const batchIssues = Array.isArray(run && run.batchIssues) ? run.batchIssues : [];
     return {
       kind: run.kind || '',
       nameText: run.issueLabel || run.key,
@@ -28,6 +29,7 @@
       badgeClass: h.statusClass(run),
       badgeLabel: run.status || (run.kind === 'active' ? 'running' : 'completed'),
       reason: (run.reason === 'auto-select' || run.reason === 'review') ? run.reason : '',
+      batchIssuesLen: batchIssues.length,
       startedText: h.formatTime(run.startedAt),
       durationText: h.formatDuration(run.duration),
       branchText: h.formatBranch(run),
@@ -587,7 +589,7 @@
     }
   }
 
-  function updateTitleCell(cell, oldSnap, newSnap) {
+  function updateTitleCell(cell, oldSnap, newSnap, newRun) {
     const wrap = cell.children[0];
     if (!wrap) return;
     const name = wrap.children[0];
@@ -598,8 +600,32 @@
     if (oldSnap.metaText !== newSnap.metaText && meta) {
       setText(meta, newSnap.metaText);
     }
-    if (oldSnap.reason === newSnap.reason) return;
-    reconcileReasonChip(wrap, newSnap.reason);
+    if (oldSnap.reason !== newSnap.reason) {
+      reconcileReasonChip(wrap, newSnap.reason);
+    }
+    if ((oldSnap.batchIssuesLen <= 1) !== (newSnap.batchIssuesLen <= 1)) {
+      reconcileBatchMembership(wrap, newRun);
+    }
+  }
+
+  function reconcileBatchMembership(wrap, run) {
+    const existing = wrap.querySelector('.batch-membership');
+    const chip = renderBatchMembership(run);
+    if (!chip) {
+      if (existing) {
+        wrap.removeChild(existing);
+        mutationCount += 1;
+      }
+      return;
+    }
+    if (!existing) {
+      wrap.appendChild(chip);
+      mutationCount += 1;
+      return;
+    }
+    if (existing.textContent !== chip.textContent) {
+      setText(existing, chip.textContent);
+    }
   }
 
   function reconcileReasonChip(wrap, reason) {
@@ -708,7 +734,7 @@
     }
 
     const titleCell = cellOf(row, 'title');
-    if (titleCell) updateTitleCell(titleCell, oldSnap, newSnap);
+    if (titleCell) updateTitleCell(titleCell, oldSnap, newSnap, newRun);
 
     const badgeCell = cellOf(row, 'badge');
     if (badgeCell) updateBadgeCell(badgeCell, oldSnap, newSnap);
