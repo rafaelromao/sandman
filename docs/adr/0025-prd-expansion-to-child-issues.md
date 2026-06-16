@@ -74,6 +74,12 @@ using the same `DependencyResolver`-style seam that already lives in
    authored children, and the per-PRD `expanded PRD #N to M accepted
    children` summary already accounts for the drop). The filtering
    contract is unchanged; only the operator-facing log line is gone.
+   This `## Parent` filter applies only to candidates harvested from
+   a PRD's body, comments, or search fallback; user-typed input
+   numbers in a mixed batch bypass the verification and are
+   accepted unconditionally, except when the number is itself a
+   PRD, in which case step 6 expands it on its own pass (see
+   step 3a).
 3a. **User-typed input is authoritative** (#1036) — `Resolve` builds
    a `userInputSet` from the deduped input slice and threads it into
    `resolvePRDChildren`. Candidates whose number is in `userInputSet`
@@ -88,7 +94,12 @@ using the same `DependencyResolver`-style seam that already lives in
 4. **Nested-PRD rejection** — For each harvested (non-user-typed)
    candidate, the resolver re-applies `IsPRD`. A candidate that is
    itself a PRD fails the resolution with
-   `nested PRD detected: #<child>`.
+   `nested PRD detected: #<child>`. The nested-PRD rejection applies
+   only to candidates harvested from a PRD's body, comments, or
+   search fallback; user-typed input numbers in a mixed batch bypass
+   the rejection. (A user-typed number that is itself a PRD is still
+   expanded on its own pass by step 6, not treated as a nested PRD
+   of another.)
 5. **No-children rejection** — A PRD whose accepted-child set is
    empty (no candidates, or every candidate dropped at step 3) fails
    the resolution with `no child issues for PRD #<n>`.

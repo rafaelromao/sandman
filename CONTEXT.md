@@ -49,7 +49,7 @@ A GitHub issue whose body contains the H2 sections `## Problem Statement`, `## S
 _Avoid_: spec, epic, umbrella issue.
 
 **PRDResolver**:
-The component that detects PRD issues, discovers their child issues (from the body, comments, and a fallback mention search), verifies each candidate by its `## Parent` backlink, and replaces the PRD with its accepted children in the input batch. Runs in `sandman run` after issue selection and before `DependencyResolver.Resolve`. A PRD with no accepted children fails the resolution; a harvested child that is itself a PRD (nested PRD) also fails. Candidates that are also in the user-typed input list bypass the `## Parent` and nested-PRD checks (the user owns the choice), as documented in ADR-0025 §3a.
+The component that detects PRD issues, discovers their child issues (from the body, comments, and a fallback mention search), verifies each candidate by its `## Parent` backlink, and replaces the PRD with its accepted children in the input batch. Runs in `sandman run` after issue selection and before `DependencyResolver.Resolve`. A PRD with no accepted children fails the resolution; a harvested child that is itself a PRD (nested PRD) also fails. Candidates that are also in the user-typed input list bypass the `## Parent` and nested-PRD checks (the user owns the choice), as documented in ADR-0025 §3a. User-typed numbers are otherwise accepted unconditionally, except when the number is itself a PRD, in which case the resolver still runs its own expansion pass on it.
 _Avoid_: PRD expander, PRD flattener.
 
 **`## Parent` backlink**:
