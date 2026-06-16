@@ -83,10 +83,10 @@ gh pr comment {{PR_NUMBER}} --body "..."
 Format the body as Markdown with the following sections:
 
 - `## Summary` — one paragraph describing what the PR does.
-- `## Previous review progress` — **only include this section if previous reviews exist**. List each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**. If there were no prior reviews, **omit this section entirely** (do not write "No previous reviews found.").
 - `## Findings` — bulleted list. Group by severity (`Blocking`, `Important`, `Nit`). If there are no findings in a group, omit it.
 - `## Suggested next steps` — the minimum set of follow-ups for the author.
 - `## Decision` — If there are zero `Blocking` or `Important` findings, place a single line: `**APPROVED**`. Otherwise, place `**CHANGES_REQUESTED**`.
+- `## Previous review progress` — Do not render this section if there are no prior reviews. Do not write a placeholder such as "No previous reviews found." Only render this section when prior reviews exist, and in that case list each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**.
 
 Keep the comment terse and actionable. Do not post review commentary outside the single `gh pr comment` invocation.
 
