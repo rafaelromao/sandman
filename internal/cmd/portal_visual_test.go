@@ -73,7 +73,7 @@ const visualFixtureRowsJS = `
   const rows = [
     { issueLabel: '#960', key: 'a', metaText: 'ID run-960-178153440912227639 \u00b7 #960', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '37m46s', issueTitle: '[slice 1] Add internal/shellenv with key-validation + value-quoting', branch: 'sandman/960-slice-1-add-internalshellenv-with-key-validation-value-quoting', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
     { issueLabel: '#961', key: 'b', metaText: 'ID run-961-17815367101959514747 \u00b7 #961', status: 'running', started: 'Jun 15, 12:18:30 PM', duration: '17s', issueTitle: '[slice 2] Add internal/prompt.Renderer with body-insert substitution', branch: 'sandman/961-slice-2-add-internalpromptrenderer-with-body-insert-substitution', batchIssues: null },
-    { issueLabel: '#962', key: 'c', metaText: 'ID run-962-178153673100000000 \u00b7 #962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: '\u2014', branch: '\u2014', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
+    { issueLabel: '#962', key: 'c', metaText: 'ID run-962-178153673100000000 \u00b7 #962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: '[slice 3] Add internal/orchestrator dependencies path', branch: '\u2014', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
   ];
   const body = document.getElementById('runs-body');
   rows.forEach(r => body.appendChild(buildRow(r)));
