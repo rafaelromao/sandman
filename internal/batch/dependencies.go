@@ -83,7 +83,7 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 				continue
 			}
 
-			if isClosedIssue(blockerIssue) {
+			if github.IsIssueClosed(blockerIssue) {
 				continue
 			}
 
@@ -144,10 +144,6 @@ func fetchDependencyIssue(ctx context.Context, client github.Client, cache map[i
 
 	cache[issueNum] = issue
 	return issue, nil
-}
-
-func isClosedIssue(issue *github.Issue) bool {
-	return issue != nil && strings.EqualFold(strings.TrimSpace(issue.State), "closed")
 }
 
 func (r *DependencyResolver) warnExpansion(issueCount int) {

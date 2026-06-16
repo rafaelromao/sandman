@@ -166,3 +166,27 @@ func FuzzValidateKey(f *testing.F) {
 		}
 	})
 }
+
+// TestShellenvQuote covers Quote's always-quoted contract: every
+// non-empty value must be wrapped in single quotes and embedded
+// single quotes must be escaped via the `'\”` idiom. Empty values
+// also render as the empty-quote literal so callers can blindly
+// interpolate the result.
+func TestShellenvQuote(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{in: "", want: "''"},
+		{in: "main", want: "'main'"},
+		{in: "sandman/42-fix-bug", want: "'sandman/42-fix-bug'"},
+		{in: "two words", want: "'two words'"},
+		{in: "it's fine", want: `'it'"'"'s fine'`},
+		{in: "'; rm -rf /", want: `''"'"'; rm -rf /'`},
+	}
+	for _, tc := range cases {
+		if got := Quote(tc.in); got != tc.want {
+			t.Errorf("Quote(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
