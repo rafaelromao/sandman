@@ -1730,7 +1730,7 @@ func TestPortal_ActiveBatchIssue_ReasonFromState(t *testing.T) {
 		// Active batch issue path requires an issue number; pass 0 to
 		// surface the auto-select run whose only event is the auto-select
 		// run itself. The row's Key/RunID are taken from the state.
-		run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 0, state, nil, "", nil)
+		run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 0, state, nil, nil, "", nil)
 		if run.Reason != "auto-select" {
 			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
 		}
