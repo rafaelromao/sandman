@@ -5898,10 +5898,12 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *test
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// effectiveParallelCap(2, 1, 0) = 1, so the start gate serialises the
-	// two issues and the pool reuses a single container. See issue #501.
-	if starter.startCount != 1 {
-		t.Fatalf("expected 1 container to start (effectiveParallel=1 cap applied in auto mode), got %d", starter.startCount)
+	// effectiveParallelCap(2, 1, 0) = 2 in auto mode, so the start gate
+	// permits both issues through and the pool spawns one container per
+	// concurrent run (capacity=1 means each container holds a single run).
+	// See issue #1076.
+	if starter.startCount != 2 {
+		t.Fatalf("expected 2 containers to start (auto mode spawns one container per concurrent run), got %d", starter.startCount)
 	}
 }
 
@@ -6297,11 +6299,11 @@ func TestRunBatch_MaxContainersAutoStartsMinimumContainers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// effectiveParallelCap(4, 2, 0) = 2, so the start gate lets 2 issues
-	// through at a time and they share a single container (capacity=2). The
-	// pool reuses that container for the second batch. See issue #501.
-	if starter.startCount != 1 {
-		t.Fatalf("expected 1 container to start (effectiveParallel=2 cap applied, capacity=2 reuses one container), got %d", starter.startCount)
+	// effectiveParallelCap(4, 2, 0) = 4 in auto mode, so the start gate lets
+	// all 4 issues through. With capacity=2 per container, the pool spawns
+	// 4/2 = 2 concurrent containers. See issue #1076.
+	if starter.startCount != 2 {
+		t.Fatalf("expected 2 containers to start (auto mode with effectiveParallel=4 and capacity=2 spawns 2 containers), got %d", starter.startCount)
 	}
 }
 
@@ -6341,8 +6343,8 @@ func TestRunBatch_UsesConfigContainerSettingsWhenRequestUnset(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if starter.startCount != 1 {
-		t.Fatalf("expected config container_capacity=1 to start 1 container (effectiveParallel=1 cap applied, container reused), got %d", starter.startCount)
+	if starter.startCount != 2 {
+		t.Fatalf("expected config container_capacity=1 to start 2 containers in auto mode (effectiveParallel=parallel=2, one container per run), got %d", starter.startCount)
 	}
 }
 
