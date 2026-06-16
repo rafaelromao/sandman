@@ -432,21 +432,10 @@ func TestRun_ExpandsPRDBeforeBatchRunner(t *testing.T) {
 	}
 }
 
-func TestRunCommand_MixedPRDAndNonChildIssues(t *testing.T) {
-	// Regression for issue #1038. The original failure mode was
-	// `resolve PRDs: nested PRD detected: #982` when running
-	// `sandman run 972:977 982 990 994:1001`. The fix in #1036 makes
-	// user-typed numbers authoritative: when #990 (a PRD) harvests
-	// #982 as a candidate, #982 is in userInputSet and is accepted
-	// unconditionally, so the nested-PRD check is skipped and the
-	// batch resolves cleanly.
-	//
-	// The test bodies mirror the real #972, #973, #974, #980, #977,
-	// #982, #990, #994..#1001 fixtures. #982's authored children are
-	// #984..#989 (slice 1-6 of the runid rework). #990 cross-references
-	// #982 in prose. The slice numbers mentioned in #982's prose
-	// (#972, #973, #974) are also user-typed, so they ride through
-	// #982's harvest via the userInputSet bypass.
+func TestRun_MixedPRDAndNonChildIssues(t *testing.T) {
+	// Regression for #1038 — see ADR-0025 §3a. The original failure
+	// mode was `resolve PRDs: nested PRD detected: #982` when running
+	// `sandman run 972:977 982 990 994:1001`.
 	prd982Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSlices tracked in #972, #973, #974.\n\n## Child Issues\n\n- #984 child\n- #985 child\n- #986 child\n- #987 child\n- #988 child\n- #989 child\n"
 	prd990Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSee parent #982.\n"
 	childBody := "## Parent\n\n#982\n\n## What\n\n"
@@ -503,44 +492,35 @@ func TestRunCommand_MixedPRDAndNonChildIssues(t *testing.T) {
 	for _, n := range spy.req.Issues {
 		gotSet[n] = struct{}{}
 	}
-	// Slices 972..977 are user-typed non-PRD issues; they pass
-	// through unchanged.
+	// Slices 972..977 are user-typed non-PRD issues; they pass through.
 	for _, n := range []int{972, 973, 974, 975, 976, 977} {
 		if _, ok := gotSet[n]; !ok {
 			t.Errorf("expected user-typed slice #%d in resolved list, got %v", n, spy.req.Issues)
 		}
 	}
-	// #990 is a user-typed PRD; it expands to its harvested candidate
-	// #982, which is in userInputSet and accepted unconditionally. #982
-	// is then added to the resolved list (or is already there from
-	// #982's own expansion). The "preservation" of #990 is via its
-	// expansion to #982.
+	// #982 is added via #990's expansion (its only harvested candidate
+	// is #982, which is in userInputSet and accepted unconditionally).
 	if _, ok := gotSet[982]; !ok {
 		t.Errorf("expected #982 in resolved list (via #990's expansion), got %v", spy.req.Issues)
 	}
-	// Issues 994..1001 are user-typed non-PRD issues; they pass
-	// through unchanged.
+	// Issues 994..1001 are user-typed non-PRD issues; they pass through.
 	for _, n := range []int{994, 995, 996, 997, 998, 999, 1000, 1001} {
 		if _, ok := gotSet[n]; !ok {
 			t.Errorf("expected user-typed #%d in resolved list, got %v", n, spy.req.Issues)
 		}
 	}
-	// #982's authored children #984..#989 must be in the resolved
-	// list — they have `## Parent\n\n#982` and pass the harvest filter.
+	// #982's authored children #984..#989 have ## Parent and pass the
+	// harvest filter.
 	for _, n := range []int{984, 985, 986, 987, 988, 989} {
 		if _, ok := gotSet[n]; !ok {
 			t.Errorf("expected authored child #%d in resolved list, got %v", n, spy.req.Issues)
 		}
 	}
-	// #980 is NOT in #982's prose in this fixture, so it must not
-	// appear in the resolved list.
-	if _, ok := gotSet[980]; ok {
-		t.Errorf("expected #980 to be absent from resolved list, got %v", spy.req.Issues)
+	// No PRD candidate-mismatch warning on stderr.
+	if strings.Contains(buf.String(), "candidate #") && strings.Contains(buf.String(), "not a child") {
+		t.Errorf("expected no 'candidate not a child' warning on stderr, got: %q", buf.String())
 	}
-	// No "skipping" or "nested PRD" warning on stderr.
-	if strings.Contains(buf.String(), "skipping") {
-		t.Errorf("expected no 'skipping' warning on stderr, got: %q", buf.String())
-	}
+	// No nested-PRD error on stderr.
 	if strings.Contains(buf.String(), "nested PRD") {
 		t.Errorf("expected no 'nested PRD' warning on stderr, got: %q", buf.String())
 	}

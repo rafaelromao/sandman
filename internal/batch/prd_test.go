@@ -461,21 +461,9 @@ func TestPRDResolver_PropagatesChildFetchError(t *testing.T) {
 }
 
 func TestPRDResolver_AcceptsUserTypedIssuesOverridingHarvestedCandidates(t *testing.T) {
-	// Mixed batch from issue #1038: a single Resolve call that mixes a
-	// PRD (#982) whose body mentions slices in prose AND lists authored
-	// children, plus the slices themselves, plus a second PRD (#990)
-	// that cross-references the first in prose.
-	//
-	// Regression for the original failure mode
-	// `resolve PRDs: nested PRD detected: #982`. The fix in #1036 makes
-	// user-typed numbers authoritative: when #990 harvests #982 as a
-	// candidate, #982 is in userInputSet and is accepted unconditionally,
-	// so the nested-PRD check is skipped and the batch resolves cleanly.
-	// The prose-mentioned slice numbers (#972, #973, #974) are also in
-	// userInputSet, so they are accepted from #982's harvest without
-	// triggering the ## Parent backlink check. The slice #980 is mentioned
-	// in prose but NOT user-typed, so it falls through to the normal
-	// harvest filter (no ## Parent backlink) and is dropped.
+	// Regression for #1038 — see ADR-0025 §3a. Mixed batch: a PRD (#982)
+	// with slices in prose and authored children, the slices themselves,
+	// and a second PRD (#990) that cross-references #982.
 	prd982Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSlices tracked in #972, #973, #974, #980.\n\n## Child Issues\n\n- #984 child\n- #985 child\n- #986 child\n- #987 child\n- #988 child\n- #989 child\n"
 	prd990Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSee parent #982.\n"
 	childBody := "## Parent\n\n#982\n\n## What\n\n"
@@ -506,32 +494,27 @@ func TestPRDResolver_AcceptsUserTypedIssuesOverridingHarvestedCandidates(t *test
 	for _, n := range got {
 		gotSet[n] = struct{}{}
 	}
-	// Slices mentioned in #982's prose that the user typed must be in
-	// the output — they ride through #982's harvest via the userInputSet
-	// bypass.
+	// User-typed slices ride through #982's harvest via the
+	// userInputSet bypass.
 	for _, n := range []int{972, 973, 974} {
 		if _, ok := gotSet[n]; !ok {
 			t.Errorf("expected user-typed slice #%d in output, got %v", n, got)
 		}
 	}
-	// #982's authored children must be in the output — they have
-	// `## Parent\n\n#982` and pass the harvest filter normally.
+	// #982's authored children pass the harvest filter normally.
 	for _, n := range []int{984, 985, 986, 987, 988, 989} {
 		if _, ok := gotSet[n]; !ok {
 			t.Errorf("expected authored child #%d in output, got %v", n, got)
 		}
 	}
-	// #982 must be in the output: it is a user-typed number and #990
-	// (also a PRD) harvests #982 from its prose, so #982 is added back
-	// via #990's expansion. This is the "preservation" of #990 — the
-	// user-typed #990 expands to its real candidate #982, which is
-	// in userInputSet and accepted unconditionally.
+	// #982 is in the output: #990 (also a PRD) harvests #982 from
+	// its prose, and #982 is in userInputSet so it is accepted
+	// unconditionally. This is the "preservation" of #990.
 	if _, ok := gotSet[982]; !ok {
 		t.Errorf("expected user-typed #982 in output (added via #990's expansion), got %v", got)
 	}
-	// #980 must NOT be in the output: it is mentioned in #982's prose
-	// but is NOT user-typed, so it falls through to the harvest filter,
-	// has no ## Parent backlink to #982, and is dropped.
+	// #980 is mentioned in #982's prose but is not user-typed and
+	// has no ## Parent backlink, so the harvest filter drops it.
 	if _, ok := gotSet[980]; ok {
 		t.Errorf("expected prose-only #980 to be dropped, got %v", got)
 	}
