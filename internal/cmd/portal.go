@@ -506,7 +506,7 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 	}
 
 	var resp daemon.CommandResponse
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(conn, portalMaxBodyBytes)).Decode(&resp); err != nil {
 		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not read abort response for run %q", runKey)}
 	}
 	if resp.Status == "error" {
