@@ -90,7 +90,7 @@ func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) 
 		for _, child := range children {
 			addUnique(child)
 		}
-		fmt.Fprintf(r.warningWriter, "expanded PRD #%d to %d child issues\n", num, len(children))
+		fmt.Fprintf(r.warningWriter, "expanded PRD #%d to %d accepted children\n", num, len(children))
 	}
 	return out, nil
 }
