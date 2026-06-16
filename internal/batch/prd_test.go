@@ -3,6 +3,7 @@ package batch
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -484,7 +485,7 @@ func TestPRDResolver_AcceptsUserTypedIssuesOverridingHarvestedCandidates(t *test
 		},
 	}
 
-	r := NewPRDResolver(client, nil)
+	r := NewPRDResolver(client, io.Discard)
 	got, err := r.Resolve(context.Background(), []int{982, 972, 973, 974, 990})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
