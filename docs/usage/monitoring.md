@@ -32,7 +32,7 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 
 | Field | Description |
 |-------|-------------|
-| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.idle_timeout`, `run.warning`, `run.finished`, `run.aborted`) |
+| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.retry`, `run.idle_timeout`, `run.warning`, `run.finished`, `run.aborted`) |
 | `timestamp` | ISO 8601 timestamp |
 | `run_id` | Unique run identifier |
 | `issue` | GitHub issue number, or `null` for prompt-only runs |
@@ -56,6 +56,17 @@ Emitted when one or more `BlockedBy` issues failed in the same batch.
 | Field | Description |
 |-------|-------------|
 | `blocked_by` | List of issue numbers that caused the block |
+
+#### `run.retry`
+Emitted at the top of each retry iteration in the orchestrator's `for attempt` loop, between two attempts that are both actually about to run. The first attempt and the final attempt do not emit `run.retry`; the terminal `run.finished` (or `run.aborted`) covers those cases. Symmetric across the issue-driven and prompt-only retry loops; prompt-only runs use `issue: null` to match the existing prompt-only convention.
+
+| Field | Description |
+|-------|-------------|
+| `attempt` | 1-indexed; matches the heartbeat's attempt indexing |
+| `max_attempts` | Total attempts the run was budgeted for (`retries + 1`) |
+| `previous_status` | `result.Status` from the previous iteration, verbatim (`failure` or `aborted` in practice; the spec's `idle_timeout` value is unreachable today because `withHeartbeat` flips non-success to `aborted` before the next attempt's `run.retry` fires) |
+| `branch` | Branch the run is operating on |
+| `last_log_lines` | `["line 1", "line 2", "line 3"]` — Up to 3 trailing lines from the agent log at retry time |
 
 #### `run.idle_timeout`
 Emitted when the heartbeat watchdog detects that the agent has produced no log output for the configured `run_idle_timeout` duration. The watchdog then kills the agent process and the run terminates as `aborted`. This event is diagnostic; the terminal status is set by the subsequent `run.aborted` event.
