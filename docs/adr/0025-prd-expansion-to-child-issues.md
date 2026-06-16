@@ -77,7 +77,9 @@ using the same `DependencyResolver`-style seam that already lives in
    This `## Parent` filter applies only to candidates harvested from
    a PRD's body, comments, or search fallback; user-typed input
    numbers in a mixed batch bypass the verification and are
-   accepted unconditionally (see step 3a).
+   accepted unconditionally, except when the number is itself a
+   PRD, in which case step 6 expands it on its own pass (see
+   step 3a).
 3a. **User-typed input is authoritative** (#1036) — `Resolve` builds
    a `userInputSet` from the deduped input slice and threads it into
    `resolvePRDChildren`. Candidates whose number is in `userInputSet`
