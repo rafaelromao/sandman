@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 )
@@ -20,21 +21,17 @@ var autoSelectRunIDRe = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{4}-auto-select
 func shortTempDir(t *testing.T) string {
 	// Use a short path to avoid Unix socket path length limit (108 chars on Linux).
 	// The batch ID alone is ~40 chars, so we need a short base path.
-	// Use t.TempDir() for isolation but symlink from a short path to avoid
-	// the long path that t.TempDir() generates.
-	realDir := t.TempDir()
+	// t.TempDir() generates paths like /tmp/TestNameLong.../001 which are too long.
+	// We create a unique subdir under /tmp/sm instead.
 	shortDir := filepath.Join(os.TempDir(), "sm")
 	if err := os.MkdirAll(shortDir, 0o700); err != nil {
 		t.Skipf("cannot create short temp dir: %v", err)
 	}
-	// Create a unique subdir with a short name
 	name := fmt.Sprintf("t%d", time.Now().UnixNano()%1000000)
 	combined := filepath.Join(shortDir, name)
 	if err := os.MkdirAll(combined, 0o700); err != nil {
 		t.Skipf("cannot create short temp subdir: %v", err)
 	}
-	// Clean up the real dir since we're using combined
-	os.RemoveAll(realDir)
 	return combined
 }
 
@@ -300,5 +297,62 @@ func TestRunSelectionPhaseWithEvents_NoCandidateIssuesEmitsNoRunStarted(t *testi
 	}
 	if finished != nil {
 		t.Fatalf("expected no run.finished event for pre-flight failure, got %+v", finished)
+	}
+}
+
+func TestRunSelectionPhaseWithEvents_CreatesDirManifestAndSocketsOnFailure(t *testing.T) {
+	sandmanDir := shortTempDir(t)
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A", Body: "A", Labels: []string{"bug"}},
+			{Number: 2, Title: "Feature B", Body: "B", Labels: []string{"bug"}},
+		},
+	}
+	cfg := &config.Config{
+		Agent:         "test-agent",
+		ReviewCommand: "/oc review",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"test-agent": {
+			Command: "true",
+		},
+	}
+	log := &recordingEventLog{}
+
+	_, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1, 2}, "label:bug is:open", log)
+	if err == nil {
+		t.Fatal("expected error for missing selected-issues.json")
+	}
+
+	started, _ := findAutoSelectEvents(log)
+	if started == nil {
+		t.Fatal("expected run.started event")
+	}
+
+	runDir := filepath.Join(sandmanDir, "runs")
+	entries, err := os.ReadDir(runDir)
+	if err != nil {
+		t.Fatalf("failed to read runs dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one run dir, got %d", len(entries))
+	}
+	runDir = filepath.Join(runDir, entries[0].Name())
+
+	manifest, err := daemon.ReadManifest(runDir)
+	if err != nil {
+		t.Fatalf("failed to read manifest: %v", err)
+	}
+	if manifest.RunKind != "auto-select" {
+		t.Fatalf("expected RunKind auto-select, got %q", manifest.RunKind)
+	}
+	if len(manifest.Candidates) != 2 || manifest.Candidates[0] != 1 || manifest.Candidates[1] != 2 {
+		t.Fatalf("expected Candidates [1, 2], got %v", manifest.Candidates)
+	}
+	if manifest.Query != "label:bug is:open" {
+		t.Fatalf("expected Query label:bug is:open, got %q", manifest.Query)
+	}
+	if manifest.Count != 5 {
+		t.Fatalf("expected Count 5, got %d", manifest.Count)
 	}
 }
