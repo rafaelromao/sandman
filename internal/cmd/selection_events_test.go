@@ -3,8 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
-	"strconv"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,29 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 )
+
+var autoSelectRunIDRe = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{4}-auto-select-\d+c$`)
+
+func shortTempDir(t *testing.T) string {
+	// Use a short path to avoid Unix socket path length limit (108 chars on Linux).
+	// The batch ID alone is ~40 chars, so we need a short base path.
+	// Use t.TempDir() for isolation but symlink from a short path to avoid
+	// the long path that t.TempDir() generates.
+	realDir := t.TempDir()
+	shortDir := filepath.Join(os.TempDir(), "sm")
+	if err := os.MkdirAll(shortDir, 0o700); err != nil {
+		t.Skipf("cannot create short temp dir: %v", err)
+	}
+	// Create a unique subdir with a short name
+	name := fmt.Sprintf("t%d", time.Now().UnixNano()%1000000)
+	combined := filepath.Join(shortDir, name)
+	if err := os.MkdirAll(combined, 0o700); err != nil {
+		t.Skipf("cannot create short temp subdir: %v", err)
+	}
+	// Clean up the real dir since we're using combined
+	os.RemoveAll(realDir)
+	return combined
+}
 
 func findAutoSelectEvents(log *recordingEventLog) (started, finished *events.Event) {
 	for i := range log.events {
@@ -43,7 +67,7 @@ func autoSelectEventOrder(log *recordingEventLog) []string {
 }
 
 func TestRunSelectionPhaseWithEvents_EmitsRunStartedBeforeAgentAndFinishedAfterOnSuccess(t *testing.T) {
-	sandmanDir := t.TempDir()
+	sandmanDir := shortTempDir(t)
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
 			{Number: 1, Title: "Feature A", Body: "A", Labels: []string{"bug"}},
@@ -61,9 +85,7 @@ func TestRunSelectionPhaseWithEvents_EmitsRunStartedBeforeAgentAndFinishedAfterO
 	}
 	log := &recordingEventLog{}
 
-	before := time.Now().UnixMilli()
 	selected, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1, 2}, "label:bug is:open", log)
-	after := time.Now().UnixMilli()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,10 +103,8 @@ func TestRunSelectionPhaseWithEvents_EmitsRunStartedBeforeAgentAndFinishedAfterO
 	if started.RunID != finished.RunID {
 		t.Fatalf("expected same RunID on started and finished, got started=%q finished=%q", started.RunID, finished.RunID)
 	}
-	expectedPrefix := "auto-select-" + strconv.FormatInt(before, 10)
-	expectedPrefixLater := "auto-select-" + strconv.FormatInt(after, 10)
-	if started.RunID < expectedPrefix || started.RunID > expectedPrefixLater {
-		t.Fatalf("expected RunID in [%q, %q], got %q", expectedPrefix, expectedPrefixLater, started.RunID)
+	if !autoSelectRunIDRe.MatchString(started.RunID) {
+		t.Fatalf("expected RunID to match pattern %s, got %q", autoSelectRunIDRe.String(), started.RunID)
 	}
 	if got := autoSelectEventOrder(log); len(got) != 2 || got[0] != "run.started" || got[1] != "run.finished" {
 		t.Fatalf("expected exactly one run.started followed by one run.finished, got %v", got)
@@ -123,7 +143,7 @@ func TestRunSelectionPhaseWithEvents_EmitsRunStartedBeforeAgentAndFinishedAfterO
 }
 
 func TestRunSelectionPhaseWithEvents_AgentNonZeroExitEmitsFailureAndPropagatesError(t *testing.T) {
-	sandmanDir := t.TempDir()
+	sandmanDir := shortTempDir(t)
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{{Number: 1, Title: "Feature A"}},
 	}
@@ -160,7 +180,7 @@ func TestRunSelectionPhaseWithEvents_AgentNonZeroExitEmitsFailureAndPropagatesEr
 }
 
 func TestRunSelectionPhaseWithEvents_MissingJSONEmitsFailureAndPropagatesError(t *testing.T) {
-	sandmanDir := t.TempDir()
+	sandmanDir := shortTempDir(t)
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{{Number: 1, Title: "Feature A"}},
 	}
@@ -194,7 +214,7 @@ func TestRunSelectionPhaseWithEvents_MissingJSONEmitsFailureAndPropagatesError(t
 }
 
 func TestRunSelectionPhaseWithEvents_EmptySelectedListEmitsFailureAndPropagatesError(t *testing.T) {
-	sandmanDir := t.TempDir()
+	sandmanDir := shortTempDir(t)
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{{Number: 1, Title: "Feature A"}},
 	}
@@ -230,7 +250,7 @@ func TestRunSelectionPhaseWithEvents_EmptySelectedListEmitsFailureAndPropagatesE
 }
 
 func TestRunSelectionPhaseWithEvents_ReviewDaemonGuardFailureEmitsNoRunStarted(t *testing.T) {
-	sandmanDir := t.TempDir()
+	sandmanDir := shortTempDir(t)
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{{Number: 1, Title: "Feature A"}},
 	}
@@ -258,7 +278,7 @@ func TestRunSelectionPhaseWithEvents_ReviewDaemonGuardFailureEmitsNoRunStarted(t
 }
 
 func TestRunSelectionPhaseWithEvents_NoCandidateIssuesEmitsNoRunStarted(t *testing.T) {
-	sandmanDir := t.TempDir()
+	sandmanDir := shortTempDir(t)
 	gh := &fakeGitHubClient{}
 	cfg := &config.Config{Agent: "test-agent", ReviewCommand: "/oc review"}
 	cfg.AgentProviders = map[string]config.Agent{
