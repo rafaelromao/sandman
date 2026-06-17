@@ -213,10 +213,15 @@ func (d *Daemon) tick(ctx context.Context) error {
 	var wg sync.WaitGroup
 	for _, pr := range prs {
 		pr := pr
-		sem <- struct{}{}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			default:
+				d.logf("PR #%d: parallel limit reached, skipping", pr.Number)
+				return
+			}
 			defer func() { <-sem }()
 			if err := d.processPR(ctx, pr.Number); err != nil {
 				d.logf("process PR #%d: %v", pr.Number, err)

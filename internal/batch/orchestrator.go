@@ -1677,7 +1677,15 @@ func (s *runSession) runOnce(
 			result.Status = "failure"
 		} else {
 			if events.RunStatusFromPayload(result.Status).IsSuccess() {
-				break
+				if issue != nil && o.githubClient != nil {
+					prMerged := checkPRMerged(o.githubClient, branch)
+					if prMerged {
+						break
+					}
+					result.Status = "failure"
+				} else {
+					break
+				}
 			}
 		}
 	}
