@@ -3775,7 +3775,7 @@ func TestRunBatch_SkipsIssuesBlockedByOpenExternalBlockers(t *testing.T) {
 	}
 }
 
-func TestRunBatch_InBatchBlockerSuccessUnblocksDependentDespiteOpenIssue(t *testing.T) {
+func TestRunBatch_InBatchBlockerSuccessKeepsDependentBlockedWhenIssueOpen(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -3794,11 +3794,9 @@ func TestRunBatch_InBatchBlockerSuccessUnblocksDependentDespiteOpenIssue(t *test
 	spyLog := &spyEventLog{}
 	blockerStarted := make(chan struct{})
 	releaseBlocker := make(chan struct{})
-	dependentStarted := make(chan struct{})
 	factory := &controlledRunnableFactory{
 		runnables: map[int]Runnable{
-			42:  &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}, started: blockerStarted, release: releaseBlocker},
-			100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "success"}, started: dependentStarted},
+			42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}, started: blockerStarted, release: releaseBlocker},
 		},
 	}
 
@@ -3818,10 +3816,7 @@ func TestRunBatch_InBatchBlockerSuccessUnblocksDependentDespiteOpenIssue(t *test
 	}()
 
 	waitForSignal(t, blockerStarted, "expected blocker to start")
-	assertNoSignal(t, dependentStarted, "dependent should wait for blocker to finish")
 	close(releaseBlocker)
-
-	waitForSignal(t, dependentStarted, "expected dependent to start once in-batch blocker succeeded, even though blocker's GitHub issue is still open")
 	waitForSignal(t, done, "expected batch to finish")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -3838,14 +3833,19 @@ func TestRunBatch_InBatchBlockerSuccessUnblocksDependentDespiteOpenIssue(t *test
 	if statuses[42] != "success" {
 		t.Fatalf("expected blocker success, got %q", statuses[42])
 	}
-	if statuses[100] != "success" {
-		t.Fatalf("expected dependent success because in-batch blocker succeeded, got %q", statuses[100])
+	if statuses[100] != "blocked" {
+		t.Fatalf("expected dependent to remain blocked when in-batch blocker succeeded but issue is still open, got %q", statuses[100])
 	}
 
+	var blockedEventFound bool
 	for _, e := range spyLog.events {
 		if e.Type == "run.blocked" && e.Issue == 100 {
-			t.Fatalf("did not expect run.blocked event for dependent when in-batch blocker succeeded, got %#v", e.Payload)
+			blockedEventFound = true
+			break
 		}
+	}
+	if !blockedEventFound {
+		t.Fatalf("expected run.blocked event for dependent when in-batch blocker succeeded but issue is open")
 	}
 }
 
@@ -3856,7 +3856,7 @@ func TestRunBatch_InBatchBlockerWithEmptyStatusDoesNotBlockDependent(t *testing.
 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			42:  {Number: 42, Title: "Blocker", State: "open"},
+			42:  {Number: 42, Title: "Blocker", State: "closed"},
 			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}, State: "open"},
 		},
 		prs: map[string]*github.PR{
@@ -3927,7 +3927,7 @@ func TestRunBatch_InBatchBlockerWithNonTerminalRawStatusDoesNotBlockDependent(t 
 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			42:  {Number: 42, Title: "Blocker", State: "open"},
+			42:  {Number: 42, Title: "Blocker", State: "closed"},
 			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}, State: "open"},
 		},
 		prs: map[string]*github.PR{

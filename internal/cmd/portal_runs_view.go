@@ -1073,6 +1073,9 @@ func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, 
 	return "/api/logs?path=" + url.QueryEscape(relPath)
 }
 
+// parseRunDirPR extracts a PR number from a directory name that starts
+// with "PR". Returns (prNumber, true) if the name has the form "PR<N>"
+// where N is a positive integer, or (0, false) otherwise.
 func (v *portalRunsView) parseRunDirPR(name string) (int, bool) {
 	if !strings.HasPrefix(name, "PR") {
 		return 0, false
