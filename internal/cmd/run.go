@@ -182,6 +182,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			var issues []int
+			var autoIssueRunID string
 			if overridePrompt && !issueSelectionProvided {
 				if promptNeedsIssueSelection {
 					return MarkUsage(fmt.Errorf("prompt requires issue selection but no issue selection was provided"))
@@ -201,9 +202,37 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return err
 					}
 					resolvedQuery := resolveAutoQuery(label, query)
-					issues, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, ".sandman", agentName, modelFlag, cfg, resolvedQuery, deps.EventLog)
+					autoTS, autoShortID := "", ""
+					issues, autoTS, autoShortID, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, ".sandman", agentName, modelFlag, cfg, resolvedQuery, deps.EventLog)
 					if err != nil {
 						return err
+					}
+					if autoTS != "" && autoShortID != "" {
+						firstSubject := ""
+						if len(issues) > 0 {
+							firstSubject = fmt.Sprintf("%d", issues[0])
+						}
+						batchID := runid.NewBatchID(runid.KindIssue, len(issues), firstSubject, autoTS, autoShortID)
+						issueRunDir := daemon.RunDir(".sandman", nil, batchID)
+						if err := os.MkdirAll(issueRunDir, 0o700); err != nil {
+							return fmt.Errorf("create issue batch dir: %w", err)
+						}
+						autoIssueRunID = runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d-issues", len(issues)), autoTS, autoShortID)
+						if deps.EventLog != nil {
+							if err := deps.EventLog.Log(events.Event{
+								Type:      "run.started",
+								Timestamp: time.Now(),
+								RunID:     autoIssueRunID,
+								Issue:     issues[0],
+								Payload: map[string]any{
+									"run_kind": "issue",
+									"issues":   append([]int(nil), issues...),
+								},
+							}); err != nil {
+								return fmt.Errorf("log issue run.started: %w", err)
+							}
+						}
+						runID = batchID
 					}
 				} else if len(args) > 0 {
 					selection, orderedIssues, _, hasUnboundedEnd, err := parseIssueSelection(args)
@@ -631,7 +660,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					commander = c
 				}
 			}
-			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now()}
+			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), RunID: autoIssueRunID, RunKind: "issue"}
 			if err := rs.Prepare(manifest, commander); err != nil {
 				_ = rs.Close()
 				// A daemon without a control socket is invisible

@@ -139,6 +139,10 @@ func (s *CommandServer) handle(conn net.Conn) {
 	}
 	switch req.Action {
 	case "abort":
+		if s.commander == nil {
+			writeResponse(conn, CommandResponse{Status: "error", Message: "abort_failed"})
+			return
+		}
 		if err := s.commander.AbortIssue(req.Issue); err != nil {
 			writeResponse(conn, CommandResponse{Status: "error", Message: "abort_failed"})
 			return

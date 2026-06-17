@@ -3539,7 +3539,7 @@ func TestResolveAutoIssues_LegacyPriorityPromptFileIgnored(t *testing.T) {
 
 	gh := &fakeGitHubClient{}
 
-	issues, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
+	issues, _, _, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3552,7 +3552,7 @@ func TestResolveAutoIssues_PriorityPromptFileAbsentUsesNumericSort(t *testing.T)
 	sandmanDir := t.TempDir()
 	gh := &fakeGitHubClient{}
 
-	issues, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
+	issues, _, _, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
