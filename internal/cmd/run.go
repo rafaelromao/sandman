@@ -213,7 +213,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 							firstSubject = fmt.Sprintf("%d", issues[0])
 						}
 						batchID := runid.NewBatchID(runid.KindIssue, len(issues), firstSubject, autoTS, autoShortID)
-						issueRunDir := daemon.RunDir(".sandman", nil, batchID)
+						issueRunDir := daemon.RunDir(".sandman", batchID)
 						if err := os.MkdirAll(issueRunDir, 0o700); err != nil {
 							return fmt.Errorf("create issue batch dir: %w", err)
 						}
