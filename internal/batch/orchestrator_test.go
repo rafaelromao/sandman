@@ -3720,6 +3720,148 @@ func TestRunBatch_InBatchBlockerSuccessUnblocksDependentDespiteOpenIssue(t *test
 	}
 }
 
+func TestRunBatch_InBatchBlockerWithEmptyStatusDoesNotBlockDependent(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker", State: "open"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}, State: "open"},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-blocker":    mergedPR("sandman/42-blocker", ""),
+			"sandman/100-dependent": mergedPR("sandman/100-dependent", ""),
+		},
+	}
+
+	spyLog := &spyEventLog{}
+	blockerStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+	dependentStarted := make(chan struct{})
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42:  &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: ""}, started: blockerStarted, release: releaseBlocker},
+			100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "success"}, started: dependentStarted},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	var result *Result
+	var err error
+	go func() {
+		defer close(done)
+		result, err = o.RunBatch(context.Background(), Request{
+			Issues:       []int{42, 100},
+			Dependencies: map[int][]int{100: {42}},
+			Parallel:     2,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+	assertNoSignal(t, dependentStarted, "dependent should wait for blocker to finish")
+	close(releaseBlocker)
+
+	waitForSignal(t, dependentStarted, "expected dependent to start once in-batch blocker finished (empty status is non-terminal)")
+	waitForSignal(t, done, "expected batch to finish")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(result.Runs))
+	}
+
+	statuses := make(map[int]string)
+	for _, run := range result.Runs {
+		statuses[run.IssueNumber] = run.Status
+	}
+	if statuses[100] != "success" {
+		t.Fatalf("expected dependent success because in-batch blocker's empty (non-terminal) status should not block, got %q", statuses[100])
+	}
+
+	for _, e := range spyLog.events {
+		if e.Type == "run.blocked" && e.Issue == 100 {
+			t.Fatalf("did not expect run.blocked event for dependent when in-batch blocker had empty (non-terminal) status, got %#v", e.Payload)
+		}
+	}
+}
+
+func TestRunBatch_InBatchBlockerWithNonTerminalRawStatusDoesNotBlockDependent(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker", State: "open"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}, State: "open"},
+		},
+		prs: map[string]*github.PR{
+			"sandman/42-blocker":    mergedPR("sandman/42-blocker", ""),
+			"sandman/100-dependent": mergedPR("sandman/100-dependent", ""),
+		},
+	}
+
+	spyLog := &spyEventLog{}
+	blockerStarted := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+	dependentStarted := make(chan struct{})
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42:  &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "running"}, started: blockerStarted, release: releaseBlocker},
+			100: &controlledRunnable{result: AgentRunResult{IssueNumber: 100, Status: "success"}, started: dependentStarted},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	var result *Result
+	var err error
+	go func() {
+		defer close(done)
+		result, err = o.RunBatch(context.Background(), Request{
+			Issues:       []int{42, 100},
+			Dependencies: map[int][]int{100: {42}},
+			Parallel:     2,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+	assertNoSignal(t, dependentStarted, "dependent should wait for blocker to finish")
+	close(releaseBlocker)
+
+	waitForSignal(t, dependentStarted, "expected dependent to start once in-batch blocker finished (non-terminal raw status is not a blocker)")
+	waitForSignal(t, done, "expected batch to finish")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(result.Runs))
+	}
+
+	statuses := make(map[int]string)
+	for _, run := range result.Runs {
+		statuses[run.IssueNumber] = run.Status
+	}
+	if statuses[100] != "success" {
+		t.Fatalf("expected dependent success because in-batch blocker's non-terminal raw status should not block, got %q", statuses[100])
+	}
+
+	for _, e := range spyLog.events {
+		if e.Type == "run.blocked" && e.Issue == 100 {
+			t.Fatalf("did not expect run.blocked event for dependent when in-batch blocker had non-terminal raw status, got %#v", e.Payload)
+		}
+	}
+}
+
 func TestRunBatch_RechecksExternalBlockerStateBeforeDependentStart(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
