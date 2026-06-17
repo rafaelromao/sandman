@@ -1039,6 +1039,11 @@ func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirIntact(t *testing.T)
 
 	branchTipBefore := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
 
+	uncommittedPath := filepath.Join(s1.WorkDir(), "uncommitted.txt")
+	if err := os.WriteFile(uncommittedPath, []byte("work in progress\n"), 0644); err != nil {
+		t.Fatalf("write uncommitted file: %v", err)
+	}
+
 	gitPath := filepath.Join(s1.WorkDir(), ".git")
 	if err := os.WriteFile(gitPath, []byte("gitdir: /tmp/nonexistent-worktree-gitdir\n"), 0644); err != nil {
 		t.Fatalf("corrupt .git file: %v", err)
@@ -1049,7 +1054,6 @@ func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirIntact(t *testing.T)
 	}
 
 	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	s2.SetOverride(false)
 	if err := s2.Start(); err != nil {
 		t.Fatalf("Start() should reattach prunable worktree, got: %v", err)
 	}
@@ -1060,6 +1064,10 @@ func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirIntact(t *testing.T)
 
 	if _, err := os.Stat(filepath.Join(s2.WorkDir(), "tracked.txt")); err != nil {
 		t.Errorf("expected tracked.txt in reattached worktree, got err=%v", err)
+	}
+
+	if _, err := os.Stat(uncommittedPath); err != nil {
+		t.Errorf("expected uncommitted.txt to be preserved in reattached worktree, got err=%v", err)
 	}
 
 	branchTipAfter := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
@@ -1109,7 +1117,6 @@ func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirGone(t *testing.T) {
 	}
 
 	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	s2.SetOverride(false)
 	if err := s2.Start(); err != nil {
 		t.Fatalf("Start() should recreate prunable worktree with dir gone, got: %v", err)
 	}

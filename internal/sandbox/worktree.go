@@ -81,20 +81,45 @@ func (s *WorktreeSandbox) Start() error {
 	}
 	if !s.override {
 		if _, reclaimable := ReclaimableWorktree(s.repoPath, s.worktreeBase, s.branch); reclaimable {
+			if s.workDirExists() {
+				gitlinkPath := filepath.Join(s.workDir, ".git")
+				data, err := os.ReadFile(gitlinkPath)
+				if err == nil {
+					content := strings.TrimSpace(string(data))
+					const prefix = "gitdir: "
+					if strings.HasPrefix(content, prefix) {
+						gitdir := strings.TrimSpace(strings.TrimPrefix(content, prefix))
+						if !filepath.IsAbs(gitdir) {
+							gitdir = filepath.Join(s.workDir, gitdir)
+						}
+						if _, err := os.Stat(gitdir); err != nil {
+							worktreeDirName := filepath.Base(s.workDir)
+							correctGitdir := filepath.Join(s.repoPath, ".git", "worktrees", worktreeDirName)
+							if err := os.WriteFile(gitlinkPath, []byte("gitdir: "+correctGitdir+"\n"), 0644); err != nil {
+								return fmt.Errorf("fix broken gitlink: %w", err)
+							}
+							return s.configureGitIdentity()
+						}
+					}
+				}
+			}
 			pruneCmd := exec.Command("git", "worktree", "prune")
 			pruneCmd.Dir = s.repoPath
 			if out, err := pruneCmd.CombinedOutput(); err != nil {
 				return fmt.Errorf("git worktree prune: %w\n%s", err, out)
 			}
 			if s.workDirExists() {
-				if err := os.RemoveAll(s.workDir); err != nil {
-					return fmt.Errorf("clean broken worktree dir: %w", err)
+				addCmd := exec.Command("git", "worktree", "add", "-f", s.workDir, s.branch)
+				addCmd.Dir = s.repoPath
+				if out, err := addCmd.CombinedOutput(); err != nil {
+					return fmt.Errorf("git worktree add (reattach): %w\n%s", err, out)
 				}
-			}
-			addCmd := exec.Command("git", "worktree", "add", "-f", s.workDir, s.branch)
-			addCmd.Dir = s.repoPath
-			if out, err := addCmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("git worktree add (reattach): %w\n%s", err, out)
+			} else {
+				addCmd := exec.Command("git", "worktree", "add", s.workDir, s.branch)
+				addCmd.Dir = s.repoPath
+				if out, err := addCmd.CombinedOutput(); err != nil {
+					return fmt.Errorf("git worktree add (recreate): %w\n%s", err, out)
+				}
 			}
 			return s.configureGitIdentity()
 		}
