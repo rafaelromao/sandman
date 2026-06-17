@@ -223,12 +223,16 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	var recovered int
 	recoveredRunIDs := make(map[string]struct{})
 	emitOrphan := func(run events.RunState, issueNumber int) error {
-		issueRef := issueNumber
+		var issueRef *int
+		if issueNumber > 0 {
+			ref := issueNumber
+			issueRef = &ref
+		}
 		event := events.Event{
 			Type:     "run.aborted",
 			RunID:    run.RunID,
 			Issue:    issueNumber,
-			IssueRef: &issueRef,
+			IssueRef: issueRef,
 			Payload:  map[string]any{"recovered": true},
 		}
 		if err := log.Log(event); err != nil {
@@ -239,6 +243,27 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		return nil
 	}
 	for _, batch := range dead {
+		if batch.Manifest.RunKind == "auto-select" {
+			autoSelectRunID := filepath.Base(batch.RunDir)
+			for _, run := range runs {
+				if run.RunID != autoSelectRunID || !run.IsAutoSelect() {
+					continue
+				}
+				if _, ok := recoveredRunIDs[run.RunID]; ok {
+					continue
+				}
+				if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
+					continue
+				}
+				if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
+					continue
+				}
+				if err := emitOrphan(run, 0); err != nil {
+					return recovered, len(dead), err
+				}
+			}
+			continue
+		}
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
