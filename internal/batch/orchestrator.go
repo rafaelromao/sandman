@@ -25,8 +25,13 @@ import (
 	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
-func generateRunID(issueNum int) string {
-	return fmt.Sprintf("run-%d-%d", issueNum, time.Now().UnixNano())
+// buildRunID returns the per-row RunID for an issue-driven AgentRun.
+// Both the run.queued placeholder (emitted in RunBatch's goroutine launch)
+// and the run.started / run.continued events emitted inside
+// (*runSession).execute go through this helper so every per-row RunID
+// shares the batch's (ts, shortid) prefix.
+func buildRunID(num int, ts, shortid string) string {
+	return runid.NewRunID(runid.KindIssue, fmt.Sprintf("issue-%d", num), ts, shortid)
 }
 
 func issueRef(num int) *int {
@@ -915,7 +920,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	for turn, num := range ordered {
 		wg.Add(1)
-		runID := generateRunID(num)
+		runID := buildRunID(num, req.RunTS, req.RunShortID)
 		if o.eventLog != nil && (len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 			queuedPayload := map[string]any{"blocked_by": dependencies[num]}
 			if issue, err := o.githubClient.FetchIssue(num); err == nil && issue != nil {
@@ -1071,7 +1076,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 
-			res, started := o.runSingle(issueCtx, parentCtx, issueNum, cfg, agentName, agentCfg, mode == ModeContinue, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, policy.sandboxFactory, policy.containerAlloc, mode == ModeOverride, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile)
+			res, started := o.runSingle(issueCtx, parentCtx, issueNum, cfg, agentName, agentCfg, mode == ModeContinue, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, policy.sandboxFactory, policy.containerAlloc, mode == ModeOverride, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile, req.RunTS, req.RunShortID)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -1427,15 +1432,23 @@ type runSession struct {
 
 	// runID is an optional batch-level identifier for prompt-only runs.
 	// When non-empty, it is used as the run directory name and as the
-	// RunID in run.started events instead of generateRunID(0).
+	// RunID in run.started events instead of an auto-generated fallback.
 	runID string
 
-	// batchTS and batchShortID are the timestamp and short-ID components
-	// of the auto-generated batch ID for prompt-only runs. Used to
+	// batchTS and batchShortID are the timestamp and short-id components
+	// of the auto-generated batch id for prompt-only runs. Used to
 	// construct the per-row RunID in run.started events when runID is
 	// empty.
 	batchTS      string
 	batchShortID string
+
+	// runTS and runShortID are the timestamp and short-id components of
+	// the auto-generated batch id for issue-driven runs. Populated from
+	// batch.Request.RunTS / RunShortID by runSingle; consumed by
+	// buildRunID in execute to produce the per-row RunID for
+	// run.started / run.continued events.
+	runTS      string
+	runShortID string
 
 	// userProvidedRunID is the original user-provided --run-id value
 	// (empty if not provided). Used to construct the subject for the
@@ -1672,7 +1685,7 @@ func (s *runSession) runOnce(
 // delegates to (*runSession).execute. parentCtx is the RunBatch ctx
 // (the ctx that owns this whole batch); the supervisor uses it to
 // distinguish external aborts from normal session end.
-func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, runTS string, runShortID string) (AgentRunResult, bool) {
 	s := &runSession{
 		o:           o,
 		issueNumber: num,
@@ -1708,6 +1721,8 @@ func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context,
 		maxContainersSet:           maxContainersSet,
 		dangerouslySkipPermissions: dangerouslySkipPermissions,
 		strandedReconcile:          strandedReconcile,
+		runTS:                      runTS,
+		runShortID:                 runShortID,
 		parentCtx:                  parentCtx,
 		opts:                       o.runSessionOpts,
 	}
@@ -1760,7 +1775,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		_ = wt.Stop()
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
-	runID := generateRunID(s.issueNumber)
+	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
 	if len(blockedBy) > 0 {
 		res := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "blocked", Branch: branch}
 		o.logBlocked(s.issueNumber, blockedBy, runID)
@@ -2103,7 +2118,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		}
 		runID = runid.NewRunID(runid.KindPromptOnly, subject, s.batchTS, s.batchShortID)
 	} else if runID == "" {
-		runID = generateRunID(0)
+		runID = fmt.Sprintf("run-0-%d", time.Now().UnixNano())
 	}
 	if o.eventLog != nil {
 		promptSourceType := "current"

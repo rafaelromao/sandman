@@ -61,7 +61,16 @@ type runSessionTestEnv struct {
 
 func newRunSessionTestEnv(t *testing.T) *runSessionTestEnv {
 	t.Helper()
-	dir := t.TempDir()
+	// Allocate the repo dir under /tmp with a short prefix so the
+	// resulting run.sock path stays under the 108-byte Unix socket
+	// limit. The new run-id scheme (slice 2) produces ~38-char
+	// directory names which, combined with the default t.TempDir
+	// path prefix, push run.sock past the limit.
+	dir, err := os.MkdirTemp("/tmp", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	t.Chdir(dir)
 	initRunIntegrationRepoWithRemote(t, dir)
 

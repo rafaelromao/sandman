@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
-	"github.com/rafaelromao/sandman/internal/runid"
 )
 
 // IsRunActive reports whether a run directory is currently owned by a live
@@ -141,27 +140,16 @@ type BatchManifest struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// RunDir returns a run directory path under baseDir/runs/.
-// When runID is non-empty, it is used as the directory name. Otherwise a
-// unique timestamp-based name is generated. The directory itself is not
-// created; callers decide when to mkdir.
-func RunDir(baseDir string, issues []int, runID string) string {
-	id := runID
-	if id == "" {
-		if len(issues) > 0 {
-			id = fmt.Sprintf("run-%d-%d", issues[0], time.Now().UnixNano())
-		} else if issues != nil {
-			ts, shortid, err := runid.NewBatch()
-			if err != nil {
-				id = fmt.Sprintf("run-%d", time.Now().UnixNano())
-			} else {
-				id = runid.NewBatchID(runid.KindPromptOnly, 1, "", ts, shortid)
-			}
-		} else {
-			id = fmt.Sprintf("run-%d", time.Now().UnixNano())
-		}
-	}
-	return filepath.Join(baseDir, "runs", id)
+// RunDir returns a run directory path under baseDir/runs/. The dirID
+// argument is the pre-built batch identifier (the result of
+// runid.NewBatchID for issue-driven batches, or a user-supplied
+// --run-id for prompt-only mode — see runid.IsValidUserRunID for
+// the validation rules the caller is expected to apply before
+// passing the value in). RunDir joins it verbatim without
+// auto-generation. The directory itself is not created; callers
+// decide when to mkdir.
+func RunDir(baseDir, dirID string) string {
+	return filepath.Join(baseDir, "runs", dirID)
 }
 
 // ManifestPath returns the on-disk path of the batch manifest file
