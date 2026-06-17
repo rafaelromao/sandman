@@ -19,10 +19,6 @@ import (
 var autoSelectRunIDRe = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{4}-auto-select-\d+c$`)
 
 func shortTempDir(t *testing.T) string {
-	// Use a short path to avoid Unix socket path length limit (108 chars on Linux).
-	// The batch ID alone is ~40 chars, so we need a short base path.
-	// t.TempDir() generates paths like /tmp/TestNameLong.../001 which are too long.
-	// We create a unique subdir under /tmp/sm instead.
 	shortDir := filepath.Join(os.TempDir(), "sm")
 	if err := os.MkdirAll(shortDir, 0o700); err != nil {
 		t.Skipf("cannot create short temp dir: %v", err)
@@ -32,6 +28,7 @@ func shortTempDir(t *testing.T) string {
 	if err := os.MkdirAll(combined, 0o700); err != nil {
 		t.Skipf("cannot create short temp subdir: %v", err)
 	}
+	t.Cleanup(func() { os.RemoveAll(combined) })
 	return combined
 }
 
@@ -354,5 +351,37 @@ func TestRunSelectionPhaseWithEvents_CreatesDirManifestAndSocketsOnFailure(t *te
 	}
 	if manifest.Count != 5 {
 		t.Fatalf("expected Count 5, got %d", manifest.Count)
+	}
+}
+
+func TestRunSelectionPhaseWithEvents_LeavesRunDirOnFailure(t *testing.T) {
+	sandmanDir := shortTempDir(t)
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 10, Title: "Bug A", Body: "A", Labels: []string{"bug"}},
+		},
+	}
+	cfg := &config.Config{Agent: "test-agent", ReviewCommand: "/oc review"}
+	cfg.AgentProviders = map[string]config.Agent{
+		"test-agent": {Command: "exit 1"},
+	}
+	log := &recordingEventLog{}
+
+	_, err := runSelectionPhaseWithEvents(context.Background(), gh, 3, sandmanDir, "test-agent", "", cfg, []int{10}, "label:bug is:open", log)
+	if err == nil {
+		t.Fatal("expected error from agent failure")
+	}
+
+	runDir := filepath.Join(sandmanDir, "runs")
+	entries, err := os.ReadDir(runDir)
+	if err != nil {
+		t.Fatalf("cannot read runs dir after failure: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one run dir left on disk after failure, got %d", len(entries))
+	}
+	manifestPath := filepath.Join(runDir, entries[0].Name(), "batch.json")
+	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+		t.Fatalf("batch.json should exist at %s after failure", manifestPath)
 	}
 }

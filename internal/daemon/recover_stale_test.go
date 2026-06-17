@@ -755,3 +755,40 @@ func TestRecoverStaleRuns_RecoversAutoSelectFromDeadBatch(t *testing.T) {
 		t.Errorf("expected payload.recovered=true, got %v", e.Payload)
 	}
 }
+
+func TestRecoverStaleRuns_SkipsAutoSelectWithTerminalStatus(t *testing.T) {
+	baseDir := t.TempDir()
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(5 * time.Minute)
+	finished := started.Add(10 * time.Minute)
+
+	autoSelectRunID := "20260608-120000-abcd-auto-select-5c"
+	runDir := filepath.Join(baseDir, "runs", autoSelectRunID+"-candidates")
+	writeManifestFile(t, runDir, BatchManifest{
+		RunKind:    "auto-select",
+		RunID:      autoSelectRunID,
+		Candidates: []int{1, 2, 3, 4, 5},
+		Count:      5,
+		CreatedAt:  createdAt,
+	})
+
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.started", RunID: autoSelectRunID, Issue: 0, Timestamp: started, Payload: map[string]any{"run_kind": "auto-select"}},
+		{Type: "run.finished", RunID: autoSelectRunID, Issue: 0, Timestamp: finished, Payload: map[string]any{"run_kind": "auto-select", "status": "success"}},
+	}
+
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered (run already terminated), got %d", recovered)
+	}
+	if dirs != 1 {
+		t.Errorf("expected 1 dead dir, got %d", dirs)
+	}
+	if len(eventLog.logged) != 0 {
+		t.Fatalf("expected 0 logged events for terminal auto-select run, got %d", len(eventLog.logged))
+	}
+}
