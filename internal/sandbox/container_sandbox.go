@@ -43,7 +43,7 @@ var ExecCommandFn = exec.Command
 // KillAgentFn is the function-variable seam for the container-side kill signal
 // sent when an exec is aborted via context cancellation. The default reads the
 // agent's pidfile (/tmp/agent-pgid) inside the container and sends SIGKILL to
-// that process group via `docker exec <id> sh -c 'kill -<pgid> 0'`. Tests may
+// that process group via `docker exec <id> sh -c 'kill -KILL -<pgid>'`. Tests may
 // substitute a stub to verify the call is made with the expected container ID.
 // Save and restore around the test:
 //
@@ -52,7 +52,7 @@ var ExecCommandFn = exec.Command
 //	sandbox.KillAgentFn = func(containerID string) error { ... }
 var KillAgentFn = func(containerID string) error {
 	cmd := exec.Command("docker", "exec", containerID, "sh", "-c",
-		"pgid=$(cat /tmp/agent-pgid 2>/dev/null); [ -n \"$pgid\" ] && kill -\"$pgid\" 0")
+		"pgid=$(cat /tmp/agent-pgid 2>/dev/null); [ -n \"$pgid\" ] && kill -KILL -\"$pgid\"")
 	return cmd.Run()
 }
 
