@@ -1532,10 +1532,8 @@ func TestPortal_RunColumnHasWidthCap(t *testing.T) {
 		t.Fatalf("read %s: %v", htmlPath, err)
 	}
 	html := string(data)
-	// The Run column should drive its own width up to a sane cap, so the
-	// Part-of-batch chip can sit on a single line and the meta-line's long
-	// run-id can break, instead of the column being clamped to its
-	// min-content width by sibling columns.
+	// The Run column width is now controlled by colgroup + table-layout: fixed.
+	// The title cell CSS provides only a min-width floor.
 	if !strings.Contains(html, `td[data-cell="title"]`) {
 		t.Fatalf("could not find td[data-cell=\"title\"] selector in %s", htmlPath)
 	}
@@ -1550,10 +1548,8 @@ func TestPortal_RunColumnHasWidthCap(t *testing.T) {
 		t.Fatalf("could not find closing brace for td[data-cell=\"title\"] rule in %s", htmlPath)
 	}
 	body := html[bodyStart : bodyStart+close]
-	for _, tok := range []string{"min-width: 168px", "max-width: min(220px, 22%)", "width: 200px"} {
-		if !strings.Contains(body, tok) {
-			t.Errorf("td[data-cell=\"title\"] rule missing %q", tok)
-		}
+	if !strings.Contains(body, "min-width: 200px") {
+		t.Errorf("td[data-cell=\"title\"] rule missing %q", "min-width: 200px")
 	}
 }
 

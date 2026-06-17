@@ -3414,8 +3414,8 @@ func TestPortal_RunsTableHasColgroupAndFixedLayout(t *testing.T) {
 
 	colIDs := []string{"col-title", "col-badge", "col-started", "col-duration", "col-issue-title", "col-branch", "col-actions"}
 	for _, id := range colIDs {
-		if !strings.Contains(content, `<col id="`+id+`">`) {
-			t.Fatalf("page missing <col id=%q> element in colgroup", id)
+		if !strings.Contains(content, `<col class="`+id+`">`) {
+			t.Fatalf("page missing <col class=%q> element in colgroup", id)
 		}
 	}
 

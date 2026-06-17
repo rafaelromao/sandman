@@ -675,10 +675,18 @@
     table {
       width: 100%;
       min-width: 920px;
+      table-layout: fixed;
       border-collapse: separate;
       border-spacing: 0;
       font-size: 13px;
     }
+    .col-title { width: 480px; }
+    .col-badge { width: 110px; }
+    .col-started { width: 140px; }
+    .col-duration { width: 90px; }
+    .col-issue-title { width: 180px; }
+    .col-branch { width: 150px; }
+    .col-actions { width: 90px; }
     thead th {
       position: sticky;
       top: 0;
@@ -712,9 +720,7 @@
        unbreakable run-id token in the meta-line can break instead of
        forcing the column wider than its natural share. */
     tbody td[data-cell="title"] {
-      min-width: 168px;
-      max-width: min(220px, 22%);
-      width: 200px;
+      min-width: 200px;
     }
     /* Issue Title gets the slack the previous Branch column used to
        claim. min-width keeps short titles from being squeezed when
@@ -1738,13 +1744,13 @@
     <section class="table-shell" aria-label="Sandman runs">
       <table style="table-layout: fixed;">
         <colgroup>
-          <col id="col-title">
-          <col id="col-badge">
-          <col id="col-started">
-          <col id="col-duration">
-          <col id="col-issue-title">
-          <col id="col-branch">
-          <col id="col-actions">
+          <col class="col-title">
+          <col class="col-badge">
+          <col class="col-started">
+          <col class="col-duration">
+          <col class="col-issue-title">
+          <col class="col-branch">
+          <col class="col-actions">
         </colgroup>
         <thead>
           <tr>
