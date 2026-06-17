@@ -1413,8 +1413,7 @@ func TestPortal_BatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
 		{"display: block", "block-level element (not inline-block)"},
 		{"width: 100%", "fills the title cell"},
 		{"box-sizing: border-box", "padding stays inside the cell width"},
-		{"border-radius: 6px", "small fixed radius so wrapped lines read correctly"},
-		{"background: var(--surface-3)", "muted chip background preserved"},
+		{"background: transparent", "no surface fill so the chip reads as part of the run row"},
 		{"color: var(--muted)", "muted chip text color preserved"},
 		{"font-size: 11px", "chip font size preserved"},
 		{"letter-spacing: 0.04em", "chip letter-spacing preserved"},
@@ -1426,7 +1425,7 @@ func TestPortal_BatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
 		}
 	}
 	if strings.Contains(body, "border-radius: 999px") {
-		t.Errorf(".batch-membership rule still has 999px pill radius; expected a small fixed radius so wrapped lines read correctly")
+		t.Errorf(".batch-membership rule still has 999px pill radius; expected no pill so the chip reads as a footnote")
 	}
 }
 
@@ -1445,7 +1444,7 @@ func TestPortal_BatchRowCSS_RendersAsSecondaryRowUnderRunRow(t *testing.T) {
 		sel   string
 		props []string
 	}{
-		{"tbody tr.batch-row td", []string{"border-bottom: none"}},
+		{"tbody tr.batch-row td", []string{"border: none"}},
 		{"tbody tr.run-row + tr.batch-row td", []string{"padding-top: 0"}},
 		{"tbody tr.run-row:hover + tr.batch-row td", []string{"background:"}},
 		{"tbody tr.run-row.active + tr.batch-row td", []string{"background:"}},
@@ -1551,7 +1550,7 @@ func TestPortal_RunColumnHasWidthCap(t *testing.T) {
 		t.Fatalf("could not find closing brace for td[data-cell=\"title\"] rule in %s", htmlPath)
 	}
 	body := html[bodyStart : bodyStart+close]
-	for _, tok := range []string{"min-width: 200px", "max-width: min(480px, 50%)", "width: 480px"} {
+	for _, tok := range []string{"min-width: 168px", "max-width: min(220px, 22%)", "width: 200px"} {
 		if !strings.Contains(body, tok) {
 			t.Errorf("td[data-cell=\"title\"] rule missing %q", tok)
 		}
