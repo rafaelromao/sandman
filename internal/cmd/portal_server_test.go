@@ -1350,6 +1350,9 @@ func TestPortal_PageExposesCommandPanelShell(t *testing.T) {
 	if strings.Contains(content, "class=\"launcher\"") {
 		t.Fatalf("expected launcher section to be removed\n%s", content[:1000])
 	}
+	if !strings.Contains(content, `points="6 9 12 15 18 9"`) {
+		t.Fatalf("disclosure chevron missing down-chevron polyline points\n%s", content[:1000])
+	}
 }
 
 func TestPortal_PageExposesMobileExpandedRunPanelStyles(t *testing.T) {
