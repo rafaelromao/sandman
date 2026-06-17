@@ -715,10 +715,9 @@
       background: var(--surface-2);
       padding: 0;
     }
-    /* The Run column drives its own width up to a sane cap so the
-       Part-of-batch chip can sit on a single line and the long
-       unbreakable run-id token in the meta-line can break instead of
-       forcing the column wider than its natural share. */
+    /* The Run column width is set by colgroup + table-layout: fixed.
+       This floor prevents the title cell from being squeezed narrower
+       than 200px when the viewport is narrow. */
     tbody td[data-cell="title"] {
       min-width: 200px;
     }
@@ -1742,7 +1741,7 @@
     </section>
 
     <section class="table-shell" aria-label="Sandman runs">
-      <table style="table-layout: fixed;">
+      <table>
         <colgroup>
           <col class="col-title">
           <col class="col-badge">

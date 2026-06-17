@@ -1521,7 +1521,7 @@ func TestPortal_MetaLineCSS_AllowsLongTokenToBreak(t *testing.T) {
 	}
 }
 
-func TestPortal_RunColumnHasWidthCap(t *testing.T) {
+func TestPortal_RunColumnHasMinWidthFloor(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("locate test file")
