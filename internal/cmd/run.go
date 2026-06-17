@@ -19,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/spf13/cobra"
 )
 
@@ -121,9 +122,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			reviewCommand := cfg.EffectiveReviewCommand()
 
+			runIDFlag := cmd.Flags().Lookup("run-id")
 			runID, _ := cmd.Flags().GetString("run-id")
-			if runID != "" && !isValidRunID(runID) {
-				return MarkUsage(fmt.Errorf("--run-id must start with a letter and contain only alphanumeric characters, hyphens, and underscores"))
+			if runIDFlag.Changed {
+				if err := runid.IsValidUserRunID(runID); err != nil {
+					return MarkUsage(fmt.Errorf("--run-id %v", err))
+				}
 			}
 
 			selectedPrompt := ""
@@ -583,6 +587,19 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale run-owned config snapshots from previous runs\n", staleRemoved)
 			}
 
+			sessionRunID := runID
+			if len(req.Issues) == 0 && overridePrompt {
+				ts, shortid, err := runid.NewBatch()
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to generate unique batch ID: %v; falling back to timestamp-based name\n", err)
+				} else {
+					req.RunID = runID
+					req.BatchTS = ts
+					req.BatchShortID = shortid
+					sessionRunID = runid.NewBatchID(runid.KindPromptOnly, 1, runID, ts, shortid)
+				}
+			}
+
 			// Boot the run session: MkdirAll → WriteManifest →
 			// ControlSocket.Start → CommandServer.Start, in that fixed
 			// order. The daemon.RunSession helper collapses the four
@@ -591,7 +608,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			// Prepare returns nil, so the orchestrator can never see a
 			// half-bootstrapped run. Close is deferred first so it runs
 			// last: the listener stops before the run dir is removed.
-			rs := daemon.NewRunSession(".sandman", runID)
+			rs := daemon.NewRunSession(".sandman", sessionRunID)
 			// The comma-ok form matters: a typed-nil interface
 			// (`var c IssueCommander = (*concrete)(nil)`) is
 			// non-nil but unusable, and `Prepare` would then
@@ -656,7 +673,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
-	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection")
+	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only runs; may contain alphanumeric characters, hyphens, and underscores (max 64 chars); cannot be combined with issue selection")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode)")
 	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
@@ -1200,29 +1217,4 @@ func formatIssueLabel(issueNumber int, issue *int, review bool, runID string) st
 
 func promptRequiresIssueSelection(promptText string) bool {
 	return strings.Contains(promptText, "{{ISSUE_NUMBER}}") || strings.Contains(promptText, "{{ISSUE_TITLE}}") || strings.Contains(promptText, "{{ISSUE_BODY}}")
-}
-
-// isValidRunID validates that id starts with a letter and contains only
-// alphanumeric characters, hyphens, and underscores.
-func isValidRunID(id string) bool {
-	if len(id) == 0 {
-		return false
-	}
-	for i, r := range id {
-		switch {
-		case i == 0 && !isLetter(r):
-			return false
-		case i > 0 && !isLetter(r) && !isDigit(r) && r != '-' && r != '_':
-			return false
-		}
-	}
-	return true
-}
-
-func isLetter(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-}
-
-func isDigit(r rune) bool {
-	return r >= '0' && r <= '9'
 }

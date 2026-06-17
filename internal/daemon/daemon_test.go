@@ -32,17 +32,17 @@ func TestRunDir_IsUnderRuns(t *testing.T) {
 }
 
 func TestRunDir_NoIssues(t *testing.T) {
-	dir := RunDir("", nil, "")
+	dir := RunDir("", []int{}, "")
 	parts := strings.Split(dir, string(filepath.Separator))
 	if len(parts) < 1 {
 		t.Fatal("expected at least one path component")
 	}
 	last := parts[len(parts)-1]
-	if !strings.HasPrefix(last, "run-") {
-		t.Fatalf("expected run- prefix, got %q", last)
+	if !strings.HasPrefix(last, "20") {
+		t.Fatalf("expected timestamp prefix for prompt-only run, got %q", last)
 	}
-	if strings.Count(last, "-") != 1 {
-		t.Fatalf("expected no embedded issue number in path with no issues: %q", last)
+	if !strings.HasSuffix(last, "-prompt-only") {
+		t.Fatalf("expected -prompt-only suffix, got %q", last)
 	}
 }
 

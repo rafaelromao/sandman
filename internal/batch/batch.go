@@ -97,6 +97,14 @@ type Request struct {
 	// run.started events instead of the auto-generated run-0-<timestamp>.
 	// Must be validated by the caller to match [a-zA-Z][a-zA-Z0-9_-]*.
 	RunID string
+	// BatchTS is the timestamp component of the auto-generated batch ID for
+	// prompt-only runs. Used together with BatchShortID to construct the
+	// per-row RunID in run.started events.
+	BatchTS string
+	// BatchShortID is the short-ID component of the auto-generated batch ID
+	// for prompt-only runs. Used together with BatchTS to construct the
+	// per-row RunID in run.started events.
+	BatchShortID string
 }
 
 // IssueMode returns the mode for num, defaulting to ModeFresh.
