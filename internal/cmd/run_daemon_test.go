@@ -45,6 +45,42 @@ func chdirToSandmanDir(t testing.TB) string {
 	return dir
 }
 
+// chdirToShortSandmanDir is like chdirToSandmanDir but allocates the
+// temp dir under /tmp with a short prefix so the resulting socket
+// paths stay under the 108-byte Unix socket limit. The new run-id
+// scheme (slice 2) produces ~38-char directory names which, combined
+// with the default t.TempDir path prefix, push run.sock and cmd.sock
+// past the limit. Use this variant for tests that actually dial a
+// socket in the run dir.
+func chdirToShortSandmanDir(t testing.TB) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sandmanDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			c, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	t.Chdir(dir)
+	return dir
+}
+
 // depsWithSocket returns Dependencies for tests that have already
 // chdir'd into a directory with a live .sandman/review.sock.
 func depsWithSocket(runner batch.Runner) Dependencies {
@@ -71,7 +107,7 @@ func (b *blockedBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*
 }
 
 func TestRun_CreatesControlSocketInRunDir(t *testing.T) {
-	dir := chdirToSandmanDir(t)
+	dir := chdirToShortSandmanDir(t)
 	deps := depsWithSocket(&blockedBatchRunner{
 		started: make(chan struct{}),
 		release: make(chan struct{}),
@@ -171,7 +207,7 @@ func (c *commanderBatchRunner) AbortIssue(issueNumber int) error {
 }
 
 func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
-	dir := chdirToSandmanDir(t)
+	dir := chdirToShortSandmanDir(t)
 	deps := depsWithSocket(&commanderBatchRunner{
 		started:    make(chan struct{}),
 		release:    make(chan struct{}),

@@ -184,7 +184,9 @@ func TestContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
 
 	var captured []string
-	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+	prev := ExecCommandFn
+	defer func() { ExecCommandFn = prev }()
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
 		captured = append([]string{name}, arg...)
 		return exec.Command("true")
 	}
@@ -230,7 +232,9 @@ func TestContainerSandbox_Exec_ReturnsErrorOnStartFailure(t *testing.T) {
 	ctr := &fakeContainer{id: "abc123"}
 	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
 
-	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+	prev := ExecCommandFn
+	defer func() { ExecCommandFn = prev }()
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("nonexistent-command-that-fails")
 	}
 
@@ -294,7 +298,9 @@ func TestContainerSandbox_ExecInteractive_RunsContainerExec(t *testing.T) {
 	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
 
 	var captured []string
-	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+	prev := ExecCommandFn
+	defer func() { ExecCommandFn = prev }()
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
 		captured = append([]string{name}, arg...)
 		return exec.Command("true")
 	}
@@ -331,7 +337,9 @@ func TestContainerSandbox_ExecInteractive_ReturnsErrorOnStartFailure(t *testing.
 	ctr := &fakeContainer{id: "abc123"}
 	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
 
-	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+	prev := ExecCommandFn
+	defer func() { ExecCommandFn = prev }()
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("nonexistent-command-that-fails")
 	}
 
@@ -346,7 +354,9 @@ func TestSharedContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	sb := NewSharedContainerSandbox(wt, ctr, "docker", "/host/repo")
 
 	var captured []string
-	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+	prev := ExecCommandFn
+	defer func() { ExecCommandFn = prev }()
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
 		captured = append([]string{name}, arg...)
 		return exec.Command("true")
 	}
@@ -426,7 +436,9 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 	ctr := &fakeContainer{id: "abc123"}
 	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
 
-	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+	prev := ExecCommandFn
+	defer func() { ExecCommandFn = prev }()
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("sleep", "60")
 	}
 
@@ -462,7 +474,9 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 	ctr := &fakeContainer{id: "abc123"}
 	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
 
-	sb.execFn = func(name string, arg ...string) *exec.Cmd {
+	prev := ExecCommandFn
+	defer func() { ExecCommandFn = prev }()
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("sleep", "60")
 	}
 

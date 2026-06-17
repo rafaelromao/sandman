@@ -9,15 +9,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/runid"
 )
 
 func autoPromptFileExists(sandmanDir string) bool {
@@ -40,13 +41,14 @@ func runSelectionPhase(ctx context.Context, client github.Client, count int, san
 	// auto_test.go (which pre-date the event-emission seam) can keep calling
 	// runSelectionPhase. Production code paths go through
 	// runSelectionPhaseWithEvents via resolveAutoIssues.
-	return runSelectionPhaseWithEvents(ctx, client, count, sandmanDir, agentName, modelFlag, cfg, candidates, resolveAutoQuery("", ""), nil)
+	issues, _, _, err := runSelectionPhaseWithEvents(ctx, client, count, sandmanDir, agentName, modelFlag, cfg, candidates, resolveAutoQuery("", ""), nil)
+	return issues, err
 }
 
 // runSelectionPhaseWithEvents runs the selection phase and emits a pair of
 // run.started / run.finished events to eventLog so the portal can pick the
-// auto-select run up. The RunID has the form "auto-select-<unix-ms>". The
-// run.started event is emitted only after pre-flight checks (review daemon
+// auto-select run up. RunID uses the new batch scheme: "<ts>-<shortid>-auto-select-<count>c".
+// The run.started event is emitted only after pre-flight checks (review daemon
 // guard, candidate fetch) pass; pre-flight failures emit no run.started and
 // the underlying error is returned to the caller. run.finished is always
 // emitted when run.started was emitted, with status "success" or "failure"
@@ -54,24 +56,146 @@ func runSelectionPhase(ctx context.Context, client github.Client, count int, san
 //
 // When eventLog is nil the function behaves as the original runSelectionPhase:
 // no events are emitted and only the selected issues (or error) are returned.
-func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, count int, sandmanDir, agentName, modelFlag string, cfg *config.Config, candidates []int, query string, eventLog events.EventLog) ([]int, error) {
+func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, count int, sandmanDir, agentName, modelFlag string, cfg *config.Config, candidates []int, query string, eventLog events.EventLog) ([]int, string, string, error) {
 	if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	candidateIssues, err := fetchCandidateIssues(client, candidates)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	if len(candidateIssues) == 0 {
-		return nil, fmt.Errorf("no candidate issues found")
+		return nil, "", "", fmt.Errorf("no candidate issues found")
 	}
-
-	candidateText := formatCandidateIssues(candidateIssues)
 
 	effectiveCount := count
 	if effectiveCount <= 0 {
 		effectiveCount = len(candidateIssues)
 	}
+
+	if eventLog == nil {
+		issues, err := runSelectionPhaseLegacy(ctx, client, effectiveCount, sandmanDir, agentName, modelFlag, cfg, candidateIssues)
+		return issues, "", "", err
+	}
+
+	ts, shortid, err := runid.NewBatchIn(filepath.Join(sandmanDir, "runs"))
+	if err != nil {
+		return nil, "", "", fmt.Errorf("generate batch id: %w", err)
+	}
+	batchID := runid.NewBatchID(runid.KindAutoSelect, effectiveCount, "", ts, shortid)
+	runID := runid.NewRunID(runid.KindAutoSelect, fmt.Sprintf("auto-select-%dc", effectiveCount), ts, shortid)
+	runDir := daemon.RunDir(sandmanDir, batchID)
+
+	manifest := daemon.BatchManifest{
+		RunKind:    "auto-select",
+		RunID:      runID,
+		Candidates: append([]int(nil), candidates...),
+		Query:      query,
+		Count:      effectiveCount,
+		CreatedAt:  time.Now(),
+	}
+
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		return nil, "", "", fmt.Errorf("create run dir: %w", err)
+	}
+
+	if err := daemon.WriteManifest(runDir, manifest); err != nil {
+		os.RemoveAll(runDir)
+		return nil, "", "", fmt.Errorf("write manifest: %w", err)
+	}
+
+	broadcaster := daemon.NewBroadcaster()
+	ctrlSock := daemon.NewControlSocket(runDir, broadcaster)
+	if err := ctrlSock.Start(); err != nil {
+		os.RemoveAll(runDir)
+		return nil, "", "", fmt.Errorf("control socket start: %w", err)
+	}
+
+	cmdServer := daemon.NewCommandServer(runDir, nil)
+	if err := cmdServer.Start(); err != nil {
+		ctrlSock.Stop()
+		os.RemoveAll(runDir)
+		return nil, "", "", fmt.Errorf("command server start: %w", err)
+	}
+
+	cleanup := func() {
+		cmdServer.Stop()
+		ctrlSock.Stop()
+	}
+
+	success := false
+	defer func() {
+		cleanup()
+		if success {
+			os.RemoveAll(runDir)
+		}
+		// On failure, leave runDir on disk for RecoverStaleRuns
+	}()
+
+	_ = eventLog.Log(events.Event{
+		Type:      "run.started",
+		Timestamp: time.Now(),
+		RunID:     runID,
+		Payload: map[string]any{
+			"run_kind":   "auto-select",
+			"count":      effectiveCount,
+			"query":      query,
+			"candidates": append([]int(nil), candidates...),
+		},
+	})
+
+	candidateText := formatCandidateIssues(candidateIssues)
+
+	promptText := prompt.ApplySubstitutions(prompt.DefaultPriorityPrompt(), prompt.RenderConfig{
+		CandidateIssues: candidateText,
+		MaxCount:        effectiveCount,
+	})
+
+	promptPath := filepath.Join(sandmanDir, "selection-prompt.md")
+	if err := os.WriteFile(promptPath, []byte(promptText), 0o644); err != nil {
+		emitAutoSelectFinished(eventLog, runID, "failure", fmt.Sprintf("write selection prompt: %v", err), nil)
+		return nil, "", "", fmt.Errorf("write selection prompt: %w", err)
+	}
+	defer os.Remove(promptPath)
+
+	agentCfg, err := cfg.ResolveAgentProvider(agentName)
+	if err != nil {
+		emitAutoSelectFinished(eventLog, runID, "failure", fmt.Sprintf("resolve agent: %v", err), nil)
+		return nil, "", "", fmt.Errorf("resolve agent: %w", err)
+	}
+
+	modelFlagStr := resolveModelFlag(modelFlag, agentCfg.Preset)
+
+	renderedCmd, err := batch.RenderCommand(agentCfg.Command, batch.CommandData{
+		PromptFile: promptPath,
+		ModelFlag:  modelFlagStr,
+	})
+	if err != nil {
+		emitAutoSelectFinished(eventLog, runID, "failure", fmt.Sprintf("render agent command: %v", err), nil)
+		return nil, "", "", fmt.Errorf("render agent command: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", renderedCmd)
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+	if err := cmd.Run(); err != nil {
+		agentErr := fmt.Errorf("selection agent failed with stderr: %s: %w", strings.TrimSpace(stderrBuf.String()), err)
+		emitAutoSelectFinished(eventLog, runID, "failure", agentErr.Error(), nil)
+		return nil, "", "", agentErr
+	}
+
+	selected, err := readSelectedIssues(sandmanDir, effectiveCount)
+	if err != nil {
+		emitAutoSelectFinished(eventLog, runID, "failure", err.Error(), nil)
+		return nil, "", "", err
+	}
+	emitAutoSelectFinished(eventLog, runID, "success", "", selected)
+	success = true
+	return selected, ts, shortid, nil
+}
+
+func runSelectionPhaseLegacy(ctx context.Context, client github.Client, effectiveCount int, sandmanDir, agentName, modelFlag string, cfg *config.Config, candidateIssues []github.Issue) ([]int, error) {
+	candidateText := formatCandidateIssues(candidateIssues)
 
 	promptText := prompt.ApplySubstitutions(prompt.DefaultPriorityPrompt(), prompt.RenderConfig{
 		CandidateIssues: candidateText,
@@ -99,37 +223,18 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 		return nil, fmt.Errorf("render agent command: %w", err)
 	}
 
-	runID := "auto-select-" + strconv.FormatInt(time.Now().UnixMilli(), 10)
-
-	if eventLog != nil {
-		_ = eventLog.Log(events.Event{
-			Type:      "run.started",
-			Timestamp: time.Now(),
-			RunID:     runID,
-			Payload: map[string]any{
-				"run_kind":   "auto-select",
-				"count":      effectiveCount,
-				"query":      query,
-				"candidates": append([]int(nil), candidates...),
-			},
-		})
-	}
-
 	cmd := exec.CommandContext(ctx, "sh", "-c", renderedCmd)
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 	if err := cmd.Run(); err != nil {
-		agentErr := fmt.Errorf("selection agent failed with stderr: %s: %w", strings.TrimSpace(stderrBuf.String()), err)
-		emitAutoSelectFinished(eventLog, runID, "failure", agentErr.Error(), nil)
-		return nil, agentErr
+		return nil, fmt.Errorf("selection agent failed with stderr: %s: %w", strings.TrimSpace(stderrBuf.String()), err)
 	}
 
 	selected, err := readSelectedIssues(sandmanDir, effectiveCount)
 	if err != nil {
-		emitAutoSelectFinished(eventLog, runID, "failure", err.Error(), nil)
 		return nil, err
 	}
-	emitAutoSelectFinished(eventLog, runID, "success", "", selected)
+
 	return selected, nil
 }
 
@@ -208,13 +313,13 @@ func readSelectedIssues(sandmanDir string, maxCount int) ([]int, error) {
 	return selected, nil
 }
 
-func resolveAutoIssues(ctx context.Context, client github.Client, count int, candidates []int, sandmanDir, agentName, modelFlag string, cfg *config.Config, query string, eventLog events.EventLog) ([]int, error) {
+func resolveAutoIssues(ctx context.Context, client github.Client, count int, candidates []int, sandmanDir, agentName, modelFlag string, cfg *config.Config, query string, eventLog events.EventLog) ([]int, string, string, error) {
 	if autoPromptFileExists(sandmanDir) {
 		return runSelectionPhaseWithEvents(ctx, client, count, sandmanDir, agentName, modelFlag, cfg, candidates, query, eventLog)
 	}
 
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no issues ready for agent")
+		return nil, "", "", fmt.Errorf("no issues ready for agent")
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
@@ -224,7 +329,7 @@ func resolveAutoIssues(ctx context.Context, client github.Client, count int, can
 	if count > 0 && count < len(candidates) {
 		candidates = candidates[:count]
 	}
-	return candidates, nil
+	return candidates, "", "", nil
 }
 
 func resolveModelFlag(modelFlag, preset string) string {

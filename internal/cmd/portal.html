@@ -480,13 +480,22 @@
     }
     /* Context and batch chips live in their own tr (so a single td can
        span all six columns), but visually they are part of the run row
-       above: no border, no surface fill, no decorative chrome. The
-       same hover/active state that paints the run row also paints the
-       chip row directly under it, so the two read as one block. */
+       above: no surface fill, no decorative chrome. The same hover/active
+       state that paints the run row also paints the chip row directly
+       under it, so the two read as one block. The divider line moves to
+       BELOW the chip (inherited border-bottom) so the run row + chip
+       read as a single visual block; the next run row starts after the
+       chip's own divider. */
     tbody tr.batch-row td,
     tbody tr.context-row td {
       padding: 0 14px 6px;
-      border: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+    }
+    tbody tr.run-row:has(+ tr.context-row) td,
+    tbody tr.run-row:has(+ tr.batch-row) td {
+      border-bottom: none;
     }
     tbody tr.run-row + tr.batch-row td,
     tbody tr.run-row + tr.context-row td {
@@ -675,10 +684,18 @@
     table {
       width: 100%;
       min-width: 920px;
+      table-layout: fixed;
       border-collapse: separate;
       border-spacing: 0;
       font-size: 13px;
     }
+    .col-title { width: 480px; }
+    .col-badge { width: 110px; }
+    .col-started { width: 140px; }
+    .col-duration { width: 90px; }
+    .col-issue-title { width: 180px; }
+    .col-branch { width: 150px; }
+    .col-actions { width: 90px; }
     thead th {
       position: sticky;
       top: 0;
@@ -707,20 +724,30 @@
       background: var(--surface-2);
       padding: 0;
     }
-    /* The Run column drives its own width up to a sane cap so the
-       Part-of-batch chip can sit on a single line and the long
-       unbreakable run-id token in the meta-line can break instead of
-       forcing the column wider than its natural share. */
+    /* The Run column width is set by colgroup + table-layout: fixed.
+       This floor prevents the title cell from being squeezed narrower
+       than 200px when the viewport is narrow. */
     tbody td[data-cell="title"] {
-      min-width: 168px;
-      max-width: min(220px, 22%);
-      width: 200px;
+      min-width: 200px;
     }
     /* Issue Title gets the slack the previous Branch column used to
        claim. min-width keeps short titles from being squeezed when
-       the viewport is wide; overflow-wrap lets long titles break. */
+       the viewport is wide; ellipsis truncates long titles. */
     tbody td[data-cell="issue-title"] {
       min-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    tbody td[data-cell="started"] {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    tbody td[data-cell="branch"] {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     /* Long unbreakable tokens (long run-id, long branch, long issue
        title) must not force the column wider than the table can afford.
@@ -1736,15 +1763,15 @@
     </section>
 
     <section class="table-shell" aria-label="Sandman runs">
-      <table style="table-layout: fixed;">
+      <table>
         <colgroup>
-          <col id="col-title">
-          <col id="col-badge">
-          <col id="col-started">
-          <col id="col-duration">
-          <col id="col-issue-title">
-          <col id="col-branch">
-          <col id="col-actions">
+          <col class="col-title">
+          <col class="col-badge">
+          <col class="col-started">
+          <col class="col-duration">
+          <col class="col-issue-title">
+          <col class="col-branch">
+          <col class="col-actions">
         </colgroup>
         <thead>
           <tr>
@@ -2801,10 +2828,8 @@
     }
 
     function renderRunMeta(run) {
-      const parts = [];
-      if (run.runId) parts.push('ID ' + run.runId);
-      if (run.issueLabel) parts.push(run.issueLabel);
-      return parts.length ? parts.join(' · ') : 'Run';
+      if (run.runId) return 'ID ' + run.runId;
+      return 'Run';
     }
 
     function highlightTerminalText(text) {

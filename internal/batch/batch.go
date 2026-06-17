@@ -92,11 +92,31 @@ type Request struct {
 	// in the trigger comment. May be empty. Only meaningful when Review
 	// is true.
 	ReviewFocus string
-	// RunID is an optional batch-level identifier for prompt-only runs.
-	// When set, it is used as the run directory name and as the RunID in
-	// run.started events instead of the auto-generated run-0-<timestamp>.
-	// Must be validated by the caller to match [a-zA-Z][a-zA-Z0-9_-]*.
+	// RunID is the optional user-provided batch identifier for prompt-only
+	// runs. When set, it is used as the run directory name and the per-row
+	// RunID in run.started events. Issue-driven runs leave it empty; their
+	// per-row RunIDs are derived from RunTS / RunShortID via
+	// runid.NewRunID. Callers MUST validate RunID with
+	// runid.IsValidUserRunID before passing it in (the cmd layer does so
+	// in the --run-id flag path).
 	RunID string
+	// RunTS is the timestamp component of the auto-generated batch id for
+	// issue-driven runs (set by `sandman run 42 43 44`). The orchestrator
+	// combines RunTS with RunShortID via runid.NewRunID to build the
+	// per-row RunID recorded in run.queued / run.started events.
+	RunTS string
+	// RunShortID is the short-ID component of the auto-generated batch id
+	// for issue-driven runs. The orchestrator combines it with RunTS via
+	// runid.NewRunID to build the per-row RunID.
+	RunShortID string
+	// BatchTS is the timestamp component of the auto-generated batch id for
+	// prompt-only runs. Used together with BatchShortID to construct the
+	// per-row RunID in run.started events.
+	BatchTS string
+	// BatchShortID is the short-id component of the auto-generated batch id
+	// for prompt-only runs. Used together with BatchTS to construct the
+	// per-row RunID in run.started events.
+	BatchShortID string
 }
 
 // IssueMode returns the mode for num, defaulting to ModeFresh.

@@ -129,7 +129,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 	ln.Close()
 
 	active := portalActiveRun{
-		Key:          "run-42-1",
+		Key:          "20250617-143052-abcd-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -138,7 +138,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 
 	started := time.Now().Add(-1 * time.Minute)
 	state := &events.RunState{
-		RunID: "run-42-1",
+		RunID: "20250617-143052-abcd-issue-42",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -247,7 +247,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 	t.Cleanup(func() { _ = ln.Close() })
 
 	active := portalActiveRun{
-		Key:          "run-42-1",
+		Key:          "20250617-143052-abcd-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -256,7 +256,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 
 	started := time.Now().Add(-1 * time.Minute)
 	state := &events.RunState{
-		RunID: "run-42-1",
+		RunID: "20250617-143052-abcd-issue-42",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -749,7 +749,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	t.Cleanup(func() { _ = ln.Close() })
 
 	active := portalActiveRun{
-		Key:          "run-42-1",
+		Key:          "20250617-143052-abcd-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -757,7 +757,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	}
 
 	state := &events.RunState{
-		RunID: "run-42-1",
+		RunID: "20250617-143052-abcd-issue-42",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload: map[string]any{
@@ -930,7 +930,7 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 
 	startedAt := time.Now().Add(-1 * time.Minute)
 	active := portalActiveRun{
-		Key:          "run-42-1",
+		Key:          "20250617-143052-abcd-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -1418,7 +1418,7 @@ func TestPortal_BatchRowCSS_RendersAsSecondaryRowUnderRunRow(t *testing.T) {
 		sel   string
 		props []string
 	}{
-		{"tbody tr.batch-row td", []string{"border: none"}},
+		{"tbody tr.batch-row td", []string{"border-top: none", "border-left: none", "border-right: none"}},
 		{"tbody tr.run-row + tr.batch-row td", []string{"padding-top: 0"}},
 		{"tbody tr.run-row:hover + tr.batch-row td", []string{"background:"}},
 		{"tbody tr.run-row.active + tr.batch-row td", []string{"background:"}},
@@ -1495,7 +1495,7 @@ func TestPortal_MetaLineCSS_AllowsLongTokenToBreak(t *testing.T) {
 	}
 }
 
-func TestPortal_RunColumnHasWidthCap(t *testing.T) {
+func TestPortal_RunColumnHasMinWidthFloor(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("locate test file")
@@ -1506,10 +1506,8 @@ func TestPortal_RunColumnHasWidthCap(t *testing.T) {
 		t.Fatalf("read %s: %v", htmlPath, err)
 	}
 	html := string(data)
-	// The Run column should drive its own width up to a sane cap, so the
-	// Part-of-batch chip can sit on a single line and the meta-line's long
-	// run-id can break, instead of the column being clamped to its
-	// min-content width by sibling columns.
+	// The Run column width is now controlled by colgroup + table-layout: fixed.
+	// The title cell CSS provides only a min-width floor.
 	if !strings.Contains(html, `td[data-cell="title"]`) {
 		t.Fatalf("could not find td[data-cell=\"title\"] selector in %s", htmlPath)
 	}
@@ -1524,10 +1522,8 @@ func TestPortal_RunColumnHasWidthCap(t *testing.T) {
 		t.Fatalf("could not find closing brace for td[data-cell=\"title\"] rule in %s", htmlPath)
 	}
 	body := html[bodyStart : bodyStart+close]
-	for _, tok := range []string{"min-width: 168px", "max-width: min(220px, 22%)", "width: 200px"} {
-		if !strings.Contains(body, tok) {
-			t.Errorf("td[data-cell=\"title\"] rule missing %q", tok)
-		}
+	if !strings.Contains(body, "min-width: 200px") {
+		t.Errorf("td[data-cell=\"title\"] rule missing %q", "min-width: 200px")
 	}
 }
 
