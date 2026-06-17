@@ -2449,3 +2449,77 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+func TestPortalDiffDiffRuns_NoInsertBeforeForStableRuns(t *testing.T) {
+	js := `const body = makeMockBody();
+const runs = [
+  { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' },
+  { key: 'b', kind: 'active', status: 'running', issueLabel: 'B', runId: 'r2' },
+  { key: 'c', kind: 'active', status: 'running', issueLabel: 'C', runId: 'r3' },
+];
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+const aRow = body.children[0];
+const bRow = body.children[1];
+const cRow = body.children[2];
+clearLog(body);
+SandmanPortalDiff.resetCounters();
+const modifiedRuns = [
+  Object.assign({}, runs[0], { status: 'success' }),
+  Object.assign({}, runs[1], { status: 'success' }),
+  Object.assign({}, runs[2], { status: 'success' }),
+];
+SandmanPortalDiff.diffRuns(body, modifiedRuns, opts);
+const insertBeforeCalls = body._log.filter(e => e[0] === 'insertBefore');
+if (insertBeforeCalls.length !== 0) {
+  throw new Error('expected 0 insertBefore calls for stable runs, got ' + insertBeforeCalls.length + ': ' + JSON.stringify(insertBeforeCalls));
+}
+if (body.children[0] !== aRow) throw new Error('a row identity changed');
+if (body.children[1] !== bRow) throw new Error('b row identity changed');
+if (body.children[2] !== cRow) throw new Error('c row identity changed');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffDiffRuns_NoInsertBeforeForStableRunsWithContextRows(t *testing.T) {
+	js := `const body = makeMockBody();
+const runs = [
+  { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', reason: 'review', prNumber: 1, issueNumber: 1 },
+  { key: 'b', kind: 'active', status: 'running', issueLabel: 'B', runId: 'r2', reason: 'review', prNumber: 2, issueNumber: 2 },
+  { key: 'c', kind: 'active', status: 'running', issueLabel: 'C', runId: 'r3', reason: 'review', prNumber: 3, issueNumber: 3 },
+];
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, runs, opts);
+const aRow = body.querySelector('tr[data-run-key="a"]');
+const bRow = body.querySelector('tr[data-run-key="b"]');
+const cRow = body.querySelector('tr[data-run-key="c"]');
+const ctxA = body.querySelector('tr.context-row[data-context-for="a"]');
+const ctxB = body.querySelector('tr.context-row[data-context-for="b"]');
+const ctxC = body.querySelector('tr.context-row[data-context-for="c"]');
+if (!aRow || !bRow || !cRow) throw new Error('expected all data rows');
+if (!ctxA || !ctxB || !ctxC) throw new Error('expected all context rows');
+clearLog(body);
+SandmanPortalDiff.resetCounters();
+const modifiedRuns = [
+  Object.assign({}, runs[0], { status: 'success' }),
+  Object.assign({}, runs[1], { status: 'success' }),
+  Object.assign({}, runs[2], { status: 'success' }),
+];
+SandmanPortalDiff.diffRuns(body, modifiedRuns, opts);
+const insertBeforeCalls = body._log.filter(e => e[0] === 'insertBefore');
+if (insertBeforeCalls.length !== 0) {
+  throw new Error('expected 0 insertBefore calls for stable runs with context rows, got ' + insertBeforeCalls.length + ': ' + JSON.stringify(insertBeforeCalls));
+}
+const aRowNow = body.querySelector('tr[data-run-key="a"]');
+const bRowNow = body.querySelector('tr[data-run-key="b"]');
+const cRowNow = body.querySelector('tr[data-run-key="c"]');
+if (aRowNow !== aRow) throw new Error('a row identity changed');
+if (bRowNow !== bRow) throw new Error('b row identity changed');
+if (cRowNow !== cRow) throw new Error('c row identity changed');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
