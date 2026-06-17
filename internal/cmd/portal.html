@@ -2819,10 +2819,8 @@
     }
 
     function renderRunMeta(run) {
-      const parts = [];
-      if (run.runId) parts.push('ID ' + run.runId);
-      if (run.issueLabel) parts.push(run.issueLabel);
-      return parts.length ? parts.join(' · ') : 'Run';
+      if (run.runId) return 'ID ' + run.runId;
+      return 'Run';
     }
 
     function highlightTerminalText(text) {
