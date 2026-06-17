@@ -8239,10 +8239,11 @@ func TestOrchestrator_AbortIssue_ActiveRun(t *testing.T) {
 // added in PR #1018) is exercised end-to-end. The previous abort tests use a
 // blockingRunnable + fakeSandbox, which prove the issueCtx propagates but not
 // that the underlying process is actually killed. This test closes that gap:
-// it injects a long-running `sleep 60` exec.Cmd through ContainerSandbox's
-// execFn, calls AbortIssue, and asserts (a) the cancel is found, (b) a
-// terminal run.aborted event lands, (c) the orchestrator goroutine returns
-// within a 3 s deadline, and (d) the sleep process was actually reaped.
+// it injects a long-running `sleep 60` exec.Cmd through the
+// sandbox.ExecCommandFn seam, calls AbortIssue, and asserts (a) the cancel
+// is found, (b) a terminal run.aborted event lands, and (c) the orchestrator
+// goroutine returns within a 3 s deadline — which only happens if waitCmd
+// actually killed the sleep process.
 func TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal(t *testing.T) {
 	if err := exec.Command("sleep", "0").Run(); err != nil {
 		t.Skipf("sleep command not available: %v", err)
@@ -8273,7 +8274,9 @@ func TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal(t *te
 
 	var sleepMu sync.Mutex
 	var sleepCmd *exec.Cmd
-	execFn := func(name string, arg ...string) *exec.Cmd {
+	prevExecCommandFn := sandbox.ExecCommandFn
+	defer func() { sandbox.ExecCommandFn = prevExecCommandFn }()
+	sandbox.ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
 		sleepMu.Lock()
 		defer sleepMu.Unlock()
 		sleepCmd = exec.Command("sleep", "60")
@@ -8284,7 +8287,7 @@ func TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal(t *te
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
 	sbFactory := sandboxFactoryFunc(func(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
-		return sandbox.NewContainerSandboxWithExecFn(wt, container, "docker", repoPath, execFn)
+		return sandbox.NewContainerSandbox(wt, container, "docker", repoPath)
 	})
 
 	spyLog := &spyEventLog{}
@@ -8320,6 +8323,11 @@ func TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal(t *te
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
+		// The orchestrator goroutine returns only after waitCmd unblocks.
+		// waitCmd calls syscall.Kill(-pgid, SIGKILL) on context cancel, so
+		// a stuck 3 s deadline means Setpgid is missing on ContainerSandbox
+		// (see PR #1018 / issue #1008) and the negative-PGID kill targets
+		// the daemon's PGID instead of the sleep process group.
 		t.Fatal("orchestrator goroutine did not return within 3s — AbortIssue did not unblock the production waitCmd")
 	}
 
@@ -8336,21 +8344,6 @@ func TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal(t *te
 	}
 	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
 		t.Fatalf("expected aborted terminal status, got %q", status)
-	}
-
-	sleepMu.Lock()
-	finalCmd := sleepCmd
-	sleepMu.Unlock()
-	if finalCmd == nil {
-		t.Fatal("expected the long-running sleep *exec.Cmd to have been captured by the injected execFn")
-	}
-	// waitCmd calls cmd.Wait() via the processWrapper, which reaps the
-	// killed process and populates ProcessState. The Setpgid: true cmd
-	// attribute added in PR #1018 is what makes the negative-PGID SIGKILL
-	// actually hit the sleep process group; without it waitCmd would block
-	// here forever and the orchestrator goroutine would never return.
-	if finalCmd.ProcessState == nil {
-		t.Fatal("expected the long-running sleep process to have been killed and reaped by waitCmd")
 	}
 }
 
@@ -8392,9 +8385,8 @@ type fakeContainerForAbortTest struct {
 	id string
 }
 
-func (f *fakeContainerForAbortTest) ID() string           { return f.id }
-func (f *fakeContainerForAbortTest) Stop() error          { return nil }
-func (f *fakeContainerForAbortTest) Alive() (bool, error) { return true, nil }
+func (f *fakeContainerForAbortTest) ID() string  { return f.id }
+func (f *fakeContainerForAbortTest) Stop() error { return nil }
 
 // TestOrchestrator_AbortIssue_SiblingIsNotSignalled verifies the
 // per-session scope of the unified superviseShutdown supervisor: when

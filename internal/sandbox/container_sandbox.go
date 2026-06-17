@@ -23,8 +23,22 @@ type ContainerSandbox struct {
 	ownsContainer  bool
 	cmd            *exec.Cmd
 	processWrapper *processWrapper
-	execFn         func(name string, arg ...string) *exec.Cmd
 }
+
+// ExecCommandFn is the function-variable seam for the *exec.Cmd factory used
+// by ContainerSandbox.Exec and ContainerSandbox.ExecInteractive. The default
+// delegates to exec.Command; tests may substitute a stub that returns a real
+// long-running *exec.Cmd (e.g. `sleep 60`) so the production waitCmd path can
+// be exercised end-to-end without a real container runtime. The pattern
+// mirrors the unexported reconcileStrandedFn seam in worktree.go (ADR-0027),
+// but is exported so cross-package tests (e.g. the orchestrator abort tests
+// in package batch) can drive the waitCmd path. Save and restore around the
+// test:
+//
+//	prev := sandbox.ExecCommandFn
+//	defer func() { sandbox.ExecCommandFn = prev }()
+//	sandbox.ExecCommandFn = func(name string, arg ...string) *exec.Cmd { ... }
+var ExecCommandFn = exec.Command
 
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
 func NewContainerSandbox(worktree Sandbox, container Container, binary, repoPath string) *ContainerSandbox {
@@ -34,7 +48,6 @@ func NewContainerSandbox(worktree Sandbox, container Container, binary, repoPath
 		binary:        binary,
 		repoPath:      repoPath,
 		ownsContainer: true,
-		execFn:        exec.Command,
 	}
 }
 
@@ -46,26 +59,6 @@ func NewSharedContainerSandbox(worktree Sandbox, container Container, binary, re
 		binary:        binary,
 		repoPath:      repoPath,
 		ownsContainer: false,
-		execFn:        exec.Command,
-	}
-}
-
-// NewContainerSandboxWithExecFn is the test-only constructor that lets tests
-// inject a custom exec.Command factory. Production code must use
-// NewContainerSandbox or NewSharedContainerSandbox, which set execFn to
-// exec.Command. This helper exists so tests outside the sandbox package can
-// drive the production waitCmd path with a real long-running *exec.Cmd (e.g.
-// `sleep 60`) without exposing the unexported execFn field. The ownsContainer
-// flag is true so Stop() tears the container down on test cleanup, matching
-// NewContainerSandbox semantics.
-func NewContainerSandboxWithExecFn(worktree Sandbox, container Container, binary, repoPath string, execFn func(name string, arg ...string) *exec.Cmd) *ContainerSandbox {
-	return &ContainerSandbox{
-		worktree:      worktree,
-		container:     container,
-		binary:        binary,
-		repoPath:      repoPath,
-		ownsContainer: true,
-		execFn:        execFn,
 	}
 }
 
@@ -152,7 +145,7 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
 func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	cmd := s.execFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
+	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -170,7 +163,7 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 
 // ExecInteractive runs a command inside the container attached to the user's terminal.
 func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) error {
-	cmd := s.execFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
+	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
