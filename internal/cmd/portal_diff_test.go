@@ -114,7 +114,7 @@ clearLog(badgeCell); clearLog(durationCell);
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true');
-if (result.cells !== 2) throw new Error('expected 2 cell mutations on title change, got ' + JSON.stringify(result));
+if (result.cells !== 1) throw new Error('expected 1 cell mutation on title change, got ' + JSON.stringify(result));
 if (countLog(badgeCell) !== 0) throw new Error('badge cell was touched');
 if (countLog(durationCell) !== 0) throw new Error('duration cell was touched');
 console.log('PASS');
@@ -1640,10 +1640,8 @@ const renderStatusBadge = (run) => {
   return '<span class="badge ' + escapeHTML(k) + '"><span class="dot"></span>' + escapeHTML(label) + '</span>';
 };
 const renderRunMeta = (run) => {
-  const parts = [];
-  if (run.runId) parts.push('ID ' + run.runId);
-  if (run.issueLabel) parts.push(run.issueLabel);
-  return parts.length ? parts.join(' · ') : 'Run';
+  if (run.runId) return 'ID ' + run.runId;
+  return 'Run';
 };
 const renderTerminalContent = (text) => {
   const value = String(text || '');
