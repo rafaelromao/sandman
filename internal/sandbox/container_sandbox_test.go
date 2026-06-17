@@ -223,8 +223,8 @@ func TestContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	if captured[7] != "-c" {
 		t.Errorf("expected flag -c, got %q", captured[7])
 	}
-	if !strings.Contains(captured[8], "setsid") {
-		t.Errorf("expected command to contain setsid wrapper, got %q", captured[8])
+	if !strings.Contains(captured[8], "/tmp/agent-pgid") {
+		t.Errorf("expected command to contain pidfile mechanism, got %q", captured[8])
 	}
 	if !strings.Contains(captured[8], "echo hello") {
 		t.Errorf("expected command to contain original command echo hello, got %q", captured[8])

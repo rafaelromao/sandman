@@ -159,7 +159,7 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 	return os.WriteFile(gitFile, []byte(updated), 0644)
 }
 
-const execWrapperScript = `setsid sh -c 'echo \$\$ > /tmp/agent-pgid; exec %s' & SPID=$!; wait $SPID; rm -f /tmp/agent-pgid
+const execWrapperScript = `sh -c 'echo \$\$ > /tmp/agent-pgid; exec "$@"' _ %s
 `
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
