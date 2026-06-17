@@ -1939,15 +1939,19 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 // returns success.
 func (s *runSession) reconcileWorktreeBranch(wt sandbox.Sandbox, branch string) {
 	o := s.o
+	workDir := wt.WorkDir()
+	if workDir == "" {
+		return
+	}
 	expectedRef := "refs/heads/" + branch
-	if currentRef, err := sandbox.CurrentBranchRef(wt.WorkDir()); err == nil && currentRef == expectedRef {
+	if currentRef, err := sandbox.CurrentBranchRef(workDir); err == nil && currentRef == expectedRef {
 		return
 	}
 	if !sandbox.BranchExists(wt.RepoPath(), branch) {
 		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: branch %q was deleted; next run will recreate it\n", branch)
 		return
 	}
-	cmd := exec.Command("git", "-C", wt.WorkDir(), "checkout", "-f", branch)
+	cmd := exec.Command("git", "-C", workDir, "checkout", "-f", branch)
 	cmd.Dir = wt.RepoPath()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: git checkout -f %s: %v\n%s\n", branch, err, out)
