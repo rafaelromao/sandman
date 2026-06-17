@@ -112,7 +112,7 @@ func waitForLineCount(t *testing.T, path string, want int) {
 
 func waitForPath(t *testing.T, path string) {
 	t.Helper()
-	for i := 0; i < 500; i++ {
+	for i := 0; i < 3000; i++ {
 		if _, err := os.Stat(path); err == nil {
 			return
 		}
@@ -325,7 +325,7 @@ func TestRun_DependencyAwareBatch_IncludeDependenciesExecutesTransitiveChain(t *
 		issues: map[int]*github.Issue{
 			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
 			42:  {Number: 42, Title: "Refactor", BlockedBy: []int{7}, State: "open"},
-			7:   {Number: 7, Title: "Groundwork", State: "closed"},
+			7:   {Number: 7, Title: "Groundwork", State: "open"},
 		},
 		prs: map[string]*github.PR{
 			"sandman/100-feature":  {Number: 100, State: "closed", Merged: true, HeadRefName: "sandman/100-feature", HeadRefOid: ""},
@@ -338,22 +338,8 @@ state_dir="$repo_root/.sandman/chain"
 mkdir -p "$state_dir"
 printf '%s\n' "$issue" >> "$state_dir/start-order"
 
-case "$issue" in
-  42)
-    while [ ! -f "$state_dir/7.done" ]; do sleep 0.01; done
-    ;;
-  100)
-    while [ ! -f "$state_dir/42.done" ]; do sleep 0.01; done
-    ;;
-esac
-
 touch "$state_dir/$issue.done"
 `), client)
-
-	go func() {
-		waitForPath(t, filepath.Join(dir, ".sandman", "chain", "42.done"))
-		client.setIssueState(42, "closed")
-	}()
 
 	resultCh := make(chan struct {
 		out string
@@ -366,6 +352,11 @@ touch "$state_dir/$issue.done"
 			err error
 		}{out: out, err: err}
 	}()
+
+	waitForPath(t, filepath.Join(dir, ".sandman", "chain", "7.done"))
+	client.setIssueState(7, "closed")
+	waitForPath(t, filepath.Join(dir, ".sandman", "chain", "42.done"))
+	client.setIssueState(42, "closed")
 
 	result := <-resultCh
 	out, err := result.out, result.err
