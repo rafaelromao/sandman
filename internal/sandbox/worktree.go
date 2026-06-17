@@ -79,6 +79,26 @@ func (s *WorktreeSandbox) Start() error {
 			overrideRecreate = true
 		}
 	}
+	if !s.override {
+		if _, reclaimable := ReclaimableWorktree(s.repoPath, s.worktreeBase, s.branch); reclaimable {
+			pruneCmd := exec.Command("git", "worktree", "prune")
+			pruneCmd.Dir = s.repoPath
+			if out, err := pruneCmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("git worktree prune: %w\n%s", err, out)
+			}
+			if s.workDirExists() {
+				if err := os.RemoveAll(s.workDir); err != nil {
+					return fmt.Errorf("clean broken worktree dir: %w", err)
+				}
+			}
+			addCmd := exec.Command("git", "worktree", "add", "-f", s.workDir, s.branch)
+			addCmd.Dir = s.repoPath
+			if out, err := addCmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("git worktree add (reattach): %w\n%s", err, out)
+			}
+			return s.configureGitIdentity()
+		}
+	}
 overrideCleanup:
 	if s.override {
 		// Capture stranded-worktree state up front so the recovery
