@@ -1064,11 +1064,6 @@ func (v *portalRunsView) parseRunDirPR(name string) (int, bool) {
 	return n, true
 }
 
-// readPortalTextFile returns the contents of a saved portal log file.
-// Saved log files are persisted in the same `[<label>] HH:MM:SS ` prefixed
-// format as the live stream. Mixed-batch log files (if any) may contain
-// sibling-issue prefixes; the reader preserves them verbatim. Pre-change log
-// files (saved before slice 1) may be un-prefixed; the reader tolerates both.
 func (v *portalRunsView) readPortalTextFile(path string) string {
 	if path == "" {
 		return ""
