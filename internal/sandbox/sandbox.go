@@ -64,7 +64,13 @@ type Sandbox interface {
 // Wait. Calling cmd.Wait twice triggers Go's "Wait was already called"
 // error. cmdWrapper is the wrapper created when cmd was started; the
 // caller passes it in so waitCmd can block on the right channel.
-func waitCmd(ctx context.Context, cmd *exec.Cmd, cmdWrapper *processWrapper) error {
+//
+// onAbort is an optional callback invoked synchronously when the context
+// is cancelled, after the process group kill is sent but before waitCmd
+// waits for the process to exit. It is intended for propagating the abort
+// signal into container namespaces where the host-side process group kill
+// does not reach.
+func waitCmd(ctx context.Context, cmd *exec.Cmd, cmdWrapper *processWrapper, onAbort func()) error {
 	if cmdWrapper == nil {
 		return errors.New("waitCmd: cmdWrapper is nil")
 	}
@@ -79,6 +85,9 @@ func waitCmd(ctx context.Context, cmd *exec.Cmd, cmdWrapper *processWrapper) err
 			// processes such as agent scripts and their background tasks
 			// are terminated, not just the immediate sh -c parent.
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		if onAbort != nil {
+			onAbort()
 		}
 		<-waitDone
 		return ctx.Err()

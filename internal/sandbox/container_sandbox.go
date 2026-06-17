@@ -40,6 +40,22 @@ type ContainerSandbox struct {
 //	sandbox.ExecCommandFn = func(name string, arg ...string) *exec.Cmd { ... }
 var ExecCommandFn = exec.Command
 
+// KillAgentFn is the function-variable seam for the container-side kill signal
+// sent when an exec is aborted via context cancellation. The default reads the
+// agent's pidfile (/tmp/agent-pgid) inside the container and sends SIGKILL to
+// that process group via `docker exec <id> sh -c 'kill -KILL -<pgid>'`. Tests may
+// substitute a stub to verify the call is made with the expected container ID.
+// Save and restore around the test:
+//
+//	prev := sandbox.KillAgentFn
+//	defer func() { sandbox.KillAgentFn = prev }()
+//	sandbox.KillAgentFn = func(containerID string) error { ... }
+var KillAgentFn = func(containerID string) error {
+	cmd := exec.Command("docker", "exec", containerID, "sh", "-c",
+		"pgid=$(cat /tmp/agent-pgid 2>/dev/null); [ -n \"$pgid\" ] && kill -KILL -\"$pgid\"")
+	return cmd.Run()
+}
+
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
 func NewContainerSandbox(worktree Sandbox, container Container, binary, repoPath string) *ContainerSandbox {
 	return &ContainerSandbox{
@@ -143,9 +159,13 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 	return os.WriteFile(gitFile, []byte(updated), 0644)
 }
 
+const execWrapperScript = `sh -c 'echo \$\$ > /tmp/agent-pgid; exec "$@"' _ %s
+`
+
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
 func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
+	wrapperCmd := fmt.Sprintf(execWrapperScript, command)
+	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -155,7 +175,11 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)
 
-	if err := waitCmd(ctx, cmd, s.processWrapper); err != nil {
+	onAbort := func() {
+		_ = KillAgentFn(s.container.ID())
+	}
+
+	if err := waitCmd(ctx, cmd, s.processWrapper, onAbort); err != nil {
 		return fmt.Errorf("container exec: %w", err)
 	}
 	return nil
@@ -163,7 +187,8 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 
 // ExecInteractive runs a command inside the container attached to the user's terminal.
 func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) error {
-	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
+	wrapperCmd := fmt.Sprintf(execWrapperScript, command)
+	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -174,7 +199,11 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)
 
-	if err := waitCmd(ctx, cmd, s.processWrapper); err != nil {
+	onAbort := func() {
+		_ = KillAgentFn(s.container.ID())
+	}
+
+	if err := waitCmd(ctx, cmd, s.processWrapper, onAbort); err != nil {
 		return fmt.Errorf("container exec: %w", err)
 	}
 	return nil
