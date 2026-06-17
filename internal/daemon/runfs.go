@@ -139,6 +139,7 @@ type BatchManifest struct {
 	Issues     []int     `json:"issues,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 	RunKind    string    `json:"runKind,omitempty"`
+	RunID      string    `json:"runID,omitempty"`
 	Candidates []int     `json:"candidates,omitempty"`
 	Query      string    `json:"query,omitempty"`
 	Count      int       `json:"count,omitempty"`
@@ -244,7 +245,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	}
 	for _, batch := range dead {
 		if batch.Manifest.RunKind == "auto-select" {
-			autoSelectRunID := filepath.Base(batch.RunDir)
+			autoSelectRunID := batch.Manifest.RunID
 			for _, run := range runs {
 				if run.RunID != autoSelectRunID || !run.IsAutoSelect() {
 					continue

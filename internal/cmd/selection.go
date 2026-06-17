@@ -81,11 +81,12 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 		return nil, fmt.Errorf("generate batch id: %w", err)
 	}
 	batchID := runid.NewBatchID(runid.KindAutoSelect, effectiveCount, "", ts, shortid)
-	runID := fmt.Sprintf("%s-%s-auto-select-%dc", ts, shortid, effectiveCount)
+	runID := runid.NewRunID(runid.KindAutoSelect, fmt.Sprintf("auto-select-%dc", effectiveCount), ts, shortid)
 	runDir := daemon.RunDir(sandmanDir, nil, batchID)
 
 	manifest := daemon.BatchManifest{
 		RunKind:    "auto-select",
+		RunID:      runID,
 		Candidates: append([]int(nil), candidates...),
 		Query:      query,
 		Count:      effectiveCount,
