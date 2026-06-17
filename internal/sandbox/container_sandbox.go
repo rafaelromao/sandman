@@ -159,18 +159,7 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 	return os.WriteFile(gitFile, []byte(updated), 0644)
 }
 
-// execWrapperScript runs the agent command as a session leader inside the
-// container so that the agent's PID equals its PGID. This enables
-// KillAgentFn (which sends `kill -<pgid> 0`) to reach the agent and all
-// its children with a single signal. setsid(1) with --fork creates a new
-// session and process group, forks immediately, writes the child PID to
-// the pidfile, then exits. The parent shell script exits, leaving the
-// agent as an orphaned session leader reparented to container init (PID 1)
-// but still trackable by PGID via the pidfile.
-const execWrapperScript = `exec 2>/dev/null >/dev/null
-setsid --fork %s > /tmp/agent-pgid 2>&1 &
-wait
-rm -f /tmp/agent-pgid
+const execWrapperScript = `setsid sh -c 'echo \$\$ > /tmp/agent-pgid; exec %s' & SPID=$!; wait $SPID; rm -f /tmp/agent-pgid
 `
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
