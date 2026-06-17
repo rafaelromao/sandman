@@ -214,11 +214,13 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 
 	runs := events.ProjectRunStates(eventsList)
 	byIssue := make(map[int][]events.RunState)
+	runsByID := make(map[string]events.RunState)
 	for _, run := range runs {
 		issue := run.IssueNumber()
 		if issue > 0 {
 			byIssue[issue] = append(byIssue[issue], run)
 		}
+		runsByID[run.RunID] = run
 	}
 
 	var recovered int
@@ -246,22 +248,21 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	for _, batch := range dead {
 		if batch.Manifest.RunKind == "auto-select" {
 			autoSelectRunID := batch.Manifest.RunID
-			for _, run := range runs {
-				if run.RunID != autoSelectRunID || !run.IsAutoSelect() {
-					continue
-				}
-				if _, ok := recoveredRunIDs[run.RunID]; ok {
-					continue
-				}
-				if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
-					continue
-				}
-				if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
-					continue
-				}
-				if err := emitOrphan(run, 0); err != nil {
-					return recovered, len(dead), err
-				}
+			run, ok := runsByID[autoSelectRunID]
+			if !ok || !run.IsAutoSelect() {
+				continue
+			}
+			if _, ok := recoveredRunIDs[run.RunID]; ok {
+				continue
+			}
+			if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
+				continue
+			}
+			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
+				continue
+			}
+			if err := emitOrphan(run, 0); err != nil {
+				return recovered, len(dead), err
 			}
 			continue
 		}
