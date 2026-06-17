@@ -40,6 +40,22 @@ type ContainerSandbox struct {
 //	sandbox.ExecCommandFn = func(name string, arg ...string) *exec.Cmd { ... }
 var ExecCommandFn = exec.Command
 
+// KillAgentFn is the function-variable seam for the container-side kill signal
+// sent when an exec is aborted via context cancellation. The default reads the
+// agent's pidfile (/tmp/agent-pgid) inside the container and sends SIGKILL to
+// that process group via `docker exec <id> sh -c 'kill -<pgid> 0'`. Tests may
+// substitute a stub to verify the call is made with the expected container ID.
+// Save and restore around the test:
+//
+//	prev := sandbox.KillAgentFn
+//	defer func() { sandbox.KillAgentFn = prev }()
+//	sandbox.KillAgentFn = func(containerID string) error { ... }
+var KillAgentFn = func(containerID string) error {
+	cmd := exec.Command("docker", "exec", containerID, "sh", "-c",
+		"pgid=$(cat /tmp/agent-pgid 2>/dev/null); [ -n \"$pgid\" ] && kill -\"$pgid\" 0")
+	return cmd.Run()
+}
+
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
 func NewContainerSandbox(worktree Sandbox, container Container, binary, repoPath string) *ContainerSandbox {
 	return &ContainerSandbox{
@@ -143,9 +159,24 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 	return os.WriteFile(gitFile, []byte(updated), 0644)
 }
 
+// execWrapperScript runs the agent command as a session leader inside the
+// container so that the agent's PID equals its PGID. This enables
+// KillAgentFn (which sends `kill -<pgid> 0`) to reach the agent and all
+// its children with a single signal. setsid(1) with --fork creates a new
+// session and process group, forks immediately, writes the child PID to
+// the pidfile, then exits. The parent shell script exits, leaving the
+// agent as an orphaned session leader reparented to container init (PID 1)
+// but still trackable by PGID via the pidfile.
+const execWrapperScript = `exec 2>/dev/null >/dev/null
+setsid --fork %s > /tmp/agent-pgid 2>&1 &
+wait
+rm -f /tmp/agent-pgid
+`
+
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
 func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
+	wrapperCmd := fmt.Sprintf(execWrapperScript, command)
+	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -155,7 +186,11 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)
 
-	if err := waitCmd(ctx, cmd, s.processWrapper); err != nil {
+	onAbort := func() {
+		_ = KillAgentFn(s.container.ID())
+	}
+
+	if err := waitCmd(ctx, cmd, s.processWrapper, onAbort); err != nil {
 		return fmt.Errorf("container exec: %w", err)
 	}
 	return nil
@@ -163,7 +198,8 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 
 // ExecInteractive runs a command inside the container attached to the user's terminal.
 func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) error {
-	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", command)
+	wrapperCmd := fmt.Sprintf(execWrapperScript, command)
+	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -174,7 +210,11 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)
 
-	if err := waitCmd(ctx, cmd, s.processWrapper); err != nil {
+	onAbort := func() {
+		_ = KillAgentFn(s.container.ID())
+	}
+
+	if err := waitCmd(ctx, cmd, s.processWrapper, onAbort); err != nil {
 		return fmt.Errorf("container exec: %w", err)
 	}
 	return nil

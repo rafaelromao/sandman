@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -222,8 +223,11 @@ func TestContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	if captured[7] != "-c" {
 		t.Errorf("expected flag -c, got %q", captured[7])
 	}
-	if captured[8] != "echo hello" {
-		t.Errorf("expected command echo hello, got %q", captured[8])
+	if !strings.Contains(captured[8], "setsid") {
+		t.Errorf("expected command to contain setsid wrapper, got %q", captured[8])
+	}
+	if !strings.Contains(captured[8], "echo hello") {
+		t.Errorf("expected command to contain original command echo hello, got %q", captured[8])
 	}
 }
 
@@ -424,6 +428,61 @@ func TestSharedContainerSandbox_SetOverride_ForwardsToWorktree(t *testing.T) {
 	}
 	if wt.setOverrideValue {
 		t.Error("expected SetOverride(false) to forward value false to worktree")
+	}
+}
+
+func TestContainerSandbox_Exec_KillAgentFnCalledOnAbort(t *testing.T) {
+	if err := exec.Command("sleep", "0").Run(); err != nil {
+		t.Skipf("sleep command not available: %v", err)
+	}
+
+	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	ctr := &fakeContainer{id: "test-container-123"}
+	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	prevExec := ExecCommandFn
+	prevKill := KillAgentFn
+	defer func() {
+		ExecCommandFn = prevExec
+		KillAgentFn = prevKill
+	}()
+
+	var killCalls []string
+	KillAgentFn = func(containerID string) error {
+		killCalls = append(killCalls, containerID)
+		return nil
+	}
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
+		return exec.Command("sleep", "60")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- sb.Exec(ctx, "echo hello", io.Discard, io.Discard)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error from context cancellation")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Exec did not unblock after context cancel")
+	}
+
+	if len(killCalls) != 1 {
+		t.Fatalf("expected KillAgentFn to be called exactly once, got %d calls", len(killCalls))
+	}
+	if killCalls[0] != "test-container-123" {
+		t.Errorf("expected containerID=test-container-123, got %q", killCalls[0])
 	}
 }
 
