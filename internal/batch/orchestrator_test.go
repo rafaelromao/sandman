@@ -8724,6 +8724,7 @@ func TestOrchestrator_AbortIssue_QueuedRun(t *testing.T) {
 	}()
 
 	waitForSignal(t, started42, "expected 42 to start")
+	time.Sleep(10 * time.Millisecond)
 	if err := o.AbortIssue(43); err != nil {
 		t.Fatalf("AbortIssue(43) returned error: %v", err)
 	}
