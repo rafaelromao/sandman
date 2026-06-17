@@ -8375,6 +8375,161 @@ func TestOrchestrator_AbortIssue_ActiveRun(t *testing.T) {
 	}
 }
 
+// TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal
+// wires a REAL *sandbox.ContainerSandbox into runSingle so the production
+// waitCmd path (negative-PGID SIGKILL via the Setpgid: true cmd.SysProcAttr
+// added in PR #1018) is exercised end-to-end. The previous abort tests use a
+// blockingRunnable + fakeSandbox, which prove the issueCtx propagates but not
+// that the underlying process is actually killed. This test closes that gap:
+// it injects a long-running `sleep 60` exec.Cmd through the
+// sandbox.ExecCommandFn seam, calls AbortIssue, and asserts (a) the cancel
+// is found, (b) a terminal run.aborted event lands, and (c) the orchestrator
+// goroutine returns within a 3 s deadline — which only happens if waitCmd
+// actually killed the sleep process.
+func TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal(t *testing.T) {
+	if err := exec.Command("sleep", "0").Run(); err != nil {
+		t.Skipf("sleep command not available: %v", err)
+	}
+
+	dir := t.TempDir()
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+	// Prepend the fake-docker directory to PATH so ResolveRuntime("docker")
+	// succeeds without taking over the rest of PATH (which still needs `git`
+	// for initGitRepo below).
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOME", t.TempDir())
+
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+
+	wt := &fakeWorktreeForContainerAbortTest{workDir: "/host/repo/.sandman/worktrees/sandman/42-fix-bug"}
+	ctr := &fakeContainerForAbortTest{id: "container-abort-42"}
+
+	var sleepMu sync.Mutex
+	var sleepCmd *exec.Cmd
+	prevExecCommandFn := sandbox.ExecCommandFn
+	defer func() { sandbox.ExecCommandFn = prevExecCommandFn }()
+	sandbox.ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
+		sleepMu.Lock()
+		defer sleepMu.Unlock()
+		sleepCmd = exec.Command("sleep", "60")
+		return sleepCmd
+	}
+
+	starter := &fakeContainerStarter{container: ctr}
+	factory := &fakeContainerRuntimeFactory{starter: starter}
+
+	sbFactory := sandboxFactoryFunc(func(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+		return sandbox.NewContainerSandbox(wt, container, "docker", repoPath)
+	})
+
+	spyLog := &spyEventLog{}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "docker", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.containerRuntimeFactory = factory
+	o.sandboxFactory = sbFactory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		sleepMu.Lock()
+		spawned := sleepCmd
+		sleepMu.Unlock()
+		if spawned != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("expected ContainerSandbox.Exec to be reached and sleep to be spawned")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if err := o.AbortIssue(42); err != nil {
+		t.Fatalf("AbortIssue returned error: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		// The orchestrator goroutine returns only after waitCmd unblocks.
+		// waitCmd calls syscall.Kill(-pgid, SIGKILL) on context cancel, so
+		// a stuck 3 s deadline means Setpgid is missing on ContainerSandbox
+		// (see PR #1018 / issue #1008) and the negative-PGID kill targets
+		// the daemon's PGID instead of the sleep process group.
+		t.Fatal("orchestrator goroutine did not return within 3s — AbortIssue did not unblock the production waitCmd")
+	}
+
+	var abortedEvent *events.Event
+	for i := range spyLog.events {
+		e := &spyLog.events[i]
+		if e.Issue == 42 && e.Type == "run.aborted" {
+			abortedEvent = e
+			break
+		}
+	}
+	if abortedEvent == nil {
+		t.Fatalf("expected run.aborted event for issue 42, got %v", spyLog.events)
+	}
+	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
+		t.Fatalf("expected aborted terminal status, got %q", status)
+	}
+}
+
+// fakeWorktreeForContainerAbortTest is a minimal sandbox.Sandbox used only by
+// TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal. It
+// avoids touching the real worktree so the test stays hermetic; the production
+// waitCmd path lives on the ContainerSandbox wrapping it, which is what this
+// test exists to exercise.
+type fakeWorktreeForContainerAbortTest struct {
+	workDir string
+}
+
+func (f *fakeWorktreeForContainerAbortTest) Start() error     { return nil }
+func (f *fakeWorktreeForContainerAbortTest) Stop() error      { return nil }
+func (f *fakeWorktreeForContainerAbortTest) WorkDir() string  { return f.workDir }
+func (f *fakeWorktreeForContainerAbortTest) RepoPath() string { return "" }
+func (f *fakeWorktreeForContainerAbortTest) WritePrompt(string) error {
+	return nil
+}
+func (f *fakeWorktreeForContainerAbortTest) Exec(ctx context.Context, _ string, _, _ io.Writer) error {
+	return nil
+}
+func (f *fakeWorktreeForContainerAbortTest) ExecInteractive(_ context.Context, _ string) error {
+	return nil
+}
+func (f *fakeWorktreeForContainerAbortTest) Process() sandbox.Process { return nil }
+func (f *fakeWorktreeForContainerAbortTest) SetOverride(bool)         {}
+func (f *fakeWorktreeForContainerAbortTest) SetStrandedReconcile(bool) {
+}
+func (f *fakeWorktreeForContainerAbortTest) SetGitIdentity(string, string) {
+}
+
+// fakeContainerForAbortTest is a minimal sandbox.Container used only by
+// TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal. It
+// satisfies the public sandbox.Container interface so it can be threaded
+// through the real ContainerSandbox constructor and the orchestrator's
+// container pool without leaking the sandbox package's private fakes.
+type fakeContainerForAbortTest struct {
+	id string
+}
+
+func (f *fakeContainerForAbortTest) ID() string  { return f.id }
+func (f *fakeContainerForAbortTest) Stop() error { return nil }
+
 // TestOrchestrator_AbortIssue_SiblingIsNotSignalled verifies the
 // per-session scope of the unified superviseShutdown supervisor: when
 // AbortIssue cancels a single issue, only that issue's process is
