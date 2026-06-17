@@ -991,6 +991,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				case blockerStatus.IsAborted():
 					abortedBy = append(abortedBy, blocker)
 				case blockerStatus.IsSuccess():
+					issue, err := o.githubClient.FetchIssue(blocker)
+					if err == nil && issue != nil && strings.EqualFold(issue.State, "open") {
+						stillBlockedBy = append(stillBlockedBy, blocker)
+					}
 				case blockerStatus.IsTerminal() && !blockerStatus.IsSuccess():
 					stillBlockedBy = append(stillBlockedBy, blocker)
 				}
