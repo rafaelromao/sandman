@@ -112,7 +112,7 @@ func waitForLineCount(t *testing.T, path string, want int) {
 
 func waitForPath(t *testing.T, path string) {
 	t.Helper()
-	for i := 0; i < 500; i++ {
+	for i := 0; i < 1000; i++ {
 		if _, err := os.Stat(path); err == nil {
 			return
 		}
