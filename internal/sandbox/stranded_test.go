@@ -296,3 +296,77 @@ func TestStrandedWorktree_PrunableWorktreeIsNotFlagged(t *testing.T) {
 		t.Fatalf("expected prunable worktree to be excluded from ListStrandedWorktrees, got %+v", results)
 	}
 }
+
+func TestReclaimableWorktree_PrunableWorktreeAtPathReturnsTrue(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/77-prunable"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	wtPath := filepath.Join(worktreeBase, branch)
+	runGit(t, repoDir, "worktree", "add", wtPath, branch)
+
+	if err := os.RemoveAll(wtPath); err != nil {
+		t.Fatalf("remove wtPath: %v", err)
+	}
+
+	info, reclaimable := ReclaimableWorktree(repoDir, worktreeBase, branch)
+	if !reclaimable {
+		t.Fatalf("expected reclaimable=true for prunable worktree at path, got info=%+v", info)
+	}
+	if info.Path != wtPath {
+		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	}
+	if info.ExpectedBranch != "refs/heads/"+branch {
+		t.Errorf("ExpectedBranch: got %q, want %q", info.ExpectedBranch, "refs/heads/"+branch)
+	}
+}
+
+func TestReclaimableWorktree_NoWorktreeAtPathReturnsFalse(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	info, reclaimable := ReclaimableWorktree(repoDir, worktreeBase, "sandman/907-foo")
+	if reclaimable {
+		t.Fatalf("expected reclaimable=false when no worktree exists at path, got info=%+v", info)
+	}
+	if info != (StrandedWorktreeInfo{}) {
+		t.Fatalf("expected zero-value StrandedWorktreeInfo, got %+v", info)
+	}
+}
+
+func TestReclaimableWorktree_NonPrunableWorktreeAtPathReturnsTrue(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/77-healthy"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	wtPath := filepath.Join(worktreeBase, branch)
+	runGit(t, repoDir, "worktree", "add", wtPath, branch)
+
+	info, reclaimable := ReclaimableWorktree(repoDir, worktreeBase, branch)
+	if !reclaimable {
+		t.Fatalf("expected reclaimable=true for non-prunable worktree at path, got info=%+v", info)
+	}
+	if info.Path != wtPath {
+		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	}
+	if info.ExpectedBranch != "refs/heads/"+branch {
+		t.Errorf("ExpectedBranch: got %q, want %q", info.ExpectedBranch, "refs/heads/"+branch)
+	}
+}
