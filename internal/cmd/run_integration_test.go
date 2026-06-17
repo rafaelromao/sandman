@@ -1043,8 +1043,8 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 
 	var events []string
 	for _, line := range strings.Split(strings.TrimSpace(string(followerLog)), "\n") {
-		if strings.HasPrefix(line, "queueing-event=") {
-			events = append(events, strings.TrimSpace(strings.TrimPrefix(line, "queueing-event=")))
+		if idx := strings.Index(line, "queueing-event="); idx >= 0 {
+			events = append(events, strings.TrimSpace(line[idx+len("queueing-event="):]))
 		}
 	}
 	if len(events) != 4 {
