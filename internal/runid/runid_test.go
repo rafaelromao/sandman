@@ -254,12 +254,16 @@ func TestNewBatch_CollisionGuard_RetriesOnCollision(t *testing.T) {
 	fixedTime := time.Date(2025, 6, 17, 14, 30, 52, 0, time.Local)
 	timeFunc = func() time.Time { return fixedTime }
 
-	collisionDir := filepath.Join(runsDir, "20250617-143052-abcd-review-PR1")
-	if err := os.MkdirAll(collisionDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(runsDir, "20250617-143052-0000-review-PR1"), 0755); err != nil {
 		t.Fatalf("failed to create collision dir: %v", err)
 	}
 
-	shortIDFunc = func() string { return "dcba" }
+	idx := 0
+	shortIDFunc = func() string {
+		sid := fmt.Sprintf("%04x", idx)
+		idx++
+		return sid
+	}
 	_, _, err := NewBatch()
 	if err != nil {
 		t.Fatalf("NewBatch() error = %v, want success after retry", err)
