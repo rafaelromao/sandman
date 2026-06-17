@@ -60,6 +60,43 @@ func StrandedWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeIn
 	return StrandedWorktreeInfo{}, false
 }
 
+// ReclaimableWorktree checks whether a git-worktree-list entry exists at
+// <worktreeBase>/<branch>, regardless of whether git considers it prunable.
+// Unlike StrandedWorktree, this helper does not filter on the prunable field;
+// it is used to detect worktree registrations that could be reattached after
+// a slice-2 cleanup pass.
+//
+// worktreeBase is resolved against repoPath when it is a relative
+// path, so callers can pass the configured WorktreeDir without pre-resolving it.
+func ReclaimableWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeInfo, bool) {
+	if !filepath.IsAbs(worktreeBase) {
+		worktreeBase = filepath.Join(repoPath, worktreeBase)
+	}
+	if _, err := os.Stat(worktreeBase); err != nil {
+		return StrandedWorktreeInfo{}, false
+	}
+
+	expectedRef := "refs/heads/" + branch
+	target := filepath.Join(worktreeBase, branch)
+
+	entries, err := listWorktrees(repoPath)
+	if err != nil {
+		return StrandedWorktreeInfo{}, false
+	}
+
+	for _, e := range entries {
+		if e.path != target {
+			continue
+		}
+		return StrandedWorktreeInfo{
+			Path:           e.path,
+			ActualBranch:   e.branch,
+			ExpectedBranch: expectedRef,
+		}, true
+	}
+	return StrandedWorktreeInfo{}, false
+}
+
 // issueDrivenDir matches directory names that come from issue-driven
 // branches (e.g. "sandman/907-foo" stored as the worktree directory name).
 var issueDrivenDir = regexp.MustCompile(`^[0-9]+-`)

@@ -145,6 +145,14 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		sandboxMode = cfg.Sandbox
 	}
 
+	rs := daemon.NewRunSession(".sandman", fmt.Sprintf("PR%d", pr.Number))
+	manifest := daemon.BatchManifest{Issues: []int{pr.Number}, CreatedAt: time.Now()}
+	if err := rs.Prepare(manifest, nil); err != nil {
+		_ = rs.Close()
+		return fmt.Errorf("bootstrap review session: %w", err)
+	}
+	defer rs.Close()
+
 	if _, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 		Agent:                reviewAgentName,
 		Model:                reviewModel,
@@ -159,10 +167,11 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 			PromptFlag: rendered,
 			Branch:     fmt.Sprintf("sandman/review-%d-%d", pr.Number, time.Now().UnixNano()),
 		},
-		Review:   true,
-		PRNumber: pr.Number,
-		RunID:    fmt.Sprintf("PR%d", pr.Number),
-		RunDir:   daemon.RunDir(".sandman", nil, fmt.Sprintf("PR%d", pr.Number)),
+		Review:       true,
+		PRNumber:     pr.Number,
+		RunID:        fmt.Sprintf("PR%d", pr.Number),
+		OutputWriter: rs.Broadcaster(),
+		RunDir:       rs.RunDir(),
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
 	}
