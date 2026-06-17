@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/runid"
 )
 
 // IsRunActive reports whether a run directory is currently owned by a live
@@ -147,9 +148,17 @@ type BatchManifest struct {
 func RunDir(baseDir string, issues []int, runID string) string {
 	id := runID
 	if id == "" {
-		id = fmt.Sprintf("run-%d", time.Now().UnixNano())
 		if len(issues) > 0 {
 			id = fmt.Sprintf("run-%d-%d", issues[0], time.Now().UnixNano())
+		} else if issues != nil {
+			ts, shortid, err := runid.NewBatch()
+			if err != nil {
+				id = fmt.Sprintf("run-%d", time.Now().UnixNano())
+			} else {
+				id = runid.NewBatchID(runid.KindPromptOnly, 1, "", ts, shortid)
+			}
+		} else {
+			id = fmt.Sprintf("run-%d", time.Now().UnixNano())
 		}
 	}
 	return filepath.Join(baseDir, "runs", id)

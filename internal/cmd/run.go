@@ -19,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/spf13/cobra"
 )
 
@@ -121,9 +122,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			reviewCommand := cfg.EffectiveReviewCommand()
 
+			runIDFlag := cmd.Flags().Lookup("run-id")
 			runID, _ := cmd.Flags().GetString("run-id")
-			if runID != "" && !isValidRunID(runID) {
-				return MarkUsage(fmt.Errorf("--run-id must start with a letter and contain only alphanumeric characters, hyphens, and underscores"))
+			if runIDFlag.Changed && runID != "" {
+				if err := runid.IsValidUserRunID(runID); err != nil {
+					return MarkUsage(fmt.Errorf("--run-id %v", err))
+				}
 			}
 
 			selectedPrompt := ""
