@@ -434,7 +434,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 			PromptFlag: rendered,
 			Branch:     fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID),
 		},
-		OutputWriter: d.Broadcaster,
+		OutputWriter: rs.Broadcaster(),
 		Review:       true,
 		PRNumber:     prNumber,
 		IssueNumber:  reviewIssueNumber,
