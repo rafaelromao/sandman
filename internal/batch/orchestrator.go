@@ -987,7 +987,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				case blockerStatus.IsSuccess():
 				case blockerStatus.IsTerminal() && !blockerStatus.IsSuccess():
 					stillBlockedBy = append(stillBlockedBy, blocker)
-				default:
 				}
 			}
 			if len(abortedBy) > 0 {
