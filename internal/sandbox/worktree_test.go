@@ -1018,3 +1018,125 @@ func TestWorktreeSandbox_StartCallsReconcileStrandedFnSeam(t *testing.T) {
 		removeBranch(t, dir, branch)
 	})
 }
+
+func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirIntact(t *testing.T) {
+	// A worktree exists and is registered, but its .git gitlink points to a
+	// non-existent gitdir, making it show as "prunable" in git worktree list.
+	// Start() must detect the prunable registration, prune it, re-register the
+	// existing directory (no -b flag), preserve content, and return success.
+	dir := t.TempDir()
+	initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	branch := "sandman/42-fix-bug"
+
+	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s1.Start(); err != nil {
+		t.Fatalf("create initial worktree: %v", err)
+	}
+
+	branchTipBefore := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
+
+	uncommittedPath := filepath.Join(s1.WorkDir(), "uncommitted.txt")
+	if err := os.WriteFile(uncommittedPath, []byte("work in progress\n"), 0644); err != nil {
+		t.Fatalf("write uncommitted file: %v", err)
+	}
+
+	gitPath := filepath.Join(s1.WorkDir(), ".git")
+	if err := os.WriteFile(gitPath, []byte("gitdir: /tmp/nonexistent-worktree-gitdir\n"), 0644); err != nil {
+		t.Fatalf("corrupt .git file: %v", err)
+	}
+
+	if _, reclaimable := ReclaimableWorktree(dir, worktreeBase, branch); !reclaimable {
+		t.Fatalf("expected ReclaimableWorktree to return true after gitlink corruption")
+	}
+
+	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s2.Start(); err != nil {
+		t.Fatalf("Start() should reattach prunable worktree, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s2.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	if _, err := os.Stat(filepath.Join(s2.WorkDir(), "tracked.txt")); err != nil {
+		t.Errorf("expected tracked.txt in reattached worktree, got err=%v", err)
+	}
+
+	if _, err := os.Stat(uncommittedPath); err != nil {
+		t.Errorf("expected uncommitted.txt to be preserved in reattached worktree, got err=%v", err)
+	}
+
+	branchTipAfter := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
+	if branchTipAfter != branchTipBefore {
+		t.Errorf("branch tip changed: before=%q, after=%q", branchTipBefore, branchTipAfter)
+	}
+
+	revParse := exec.Command("git", "rev-parse", "--git-dir")
+	revParse.Dir = s2.WorkDir()
+	if out, err := revParse.CombinedOutput(); err != nil {
+		t.Fatalf("worktree dir is not a real git worktree: %v: %s", err, out)
+	}
+}
+
+func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirGone(t *testing.T) {
+	// A worktree registration exists (prunable due to broken gitlink) but the
+	// worktree directory itself has been deleted from disk. Start() must
+	// detect the prunable registration, prune it, and create a fresh worktree
+	// on the existing branch tip. No error, branch tip preserved.
+	dir := t.TempDir()
+	initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	branch := "sandman/42-fix-bug"
+
+	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s1.Start(); err != nil {
+		t.Fatalf("create initial worktree: %v", err)
+	}
+
+	branchTipBefore := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
+	worktreePath := s1.WorkDir()
+
+	gitPath := filepath.Join(worktreePath, ".git")
+	if err := os.WriteFile(gitPath, []byte("gitdir: /tmp/nonexistent-worktree-gitdir\n"), 0644); err != nil {
+		t.Fatalf("corrupt .git file: %v", err)
+	}
+
+	if _, reclaimable := ReclaimableWorktree(dir, worktreeBase, branch); !reclaimable {
+		t.Fatalf("expected ReclaimableWorktree to return true after gitlink corruption")
+	}
+
+	if err := os.RemoveAll(worktreePath); err != nil {
+		t.Fatalf("remove worktree dir: %v", err)
+	}
+
+	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s2.Start(); err != nil {
+		t.Fatalf("Start() should recreate prunable worktree with dir gone, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s2.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	if _, err := os.Stat(filepath.Join(s2.WorkDir(), "tracked.txt")); err != nil {
+		t.Errorf("expected tracked.txt in recreated worktree, got err=%v", err)
+	}
+
+	branchTipAfter := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
+	if branchTipAfter != branchTipBefore {
+		t.Errorf("branch tip changed: before=%q, after=%q", branchTipBefore, branchTipAfter)
+	}
+
+	revParse := exec.Command("git", "rev-parse", "--git-dir")
+	revParse.Dir = s2.WorkDir()
+	if out, err := revParse.CombinedOutput(); err != nil {
+		t.Fatalf("worktree dir is not a real git worktree: %v: %s", err, out)
+	}
+}
