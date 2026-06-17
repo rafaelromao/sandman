@@ -30,6 +30,19 @@ type spyBatchRunner struct {
 	err    error
 }
 
+// Test fixtures use a deterministic (ts, shortid) pair so the new
+// per-row RunIDs produced by runid.NewRunID match the strings the test
+// events hard-code. The values are intentionally stable (no time /
+// random component) so the tests can use full-string equality.
+const (
+	testRunTS      = "20250617-143052"
+	testRunShortID = "abcd"
+
+	testRunIDIssue42First  = testRunTS + "-" + testRunShortID + "-issue-42-1"
+	testRunIDIssue42Second = testRunTS + "-" + testRunShortID + "-issue-42-2"
+	testRunIDIssue42Prev   = testRunTS + "-" + testRunShortID + "-issue-42-prev"
+)
+
 func (s *spyBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
 	s.called = true
 	s.req = req
@@ -1124,7 +1137,7 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 					t.Fatalf("write task: %v", err)
 				}
 				deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
-				deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
+				deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunIDIssue42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
 				deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
 			}
 
@@ -1185,8 +1198,8 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 		},
 	}}
 	deps.EventLog = &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}},
-		{Type: "run.continued", RunID: "run-42-2", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.2", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true}},
+		{Type: "run.started", RunID: testRunIDIssue42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}},
+		{Type: "run.continued", RunID: testRunIDIssue42Second, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.2", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true}},
 	}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
 
@@ -1207,8 +1220,8 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 	if got := spy.req.IssueMode(42); got != batch.ModeContinue {
 		t.Fatalf("expected ModeContinue request, got %v", got)
 	}
-	if spy.req.PreviousRunIDs[42] != "run-42-2" {
-		t.Fatalf("expected PreviousRunIDs[42]=run-42-2, got %q", spy.req.PreviousRunIDs[42])
+	if spy.req.PreviousRunIDs[42] != testRunIDIssue42Second {
+		t.Fatalf("expected PreviousRunIDs[42]=%s, got %q", testRunIDIssue42Second, spy.req.PreviousRunIDs[42])
 	}
 	if spy.req.Branches[42] != branch {
 		t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])
@@ -1270,7 +1283,7 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 		},
 	}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
-	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "docker", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunIDIssue42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "docker", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}}}}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1338,7 +1351,7 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 			"opencode": {Preset: "opencode", Command: "true"},
 		},
 	}}
-	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-prev", Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunIDIssue42Prev, Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{
 		42: {Number: 42, Title: "Fix bug"},
 		43: {Number: 43, Title: "Fresh bug"},
@@ -1360,7 +1373,7 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	if got := spy.req.IssueMode(43); got != batch.ModeOverride {
 		t.Fatalf("expected issue 43 override mode (promoted from --continue), got %v", got)
 	}
-	if spy.req.PreviousRunIDs[42] != "run-42-prev" {
+	if spy.req.PreviousRunIDs[42] != testRunIDIssue42Prev {
 		t.Fatalf("expected issue 42 previous run replay, got %q", spy.req.PreviousRunIDs[42])
 	}
 	if _, ok := spy.req.PreviousRunIDs[43]; ok {
@@ -1443,7 +1456,7 @@ func TestRun_ContinueFlag_WarnsWhenIssueTaskMissing(t *testing.T) {
 			"opencode": {Preset: "opencode", Command: "true"},
 		},
 	}}
-	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-42-prev", Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunIDIssue42Prev, Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}
 
 	var buf bytes.Buffer
@@ -3526,7 +3539,7 @@ func TestResolveAutoIssues_LegacyPriorityPromptFileIgnored(t *testing.T) {
 
 	gh := &fakeGitHubClient{}
 
-	issues, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
+	issues, _, _, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3539,7 +3552,7 @@ func TestResolveAutoIssues_PriorityPromptFileAbsentUsesNumericSort(t *testing.T)
 	sandmanDir := t.TempDir()
 	gh := &fakeGitHubClient{}
 
-	issues, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
+	issues, _, _, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4410,5 +4423,45 @@ func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 	}
 	if spy.req.PromptConfig.PromptArgs["K"] != "V" {
 		t.Errorf("expected K=V, got K=%q", spy.req.PromptConfig.PromptArgs["K"])
+	}
+}
+
+// TestRun_IssueDrivenBatchUsesNewIDScheme verifies that `sandman run 42`
+// builds a directory id matching the new <ts>-<shortid>-1-issues-first-42
+// shape (acceptance criterion #1) and that the (ts, shortid) pair is
+// propagated into batch.Request.RunTS / RunShortID so the orchestrator
+// can build per-row RunIDs from it.
+func TestRun_IssueDrivenBatchUsesNewIDScheme(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+	deps.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}},
+		prs:    map[string]*github.PR{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if spy.req.RunTS == "" {
+		t.Errorf("expected req.RunTS to be populated for issue-driven batch")
+	}
+	if spy.req.RunShortID == "" {
+		t.Errorf("expected req.RunShortID to be populated for issue-driven batch")
+	}
+	// RunDir is captured on the session; verify the dir id matches the
+	// new <ts>-<shortid>-1-issues-first-42 format.
+	dir := spy.req.RunDir
+	want := filepath.Join(".sandman", "runs", spy.req.RunTS+"-"+spy.req.RunShortID+"-1-issues-first-42")
+	if dir != want {
+		t.Fatalf("expected run dir %q, got %q", want, dir)
 	}
 }

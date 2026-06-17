@@ -47,13 +47,13 @@ var (
 )
 
 // NewRunSession returns a session bound to the run directory that
-// RunDir(baseDir, nil, runID) computes. The directory is not created
+// RunDir(baseDir, runID) computes. The directory is not created
 // yet — Prepare does that as the first boot step.
 func NewRunSession(baseDir, runID string) *RunSession {
 	return &RunSession{
 		baseDir:     baseDir,
 		runID:       runID,
-		runDir:      RunDir(baseDir, nil, runID),
+		runDir:      RunDir(baseDir, runID),
 		broadcaster: NewBroadcaster(),
 	}
 }

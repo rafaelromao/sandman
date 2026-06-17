@@ -41,10 +41,14 @@ func (k Kind) String() string {
 }
 
 func NewBatch() (ts, shortid string, err error) {
+	return NewBatchIn(runsDirRoot)
+}
+
+func NewBatchIn(baseRunsDir string) (ts, shortid string, err error) {
 	ts = timeFunc().Format("20060102-150405")
 	for attempt := 0; attempt < 16; attempt++ {
 		shortid = shortIDFunc()
-		entries, err := os.ReadDir(runsDirRoot)
+		entries, err := os.ReadDir(baseRunsDir)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return ts, shortid, nil

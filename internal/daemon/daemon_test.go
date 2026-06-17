@@ -9,67 +9,31 @@ import (
 	"time"
 )
 
-func TestRunDir_CreatesUniquePath(t *testing.T) {
-	d1 := RunDir("", []int{42}, "")
-	d2 := RunDir("", []int{42}, "")
-	if d1 == d2 {
-		t.Fatal("expected unique run dirs")
-	}
-}
-
-func TestRunDir_ContainsIssueInPath(t *testing.T) {
-	dir := RunDir("", []int{42}, "")
-	if !strings.Contains(dir, "42") {
-		t.Fatalf("expected issue 42 in path, got %q", dir)
-	}
-}
-
-func TestRunDir_IsUnderRuns(t *testing.T) {
-	dir := RunDir("base", []int{1}, "")
-	if !strings.HasPrefix(dir, filepath.Join("base", "runs")) {
-		t.Fatalf("expected path under base/runs, got %q", dir)
-	}
-}
-
-func TestRunDir_NoIssues(t *testing.T) {
-	dir := RunDir("", []int{}, "")
-	parts := strings.Split(dir, string(filepath.Separator))
-	if len(parts) < 1 {
-		t.Fatal("expected at least one path component")
-	}
-	last := parts[len(parts)-1]
-	if !strings.HasPrefix(last, "20") {
-		t.Fatalf("expected timestamp prefix for prompt-only run, got %q", last)
-	}
-	if !strings.HasSuffix(last, "-prompt-only") {
-		t.Fatalf("expected -prompt-only suffix, got %q", last)
-	}
-}
-
-func TestRunDir_SubdirNotCreated(t *testing.T) {
-	dir := RunDir(t.TempDir(), []int{1}, "")
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Fatal("RunDir should not create the directory")
-	}
-}
-
-func TestRunDir_WithRunID(t *testing.T) {
-	dir := RunDir("base", nil, "my-run")
-	want := filepath.Join("base", "runs", "my-run")
+func TestRunDir_JoinsBaseRunsAndDirID(t *testing.T) {
+	dir := RunDir("base", "20250617-143052-abcd-1-issues-first-42")
+	want := filepath.Join("base", "runs", "20250617-143052-abcd-1-issues-first-42")
 	if dir != want {
 		t.Fatalf("expected %q, got %q", want, dir)
 	}
 }
 
-func TestRunDir_WithRunID_IsUnderRuns(t *testing.T) {
-	dir := RunDir("base", nil, "my-run")
+func TestRunDir_PreservesDirIDVerbatim(t *testing.T) {
+	dirID := "20250617-143052-abcd-3-issues-first-42"
+	dir := RunDir("base", dirID)
+	if !strings.HasSuffix(dir, dirID) {
+		t.Fatalf("expected path to end with %q, got %q", dirID, dir)
+	}
+}
+
+func TestRunDir_IsUnderRuns(t *testing.T) {
+	dir := RunDir("base", "anything")
 	if !strings.HasPrefix(dir, filepath.Join("base", "runs")) {
 		t.Fatalf("expected path under base/runs, got %q", dir)
 	}
 }
 
-func TestRunDir_WithRunID_SubdirNotCreated(t *testing.T) {
-	dir := RunDir(t.TempDir(), nil, "my-run")
+func TestRunDir_SubdirNotCreated(t *testing.T) {
+	dir := RunDir(t.TempDir(), "anything")
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatal("RunDir should not create the directory")
 	}
