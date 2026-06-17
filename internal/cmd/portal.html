@@ -723,7 +723,7 @@
     }
     /* Issue Title gets the slack the previous Branch column used to
        claim. min-width keeps short titles from being squeezed when
-       the viewport is wide; overflow-wrap lets long titles break. */
+       the viewport is wide; ellipsis truncates long titles. */
     tbody td[data-cell="issue-title"] {
       min-width: 240px;
       overflow: hidden;
