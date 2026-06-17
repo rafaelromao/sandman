@@ -67,5 +67,5 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0023 | Handoff points to rendered prompt and tracks last skill | superseded |
 | 0024 | Remove Pi agent support | accepted |
 | 0027 | Auto-recover from stranded worktrees in `--override` and `--continue` flows | proposed |
-| 0028 | PR review prompt — omit `## Previous review progress` when there are no prior reviews | accepted |
+| 0028 | Standardize Run ID and Run Dir naming | accepted |
 | 0029 | Portal secondary-row chips for run context | accepted |
