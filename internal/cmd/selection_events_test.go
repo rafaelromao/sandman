@@ -79,7 +79,7 @@ func TestRunSelectionPhaseWithEvents_EmitsRunStartedBeforeAgentAndFinishedAfterO
 	}
 	log := &recordingEventLog{}
 
-	selected, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1, 2}, "label:bug is:open", log)
+	selected, _, _, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1, 2}, "label:bug is:open", log)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestRunSelectionPhaseWithEvents_AgentNonZeroExitEmitsFailureAndPropagatesEr
 	}
 	log := &recordingEventLog{}
 
-	_, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1}, "label:bug is:open", log)
+	_, _, _, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1}, "label:bug is:open", log)
 	if err == nil {
 		t.Fatal("expected error from agent failure")
 	}
@@ -184,7 +184,7 @@ func TestRunSelectionPhaseWithEvents_MissingJSONEmitsFailureAndPropagatesError(t
 	}
 	log := &recordingEventLog{}
 
-	_, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1}, "label:bug is:open", log)
+	_, _, _, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1}, "label:bug is:open", log)
 	if err == nil {
 		t.Fatal("expected error for missing selected-issues.json")
 	}
@@ -220,7 +220,7 @@ func TestRunSelectionPhaseWithEvents_EmptySelectedListEmitsFailureAndPropagatesE
 	}
 	log := &recordingEventLog{}
 
-	_, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1}, "label:bug is:open", log)
+	_, _, _, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1}, "label:bug is:open", log)
 	if err == nil {
 		t.Fatal("expected error for empty selected list")
 	}
@@ -254,7 +254,7 @@ func TestRunSelectionPhaseWithEvents_ReviewDaemonGuardFailureEmitsNoRunStarted(t
 	}
 	log := &recordingEventLog{}
 
-	_, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1}, "label:bug is:open", log)
+	_, _, _, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1}, "label:bug is:open", log)
 	if err == nil {
 		t.Fatal("expected review-daemon guard error")
 	}
@@ -280,7 +280,7 @@ func TestRunSelectionPhaseWithEvents_NoCandidateIssuesEmitsNoRunStarted(t *testi
 	}
 	log := &recordingEventLog{}
 
-	_, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, nil, "label:bug is:open", log)
+	_, _, _, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, nil, "label:bug is:open", log)
 	if err == nil {
 		t.Fatal("expected no-candidate-issues error")
 	}
@@ -316,7 +316,7 @@ func TestRunSelectionPhaseWithEvents_CreatesDirManifestAndSocketsOnFailure(t *te
 	}
 	log := &recordingEventLog{}
 
-	_, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1, 2}, "label:bug is:open", log)
+	_, _, _, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1, 2}, "label:bug is:open", log)
 	if err == nil {
 		t.Fatal("expected error for missing selected-issues.json")
 	}
@@ -367,7 +367,7 @@ func TestRunSelectionPhaseWithEvents_LeavesRunDirOnFailure(t *testing.T) {
 	}
 	log := &recordingEventLog{}
 
-	_, err := runSelectionPhaseWithEvents(context.Background(), gh, 3, sandmanDir, "test-agent", "", cfg, []int{10}, "label:bug is:open", log)
+	_, _, _, err := runSelectionPhaseWithEvents(context.Background(), gh, 3, sandmanDir, "test-agent", "", cfg, []int{10}, "label:bug is:open", log)
 	if err == nil {
 		t.Fatal("expected error from agent failure")
 	}

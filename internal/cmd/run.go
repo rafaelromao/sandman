@@ -19,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/spf13/cobra"
 )
 
@@ -197,9 +198,45 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return err
 					}
 					resolvedQuery := resolveAutoQuery(label, query)
-					issues, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, ".sandman", agentName, modelFlag, cfg, resolvedQuery, deps.EventLog)
+					autoTS, autoShortID := "", ""
+					issues, autoTS, autoShortID, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, ".sandman", agentName, modelFlag, cfg, resolvedQuery, deps.EventLog)
 					if err != nil {
 						return err
+					}
+					if autoTS != "" && autoShortID != "" {
+						firstSubject := ""
+						if len(issues) > 0 {
+							firstSubject = fmt.Sprintf("%d", issues[0])
+						}
+						batchID := runid.NewBatchID(runid.KindIssue, len(issues), firstSubject, autoTS, autoShortID)
+						issueRunDir := daemon.RunDir(".sandman", nil, batchID)
+						if err := os.MkdirAll(issueRunDir, 0o700); err != nil {
+							return fmt.Errorf("create issue batch dir: %w", err)
+						}
+						issueRunID := runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d-issues", len(issues)), autoTS, autoShortID)
+						manifest := daemon.BatchManifest{
+							Issues:    append([]int(nil), issues...),
+							RunID:     issueRunID,
+							RunKind:   "issue",
+							CreatedAt: time.Now(),
+						}
+						if err := daemon.WriteManifest(issueRunDir, manifest); err != nil {
+							return fmt.Errorf("write issue batch manifest: %w", err)
+						}
+						if deps.EventLog != nil {
+							if err := deps.EventLog.Log(events.Event{
+								Type:      "run.started",
+								Timestamp: time.Now(),
+								RunID:     issueRunID,
+								Payload: map[string]any{
+									"run_kind": "issue",
+									"issues":   append([]int(nil), issues...),
+								},
+							}); err != nil {
+								return fmt.Errorf("log issue run.started: %w", err)
+							}
+						}
+						runID = batchID
 					}
 				} else if len(args) > 0 {
 					selection, orderedIssues, _, hasUnboundedEnd, err := parseIssueSelection(args)
