@@ -179,6 +179,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			var issues []int
+			var autoIssueRunID string
 			if overridePrompt && !issueSelectionProvided {
 				if promptNeedsIssueSelection {
 					return MarkUsage(fmt.Errorf("prompt requires issue selection but no issue selection was provided"))
@@ -213,21 +214,13 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						if err := os.MkdirAll(issueRunDir, 0o700); err != nil {
 							return fmt.Errorf("create issue batch dir: %w", err)
 						}
-						issueRunID := runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d-issues", len(issues)), autoTS, autoShortID)
-						manifest := daemon.BatchManifest{
-							Issues:    append([]int(nil), issues...),
-							RunID:     issueRunID,
-							RunKind:   "issue",
-							CreatedAt: time.Now(),
-						}
-						if err := daemon.WriteManifest(issueRunDir, manifest); err != nil {
-							return fmt.Errorf("write issue batch manifest: %w", err)
-						}
+						autoIssueRunID = runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d-issues", len(issues)), autoTS, autoShortID)
 						if deps.EventLog != nil {
 							if err := deps.EventLog.Log(events.Event{
 								Type:      "run.started",
 								Timestamp: time.Now(),
-								RunID:     issueRunID,
+								RunID:     autoIssueRunID,
+								Issue:     issues[0],
 								Payload: map[string]any{
 									"run_kind": "issue",
 									"issues":   append([]int(nil), issues...),
@@ -643,7 +636,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					commander = c
 				}
 			}
-			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now()}
+			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), RunID: autoIssueRunID, RunKind: "issue"}
 			if err := rs.Prepare(manifest, commander); err != nil {
 				_ = rs.Close()
 				// A daemon without a control socket is invisible

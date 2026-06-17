@@ -261,9 +261,19 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
 				continue
 			}
-			if err := emitOrphan(run, 0); err != nil {
-				return recovered, len(dead), err
+			event := events.Event{
+				Type:  "run.aborted",
+				RunID: run.RunID,
+				Payload: map[string]any{
+					"recovered": true,
+					"run_kind":  "auto-select",
+				},
 			}
+			if err := log.Log(event); err != nil {
+				return recovered, len(dead), fmt.Errorf("log run.aborted for auto-select run %s: %w", run.RunID, err)
+			}
+			recovered++
+			recoveredRunIDs[run.RunID] = struct{}{}
 			continue
 		}
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
