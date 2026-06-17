@@ -19,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/scaffold"
 	"github.com/rafaelromao/sandman/internal/shellenv"
@@ -1429,6 +1430,18 @@ type runSession struct {
 	// RunID in run.started events instead of generateRunID(0).
 	runID string
 
+	// batchTS and batchShortID are the timestamp and short-ID components
+	// of the auto-generated batch ID for prompt-only runs. Used to
+	// construct the per-row RunID in run.started events when runID is
+	// empty.
+	batchTS      string
+	batchShortID string
+
+	// userProvidedRunID is the original user-provided --run-id value
+	// (empty if not provided). Used to construct the subject for the
+	// per-row RunID in run.started events.
+	userProvidedRunID string
+
 	// review, prNumber and reviewFocus mark the session as a review-agent
 	// run. They are sourced from batch.Request and propagated into the
 	// run.started and run.finished event payloads so the event log and
@@ -1966,7 +1979,7 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
-	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.IssueMode(0), baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, strandedReconcile, req.Review, req.PRNumber, req.ReviewFocus, req.RunID, req.PreviousRunIDs, req.IssueNumber)
+	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.IssueMode(0), baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, strandedReconcile, req.Review, req.PRNumber, req.ReviewFocus, req.RunID, req.PreviousRunIDs, req.IssueNumber, req.BatchTS, req.BatchShortID)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -1982,7 +1995,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 
 // runPromptOnlySingle runs a single prompt-only AgentRun. It builds a
 // runSession and delegates to (*runSession).executePromptOnly.
-func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, mode IssueMode, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string, reviewIssueNumber int) (AgentRunResult, bool) {
+func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, mode IssueMode, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string, reviewIssueNumber int, batchTS string, batchShortID string) (AgentRunResult, bool) {
 	s := &runSession{
 		o:                          o,
 		cfg:                        cfg,
@@ -2012,6 +2025,9 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		reviewFocus:                reviewFocus,
 		issueNumber:                reviewIssueNumber,
 		runID:                      runID,
+		batchTS:                    batchTS,
+		batchShortID:               batchShortID,
+		userProvidedRunID:          runID,
 		parentCtx:                  ctx,
 		opts:                       o.runSessionOpts,
 	}
@@ -2081,7 +2097,15 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 
 	runID := s.runID
 	if runID == "" {
-		runID = generateRunID(0)
+		if s.batchTS != "" && s.batchShortID != "" {
+			subject := "prompt"
+			if s.userProvidedRunID != "" {
+				subject = "prompt-" + s.userProvidedRunID
+			}
+			runID = runid.NewRunID(runid.KindPromptOnly, subject, s.batchTS, s.batchShortID)
+		} else {
+			runID = generateRunID(0)
+		}
 	}
 	if o.eventLog != nil {
 		promptSourceType := "current"
