@@ -95,10 +95,12 @@ func (s *WorktreeSandbox) Start() error {
 						if _, err := os.Stat(gitdir); err != nil {
 							worktreeDirName := filepath.Base(s.workDir)
 							correctGitdir := filepath.Join(s.repoPath, ".git", "worktrees", worktreeDirName)
-							if err := os.WriteFile(gitlinkPath, []byte("gitdir: "+correctGitdir+"\n"), 0644); err != nil {
-								return fmt.Errorf("fix broken gitlink: %w", err)
+							if info, err := os.Stat(correctGitdir); err == nil && info.IsDir() {
+								if err := os.WriteFile(gitlinkPath, []byte("gitdir: "+correctGitdir+"\n"), 0644); err != nil {
+									return fmt.Errorf("fix broken gitlink: %w", err)
+								}
+								return s.configureGitIdentity()
 							}
-							return s.configureGitIdentity()
 						}
 					}
 				}
