@@ -1589,7 +1589,7 @@ func TestPortal_PageIncludesMobileCommandHistoryLayout(t *testing.T) {
 		"@media (max-width: 760px)",
 		".command-row {",
 		"flex-direction: column;",
-		"min-height: 56px;",
+		"gap: 6px;",
 		".command-row .col-status {",
 		"align-self: flex-start;",
 		".command-row .col-command {",
