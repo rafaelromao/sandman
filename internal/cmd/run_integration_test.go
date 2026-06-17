@@ -847,7 +847,7 @@ printf 'container-workdir=%s\n' "$PWD"
 	}
 	extract := func(logData []byte, prefix string) (string, bool) {
 		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
-			if strings.HasPrefix(line, prefix) {
+			if strings.Contains(line, prefix) {
 				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
 			}
 		}
@@ -983,7 +983,7 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 	}
 	extract := func(logData []byte, prefix string) (string, bool) {
 		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
-			if strings.HasPrefix(line, prefix) {
+			if strings.Contains(line, prefix) {
 				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
 			}
 		}
@@ -1132,7 +1132,7 @@ sleep 1
 
 	extract := func(logData []byte, prefix string) (string, bool) {
 		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
-			if strings.HasPrefix(line, prefix) {
+			if strings.Contains(line, prefix) {
 				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
 			}
 		}
