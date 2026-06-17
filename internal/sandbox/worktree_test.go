@@ -716,6 +716,7 @@ func TestWorktreeSandbox_OverrideReconcileMissingBranch(t *testing.T) {
 
 	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
 	s2.SetOverride(true)
+	s2.SetStrandedReconcile(false)
 	if err := s2.Start(); err != nil {
 		t.Fatalf("expected no error with --override, got: %v", err)
 	}
@@ -1138,5 +1139,49 @@ func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirGone(t *testing.T) {
 	revParse.Dir = s2.WorkDir()
 	if out, err := revParse.CombinedOutput(); err != nil {
 		t.Fatalf("worktree dir is not a real git worktree: %v: %s", err, out)
+	}
+}
+
+func TestWorktreeSandbox_StartSkipsPrunableReattachWhenReconcileDisabled(t *testing.T) {
+	// A worktree exists and is registered, but its .git gitlink points to a
+	// non-existent gitdir, making it show as "prunable" in git worktree list.
+	// With SetStrandedReconcile(false), Start() must NOT attempt reattach;
+	// instead it must fall through to the "branch already exists" error,
+	// preserving the fail-loudly contract for operators who pass
+	// --no-reconcile-stranded.
+	dir := t.TempDir()
+	initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	branch := "sandman/42-fix-bug"
+
+	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s1.Start(); err != nil {
+		t.Fatalf("create initial worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		s1.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	gitPath := filepath.Join(s1.WorkDir(), ".git")
+	if err := os.WriteFile(gitPath, []byte("gitdir: /tmp/nonexistent-worktree-gitdir\n"), 0644); err != nil {
+		t.Fatalf("corrupt .git file: %v", err)
+	}
+
+	if _, reclaimable := ReclaimableWorktree(dir, worktreeBase, branch); !reclaimable {
+		t.Fatalf("expected ReclaimableWorktree to return true after gitlink corruption")
+	}
+
+	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s2.SetStrandedReconcile(false)
+	err := s2.Start()
+	if err == nil {
+		t.Fatal("expected error when reconcile is disabled and worktree is prunable")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("expected 'already exists' error, got: %v", err)
 	}
 }
