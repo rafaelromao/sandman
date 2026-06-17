@@ -1451,12 +1451,7 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 		t.Fatal("OutputWriter was nil")
 	}
 
-	var isNilDaemBroadcaster bool
-	if d.Broadcaster == nil {
-		isNilDaemBroadcaster = true
-	}
-
-	if capturedWriter == d.Broadcaster && !isNilDaemBroadcaster {
+	if capturedWriter == d.Broadcaster {
 		t.Errorf("OutputWriter should be rs.Broadcaster (per-PR), not d.Broadcaster (daemon-level)")
 	}
 }
