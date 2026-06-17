@@ -60,6 +60,14 @@ func StrandedWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeIn
 	return StrandedWorktreeInfo{}, false
 }
 
+// ReclaimableWorktree checks whether a git-worktree-list entry exists at
+// <worktreeBase>/<branch>, regardless of whether git considers it prunable.
+// Unlike StrandedWorktree, this helper does not filter on the prunable field;
+// it is used to detect worktree registrations that could be reattached after
+// a slice-2 cleanup pass.
+//
+// worktreeBase is resolved against repoPath when it is a relative
+// path, so callers can pass the configured WorktreeDir without pre-resolving it.
 func ReclaimableWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeInfo, bool) {
 	if !filepath.IsAbs(worktreeBase) {
 		worktreeBase = filepath.Join(repoPath, worktreeBase)

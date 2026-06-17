@@ -345,6 +345,21 @@ func TestReclaimableWorktree_NoWorktreeAtPathReturnsFalse(t *testing.T) {
 	}
 }
 
+func TestReclaimableWorktree_MissingBaseReturnsFalse(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	missingBase := filepath.Join(repoDir, "does-not-exist")
+
+	info, reclaimable := ReclaimableWorktree(repoDir, missingBase, "sandman/907-foo")
+	if reclaimable {
+		t.Fatalf("expected false (no-op) when worktreeBase is missing, got info=%+v", info)
+	}
+	if info != (StrandedWorktreeInfo{}) {
+		t.Fatalf("expected zero-value StrandedWorktreeInfo, got %+v", info)
+	}
+}
+
 func TestReclaimableWorktree_NonPrunableWorktreeAtPathReturnsTrue(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
