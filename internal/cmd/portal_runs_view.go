@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1070,6 +1071,24 @@ func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, 
 		return ""
 	}
 	return "/api/logs?path=" + url.QueryEscape(relPath)
+}
+
+// parseRunDirPR extracts a PR number from a directory name that starts
+// with "PR". Returns (prNumber, true) if the name has the form "PR<N>"
+// where N is a positive integer, or (0, false) otherwise.
+func (v *portalRunsView) parseRunDirPR(name string) (int, bool) {
+	if !strings.HasPrefix(name, "PR") {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(name, "PR")
+	if rest == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // readPortalTextFile returns the contents of a saved portal log file.
