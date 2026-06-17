@@ -30,10 +30,11 @@ type WorktreeSandbox struct {
 // NewWorktreeSandbox creates a WorktreeSandbox for the given repo and branch.
 func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *WorktreeSandbox {
 	return &WorktreeSandbox{
-		repoPath:     repoPath,
-		worktreeBase: worktreeBase,
-		branch:       branch,
-		sourceBranch: sourceBranch,
+		repoPath:          repoPath,
+		worktreeBase:      worktreeBase,
+		branch:            branch,
+		sourceBranch:      sourceBranch,
+		strandedReconcile: true,
 	}
 }
 
@@ -77,6 +78,53 @@ func (s *WorktreeSandbox) Start() error {
 					s.workDir, strings.TrimPrefix(currentRef, "refs/heads/"), s.branch)
 			}
 			overrideRecreate = true
+		}
+	}
+	if !s.override && s.strandedReconcile {
+		if _, reclaimable := ReclaimableWorktree(s.repoPath, s.worktreeBase, s.branch); reclaimable {
+			if s.workDirExists() {
+				gitlinkPath := filepath.Join(s.workDir, ".git")
+				data, err := os.ReadFile(gitlinkPath)
+				if err == nil {
+					content := strings.TrimSpace(string(data))
+					const prefix = "gitdir: "
+					if strings.HasPrefix(content, prefix) {
+						gitdir := strings.TrimSpace(strings.TrimPrefix(content, prefix))
+						if !filepath.IsAbs(gitdir) {
+							gitdir = filepath.Join(s.workDir, gitdir)
+						}
+						if _, err := os.Stat(gitdir); err != nil {
+							worktreeDirName := filepath.Base(s.workDir)
+							correctGitdir := filepath.Join(s.repoPath, ".git", "worktrees", worktreeDirName)
+							if info, err := os.Stat(correctGitdir); err == nil && info.IsDir() {
+								if err := os.WriteFile(gitlinkPath, []byte("gitdir: "+correctGitdir+"\n"), 0644); err != nil {
+									return fmt.Errorf("fix broken gitlink: %w", err)
+								}
+								return s.configureGitIdentity()
+							}
+						}
+					}
+				}
+			}
+			pruneCmd := exec.Command("git", "worktree", "prune")
+			pruneCmd.Dir = s.repoPath
+			if out, err := pruneCmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("git worktree prune: %w\n%s", err, out)
+			}
+			if s.workDirExists() {
+				addCmd := exec.Command("git", "worktree", "add", "-f", s.workDir, s.branch)
+				addCmd.Dir = s.repoPath
+				if out, err := addCmd.CombinedOutput(); err != nil {
+					return fmt.Errorf("git worktree add (reattach): %w\n%s", err, out)
+				}
+			} else {
+				addCmd := exec.Command("git", "worktree", "add", s.workDir, s.branch)
+				addCmd.Dir = s.repoPath
+				if out, err := addCmd.CombinedOutput(); err != nil {
+					return fmt.Errorf("git worktree add (recreate): %w\n%s", err, out)
+				}
+			}
+			return s.configureGitIdentity()
 		}
 	}
 overrideCleanup:
