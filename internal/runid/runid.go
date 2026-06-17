@@ -41,8 +41,8 @@ func (k Kind) String() string {
 }
 
 func NewBatch() (ts, shortid string, err error) {
+	ts = timeFunc().Format("20060102-150405")
 	for attempt := 0; attempt < 16; attempt++ {
-		ts = timeFunc().Format("20060102-150405")
 		shortid = shortIDFunc()
 		entries, err := os.ReadDir(runsDirRoot)
 		if err != nil {
