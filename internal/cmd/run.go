@@ -588,11 +588,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			sessionRunID := runID
-			if sessionRunID == "" && len(req.Issues) == 0 && overridePrompt {
+			if len(req.Issues) == 0 && overridePrompt {
 				ts, shortid, err := runid.NewBatch()
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to generate unique batch ID: %v; falling back to timestamp-based name\n", err)
 				} else {
+					req.RunID = runID
 					req.BatchTS = ts
 					req.BatchShortID = shortid
 					sessionRunID = runid.NewBatchID(runid.KindPromptOnly, 1, runID, ts, shortid)

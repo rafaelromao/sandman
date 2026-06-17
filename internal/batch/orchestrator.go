@@ -2096,16 +2096,14 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}()
 
 	runID := s.runID
-	if runID == "" {
-		if s.batchTS != "" && s.batchShortID != "" {
-			subject := "prompt"
-			if s.userProvidedRunID != "" {
-				subject = "prompt-" + s.userProvidedRunID
-			}
-			runID = runid.NewRunID(runid.KindPromptOnly, subject, s.batchTS, s.batchShortID)
-		} else {
-			runID = generateRunID(0)
+	if s.batchTS != "" && s.batchShortID != "" {
+		subject := "prompt"
+		if s.userProvidedRunID != "" {
+			subject = "prompt-" + s.userProvidedRunID
 		}
+		runID = runid.NewRunID(runid.KindPromptOnly, subject, s.batchTS, s.batchShortID)
+	} else if runID == "" {
+		runID = generateRunID(0)
 	}
 	if o.eventLog != nil {
 		promptSourceType := "current"
