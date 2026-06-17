@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1072,6 +1073,26 @@ func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, 
 	return "/api/logs?path=" + url.QueryEscape(relPath)
 }
 
+func (v *portalRunsView) parseRunDirPR(name string) (int, bool) {
+	if !strings.HasPrefix(name, "PR") {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(name, "PR")
+	if rest == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// readPortalTextFile returns the contents of a saved portal log file.
+// Saved log files are persisted in the same `[<label>] HH:MM:SS ` prefixed
+// format as the live stream. Mixed-batch log files (if any) may contain
+// sibling-issue prefixes; the reader preserves them verbatim. Pre-change log
+// files (saved before slice 1) may be un-prefixed; the reader tolerates both.
 func (v *portalRunsView) readPortalTextFile(path string) string {
 	if path == "" {
 		return ""

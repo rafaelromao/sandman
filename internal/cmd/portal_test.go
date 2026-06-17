@@ -1113,6 +1113,31 @@ func TestPortal_SavedLogFile_KeepsIssuePrefixesIntact(t *testing.T) {
 	}
 }
 
+func TestPortal_SavedLogFile_PreservesPrefixByteForByteModuloANSI(t *testing.T) {
+	repoRoot := t.TempDir()
+	logsDir := filepath.Join(repoRoot, ".sandman", "logs")
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	raw := "[issue-42] 10:30:00 \x1b[32mgreen\x1b[0m log line\n[issue-42] 10:30:01 plain line\n"
+	logPath := filepath.Join(logsDir, "42.log")
+	if err := os.WriteFile(logPath, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&portalRunsView{}).readPortalTextFile(logPath)
+
+	if !strings.Contains(got, "[issue-42] 10:30:00 ") {
+		t.Fatalf("expected saved log to preserve issue prefix, got:\n%s", got)
+	}
+	if !strings.Contains(got, "[issue-42] 10:30:01 plain line") {
+		t.Fatalf("expected saved log to preserve plain line with prefix, got:\n%s", got)
+	}
+	if strings.Contains(got, "\x1b[32m") {
+		t.Fatalf("expected ANSI sequences to be stripped, got:\n%s", got)
+	}
+}
+
 func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
