@@ -138,6 +138,7 @@ func CleanupStaleRunSnapshots(baseDir string) (int, error) {
 type BatchManifest struct {
 	Issues    []int     `json:"issues"`
 	CreatedAt time.Time `json:"createdAt"`
+	RunID     string    `json:"runID,omitempty"`
 }
 
 // RunDir returns a run directory path under baseDir/runs/.

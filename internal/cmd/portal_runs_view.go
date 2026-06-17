@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +91,7 @@ type portalActiveRun struct {
 	IssueNumber  int
 	IssueNumbers []int
 	PRNumber     int
+	RunID        string
 	StartedAt    time.Time
 	ModTime      time.Time
 }
@@ -372,9 +372,11 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		}
 		runDir := filepath.Dir(instance.SocketPath)
 		manifest, manifestErr := daemon.ReadManifest(runDir)
-		prNumber := v.prNumberFromEvent(eventsByRun[instance.Name])
-		if prNumber == 0 {
-			prNumber, _ = v.parseRunDirPR(instance.Name)
+		prNumber := 0
+		runID := instance.Name
+		if manifestErr == nil && manifest.RunID != "" {
+			runID = manifest.RunID
+			prNumber = v.prNumberFromEvent(eventsByRun[runID])
 		}
 		issueNumbers := []int(nil)
 		issueNumber := 0
@@ -399,6 +401,7 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			IssueNumber:  issueNumber,
 			IssueNumbers: issueNumbers,
 			PRNumber:     prNumber,
+			RunID:        runID,
 			StartedAt:    startedAt,
 			ModTime:      info.ModTime(),
 		})
@@ -683,6 +686,10 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		review = true
 	}
 	logPath := v.portalLogPath(repoRoot, issueNumber, "")
+	eventKey := match.instance.Key
+	if match.instance.RunID != "" {
+		eventKey = match.instance.RunID
+	}
 	run := portalRun{
 		Key:         runID,
 		RunID:       runID,
@@ -699,7 +706,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		LogPath:     logPath,
 		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, ""),
 		Log:         v.readPortalSocketOutput(match.instance.SocketPath),
-		Events:      eventsByRun[match.instance.Key],
+		Events:      eventsByRun[eventKey],
 		BatchKey:    match.instance.Key,
 	}
 	v.markCompletedIfSocketDead(&run, run.SocketPath)
@@ -939,23 +946,6 @@ func (v *portalRunsView) prNumberFromEvent(events []portalEvent) int {
 		}
 	}
 	return 0
-}
-
-// parseRunDirPR extracts a PR number from legacy directory names like PR42.
-// Returns (0, false) if the name doesn't match the legacy PR<N> pattern.
-func (v *portalRunsView) parseRunDirPR(name string) (int, bool) {
-	if !strings.HasPrefix(name, "PR") {
-		return 0, false
-	}
-	rest := strings.TrimPrefix(name, "PR")
-	if rest == "" {
-		return 0, false
-	}
-	n, err := strconv.Atoi(rest)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
 }
 
 // reviewIssueNumber reads the issue_number field from a review run's
