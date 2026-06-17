@@ -366,6 +366,9 @@ func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(sockDir, "batch.json"), []byte(`{"issues":[],"runID":"PR43"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -383,6 +386,7 @@ func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: started, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
 		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
+		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "PR43", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR43", "review": true, "pr_number": 43}},
 		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "run-prompt-1", Issue: 0, Payload: map[string]any{"branch": "sandman/prompt-only-1"}},
 		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "run-prompt-1", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/prompt-only-1"}},
 	})

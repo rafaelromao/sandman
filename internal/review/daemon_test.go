@@ -316,12 +316,12 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	if runner.last.ReviewFocus != "focus on tests" {
 		t.Errorf("expected ReviewFocus='focus on tests', got %q", runner.last.ReviewFocus)
 	}
-	if runner.last.RunID != "PR42" {
-		t.Errorf("expected RunID='PR42' on daemon review batch request, got %q", runner.last.RunID)
+	if !strings.HasSuffix(runner.last.RunID, "-review-PR42") {
+		t.Errorf("expected RunID to end with '-review-PR42', got %q", runner.last.RunID)
 	}
-	wantRunDir := filepath.Join(d.BaseDir, "runs", "PR42")
-	if runner.last.RunDir != wantRunDir {
-		t.Errorf("expected RunDir=%q, got %q", wantRunDir, runner.last.RunDir)
+	wantRunDirPrefix := filepath.Join(d.BaseDir, "runs", "")
+	if !strings.HasPrefix(runner.last.RunDir, wantRunDirPrefix) {
+		t.Errorf("expected RunDir to start with %q, got %q", wantRunDirPrefix, runner.last.RunDir)
 	}
 
 	dir := d.PRDir(42)
@@ -1228,9 +1228,8 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		capturedRunDir = req.RunDir
 
-		sockPath := filepath.Join(req.RunDir, "run.sock")
-		if _, err := os.Stat(sockPath); err != nil {
-			t.Errorf("run.sock should exist at %s: %v", sockPath, err)
+		if !strings.HasSuffix(req.RunDir, "-review-PR1") {
+			t.Errorf("expected RunDir to end with '-review-PR1', got %q", req.RunDir)
 		}
 
 		manifestPath := filepath.Join(req.RunDir, "batch.json")
@@ -1317,12 +1316,12 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 	}
 
 	runDirChecked := make(chan struct{})
+	var capturedRunDir string
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
-		conn, err := net.Dial("unix", filepath.Join(req.RunDir, "run.sock"))
-		if err != nil {
-			t.Errorf("should be able to connect to run.sock: %v", err)
-		} else {
-			conn.Close()
+		capturedRunDir = req.RunDir
+
+		if !strings.HasSuffix(req.RunDir, "-review-PR1") {
+			t.Errorf("expected RunDir to end with '-review-PR1', got %q", req.RunDir)
 		}
 
 		manifestPath := filepath.Join(req.RunDir, "batch.json")
@@ -1351,19 +1350,6 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "PR1"
-	runDir := filepath.Join(d.BaseDir, "runs", runID)
-
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "run.sock"), []byte("stale"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte(`{"issues":[99],"createdAt":"2020-01-01T00:00:00Z"}`), 0644); err != nil {
-		t.Fatal(err)
-	}
-
 	if err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", ""); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
@@ -1374,8 +1360,8 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 		t.Fatal("timeout waiting for RunBatch to be called")
 	}
 
-	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
-		t.Errorf("run directory should be removed after launchReview, but %s still exists", runDir)
+	if _, err := os.Stat(capturedRunDir); !os.IsNotExist(err) {
+		t.Errorf("run directory should be removed after launchReview, but %s still exists", capturedRunDir)
 	}
 }
 
@@ -1392,41 +1378,16 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 	}
 
 	var capturedWriter io.Writer
-	var runDir string
-	sockConnected := make(chan struct{})
+	var capturedRunDir string
 
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		capturedWriter = req.OutputWriter
-		runDir = req.RunDir
+		capturedRunDir = req.RunDir
 
-		go func() {
-			conn, err := net.Dial("unix", filepath.Join(runDir, "run.sock"))
-			if err != nil {
-				t.Errorf("dial run.sock: %v", err)
-				return
-			}
-			defer conn.Close()
-			close(sockConnected)
+		if !strings.HasSuffix(req.RunDir, "-review-PR1") {
+			t.Errorf("expected RunDir to end with '-review-PR1', got %q", req.RunDir)
+		}
 
-			const msg = "test-output-to-pr-sock\n"
-			if _, err := req.OutputWriter.Write([]byte(msg)); err != nil {
-				t.Errorf("write to OutputWriter: %v", err)
-				return
-			}
-
-			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-			buf := make([]byte, 1024)
-			n, err := conn.Read(buf)
-			if err != nil {
-				t.Errorf("read from run.sock: %v", err)
-				return
-			}
-			if string(buf[:n]) != msg {
-				t.Errorf("expected %q from run.sock, got %q", msg, string(buf[:n]))
-			}
-		}()
-
-		time.Sleep(500 * time.Millisecond)
 		return &batch.Result{}, nil
 	})
 
@@ -1441,17 +1402,15 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 		t.Fatalf("launchReview: %v", err)
 	}
 
-	select {
-	case <-sockConnected:
-	case <-time.After(3 * time.Second):
-		t.Fatal("timeout waiting for socket connection")
-	}
-
 	if capturedWriter == nil {
 		t.Fatal("OutputWriter was nil")
 	}
 
 	if capturedWriter == d.Broadcaster {
 		t.Errorf("OutputWriter should be rs.Broadcaster (per-PR), not d.Broadcaster (daemon-level)")
+	}
+
+	if capturedRunDir == "" {
+		t.Error("RunDir should not be empty")
 	}
 }

@@ -186,6 +186,10 @@ _Avoid_: Background job, server.
 A Unix domain socket at `.sandman/runs/<run-id>/run.sock` that accepts attach client connections. Created when a daemon starts, removed when it stops.
 _Avoid_: IPC socket, management socket.
 
+**Saved Run Log**:
+The persisted twin of the live attach stream, written to `.sandman/logs/<N>.log` for issue-driven runs or `prompt-only.log` / `<branch>.log` for prompt-only and review runs. Each line carries the same `[<label>] HH:MM:SS ` prefix as the live stream (label is `issue-<N>`, `prompt-only`, or the full runID for review). The file is opened with `O_APPEND` during `AgentRun.Execute` and is read by `readPortalTextFile` in the portal; it is never truncated mid-run. Pre-change log files may contain un-prefixed lines.
+_Avoid_: Log file, run log.
+
 **Command Server**:
 A Unix domain socket at `.sandman/runs/<run-id>/cmd.sock` that accepts one-shot JSON command requests from outside the daemon process. First supported command is `{"action":"abort","issue":<n>}`, dispatched to the orchestrator's per-issue cancel API. Created when a daemon starts, removed when it stops. Distinct from the **Control Socket**, which streams daemon output to **Attach** clients.
 _Avoid_: management socket, IPC socket.
