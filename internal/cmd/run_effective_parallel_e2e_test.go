@@ -139,8 +139,8 @@ func readQueueingLogField(t *testing.T, dir string, issue int, prefix string) st
 		t.Fatalf("read log for issue %d: %v", issue, err)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
-		if strings.Contains(line, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if idx := strings.Index(line, prefix); idx >= 0 {
+			return strings.TrimSpace(line[idx+len(prefix):])
 		}
 	}
 	return ""
