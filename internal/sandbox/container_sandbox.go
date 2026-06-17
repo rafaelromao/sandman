@@ -50,6 +50,25 @@ func NewSharedContainerSandbox(worktree Sandbox, container Container, binary, re
 	}
 }
 
+// NewContainerSandboxWithExecFn is the test-only constructor that lets tests
+// inject a custom exec.Command factory. Production code must use
+// NewContainerSandbox or NewSharedContainerSandbox, which set execFn to
+// exec.Command. This helper exists so tests outside the sandbox package can
+// drive the production waitCmd path with a real long-running *exec.Cmd (e.g.
+// `sleep 60`) without exposing the unexported execFn field. The ownsContainer
+// flag is true so Stop() tears the container down on test cleanup, matching
+// NewContainerSandbox semantics.
+func NewContainerSandboxWithExecFn(worktree Sandbox, container Container, binary, repoPath string, execFn func(name string, arg ...string) *exec.Cmd) *ContainerSandbox {
+	return &ContainerSandbox{
+		worktree:      worktree,
+		container:     container,
+		binary:        binary,
+		repoPath:      repoPath,
+		ownsContainer: true,
+		execFn:        execFn,
+	}
+}
+
 // SetGitIdentity forwards worktree-local git identity configuration to the underlying worktree.
 func (s *ContainerSandbox) SetGitIdentity(name, email string) {
 	s.worktree.SetGitIdentity(name, email)
