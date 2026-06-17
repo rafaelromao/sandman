@@ -1488,7 +1488,7 @@ func TestResolveAutoIssues_PriorityPromptFileSelectsSelectionPhase(t *testing.T)
 		},
 	}
 
-	_, err := resolveAutoIssues(context.Background(), gh, 1, []int{1}, sandmanDir, "", "", &config.Config{ReviewCommand: "/oc review"}, "", nil)
+	_, _, _, err := resolveAutoIssues(context.Background(), gh, 1, []int{1}, sandmanDir, "", "", &config.Config{ReviewCommand: "/oc review"}, "", nil)
 	if err == nil {
 		t.Fatal("expected selection phase error")
 	}
@@ -1506,7 +1506,7 @@ func TestResolveAutoIssues_AutoPromptFileAbsentUsesNumericSort(t *testing.T) {
 		},
 	}
 
-	issues, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
+	issues, _, _, err := resolveAutoIssues(context.Background(), gh, 1, []int{1, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1544,7 +1544,7 @@ func TestResolveAutoIssues_UnlimitedCap(t *testing.T) {
 		},
 	}
 
-	issues, err := resolveAutoIssues(context.Background(), gh, 0, []int{1}, sandmanDir, "", "", &config.Config{}, "", nil)
+	issues, _, _, err := resolveAutoIssues(context.Background(), gh, 0, []int{1}, sandmanDir, "", "", &config.Config{}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

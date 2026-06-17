@@ -154,6 +154,9 @@ _Avoid_: run identifier.
 The abstract isolation mechanism within which an AgentRun executes. Hides whether isolation is provided by a worktree or by a container-backed sandbox strategy.
 _Avoid_: Environment, boundary, boundary context.
 
+**Sandbox.Exec contract (Setpgid invariant)**:
+The `Sandbox.Exec` method requires the spawned OS command to be its own process-group leader. Any new `Sandbox` implementation must set `Setpgid: true` on the spawned command, so that the shared `waitCmd` helper's `syscall.Kill(-cmd.Process.Pid, …)` lands on the right group on context cancel. Without this, the cancel silently no-ops and `cmd.Wait()` blocks forever, surfacing as a "no-op" abort in the portal. This invariant prevents a bug where an in-flight AgentRun in container mode stays `active` after the user clicks Abort, because the `kill(-PID, SIGKILL)` in `waitCmd` targets a non-existent PGID and returns `ESRCH`. A separate follow-up issue (#1113) addresses the remaining problem that killing the host-side `docker exec` / `podman exec` wrapper does not propagate to the in-container AgentRun.
+
 **Worktree**:
 A git worktree under `.sandman/worktrees/`, created per AgentRun, providing a dedicated checkout for the agent to modify. Not a sandbox on its own; a sandbox may contain one or more worktrees.
 _Avoid_: Working directory, checkout, clone.
