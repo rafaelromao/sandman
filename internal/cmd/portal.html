@@ -723,9 +723,22 @@
     }
     /* Issue Title gets the slack the previous Branch column used to
        claim. min-width keeps short titles from being squeezed when
-       the viewport is wide; overflow-wrap lets long titles break. */
+       the viewport is wide; ellipsis truncates long titles. */
     tbody td[data-cell="issue-title"] {
       min-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    tbody td[data-cell="started"] {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    tbody td[data-cell="branch"] {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     /* Long unbreakable tokens (long run-id, long branch, long issue
        title) must not force the column wider than the table can afford.
