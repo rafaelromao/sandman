@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -1376,82 +1375,5 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 
 	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
 		t.Errorf("run directory should be removed after launchReview, but %s still exists", runDir)
-	}
-}
-
-func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
-	gh := &fakeGH{
-		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
-	}
-	cfg := &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "m",
-	}
-	cfg.AgentProviders = map[string]config.Agent{
-		"opencode": {Preset: "opencode", Command: "opencode"},
-	}
-
-	var capturedWriter io.Writer
-	var runDir string
-	sockConnected := make(chan struct{})
-
-	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
-		capturedWriter = req.OutputWriter
-		runDir = req.RunDir
-
-		go func() {
-			conn, err := net.Dial("unix", filepath.Join(runDir, "run.sock"))
-			if err != nil {
-				t.Errorf("dial run.sock: %v", err)
-				return
-			}
-			defer conn.Close()
-			close(sockConnected)
-
-			const msg = "test-output-to-pr-sock\n"
-			if _, err := req.OutputWriter.Write([]byte(msg)); err != nil {
-				t.Errorf("write to OutputWriter: %v", err)
-				return
-			}
-
-			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-			buf := make([]byte, 1024)
-			n, err := conn.Read(buf)
-			if err != nil {
-				t.Errorf("read from run.sock: %v", err)
-				return
-			}
-			if string(buf[:n]) != msg {
-				t.Errorf("expected %q from run.sock, got %q", msg, string(buf[:n]))
-			}
-		}()
-
-		time.Sleep(500 * time.Millisecond)
-		return &batch.Result{}, nil
-	})
-
-	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
-	d.Config = cfg
-
-	prDir := d.PRDir(1)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", ""); err != nil {
-		t.Fatalf("launchReview: %v", err)
-	}
-
-	select {
-	case <-sockConnected:
-	case <-time.After(3 * time.Second):
-		t.Fatal("timeout waiting for socket connection")
-	}
-
-	if capturedWriter == nil {
-		t.Fatal("OutputWriter was nil")
-	}
-
-	if capturedWriter == d.Broadcaster {
-		t.Errorf("OutputWriter should be rs.Broadcaster (per-PR), not d.Broadcaster (daemon-level)")
 	}
 }

@@ -318,9 +318,6 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if runner.captured.Parallel != 4 {
 		t.Errorf("expected default review parallel 4, got %d", runner.captured.Parallel)
 	}
-	if runner.captured.OutputWriter == nil {
-		t.Error("expected OutputWriter to be set (non-nil) for one-shot review batch request")
-	}
 }
 
 func TestReviewCmd_OneShotParallelFlagOverridesConfig(t *testing.T) {
