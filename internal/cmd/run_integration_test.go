@@ -847,8 +847,8 @@ printf 'container-workdir=%s\n' "$PWD"
 	}
 	extract := func(logData []byte, prefix string) (string, bool) {
 		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
-			if strings.HasPrefix(line, prefix) {
-				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+			if idx := strings.Index(line, prefix); idx >= 0 {
+				return strings.TrimSpace(line[idx+len(prefix):]), true
 			}
 		}
 		return "", false
@@ -983,8 +983,8 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 	}
 	extract := func(logData []byte, prefix string) (string, bool) {
 		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
-			if strings.HasPrefix(line, prefix) {
-				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+			if idx := strings.Index(line, prefix); idx >= 0 {
+				return strings.TrimSpace(line[idx+len(prefix):]), true
 			}
 		}
 		return "", false
@@ -1043,8 +1043,8 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 
 	var events []string
 	for _, line := range strings.Split(strings.TrimSpace(string(followerLog)), "\n") {
-		if strings.HasPrefix(line, "queueing-event=") {
-			events = append(events, strings.TrimSpace(strings.TrimPrefix(line, "queueing-event=")))
+		if idx := strings.Index(line, "queueing-event="); idx >= 0 {
+			events = append(events, strings.TrimSpace(line[idx+len("queueing-event="):]))
 		}
 	}
 	if len(events) != 4 {
@@ -1132,8 +1132,8 @@ sleep 1
 
 	extract := func(logData []byte, prefix string) (string, bool) {
 		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
-			if strings.HasPrefix(line, prefix) {
-				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+			if idx := strings.Index(line, prefix); idx >= 0 {
+				return strings.TrimSpace(line[idx+len(prefix):]), true
 			}
 		}
 		return "", false

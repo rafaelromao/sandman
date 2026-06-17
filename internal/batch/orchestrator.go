@@ -2173,7 +2173,13 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		_ = o.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}
 
-	logPath := s.o.agentLogPath(s.o.layout.SafeLogFilename(branch) + ".log")
+	var logFilename string
+	if s.review && s.prNumber > 0 {
+		logFilename = fmt.Sprintf("PR%d.log", s.prNumber)
+	} else {
+		logFilename = s.o.layout.SafeLogFilename(branch) + ".log"
+	}
+	logPath := s.o.agentLogPath(logFilename)
 	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
 			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {

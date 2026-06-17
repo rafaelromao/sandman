@@ -78,7 +78,7 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 }
 
 // Execute runs the agent command inside the sandbox, writing prefixed output to the given writers
-// and un-prefixed output to the layout's LogDir.
+// and to the layout's LogDir (saved log file is also prefixed).
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	logDir := r.layout.LogDir
 	if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -104,15 +104,19 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 
 	prefixedOut := NewLinePrefixWriter(r.prefixLabel(), stdout)
 	prefixedErr := NewLinePrefixWriter(r.prefixLabel(), stderr)
+	logPrefixedOut := NewLinePrefixWriter(r.prefixLabel(), logFile)
+	logPrefixedErr := NewLinePrefixWriter(r.prefixLabel(), logFile)
 
-	combinedOut := io.MultiWriter(logFile, prefixedOut)
-	combinedErr := io.MultiWriter(logFile, prefixedErr)
+	combinedOut := io.MultiWriter(prefixedOut, logPrefixedOut)
+	combinedErr := io.MultiWriter(prefixedErr, logPrefixedErr)
 
 	if err := r.sandbox.Exec(ctx, command, combinedOut, combinedErr); err != nil {
 		return fmt.Errorf("execute agent: %w", err)
 	}
 	_ = prefixedOut.Flush()
 	_ = prefixedErr.Flush()
+	_ = logPrefixedOut.Flush()
+	_ = logPrefixedErr.Flush()
 	return nil
 }
 
