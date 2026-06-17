@@ -861,7 +861,7 @@ func TestAgentRun_Execute_LogFilePrefixed(t *testing.T) {
 	t.Chdir(dir)
 
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
-	sb := &fakeSandbox{execStdout: "hello world\nsecond line\n"}
+	sb := &fakeSandbox{execStdout: "hello world\nsecond line\n", execStderr: "warn line\n"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
@@ -889,7 +889,7 @@ func TestAgentRun_Execute_LogFilePrefixed(t *testing.T) {
 
 func TestAgentRun_Execute_LogFilePrefixed_PromptOnly(t *testing.T) {
 	dir := t.TempDir()
-	sb := &fakeSandbox{execStdout: "hello world\nsecond line\n"}
+	sb := &fakeSandbox{execStdout: "hello world\nsecond line\n", execStderr: "warn line\n"}
 
 	run := NewAgentRunWithLayout(nil, "prompt-test", sb, paths.NewLayout(&config.Config{}, dir))
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
@@ -912,5 +912,39 @@ func TestAgentRun_Execute_LogFilePrefixed_PromptOnly(t *testing.T) {
 		if !strings.HasPrefix(line, expectedPrefix) {
 			t.Errorf("expected line to start with %q, got %q", expectedPrefix, line)
 		}
+	}
+}
+
+func TestAgentRun_Execute_LogFilePrefixed_FlushesPartialLine(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{execStdout: "complete line\npartial line"}
+
+	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("expected log file to exist: %v", err)
+	}
+
+	content := string(data)
+	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		expectedPrefix := fmt.Sprintf("[issue-%d]", issue.Number)
+		if !strings.HasPrefix(line, expectedPrefix) {
+			t.Errorf("expected line to start with %q, got %q", expectedPrefix, line)
+		}
+	}
+	if !strings.Contains(content, "partial line") {
+		t.Errorf("expected log to contain partial line, got %q", content)
 	}
 }
