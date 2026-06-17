@@ -136,8 +136,12 @@ func CleanupStaleRunSnapshots(baseDir string) (int, error) {
 // back via ReadManifest so other sandman commands (status, portal) can
 // inspect a live or completed run.
 type BatchManifest struct {
-	Issues    []int     `json:"issues"`
-	CreatedAt time.Time `json:"createdAt"`
+	Issues     []int     `json:"issues,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	RunKind    string    `json:"runKind,omitempty"`
+	Candidates []int     `json:"candidates,omitempty"`
+	Query      string    `json:"query,omitempty"`
+	Count      int       `json:"count,omitempty"`
 }
 
 // RunDir returns a run directory path under baseDir/runs/.
