@@ -105,18 +105,19 @@ type portalRunsView struct{}
 
 // compute is the entry point for computing displayable portal runs.
 func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]portalRun, error) {
-	activeInstances, err := v.discoverActiveRuns(repoRoot)
-	if err != nil {
-		return nil, err
-	}
-
 	eventList, err := eventLog.Read()
 	if err != nil {
 		return nil, fmt.Errorf("read event log: %w", err)
 	}
 
-	runStates := events.ProjectRunStates(eventList)
 	eventsByRun := v.groupEventsByRun(eventList)
+
+	activeInstances, err := v.discoverActiveRuns(repoRoot, eventsByRun)
+	if err != nil {
+		return nil, err
+	}
+
+	runStates := events.ProjectRunStates(eventList)
 	activeStates := make([]events.RunState, 0, len(runStates))
 	activeBatchStart := time.Time{}
 	for _, run := range runStates {
@@ -357,7 +358,7 @@ func (v *portalRunsView) runPriority(run portalRun) int {
 	}
 }
 
-func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun, error) {
+func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[string][]portalEvent) ([]portalActiveRun, error) {
 	instances, err := discoverPortalInstances(repoRoot)
 	if err != nil {
 		return nil, err
@@ -371,7 +372,10 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun,
 		}
 		runDir := filepath.Dir(instance.SocketPath)
 		manifest, manifestErr := daemon.ReadManifest(runDir)
-		prNumber, _ := v.parseRunDirPR(instance.Name)
+		prNumber := v.prNumberFromEvent(eventsByRun[instance.Name])
+		if prNumber == 0 {
+			prNumber, _ = v.parseRunDirPR(instance.Name)
+		}
 		issueNumbers := []int(nil)
 		issueNumber := 0
 		startedAt := info.ModTime()
@@ -925,6 +929,35 @@ func (v *portalRunsView) reviewPRNumber(payload map[string]any) int {
 	return 0
 }
 
+// prNumberFromEvent extracts the PR number from the run.started event
+// in the given events slice. Returns 0 if no run.started event is found
+// or if the payload does not contain pr_number.
+func (v *portalRunsView) prNumberFromEvent(events []portalEvent) int {
+	for _, e := range events {
+		if e.Type == "run.started" {
+			return v.reviewPRNumber(e.Payload)
+		}
+	}
+	return 0
+}
+
+// parseRunDirPR extracts a PR number from legacy directory names like PR42.
+// Returns (0, false) if the name doesn't match the legacy PR<N> pattern.
+func (v *portalRunsView) parseRunDirPR(name string) (int, bool) {
+	if !strings.HasPrefix(name, "PR") {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(name, "PR")
+	if rest == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
 // reviewIssueNumber reads the issue_number field from a review run's
 // payload. Returns 0 when the field is absent (older event logs).
 func (v *portalRunsView) reviewIssueNumber(payload map[string]any) int {
@@ -1047,21 +1080,6 @@ func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, 
 		return ""
 	}
 	return "/api/logs?path=" + url.QueryEscape(relPath)
-}
-
-func (v *portalRunsView) parseRunDirPR(name string) (int, bool) {
-	if !strings.HasPrefix(name, "PR") {
-		return 0, false
-	}
-	rest := strings.TrimPrefix(name, "PR")
-	if rest == "" {
-		return 0, false
-	}
-	n, err := strconv.Atoi(rest)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
 }
 
 func (v *portalRunsView) readPortalTextFile(path string) string {

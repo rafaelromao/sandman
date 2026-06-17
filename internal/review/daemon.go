@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/runid"
 )
 
 // PollingInterval is the default interval at which the daemon scans open PRs
@@ -402,7 +403,19 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		d.logf("fetch PR %d: %v (issue_number will not be set)", prNumber, err)
 	}
 
-	runID := fmt.Sprintf("PR%d", prNumber)
+	ts, shortid, err := runid.NewBatch()
+	if err != nil {
+		return fmt.Errorf("generate batch ID: %w", err)
+	}
+	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("PR%d", prNumber), ts, shortid)
+
+	var subject string
+	if reviewIssueNumber > 0 {
+		subject = fmt.Sprintf("issue-%d-review-PR%d", reviewIssueNumber, prNumber)
+	} else {
+		subject = fmt.Sprintf("review-PR%d", prNumber)
+	}
+	perRowRunID := runid.NewRunID(runid.KindReview, subject, ts, shortid)
 
 	// Boot the per-PR run session. The review daemon path does not
 	// start a cmd.sock (the per-issue abort is a CLI-only seam), so
@@ -413,7 +426,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	// agent's first output still leaves enough on disk for the
 	// portal's stale-recovery sweep to emit run.aborted (issue
 	// #1024).
-	rs := daemon.NewRunSession(d.BaseDir, runID)
+	rs := daemon.NewRunSession(d.BaseDir, batchDirName)
 	manifest := daemon.BatchManifest{Issues: []int{}, CreatedAt: time.Now()}
 	if err := rs.Prepare(manifest, nil); err != nil {
 		_ = rs.Close()
@@ -439,7 +452,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		PRNumber:     prNumber,
 		IssueNumber:  reviewIssueNumber,
 		ReviewFocus:  focus,
-		RunID:        runID,
+		RunID:        perRowRunID,
 		RunDir:       rs.RunDir(),
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
