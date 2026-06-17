@@ -2433,18 +2433,18 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			agent:    "opencode",
 			cfgModel: "config-model",
 			reqModel: "request-model",
-			wantCmd:  `opencode run --title 'Sandman run-42-`,
+			wantCmd:  `opencode run --title 'Sandman 20250617-143052-abcd-issue-42`,
 		},
 		{
 			name:     "config model is used",
 			agent:    "opencode",
 			cfgModel: "config-model",
-			wantCmd:  `opencode run --title 'Sandman run-42-`,
+			wantCmd:  `opencode run --title 'Sandman 20250617-143052-abcd-issue-42`,
 		},
 		{
 			name:    "default behavior leaves model out",
 			agent:   "opencode",
-			wantCmd: `opencode run --title 'Sandman run-42-`,
+			wantCmd: `opencode run --title 'Sandman 20250617-143052-abcd-issue-42`,
 		},
 	}
 
@@ -2468,7 +2468,7 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			}}, nil)
 			o.sandboxFactory = &fakeSandboxFactory{sandbox: sb}
 
-			_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Model: tt.reqModel})
+			_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Model: tt.reqModel, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -2476,7 +2476,7 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 				t.Errorf("expected command containing %q, got %q", tt.wantCmd, sb.execCommand)
 			}
 			if tt.agent == "opencode" {
-				if !strings.Contains(sb.execCommand, `--title 'Sandman run-`) {
+				if !strings.Contains(sb.execCommand, `--title 'Sandman 20250617-143052-abcd-issue-42`) {
 					t.Errorf("expected --title flag in command, got %q", sb.execCommand)
 				}
 				if strings.Contains(sb.execCommand, `--title ''`) {
@@ -8896,13 +8896,6 @@ func TestBuildRunID_IssueKind(t *testing.T) {
 	want := "20250617-143052-abcd-issue-42"
 	if got != want {
 		t.Fatalf("buildRunID(42, ts, shortid) = %q, want %q", got, want)
-	}
-}
-
-func TestBuildRunID_FallsBackToLegacyWithoutBatchID(t *testing.T) {
-	got := buildRunID(99, "", "")
-	if !strings.HasPrefix(got, "run-99-") {
-		t.Fatalf("expected legacy prefix run-99- when ts/shortid are empty, got %q", got)
 	}
 }
 

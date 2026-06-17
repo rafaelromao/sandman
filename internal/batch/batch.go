@@ -96,7 +96,9 @@ type Request struct {
 	// runs. When set, it is used as the run directory name and the per-row
 	// RunID in run.started events. Issue-driven runs leave it empty; their
 	// per-row RunIDs are derived from RunTS / RunShortID via
-	// runid.NewRunID.
+	// runid.NewRunID. Callers MUST validate RunID with
+	// runid.IsValidUserRunID before passing it in (the cmd layer does so
+	// in the --run-id flag path).
 	RunID string
 	// RunTS is the timestamp component of the auto-generated batch id for
 	// issue-driven runs (set by `sandman run 42 43 44`). The orchestrator

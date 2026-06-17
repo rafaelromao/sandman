@@ -25,21 +25,12 @@ import (
 	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
-func generateRunID(issueNum int) string {
-	return fmt.Sprintf("run-%d-%d", issueNum, time.Now().UnixNano())
-}
-
 // buildRunID returns the per-row RunID for an issue-driven AgentRun.
 // Both the run.queued placeholder (emitted in RunBatch's goroutine launch)
 // and the run.started / run.continued events emitted inside
 // (*runSession).execute go through this helper so every per-row RunID
-// shares the batch's (ts, shortid) prefix. Empty ts/shortid falls back
-// to the legacy run-<num>-<unixNano> form so tests that bypass the
-// runid wiring still get a unique id.
+// shares the batch's (ts, shortid) prefix.
 func buildRunID(num int, ts, shortid string) string {
-	if ts == "" || shortid == "" {
-		return generateRunID(num)
-	}
 	return runid.NewRunID(runid.KindIssue, fmt.Sprintf("issue-%d", num), ts, shortid)
 }
 
@@ -2127,7 +2118,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		}
 		runID = runid.NewRunID(runid.KindPromptOnly, subject, s.batchTS, s.batchShortID)
 	} else if runID == "" {
-		runID = generateRunID(0)
+		runID = fmt.Sprintf("run-0-%d", time.Now().UnixNano())
 	}
 	if o.eventLog != nil {
 		promptSourceType := "current"

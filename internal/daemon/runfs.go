@@ -141,10 +141,13 @@ type BatchManifest struct {
 }
 
 // RunDir returns a run directory path under baseDir/runs/. The dirID
-// argument is the pre-built batch identifier (e.g. the result of
-// runid.NewBatchID or a user-supplied --run-id for prompt-only mode);
-// RunDir joins it verbatim without auto-generation. The directory
-// itself is not created; callers decide when to mkdir.
+// argument is the pre-built batch identifier (the result of
+// runid.NewBatchID for issue-driven batches, or a user-supplied
+// --run-id for prompt-only mode — see runid.IsValidUserRunID for
+// the validation rules the caller is expected to apply before
+// passing the value in). RunDir joins it verbatim without
+// auto-generation. The directory itself is not created; callers
+// decide when to mkdir.
 func RunDir(baseDir, dirID string) string {
 	return filepath.Join(baseDir, "runs", dirID)
 }
