@@ -478,35 +478,49 @@
       color: var(--muted);
       font-weight: 400;
     }
-    tbody tr.batch-row td {
+    /* Context and batch chips live in their own tr (so a single td can
+       span all six columns), but visually they are part of the run row
+       above: no border, no surface fill, no decorative chrome. The
+       same hover/active state that paints the run row also paints the
+       chip row directly under it, so the two read as one block. */
+    tbody tr.batch-row td,
+    tbody tr.context-row td {
       padding: 0 14px 6px;
-      border-bottom: none;
+      border: none;
     }
-    tbody tr.run-row + tr.batch-row td {
+    tbody tr.run-row + tr.batch-row td,
+    tbody tr.run-row + tr.context-row td {
       padding-top: 0;
     }
-    tbody tr.run-row:hover + tr.batch-row td {
+    tbody tr.run-row:hover + tr.batch-row td,
+    tbody tr.run-row:hover + tr.context-row td {
       background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
     }
-    tbody tr.run-row.active + tr.batch-row td {
+    tbody tr.run-row.active + tr.batch-row td,
+    tbody tr.run-row.active + tr.context-row td {
       background: color-mix(in oklch, var(--accent) 12%, var(--surface));
-    }
-    .context-row td {
-      padding: 0 12px 4px;
-      border: none;
     }
     .batch-membership,
     .context-chip {
       display: block;
       width: 100%;
       box-sizing: border-box;
-      padding: 2px 8px;
-      border-radius: 6px;
-      background: var(--surface-3);
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
       color: var(--muted);
       font-size: 11px;
       letter-spacing: 0.04em;
       overflow-wrap: anywhere;
+    }
+    .batch-membership::before,
+    .context-chip::before {
+      content: "·";
+      display: inline-block;
+      width: 1.25em;
+      margin-right: 0.25em;
+      color: color-mix(in oklch, var(--muted) 70%, var(--text));
+      text-align: center;
     }
     .eyebrow {
       display: inline-flex;
@@ -660,7 +674,7 @@
     }
     table {
       width: 100%;
-      min-width: 1040px;
+      min-width: 920px;
       border-collapse: separate;
       border-spacing: 0;
       font-size: 13px;
@@ -698,9 +712,15 @@
        unbreakable run-id token in the meta-line can break instead of
        forcing the column wider than its natural share. */
     tbody td[data-cell="title"] {
-      min-width: 200px;
-      max-width: min(480px, 50%);
-      width: 480px;
+      min-width: 168px;
+      max-width: min(220px, 22%);
+      width: 200px;
+    }
+    /* Issue Title gets the slack the previous Branch column used to
+       claim. min-width keeps short titles from being squeezed when
+       the viewport is wide; overflow-wrap lets long titles break. */
+    tbody td[data-cell="issue-title"] {
+      min-width: 240px;
     }
     /* Long unbreakable tokens (long run-id, long branch, long issue
        title) must not force the column wider than the table can afford.
@@ -1724,12 +1744,11 @@
             <th>Started</th>
             <th>Duration</th>
             <th>Issue Title</th>
-            <th>Branch</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody id="runs-body">
-          <tr><td colspan="7"><div class="empty-state">Loading runs.</div></td></tr>
+          <tr><td colspan="6"><div class="empty-state">Loading runs.</div></td></tr>
         </tbody>
       </table>
     </section>

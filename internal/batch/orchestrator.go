@@ -985,9 +985,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				case blockerStatus.IsAborted():
 					abortedBy = append(abortedBy, blocker)
 				case blockerStatus.IsSuccess():
-				default:
+				case blockerStatus.IsTerminal() && !blockerStatus.IsSuccess():
 					stillBlockedBy = append(stillBlockedBy, blocker)
 				}
+				// non-terminal statuses (running/queued/unknown/empty) intentionally
+				// fall through so the dependent proceeds; this guards against a
+				// blocker that wrote no status (e.g. panicked before writing).
 			}
 			if len(abortedBy) > 0 {
 				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}

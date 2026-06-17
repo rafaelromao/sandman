@@ -58,14 +58,13 @@ const visualFixtureRowsJS = `
     td('started').textContent = rowSpec.started;
     td('duration').textContent = rowSpec.duration;
     const it = td('issue-title'); it.classList.add('mono'); it.textContent = rowSpec.issueTitle;
-    const br = td('branch'); br.classList.add('mono'); br.textContent = rowSpec.branch;
     const ac = td('actions'); ac.classList.add('run-actions');
     const btn = document.createElement('button'); btn.classList.add('action-btn','danger'); btn.textContent = 'Abort'; ac.appendChild(btn);
     if (rowSpec.batchIssues && rowSpec.batchIssues.length > 1) {
       const batchTr = document.createElement('tr');
       batchTr.classList.add('batch-row');
       const batchTd = document.createElement('td');
-      batchTd.setAttribute('colspan', '7');
+      batchTd.setAttribute('colspan', '6');
       const chip = document.createElement('span'); chip.classList.add('batch-membership', 'mono');
       chip.setAttribute('data-batch-membership', '1');
       chip.textContent = 'Part of batch: ' + rowSpec.batchIssues.map(n => '#' + n).join(', ');
@@ -77,9 +76,9 @@ const visualFixtureRowsJS = `
   }
 
   const rows = [
-    { issueLabel: '#960', key: 'a', metaText: 'ID run-960-178153440912227639 \u00b7 #960', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '37m46s', issueTitle: '[slice 1] Add internal/shellenv with key-validation + value-quoting', branch: 'sandman/960-slice-1-add-internalshellenv-with-key-validation-value-quoting', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
-    { issueLabel: '#961', key: 'b', metaText: 'ID run-961-17815367101959514747 \u00b7 #961', status: 'running', started: 'Jun 15, 12:18:30 PM', duration: '17s', issueTitle: '[slice 2] Add internal/prompt.Renderer with body-insert substitution', branch: 'sandman/961-slice-2-add-internalpromptrenderer-with-body-insert-substitution', batchIssues: null },
-    { issueLabel: '#962', key: 'c', metaText: 'ID run-962-178153673100000000 \u00b7 #962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: '[slice 3] Add internal/orchestrator dependencies path', branch: '\u2014', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
+    { issueLabel: '#960', key: 'a', metaText: 'ID run-960-178153440912227639 \u00b7 #960', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '37m46s', issueTitle: '[slice 1] Add internal/shellenv with key-validation + value-quoting', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
+    { issueLabel: '#961', key: 'b', metaText: 'ID run-961-17815367101959514747 \u00b7 #961', status: 'running', started: 'Jun 15, 12:18:30 PM', duration: '17s', issueTitle: '[slice 2] Add internal/prompt.Renderer with body-insert substitution', batchIssues: null },
+    { issueLabel: '#962', key: 'c', metaText: 'ID run-962-178153673100000000 \u00b7 #962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: '[slice 3] Add internal/orchestrator dependencies path', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
   ];
   const body = document.getElementById('runs-body');
   rows.forEach(r => body.appendChild(buildRow(r)));
@@ -97,7 +96,6 @@ const visualFixtureRowsJS = `
       const meta = tr.querySelector('.meta-line');
       const chip = tr.querySelector('.batch-membership');
       const it = tr.querySelector('[data-cell="issue-title"]');
-      const br = tr.querySelector('[data-cell="branch"]');
       const rect = (el) => el ? { w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) } : null;
       const batchRow = tr.nextElementSibling && tr.nextElementSibling.classList.contains('batch-row') ? tr.nextElementSibling : null;
       const batchChip = batchRow ? batchRow.querySelector('.batch-membership') : null;
@@ -108,7 +106,6 @@ const visualFixtureRowsJS = `
         meta: rect(meta),
         chip: rect(batchChip || chip),
         issueTitle: rect(it),
-        branch: rect(br),
         innerWidthTitleCell: t ? t.clientWidth : null,
         batchRow: rect(batchTd),
         batchTdInnerWidth: batchTd ? batchTd.clientWidth : null,
@@ -166,7 +163,7 @@ func buildVisualFixture(t *testing.T) string {
       <thead>
         <tr>
           <th>Run</th><th>Status</th><th>Started</th><th>Duration</th>
-          <th>Issue Title</th><th>Branch</th><th>Actions</th>
+          <th>Issue Title</th><th>Actions</th>
         </tr>
       </thead>
       <tbody id="runs-body"></tbody>
@@ -196,7 +193,6 @@ type visualRow struct {
 	Meta                *visualRect `json:"meta"`
 	Chip                *visualRect `json:"chip"`
 	IssueTitle          *visualRect `json:"issueTitle"`
-	Branch              *visualRect `json:"branch"`
 	InnerWidthTitleCell *int        `json:"innerWidthTitleCell"`
 	BatchRow            *visualRect `json:"batchRow"`
 	BatchTdInnerWidth   *int        `json:"batchTdInnerWidth"`
@@ -334,17 +330,17 @@ func TestPortal_Visual_BatchMembershipFillsRunCellAndWraps(t *testing.T) {
 	if row.Chip.W < innerW-2 || row.Chip.W > innerW+2 {
 		t.Errorf("chip width %d != cell content width %d (want within 2px)", row.Chip.W, innerW)
 	}
-	// Chip should be at most 2 lines for an 8-issue batch at 480px cap
+	// Chip should be at most 2 lines for an 8-issue batch at 220px cap
 	// (1 line for <=7 issues, 2 lines for 8+). 3+ lines was the bug.
 	if row.Chip.H > 40 {
 		t.Errorf("chip height %d implies 3+ wrapped lines; expected <= 2 (height <= 40px)", row.Chip.H)
 	}
-	// Run column grew to the cap, not clamped to its min-content.
-	if row.TitleCell == nil || row.TitleCell.W < 200 {
-		t.Errorf("Run column width %v; expected >= 200 (the column cap allows it to grow)", row.TitleCell)
+	// Run column grew to its min, not clamped below it.
+	if row.TitleCell == nil || row.TitleCell.W < 168 {
+		t.Errorf("Run column width %v; expected >= 168 (the column min allows it to grow)", row.TitleCell)
 	}
-	if row.TitleCell != nil && row.TitleCell.W > 480 {
-		t.Errorf("Run column width %d > 480 cap; expected the cap to hold", row.TitleCell.W)
+	if row.TitleCell != nil && row.TitleCell.W > 220 {
+		t.Errorf("Run column width %d > 220 cap; expected the cap to hold", row.TitleCell.W)
 	}
 }
 
@@ -377,8 +373,8 @@ func TestPortal_Visual_MetaLineDoesNotForceColumnWidth(t *testing.T) {
 		t.Errorf("meta-line height %d implies 2+ lines; expected 1 (height ~17px)", row.Meta.H)
 	}
 	// Run column stayed within the cap even with the long run-id token.
-	if row.TitleCell == nil || row.TitleCell.W > 480 {
-		t.Errorf("Run column width %v; expected <= 480 cap with the long run-id", row.TitleCell)
+	if row.TitleCell == nil || row.TitleCell.W > 220 {
+		t.Errorf("Run column width %v; expected <= 220 cap with the long run-id", row.TitleCell)
 	}
 }
 
@@ -394,20 +390,17 @@ func TestPortal_Visual_NoHorizontalScrollAt1280px(t *testing.T) {
 		t.Errorf("horizontal scroll appeared: scrollWidth=%d > clientWidth=%d", dump.ScrollWidth, dump.ClientWidth)
 	}
 	// Defence-in-depth: also assert no row exceeded the cap, and Issue
-	// Title + Branch didn't claim more than the cap leftover.
+	// Title didn't claim more than the cap leftover.
 	for _, r := range dump.Rows {
 		if r.IssueTitle != nil && r.IssueTitle.W > 1280 {
 			t.Errorf("row %d issueTitle width %d > viewport", r.Idx, r.IssueTitle.W)
-		}
-		if r.Branch != nil && r.Branch.W > 1280 {
-			t.Errorf("row %d branch width %d > viewport", r.Idx, r.Branch.W)
 		}
 	}
 }
 
 // TestPortal_Visual_RunRowStaysShortOnMobileViewport asserts that at a
 // narrow viewport the run row does not stretch tall because of long
-// issue-title or branch cells. Before the fix, those cells wrapped to
+// issue-title cells. Before the fix, those cells wrapped to
 // multiple lines and forced the row to ~285px. The fix applies
 // white-space:nowrap + overflow:hidden + text-overflow:ellipsis so
 // they stay on a single line.
@@ -444,11 +437,8 @@ func TestPortal_Visual_RunRowStaysShortOnMobileViewport(t *testing.T) {
 	if row.BatchRow != nil && row.BatchRow.H > 40 {
 		t.Errorf("batch-row td height %d on 500px viewport; expected <= 40", row.BatchRow.H)
 	}
-	// Issue-title and branch cells should be on a single line (height ~17px).
+	// Issue-title cell should be on a single line (height ~17px).
 	if row.IssueTitle != nil && row.IssueTitle.H > 25 {
 		t.Errorf("issue-title cell height %d on 500px viewport; expected <= 25", row.IssueTitle.H)
-	}
-	if row.Branch != nil && row.Branch.H > 25 {
-		t.Errorf("branch cell height %d on 500px viewport; expected <= 25", row.Branch.H)
 	}
 }

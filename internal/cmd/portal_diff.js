@@ -33,7 +33,6 @@
       batchText: batchText(run),
       startedText: h.formatTime(run.startedAt),
       durationText: h.formatDuration(run.duration),
-      branchText: h.formatBranch(run),
       issueTitleText: h.formatIssueTitle(run),
       canAbort: opts.abortSupported !== false && h.isRunAbortable(run, opts.abortReservations),
       canArchive: opts.archiveSupported !== false && h.isRunArchivable(run),
@@ -92,7 +91,7 @@
     tr.classList.add('context-row');
     tr.setAttribute('data-context-for', run.key);
     const td = global.document.createElement('td');
-    td.setAttribute('colspan', '7');
+    td.setAttribute('colspan', '6');
     td.appendChild(buildContextChip(text));
     tr.appendChild(td);
     return tr;
@@ -205,7 +204,7 @@
     tr.classList.add('batch-row');
     tr.setAttribute('data-batch-for', run.key);
     const td = global.document.createElement('td');
-    td.setAttribute('colspan', '7');
+    td.setAttribute('colspan', '6');
     const chip = global.document.createElement('span');
     chip.classList.add('batch-membership', 'mono');
     chip.setAttribute('data-batch-membership', '1');
@@ -338,9 +337,6 @@
 
     const issueTitleCell = makeRowCell('issue-title', tr);
     buildMonoCell(issueTitleCell, opts.helpers.formatIssueTitle(run));
-
-    const branchCell = makeRowCell('branch', tr);
-    buildMonoCell(branchCell, opts.helpers.formatBranch(run));
 
     const actionsCell = makeRowCell('actions', tr);
     buildActionsCell(actionsCell, run, opts);
@@ -660,7 +656,7 @@
     tr.classList.add('detail-row');
     tr.setAttribute('data-detail-for', run.key);
     const td = global.document.createElement('td');
-    td.setAttribute('colspan', '7');
+    td.setAttribute('colspan', '6');
     const panel = global.document.createElement('div');
     panel.classList.add('detail-panel');
     buildDetailContent(panel, run, tabNameFor(run, opts), opts.helpers);
@@ -879,9 +875,6 @@
     const durationCell = cellOf(row, 'duration');
     if (durationCell) updateMonoCell(durationCell, newSnap.durationText);
 
-    const branchCell = cellOf(row, 'branch');
-    if (branchCell) updateMonoCell(branchCell, newSnap.branchText);
-
     const issueTitleCell = cellOf(row, 'issue-title');
     if (issueTitleCell) updateMonoCell(issueTitleCell, newSnap.issueTitleText);
 
@@ -928,7 +921,7 @@
   function setEmpty(body, html) {
     const placeholder = global.document.createElement('tr');
     const td = global.document.createElement('td');
-    td.setAttribute('colspan', '7');
+    td.setAttribute('colspan', '6');
     td.innerHTML = html;
     placeholder.appendChild(td);
     body.replaceChildren(placeholder);
