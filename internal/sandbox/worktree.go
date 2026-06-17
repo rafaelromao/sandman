@@ -30,10 +30,11 @@ type WorktreeSandbox struct {
 // NewWorktreeSandbox creates a WorktreeSandbox for the given repo and branch.
 func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *WorktreeSandbox {
 	return &WorktreeSandbox{
-		repoPath:     repoPath,
-		worktreeBase: worktreeBase,
-		branch:       branch,
-		sourceBranch: sourceBranch,
+		repoPath:          repoPath,
+		worktreeBase:      worktreeBase,
+		branch:            branch,
+		sourceBranch:      sourceBranch,
+		strandedReconcile: true,
 	}
 }
 
@@ -79,7 +80,7 @@ func (s *WorktreeSandbox) Start() error {
 			overrideRecreate = true
 		}
 	}
-	if !s.override {
+	if !s.override && s.strandedReconcile {
 		if _, reclaimable := ReclaimableWorktree(s.repoPath, s.worktreeBase, s.branch); reclaimable {
 			if s.workDirExists() {
 				gitlinkPath := filepath.Join(s.workDir, ".git")

@@ -2,7 +2,7 @@
 
 ## Status
 
-proposed
+accepted
 
 ## Context
 
@@ -22,7 +22,7 @@ The auto-recovery pattern is not new. ADR-0021 (`docs/adr/0021-portal-auto-runs-
 
 ## Decision
 
-Auto-recovery from stranded worktrees is on by default in the two flows that can create a worktree: `sandman run --override` and `sandman run --continue` (after the #934 auto-promotion falls through). Both flows call the same Go helper before they call `git worktree add`, and the helper performs detection and recovery in a single pass.
+Auto-recovery from stranded and prunable worktrees is on by default in the two flows that can create a worktree: `sandman run --override` and `sandman run --continue` (after the #934 auto-promotion falls through). Both flows call the same Go helper before they call `git worktree add`, and the helper performs detection and recovery in a single pass. Recovery includes prunable-reattach (strategy 0): when a worktree registration exists but the `.git` gitlink points to a non-existent directory, the registration is pruned and the existing directory is re-registered without deleting its contents.
 
 The two new CLI flags share a single boolean (`reconcileStranded`) with a sensible default:
 
@@ -31,7 +31,9 @@ The two new CLI flags share a single boolean (`reconcileStranded`) with a sensib
 
 `StrandedWorktree` (the Go helper introduced in #936) is the canonical detection source. Both `--override` and `--continue` call it; `scripts/reconcile-stranded-worktrees.sh` is reduced to a wrapper that shells out to the same helper. Detection returns a structured value that the recovery loop can iterate over without re-parsing git output.
 
-The recovery loop tries three strategies, in order, and stops as soon as one succeeds:
+The recovery loop tries four strategies, in order, and stops as soon as one succeeds:
+
+0. **Reclaim prunable worktree.** If a worktree registration exists at `.sandman/worktrees/<issue>` but the `.git` gitlink points to a non-existent directory (git marks it prunable), the helper detects the stale registration via `ReclaimableWorktree`, runs `git worktree prune` to remove the stale entry, and re-registers the existing directory with `git worktree add <dir> <branch>` (no `-b`). This is the cheapest recovery and runs before the branch-delete strategies. It preserves any uncommitted work in the directory.
 
 1. **Delete the branch from the stranded worktree's cwd.** If the worktree at `.sandman/worktrees/<issue>` is checked out on the wrong branch but that branch has no commits ahead of the base, the helper `git branch -D`s the wrong branch from inside the worktree directory. This is the cheapest fix and is sufficient when the stranded branch is genuinely unreferenced.
 2. **Check out the base branch in the main repo.** If the main repo itself is on `sandman/N-…`, the helper runs `git -C <repoRoot> checkout <baseBranch>` so the worktree registration can be removed and re-created. This is the most common case after a `Ctrl+C` mid-run on the main repo.
@@ -56,8 +58,12 @@ The package-level function variable seam that ADR-0021 introduced is replicated 
 - Strategy (c) (`git update-ref -d`) is destructive. It is a deliberate last resort, but it does drop a ref. The helper logs a warning before this branch runs and refuses to delete a ref that has commits ahead of the base, so the destruction is bounded; still, an operator who expected the recovery to be no-op-on-main-repo will see the ref disappear and may not realise why.
 - The auto-promotion in `--continue` (slice #934) breaks the implicit assumption from ADR-0022 that a prior AgentRun exists. The previous error path — "no AgentRun for issue N; run with `--override`" — is no longer the only way out. Operators who relied on that error to catch wrong issue numbers will need to add an explicit guard, since the orchestrator will now treat a typo'd issue as a fresh `--override` and try to auto-recover whatever stranded state happens to exist.
 
+### Phase 5 follow-up
+
+Slices #934–#938 wired the auto-recovery for the `--override` path only. The prunable-reattach (strategy 0) for the `--continue` path was not implemented in those slices: when `--continue` encountered a prunable worktree registration, it would fall through to the orphan-dir cleanup and branch-exists error, failing loudly instead of auto-recovering. Slices 1–3 of issue #1006 close this gap by extending the `--no-reconcile-stranded` gate to also cover the prunable-reattach block, so the same `--reconcile-stranded` / `--no-reconcile-stranded` contract applies to both the override and continue flows.
+
 ### Neutral
 
 - `scripts/reconcile-stranded-worktrees.sh` still works for manual detection. After slice #936 lands it is a thin wrapper around the Go helper, but operators can still run it to see which worktrees are stranded without invoking `sandman run`. The script's printed remediation commands are no longer needed in the common case, but the detection output is unchanged.
 - The function variable seam is a `func(...) error`, not a struct field. This mirrors ADR-0021's `portalStaleCleaner` choice. Future work that wants to inject a stub from a `Dependencies` object can wrap the seam; today the orchestrator does not take a `Dependencies`.
-- This ADR is filed as `proposed`. The contract described above is the contract the slices in #934–#938 implement. If any of those slices diverge from the contract — for example, if `StrandedWorktree` returns a different shape, or if the recovery strategies are reordered — the ADR is the artefact that has to change to match, not the code.
+- This ADR is filed as `accepted`. The original contract (slices #934–#938) and the extension (slices 1–3 of #1006) collectively implement the auto-recovery for both `--override` and `--continue`, including prunable-reattach for the `--continue` path. If any future slice diverges from the contract — for example, if `StrandedWorktree` returns a different shape, or if the recovery strategies are reordered — the ADR is the artefact that has to change to match, not the code.
