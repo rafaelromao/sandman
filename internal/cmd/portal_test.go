@@ -566,32 +566,6 @@ func TestPortal_RunFromActiveMatchReturnsReviewingForPRInstance(t *testing.T) {
 	}
 }
 
-func TestPortal_ParseRunDirPR(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     string
-		wantNum   int
-		wantMatch bool
-	}{
-		{"PR42", "PR42", 42, true},
-		{"existing run-issue format", "run-42-123", 0, false},
-		{"PR without number", "PR", 0, false},
-		{"PR with non-numeric suffix", "PR123abc", 0, false},
-		{"plain number", "42", 0, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			num, ok := (&portalRunsView{}).parseRunDirPR(tt.input)
-			if ok != tt.wantMatch {
-				t.Errorf("parseRunDirPR(%q) match = %v, want %v", tt.input, ok, tt.wantMatch)
-			}
-			if num != tt.wantNum {
-				t.Errorf("parseRunDirPR(%q) num = %d, want %d", tt.input, num, tt.wantNum)
-			}
-		})
-	}
-}
-
 func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
@@ -993,7 +967,7 @@ func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot)
+	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, nil)
 	if err != nil {
 		t.Fatalf("discoverActiveRuns: %v", err)
 	}
@@ -1028,7 +1002,7 @@ func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 
-	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot)
+	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, nil)
 	if err != nil {
 		t.Fatalf("discoverActiveRuns: %v", err)
 	}
@@ -1078,7 +1052,7 @@ func TestPortal_DiscoverActiveRuns_SkipsDeadSocketFromFinishedBatch(t *testing.T
 	portalRunLivenessProbe = func(string) bool { return false }
 	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
 
-	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot)
+	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, nil)
 	if err != nil {
 		t.Fatalf("discoverActiveRuns: %v", err)
 	}

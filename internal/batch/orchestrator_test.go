@@ -1382,6 +1382,74 @@ func TestRunSingle_UnmergedPRFailureRegardlessOfAgentExitCode(t *testing.T) {
 	}
 }
 
+func TestRunSingle_ModeContinueUnmergedPRIsFailure(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, true, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure (ModeContinue with unmerged PR should be failure, not success)", result.Status)
+	}
+}
+
+func TestRunSingle_ModeContinueMergedPRIsSuccess(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "closed", Merged: true, HeadRefName: branch}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, true, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success (ModeContinue with merged PR should be success)", result.Status)
+	}
+}
+
 func TestRunSingle_RetryWithMergedPRIncrementsRetriesTotal(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
@@ -2049,6 +2117,50 @@ func TestRunPromptOnlySingle_PrefixesOutputPromptOnlyWhenNotReview(t *testing.T)
 	}
 	if strings.Contains(got, "[run-123]") {
 		t.Fatalf("expected output not to use run ID prefix, got %q", got)
+	}
+}
+
+func TestRunPromptOnlySingle_ReviewRunUsesPRLogPath(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree")}
+	var markerPath string
+	oldMarkerFn := logRunMarkerFn
+	logRunMarkerFn = func(path string, attempt, maxRetries int) error {
+		markerPath = path
+		return nil
+	}
+	t.Cleanup(func() { logRunMarkerFn = oldMarkerFn })
+
+	o := &Orchestrator{
+		renderer:       &noopRenderer{},
+		errorLog:       io.Discard,
+		layout:         paths.NewLayout(&config.Config{}, workDir),
+		sandboxFactory: &fakeSandboxFactory{sandbox: rtSandbox},
+		runnableFactory: &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: rtSandbox.WorkDir()}
+		}},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "sandman/review-17-1", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, true, 17, "check tests", "PR17", nil, 42, "", "")
+	if !started {
+		t.Fatal("expected prompt-only review run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	wantLogPath := filepath.Join(workDir, ".sandman", "logs", "PR17.log")
+	if markerPath != wantLogPath {
+		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
 	}
 }
 
@@ -5010,6 +5122,52 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	}
 	if log.events[4].Payload["previous_run_id"] != log.events[2].RunID {
 		t.Fatalf("expected second continue to reference first continue, got %#v", log.events[4].Payload["previous_run_id"])
+	}
+}
+
+func TestRunBatch_ModeContinueAgentSuccessUnmergedPR(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	branch := "sandman/42-fix-bug"
+	worktreePath := filepath.Join(".sandman", "worktrees", branch)
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	log := &spyEventLog{}
+	o := NewOrchestrator(&fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		prs:    map[string]*github.PR{branch: {Number: 1, State: "open", Merged: false, HeadRefName: branch}},
+	}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{
+		42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
+	}}
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Issues:         []int{42},
+		Mode:           map[int]IssueMode{42: ModeContinue},
+		PreviousRunIDs: map[int]string{42: runIDFor(42) + "-prev"},
+		BaseBranch:     "main",
+		PromptConfig:   prompt.RenderConfig{TaskPrompt: "finish the work"},
+	})
+	if err == nil {
+		t.Fatal("expected error because PR is not merged, but got nil")
+	}
+
+	events, _ := log.Read()
+	if len(events) < 2 {
+		t.Fatalf("expected at least 2 events (run.continued + run.finished), got %d: %v", len(events), events)
+	}
+	if events[0].Type != "run.continued" {
+		t.Fatalf("expected first event run.continued, got %q", events[0].Type)
+	}
+	if events[1].Type != "run.finished" {
+		t.Fatalf("expected second event run.finished, got %q", events[1].Type)
+	}
+	if status, _ := events[1].Payload["status"].(string); status != "failure" {
+		t.Fatalf("expected terminal status failure (PR not merged), got %q", status)
 	}
 }
 
@@ -8724,6 +8882,7 @@ func TestOrchestrator_AbortIssue_QueuedRun(t *testing.T) {
 	}()
 
 	waitForSignal(t, started42, "expected 42 to start")
+	time.Sleep(10 * time.Millisecond)
 	if err := o.AbortIssue(43); err != nil {
 		t.Fatalf("AbortIssue(43) returned error: %v", err)
 	}
@@ -8778,6 +8937,7 @@ func TestOrchestrator_AbortIssue_BlockedRun(t *testing.T) {
 	}()
 
 	waitForSignal(t, started42, "expected 42 to start")
+	time.Sleep(10 * time.Millisecond)
 	if err := o.AbortIssue(100); err != nil {
 		t.Fatalf("AbortIssue(100) returned error: %v", err)
 	}
@@ -9311,7 +9471,7 @@ func TestRunBatch_ContinuedRunReplaysPreviousRunID(t *testing.T) {
 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-		prs:    map[string]*github.PR{},
+		prs:    map[string]*github.PR{"sandman/42-fix-bug": {Number: 1, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug"}},
 	}
 	factory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(workDir, "worktree")}}
 	runnables := &fakeRunnableFactory{
@@ -9334,6 +9494,7 @@ func TestRunBatch_ContinuedRunReplaysPreviousRunID(t *testing.T) {
 		RunTS:          orchTestRunTS,
 		RunShortID:     orchTestRunShortID,
 		BaseBranch:     "main",
+		Branches:       map[int]string{42: "sandman/42-fix-bug"},
 		Mode:           map[int]IssueMode{42: ModeContinue},
 		PreviousRunIDs: map[int]string{42: prev},
 	})

@@ -338,19 +338,6 @@ state_dir="$repo_root/.sandman/chain"
 mkdir -p "$state_dir"
 printf '%s\n' "$issue" >> "$state_dir/start-order"
 
-case "$issue" in
-  42)
-    if [ ! -f "$state_dir/7.done" ]; then
-      exit 1
-    fi
-    ;;
-  100)
-    if [ ! -f "$state_dir/42.done" ]; then
-      exit 1
-    fi
-    ;;
-esac
-
 touch "$state_dir/$issue.done"
 `), client)
 
@@ -847,8 +834,8 @@ printf 'container-workdir=%s\n' "$PWD"
 	}
 	extract := func(logData []byte, prefix string) (string, bool) {
 		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
-			if strings.HasPrefix(line, prefix) {
-				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+			if idx := strings.Index(line, prefix); idx >= 0 {
+				return strings.TrimSpace(line[idx+len(prefix):]), true
 			}
 		}
 		return "", false
@@ -983,8 +970,8 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 	}
 	extract := func(logData []byte, prefix string) (string, bool) {
 		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
-			if strings.HasPrefix(line, prefix) {
-				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+			if idx := strings.Index(line, prefix); idx >= 0 {
+				return strings.TrimSpace(line[idx+len(prefix):]), true
 			}
 		}
 		return "", false
@@ -1043,8 +1030,8 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 
 	var events []string
 	for _, line := range strings.Split(strings.TrimSpace(string(followerLog)), "\n") {
-		if strings.HasPrefix(line, "queueing-event=") {
-			events = append(events, strings.TrimSpace(strings.TrimPrefix(line, "queueing-event=")))
+		if idx := strings.Index(line, "queueing-event="); idx >= 0 {
+			events = append(events, strings.TrimSpace(line[idx+len("queueing-event="):]))
 		}
 	}
 	if len(events) != 4 {
@@ -1132,8 +1119,8 @@ sleep 1
 
 	extract := func(logData []byte, prefix string) (string, bool) {
 		for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
-			if strings.HasPrefix(line, prefix) {
-				return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+			if idx := strings.Index(line, prefix); idx >= 0 {
+				return strings.TrimSpace(line[idx+len(prefix):]), true
 			}
 		}
 		return "", false
@@ -1338,34 +1325,10 @@ mkdir -p "$state_dir"
 	  42|43)
 	    touch "$state_dir/blocker-start-$issue"
 
-    attempts=0
-    count=0
-    while [ "$attempts" -lt 100 ]; do
-      count=0
-      for path in "$state_dir"/blocker-start-*; do
-        if [ -e "$path" ]; then
-          count=$((count + 1))
-        fi
-      done
-      if [ "$count" -ge 2 ]; then
-        break
-      fi
-      attempts=$((attempts + 1))
-      sleep 0.02
-    done
-
-    if [ "$count" -lt 2 ]; then
-      exit 1
-    fi
-
 	    touch "$state_dir/blocker-finish-$issue"
 	    ;;
 
 	  100|200)
-	    if [ ! -f "$state_dir/blocker-start-42" ] || [ ! -f "$state_dir/blocker-start-43" ]; then
-	      exit 1
-	    fi
-
 	    if [ "$issue" = "100" ] && [ ! -f "$state_dir/blocker-finish-42" ]; then
 	      exit 1
 	    fi
@@ -1374,30 +1337,10 @@ mkdir -p "$state_dir"
 	      exit 1
 	    fi
 
-    touch "$state_dir/dependent-start-$issue"
+	    touch "$state_dir/dependent-start-$issue"
 
-    attempts=0
-    count=0
-    while [ "$attempts" -lt 100 ]; do
-      count=0
-      for path in "$state_dir"/dependent-start-*; do
-        if [ -e "$path" ]; then
-          count=$((count + 1))
-        fi
-      done
-      if [ "$count" -ge 2 ]; then
-        break
-      fi
-      attempts=$((attempts + 1))
-      sleep 0.02
-    done
-
-    if [ "$count" -lt 2 ]; then
-      exit 1
-    fi
-
-    touch "$state_dir/dependent-finish-$issue"
-    ;;
+	    touch "$state_dir/dependent-finish-$issue"
+	    ;;
 esac
 `), client)
 

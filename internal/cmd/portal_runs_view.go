@@ -92,6 +92,7 @@ type portalActiveRun struct {
 	IssueNumber  int
 	IssueNumbers []int
 	PRNumber     int
+	RunID        string
 	StartedAt    time.Time
 	ModTime      time.Time
 }
@@ -105,18 +106,19 @@ type portalRunsView struct{}
 
 // compute is the entry point for computing displayable portal runs.
 func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]portalRun, error) {
-	activeInstances, err := v.discoverActiveRuns(repoRoot)
-	if err != nil {
-		return nil, err
-	}
-
 	eventList, err := eventLog.Read()
 	if err != nil {
 		return nil, fmt.Errorf("read event log: %w", err)
 	}
 
-	runStates := events.ProjectRunStates(eventList)
 	eventsByRun := v.groupEventsByRun(eventList)
+
+	activeInstances, err := v.discoverActiveRuns(repoRoot, eventsByRun)
+	if err != nil {
+		return nil, err
+	}
+
+	runStates := events.ProjectRunStates(eventList)
 	activeStates := make([]events.RunState, 0, len(runStates))
 	activeBatchStart := time.Time{}
 	for _, run := range runStates {
@@ -357,7 +359,7 @@ func (v *portalRunsView) runPriority(run portalRun) int {
 	}
 }
 
-func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun, error) {
+func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[string][]portalEvent) ([]portalActiveRun, error) {
 	instances, err := discoverPortalInstances(repoRoot)
 	if err != nil {
 		return nil, err
@@ -371,7 +373,12 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun,
 		}
 		runDir := filepath.Dir(instance.SocketPath)
 		manifest, manifestErr := daemon.ReadManifest(runDir)
-		prNumber, _ := v.parseRunDirPR(instance.Name)
+		prNumber := 0
+		runID := instance.Name
+		if manifestErr == nil && manifest.RunID != "" {
+			runID = manifest.RunID
+			prNumber = v.prNumberFromEvent(eventsByRun[runID])
+		}
 		issueNumbers := []int(nil)
 		issueNumber := 0
 		startedAt := info.ModTime()
@@ -395,6 +402,7 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string) ([]portalActiveRun,
 			IssueNumber:  issueNumber,
 			IssueNumbers: issueNumbers,
 			PRNumber:     prNumber,
+			RunID:        runID,
 			StartedAt:    startedAt,
 			ModTime:      info.ModTime(),
 		})
@@ -679,6 +687,10 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		review = true
 	}
 	logPath := v.portalLogPath(repoRoot, issueNumber, "")
+	eventKey := match.instance.Key
+	if match.instance.RunID != "" {
+		eventKey = match.instance.RunID
+	}
 	run := portalRun{
 		Key:         runID,
 		RunID:       runID,
@@ -695,7 +707,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		LogPath:     logPath,
 		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, ""),
 		Log:         v.readPortalSocketOutput(match.instance.SocketPath),
-		Events:      eventsByRun[match.instance.Key],
+		Events:      eventsByRun[eventKey],
 		BatchKey:    match.instance.Key,
 	}
 	v.markCompletedIfSocketDead(&run, run.SocketPath)
@@ -921,6 +933,18 @@ func (v *portalRunsView) reviewPRNumber(payload map[string]any) int {
 		return int(n)
 	case float64:
 		return int(n)
+	}
+	return 0
+}
+
+// prNumberFromEvent extracts the PR number from the run.started event
+// in the given events slice. Returns 0 if no run.started event is found
+// or if the payload does not contain pr_number.
+func (v *portalRunsView) prNumberFromEvent(events []portalEvent) int {
+	for _, e := range events {
+		if e.Type == "run.started" {
+			return v.reviewPRNumber(e.Payload)
+		}
 	}
 	return 0
 }
