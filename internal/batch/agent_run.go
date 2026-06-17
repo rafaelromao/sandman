@@ -78,7 +78,7 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 }
 
 // Execute runs the agent command inside the sandbox, writing prefixed output to the given writers
-// and to the layout's LogDir.
+// and to the layout's LogDir (saved log file is also prefixed).
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	logDir := r.layout.LogDir
 	if err := os.MkdirAll(logDir, 0755); err != nil {
