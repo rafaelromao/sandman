@@ -480,13 +480,22 @@
     }
     /* Context and batch chips live in their own tr (so a single td can
        span all six columns), but visually they are part of the run row
-       above: no border, no surface fill, no decorative chrome. The
-       same hover/active state that paints the run row also paints the
-       chip row directly under it, so the two read as one block. */
+       above: no surface fill, no decorative chrome. The same hover/active
+       state that paints the run row also paints the chip row directly
+       under it, so the two read as one block. The divider line moves to
+       BELOW the chip (inherited border-bottom) so the run row + chip
+       read as a single visual block; the next run row starts after the
+       chip's own divider. */
     tbody tr.batch-row td,
     tbody tr.context-row td {
       padding: 0 14px 6px;
-      border: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+    }
+    tbody tr.run-row:has(+ tr.context-row) td,
+    tbody tr.run-row:has(+ tr.batch-row) td {
+      border-bottom: none;
     }
     tbody tr.run-row + tr.batch-row td,
     tbody tr.run-row + tr.context-row td {

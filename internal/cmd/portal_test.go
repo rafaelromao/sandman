@@ -1444,7 +1444,7 @@ func TestPortal_BatchRowCSS_RendersAsSecondaryRowUnderRunRow(t *testing.T) {
 		sel   string
 		props []string
 	}{
-		{"tbody tr.batch-row td", []string{"border: none"}},
+		{"tbody tr.batch-row td", []string{"border-top: none", "border-left: none", "border-right: none"}},
 		{"tbody tr.run-row + tr.batch-row td", []string{"padding-top: 0"}},
 		{"tbody tr.run-row:hover + tr.batch-row td", []string{"background:"}},
 		{"tbody tr.run-row.active + tr.batch-row td", []string{"background:"}},
