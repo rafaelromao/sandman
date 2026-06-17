@@ -1432,7 +1432,7 @@ type runSession struct {
 
 	// runID is an optional batch-level identifier for prompt-only runs.
 	// When non-empty, it is used as the run directory name and as the
-	// RunID in run.started events instead of generateRunID(0).
+	// RunID in run.started events instead of an auto-generated fallback.
 	runID string
 
 	// batchTS and batchShortID are the timestamp and short-id components
