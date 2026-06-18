@@ -21,7 +21,7 @@
 
   function snapshotCellState(run, opts) {
     const h = opts.helpers;
-    return {
+    const snap = {
       kind: run.kind || '',
       archived: !!(run && run.archived),
       nameText: run.issueLabel || run.key,
@@ -38,6 +38,10 @@
       canArchive: opts.archiveSupported !== false && h.isRunArchivable(run),
       ariaExpanded: String(opts.expandedKey === run.key),
     };
+    const stale = stalenessOf(run);
+    snap.staleText = stale ? stale.text : '';
+    snap.staleWarn = stale ? stale.warn : false;
+    return snap;
   }
 
   function cellOf(row, name) {
@@ -233,6 +237,8 @@
     td.appendChild(badge);
     if (run.archived) appendArchivedBadge(td);
     appendRetryChip(td, run);
+    const stale = stalenessOf(run);
+    if (stale) appendStaleChip(td, stale.text, stale.warn);
   }
 
   function appendArchivedBadge(td) {
@@ -256,6 +262,56 @@
     chip.setAttribute('title', tooltip);
     chip.textContent = label;
     td.appendChild(chip);
+  }
+
+  const STALE_CHIP_SECONDS = 60;
+  const STALE_WARN_SECONDS = 180;
+
+  function formatStaleDuration(seconds) {
+    if (seconds < 60) return seconds + 's';
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    if (m < 60) return m + 'm' + (s ? ' ' + s + 's' : '');
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return h + 'h' + (mm ? ' ' + mm + 'm' : '');
+  }
+
+  // stalenessOf derives the per-row staleness signal from the server-provided
+  // lastOutputAt (saved-run-log mtime with a startedAt fallback, set by
+  // compute()). Returns null for non-active rows or rows younger than the
+  // chip threshold, so healthy quiet agents are not flagged. The warn tier
+  // escalates the chip to the --warning token past the second threshold; no
+  // new color is introduced.
+  function stalenessOf(run) {
+    if (!run || run.kind !== 'active' || !run.lastOutputAt) return null;
+    const ts = Date.parse(run.lastOutputAt);
+    if (!Number.isFinite(ts)) return null;
+    const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (seconds < STALE_CHIP_SECONDS) return null;
+    return { text: 'stale \u00b7 ' + formatStaleDuration(seconds), warn: seconds >= STALE_WARN_SECONDS };
+  }
+
+  function appendStaleChip(td, staleText, staleWarn) {
+    const chip = global.document.createElement('span');
+    chip.classList.add('stale-chip');
+    if (staleWarn) chip.classList.add('warn');
+    chip.setAttribute('data-stale', '1');
+    chip.textContent = staleText;
+    td.appendChild(chip);
+  }
+
+  function reconcileStaleChip(cell, staleText, staleWarn) {
+    let existing = null;
+    for (const child of cell.querySelectorAll('.stale-chip')) { existing = child; break; }
+    if (!staleText) {
+      if (existing) { cell.removeChild(existing); mutationCount += 1; }
+      return;
+    }
+    if (existing && existing.textContent === staleText && existing.classList.contains('warn') === Boolean(staleWarn)) return;
+    if (existing) cell.removeChild(existing);
+    appendStaleChip(cell, staleText, staleWarn);
+    mutationCount += 1;
   }
 
   function buildMonoCell(td, text, extraClass) {
@@ -678,6 +734,12 @@
     const content = detailRow.querySelector('.detail-content');
     if (!content) return;
     if (tabName === 'log') {
+      // While the Log tab is being fed by a live SSE stream
+      // (opts.streamingKeys), the stream owns this <pre>; the poll path
+      // must not overwrite it with its 64KB socket snapshot every 2s.
+      if (opts.streamingKeys && opts.streamingKeys.has(run.key) && content.querySelector('pre[data-scroll-key]')) {
+        return;
+      }
       const pre = content.querySelector('pre[data-scroll-key]');
       const newLog = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
       if (pre) {
@@ -787,6 +849,7 @@
     if (oldSnap.archived !== newSnap.archived) {
       reconcileArchivedBadge(cell, newSnap.archived);
     }
+    reconcileStaleChip(cell, newSnap.staleText, newSnap.staleWarn);
   }
 
   function reconcileArchivedBadge(cell, archived) {

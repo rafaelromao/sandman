@@ -493,6 +493,126 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffUpdateDetailContent_StreamedLogIsShieldedFromPoll pins the
+// seam that lets a live SSE stream own a Log <pre>: while a run's key is in
+// opts.streamingKeys, the poll path (updateDetailContent) must not touch
+// the streamed pre, even as run.log changes. Once the key is removed, the
+// poll resumes authority and reconciles the log normally.
+func TestPortalDiffUpdateDetailContent_StreamedLogIsShieldedFromPoll(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r1', log: 'first line' };
+const streamingKeys = new Set();
+const opts = { helpers, stopGroups: new Set(), expandedKey: 'a', tabs: { a: 'log' }, streamingKeys };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="a"]');
+if (!detailRow) throw new Error('expected a detail row for the expanded run');
+const pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected a log pre for the expanded run');
+const before = pre.getAttribute('data-rendered-log') || '';
+
+// Stream takes ownership; a poll with a longer log must NOT clobber the pre.
+streamingKeys.add('a');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [Object.assign({}, run, { log: 'first line\nsecond line' })], opts);
+const guarded = pre.getAttribute('data-rendered-log') || '';
+if (guarded !== before) throw new Error('streamed log pre was clobbered by poll (before=' + JSON.stringify(before) + ', after=' + JSON.stringify(guarded) + ')');
+
+// Stream releases; the poll resumes and appends the new line.
+streamingKeys.delete('a');
+SandmanPortalDiff.diffRuns(body, [Object.assign({}, run, { log: 'first line\nsecond line' })], opts);
+const resumed = pre.getAttribute('data-rendered-log') || '';
+if (resumed === before) throw new Error('poll did not resume updating the log after the stream released it');
+if (!/second line/.test(resumed)) throw new Error('resumed log missing the new line, got ' + JSON.stringify(resumed));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildBadgeCell_StaleWarnChipPast180s(t *testing.T) {
+	js := `const body = makeMockBody();
+const lastOutputAt = new Date(Date.now() - 200*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r1', lastOutputAt };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const badgeCell = row.querySelector('[data-cell="badge"]');
+if (!badgeCell) throw new Error('expected badge cell');
+const chip = badgeCell.querySelector('.stale-chip');
+if (!chip) throw new Error('expected .stale-chip.warn for an active run idle 200s');
+if (!chip.classList.contains('warn')) throw new Error('expected warn tier (>=180s) to add .warn class');
+if (!/^stale \u00b7 /.test(chip.textContent)) throw new Error('expected "stale \u00b7 ..." text, got ' + JSON.stringify(chip.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildBadgeCell_StaleChipMutedBetween60sAnd180s(t *testing.T) {
+	js := `const body = makeMockBody();
+const lastOutputAt = new Date(Date.now() - 90*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r1', lastOutputAt };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const badgeCell = row.querySelector('[data-cell="badge"]');
+const chip = badgeCell.querySelector('.stale-chip');
+if (!chip) throw new Error('expected .stale-chip for an active run idle 90s');
+if (chip.classList.contains('warn')) throw new Error('90s must NOT be warn tier (only >=180s)');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildBadgeCell_NoStaleChipUnder60sOrForCompletedRows(t *testing.T) {
+	js := `const body = makeMockBody();
+const fresh = new Date(Date.now() - 10*1000).toISOString();
+// active but fresh → no chip
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, { key: 'a', kind: 'active', status: 'running', issueLabel: '#1', runId: 'r1', lastOutputAt: fresh }, opts);
+let chip = body.children[0].querySelector('[data-cell="badge"]').querySelector('.stale-chip');
+if (chip) throw new Error('expected NO .stale-chip for an active run idle only 10s');
+// completed run even with lastOutputAt → no chip (staleness is active-only)
+const old = new Date(Date.now() - 999*1000).toISOString();
+SandmanPortalDiff.insertRunRow(body, { key: 'b', kind: 'completed', status: 'success', issueLabel: '#2', runId: 'r2', lastOutputAt: old }, opts);
+chip = body.children[1].querySelector('[data-cell="badge"]').querySelector('.stale-chip');
+if (chip) throw new Error('expected NO .stale-chip for a completed row even when lastOutputAt present');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffUpdateCells_StaleChipTransitionsOnLastOutputAtChange pins
+// the reconciliation path in updateBadgeCell: a fresh→stale transition adds
+// the chip, and a stale→fresh transition (new output resumed) removes it,
+// without rebuilding the whole badge.
+func TestPortalDiffUpdateCells_StaleChipTransitionsOnLastOutputAtChange(t *testing.T) {
+	js := `const body = makeMockBody();
+const fresh = new Date(Date.now() - 5*1000).toISOString();
+const stale = new Date(Date.now() - 300*1000).toISOString();
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const runFresh = { key: 'a', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r1', lastOutputAt: fresh };
+const runStale = Object.assign({}, runFresh, { lastOutputAt: stale });
+const created = SandmanPortalDiff.insertRunRow(body, runFresh, opts);
+const badgeCell = created.row.querySelector('[data-cell="badge"]');
+if (badgeCell.querySelector('.stale-chip')) throw new Error('fresh run must not start with a stale chip');
+
+// fresh → stale: chip (warn) appears
+SandmanPortalDiff.updateRunRowCells(created.row, runFresh, runStale, opts);
+let chip = badgeCell.querySelector('.stale-chip');
+if (!chip || !chip.classList.contains('warn')) throw new Error('fresh->stale transition must add a warn stale chip');
+
+// stale → fresh: chip removed (run produced output again)
+SandmanPortalDiff.updateRunRowCells(created.row, runStale, runFresh, opts);
+chip = badgeCell.querySelector('.stale-chip');
+if (chip) throw new Error('stale->fresh transition must remove the stale chip');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffBuildEventsContent_RunRetryRendersRetryCard(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', events: [

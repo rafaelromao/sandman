@@ -26,21 +26,29 @@ type portalEvent struct {
 }
 
 type portalRun struct {
-	Key         string        `json:"key"`
-	RunID       string        `json:"runId"`
-	Kind        string        `json:"kind"`
-	Status      string        `json:"status"`
-	IssueLabel  string        `json:"issueLabel"`
-	IssueNumber int           `json:"issueNumber,omitempty"`
-	Branch      string        `json:"branch,omitempty"`
-	StartedAt   time.Time     `json:"startedAt"`
-	FinishedAt  *time.Time    `json:"finishedAt,omitempty"`
-	Duration    string        `json:"duration,omitempty"`
-	SocketPath  string        `json:"socketPath,omitempty"`
-	LogPath     string        `json:"logPath,omitempty"`
-	LogURL      string        `json:"logUrl,omitempty"`
-	Log         string        `json:"log,omitempty"`
-	Events      []portalEvent `json:"events,omitempty"`
+	Key         string     `json:"key"`
+	RunID       string     `json:"runId"`
+	Kind        string     `json:"kind"`
+	Status      string     `json:"status"`
+	IssueLabel  string     `json:"issueLabel"`
+	IssueNumber int        `json:"issueNumber,omitempty"`
+	Branch      string     `json:"branch,omitempty"`
+	StartedAt   time.Time  `json:"startedAt"`
+	FinishedAt  *time.Time `json:"finishedAt,omitempty"`
+	Duration    string     `json:"duration,omitempty"`
+	// LastOutputAt is the staleness signal for active runs: the mtime of
+	// the saved run log (.sandman/logs/<N>.log, opened with O_APPEND
+	// during AgentRun.Execute), falling back to StartedAt when no log
+	// file exists yet. It is populated only for active rows and omitted
+	// from JSON for terminal rows, so the /api/runs contract carries
+	// staleness only where it is meaningful. The portal renders this as
+	// a "stale · Ns" chip past an idle threshold.
+	LastOutputAt *time.Time    `json:"lastOutputAt,omitempty"`
+	SocketPath   string        `json:"socketPath,omitempty"`
+	LogPath      string        `json:"logPath,omitempty"`
+	LogURL       string        `json:"logUrl,omitempty"`
+	Log          string        `json:"log,omitempty"`
+	Events       []portalEvent `json:"events,omitempty"`
 	// Review flags runs whose run.started event carried payload.review = true.
 	// The field is omitted from JSON when false to preserve the existing /api/runs
 	// contract for implementation runs.
@@ -221,6 +229,22 @@ func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]p
 			continue
 		}
 		runs[i].Archived = v.isRunArchived(repoRoot, runs[i].RunID)
+	}
+	// Staleness signal for active rows: the saved-run-log mtime (with a
+	// StartedAt fallback). Computed here so every runFrom* constructor and
+	// every caller of compute() (the /api/runs handler, the abort lookup)
+	// sees the same value without each having to know how staleness is
+	// derived. One os.Stat per active run per poll; the saved log is the
+	// same file the portal already reads for terminal rows.
+	for i := range runs {
+		if runs[i].Kind != "active" {
+			continue
+		}
+		at := v.lastOutputAt(runs[i])
+		if at.IsZero() {
+			continue
+		}
+		runs[i].LastOutputAt = &at
 	}
 	sort.SliceStable(runs, func(i, j int) bool {
 		if runs[i].Kind != runs[j].Kind {
@@ -1112,6 +1136,26 @@ func (v *portalRunsView) readPortalSocketOutput(sockPath string) string {
 		buf = *bytes.NewBuffer(append([]byte(nil), data[len(data)-portalReadLimit:]...))
 	}
 	return v.cleanPortalText(buf.String())
+}
+
+// lastOutputAt returns the staleness timestamp for an active run: the
+// mtime of the saved run log at run.LogPath (the file AgentRun.Execute
+// writes via O_APPEND, so its mtime tracks the last output write), with
+// a StartedAt fallback for runs whose log file has not been created yet.
+// A directory at the path is ignored (treated as no log) so a malformed
+// path never masquerades as fresh output. Returns the zero time when
+// neither source is available, which the caller skips before setting
+// LastOutputAt.
+func (v *portalRunsView) lastOutputAt(run portalRun) time.Time {
+	if run.LogPath != "" {
+		if info, err := os.Stat(run.LogPath); err == nil && !info.IsDir() {
+			return info.ModTime()
+		}
+	}
+	if !run.StartedAt.IsZero() {
+		return run.StartedAt
+	}
+	return time.Time{}
 }
 
 func payloadIntValue(value any) (int, bool) {

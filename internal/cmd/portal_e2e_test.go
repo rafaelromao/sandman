@@ -149,6 +149,87 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 	}
 }
 
+func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("skip e2e in CI")
+	}
+	if !portalAbortSupported() {
+		t.Skip("skip abort e2e on unsupported platform")
+	}
+	if !containerRuntimeAvailable(t) {
+		t.Skip("skip: no container runtime available")
+	}
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := shortTempDir(t)
+	t.Chdir(repoDir)
+	initRunIntegrationRepoWithRemote(t, repoDir)
+	writeContainerAbortE2EConfig(t, repoDir)
+
+	ghShimDir := shortTempDir(t)
+	writeFakeGHShim(t, ghShimDir)
+	writeBlockingOpencodeShim(t, ghShimDir)
+	prependPath(t, ghShimDir)
+
+	portalURL := startPortalBinary(t, binPath, repoDir, ghShimDir)
+	waitForPortalReady(t, portalURL)
+
+	_ = startSandmanRun(t, binPath, repoDir, ghShimDir, "run", "1", "2")
+
+	waitForPortalRunCountAndStatus(t, portalURL, 2, "active")
+
+	runs := fetchPortalRuns(t, portalURL)
+	runByIssue := portalRunsByIssue(runs)
+	abortRun, ok := runByIssue[1]
+	if !ok {
+		t.Fatalf("expected issue 1 run in %v", runs)
+	}
+	abortBodyCode, abortBody := writeAbortRequest(t, portalURL, abortRun.Key, 1)
+	if abortBodyCode != http.StatusOK {
+		t.Fatalf("expected 200 abort response, got %d: %s", abortBodyCode, abortBody)
+	}
+	if len(abortBody) == 0 {
+		t.Fatal("expected non-empty abort response body")
+	}
+	var abortResp map[string]any
+	if err := json.Unmarshal(abortBody, &abortResp); err != nil {
+		t.Fatalf("parse abort response: %v", err)
+	}
+	if abortResp["status"] != "aborted" || abortResp["scope"] != "issue" {
+		t.Fatalf("unexpected abort response: %v", abortResp)
+	}
+
+	waitForPortalRun(t, portalURL, 1, func(run portalRun) bool {
+		return run.Kind == "completed" && run.Status == "aborted"
+	})
+
+	issue2Run := waitForPortalRun(t, portalURL, 2, func(run portalRun) bool {
+		return run.Kind == "active" || (run.Kind == "completed" && run.Status == "success")
+	})
+	if issue2Run.Kind == "completed" && issue2Run.Status != "success" {
+		t.Fatalf("expected issue 2 to stay active or finish successfully, got %#v", issue2Run)
+	}
+
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
+	eventsWritten, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var aborted []events.Event
+	for _, event := range eventsWritten {
+		if event.Type == "run.aborted" {
+			aborted = append(aborted, event)
+		}
+	}
+	if len(aborted) != 1 {
+		t.Fatalf("expected exactly one run.aborted event, got %v", aborted)
+	}
+	if aborted[0].Issue != 1 {
+		t.Fatalf("expected run.aborted for issue 1, got %#v", aborted[0])
+	}
+}
+
 func TestPortal_E2E_MixedBatchShowsBatchMembershipAndKeepsIssuePrefixes(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
@@ -262,15 +343,31 @@ func writeAbortE2EConfig(t *testing.T, repoDir string) {
 	}
 }
 
-func shortTempDir(t *testing.T) string {
+func containerRuntimeAvailable(t *testing.T) bool {
+	t.Helper()
+	for _, runtime := range []string{"podman", "docker"} {
+		cmd := exec.Command(runtime, "version")
+		if cmd.Run() == nil {
+			return true
+		}
+	}
+	if os.Getenv("CI") != "" {
+		t.Skip("no container runtime available in CI")
+	}
+	t.Skip("no container runtime available (podman or docker)")
+}
+
+func writeContainerAbortE2EConfig(t *testing.T, repoDir string) {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("/tmp", "sm-")
-	if err != nil {
-		t.Fatalf("create temp dir: %v", err)
+	configPath := filepath.Join(repoDir, ".sandman", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatalf("create config dir: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return dir
+	configYAML := []byte("agent: opencode\nsandbox: podman\nreview_command: /oc review\ngit:\n  base_branch: main\n")
+	if err := os.WriteFile(configPath, configYAML, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 }
 
 func writeBlockingOpencodeShim(t *testing.T, dir string) {
