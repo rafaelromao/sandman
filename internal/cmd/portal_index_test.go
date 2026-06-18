@@ -102,7 +102,7 @@ func TestPortalHandler_RunsServesSharedRunsIndexSnapshot(t *testing.T) {
 }
 
 func TestPortalRunsIndex_DiscoverActiveRuns_RefreshesManifestCacheOnChange(t *testing.T) {
-	repoRoot, err := os.MkdirTemp("/tmp/opencode", "portal-index-manifest-")
+	repoRoot, err := os.MkdirTemp("", "portal-index-manifest-")
 	if err != nil {
 		t.Fatal(err)
 	}
