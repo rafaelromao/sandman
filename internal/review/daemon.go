@@ -460,10 +460,61 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		RunID:        perRowRunID,
 		RunDir:       rs.RunDir(),
 	}
+	verifyStart := d.now()
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return fmt.Errorf("run batch: %w", err)
 	}
+	if err := d.VerifyReviewPosted(ctx, prNumber, verifyStart); err != nil {
+		return fmt.Errorf("review verification: %w", err)
+	}
 	return nil
+}
+
+// now returns the current time. It uses the daemon's Clock if set,
+// otherwise falls back to time.Now. Tests inject a custom clock.
+func (d *Daemon) now() time.Time {
+	if d.Clock != nil {
+		return d.Clock()
+	}
+	return time.Now()
+}
+
+// VerifyReviewPosted checks whether a new PR comment was posted after the
+// given timestamp. It retries up to 3 times with 5-second backoff to
+// handle GitHub API eventual consistency.
+func (d *Daemon) VerifyReviewPosted(ctx context.Context, prNumber int, since time.Time) error {
+	const maxRetries = 3
+	const backoff = 5 * time.Second
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			d.logf("PR #%d: review verification attempt %d/%d, retrying in %v", prNumber, attempt+1, maxRetries, backoff)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		comments, err := d.GitHub.ListPRComments(prNumber)
+		if err != nil {
+			lastErr = fmt.Errorf("list PR comments: %w", err)
+			d.logf("PR #%d: review verification: %v", prNumber, lastErr)
+			continue
+		}
+
+		for _, c := range comments {
+			if c.CreatedAt.After(since) && c.Body != "" {
+				d.logf("PR #%d: review comment verified (ID %s, posted at %v)", prNumber, c.ID, c.CreatedAt)
+				return nil
+			}
+		}
+		lastErr = fmt.Errorf("no review comment found on PR #%d after %v", prNumber, since)
+	}
+
+	d.logf("PR #%d: review verification failed after %d attempts: %v", prNumber, maxRetries, lastErr)
+	return lastErr
 }
 
 // logf writes a line to the broadcaster (or stderr when none is wired).
