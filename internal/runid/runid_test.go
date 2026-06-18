@@ -40,7 +40,7 @@ func TestNewBatchID(t *testing.T) {
 			kind:         KindIssue,
 			n:            3,
 			firstSubject: "42",
-			want:         "abcd-260618113825-3+3",
+			want:         "abcd-260618113825-42+3",
 		},
 		{
 			name:         "KindReview",

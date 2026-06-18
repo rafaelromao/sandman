@@ -4458,9 +4458,9 @@ func TestRun_IssueDrivenBatchUsesNewIDScheme(t *testing.T) {
 		t.Errorf("expected req.RunShortID to be populated for issue-driven batch")
 	}
 	// RunDir is captured on the session; verify the dir id matches the
-	// new <shortid>-<ts>-1+1 format.
+	// new <shortid>-<ts>-42+1 format.
 	dir := spy.req.RunDir
-	want := filepath.Join(".sandman", "runs", spy.req.RunShortID+"-"+spy.req.RunTS+"-1+1")
+	want := filepath.Join(".sandman", "runs", spy.req.RunShortID+"-"+spy.req.RunTS+"-42+1")
 	if dir != want {
 		t.Fatalf("expected run dir %q, got %q", want, dir)
 	}

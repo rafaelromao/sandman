@@ -72,7 +72,7 @@ func NewBatchIn(baseRunsDir string) (ts, shortid string, err error) {
 func NewBatchID(kind Kind, n int, firstSubject string, ts, shortid string) string {
 	switch kind {
 	case KindIssue:
-		return fmt.Sprintf("%s-%s-%d+%d", shortid, ts, n, n)
+		return fmt.Sprintf("%s-%s-%s+%d", shortid, ts, firstSubject, n)
 	case KindReview:
 		return fmt.Sprintf("%s-%s-PR%s", shortid, ts, firstSubject)
 	case KindAutoSelect:
