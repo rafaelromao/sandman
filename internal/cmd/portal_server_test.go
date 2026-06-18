@@ -1077,6 +1077,57 @@ func TestPortal_PageUsesPlainEscapedTerminalRendering(t *testing.T) {
 	}
 }
 
+func TestPortal_PageIncludesAllClearEmptyStateMessage(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	if !strings.Contains(content, "All clear — 0 active") {
+		t.Fatalf("page missing the all-clear empty-state contract\n%s", content[:min(1200, len(content))])
+	}
+}
+
+func TestPortal_PageAbortedBadgeCSSIsDistinctFromArchived(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	if !strings.Contains(content, `.badge.aborted { background: color-mix(in oklch, var(--danger) 8%, var(--surface));`) {
+		t.Fatalf("page missing the distinct aborted badge background rule\n%s", content[:min(1200, len(content))])
+	}
+	if !strings.Contains(content, `.badge.archived { background: color-mix(in oklch, var(--muted) 12%, var(--surface));`) {
+		t.Fatalf("page missing the archived badge rule\n%s", content[:min(1200, len(content))])
+	}
+}
+
 func TestPortal_PageMastheadMetadataStacksUpdatedBelowRepo(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

@@ -52,6 +52,18 @@
     return body.querySelector('tr.detail-row[data-detail-for="' + runKey + '"]');
   }
 
+  function domSafeKey(value) {
+    return String(value || '').trim().replace(/[^A-Za-z0-9_-]+/g, '-');
+  }
+
+  function rowIDForKey(runKey) {
+    return 'run-row-' + domSafeKey(runKey);
+  }
+
+  function detailIDForKey(runKey) {
+    return 'run-detail-' + domSafeKey(runKey);
+  }
+
   function dataRowOf(body, runKey) {
     return body.querySelector('tr[data-run-key="' + runKey + '"]');
   }
@@ -375,8 +387,10 @@
     if (run.archived) tr.classList.add('row-archived');
     tr.setAttribute('data-action', 'toggle-run');
     tr.setAttribute('data-run-key', run.key);
+    tr.setAttribute('id', rowIDForKey(run.key));
     tr.setAttribute('role', 'button');
     tr.setAttribute('tabindex', '0');
+    tr.setAttribute('aria-controls', detailIDForKey(run.key));
     tr.setAttribute('aria-expanded', String(opts.expandedKey === run.key));
 
     const titleCell = makeRowCell('title', tr);
@@ -711,6 +725,9 @@
     const tr = global.document.createElement('tr');
     tr.classList.add('detail-row');
     tr.setAttribute('data-detail-for', run.key);
+    tr.setAttribute('id', detailIDForKey(run.key));
+    tr.setAttribute('role', 'region');
+    tr.setAttribute('aria-labelledby', rowIDForKey(run.key));
     const td = global.document.createElement('td');
     td.setAttribute('colspan', '6');
     const panel = global.document.createElement('div');

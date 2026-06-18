@@ -726,8 +726,10 @@
     .badge.failure .dot, .badge.error .dot { background: var(--danger); }
     .badge.warning { background: color-mix(in oklch, var(--warning) 12%, var(--surface)); border-color: color-mix(in oklch, var(--warning) 24%, var(--border)); }
     .badge.warning .dot { background: var(--warning); }
-    .badge.aborted { background: color-mix(in oklch, var(--muted) 12%, var(--surface)); border-color: color-mix(in oklch, var(--muted) 24%, var(--border)); }
-    .badge.aborted .dot { background: var(--muted); }
+    /* Distinct from archived: aborted is an interruption, not historical storage.
+       Keep it calmer than failure but visibly separate from the archived mute. */
+    .badge.aborted { background: color-mix(in oklch, var(--danger) 8%, var(--surface)); border-color: color-mix(in oklch, var(--danger) 24%, var(--border)); }
+    .badge.aborted .dot { background: color-mix(in oklch, var(--danger) 72%, var(--muted)); }
     .badge.archived { background: color-mix(in oklch, var(--muted) 12%, var(--surface)); border-color: color-mix(in oklch, var(--muted) 24%, var(--border)); }
     .badge.archived .dot { background: var(--muted); }
     tbody tr.run-row.row-archived td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
@@ -2955,6 +2957,8 @@
       let filtered = state.runs.filter(shouldShowRun);
       filtered = sortedVisibleRuns(filtered);
       syncSortButtons();
+      const activeCount = state.runs.filter((run) => run && run.kind === 'active').length;
+      const completedCount = state.runs.filter((run) => run && run.kind === 'completed').length;
       summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong> runs visible';
       const scrollStates = portalScroll ? portalScroll.capture(runsBody.querySelectorAll('[data-scroll-key]')) : {};
       const abortReservations = new Set();
@@ -2982,7 +2986,11 @@
       if (!state.runs.length) {
         portalDiff.setEmpty(runsBody, '<div class="empty-state">' + escapeHTML(state.loading ? 'Loading runs.' : 'No Sandman runs found.') + '</div>');
       } else if (!filtered.length) {
-        portalDiff.setEmpty(runsBody, '<div class="empty-state">No runs match the current filters.</div>');
+        if (!state.loading && activeCount === 0 && completedCount > 0) {
+          portalDiff.setEmpty(runsBody, '<div class="empty-state">All clear — 0 active, ' + escapeHTML(String(completedCount)) + ' completed.</div>');
+        } else {
+          portalDiff.setEmpty(runsBody, '<div class="empty-state">No runs match the current filters.</div>');
+        }
       } else {
         portalDiff.diffRuns(runsBody, filtered, diffOpts);
       }
