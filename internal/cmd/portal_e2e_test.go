@@ -355,7 +355,6 @@ func containerRuntimeAvailable(t *testing.T) bool {
 		t.Skip("no container runtime available in CI")
 	}
 	t.Skip("no container runtime available (podman or docker)")
-	return false
 }
 
 func writeContainerAbortE2EConfig(t *testing.T, repoDir string) {
