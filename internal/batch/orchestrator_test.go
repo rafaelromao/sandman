@@ -34,7 +34,7 @@ import (
 // same runid helper — that way the assertions stay correct even if
 // runid's exact format drifts in the future.
 const (
-	orchTestRunTS      = "20250617-143052"
+	orchTestRunTS      = "260618113825"
 	orchTestRunShortID = "abcd"
 )
 
@@ -2545,18 +2545,18 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			agent:    "opencode",
 			cfgModel: "config-model",
 			reqModel: "request-model",
-			wantCmd:  `opencode run --title 'Sandman 20250617-143052-abcd-issue-42`,
+			wantCmd:  `opencode run --title 'Sandman ` + runIDFor(42),
 		},
 		{
 			name:     "config model is used",
 			agent:    "opencode",
 			cfgModel: "config-model",
-			wantCmd:  `opencode run --title 'Sandman 20250617-143052-abcd-issue-42`,
+			wantCmd:  `opencode run --title 'Sandman ` + runIDFor(42),
 		},
 		{
 			name:    "default behavior leaves model out",
 			agent:   "opencode",
-			wantCmd: `opencode run --title 'Sandman 20250617-143052-abcd-issue-42`,
+			wantCmd: `opencode run --title 'Sandman ` + runIDFor(42),
 		},
 	}
 
@@ -2588,7 +2588,7 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 				t.Errorf("expected command containing %q, got %q", tt.wantCmd, sb.execCommand)
 			}
 			if tt.agent == "opencode" {
-				if !strings.Contains(sb.execCommand, `--title 'Sandman 20250617-143052-abcd-issue-42`) {
+				if !strings.Contains(sb.execCommand, `--title 'Sandman `+runIDFor(42)) {
 					t.Errorf("expected --title flag in command, got %q", sb.execCommand)
 				}
 				if strings.Contains(sb.execCommand, `--title ''`) {
@@ -9349,8 +9349,8 @@ func TestReconcileWorktreeBranch_LogsAndContinuesOnFailure(t *testing.T) {
 }
 
 func TestBuildRunID_IssueKind(t *testing.T) {
-	got := buildRunID(42, "20250617-143052", "abcd")
-	want := "20250617-143052-abcd-issue-42"
+	got := buildRunID(42, orchTestRunTS, orchTestRunShortID)
+	want := runIDFor(42)
 	if got != want {
 		t.Fatalf("buildRunID(42, ts, shortid) = %q, want %q", got, want)
 	}
@@ -9359,7 +9359,7 @@ func TestBuildRunID_IssueKind(t *testing.T) {
 // TestRunBatch_PerRowRunIDsShareBatchPrefix verifies that when an
 // issue-driven batch is run with explicit RunTS/RunShortID, every per-row
 // run.started / run.finished event carries the new-shape RunID
-// <ts>-<shortid>-issue-<num> and that all rows share the batch prefix.
+// <shortid>-<ts>-issue-<num> and that all rows share the batch prefix.
 // This is acceptance criterion #3 for slice 2 (`sandman run 42 43 44`).
 func TestRunBatch_PerRowRunIDsShareBatchPrefix(t *testing.T) {
 	workDir := t.TempDir()
@@ -9445,8 +9445,8 @@ func TestRunBatch_PerRowRunIDsShareBatchPrefix(t *testing.T) {
 			t.Errorf("issue %d: missing or wrong run.started RunID, got %q, want %q", issue, gotRunIDs[issue], want)
 		}
 	}
-	// All three RunIDs share the <ts>-<shortid> prefix.
-	prefix := orchTestRunTS + "-" + orchTestRunShortID
+	// All three RunIDs share the <shortid>-<ts> prefix.
+	prefix := orchTestRunShortID + "-" + orchTestRunTS
 	for issue, rid := range gotRunIDs {
 		if !strings.HasPrefix(rid, prefix) {
 			t.Errorf("issue %d RunID %q does not start with shared prefix %q", issue, rid, prefix)

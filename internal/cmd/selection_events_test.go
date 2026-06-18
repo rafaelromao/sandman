@@ -16,7 +16,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-var autoSelectRunIDRe = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{4}-auto-select-\d+c$`)
+var autoSelectRunIDRe = regexp.MustCompile(`^[0-9a-f]{4}-\d{12}-auto-select-\d+c$`)
 
 func shortTempDir(t *testing.T) string {
 	shortDir := filepath.Join(os.TempDir(), "sm")

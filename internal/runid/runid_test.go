@@ -26,7 +26,7 @@ func TestKind_String(t *testing.T) {
 }
 
 func TestNewBatchID(t *testing.T) {
-	ts, shortid := "20250617-143052", "abcd"
+	ts, shortid := "260618113825", "abcd"
 
 	tests := []struct {
 		name         string
@@ -40,35 +40,35 @@ func TestNewBatchID(t *testing.T) {
 			kind:         KindIssue,
 			n:            3,
 			firstSubject: "42",
-			want:         "20250617-143052-abcd-3-issues-first-42",
+			want:         "abcd-260618113825-3+3",
 		},
 		{
 			name:         "KindReview",
 			kind:         KindReview,
 			n:            1,
-			firstSubject: "PR42",
-			want:         "20250617-143052-abcd-review-PR42",
+			firstSubject: "42",
+			want:         "abcd-260618113825-PR42",
 		},
 		{
 			name:         "KindAutoSelect",
 			kind:         KindAutoSelect,
 			n:            50,
 			firstSubject: "",
-			want:         "20250617-143052-abcd-auto-select-50-candidates",
+			want:         "abcd-260618113825-auto-50",
 		},
 		{
 			name:         "KindPromptOnly with userid",
 			kind:         KindPromptOnly,
 			n:            1,
 			firstSubject: "myid",
-			want:         "20250617-143052-abcd-prompt-only-ID-myid",
+			want:         "abcd-260618113825-myid",
 		},
 		{
 			name:         "KindPromptOnly without userid",
 			kind:         KindPromptOnly,
 			n:            1,
 			firstSubject: "",
-			want:         "20250617-143052-abcd-prompt-only",
+			want:         "abcd-260618113825",
 		},
 	}
 	for _, tt := range tests {
@@ -82,7 +82,7 @@ func TestNewBatchID(t *testing.T) {
 }
 
 func TestNewRunID(t *testing.T) {
-	ts, shortid := "20250617-143052", "abcd"
+	ts, shortid := "260618113825", "abcd"
 
 	tests := []struct {
 		name    string
@@ -93,38 +93,38 @@ func TestNewRunID(t *testing.T) {
 		{
 			name:    "KindIssue",
 			kind:    KindIssue,
-			subject: "issue-42",
-			want:    "20250617-143052-abcd-issue-42",
+			subject: "42",
+			want:    "abcd-260618113825-42",
 		},
 		{
 			name:    "KindReview with linked issue",
 			kind:    KindReview,
-			subject: "issue-42-review-PR42",
-			want:    "20250617-143052-abcd-issue-42-review-PR42",
+			subject: "42-PR42",
+			want:    "abcd-260618113825-42-PR42",
 		},
 		{
 			name:    "KindReview without linked issue",
 			kind:    KindReview,
-			subject: "review-PR42",
-			want:    "20250617-143052-abcd-review-PR42",
+			subject: "PR42",
+			want:    "abcd-260618113825-PR42",
 		},
 		{
 			name:    "KindAutoSelect",
 			kind:    KindAutoSelect,
-			subject: "auto-select-50c",
-			want:    "20250617-143052-abcd-auto-select-50c",
+			subject: "auto-50",
+			want:    "abcd-260618113825-auto-50",
 		},
 		{
 			name:    "KindPromptOnly with userid",
 			kind:    KindPromptOnly,
-			subject: "prompt-myid",
-			want:    "20250617-143052-abcd-prompt-myid",
+			subject: "myid",
+			want:    "abcd-260618113825-myid",
 		},
 		{
 			name:    "KindPromptOnly without userid",
 			kind:    KindPromptOnly,
-			subject: "prompt",
-			want:    "20250617-143052-abcd-prompt",
+			subject: "",
+			want:    "abcd-260618113825",
 		},
 	}
 	for _, tt := range tests {
@@ -173,31 +173,61 @@ func TestKindFromDirName(t *testing.T) {
 		wantFound bool
 	}{
 		{
-			name:      "KindIssue batch dir",
+			name:      "New format KindIssue batch dir",
+			input:     "abcd-260618113825-42+2",
+			wantKind:  KindIssue,
+			wantFound: true,
+		},
+		{
+			name:      "New format KindReview batch dir",
+			input:     "abcd-260618113825-PR42",
+			wantKind:  KindReview,
+			wantFound: true,
+		},
+		{
+			name:      "New format KindAutoSelect batch dir",
+			input:     "abcd-260618113825-auto-50",
+			wantKind:  KindAutoSelect,
+			wantFound: true,
+		},
+		{
+			name:      "New format KindPromptOnly with ID",
+			input:     "abcd-260618113825-myid",
+			wantKind:  KindPromptOnly,
+			wantFound: true,
+		},
+		{
+			name:      "New format KindPromptOnly without ID",
+			input:     "abcd-260618113825",
+			wantKind:  KindPromptOnly,
+			wantFound: true,
+		},
+		{
+			name:      "Old format KindIssue batch dir",
 			input:     "20250617-143052-abcd-3-issues-first-42",
 			wantKind:  KindIssue,
 			wantFound: true,
 		},
 		{
-			name:      "KindReview batch dir",
+			name:      "Old format KindReview batch dir",
 			input:     "20250617-143052-abcd-review-PR42",
 			wantKind:  KindReview,
 			wantFound: true,
 		},
 		{
-			name:      "KindAutoSelect batch dir",
+			name:      "Old format KindAutoSelect batch dir",
 			input:     "20250617-143052-abcd-auto-select-50-candidates",
 			wantKind:  KindAutoSelect,
 			wantFound: true,
 		},
 		{
-			name:      "KindPromptOnly with ID",
+			name:      "Old format KindPromptOnly with ID",
 			input:     "20250617-143052-abcd-prompt-only-ID-myid",
 			wantKind:  KindPromptOnly,
 			wantFound: true,
 		},
 		{
-			name:      "KindPromptOnly without ID",
+			name:      "Old format KindPromptOnly without ID",
 			input:     "20250617-143052-abcd-prompt-only",
 			wantKind:  KindPromptOnly,
 			wantFound: true,
@@ -231,8 +261,8 @@ func TestNewBatch_FirstAttemptSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBatch() error = %v", err)
 	}
-	if len(ts) != 15 {
-		t.Errorf("ts length = %d, want 15 (20060102-150405 format)", len(ts))
+	if len(ts) != 12 {
+		t.Errorf("ts length = %d, want 12 (060102-150405 format)", len(ts))
 	}
 	if len(shortid) != 4 {
 		t.Errorf("shortid length = %d, want 4", len(shortid))
@@ -251,10 +281,10 @@ func TestNewBatch_CollisionGuard_RetriesOnCollision(t *testing.T) {
 		timeFunc = originalTimeFunc
 	}()
 
-	fixedTime := time.Date(2025, 6, 17, 14, 30, 52, 0, time.Local)
+	fixedTime := time.Date(2026, 6, 18, 11, 38, 25, 0, time.Local)
 	timeFunc = func() time.Time { return fixedTime }
 
-	if err := os.MkdirAll(filepath.Join(runsDir, "20250617-143052-0000-review-PR1"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(runsDir, "0000-260618113825-PR1"), 0755); err != nil {
 		t.Fatalf("failed to create collision dir: %v", err)
 	}
 
@@ -282,13 +312,13 @@ func TestNewBatch_CollisionGuard_AllCollisionsExhausted(t *testing.T) {
 		timeFunc = originalTimeFunc
 	}()
 
-	fixedTime := time.Date(2025, 6, 17, 14, 30, 52, 0, time.Local)
+	fixedTime := time.Date(2026, 6, 18, 11, 38, 25, 0, time.Local)
 	timeFunc = func() time.Time { return fixedTime }
 
-	ts := "20250617-143052"
+	ts := "260618113825"
 	for i := 0; i < 16; i++ {
 		sid := fmt.Sprintf("%04x", i)
-		collisionDir := filepath.Join(runsDir, ts+"-"+sid+"-review-PR1")
+		collisionDir := filepath.Join(runsDir, sid+"-"+ts+"-PR1")
 		os.MkdirAll(collisionDir, 0755)
 	}
 

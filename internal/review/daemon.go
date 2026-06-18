@@ -412,7 +412,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	if err != nil {
 		return fmt.Errorf("generate batch ID: %w", err)
 	}
-	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("PR%d", prNumber), ts, shortid)
+	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("%d", prNumber), ts, shortid)
 
 	var subject string
 	if reviewIssueNumber > 0 {
