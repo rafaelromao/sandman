@@ -7,12 +7,6 @@
   <script>
     (function () {
       const themes = new Set({{.SupportedThemesJSON}});
-      const aliases = new Map([
-        ['latte', 'catppuccin-latte'],
-        ['frappe', 'catppuccin-frappe'],
-        ['macchiato', 'catppuccin-macchiato'],
-        ['mocha', 'catppuccin-mocha'],
-      ]);
       const storageKey = 'sandman.portal.theme';
       const defaultTheme = 'sandman';
       let theme = defaultTheme;
@@ -20,8 +14,6 @@
         const saved = localStorage.getItem(storageKey);
         if (themes.has(saved)) {
           theme = saved;
-        } else if (aliases.has(saved)) {
-          theme = aliases.get(saved);
         }
       } catch (err) {
       }
@@ -70,64 +62,26 @@
       --page-top: oklch(0.14 0.03 260);
       --page-bottom: var(--bg);
     }
-    html[data-theme="catppuccin-latte"] {
+    html[data-theme="sandman-light"] {
       color-scheme: light;
-      --bg: oklch(0.96 0.01 265);
-      --surface: oklch(0.93 0.01 265);
-      --surface-2: oklch(0.91 0.01 268);
-      --surface-3: oklch(0.86 0.01 271);
-      --border: oklch(0.76 0.02 273);
-      --text: oklch(0.44 0.04 279);
-      --muted: oklch(0.55 0.03 279);
-      --accent: oklch(0.55 0.25 297);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.96 0.01 265);
-      --success: oklch(0.63 0.18 140);
-      --danger: oklch(0.55 0.22 20);
-      --warning: oklch(0.71 0.15 68);
-      --shadow: 0 1px 0 oklch(0.44 0.04 279 / 0.05), 0 24px 48px oklch(0.44 0.04 279 / 0.12);
-      --page-top: oklch(0.98 0.01 265);
-      --page-bottom: oklch(0.94 0.01 265);
+      --bg: oklch(0.97 0.008 260);
+      --surface: oklch(0.95 0.008 260);
+      --surface-2: oklch(0.92 0.008 260);
+      --surface-3: oklch(0.88 0.008 260);
+      --border: oklch(0.80 0.01 260);
+      --text: oklch(0.30 0.02 260);
+      --muted: oklch(0.50 0.02 260);
+      --accent: oklch(0.72 0.12 82);
+      --accent-weak: color-mix(in oklch, var(--accent) 12%, var(--surface));
+      --accent-ink: oklch(0.22 0.03 260);
+      --success: oklch(0.57 0.15 145);
+      --danger: oklch(0.55 0.18 25);
+      --warning: oklch(0.70 0.13 78);
+      --shadow: 0 1px 0 oklch(0.30 0.02 260 / 0.05), 0 24px 48px oklch(0.30 0.02 260 / 0.12);
+      --page-top: oklch(0.99 0.008 260);
+      --page-bottom: oklch(0.95 0.008 260);
     }
-    html[data-theme="catppuccin-frappe"] {
-      color-scheme: dark;
-      --bg: oklch(0.33 0.03 275);
-      --surface: oklch(0.30 0.03 276);
-      --surface-2: oklch(0.39 0.03 276);
-      --surface-3: oklch(0.46 0.03 273);
-      --border: oklch(0.52 0.03 274);
-      --text: oklch(0.86 0.05 273);
-      --muted: oklch(0.75 0.04 274);
-      --accent: oklch(0.76 0.11 312);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.17 0.03 275);
-      --success: oklch(0.81 0.11 133);
-      --danger: oklch(0.72 0.12 19);
-      --warning: oklch(0.84 0.08 83);
-      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
-      --page-top: oklch(0.23 0.03 275);
-      --page-bottom: var(--bg);
-    }
-    html[data-theme="catppuccin-macchiato"] {
-      color-scheme: dark;
-      --bg: oklch(0.28 0.03 277);
-      --surface: oklch(0.25 0.03 278);
-      --surface-2: oklch(0.35 0.03 276);
-      --surface-3: oklch(0.40 0.03 277);
-      --border: oklch(0.46 0.03 274);
-      --text: oklch(0.87 0.05 274);
-      --muted: oklch(0.75 0.04 274);
-      --accent: oklch(0.77 0.13 304);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.15 0.03 278);
-      --success: oklch(0.83 0.11 138);
-      --danger: oklch(0.74 0.13 11);
-      --warning: oklch(0.88 0.07 85);
-      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
-      --page-top: oklch(0.19 0.03 277);
-      --page-bottom: var(--bg);
-    }
-    html[data-theme="catppuccin-mocha"] {
+    html[data-theme="catppuccin"] {
       color-scheme: dark;
       --bg: oklch(0.24 0.03 284);
       --surface: oklch(0.22 0.03 284);
@@ -146,7 +100,7 @@
       --page-top: oklch(0.18 0.03 284);
       --page-bottom: var(--bg);
     }
-    html[data-theme="tokyo-night"] {
+    html[data-theme="tokio-night"] {
       color-scheme: dark;
       --bg: oklch(0.19 0.03 261);
       --surface: oklch(0.23 0.03 261);
@@ -184,7 +138,7 @@
       --page-top: oklch(0.24 0.03 75);
       --page-bottom: var(--bg);
     }
-    html[data-theme="everforest"] {
+    html[data-theme="evergreen"] {
       color-scheme: dark;
       --bg: oklch(0.27 0.02 135);
       --surface: oklch(0.31 0.02 135);
@@ -202,158 +156,6 @@
       --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
       --page-top: oklch(0.23 0.02 135);
       --page-bottom: var(--bg);
-    }
-    html[data-theme="nord"] {
-      color-scheme: dark;
-      --bg: oklch(0.25 0.02 260);
-      --surface: oklch(0.29 0.02 260);
-      --surface-2: oklch(0.35 0.02 260);
-      --surface-3: oklch(0.41 0.02 260);
-      --border: oklch(0.47 0.02 260);
-      --text: oklch(0.88 0.03 260);
-      --muted: oklch(0.73 0.03 260);
-      --accent: oklch(0.68 0.09 235);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.16 0.02 260);
-      --success: oklch(0.79 0.10 145);
-      --danger: oklch(0.70 0.13 10);
-      --warning: oklch(0.84 0.08 85);
-      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
-      --page-top: oklch(0.21 0.02 260);
-      --page-bottom: var(--bg);
-    }
-    html[data-theme="dracula"] {
-      color-scheme: dark;
-      --bg: oklch(0.18 0.03 290);
-      --surface: oklch(0.22 0.03 290);
-      --surface-2: oklch(0.28 0.03 290);
-      --surface-3: oklch(0.35 0.03 290);
-      --border: oklch(0.42 0.03 290);
-      --text: oklch(0.88 0.04 290);
-      --muted: oklch(0.75 0.04 290);
-      --accent: oklch(0.74 0.16 340);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.18 0.03 290);
-      --success: oklch(0.80 0.11 145);
-      --danger: oklch(0.73 0.14 10);
-      --warning: oklch(0.88 0.08 85);
-      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
-      --page-top: oklch(0.14 0.03 290);
-      --page-bottom: var(--bg);
-    }
-    html[data-theme="rose-pine"] {
-      color-scheme: dark;
-      --bg: oklch(0.19 0.02 290);
-      --surface: oklch(0.23 0.02 290);
-      --surface-2: oklch(0.29 0.02 290);
-      --surface-3: oklch(0.35 0.02 290);
-      --border: oklch(0.42 0.02 290);
-      --text: oklch(0.88 0.03 280);
-      --muted: oklch(0.73 0.03 280);
-      --accent: oklch(0.72 0.11 10);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.18 0.02 290);
-      --success: oklch(0.79 0.10 145);
-      --danger: oklch(0.72 0.14 10);
-      --warning: oklch(0.84 0.08 85);
-      --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.3);
-      --page-top: oklch(0.15 0.02 290);
-      --page-bottom: var(--bg);
-    }
-    html[data-theme="tokyo-night-day"] {
-      color-scheme: light;
-      --bg: oklch(0.96 0.01 260);
-      --surface: oklch(0.93 0.01 260);
-      --surface-2: oklch(0.90 0.01 260);
-      --surface-3: oklch(0.87 0.01 260);
-      --border: oklch(0.78 0.01 260);
-      --text: oklch(0.34 0.03 260);
-      --muted: oklch(0.52 0.03 260);
-      --accent: oklch(0.56 0.16 260);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.96 0.01 260);
-      --success: oklch(0.57 0.16 145);
-      --danger: oklch(0.55 0.18 25);
-      --warning: oklch(0.69 0.14 78);
-      --shadow: 0 1px 0 oklch(0.34 0.03 260 / 0.05), 0 24px 48px oklch(0.34 0.03 260 / 0.12);
-      --page-top: oklch(0.99 0.01 260);
-      --page-bottom: oklch(0.95 0.01 260);
-    }
-    html[data-theme="everforest-light"] {
-      color-scheme: light;
-      --bg: oklch(0.97 0.01 135);
-      --surface: oklch(0.94 0.01 135);
-      --surface-2: oklch(0.91 0.01 135);
-      --surface-3: oklch(0.88 0.01 135);
-      --border: oklch(0.79 0.01 135);
-      --text: oklch(0.34 0.02 135);
-      --muted: oklch(0.50 0.02 135);
-      --accent: oklch(0.50 0.12 145);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.96 0.01 135);
-      --success: oklch(0.57 0.15 145);
-      --danger: oklch(0.55 0.18 25);
-      --warning: oklch(0.69 0.12 78);
-      --shadow: 0 1px 0 oklch(0.34 0.02 135 / 0.05), 0 24px 48px oklch(0.34 0.02 135 / 0.12);
-      --page-top: oklch(0.99 0.01 135);
-      --page-bottom: oklch(0.95 0.01 135);
-    }
-    html[data-theme="solarized-light"] {
-      color-scheme: light;
-      --bg: oklch(0.96 0.01 95);
-      --surface: oklch(0.92 0.01 95);
-      --surface-2: oklch(0.89 0.01 95);
-      --surface-3: oklch(0.85 0.01 95);
-      --border: oklch(0.76 0.01 95);
-      --text: oklch(0.34 0.02 95);
-      --muted: oklch(0.50 0.02 95);
-      --accent: oklch(0.54 0.11 200);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.96 0.01 95);
-      --success: oklch(0.56 0.14 145);
-      --danger: oklch(0.55 0.18 25);
-      --warning: oklch(0.70 0.13 78);
-      --shadow: 0 1px 0 oklch(0.34 0.02 95 / 0.05), 0 24px 48px oklch(0.34 0.02 95 / 0.12);
-      --page-top: oklch(0.99 0.01 95);
-      --page-bottom: oklch(0.95 0.01 95);
-    }
-    html[data-theme="nord-light"] {
-      color-scheme: light;
-      --bg: oklch(0.96 0.01 260);
-      --surface: oklch(0.93 0.01 260);
-      --surface-2: oklch(0.90 0.01 260);
-      --surface-3: oklch(0.86 0.01 260);
-      --border: oklch(0.78 0.01 260);
-      --text: oklch(0.33 0.02 260);
-      --muted: oklch(0.52 0.02 260);
-      --accent: oklch(0.55 0.07 235);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.96 0.01 260);
-      --success: oklch(0.57 0.13 145);
-      --danger: oklch(0.55 0.18 25);
-      --warning: oklch(0.68 0.12 78);
-      --shadow: 0 1px 0 oklch(0.33 0.02 260 / 0.05), 0 24px 48px oklch(0.33 0.02 260 / 0.12);
-      --page-top: oklch(0.99 0.01 260);
-      --page-bottom: oklch(0.95 0.01 260);
-    }
-    html[data-theme="github-light"] {
-      color-scheme: light;
-      --bg: oklch(0.98 0.005 265);
-      --surface: oklch(0.96 0.005 265);
-      --surface-2: oklch(0.93 0.005 265);
-      --surface-3: oklch(0.89 0.005 265);
-      --border: oklch(0.82 0.005 265);
-      --text: oklch(0.28 0.02 265);
-      --muted: oklch(0.48 0.02 265);
-      --accent: oklch(0.42 0.08 265);
-      --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.98 0.005 265);
-      --success: oklch(0.56 0.14 145);
-      --danger: oklch(0.55 0.18 25);
-      --warning: oklch(0.69 0.12 78);
-      --shadow: 0 1px 0 oklch(0.28 0.02 265 / 0.05), 0 24px 48px oklch(0.28 0.02 265 / 0.12);
-      --page-top: oklch(0.99 0.005 265);
-      --page-bottom: oklch(0.96 0.005 265);
     }
     * { box-sizing: border-box; }
     html, body { min-height: 100%; }
@@ -434,9 +236,6 @@
     .status-bar {
       display: contents;
     }
-    .status-bar .meta-line {
-      margin-top: 0;
-    }
     /* Poll-health pill: the masthead half of the staleness story. Shows the
        poll cadence and age since the last successful poll; the dot escalates
        to --warning after consecutive failures so a wedged poll is visible
@@ -508,6 +307,9 @@
     .meta-line strong {
       color: var(--muted);
       font-weight: 400;
+    }
+    .status-bar .meta-line {
+      margin-top: 0;
     }
     /* Context and batch chips live in their own tr (so a single td can
        span all six columns), but visually they are part of the run row
@@ -782,7 +584,7 @@
     }
     table {
       width: 100%;
-      min-width: 920px;
+      min-width: 760px;
       table-layout: fixed;
       border-collapse: separate;
       border-spacing: 0;
@@ -793,7 +595,6 @@
     .col-started { width: 140px; }
     .col-duration { width: 90px; }
     .col-issue-title { width: 180px; }
-    .col-branch { width: 150px; }
     .col-actions { width: 90px; }
     thead th {
       position: sticky;
@@ -807,6 +608,37 @@
       text-align: left;
       padding: 15px 14px;
       border-bottom: 1px solid var(--border);
+    }
+    .th-sort {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: none;
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-transform: inherit;
+      letter-spacing: inherit;
+      cursor: pointer;
+    }
+    .th-sort:hover {
+      color: var(--text);
+    }
+    .th-sort:focus-visible {
+      outline: 2px solid color-mix(in oklch, var(--accent) 72%, var(--surface-3));
+      outline-offset: 4px;
+    }
+    .th-sort .sort-indicator {
+      min-width: 0.9em;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .th-sort[aria-pressed="true"] {
+      color: var(--text);
+    }
+    .th-sort[aria-pressed="true"] .sort-indicator {
+      color: var(--accent);
     }
     tbody td {
       padding: 15px 14px;
@@ -839,11 +671,6 @@
       white-space: nowrap;
     }
     tbody td[data-cell="started"] {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    tbody td[data-cell="branch"] {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -1066,12 +893,6 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .term-prompt { color: var(--accent); }
-    .term-string { color: color-mix(in oklch, var(--warning) 65%, var(--text)); }
-    .term-number { color: color-mix(in oklch, var(--success) 55%, var(--text)); }
-    .term-url { color: color-mix(in oklch, var(--accent) 65%, var(--text)); }
-    .term-path { color: color-mix(in oklch, var(--muted) 35%, var(--text)); }
-    .term-keyword { color: color-mix(in oklch, var(--danger) 42%, var(--text)); }
     .json-key { color: var(--accent); }
     .json-string { color: color-mix(in oklch, var(--warning) 65%, var(--text)); }
     .json-number { color: color-mix(in oklch, var(--success) 55%, var(--text)); }
@@ -1652,6 +1473,11 @@
       .command-grid.two { grid-template-columns: 1fr; }
       .settings-wrap { justify-items: start; }
       .detail-panel { min-height: 0; max-height: calc(100vh - 220px); overflow: auto; }
+      .col-duration,
+      th[data-col="duration"],
+      td[data-cell="duration"] {
+        display: none;
+      }
     }
     @media (max-width: 760px) {
       main { padding-inline: 12px; }
@@ -1702,6 +1528,11 @@
       .settings-panel-body {
         padding-left: 16px;
         padding-right: 16px;
+      }
+      .col-issue-title,
+      th[data-col="issue-title"],
+      td[data-cell="issue-title"] {
+        display: none;
       }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -1886,16 +1717,15 @@
           <col class="col-started">
           <col class="col-duration">
           <col class="col-issue-title">
-          <col class="col-branch">
           <col class="col-actions">
         </colgroup>
         <thead>
           <tr>
             <th>Run</th>
-            <th>Status</th>
-            <th>Started</th>
-            <th>Duration</th>
-            <th>Issue Title</th>
+            <th data-col="status"><button type="button" class="th-sort" data-sort="status" aria-pressed="false">Status<span class="sort-indicator"></span></button></th>
+            <th data-col="started"><button type="button" class="th-sort" data-sort="started" aria-pressed="false">Started<span class="sort-indicator"></span></button></th>
+            <th data-col="duration"><button type="button" class="th-sort" data-sort="duration" aria-pressed="false">Duration<span class="sort-indicator"></span></button></th>
+            <th data-col="issue-title">Issue Title</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -1922,6 +1752,7 @@
     const themeStorageKey = 'sandman.portal.theme';
     const supportedThemes = new Set({{.SupportedThemesJSON}});
     const statusChips = document.getElementById('status-chips');
+    const sortButtons = Array.from(document.querySelectorAll('.th-sort'));
     const activeBatchesToggle = document.getElementById('active-batches');
     const archivedToggle = document.getElementById('archived-toggle');
     const runsBody = document.getElementById('runs-body');
@@ -1948,7 +1779,7 @@
     }
     const portalScroll = window.SandmanPortalScroll;
     const portalDiff = window.SandmanPortalDiff;
-    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false };
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, sortBy: 'server', sortDir: 'desc' };
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -1988,14 +1819,8 @@
     }
 
     function normalizeTheme(value) {
-      const aliases = new Map([
-        ['latte', 'catppuccin-latte'],
-        ['frappe', 'catppuccin-frappe'],
-        ['macchiato', 'catppuccin-macchiato'],
-        ['mocha', 'catppuccin-mocha'],
-      ]);
       if (supportedThemes.has(value)) return value;
-      return aliases.get(value) || 'sandman';
+      return 'sandman';
     }
 
     function readStoredTheme() {
@@ -2081,6 +1906,8 @@
       selectedStatus: 'all',
       activeBatches: false,
       showArchived: persistedPortalState.showArchived === true,
+      sortBy: persistedPortalState.sortBy || 'server',
+      sortDir: persistedPortalState.sortDir || 'desc',
       loading: true,
     };
 
@@ -2176,6 +2003,8 @@
         tabs: state.tabs,
         commandFormCollapsed: !commandFormExpanded,
         showArchived: state.showArchived,
+        sortBy: state.sortBy,
+        sortDir: state.sortDir,
       });
     }
 
@@ -2216,10 +2045,6 @@
 
     function formatDuration(value) {
       return value && String(value).trim() ? value : '—';
-    }
-
-    function formatBranch(run) {
-      return run.branch && String(run.branch).trim() ? run.branch : '—';
     }
 
     function formatIssueTitle(run) {
@@ -3019,6 +2844,65 @@
       }
     }
 
+    function toggleSort(key) {
+      if (!key) return;
+      if (state.sortBy !== key) {
+        state.sortBy = key;
+        state.sortDir = key === 'status' ? 'asc' : 'desc';
+      } else if (state.sortDir === 'desc') {
+        state.sortDir = 'asc';
+      } else {
+        state.sortBy = 'server';
+        state.sortDir = 'desc';
+      }
+      persistPortalViewState();
+      render();
+    }
+
+    function syncSortButtons() {
+      for (const button of sortButtons) {
+        const key = button.getAttribute('data-sort') || '';
+        const active = state.sortBy === key && state.sortBy !== 'server';
+        button.setAttribute('aria-pressed', String(active));
+        const indicator = button.querySelector('.sort-indicator');
+        if (!indicator) continue;
+        indicator.textContent = active ? (state.sortDir === 'asc' ? '↑' : '↓') : '';
+      }
+    }
+
+    function runStartedValue(run) {
+      const ts = Date.parse(run && run.startedAt);
+      return Number.isFinite(ts) ? ts : 0;
+    }
+
+    function runDurationValue(run) {
+      const started = runStartedValue(run);
+      if (!started) return 0;
+      const finished = Date.parse(run && run.finishedAt);
+      const end = Number.isFinite(finished) ? finished : Date.now();
+      return Math.max(0, end - started);
+    }
+
+    function sortedVisibleRuns(runs) {
+      if (state.sortBy === 'server') return runs;
+      const dir = state.sortDir === 'asc' ? 1 : -1;
+      return runs
+        .map((run, index) => ({ run, index }))
+        .sort((a, b) => {
+          let cmp = 0;
+          if (state.sortBy === 'status') {
+            cmp = String(a.run.status || '').localeCompare(String(b.run.status || ''));
+          } else if (state.sortBy === 'started') {
+            cmp = runStartedValue(a.run) - runStartedValue(b.run);
+          } else if (state.sortBy === 'duration') {
+            cmp = runDurationValue(a.run) - runDurationValue(b.run);
+          }
+          if (cmp === 0) return a.index - b.index;
+          return cmp * dir;
+        })
+        .map((entry) => entry.run);
+    }
+
     function shouldShowRun(run) {
       if (state.activeBatches && run.kind !== 'active') return false;
       if (!state.showArchived && run.archived) return false;
@@ -3043,30 +2927,10 @@
       return 'Run';
     }
 
-    function highlightTerminalText(text) {
-      const escaped = escapeHTML(text || '');
-      if (!escaped) return '';
-      return escaped.split('\n').map((line) => {
-        let styled = line;
-        if (styled.startsWith('&gt; ')) {
-          styled = '<span class="term-prompt">&gt;</span> ' + styled.slice(5);
-        }
-        styled = styled
-          .replace(/(https?:\/\/[^\s<]+)/g, '<span class="term-url">$1</span>')
-          .replace(/(&[a-z]+|&#x[0-9a-f]+|&#[0-9]+);?/gi, '<span class="term-protected">$1;</span>')
-          .replace(/\b([0-9]+(?:\.[0-9]+)?)\b/g, '<span class="term-number">$1</span>')
-          .replace(/(&quot;[^&]*?&quot;|'[^'&]*?')/g, '<span class="term-string">$1</span>')
-          .replace(/<span class="term-protected">(&[a-z]+|&#x[0-9a-f]+|&#[0-9]+);?<\/span>/gi, '$1;')
-          .replace(/<span class="term-protected"><\/span>/gi, '')
-          .replace(/\b(build|success|failure|error|warning|active|completed|waiting|running)\b/gi, '<span class="term-keyword">$1</span>');
-        return styled;
-      }).join('\n');
-    }
-
     function renderTerminalContent(text) {
       const value = String(text || '');
       if (!value) return '';
-      return highlightTerminalText(value);
+      return escapeHTML(value);
     }
 
     function isRunAbortable(run, abortReservations) {
@@ -3088,7 +2952,9 @@
     function render() {
       syncStatusOptions(state.runs);
       normalizePortalViewState();
-      const filtered = state.runs.filter(shouldShowRun);
+      let filtered = state.runs.filter(shouldShowRun);
+      filtered = sortedVisibleRuns(filtered);
+      syncSortButtons();
       summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong> runs visible';
       const scrollStates = portalScroll ? portalScroll.capture(runsBody.querySelectorAll('[data-scroll-key]')) : {};
       const abortReservations = new Set();
@@ -3097,7 +2963,6 @@
           escapeHTML: escapeHTML,
           formatTime: formatTime,
           formatDuration: formatDuration,
-          formatBranch: formatBranch,
           formatIssueTitle: formatIssueTitle,
           formatSource: formatSource,
           statusClass: statusClass,
@@ -3392,9 +3257,13 @@
       if (commandId) toggleCommand(commandId);
     });
 
-	activeBatchesToggle.addEventListener('change', () => {
-		state.activeBatches = activeBatchesToggle.checked;
-		render();
+    for (const button of sortButtons) {
+      button.addEventListener('click', () => toggleSort(button.getAttribute('data-sort') || ''));
+    }
+
+    activeBatchesToggle.addEventListener('change', () => {
+      state.activeBatches = activeBatchesToggle.checked;
+      render();
 	});
 
     archivedToggle.addEventListener('change', () => {

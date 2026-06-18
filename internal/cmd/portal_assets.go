@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"sort"
-	"strings"
 )
 
 //go:embed portal.html portal_themes.json portal_state.js portal_scroll.js portal_diff.js
@@ -36,10 +34,6 @@ func init() {
 	if err := json.Unmarshal(data, &portalThemeDefs); err != nil {
 		panic(fmt.Sprintf("parse portal themes: %v", err))
 	}
-
-	sort.Slice(portalThemeDefs, func(i, j int) bool {
-		return strings.Compare(portalThemeDefs[i].Label, portalThemeDefs[j].Label) < 0
-	})
 
 	values := make([]string, 0, len(portalThemeDefs))
 	var options bytes.Buffer

@@ -1014,7 +1014,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active Batches", "Log", "Events", "Details", "Actions", "data-rendered-json", "Run details", "JSON.stringify(detailsData", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Sandman", "Sleep while your agents code", "AFK coding agents orchestration", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, "const defaultTheme = 'sandman';", "html[data-theme=\"sandman\"]", `id="status-chips"`, `All statuses`} {
+	for _, want := range []string{"Active Batches", "Log", "Events", "Details", "Actions", "data-rendered-json", "Run details", "JSON.stringify(detailsData", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Sandman", "Sleep while your agents code", "AFK coding agents orchestration", "Sandman Light", "Catppuccin", "Gruvbox", "Evergreen", "Tokio Night", `const apiPath = "\/api\/runs";`, "const defaultTheme = 'sandman';", "html[data-theme=\"sandman\"]", `id="status-chips"`, `All statuses`, `data-sort="status"`, `data-sort="started"`, `data-sort="duration"`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
@@ -1043,6 +1043,37 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 	}
 	if strings.Contains(content, ">Output<") {
 		t.Fatalf("page should not expose Output tab\n%s", content[:min(800, len(content))])
+	}
+}
+
+func TestPortal_PageUsesPlainEscapedTerminalRendering(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	for _, want := range []string{"function renderTerminalContent(text)", "return escapeHTML(value);"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing terminal-rendering marker %q\n%s", want, content[:min(800, len(content))])
+		}
+	}
+	for _, forbidden := range []string{"highlightTerminalText(", "term-protected"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("page must no longer contain %q after the plain-text renderer change\n%s", forbidden, content[:min(800, len(content))])
+		}
 	}
 }
 
@@ -3446,7 +3477,7 @@ func TestPortal_RunsTableHasColgroupAndFixedLayout(t *testing.T) {
 		t.Fatalf("page missing <colgroup> element in runs table")
 	}
 
-	colIDs := []string{"col-title", "col-badge", "col-started", "col-duration", "col-issue-title", "col-branch", "col-actions"}
+	colIDs := []string{"col-title", "col-badge", "col-started", "col-duration", "col-issue-title", "col-actions"}
 	for _, id := range colIDs {
 		if !strings.Contains(content, `<col class="`+id+`">`) {
 			t.Fatalf("page missing <col class=%q> element in colgroup", id)
