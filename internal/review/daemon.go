@@ -26,6 +26,13 @@ import (
 // reference the same constant.
 const PollingInterval = 30 * time.Second
 
+// verifyMaxRetries is the maximum number of attempts for review comment
+// verification, accounting for GitHub API eventual consistency.
+const verifyMaxRetries = 3
+
+// verifyBackoff is the delay between verification retry attempts.
+const verifyBackoff = 5 * time.Second
+
 // Clock returns the current time. Inject a custom clock in tests to avoid
 // time-based dependencies.
 type Clock func() time.Time
@@ -464,7 +471,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return fmt.Errorf("run batch: %w", err)
 	}
-	if err := d.VerifyReviewPosted(ctx, prNumber, verifyStart); err != nil {
+	if err := d.verifyReviewPosted(ctx, prNumber, verifyStart); err != nil {
 		return fmt.Errorf("review verification: %w", err)
 	}
 	return nil
@@ -479,21 +486,18 @@ func (d *Daemon) now() time.Time {
 	return time.Now()
 }
 
-// VerifyReviewPosted checks whether a new PR comment was posted after the
+// verifyReviewPosted checks whether a new PR comment was posted after the
 // given timestamp. It retries up to 3 times with 5-second backoff to
 // handle GitHub API eventual consistency.
-func (d *Daemon) VerifyReviewPosted(ctx context.Context, prNumber int, since time.Time) error {
-	const maxRetries = 3
-	const backoff = 5 * time.Second
-
+func (d *Daemon) verifyReviewPosted(ctx context.Context, prNumber int, since time.Time) error {
 	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := 0; attempt < verifyMaxRetries; attempt++ {
 		if attempt > 0 {
-			d.logf("PR #%d: review verification attempt %d/%d, retrying in %v", prNumber, attempt+1, maxRetries, backoff)
+			d.logf("PR #%d: review verification attempt %d/%d, retrying in %v", prNumber, attempt+1, verifyMaxRetries, verifyBackoff)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(backoff):
+			case <-time.After(verifyBackoff):
 			}
 		}
 
@@ -513,7 +517,7 @@ func (d *Daemon) VerifyReviewPosted(ctx context.Context, prNumber int, since tim
 		lastErr = fmt.Errorf("no review comment found on PR #%d after %v", prNumber, since)
 	}
 
-	d.logf("PR #%d: review verification failed after %d attempts: %v", prNumber, maxRetries, lastErr)
+	d.logf("PR #%d: review verification failed after %d attempts: %v", prNumber, verifyMaxRetries, lastErr)
 	return lastErr
 }
 

@@ -1459,7 +1459,7 @@ func TestDaemon_VerifyReviewPosted_FailsWhenNoNewComments(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 
-	err := d.VerifyReviewPosted(context.Background(), 42, now)
+	err := d.verifyReviewPosted(context.Background(), 42, now)
 	if err == nil {
 		t.Fatal("expected error when no new comments found after timestamp")
 	}
@@ -1486,7 +1486,7 @@ func TestDaemon_VerifyReviewPosted_PassesWhenNewCommentFound(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 
-	err := d.VerifyReviewPosted(context.Background(), 42, now)
+	err := d.verifyReviewPosted(context.Background(), 42, now)
 	if err != nil {
 		t.Fatalf("expected no error when new comment found, got: %v", err)
 	}
