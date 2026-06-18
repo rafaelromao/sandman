@@ -531,6 +531,22 @@
       gap: 8px;
       align-items: center;
     }
+    .status-select {
+      display: none;
+      width: 100%;
+      min-height: 44px;
+      padding: 0 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      appearance: none;
+    }
+    .status-select:focus-visible {
+      outline: 2px solid color-mix(in oklch, var(--accent) 72%, var(--surface-3));
+      outline-offset: 2px;
+    }
     .filter-chips .fchip-divider {
       width: 1px;
       align-self: stretch;
@@ -1530,10 +1546,152 @@
       .command-grid.two { grid-template-columns: 1fr; }
       .settings-wrap { justify-items: start; }
       .detail-panel { min-height: 0; max-height: calc(100vh - 220px); overflow: auto; }
-      .col-duration,
-      th[data-col="duration"],
-      td[data-cell="duration"] {
+      .detail-grid { grid-template-columns: 1fr; }
+      .detail-content,
+      .tab-pane,
+      .tab-pane.fill {
+        min-width: 0;
+      }
+      .commands-panel,
+      .settings-panel {
+        left: 0;
+        right: 0;
+        width: auto;
+        border-left: 0;
+      }
+      .commands-panel-head,
+      .commands-panel-body,
+      .commands-panel-footer,
+      .settings-panel-head,
+      .settings-panel-body {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+      .toolbar {
+        padding: 12px;
+      }
+      .filters {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 8px;
+        align-items: center;
+      }
+      .status-select {
+        display: block;
+        grid-column: 1 / -1;
+      }
+      .filter-chips,
+      .fchip-divider {
         display: none;
+      }
+      .fchip.fchip-toggle {
+        min-height: 44px;
+      }
+      .table-shell {
+        overflow: hidden;
+        border-radius: 16px;
+      }
+      table {
+        min-width: 0;
+        table-layout: auto;
+        display: block;
+      }
+      thead {
+        display: none;
+      }
+      tbody {
+        display: block;
+      }
+      tbody tr.run-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          "title badge"
+          "issue issue"
+          "started duration"
+          "actions actions";
+        gap: 8px 10px;
+        padding: 14px 12px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+        align-items: start;
+      }
+      tbody tr.run-row:hover,
+      tbody tr.run-row.active {
+        background: color-mix(in oklch, var(--accent) 10%, var(--surface));
+      }
+      tbody tr.run-row:hover td,
+      tbody tr.run-row.active td {
+        background: transparent;
+      }
+      tbody tr.run-row td {
+        padding: 0;
+        border: none;
+        background: transparent;
+        min-width: 0;
+        width: auto;
+      }
+      tbody tr.run-row td[data-cell="title"] {
+        grid-area: title;
+        min-width: 0;
+      }
+      tbody tr.run-row td[data-cell="badge"] {
+        grid-area: badge;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+      tbody tr.run-row td[data-cell="issue-title"] {
+        grid-area: issue;
+        min-width: 0;
+        white-space: normal;
+        color: var(--text);
+      }
+      tbody tr.run-row td[data-cell="started"] {
+        grid-area: started;
+        color: var(--muted);
+      }
+      tbody tr.run-row td[data-cell="duration"] {
+        grid-area: duration;
+        color: var(--muted);
+        justify-self: end;
+      }
+      tbody tr.run-row td[data-cell="actions"] {
+        grid-area: actions;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      tbody tr.run-row td[data-cell="actions"] .action-btn {
+        min-width: 44px;
+        min-height: 44px;
+        padding: 0 12px;
+        border-radius: 999px;
+        background: transparent;
+      }
+      tbody tr.detail-row {
+        display: block;
+        width: 100%;
+      }
+      tbody tr.detail-row td {
+        display: block;
+        width: 100%;
+        max-width: none;
+        background: color-mix(in oklch, var(--accent) 8%, var(--surface-2));
+        padding: 0;
+        border: none;
+      }
+      tbody tr.context-row,
+      tbody tr.batch-row {
+        display: block;
+        background: var(--surface);
+      }
+      tbody tr.context-row td,
+      tbody tr.batch-row td {
+        display: block;
+        padding: 0 12px 10px;
+        border-bottom: 1px solid var(--border);
       }
     }
     @media (max-width: 760px) {
@@ -1796,15 +1954,18 @@
 
     <section class="toolbar" aria-label="Run filters">
       <div class="filters">
+        <select id="status-filter" class="status-select" aria-label="Filter runs by status">
+          <option value="all">All</option>
+        </select>
         <div class="filter-chips" id="status-chips" role="group" aria-label="Filter runs by status"></div>
         <span class="fchip-divider" aria-hidden="true"></span>
         <label class="fchip fchip-toggle">
           <input id="active-batches" type="checkbox">
-          <span>Active Batches</span>
+          <span>Active</span>
         </label>
         <label class="fchip fchip-toggle">
           <input id="archived-toggle" type="checkbox">
-          <span>Archived</span>
+          <span>Archive</span>
         </label>
       </div>
       <div id="summary-pill" class="status-pill"><span class="dot"></span><strong>0</strong> runs visible</div>
@@ -1853,6 +2014,7 @@
     const themeStorageKey = 'sandman.portal.theme';
     const supportedThemes = new Set({{.SupportedThemesJSON}});
     const statusChips = document.getElementById('status-chips');
+    const statusFilter = document.getElementById('status-filter');
     const sortButtons = Array.from(document.querySelectorAll('.th-sort'));
     const activeBatchesToggle = document.getElementById('active-batches');
     const archivedToggle = document.getElementById('archived-toggle');
@@ -2895,18 +3057,20 @@
     }
 
     function sortStatusValues(values) {
+      const order = ['all', 'success', 'failure', 'aborted'];
       return Array.from(values).sort((a, b) => {
-        if (a === 'running') return -1;
-        if (b === 'running') return 1;
-        if (a === 'reviewing') return -1;
-        if (b === 'reviewing') return 1;
+        const ai = order.indexOf(a);
+        const bi = order.indexOf(b);
+        if (ai >= 0 && bi >= 0) return ai - bi;
+        if (ai >= 0) return -1;
+        if (bi >= 0) return 1;
         return a.localeCompare(b);
       });
     }
 
     function syncStatusOptions(runs) {
-      const statuses = new Set(['all']);
-      for (const run of runs) statuses.add(run.status || 'unknown');
+      const statuses = new Set(['all', 'success', 'failure', 'aborted']);
+      for (const run of runs) statuses.add(statusFilterValue(run));
       const nextStatuses = sortStatusValues(statuses);
       const current = state.selectedStatus || 'all';
       const want = nextStatuses.includes(current) ? current : 'all';
@@ -2923,22 +3087,32 @@
             chip.setAttribute('aria-pressed', String(chip.getAttribute('data-status') === want));
           }
         }
+        if (statusFilter) statusFilter.value = want;
         return;
       }
       if (!statusChips) return;
       statusChips.innerHTML = '';
+      if (statusFilter) statusFilter.innerHTML = '';
       for (const value of nextStatuses) {
+        if (statusFilter) {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = statusFilterLabel(value);
+          option.selected = value === want;
+          statusFilter.appendChild(option);
+        }
         const chip = document.createElement('button');
         chip.type = 'button';
         chip.className = 'fchip';
         chip.setAttribute('data-status', value);
         chip.setAttribute('aria-pressed', String(value === want));
-        chip.textContent = value === 'all' ? 'All statuses' : value;
+        chip.textContent = statusFilterLabel(value);
         chip.addEventListener('click', () => {
           state.selectedStatus = value;
           for (const c of statusChips.querySelectorAll('.fchip[data-status]')) {
             c.setAttribute('aria-pressed', String(c.getAttribute('data-status') === value));
           }
+          if (statusFilter) statusFilter.value = value;
           render();
         });
         statusChips.appendChild(chip);
@@ -3004,10 +3178,30 @@
         .map((entry) => entry.run);
     }
 
+    function statusFilterValue(run) {
+      if (!run) return 'all';
+      const status = String(run.status || '').trim().toLowerCase();
+      if (status === 'success') return 'success';
+      if (status === 'failure' || status === 'failed' || status === 'error') return 'failure';
+      if (status === 'aborted') return 'aborted';
+      return status || 'other';
+    }
+
+    function statusFilterLabel(value) {
+      switch (value) {
+        case 'all': return 'All';
+        case 'success': return 'Success';
+        case 'failure': return 'Failure';
+        case 'aborted': return 'Aborted';
+        default:
+          return String(value || '').charAt(0).toUpperCase() + String(value || '').slice(1);
+      }
+    }
+
     function shouldShowRun(run) {
       if (state.activeBatches && run.kind !== 'active') return false;
       if (!state.showArchived && run.archived) return false;
-      if (state.selectedStatus !== 'all' && run.status !== state.selectedStatus) return false;
+      if (state.selectedStatus !== 'all' && statusFilterValue(run) !== state.selectedStatus) return false;
       return true;
     }
 
@@ -3024,8 +3218,13 @@
     }
 
     function renderRunMeta(run) {
-      if (run.runId) return 'ID ' + run.runId;
-      return 'Run';
+      const parts = [];
+      if (run.runId) parts.push('RunID ' + run.runId);
+      if (run.branch) parts.push(run.branch);
+      if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
+        parts.push('Batch #' + run.batchIssues.join(', #'));
+      }
+      return parts.length ? parts.join(' · ') : 'Run';
     }
 
     function renderTerminalContent(text) {
@@ -3378,6 +3577,18 @@
       persistPortalViewState();
       render();
     });
+
+    if (statusFilter) {
+      statusFilter.addEventListener('change', () => {
+        state.selectedStatus = statusFilter.value;
+        if (statusChips) {
+          for (const chip of statusChips.querySelectorAll('.fchip[data-status]')) {
+            chip.setAttribute('aria-pressed', String(chip.getAttribute('data-status') === state.selectedStatus));
+          }
+        }
+        render();
+      });
+    }
 
     window.addEventListener('pagehide', stopAllRunStreams);
 
