@@ -208,6 +208,7 @@ func newPortalHTTPServer(repoRoot string, launchData portalLaunchFormData, cfg *
 
 func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *config.Config) http.Handler {
 	launcher, launcherErr := newPortalLauncher(repoRoot)
+	runsIndex := getPortalRunsIndex(repoRoot)
 	staleCleaner := portalStaleCleaner
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/commands", func(w http.ResponseWriter, r *http.Request) {
@@ -247,6 +248,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 					writeJSONError(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
+				runsIndex.Invalidate()
 				if _, err := launcher.record(args); err != nil {
 					writeJSONError(w, err.Error(), http.StatusInternalServerError)
 					return
@@ -264,6 +266,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 					writeJSONError(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
+				runsIndex.Invalidate()
 				command, err := launcher.record(args)
 				if err != nil {
 					writeJSONError(w, err.Error(), http.StatusInternalServerError)
@@ -321,9 +324,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			return
 		}
 
-		eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
-		view := &portalRunsView{}
-		runs, err := view.compute(repoRoot, eventLog)
+		runs, err := runsIndex.Snapshot(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -380,6 +381,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			writeJSONError(w, "abort failed", http.StatusInternalServerError)
 			return
 		}
+		runsIndex.Invalidate()
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
@@ -413,6 +415,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			writeJSONError(w, "archive failed", http.StatusInternalServerError)
 			return
 		}
+		runsIndex.Invalidate()
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
@@ -629,18 +632,7 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 }
 
 func portalRunForKey(repoRoot, runKey string) (portalRun, error) {
-	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
-	view := &portalRunsView{}
-	runs, err := view.compute(repoRoot, eventLog)
-	if err != nil {
-		return portalRun{}, err
-	}
-	for _, run := range runs {
-		if run.Key == runKey {
-			return run, nil
-		}
-	}
-	return portalRun{}, &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("run %q not found", runKey)}
+	return getPortalRunsIndex(repoRoot).FindByKey(context.Background(), runKey)
 }
 
 func signalPortalProcess(pid int, sig syscall.Signal) error {

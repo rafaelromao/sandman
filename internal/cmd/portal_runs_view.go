@@ -98,6 +98,7 @@ type portalActiveRun struct {
 	Key          string
 	Dir          string
 	SocketPath   string
+	LiveOutput   string
 	IssueNumber  int
 	IssueNumbers []int
 	PRNumber     int
@@ -143,14 +144,20 @@ func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]p
 	if err != nil {
 		return nil, fmt.Errorf("read event log: %w", err)
 	}
+	return v.computeFromEvents(repoRoot, eventList)
+}
 
+func (v *portalRunsView) computeFromEvents(repoRoot string, eventList []events.Event) ([]portalRun, error) {
 	eventsByRun := v.groupEventsByRun(eventList)
 
 	activeInstances, err := v.discoverActiveRuns(repoRoot, eventsByRun)
 	if err != nil {
 		return nil, err
 	}
+	return v.computeWithActiveRuns(repoRoot, eventList, eventsByRun, activeInstances)
+}
 
+func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []events.Event, eventsByRun map[string][]portalEvent, activeInstances []portalActiveRun) ([]portalRun, error) {
 	runStates := events.ProjectRunStates(eventList)
 	activeStates := make([]events.RunState, 0, len(runStates))
 	activeBatchStart := time.Time{}
@@ -459,7 +466,6 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 	if batchStart.IsZero() {
 		batchStart = active.ModTime
 	}
-	liveOutput := v.readPortalSocketOutput(active.SocketPath)
 	runs := make([]portalRun, 0, len(active.IssueNumbers))
 	usedRunIDs := make(map[string]struct{})
 	for _, issueNumber := range active.IssueNumbers {
@@ -469,7 +475,7 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 		}
 		blocked := v.latestBlockedEventForIssue(eventList, issueNumber, batchStart)
 		queued := v.latestQueuedEventForIssue(eventList, issueNumber, batchStart)
-		runs = append(runs, v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, liveOutput, eventsByRun))
+		runs = append(runs, v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun))
 		if state != nil && state.RunID != "" {
 			usedRunIDs[state.RunID] = struct{}{}
 		}
@@ -750,7 +756,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
 		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, ""),
-		Log:         v.readPortalSocketOutput(match.instance.SocketPath),
+		Log:         match.instance.LiveOutput,
 		Events:      eventsByRun[eventKey],
 		BatchKey:    match.instance.Key,
 	}
@@ -787,7 +793,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	logPath := v.portalLogPath(repoRoot, issueNumber, branch)
 	logContent := v.readPortalTextFile(logPath)
 	if active != nil {
-		logContent = v.readPortalSocketOutput(active.SocketPath)
+		logContent = active.LiveOutput
 	}
 
 	portalRun := portalRun{
