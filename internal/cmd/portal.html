@@ -181,54 +181,59 @@
       display: flex;
       flex-direction: column;
     }
-    /* Flattened masthead (ADR: "Command Post", anti-references: decorative
-       chrome, polished theater). The accent radials and gradient fill are
-       gone; height, shadow, and radius are reduced so the runs table owns
-       the viewport. One restrained accent moment remains: the active-run
-       dot in the table, not the header. */
+    /* Compact topbar: flat, minimal chrome, works on both phone and wide.
+       The runs table owns the viewport; the topbar is a lean command rail.
+       One restrained accent moment remains: the active-run dot in the table. */
     .masthead {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 14px;
-      align-items: center;
-      padding: 12px 16px;
-      margin-bottom: 12px;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      background: var(--surface);
-    }
-    .masthead-copy {
-      min-width: 0;
       display: flex;
       flex-wrap: wrap;
-      align-items: baseline;
-      gap: 6px 18px;
+      align-items: center;
+      gap: 6px 16px;
+      padding: 8px 14px;
+      margin-bottom: 10px;
+    }
+    .topbar-left {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 12px;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .topbar-right {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .masthead-copy {
+      display: contents;
     }
     .masthead-brand {
       display: inline-flex;
       align-items: center;
-      gap: 9px;
+      gap: 7px;
       color: var(--text);
     }
     .masthead-brand svg {
-      width: 20px;
-      height: 20px;
+      width: 18px;
+      height: 18px;
       flex: 0 0 auto;
     }
     .masthead-brand-text {
       display: inline-flex;
       align-items: baseline;
-      gap: 8px;
+      gap: 6px;
       line-height: 1.2;
     }
     .masthead-brand-text strong {
-      font-size: 13px;
-      letter-spacing: 0.08em;
+      font-size: 12px;
+      letter-spacing: 0.07em;
       text-transform: uppercase;
     }
     .masthead-tagline {
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 400;
     }
     .status-bar {
@@ -266,6 +271,12 @@
     }
     .poll-health.warn .dot {
       background: var(--warning);
+    }
+    /* Slim status strip visible only on narrow viewports.
+       Shows repo path, live dot, and updated time without
+       taking vertical space on wide screens. */
+    .status-strip {
+      display: none;
     }
     .settings-wrap {
       display: flex;
@@ -308,6 +319,52 @@
     }
     .status-bar .meta-line {
       margin-top: 0;
+    }
+    /* Status strip: slim one-liner shown only on narrow viewports.
+       Keeps repo scope, live dot, and updated time visible without
+       taking vertical space on wide screens where the topbar shows all. */
+    .status-strip {
+      display: none;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 12px;
+      padding: 5px 12px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .status-strip-scope {
+      font-size: 10px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 40vw;
+    }
+    .status-strip-scope code {
+      font-family: inherit;
+      font-size: inherit;
+      color: inherit;
+    }
+    .status-strip-live {
+      display: flex;
+      align-items: center;
+    }
+    .status-strip-live .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--muted);
+    }
+    .status-strip-updated {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+    }
+    .status-strip-updated span {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
     }
     /* Context and batch chips live in their own tr (so a single td can
        span all six columns), but visually they are part of the run row
@@ -1511,6 +1568,39 @@
         align-self: flex-start;
       }
       .command-row .col-command {
+        flex: 0 0 auto;
+      }
+      /* Show compact status strip on narrow screens; hide the wrapped
+         meta lines and poll pill from topbar-left since status-strip
+         shows equivalent info in a single line. */
+      .status-strip { display: flex; order: -1; width: 100%; }
+      .masthead {
+        flex-direction: column;
+        padding: 0;
+        gap: 0;
+      }
+      .topbar-left,
+      .topbar-right {
+        width: 100%;
+      }
+      .topbar-left .meta-line,
+      .topbar-left .poll-health,
+      .topbar-left .subtitle { display: none; }
+      .masthead {
+        padding: 6px 12px;
+        gap: 4px 10px;
+      }
+      .masthead-brand svg {
+        width: 16px;
+        height: 16px;
+      }
+      .masthead-brand-text strong {
+        font-size: 11px;
+      }
+      .settings-wrap {
+        gap: 4px;
+      }
+      .command-row .col-command {
         font-size: 13px;
       }
       .command-row .col-started {
@@ -1553,7 +1643,7 @@
 <body>
   <main>
     <header class="masthead">
-      <div class="masthead-copy">
+      <div class="topbar-left">
         <div class="masthead-brand" aria-hidden="true">
           <svg class="brand-mark" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="color: var(--accent)">
             <g fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
@@ -1595,13 +1685,24 @@
           <span class="poll-health-label">Waiting for first poll</span>
         </span>
       </div>
-      <div class="settings-wrap">
-        <button id="commands-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="commands-panel" aria-label="Commands">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-        </button>
-        <button id="settings-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel" aria-label="Settings">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
+      <div class="topbar-right">
+        <div class="settings-wrap">
+          <button id="commands-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="commands-panel" aria-label="Commands">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          </button>
+          <button id="settings-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel" aria-label="Settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
+      </div>
+      <!-- Slim status strip: visible only on narrow viewports.
+           Placed last in DOM so string searches for Repo/Updated find the
+           real topbar-left elements first; uses CSS order to appear
+           visually at the top on narrow screens. -->
+      <div class="status-strip" aria-hidden="true">
+        <span class="status-strip-scope"><code>{{.RepoRoot}}</code></span>
+        <span class="status-strip-live"><span class="dot"></span></span>
+        <span class="status-strip-updated"><span>Updated</span><strong id="last-updated-strip">—</strong></span>
       </div>
     </header>
 
