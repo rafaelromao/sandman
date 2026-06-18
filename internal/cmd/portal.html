@@ -664,6 +664,74 @@
       gap: 12px 16px;
       align-items: center;
     }
+    /* Unified filter chip rail (P1-2): one idiom instead of a select plus
+       two checkboxes. Status chips are buttons (single-select, matching the
+       prior select semantics); the two toggles are checkbox-backed chips so
+       their checked/change mechanics and ids stay intact. */
+    .filter-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .filter-chips .fchip-divider {
+      width: 1px;
+      align-self: stretch;
+      margin: 2px 4px;
+      background: var(--border);
+    }
+    .fchip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font: inherit;
+      font-size: 12.5px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out;
+    }
+    .fchip:hover {
+      background: var(--surface-2);
+      color: var(--text);
+    }
+    .fchip:focus-visible {
+      outline: 2px solid color-mix(in oklch, var(--accent) 72%, var(--surface-3));
+      outline-offset: 2px;
+    }
+    .fchip[aria-pressed="true"] {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-ink);
+      font-weight: 600;
+    }
+    /* Checkbox-backed chip variant for the two toggle filters. The native
+       checkbox is hidden but stays focusable/checked via its label, so the
+       existing change/checked wiring is unchanged. */
+    .fchip.fchip-toggle {
+      position: relative;
+    }
+    .fchip.fchip-toggle input[type="checkbox"] {
+      position: absolute;
+      opacity: 0;
+      width: 1px;
+      height: 1px;
+      pointer-events: none;
+    }
+    .fchip.fchip-toggle:has(input:checked) {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-ink);
+      font-weight: 600;
+    }
+    .fchip.fchip-toggle:has(input:focus-visible) {
+      outline: 2px solid color-mix(in oklch, var(--accent) 72%, var(--surface-3));
+      outline-offset: 2px;
+    }
     .field {
       display: inline-flex;
       align-items: center;
@@ -1796,19 +1864,15 @@
 
     <section class="toolbar" aria-label="Run filters">
       <div class="filters">
-        <label class="field">
-          Status
-          <select id="status-filter" aria-label="Filter runs by status">
-            <option value="all">All statuses</option>
-          </select>
-        </label>
-        <label class="field">
+        <div class="filter-chips" id="status-chips" role="group" aria-label="Filter runs by status"></div>
+        <span class="fchip-divider" aria-hidden="true"></span>
+        <label class="fchip fchip-toggle">
           <input id="active-batches" type="checkbox">
-          Active Batches
+          <span>Active Batches</span>
         </label>
-        <label class="field">
+        <label class="fchip fchip-toggle">
           <input id="archived-toggle" type="checkbox">
-          Archived
+          <span>Archived</span>
         </label>
       </div>
       <div id="summary-pill" class="status-pill"><span class="dot"></span><strong>0</strong> runs visible</div>
@@ -1857,7 +1921,7 @@
     const pollIntervalInput = document.getElementById('poll-interval');
     const themeStorageKey = 'sandman.portal.theme';
     const supportedThemes = new Set({{.SupportedThemesJSON}});
-    const statusFilter = document.getElementById('status-filter');
+    const statusChips = document.getElementById('status-chips');
     const activeBatchesToggle = document.getElementById('active-batches');
     const archivedToggle = document.getElementById('archived-toggle');
     const runsBody = document.getElementById('runs-body');
@@ -2917,29 +2981,42 @@
     function syncStatusOptions(runs) {
       const statuses = new Set(['all']);
       for (const run of runs) statuses.add(run.status || 'unknown');
-      const current = statusFilter.value || state.selectedStatus || 'all';
       const nextStatuses = sortStatusValues(statuses);
-      const currentOptions = Array.from(statusFilter.options).map((option) => option.value);
-      const nextOptions = nextStatuses;
-      if (currentOptions.length === nextOptions.length && currentOptions.every((value, index) => value === nextOptions[index])) {
-        if (nextOptions.includes(current)) {
-          statusFilter.value = current;
-          state.selectedStatus = current;
-        } else {
-          statusFilter.value = 'all';
-          state.selectedStatus = 'all';
+      const current = state.selectedStatus || 'all';
+      const want = nextStatuses.includes(current) ? current : 'all';
+      state.selectedStatus = want;
+
+      // Rebuild the chip rail only when the set of statuses changes; this
+      // keeps the click handlers stable between polls and avoids resetting
+      // focus while the user is interacting with the rail.
+      const existing = statusChips ? Array.from(statusChips.querySelectorAll('.fchip[data-status]')).map((c) => c.getAttribute('data-status')) : [];
+      const same = existing.length === nextStatuses.length && existing.every((v, i) => v === nextStatuses[i]);
+      if (same) {
+        if (statusChips) {
+          for (const chip of statusChips.querySelectorAll('.fchip[data-status]')) {
+            chip.setAttribute('aria-pressed', String(chip.getAttribute('data-status') === want));
+          }
         }
         return;
       }
-      statusFilter.innerHTML = '';
-      for (const value of nextOptions) {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = value === 'all' ? 'All statuses' : value;
-        statusFilter.appendChild(option);
+      if (!statusChips) return;
+      statusChips.innerHTML = '';
+      for (const value of nextStatuses) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'fchip';
+        chip.setAttribute('data-status', value);
+        chip.setAttribute('aria-pressed', String(value === want));
+        chip.textContent = value === 'all' ? 'All statuses' : value;
+        chip.addEventListener('click', () => {
+          state.selectedStatus = value;
+          for (const c of statusChips.querySelectorAll('.fchip[data-status]')) {
+            c.setAttribute('aria-pressed', String(c.getAttribute('data-status') === value));
+          }
+          render();
+        });
+        statusChips.appendChild(chip);
       }
-      statusFilter.value = nextOptions.includes(current) ? current : 'all';
-      state.selectedStatus = statusFilter.value;
     }
 
     function shouldShowRun(run) {
@@ -3315,15 +3392,10 @@
       if (commandId) toggleCommand(commandId);
     });
 
-    statusFilter.addEventListener('change', () => {
-      state.selectedStatus = statusFilter.value || 'all';
-      render();
-    });
-
-    activeBatchesToggle.addEventListener('change', () => {
-      state.activeBatches = activeBatchesToggle.checked;
-      render();
-    });
+	activeBatchesToggle.addEventListener('change', () => {
+		state.activeBatches = activeBatchesToggle.checked;
+		render();
+	});
 
     archivedToggle.addEventListener('change', () => {
       state.showArchived = archivedToggle.checked;
