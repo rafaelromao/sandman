@@ -1014,16 +1014,14 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active Batches", "Log", "Events", "Details", "Actions", "data-rendered-json", "Run details", "JSON.stringify(detailsData", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Sandman", "Sleep while your agents code", "AFK coding agents orchestration", "Catppuccin Latte", "Catppuccin Frappe", "Catppuccin Macchiato", "Catppuccin Mocha", "Tokyo Night", "Gruvbox", "Everforest", "Nord", "Dracula", "Rose Pine", "Tokyo Night Day", "Everforest Light", "Solarized Light", "Nord Light", "GitHub Light", `const apiPath = "\/api\/runs";`, "const defaultTheme = 'sandman';", "html[data-theme=\"sandman\"]"} {
+	for _, want := range []string{"Active Batches", "Log", "Events", "Details", "Actions", "data-rendered-json", "Run details", "JSON.stringify(detailsData", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Sandman", "Sleep while your agents code", "AFK coding agents orchestration", "Sandman Light", "Catppuccin", "Gruvbox", "Evergreen", "Tokio Night", `const apiPath = "\/api\/runs";`, "const defaultTheme = 'sandman';", "html[data-theme=\"sandman\"]", `id="status-chips"`, `All statuses`, `data-sort="status"`, `data-sort="started"`, `data-sort="duration"`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
 	}
-	// Status filter still uses the static "All statuses" option; chips
-	// must not add new baked-in option values.
-	if !strings.Contains(content, `<option value="all">All statuses</option>`) {
-		t.Fatalf("page missing the static 'All statuses' status-filter option\n%s", content[:min(800, len(content))])
-	}
+	// Status control is now a chip rail instead of a select; keep the rail
+	// marker and the initial 'All statuses' chip text stable for the page
+	// contract.
 	// The data-action attributes live in the diff helper now.
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -1045,6 +1043,88 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 	}
 	if strings.Contains(content, ">Output<") {
 		t.Fatalf("page should not expose Output tab\n%s", content[:min(800, len(content))])
+	}
+}
+
+func TestPortal_PageUsesPlainEscapedTerminalRendering(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	for _, want := range []string{"function renderTerminalContent(text)", "return escapeHTML(value);"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing terminal-rendering marker %q\n%s", want, content[:min(800, len(content))])
+		}
+	}
+	for _, forbidden := range []string{"highlightTerminalText(", "term-protected"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("page must no longer contain %q after the plain-text renderer change\n%s", forbidden, content[:min(800, len(content))])
+		}
+	}
+}
+
+func TestPortal_PageIncludesAllClearEmptyStateMessage(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	if !strings.Contains(content, "All clear — 0 active") {
+		t.Fatalf("page missing the all-clear empty-state contract\n%s", content[:min(1200, len(content))])
+	}
+}
+
+func TestPortal_PageAbortedBadgeCSSIsDistinctFromArchived(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	if !strings.Contains(content, `.badge.aborted { background: color-mix(in oklch, var(--danger) 8%, var(--surface));`) {
+		t.Fatalf("page missing the distinct aborted badge background rule\n%s", content[:min(1200, len(content))])
+	}
+	if !strings.Contains(content, `.badge.archived { background: color-mix(in oklch, var(--muted) 12%, var(--surface));`) {
+		t.Fatalf("page missing the archived badge rule\n%s", content[:min(1200, len(content))])
 	}
 }
 
@@ -1093,6 +1173,38 @@ func TestPortal_PageMastheadMetadataStacksUpdatedBelowRepo(t *testing.T) {
 	}
 	if updatedIdx <= repoIdx {
 		t.Fatalf("Updated label must appear after the Repo block in the rendered masthead\nrepoIdx=%d updatedIdx=%d", repoIdx, updatedIdx)
+	}
+}
+
+func TestPortal_PageExposesPollHealthPill(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+
+	for _, want := range []string{`id="poll-health"`, "poll-health-label", "updatePollHealth", "pollFailCount"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing poll-health marker %q\n%s", want, content[:min(800, len(content))])
+		}
+	}
+	// The pill must start neutral (no ok/warn class) so the first paint
+	// does not falsely claim a healthy or failing poll.
+	if strings.Contains(content, `poll-health ok`) || strings.Contains(content, `poll-health warn`) {
+		t.Fatalf("poll-health pill must start without an ok/warn state class\n%s", content[:min(800, len(content))])
 	}
 }
 
@@ -3416,7 +3528,7 @@ func TestPortal_RunsTableHasColgroupAndFixedLayout(t *testing.T) {
 		t.Fatalf("page missing <colgroup> element in runs table")
 	}
 
-	colIDs := []string{"col-title", "col-badge", "col-started", "col-duration", "col-issue-title", "col-branch", "col-actions"}
+	colIDs := []string{"col-title", "col-badge", "col-started", "col-duration", "col-issue-title", "col-actions"}
 	for _, id := range colIDs {
 		if !strings.Contains(content, `<col class="`+id+`">`) {
 			t.Fatalf("page missing <col class=%q> element in colgroup", id)

@@ -246,3 +246,70 @@ if (afterRefresh.showArchived !== true) {
 		t.Fatalf("portal state helper failed: %v\n%s", err, out)
 	}
 }
+
+func TestPortalStatePersistsSortPreference(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for portal state helper test")
+	}
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	portalStatePath := filepath.Join(filepath.Dir(currentFile), "portal_state.js")
+
+	script := `const fs = require('fs');
+const vm = require('vm');
+const helperPath = process.argv[1];
+const source = fs.readFileSync(helperPath, 'utf8');
+const storage = new Map();
+const sandbox = {
+  window: {},
+  globalThis: {},
+  sessionStorage: {
+    getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+    setItem(key, value) { storage.set(key, String(value)); },
+    removeItem(key) { storage.delete(key); },
+  },
+  Set, Map, JSON, console,
+};
+sandbox.window = sandbox;
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox, { filename: helperPath });
+const api = sandbox.SandmanPortalState;
+
+const defaults = api.load();
+if (defaults.sortBy !== 'server' || defaults.sortDir !== 'desc') {
+  throw new Error('expected default sort state {server,desc}, got ' + JSON.stringify({ sortBy: defaults.sortBy, sortDir: defaults.sortDir }));
+}
+
+storage.set(api.storageKey, JSON.stringify({
+  expandedRunKey: null,
+  tabs: {},
+  commandFormCollapsed: false,
+  showArchived: false,
+  sortBy: 'status',
+  sortDir: 'asc',
+}));
+const loaded = api.load();
+if (loaded.sortBy !== 'status' || loaded.sortDir !== 'asc') {
+  throw new Error('expected persisted sort state {status,asc}, got ' + JSON.stringify({ sortBy: loaded.sortBy, sortDir: loaded.sortDir }));
+}
+
+storage.set(api.storageKey, JSON.stringify({ sortBy: 'bogus', sortDir: 'bogus' }));
+const migrated = api.load();
+if (migrated.sortBy !== 'server' || migrated.sortDir !== 'desc') {
+  throw new Error('expected invalid sort state to normalize to {server,desc}, got ' + JSON.stringify({ sortBy: migrated.sortBy, sortDir: migrated.sortDir }));
+}
+
+api.save({ expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, sortBy: 'duration', sortDir: 'asc' });
+const persisted = JSON.parse(storage.get(api.storageKey));
+if (persisted.sortBy !== 'duration' || persisted.sortDir !== 'asc') {
+  throw new Error('expected save() to persist sort fields, got ' + JSON.stringify(persisted));
+}
+`
+	cmd := exec.Command("node", "-e", script, portalStatePath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("portal state helper failed: %v\n%s", err, out)
+	}
+}

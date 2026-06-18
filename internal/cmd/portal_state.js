@@ -2,10 +2,12 @@
   const DEFAULT_STORAGE_KEY = 'sandman.portal.view-state.v1';
   const DEFAULT_TAB = 'log';
   const VALID_TABS = new Set(['log', 'events', 'details']);
+  const VALID_SORT_BY = new Set(['server', 'status', 'started', 'duration']);
+  const VALID_SORT_DIR = new Set(['asc', 'desc']);
   let storageKey = DEFAULT_STORAGE_KEY;
 
   function defaultState() {
-    return { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false };
+    return { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, sortBy: 'server', sortDir: 'desc' };
   }
 
   function readStorage() {
@@ -46,6 +48,8 @@
       tabs: cleanTabs(current.tabs),
       commandFormCollapsed: typeof current.commandFormCollapsed === 'boolean' ? current.commandFormCollapsed : false,
       showArchived: typeof current.showArchived === 'boolean' ? current.showArchived : false,
+      sortBy: VALID_SORT_BY.has(String(current.sortBy || '').trim()) ? String(current.sortBy).trim() : 'server',
+      sortDir: VALID_SORT_DIR.has(String(current.sortDir || '').trim()) ? String(current.sortDir).trim() : 'desc',
     };
   }
 

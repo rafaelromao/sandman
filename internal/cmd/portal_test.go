@@ -1850,6 +1850,41 @@ func TestPortal_ActiveMatch_ReasonDerivedFromSocket(t *testing.T) {
 			t.Fatalf("expected empty Reason for prompt-only active socket, got %q", run.Reason)
 		}
 	})
+
+	t.Run("unmatched active auto-select socket recovers reason status and candidates from run.started event", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, sockPath := shortSock(t)
+
+		match := portalRunMatch{
+			instance: portalActiveRun{
+				Key:        "auto-select-1700000000000",
+				RunID:      "auto-select-1700000000000",
+				SocketPath: sockPath,
+				ModTime:    time.Now().Add(-1 * time.Minute),
+			},
+		}
+		eventsByRun := map[string][]portalEvent{
+			"auto-select-1700000000000": {{
+				Type:      "run.started",
+				Timestamp: time.Now().Add(-1 * time.Minute),
+				Payload:   map[string]any{"run_kind": "auto-select", "candidates": []int{42, 43}},
+			}},
+		}
+
+		run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, eventsByRun)
+		if run.Reason != "auto-select" {
+			t.Fatalf("expected Reason 'auto-select' for unmatched active auto-select socket, got %q", run.Reason)
+		}
+		if run.Status != "auto-selecting" {
+			t.Fatalf("expected Status 'auto-selecting' for unmatched active auto-select socket, got %q", run.Status)
+		}
+		if !reflect.DeepEqual(run.Candidates, []int{42, 43}) {
+			t.Fatalf("expected Candidates [42 43], got %#v", run.Candidates)
+		}
+	})
 }
 
 func TestPortal_ActiveBatchIssue_ReasonFromState(t *testing.T) {

@@ -98,6 +98,7 @@ type portalActiveRun struct {
 	Key          string
 	Dir          string
 	SocketPath   string
+	LiveOutput   string
 	IssueNumber  int
 	IssueNumbers []int
 	PRNumber     int
@@ -143,14 +144,20 @@ func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]p
 	if err != nil {
 		return nil, fmt.Errorf("read event log: %w", err)
 	}
+	return v.computeFromEvents(repoRoot, eventList)
+}
 
+func (v *portalRunsView) computeFromEvents(repoRoot string, eventList []events.Event) ([]portalRun, error) {
 	eventsByRun := v.groupEventsByRun(eventList)
 
 	activeInstances, err := v.discoverActiveRuns(repoRoot, eventsByRun)
 	if err != nil {
 		return nil, err
 	}
+	return v.computeWithActiveRuns(repoRoot, eventList, eventsByRun, activeInstances)
+}
 
+func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []events.Event, eventsByRun map[string][]portalEvent, activeInstances []portalActiveRun) ([]portalRun, error) {
 	runStates := events.ProjectRunStates(eventList)
 	activeStates := make([]events.RunState, 0, len(runStates))
 	activeBatchStart := time.Time{}
@@ -459,7 +466,6 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 	if batchStart.IsZero() {
 		batchStart = active.ModTime
 	}
-	liveOutput := v.readPortalSocketOutput(active.SocketPath)
 	runs := make([]portalRun, 0, len(active.IssueNumbers))
 	usedRunIDs := make(map[string]struct{})
 	for _, issueNumber := range active.IssueNumbers {
@@ -469,7 +475,7 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 		}
 		blocked := v.latestBlockedEventForIssue(eventList, issueNumber, batchStart)
 		queued := v.latestQueuedEventForIssue(eventList, issueNumber, batchStart)
-		runs = append(runs, v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, liveOutput, eventsByRun))
+		runs = append(runs, v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun))
 		if state != nil && state.RunID != "" {
 			usedRunIDs[state.RunID] = struct{}{}
 		}
@@ -571,34 +577,22 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 	}
 	if state != nil {
-		run.Key = state.RunID
-		run.RunID = state.RunID
-		run.Status = v.statusOrDefault(state.Status(), state.IsActive(), state.IsReview(), state.IsAutoSelect())
-		if run.Status == "aborted" {
-			run.Kind = "completed"
+		activeWithOutput := active
+		activeWithOutput.LiveOutput = liveOutput
+		run = v.runFromState(repoRoot, *state, &activeWithOutput, eventsByRun)
+		run.BatchKey = active.Key
+		if len(active.IssueNumbers) > 1 {
+			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
-		run.Branch = state.Branch()
-		run.IssueTitle = v.issueTitleFromPayload(state.Started.Payload)
-		run.Reason = reasonForRun(*state)
-		run.StartedAt = state.Started.Timestamp
-		run.Duration = v.durationForRun(*state)
-		run.Events = eventsByRun[state.RunID]
-		run.LogPath = v.portalLogPath(repoRoot, issueNumber, state.Branch())
-		run.LogURL = v.portalLogDownloadURL(repoRoot, issueNumber, state.Branch())
-		if review, pr := v.reviewContext(*state); review {
-			run.Review = true
-			run.PRNumber = pr
-			if issueNum := v.reviewIssueNumber(state.Started.Payload); issueNum > 0 {
-				run.IssueNumber = issueNum
-				run.IssueLabel = fmt.Sprintf("#%d", issueNum)
+		if state.Finished == nil {
+			run.Log = v.filterPortalIssueOutput(liveOutput, issueNumber)
+			if strings.TrimSpace(run.Log) == "" {
+				run.Log = "No live output captured yet."
 			}
-		}
-		if candidates := v.candidatesFromPayload(state.Started.Payload); len(candidates) > 0 {
-			run.Candidates = candidates
-		}
-		if state.Finished != nil {
-			finishedAt := state.Finished.Timestamp
-			run.FinishedAt = &finishedAt
+		} else {
+			if state.Status() != "aborted" {
+				run.Kind = "active"
+			}
 			switch state.Status() {
 			case "blocked":
 				run.Log = v.portalBlockedMessage(state.Finished.Payload)
@@ -610,13 +604,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 					run.Log = "No log file yet."
 				}
 			}
-		} else {
-			run.Log = v.filterPortalIssueOutput(liveOutput, issueNumber)
-			if strings.TrimSpace(run.Log) == "" {
-				run.Log = "No live output captured yet."
-			}
 		}
-		v.markCompletedIfSocketDead(&run, run.SocketPath)
 		return run
 	}
 	if blocked != nil {
@@ -735,6 +723,14 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	if match.instance.RunID != "" {
 		eventKey = match.instance.RunID
 	}
+	startedPayload := v.startedPayload(eventsByRun[eventKey])
+	reason := chipReasonForActiveInstance(match.instance)
+	if payloadReason := v.reasonFromStartedPayload(startedPayload); payloadReason != "" {
+		reason = payloadReason
+	}
+	if reason == "auto-select" {
+		status = "auto-selecting"
+	}
 	run := portalRun{
 		Key:         runID,
 		RunID:       runID,
@@ -744,15 +740,21 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		IssueNumber: issueNumber,
 		Review:      review,
 		PRNumber:    prNumber,
-		Reason:      chipReasonForActiveInstance(match.instance),
+		Reason:      reason,
 		StartedAt:   startedAt,
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
 		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, ""),
-		Log:         v.readPortalSocketOutput(match.instance.SocketPath),
+		Log:         match.instance.LiveOutput,
 		Events:      eventsByRun[eventKey],
 		BatchKey:    match.instance.Key,
+	}
+	if startedPayload != nil {
+		run.IssueTitle = v.issueTitleFromPayload(startedPayload)
+		if candidates := v.candidatesFromPayload(startedPayload); len(candidates) > 0 {
+			run.Candidates = candidates
+		}
 	}
 	v.markCompletedIfSocketDead(&run, run.SocketPath)
 	return run
@@ -787,7 +789,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	logPath := v.portalLogPath(repoRoot, issueNumber, branch)
 	logContent := v.readPortalTextFile(logPath)
 	if active != nil {
-		logContent = v.readPortalSocketOutput(active.SocketPath)
+		logContent = active.LiveOutput
 	}
 
 	portalRun := portalRun{
@@ -870,6 +872,28 @@ func reasonForRun(runState events.RunState) string {
 // a PR-bearing socket is a review run, anything else has no chip.
 func chipReasonForActiveInstance(instance portalActiveRun) string {
 	if instance.PRNumber > 0 {
+		return "review"
+	}
+	return ""
+}
+
+func (v *portalRunsView) startedPayload(events []portalEvent) map[string]any {
+	for _, e := range events {
+		if e.Type == "run.started" {
+			return e.Payload
+		}
+	}
+	return nil
+}
+
+func (v *portalRunsView) reasonFromStartedPayload(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	if kind, ok := payload["run_kind"].(string); ok && strings.EqualFold(strings.TrimSpace(kind), "auto-select") {
+		return "auto-select"
+	}
+	if review, ok := payload["review"].(bool); ok && review {
 		return "review"
 	}
 	return ""
