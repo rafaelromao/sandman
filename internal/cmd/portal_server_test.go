@@ -1096,6 +1096,38 @@ func TestPortal_PageMastheadMetadataStacksUpdatedBelowRepo(t *testing.T) {
 	}
 }
 
+func TestPortal_PageExposesPollHealthPill(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+
+	for _, want := range []string{`id="poll-health"`, "poll-health-label", "updatePollHealth", "pollFailCount"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing poll-health marker %q\n%s", want, content[:min(800, len(content))])
+		}
+	}
+	// The pill must start neutral (no ok/warn class) so the first paint
+	// does not falsely claim a healthy or failing poll.
+	if strings.Contains(content, `poll-health ok`) || strings.Contains(content, `poll-health warn`) {
+		t.Fatalf("poll-health pill must start without an ok/warn state class\n%s", content[:min(800, len(content))])
+	}
+}
+
 func TestPortal_PageWiresPortalViewStatePersistence(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

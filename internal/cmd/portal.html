@@ -381,63 +381,94 @@
       display: flex;
       flex-direction: column;
     }
+    /* Flattened masthead (ADR: "Command Post", anti-references: decorative
+       chrome, polished theater). The accent radials and gradient fill are
+       gone; height, shadow, and radius are reduced so the runs table owns
+       the viewport. One restrained accent moment remains: the active-run
+       dot in the table, not the header. */
     .masthead {
-      position: relative;
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
-      gap: 18px;
-      align-items: start;
-      padding: 20px 20px 18px;
-      margin-bottom: 16px;
-      border-bottom: 1px solid var(--border);
+      gap: 14px;
+      align-items: center;
+      padding: 12px 16px;
+      margin-bottom: 12px;
       border: 1px solid var(--border);
-      border-radius: 22px;
-      background: linear-gradient(180deg, color-mix(in oklch, var(--surface) 92%, var(--text) 8%), var(--surface));
-      box-shadow: var(--shadow);
-      overflow: hidden;
-    }
-    .masthead::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background:
-        radial-gradient(circle at 78% 28%, color-mix(in oklch, var(--accent) 14%, transparent), transparent 26%),
-        radial-gradient(circle at 86% 42%, color-mix(in oklch, var(--accent) 8%, transparent), transparent 20%),
-        linear-gradient(180deg, color-mix(in oklch, var(--bg) 8%, transparent), transparent 30%);
-      opacity: 0.9;
-      pointer-events: none;
+      border-radius: 14px;
+      background: var(--surface);
     }
     .masthead-copy {
       min-width: 0;
-      position: relative;
-      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 6px 18px;
     }
     .masthead-brand {
       display: inline-flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 10px;
+      gap: 9px;
       color: var(--text);
     }
     .masthead-brand svg {
-      width: 34px;
-      height: 34px;
+      width: 20px;
+      height: 20px;
       flex: 0 0 auto;
     }
     .masthead-brand-text {
-      display: grid;
-      gap: 2px;
-      line-height: 1.15;
+      display: inline-flex;
+      align-items: baseline;
+      gap: 8px;
+      line-height: 1.2;
     }
     .masthead-brand-text strong {
-      font-size: 14px;
+      font-size: 13px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
     .masthead-tagline {
-      color: var(--accent);
-      font-size: 13px;
-      font-weight: 500;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+    }
+    .status-bar {
+      display: contents;
+    }
+    .status-bar .meta-line {
+      margin-top: 0;
+    }
+    /* Poll-health pill: the masthead half of the staleness story. Shows the
+       poll cadence and age since the last successful poll; the dot escalates
+       to --warning after consecutive failures so a wedged poll is visible
+       without a new color. Restrained: one pill, no chrome. */
+    .poll-health {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 11.5px;
+      white-space: nowrap;
+    }
+    .poll-health .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--muted);
+    }
+    .poll-health.ok .dot {
+      background: var(--success);
+    }
+    .poll-health.warn {
+      border-color: color-mix(in oklch, var(--warning) 36%, var(--border));
+      background: color-mix(in oklch, var(--warning) 10%, var(--surface-2));
+      color: var(--warning);
+    }
+    .poll-health.warn .dot {
+      background: var(--warning);
     }
     .settings-wrap {
       display: flex;
@@ -1660,6 +1691,10 @@
           <span class="meta-label">Updated</span>
           <strong id="last-updated">Waiting for first refresh</strong>
         </div>
+        <span class="poll-health" id="poll-health" title="Portal poll health" role="status" aria-live="polite">
+          <span class="dot"></span>
+          <span class="poll-health-label">Waiting for first poll</span>
+        </span>
       </div>
       <div class="settings-wrap">
         <button id="commands-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="commands-panel" aria-label="Commands">
@@ -3020,6 +3055,35 @@
       lastUpdated.textContent = now;
     }
 
+    // Poll-health tracking: the masthead half of the staleness story. The
+    // pill shows cadence + age since the last successful poll and escalates
+    // to --warning after consecutive failures so a wedged poll is visible.
+    const pollHealthEl = document.getElementById('poll-health');
+    const pollHealthLabel = pollHealthEl ? pollHealthEl.querySelector('.poll-health-label') : null;
+    const pollHealthWarnThreshold = 2;
+    let lastPollAt = null;
+    let pollFailCount = 0;
+
+    function updatePollHealth() {
+      if (!pollHealthEl || !pollHealthLabel) return;
+      const cadence = Math.max(0.5, Math.round(pollInterval / 1000 * 10) / 10);
+      if (lastPollAt === null) {
+        pollHealthLabel.textContent = 'Waiting for first poll';
+        pollHealthEl.classList.remove('ok', 'warn');
+        return;
+      }
+      const ageSec = Math.max(0, Math.round((Date.now() - lastPollAt) / 1000));
+      if (pollFailCount >= pollHealthWarnThreshold) {
+        pollHealthLabel.textContent = 'poll failing \u00b7 ' + ageSec + 's ago';
+        pollHealthEl.classList.remove('ok');
+        pollHealthEl.classList.add('warn');
+        return;
+      }
+      pollHealthLabel.textContent = 'every ' + cadence + 's \u00b7 ' + ageSec + 's ago';
+      pollHealthEl.classList.remove('warn');
+      pollHealthEl.classList.add('ok');
+    }
+
     async function refresh() {
       try {
         const res = await fetch(apiPath, { cache: 'no-store' });
@@ -3030,11 +3094,16 @@
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';
         updateLastUpdated();
+        lastPollAt = Date.now();
+        pollFailCount = 0;
+        updatePollHealth();
         render();
       } catch (err) {
         state.loading = false;
         errorBanner.textContent = 'Refresh failed: ' + err.message;
         errorBanner.style.display = 'block';
+        pollFailCount += 1;
+        updatePollHealth();
       }
     }
 
@@ -3267,6 +3336,7 @@
     refresh();
     refreshCommands();
     restartPolling();
+    setInterval(updatePollHealth, 1000);
   </script>
 </body>
 </html>
