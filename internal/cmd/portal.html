@@ -537,6 +537,24 @@
       margin: 2px 4px;
       background: var(--border);
     }
+    /* Native select for status filter: shown on narrow widths as a
+       replacement for the chip rail. Mirrors selectedStatus state. */
+    .status-select {
+      display: none;
+      appearance: none;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      padding: 6px 28px 6px 10px;
+      cursor: pointer;
+      min-height: 36px;
+    }
+    .status-select:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
     .fchip {
       display: inline-flex;
       align-items: center;
@@ -1576,8 +1594,8 @@
       .status-strip { display: flex; order: -1; width: 100%; }
       .masthead {
         flex-direction: column;
-        padding: 0;
-        gap: 0;
+        padding: 6px 12px;
+        gap: 4px 10px;
       }
       .topbar-left,
       .topbar-right {
@@ -1586,10 +1604,6 @@
       .topbar-left .meta-line,
       .topbar-left .poll-health,
       .topbar-left .subtitle { display: none; }
-      .masthead {
-        padding: 6px 12px;
-        gap: 4px 10px;
-      }
       .masthead-brand svg {
         width: 16px;
         height: 16px;
@@ -1623,6 +1637,132 @@
       th[data-col="issue-title"],
       td[data-cell="issue-title"] {
         display: none;
+      }
+
+      /* Show native select on narrow screens; hide chip rail on narrow.
+         Filters container wraps so select + toggles share the row. */
+      .filters { flex-wrap: wrap; gap: 8px; }
+      .status-select { display: block; flex: 1 1 auto; min-width: 120px; }
+      .filter-chips { display: none; }
+      .fchip-divider { display: none; }
+
+      /* Mobile stacked rows: each run row becomes a full-bleed card.
+         The table/tbody/tr structure is preserved for DOM contract,
+         but the visual layout is stacked blocks with hairline dividers. */
+      .table-shell { overflow: visible; }
+      .table-shell table {
+        display: block;
+      }
+      .table-shell thead {
+        display: none;
+      }
+      .table-shell tbody {
+        display: block;
+      }
+      .table-shell tr.run-row,
+      .table-shell tr.batch-row,
+      .table-shell tr.context-row {
+        display: block;
+        border: none;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+        margin-bottom: 0;
+      }
+      .table-shell tr.run-row:hover td,
+      .table-shell tr.run-row.active td {
+        background: transparent;
+      }
+      /* Active (expanded) run row: accent-tinted bg, no side-stripe */
+      .table-shell tr.run-row.active {
+        background: color-mix(in oklch, var(--accent) 8%, var(--surface));
+      }
+      .table-shell tr.run-row.active td {
+        background: transparent;
+      }
+      .table-shell tr.run-row td,
+      .table-shell tr.batch-row td,
+      .table-shell tr.context-row td {
+        display: block;
+        width: 100%;
+        border: none;
+        padding: 8px 12px;
+      }
+      /* Title cell: title + badge on same line on mobile */
+      .table-shell td[data-cell="title"] {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-bottom: 4px;
+      }
+      .table-shell td[data-cell="title"] .run-title {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .table-shell td[data-cell="title"] .run-title .name {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .table-shell td[data-cell="title"] .run-title .meta-line {
+        display: none;
+      }
+      /* Issue title: shown below title on mobile */
+      .table-shell td[data-cell="issue-title"] {
+        display: block;
+        padding-top: 0;
+        padding-bottom: 6px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      /* Actions: shown as foot line with 44px touch targets */
+      .table-shell td[data-cell="actions"] {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-top: 6px;
+        padding-bottom: 10px;
+        justify-content: flex-end;
+      }
+      .table-shell td[data-cell="actions"] .action-btn {
+        min-width: 44px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        font-size: 12px;
+        padding: 0 12px;
+      }
+      /* Duration cell: hidden on mobile (already hidden via col) */
+      /* Started cell: shown as timing in the foot line */
+      .table-shell td[data-cell="started"] {
+        display: none;
+      }
+      /* Batch and context rows: compact on mobile */
+      .table-shell tr.batch-row td,
+      .table-shell tr.context-row td {
+        padding: 4px 12px;
+      }
+      /* Detail row: accent-tinted background on mobile, full width */
+      .table-shell tr.detail-row {
+        width: 100%;
+      }
+      .table-shell tr.detail-row td {
+        background: color-mix(in oklch, var(--accent) 6%, var(--surface-2));
+        padding: 0;
+        width: 100%;
+        max-width: 100%;
+      }
+      /* Commands and Settings panels: full-screen on mobile */
+      .commands-panel,
+      .settings-panel {
+        width: 100dvw !important;
+      }
+      /* Detail panel on mobile: remove tall min-height, let it size to content */
+      .table-shell tr.detail-row td .detail-panel {
+        min-height: unset;
+        max-height: unset;
+        width: 100%;
+        box-sizing: border-box;
       }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -1796,6 +1936,9 @@
 
     <section class="toolbar" aria-label="Run filters">
       <div class="filters">
+        <select id="status-filter" class="status-select" aria-label="Filter runs by status">
+          <option value="all">All statuses</option>
+        </select>
         <div class="filter-chips" id="status-chips" role="group" aria-label="Filter runs by status"></div>
         <span class="fchip-divider" aria-hidden="true"></span>
         <label class="fchip fchip-toggle">
@@ -1853,6 +1996,7 @@
     const themeStorageKey = 'sandman.portal.theme';
     const supportedThemes = new Set({{.SupportedThemesJSON}});
     const statusChips = document.getElementById('status-chips');
+    const statusFilter = document.getElementById('status-filter');
     const sortButtons = Array.from(document.querySelectorAll('.th-sort'));
     const activeBatchesToggle = document.getElementById('active-batches');
     const archivedToggle = document.getElementById('archived-toggle');
@@ -2895,11 +3039,13 @@
     }
 
     function sortStatusValues(values) {
+      const ORDER = ['all', 'success', 'failure', 'aborted'];
       return Array.from(values).sort((a, b) => {
-        if (a === 'running') return -1;
-        if (b === 'running') return 1;
-        if (a === 'reviewing') return -1;
-        if (b === 'reviewing') return 1;
+        const ai = ORDER.indexOf(a);
+        const bi = ORDER.indexOf(b);
+        if (ai >= 0 && bi >= 0) return ai - bi;
+        if (ai >= 0) return -1;
+        if (bi >= 0) return 1;
         return a.localeCompare(b);
       });
     }
@@ -2923,6 +3069,8 @@
             chip.setAttribute('aria-pressed', String(chip.getAttribute('data-status') === want));
           }
         }
+        // Also sync the native select selection (statuses unchanged, selection may have)
+        if (statusFilter) statusFilter.value = want;
         return;
       }
       if (!statusChips) return;
@@ -2933,15 +3081,27 @@
         chip.className = 'fchip';
         chip.setAttribute('data-status', value);
         chip.setAttribute('aria-pressed', String(value === want));
-        chip.textContent = value === 'all' ? 'All statuses' : value;
+        chip.textContent = value === 'all' ? 'All statuses' : value.charAt(0).toUpperCase() + value.slice(1);
         chip.addEventListener('click', () => {
           state.selectedStatus = value;
           for (const c of statusChips.querySelectorAll('.fchip[data-status]')) {
             c.setAttribute('aria-pressed', String(c.getAttribute('data-status') === value));
           }
+          if (statusFilter) statusFilter.value = value;
           render();
         });
         statusChips.appendChild(chip);
+      }
+      // Also rebuild the native select options on narrow screens
+      if (statusFilter) {
+        statusFilter.innerHTML = '';
+        for (const value of nextStatuses) {
+          const opt = document.createElement('option');
+          opt.value = value;
+          opt.textContent = value === 'all' ? 'All statuses' : value.charAt(0).toUpperCase() + value.slice(1);
+          if (value === want) opt.selected = true;
+          statusFilter.appendChild(opt);
+        }
       }
     }
 
@@ -3376,6 +3536,16 @@
     archivedToggle.addEventListener('change', () => {
       state.showArchived = archivedToggle.checked;
       persistPortalViewState();
+      render();
+    });
+
+    statusFilter.addEventListener('change', () => {
+      state.selectedStatus = statusFilter.value;
+      if (statusChips) {
+        for (const chip of statusChips.querySelectorAll('.fchip[data-status]')) {
+          chip.setAttribute('aria-pressed', String(chip.getAttribute('data-status') === statusFilter.value));
+        }
+      }
       render();
     });
 
