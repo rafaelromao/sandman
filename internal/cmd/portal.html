@@ -26,38 +26,38 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: oklch(0.17 0.03 260);
-      --surface: oklch(0.21 0.03 260);
-      --surface-2: oklch(0.25 0.03 260);
-      --surface-3: oklch(0.30 0.03 260);
-      --border: oklch(0.36 0.03 260);
-      --text: oklch(0.94 0.02 94);
-      --muted: oklch(0.72 0.03 94);
-      --accent: oklch(0.79 0.12 82);
+      --bg: oklch(0.165 0.018 260);
+      --surface: oklch(0.20 0.018 260);
+      --surface-2: oklch(0.235 0.018 260);
+      --surface-3: oklch(0.275 0.020 260);
+      --border: oklch(0.31 0.020 260);
+      --text: oklch(0.93 0.015 80);
+      --muted: oklch(0.68 0.025 80);
+      --accent: oklch(0.76 0.07 75);
       --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.17 0.03 260);
-      --success: oklch(0.79 0.11 145);
-      --danger: oklch(0.71 0.13 28);
-      --warning: oklch(0.86 0.08 78);
+      --accent-ink: oklch(0.18 0.03 75);
+      --success: oklch(0.74 0.09 145);
+      --danger: oklch(0.68 0.12 25);
+      --warning: oklch(0.82 0.07 80);
       --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.28);
       --page-top: oklch(0.14 0.03 260);
       --page-bottom: var(--bg);
     }
     html[data-theme="sandman"] {
       color-scheme: dark;
-      --bg: oklch(0.17 0.03 260);
-      --surface: oklch(0.21 0.03 260);
-      --surface-2: oklch(0.25 0.03 260);
-      --surface-3: oklch(0.30 0.03 260);
-      --border: oklch(0.36 0.03 260);
-      --text: oklch(0.94 0.02 94);
-      --muted: oklch(0.72 0.03 94);
-      --accent: oklch(0.79 0.12 82);
+      --bg: oklch(0.165 0.018 260);
+      --surface: oklch(0.20 0.018 260);
+      --surface-2: oklch(0.235 0.018 260);
+      --surface-3: oklch(0.275 0.020 260);
+      --border: oklch(0.31 0.020 260);
+      --text: oklch(0.93 0.015 80);
+      --muted: oklch(0.68 0.025 80);
+      --accent: oklch(0.76 0.07 75);
       --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
-      --accent-ink: oklch(0.17 0.03 260);
-      --success: oklch(0.79 0.11 145);
-      --danger: oklch(0.71 0.13 28);
-      --warning: oklch(0.86 0.08 78);
+      --accent-ink: oklch(0.18 0.03 75);
+      --success: oklch(0.74 0.09 145);
+      --danger: oklch(0.68 0.12 25);
+      --warning: oklch(0.82 0.07 80);
       --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.28);
       --page-top: oklch(0.14 0.03 260);
       --page-bottom: var(--bg);
@@ -163,9 +163,7 @@
       margin: 0;
       font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       color: var(--text);
-      background:
-        radial-gradient(circle at 18% 0%, color-mix(in oklch, var(--accent) 16%, transparent), transparent 34%),
-        linear-gradient(180deg, var(--page-top), var(--page-bottom));
+      background: var(--bg);
     }
     body.commands-open {
       overflow: hidden;
