@@ -820,6 +820,23 @@
       text-transform: uppercase;
       white-space: nowrap;
     }
+    .stale-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in oklch, var(--muted) 30%, var(--border));
+      background: color-mix(in oklch, var(--muted) 8%, var(--surface-2));
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .stale-chip.warn {
+      border-color: color-mix(in oklch, var(--warning) 36%, var(--border));
+      background: color-mix(in oklch, var(--warning) 12%, var(--surface-2));
+      color: var(--warning);
+    }
     .retry-event-card {
       display: flex;
       flex-direction: column;
