@@ -336,6 +336,13 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 			"runs":     runs,
 		})
 	})
+	mux.HandleFunc("/api/runs/stream", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		servePortalRunStream(w, r, repoRoot)
+	})
 	mux.HandleFunc("/api/runs/abort", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

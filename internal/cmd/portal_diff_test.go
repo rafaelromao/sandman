@@ -493,6 +493,41 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffUpdateDetailContent_StreamedLogIsShieldedFromPoll pins the
+// seam that lets a live SSE stream own a Log <pre>: while a run's key is in
+// opts.streamingKeys, the poll path (updateDetailContent) must not touch
+// the streamed pre, even as run.log changes. Once the key is removed, the
+// poll resumes authority and reconciles the log normally.
+func TestPortalDiffUpdateDetailContent_StreamedLogIsShieldedFromPoll(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r1', log: 'first line' };
+const streamingKeys = new Set();
+const opts = { helpers, stopGroups: new Set(), expandedKey: 'a', tabs: { a: 'log' }, streamingKeys };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="a"]');
+if (!detailRow) throw new Error('expected a detail row for the expanded run');
+const pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected a log pre for the expanded run');
+const before = pre.getAttribute('data-rendered-log') || '';
+
+// Stream takes ownership; a poll with a longer log must NOT clobber the pre.
+streamingKeys.add('a');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [Object.assign({}, run, { log: 'first line\nsecond line' })], opts);
+const guarded = pre.getAttribute('data-rendered-log') || '';
+if (guarded !== before) throw new Error('streamed log pre was clobbered by poll (before=' + JSON.stringify(before) + ', after=' + JSON.stringify(guarded) + ')');
+
+// Stream releases; the poll resumes and appends the new line.
+streamingKeys.delete('a');
+SandmanPortalDiff.diffRuns(body, [Object.assign({}, run, { log: 'first line\nsecond line' })], opts);
+const resumed = pre.getAttribute('data-rendered-log') || '';
+if (resumed === before) throw new Error('poll did not resume updating the log after the stream released it');
+if (!/second line/.test(resumed)) throw new Error('resumed log missing the new line, got ' + JSON.stringify(resumed));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffBuildBadgeCell_StaleWarnChipPast180s(t *testing.T) {
 	js := `const body = makeMockBody();
 const lastOutputAt = new Date(Date.now() - 200*1000).toISOString();
