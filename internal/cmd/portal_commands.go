@@ -116,7 +116,7 @@ func (l *portalLauncher) list() ([]portalCommandRecord, error) {
 	return append([]portalCommandRecord(nil), l.records...), nil
 }
 
-func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
+func (l *portalLauncher) launch(ctx context.Context, args []string) (portalCommandRecord, error) {
 	if len(args) == 0 {
 		return portalCommandRecord{}, fmt.Errorf("missing command args")
 	}
@@ -124,7 +124,7 @@ func (l *portalLauncher) launch(args []string) (portalCommandRecord, error) {
 	if err != nil {
 		return portalCommandRecord{}, err
 	}
-	result := portalStartCommand(context.Background(), l.repoRoot, args)
+	result := portalStartCommand(ctx, l.repoRoot, args)
 	var completed portalCommandRecord
 	if result.Err != nil {
 		l.mu.Lock()

@@ -3,13 +3,14 @@ package cmd
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -103,6 +104,30 @@ type portalRunMatch struct {
 }
 
 type portalRunsView struct{}
+
+const portalViewDegradeLogInterval = 30 * time.Second
+
+var (
+	portalViewDegradeLogMu   sync.Mutex
+	portalViewDegradeLogSeen = make(map[string]time.Time)
+)
+
+// logPortalViewDegrade rate-limits repeated portal-view degradation logs per
+// key so hot-path failures (e.g. a missing socket or a dead run.sock) do not
+// flood the user's terminal every 2s. The goal is observability, not chatter:
+// the first failure is surfaced immediately, repeats are coalesced for a short
+// window, and a different path/socket gets its own first log.
+func logPortalViewDegrade(key, format string, args ...any) {
+	now := time.Now()
+	portalViewDegradeLogMu.Lock()
+	if last, ok := portalViewDegradeLogSeen[key]; ok && now.Sub(last) < portalViewDegradeLogInterval {
+		portalViewDegradeLogMu.Unlock()
+		return
+	}
+	portalViewDegradeLogSeen[key] = now
+	portalViewDegradeLogMu.Unlock()
+	log.Printf("portal view: "+format, args...)
+}
 
 // compute is the entry point for computing displayable portal runs.
 func (v *portalRunsView) compute(repoRoot string, eventLog events.EventLog) ([]portalRun, error) {
@@ -334,14 +359,13 @@ func (v *portalRunsView) dedupRunGroup(runs []portalRun) []portalRun {
 	return []portalRun{runs[bestIdx]}
 }
 
-// runPriority encodes the per-issue dedup priority order:
-// aborted > active > blocked > queued > other.
+// runPriority encodes the reachable per-issue dedup priority order:
+// aborted > active > other.
 //
-// Note: dedupRunGroup strips queued and blocked rows when any other row
-// exists, so the "queued" and "blocked" cases here are unreachable for mixed
-// groups. They are kept as guards for waiting-only groups (e.g., genuinely-
-// waiting runs with no terminal event) and to make the priority order
-// self-documenting.
+// queued/blocked rows never reach this function: dedupRunGroup strips them
+// into the waiting slice first and either returns the latest waiting row
+// directly (when there are no non-waiting rows) or drops them entirely when
+// a later active/terminal row exists.
 func (v *portalRunsView) runPriority(run portalRun) int {
 	if run.Status == "aborted" {
 		return 4
@@ -349,14 +373,7 @@ func (v *portalRunsView) runPriority(run portalRun) int {
 	if run.Kind == "active" {
 		return 3
 	}
-	switch run.Status {
-	case "blocked":
-		return 2
-	case "queued":
-		return 1
-	default:
-		return 0
-	}
+	return 0
 }
 
 func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[string][]portalEvent) ([]portalActiveRun, error) {
@@ -369,6 +386,9 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 	for _, instance := range instances {
 		info, err := os.Stat(instance.SocketPath)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				logPortalViewDegrade("stat-socket:"+instance.SocketPath, "stat %q: %v", instance.SocketPath, err)
+			}
 			continue
 		}
 		runDir := filepath.Dir(instance.SocketPath)
@@ -893,10 +913,7 @@ func (v *portalRunsView) portalBlockedByIssues(payload map[string]any) []int {
 	case []any:
 		issues := make([]int, 0, len(values))
 		for _, value := range values {
-			switch n := value.(type) {
-			case float64:
-				issues = append(issues, int(n))
-			case int:
+			if n, ok := payloadIntValue(value); ok {
 				issues = append(issues, n)
 			}
 		}
@@ -919,22 +936,8 @@ func (v *portalRunsView) reviewContext(runState events.RunState) (bool, int) {
 // reviewPRNumber reads the pr_number field from a payload, tolerating the
 // JSON-decoded float64 representation that the event log uses.
 func (v *portalRunsView) reviewPRNumber(payload map[string]any) int {
-	if payload == nil {
-		return 0
-	}
-	raw, ok := payload["pr_number"]
-	if !ok {
-		return 0
-	}
-	switch n := raw.(type) {
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	}
-	return 0
+	n, _ := payloadInt(payload, "pr_number")
+	return n
 }
 
 // prNumberFromEvent extracts the PR number from the run.started event
@@ -952,22 +955,8 @@ func (v *portalRunsView) prNumberFromEvent(events []portalEvent) int {
 // reviewIssueNumber reads the issue_number field from a review run's
 // payload. Returns 0 when the field is absent (older event logs).
 func (v *portalRunsView) reviewIssueNumber(payload map[string]any) int {
-	if payload == nil {
-		return 0
-	}
-	raw, ok := payload["issue_number"]
-	if !ok {
-		return 0
-	}
-	switch n := raw.(type) {
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	}
-	return 0
+	n, _ := payloadInt(payload, "issue_number")
+	return n
 }
 
 // candidatesFromPayload reads the candidates field from an auto-select
@@ -986,10 +975,7 @@ func (v *portalRunsView) candidatesFromPayload(payload map[string]any) []int {
 	case []any:
 		candidates := make([]int, 0, len(values))
 		for _, value := range values {
-			switch n := value.(type) {
-			case float64:
-				candidates = append(candidates, int(n))
-			case int:
+			if n, ok := payloadIntValue(value); ok {
 				candidates = append(candidates, n)
 			}
 		}
@@ -1028,6 +1014,7 @@ func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath st
 		return
 	}
 	if !v.isSocketAlive(socketPath) {
+		logPortalViewDegrade("dead-socket:"+socketPath, "active run %q fell back to completed because run.sock %q is no longer live", run.Key, socketPath)
 		run.Kind = "completed"
 	}
 }
@@ -1068,27 +1055,10 @@ func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, 
 	}
 	relPath, err := filepath.Rel(repoRoot, logPath)
 	if err != nil {
+		logPortalViewDegrade("log-rel:"+logPath, "relpath for log %q under repo %q: %v", logPath, repoRoot, err)
 		return ""
 	}
 	return "/api/logs?path=" + url.QueryEscape(relPath)
-}
-
-// parseRunDirPR extracts a PR number from a directory name that starts
-// with "PR". Returns (prNumber, true) if the name has the form "PR<N>"
-// where N is a positive integer, or (0, false) otherwise.
-func (v *portalRunsView) parseRunDirPR(name string) (int, bool) {
-	if !strings.HasPrefix(name, "PR") {
-		return 0, false
-	}
-	rest := strings.TrimPrefix(name, "PR")
-	if rest == "" {
-		return 0, false
-	}
-	n, err := strconv.Atoi(rest)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
 }
 
 // readPortalTextFile returns the contents of a saved portal log file.
@@ -1102,6 +1072,9 @@ func (v *portalRunsView) readPortalTextFile(path string) string {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			logPortalViewDegrade("read-log:"+path, "read saved log %q: %v", path, err)
+		}
 		return ""
 	}
 	if len(data) > portalReadLimit {
@@ -1114,6 +1087,7 @@ func (v *portalRunsView) readPortalTextFile(path string) string {
 func (v *portalRunsView) readPortalSocketOutput(sockPath string) string {
 	conn, err := net.DialTimeout("unix", sockPath, portalReadTimeout)
 	if err != nil {
+		logPortalViewDegrade("dial-socket:"+sockPath, "dial live socket %q: %v", sockPath, err)
 		return ""
 	}
 	defer conn.Close()
@@ -1138,6 +1112,10 @@ func (v *portalRunsView) readPortalSocketOutput(sockPath string) string {
 		buf = *bytes.NewBuffer(append([]byte(nil), data[len(data)-portalReadLimit:]...))
 	}
 	return v.cleanPortalText(buf.String())
+}
+
+func payloadIntValue(value any) (int, bool) {
+	return payloadInt(map[string]any{"value": value}, "value")
 }
 
 func (v *portalRunsView) cleanPortalText(text string) string {

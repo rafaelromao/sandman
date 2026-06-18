@@ -278,7 +278,7 @@ func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *con
 					writeJSONError(w, err.Error(), http.StatusBadRequest)
 					return
 				}
-				command, err := launcher.launch(args)
+				command, err := launcher.launch(r.Context(), args)
 				if err != nil {
 					writeJSONError(w, err.Error(), http.StatusInternalServerError)
 					return
