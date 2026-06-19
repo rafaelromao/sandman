@@ -234,6 +234,43 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffCreateRunRow_ExpandedChildReviewKeepsVisibleParentRow(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
+const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [parentRun, childReview], visibleRuns: [parentRun] };
+const created = SandmanPortalDiff.insertRunRow(body, parentRun, opts);
+if (!created.detailRow) throw new Error('expected detail row when child review is expanded');
+if (body.querySelector('tr[data-run-key="PR42"]')) throw new Error('expected hidden child review row not to render');
+if (body.querySelector('tr[data-run-key="issue-1"]') !== created.row) throw new Error('expected visible parent row to remain rendered');
+const subjectSelect = created.detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect || subjectSelect.children.length !== 2) throw new Error('expected parent row detail selector to include child review');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffDiffRuns_HidesReviewRowsAndShowsStubForOrphanReviews(t *testing.T) {
+	js := `const body = makeMockBody();
+const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const stub = { key: 'review-stub-1', kind: 'completed', status: 'success', review: false, groupedReview: false, issueLabel: 'PR42', runId: 'review-stub-1', issueNumber: 1, reviewCount: 1, reviewVerdict: 'Approved' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [review], visibleRuns: [stub] };
+const result = SandmanPortalDiff.diffRuns(body, [review], opts);
+if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
+if (body.querySelector('tr[data-run-key="PR42"]')) throw new Error('expected review row hidden from table');
+const visibleRow = body.querySelector('tr[data-run-key="review-stub-1"]');
+if (!visibleRow) throw new Error('expected orphan review stub row');
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="review-stub-1"]');
+if (!detailRow) throw new Error('expected detail row for orphan review stub');
+const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect || subjectSelect.children.length !== 2) throw new Error('expected orphan selector to include review subject');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateCells_RefreshesSubjectSelectorWhenChildReviewAppears(t *testing.T) {
 	js := `const body = makeMockBody();
 const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };

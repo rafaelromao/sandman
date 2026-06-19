@@ -933,6 +933,7 @@
       min-height: 0;
       display: flex;
       flex-direction: column;
+      margin-top: 8px;
       overflow: auto;
       width: 100%;
     }
@@ -2900,7 +2901,7 @@
 
     function findRunRowByIdentity(runIdentity) {
       const run = findRunByIdentity(runIdentity);
-      const runKey = run ? run.key : runIdentity;
+      const runKey = run ? (visibleRunForIssueGroup(run.issueNumber, state.runs)?.key || run.key) : runIdentity;
       return Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey) || null;
     }
 
@@ -3335,6 +3336,94 @@
       return status || 'default';
     }
 
+    function reviewVerdictForStatus(status) {
+      const value = String(status || '').trim();
+      if (value === 'success') return 'Approved';
+      if (value === 'failure') return 'Changes requested';
+      return '';
+    }
+
+    function summarizeReviewGroup(reviews) {
+      const summary = { count: 0, live: false, verdict: '', status: '', kind: 'completed', source: null };
+      if (!Array.isArray(reviews) || !reviews.length) return summary;
+      summary.count = reviews.length;
+      const ordered = reviews.slice().sort((a, b) => {
+        const aStarted = a && a.startedAt ? new Date(a.startedAt).getTime() : 0;
+        const bStarted = b && b.startedAt ? new Date(b.startedAt).getTime() : 0;
+        if (aStarted !== bStarted) return bStarted - aStarted;
+        return String((a && a.runId) || (a && a.key) || '').localeCompare(String((b && b.runId) || (b && b.key) || ''));
+      });
+      summary.source = ordered[0] || null;
+      for (const review of ordered) {
+        if (review && review.kind === 'active') {
+          summary.live = true;
+          summary.kind = 'active';
+          summary.status = 'reviewing';
+          break;
+        }
+      }
+      if (!summary.live) {
+        for (const review of ordered) {
+          const verdict = reviewVerdictForStatus(review && review.status);
+          if (verdict) {
+            summary.verdict = verdict;
+            summary.status = String(review && review.status ? review.status : '').trim();
+            summary.kind = 'completed';
+            break;
+          }
+        }
+      }
+      return summary;
+    }
+
+    function visibleRunForIssueGroup(issueNumber, runs) {
+      if (!Number.isInteger(issueNumber) || issueNumber <= 0 || !Array.isArray(runs)) return null;
+      const group = runs.filter((run) => run && run.issueNumber === issueNumber);
+      if (!group.length) return null;
+      const parents = group.filter((run) => !run.review);
+      if (parents.length) {
+        return parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || parents[0];
+      }
+      const summary = summarizeReviewGroup(group.filter((run) => run.review));
+      const source = summary.source || group[0];
+      if (!source) return null;
+      return {
+        ...source,
+        key: 'review-stub-' + String(issueNumber),
+        runId: 'review-stub-' + String(issueNumber),
+        review: false,
+        groupedReview: false,
+        reviewCount: summary.count,
+        reviewVerdict: summary.verdict,
+        status: summary.status || (summary.live ? 'reviewing' : String(source.status || '').trim()),
+        kind: summary.kind,
+        issueLabel: source.issueLabel && String(source.issueLabel).trim() ? source.issueLabel : ('#' + String(issueNumber)),
+      };
+    }
+
+    function visibleRunsForTable(runs) {
+      if (!Array.isArray(runs)) return [];
+      const byIssue = new Map();
+      const passthrough = [];
+      for (const run of runs) {
+        if (!run) continue;
+        if (!Number.isInteger(run.issueNumber) || run.issueNumber <= 0) {
+          passthrough.push(run);
+          continue;
+        }
+        const group = byIssue.get(run.issueNumber) || [];
+        group.push(run);
+        byIssue.set(run.issueNumber, group);
+      }
+      const visible = [...passthrough];
+      const issueNumbers = Array.from(byIssue.keys()).sort((a, b) => a - b);
+      for (const issueNumber of issueNumbers) {
+        const visibleRun = visibleRunForIssueGroup(issueNumber, byIssue.get(issueNumber));
+        if (visibleRun) visible.push(visibleRun);
+      }
+      return visible;
+    }
+
     function renderRunMeta(run) {
       const parts = [];
       if (run.runId) parts.push('RunID ' + run.runId);
@@ -3374,12 +3463,7 @@
     function render() {
       syncStatusOptions(state.runs);
       normalizePortalViewState();
-      let filtered = state.runs.filter(shouldShowRun);
-      filtered = sortedVisibleRuns(filtered);
-      const selectedRun = state.expandedRunKey ? findRunByIdentity(state.expandedRunKey) : null;
-      if (selectedRun && !filtered.some((run) => run && run.key === selectedRun.key)) {
-        filtered = [selectedRun, ...filtered];
-      }
+      const filtered = sortedVisibleRuns(visibleRunsForTable(state.runs.filter(shouldShowRun)));
       syncSortButtons();
       const activeCount = state.runs.filter((run) => run && run.kind === 'active').length;
       const completedCount = state.runs.filter((run) => run && run.kind === 'completed').length;
