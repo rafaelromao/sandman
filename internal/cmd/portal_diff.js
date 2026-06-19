@@ -494,7 +494,7 @@
       if (candidate.review) reviews.push(candidate);
       else parents.push(candidate);
     }
-    const canonicalParent = parents[0] || (!run.review ? run : null);
+    const canonicalParent = parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || parents[0] || (!run.review ? run : null);
     const related = [];
     if (canonicalParent) related.push(canonicalParent);
     reviews.sort((a, b) => {
