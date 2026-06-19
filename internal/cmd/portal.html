@@ -2293,6 +2293,7 @@
     function startRunStream(run) {
       if (!run || run.kind !== 'active' || !run.socketPath) return;
       if (streamSources[run.key]) return;
+      const backendKey = run.backendKey || run.key;
       // Reset the <pre> so the broadcaster's connect-replay refills it
       // authoritatively; the snapshot we had is a subset of the replay.
       const pre = streamPreFor(run.key);
@@ -2300,7 +2301,7 @@
         while (pre.firstChild) pre.removeChild(pre.firstChild);
         pre.setAttribute('data-rendered-log', '');
       }
-      const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(run.key));
+      const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
       src.onmessage = function (ev) { appendStreamLine(run.key, ev.data); };
       src.onerror = function () {
         // A 409 (run no longer active) closes the stream; the next render
@@ -2892,7 +2893,7 @@
     function normalizeRunIdentity(run) {
       if (!run || !run.runId) return run;
       if (run.key === run.runId) return run;
-      return { ...run, key: run.runId };
+      return { ...run, backendKey: run.key, key: run.runId };
     }
 
     function subjectRunIdentity(run) {
@@ -3622,17 +3623,19 @@
         }
         if (action === 'abort-run') {
           event.preventDefault();
-          const issue = Number(button.getAttribute('data-issue') || findRunByKey(runKey)?.issueNumber || 0);
-          const label = findRunByKey(runKey)?.issueLabel || 'this run';
+          const run = findRunByKey(runKey);
+          const issue = Number(button.getAttribute('data-issue') || run?.issueNumber || 0);
+          const label = run?.issueLabel || 'this run';
           if (typeof window.confirm === 'function' && !window.confirm('Abort ' + label + '?')) return;
-          abortRun(button, runKey, issue);
+          abortRun(button, run?.backendKey || runKey, issue);
           return;
         }
         if (action === 'archive-run') {
           event.preventDefault();
-          const runId = button.getAttribute('data-run-id') || findRunByKey(runKey)?.runId;
+          const run = findRunByKey(runKey);
+          const runId = run?.backendKey || run?.key || run?.runId || button.getAttribute('data-run-id');
           if (!runId) return;
-          const label = findRunByKey(runKey)?.issueLabel || 'this run';
+          const label = run?.issueLabel || 'this run';
           archiveRun(button, runId, label);
           return;
         }
