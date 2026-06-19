@@ -26,6 +26,13 @@ import (
 // reference the same constant.
 const PollingInterval = 30 * time.Second
 
+// verifyRetryMax is the maximum number of attempts for review comment
+// verification, accounting for GitHub API eventual consistency.
+const verifyRetryMax = 3
+
+// verifyRetryBackoff is the delay between verification retry attempts.
+const verifyRetryBackoff = 5 * time.Second
+
 // Clock returns the current time. Inject a custom clock in tests to avoid
 // time-based dependencies.
 type Clock func() time.Time
@@ -460,10 +467,61 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		RunID:        perRowRunID,
 		RunDir:       rs.RunDir(),
 	}
+	verifyStart := d.now()
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return fmt.Errorf("run batch: %w", err)
 	}
+	if err := d.verifyReviewPosted(ctx, prNumber, verifyStart, commentID); err != nil {
+		return fmt.Errorf("review verification: %w", err)
+	}
 	return nil
+}
+
+// now returns the current time. It uses the daemon's Clock if set,
+// otherwise falls back to time.Now. Tests inject a custom clock.
+func (d *Daemon) now() time.Time {
+	if d.Clock != nil {
+		return d.Clock()
+	}
+	return time.Now()
+}
+
+// verifyReviewPosted checks whether a new PR comment was posted after the
+// given timestamp, excluding the trigger comment. It retries up to 3
+// times with 5-second backoff to handle GitHub API eventual consistency.
+func (d *Daemon) verifyReviewPosted(ctx context.Context, prNumber int, since time.Time, excludeCommentID string) error {
+	var lastErr error
+	for attempt := 0; attempt < verifyRetryMax; attempt++ {
+		if attempt > 0 {
+			d.logf("PR #%d: review verification attempt %d/%d, retrying in %v", prNumber, attempt+1, verifyRetryMax, verifyRetryBackoff)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(verifyRetryBackoff):
+			}
+		}
+
+		comments, err := d.GitHub.ListPRComments(prNumber)
+		if err != nil {
+			lastErr = fmt.Errorf("list PR comments: %w", err)
+			d.logf("PR #%d: review verification: %v", prNumber, lastErr)
+			continue
+		}
+
+		for _, c := range comments {
+			if c.ID == excludeCommentID {
+				continue
+			}
+			if c.CreatedAt.After(since) && c.Body != "" {
+				d.logf("PR #%d: review comment verified (ID %s, posted at %v)", prNumber, c.ID, c.CreatedAt)
+				return nil
+			}
+		}
+		lastErr = fmt.Errorf("no review comment found on PR #%d after %v", prNumber, since)
+	}
+
+	d.logf("PR #%d: review verification failed after %d attempts: %v", prNumber, verifyRetryMax, lastErr)
+	return lastErr
 }
 
 // logf writes a line to the broadcaster (or stderr when none is wired).
