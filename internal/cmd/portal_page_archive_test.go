@@ -37,6 +37,7 @@ func TestPortal_PageWiresArchiveAction(t *testing.T) {
 	for _, want := range []string{
 		`const archivePath = "/api/runs/archive";`,
 		`async function archiveRun(`,
+		`const currentKey = state.expandedRunKey || runKey;`,
 		`action === 'archive-run'`,
 		`archiveRun(button, runId, label);`,
 		`fetch(archivePath, {`,

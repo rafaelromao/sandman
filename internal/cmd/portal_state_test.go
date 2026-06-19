@@ -279,8 +279,8 @@ vm.runInNewContext(source, sandbox, { filename: helperPath });
 const api = sandbox.SandmanPortalState;
 
 const defaults = api.load();
-if (defaults.sortBy !== 'server' || defaults.sortDir !== 'desc') {
-  throw new Error('expected default sort state {server,desc}, got ' + JSON.stringify({ sortBy: defaults.sortBy, sortDir: defaults.sortDir }));
+if (defaults.sortBy !== 'started' || defaults.sortDir !== 'desc') {
+  throw new Error('expected default sort state {started,desc}, got ' + JSON.stringify({ sortBy: defaults.sortBy, sortDir: defaults.sortDir }));
 }
 
 storage.set(api.storageKey, JSON.stringify({
@@ -298,8 +298,8 @@ if (loaded.sortBy !== 'status' || loaded.sortDir !== 'asc') {
 
 storage.set(api.storageKey, JSON.stringify({ sortBy: 'bogus', sortDir: 'bogus' }));
 const migrated = api.load();
-if (migrated.sortBy !== 'server' || migrated.sortDir !== 'desc') {
-  throw new Error('expected invalid sort state to normalize to {server,desc}, got ' + JSON.stringify({ sortBy: migrated.sortBy, sortDir: migrated.sortDir }));
+if (migrated.sortBy !== 'started' || migrated.sortDir !== 'desc') {
+  throw new Error('expected invalid sort state to normalize to {started,desc}, got ' + JSON.stringify({ sortBy: migrated.sortBy, sortDir: migrated.sortDir }));
 }
 
 api.save({ expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, sortBy: 'duration', sortDir: 'asc' });

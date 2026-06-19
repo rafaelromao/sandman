@@ -252,8 +252,9 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 			runs[i].SourceExists = true
 			continue
 		}
-		runs[i].Archived = v.isRunArchived(repoRoot, runs[i].RunID)
-		runs[i].SourceExists = v.runDirExists(repoRoot, runs[i].RunID)
+		dirID := v.sourceDirID(runs[i])
+		runs[i].Archived = v.isRunArchived(repoRoot, dirID)
+		runs[i].SourceExists = v.runDirExists(repoRoot, dirID)
 	}
 	// Staleness signal for active rows: the saved-run-log mtime (with a
 	// StartedAt fallback). Computed here so every runFrom* constructor and
@@ -790,6 +791,13 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	if match.state != nil {
 		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun)
 		run.BatchKey = match.instance.Key
+		if match.state.Finished != nil {
+			if saved := v.readPortalTextFile(run.LogPath); strings.TrimSpace(saved) != "" {
+				run.Log = saved
+			} else if strings.TrimSpace(run.Log) == "" {
+				run.Log = "No log file yet."
+			}
+		}
 		return run
 	}
 
@@ -1176,6 +1184,13 @@ func (v *portalRunsView) isRunArchived(repoRoot, runID string) bool {
 		return false
 	}
 	return info.IsDir()
+}
+
+func (v *portalRunsView) sourceDirID(run portalRun) string {
+	if run.BatchKey != "" {
+		return run.BatchKey
+	}
+	return run.RunID
 }
 
 func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {

@@ -754,6 +754,54 @@ func TestPortal_Compute_CompletedRunWithoutArchiveDir_NotArchived(t *testing.T) 
 	}
 }
 
+// TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists covers the
+// archive-button gate for rows whose source directory is the batch dir, not
+// the per-row RunID. The portal should still surface SourceExists=true so the
+// archive action remains available for live batch rows that already finished.
+func TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const runID = "abcd-260618113825-issue-42"
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "batch-42")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", filepath.Join(runDir, "run.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt, RunID: runID}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	got := runs[0]
+	if !got.SourceExists {
+		t.Fatalf("SourceExists = false, want true (batch dir exists under .sandman/runs/%s)", filepath.Base(runDir))
+	}
+}
+
 // TestPortal_Compute_CompletedRunWithSourceDir_ReportsSourceExists is the
 // cycle-3 test for the archive-button gate: a completed run that still has a
 // source directory under .sandman/runs/<run-id> must surface SourceExists=true

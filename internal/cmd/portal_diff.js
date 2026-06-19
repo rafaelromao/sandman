@@ -244,7 +244,6 @@
     badge.appendChild(labelSpan);
     td.appendChild(badge);
     if (run.archived) appendArchivedBadge(td);
-    appendRetryChip(td, run);
     const stale = stalenessOf(run);
     if (stale) appendStaleChip(td, stale.text, stale.warn);
   }
@@ -257,19 +256,6 @@
     labelSpan.textContent = 'Archived';
     badge.appendChild(labelSpan);
     td.appendChild(badge);
-  }
-
-  function appendRetryChip(td, run) {
-    const done = Number(run && run.retriesDone ? run.retriesDone : 0);
-    if (!done) return;
-    const total = Number(run && run.retriesTotal ? run.retriesTotal : 0);
-    const label = done === 1 ? '\u21bb 1 retry' : '\u21bb ' + done + ' retries';
-    const tooltip = 'retried ' + done + ' of ' + total + ' attempts \u2014 see Events tab';
-    const chip = global.document.createElement('span');
-    chip.classList.add('retry-chip');
-    chip.setAttribute('title', tooltip);
-    chip.textContent = label;
-    td.appendChild(chip);
   }
 
   const STALE_CHIP_SECONDS = 60;
@@ -480,9 +466,7 @@
 
   function subjectRunLabel(run) {
     if (!run) return 'Run';
-    const value = subjectRunValue(run) || 'Run';
-    if (run.review) return 'Review ' + value;
-    return 'Implementation ' + value;
+    return subjectRunValue(run) || 'Run';
   }
 
   function subjectRunsFor(run, opts) {
