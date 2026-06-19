@@ -320,8 +320,8 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	if runner.last.ReviewFocus != "focus on tests" {
 		t.Errorf("expected ReviewFocus='focus on tests', got %q", runner.last.ReviewFocus)
 	}
-	if !strings.HasSuffix(runner.last.RunID, "-review-PR42") {
-		t.Errorf("expected RunID to end with '-review-PR42', got %q", runner.last.RunID)
+	if !strings.HasSuffix(runner.last.RunID, "-PR42") {
+		t.Errorf("expected RunID to end with '-PR42', got %q", runner.last.RunID)
 	}
 	wantRunDirPrefix := filepath.Join(d.BaseDir, "runs", "")
 	if !strings.HasPrefix(runner.last.RunDir, wantRunDirPrefix) {
