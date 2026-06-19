@@ -45,7 +45,7 @@ func NewBatch() (ts, shortid string, err error) {
 }
 
 func NewBatchIn(baseRunsDir string) (ts, shortid string, err error) {
-	ts = timeFunc().Format("20060102-150405")
+	ts = timeFunc().Format("060102150405")
 	for attempt := 0; attempt < 16; attempt++ {
 		shortid = shortIDFunc()
 		entries, err := os.ReadDir(baseRunsDir)
@@ -57,7 +57,7 @@ func NewBatchIn(baseRunsDir string) (ts, shortid string, err error) {
 		}
 		collision := false
 		for _, entry := range entries {
-			if entry.IsDir() && strings.HasPrefix(entry.Name(), ts+"-"+shortid) {
+			if entry.IsDir() && strings.HasPrefix(entry.Name(), shortid+"-"+ts) {
 				collision = true
 				break
 			}
@@ -72,23 +72,26 @@ func NewBatchIn(baseRunsDir string) (ts, shortid string, err error) {
 func NewBatchID(kind Kind, n int, firstSubject string, ts, shortid string) string {
 	switch kind {
 	case KindIssue:
-		return fmt.Sprintf("%s-%s-%d-issues-first-%s", ts, shortid, n, firstSubject)
+		return fmt.Sprintf("%s-%s-%s+%d", shortid, ts, firstSubject, n)
 	case KindReview:
-		return fmt.Sprintf("%s-%s-review-%s", ts, shortid, firstSubject)
+		return fmt.Sprintf("%s-%s-PR%s", shortid, ts, firstSubject)
 	case KindAutoSelect:
-		return fmt.Sprintf("%s-%s-auto-select-%d-candidates", ts, shortid, n)
+		return fmt.Sprintf("%s-%s-auto-%d", shortid, ts, n)
 	case KindPromptOnly:
 		if firstSubject == "" {
-			return fmt.Sprintf("%s-%s-prompt-only", ts, shortid)
+			return fmt.Sprintf("%s-%s", shortid, ts)
 		}
-		return fmt.Sprintf("%s-%s-prompt-only-ID-%s", ts, shortid, firstSubject)
+		return fmt.Sprintf("%s-%s-%s", shortid, ts, firstSubject)
 	default:
 		return ""
 	}
 }
 
 func NewRunID(kind Kind, subject string, ts, shortid string) string {
-	return fmt.Sprintf("%s-%s-%s", ts, shortid, subject)
+	if subject == "" {
+		return fmt.Sprintf("%s-%s", shortid, ts)
+	}
+	return fmt.Sprintf("%s-%s-%s", shortid, ts, subject)
 }
 
 var userRunIDRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -106,7 +109,21 @@ func IsValidUserRunID(s string) error {
 	return nil
 }
 
+var newFormatRe = regexp.MustCompile(`^[0-9a-f]{4}-\d{12}`)
+
 func KindFromDirName(name string) (Kind, bool) {
+	// New format: {sid}-{ts}-{rest}
+	if strings.Contains(name, "-auto-") {
+		return KindAutoSelect, true
+	}
+	if strings.Contains(name, "-PR") {
+		return KindReview, true
+	}
+	// New format issue batch: {sid}-{ts}-{n}+{count} (contains "+")
+	if strings.Contains(name, "+") {
+		return KindIssue, true
+	}
+	// Old format: {ts}-{sid}-{rest}
 	if strings.Contains(name, "-issues-first-") {
 		return KindIssue, true
 	}
@@ -117,6 +134,11 @@ func KindFromDirName(name string) (Kind, bool) {
 		return KindAutoSelect, true
 	}
 	if strings.Contains(name, "-prompt-only") {
+		return KindPromptOnly, true
+	}
+	// New format PromptOnly: {sid}-{ts} or {sid}-{ts}-{userid}
+	// Only when name matches new format prefix and no other marker found.
+	if newFormatRe.MatchString(name) {
 		return KindPromptOnly, true
 	}
 	return 0, false

@@ -1228,8 +1228,8 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		capturedRunDir = req.RunDir
 
-		if !strings.HasSuffix(req.RunDir, "-review-PR1") {
-			t.Errorf("expected RunDir to end with '-review-PR1', got %q", req.RunDir)
+		if !strings.HasSuffix(req.RunDir, "-PR1") {
+			t.Errorf("expected RunDir to end with '-PR1', got %q", req.RunDir)
 		}
 
 		manifestPath := filepath.Join(req.RunDir, "batch.json")
@@ -1320,8 +1320,8 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		capturedRunDir = req.RunDir
 
-		if !strings.HasSuffix(req.RunDir, "-review-PR1") {
-			t.Errorf("expected RunDir to end with '-review-PR1', got %q", req.RunDir)
+		if !strings.HasSuffix(req.RunDir, "-PR1") {
+			t.Errorf("expected RunDir to end with '-PR1', got %q", req.RunDir)
 		}
 
 		manifestPath := filepath.Join(req.RunDir, "batch.json")
@@ -1384,8 +1384,8 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 		capturedWriter = req.OutputWriter
 		capturedRunDir = req.RunDir
 
-		if !strings.HasSuffix(req.RunDir, "-review-PR1") {
-			t.Errorf("expected RunDir to end with '-review-PR1', got %q", req.RunDir)
+		if !strings.HasSuffix(req.RunDir, "-PR1") {
+			t.Errorf("expected RunDir to end with '-PR1', got %q", req.RunDir)
 		}
 
 		return &batch.Result{}, nil
