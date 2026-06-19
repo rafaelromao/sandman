@@ -6,7 +6,7 @@ Sandman includes one built-in preset: `opencode`.
 
 | Preset | Display Name | Command Template |
 |--------|-------------|------------------|
-| `opencode` | OpenCode | `opencode run "$(cat {{.PromptFile}})"` |
+| `opencode` | OpenCode | `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"` |
 
 ## OpenCode shell strategy
 

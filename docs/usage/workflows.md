@@ -84,13 +84,13 @@ sandman portal
 
 `sandman portal` gives you a repo-scoped view of current and recent runs plus launcher presets. It rescans `.sandman/runs/` on each poll, so multiple Sandman instances in the same repository show up as they start. This is useful when you want to watch live output, review logs, compare runs, and launch new Sandman commands without jumping between terminals.
 
-## Continuing a failed run
+## Continuing a previous run
 
 ```bash
 sandman run --continue 42 --prompt "finish the tests"
 ```
 
-Reuses the previously created branch for issue #42 and feeds the agent a new prompt plus the handoff document. Useful when the original prompt stalled or drifted.
+Reuses the previously created branch for issue #42 and feeds the agent the stored task file plus any new prompt text. Useful when the original prompt stalled or drifted.
 
 ## Cleaning up
 
