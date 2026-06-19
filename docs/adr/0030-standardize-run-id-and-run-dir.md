@@ -19,39 +19,39 @@ Four batch kinds exist: regular issue, review, auto-select, and prompt-only. Eac
 
 ### Timestamp + shortid collision guard
 
-Every RunID and RunDir begins with a `<ts>-<shortid>` prefix:
+Every RunID and RunDir begins with a `<shortid>-<ts>` prefix:
 
-- `<ts>` is `time.Now().Format("20060102-150405")` (local time, 15 characters).
 - `<shortid>` is 4 lowercase hex characters derived from `unixNano % 0xFFFF`.
+- `<ts>` is `time.Now().Format("060102150405")` (local time, 12 characters, 2-digit year).
 
-When `NewBatch()` finds that a directory already exists at `.sandman/runs/<ts>-<shortid>-...`, it generates a new shortid and retries up to 16 times before returning an error. The timestamp is not changed during retry; only the shortid advances.
+When `NewBatch()` finds that a directory already exists at `.sandman/runs/<shortid>-<ts>-...`, it generates a new shortid and retries up to 16 times before returning an error. The timestamp is not changed during retry; only the shortid advances.
 
-The timestamp is placed first so that filesystem tools that sort by name naturally chronological-order runs. The shortid provides collision resistance within the same second.
+The shortid is placed first to maximise collision resistance within the same timestamp. The timestamp provides chronological ordering.
 
 ### RunDir naming templates
 
 | Kind | Template |
 |------|----------|
-| Regular issue | `<ts>-<shortid>-<N>-issues-first-<firstIssueNum>` |
-| Review | `<ts>-<shortid>-review-<firstSubject>` where `firstSubject` is the PR number prefixed `PR` |
-| Auto-select | `<ts>-<shortid>-auto-select-<N>-candidates` |
-| Prompt-only (with user id) | `<ts>-<shortid>-prompt-only-ID-<userid>` |
-| Prompt-only (without user id) | `<ts>-<shortid>-prompt-only` |
+| Regular issue | `<shortid>-<ts>-<firstIssueNum>+<N>` |
+| Review | `<shortid>-<ts>-PR<prNum>` |
+| Auto-select | `<shortid>-<ts>-auto-<N>` |
+| Prompt-only (with user id) | `<shortid>-<ts>-<userid>` |
+| Prompt-only (without user id) | `<shortid>-<ts>` |
 
-`<N>` is the count (number of issues in a batch, number of candidates in auto-select, 1 for review, 1 for prompt-only). `firstSubject` is the first issue number for regular issues, the PR number for reviews, and the user-supplied run id for prompt-only runs.
+`<N>` is the count (number of issues in a batch, number of candidates in auto-select). `firstIssueNum` is the first issue number for regular issues. For issue batches, `+<N>` means "primary issue + N more issues" (e.g., `42+2` = 3 issues total).
 
 ### Per-row RunID templates
 
-Each AgentRun within a batch receives a unique RunID built from the batch's `<ts>-<shortid>` prefix plus a per-row subject:
+Each AgentRun within a batch receives a unique RunID built from the batch's `<shortid>-<ts>` prefix plus a per-row subject:
 
 | Kind | Template |
 |------|----------|
-| Regular issue | `<ts>-<shortid>-issue-<issueNum>` |
-| Review (with linked issue) | `<ts>-<shortid>-issue-<linkedIssueNum>-review-<prNum>` |
-| Review (without linked issue) | `<ts>-<shortid>-review-<prNum>` |
-| Auto-select | `<ts>-<shortid>-auto-select-<count>c` |
-| Prompt-only (with user id) | `<ts>-<shortid>-prompt-<userid>` |
-| Prompt-only (without user id) | `<ts>-<shortid>-prompt` |
+| Regular issue | `<shortid>-<ts>-issue-<issueNum>` |
+| Review (with linked issue) | `<shortid>-<ts>-<linkedIssueNum>-PR<prNum>` |
+| Review (without linked issue) | `<shortid>-<ts>-PR<prNum>` |
+| Auto-select | `<shortid>-<ts>-auto-<N>` |
+| Prompt-only (with user id) | `<shortid>-<ts>-<userid>` |
+| Prompt-only (without user id) | `<shortid>-<ts>` |
 
 ### `--run-id` flag preserved
 
@@ -69,10 +69,14 @@ When `--run-id` is provided for a prompt-only run, it is validated by `IsValidUs
 
 The portal uses `KindFromDirName(name string) (Kind, bool)` to recover the batch kind from a RunDir name during same-second collision recovery. It matches by pattern:
 
-- `*-issues-first-*` → `KindIssue`
-- `*-review-*` → `KindReview`
-- `*-auto-select-*-candidates` → `KindAutoSelect`
-- `*-prompt-only*` → `KindPromptOnly`
+- `*-auto-*` → `KindAutoSelect`
+- `*-PR*` → `KindReview`
+- `*+*` → `KindIssue` (batch dirs only; `+N` suffix)
+- `*-issues-first-*` → `KindIssue` (old format backwards compat)
+- `*-review-*` → `KindReview` (old format backwards compat)
+- `*-auto-select-*-candidates` → `KindAutoSelect` (old format backwards compat)
+- `*-prompt-only*` → `KindPromptOnly` (old format backwards compat)
+- New format with no other marker → `KindPromptOnly` (fallback)
 
 ## Consequences
 
@@ -80,7 +84,7 @@ The portal uses `KindFromDirName(name string) (Kind, bool)` to recover the batch
 
 - Single source of truth for RunID and RunDir generation. All four batch kinds share the same `internal/runid` package.
 - Collision guard eliminates race conditions when multiple runs start within the same second.
-- Timestamp-first ordering means filesystem browsing tools naturally show runs in chronological order.
+- Shortid-first ordering maximises collision resistance within the same timestamp.
 - Pattern-based `KindFromDirName` enables the portal to recover batch kind from directory names alone.
 - Validation is loosened to accept the full range of identifiers users are likely to choose.
 

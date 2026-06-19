@@ -125,8 +125,8 @@ func TestPortal_Compute_ReasonTableForAllRunKinds(t *testing.T) {
 		{
 			name: "regular issue-driven run",
 			events: []events.Event{
-				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "abcd-260618113825-issue-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: "abcd-260618113825-issue-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
 			},
 			want: want{reason: "", status: "success", kind: "completed", label: "#42"},
 		},
@@ -225,7 +225,7 @@ func TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted(t *t
 	}{
 		{
 			name:     "active run is active",
-			runState: events.RunState{RunID: "run-active", Started: events.Event{Timestamp: startedAt}},
+			runState: events.RunState{RunID: "abcd-260618113825-active", Started: events.Event{Timestamp: startedAt}},
 			want:     "active",
 		},
 		{
@@ -249,7 +249,7 @@ func TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted(t *t
 		{
 			name: "terminal issue is completed",
 			runState: events.RunState{
-				RunID:    "run-42-1",
+				RunID:    "abcd-260618113825-issue-42",
 				Started:  events.Event{Timestamp: startedAt},
 				Finished: makeFinished(map[string]any{"status": "success"}),
 			},
@@ -600,7 +600,7 @@ func TestPortal_Compute_CompletedRunUnderArchiveDir_MarksArchived(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	const runID = "run-id-1-archived"
+	const runID = "abcd-260618113825-id-1-archived"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -648,7 +648,7 @@ func TestPortal_Compute_CompletedRunWithoutArchiveDir_NotArchived(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	const runID = "run-id-2-not-archived"
+	const runID = "abcd-260618113825-id-2-not-archived"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 

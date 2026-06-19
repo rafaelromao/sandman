@@ -10,15 +10,15 @@ import (
 )
 
 func TestRunDir_JoinsBaseRunsAndDirID(t *testing.T) {
-	dir := RunDir("base", "20250617-143052-abcd-1-issues-first-42")
-	want := filepath.Join("base", "runs", "20250617-143052-abcd-1-issues-first-42")
+	dir := RunDir("base", "abcd-260618113825-42+2")
+	want := filepath.Join("base", "runs", "abcd-260618113825-42+2")
 	if dir != want {
 		t.Fatalf("expected %q, got %q", want, dir)
 	}
 }
 
 func TestRunDir_PreservesDirIDVerbatim(t *testing.T) {
-	dirID := "20250617-143052-abcd-3-issues-first-42"
+	dirID := "abcd-260618113825-42+2"
 	dir := RunDir("base", dirID)
 	if !strings.HasSuffix(dir, dirID) {
 		t.Fatalf("expected path to end with %q, got %q", dirID, dir)
