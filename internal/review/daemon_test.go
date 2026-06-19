@@ -341,11 +341,18 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 
 func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	after := now.Add(1 * time.Minute)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}, {Number: 2, State: "open"}},
 		comments: map[int][]github.PRComment{
-			1: {{ID: "100", Body: "/sandman review", CreatedAt: now}},
-			2: {{ID: "200", Body: "/sandman review", CreatedAt: now}},
+			1: {
+				{ID: "100", Body: "/sandman review", CreatedAt: now},
+				{ID: "101", Body: "## Summary\nLGTM", CreatedAt: after},
+			},
+			2: {
+				{ID: "200", Body: "/sandman review", CreatedAt: now},
+				{ID: "201", Body: "## Summary\nLGTM", CreatedAt: after},
+			},
 		},
 		prFetch: map[int]*github.PR{
 			1: {Number: 1, Title: "PR 1", Body: "Body 1"},
@@ -364,7 +371,7 @@ func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
 		DefaultReviewModel:    "opencode/foo",
 		DefaultReviewParallel: 2,
 	})
-	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+	d.Clock = func() time.Time { return now }
 
 	done := make(chan error, 1)
 	go func() {
@@ -1459,7 +1466,7 @@ func TestDaemon_VerifyReviewPosted_FailsWhenNoNewComments(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 
-	err := d.verifyReviewPosted(context.Background(), 42, now)
+	err := d.verifyReviewPosted(context.Background(), 42, now, "999")
 	if err == nil {
 		t.Fatal("expected error when no new comments found after timestamp")
 	}
@@ -1486,7 +1493,7 @@ func TestDaemon_VerifyReviewPosted_PassesWhenNewCommentFound(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 
-	err := d.verifyReviewPosted(context.Background(), 42, now)
+	err := d.verifyReviewPosted(context.Background(), 42, now, "100")
 	if err != nil {
 		t.Fatalf("expected no error when new comment found, got: %v", err)
 	}
