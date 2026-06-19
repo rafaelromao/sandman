@@ -718,11 +718,14 @@
       font-size: 14px;
     }
     .meta-line {
-      display: block;
+      display: grid;
+      grid-auto-flow: column;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 4px 10px;
+      align-items: baseline;
       color: var(--muted);
       font-size: 12px;
       min-width: 0;
-      white-space: pre-line;
       overflow-wrap: anywhere;
     }
     .meta-line span {
@@ -3826,6 +3829,7 @@
           const runId = run?.backendKey || run?.key || run?.runId || button.getAttribute('data-run-id');
           if (!runId) return;
           const label = run?.issueLabel || 'this run';
+          if (typeof window.confirm === 'function' && !window.confirm('Archive ' + label + '?')) return;
           archiveRun(button, runId, label);
           return;
         }
