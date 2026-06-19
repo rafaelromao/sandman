@@ -3347,6 +3347,9 @@ sandbox: worktree
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix login bug", Body: "Users cannot log in with OAuth."},
 		},
+		prs: map[string]*github.PR{
+			"sandman/42-fix-login-bug": mergedPR("sandman/42-fix-login-bug", ""),
+		},
 	}
 
 	store := &config.FileStore{Path: configPath}

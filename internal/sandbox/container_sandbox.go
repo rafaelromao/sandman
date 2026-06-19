@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
 // ContainerSandbox provides isolation via a container and a git worktree.
@@ -159,12 +161,12 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 	return os.WriteFile(gitFile, []byte(updated), 0644)
 }
 
-const execWrapperScript = `sh -c 'echo \$\$ > /tmp/agent-pgid; exec "$@"' _ %s
+const execWrapperScript = `sh -c 'echo $$ > /tmp/agent-pgid; exec sh -c "$1"' _ %s
 `
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
 func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	wrapperCmd := fmt.Sprintf(execWrapperScript, command)
+	wrapperCmd := fmt.Sprintf(execWrapperScript, shellenv.Quote(command))
 	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = stdout
