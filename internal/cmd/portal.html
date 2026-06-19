@@ -3472,7 +3472,16 @@
         const nextRuns = Array.isArray(payload.runs) ? payload.runs.map(normalizeRunIdentity) : [];
         if (state.expandedRunKey) {
           const cached = prevRuns.find((run) => run && (run.key === state.expandedRunKey || run.runId === state.expandedRunKey));
-          if (cached && !nextRuns.some((run) => run && (run.key === cached.key || run.runId === cached.runId))) {
+          const issueNumber = cached ? cached.issueNumber : 0;
+          if (issueNumber > 0) {
+            const cachedIssueRuns = prevRuns.filter((run) => run && run.issueNumber === issueNumber);
+            for (let i = cachedIssueRuns.length - 1; i >= 0; i -= 1) {
+              const issueRun = cachedIssueRuns[i];
+              if (!nextRuns.some((run) => run && (run.key === issueRun.key || run.runId === issueRun.runId))) {
+                nextRuns.unshift(issueRun);
+              }
+            }
+          } else if (cached && !nextRuns.some((run) => run && (run.key === cached.key || run.runId === cached.runId))) {
             nextRuns.unshift(cached);
           }
         }
