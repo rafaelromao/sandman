@@ -129,7 +129,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 	ln.Close()
 
 	active := portalActiveRun{
-		Key:          "20250617-143052-abcd-issue-42",
+		Key:          "abcd-260618113825-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -138,7 +138,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 
 	started := time.Now().Add(-1 * time.Minute)
 	state := &events.RunState{
-		RunID: "20250617-143052-abcd-issue-42",
+		RunID: "abcd-260618113825-issue-42",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -247,7 +247,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 	t.Cleanup(func() { _ = ln.Close() })
 
 	active := portalActiveRun{
-		Key:          "20250617-143052-abcd-issue-42",
+		Key:          "abcd-260618113825-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -256,7 +256,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 
 	started := time.Now().Add(-1 * time.Minute)
 	state := &events.RunState{
-		RunID: "20250617-143052-abcd-issue-42",
+		RunID: "abcd-260618113825-issue-42",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -749,7 +749,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	t.Cleanup(func() { _ = ln.Close() })
 
 	active := portalActiveRun{
-		Key:          "20250617-143052-abcd-issue-42",
+		Key:          "abcd-260618113825-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -757,7 +757,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	}
 
 	state := &events.RunState{
-		RunID: "20250617-143052-abcd-issue-42",
+		RunID: "abcd-260618113825-issue-42",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload: map[string]any{
@@ -930,7 +930,7 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 
 	startedAt := time.Now().Add(-1 * time.Minute)
 	active := portalActiveRun{
-		Key:          "20250617-143052-abcd-issue-42",
+		Key:          "abcd-260618113825-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
