@@ -75,7 +75,7 @@
     let changed = false;
 
     if (current.expandedRunKey && !runKeys.has(current.expandedRunKey)) {
-      current.expandedRunKey = runList[0] || null;
+      current.expandedRunKey = null;
       changed = true;
     }
 

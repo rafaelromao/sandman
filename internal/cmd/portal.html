@@ -2282,12 +2282,7 @@
       const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(run.key));
       src.onmessage = function (ev) { appendStreamLine(run.key, ev.data); };
       src.onerror = function () {
-        // A 409 (run no longer active) closes the stream; the next render
-        // reconciles and cleans up. EventSource will stop retrying once
-        // readyState is CLOSED, which the reconcile also handles.
-        if (src.readyState === EventSource.CLOSED) {
-          stopRunStream(run.key);
-        }
+        stopRunStream(run.key);
       };
       streamSources[run.key] = src;
       streamingKeys.add(run.key);
