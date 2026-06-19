@@ -3295,7 +3295,7 @@
         parts.push(count + ' review' + (count === 1 ? '' : 's'));
         if (run.reviewVerdict) parts.push(run.reviewVerdict);
       }
-      if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1 && Number(run.reviewCount || 0) === 0) {
+      if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
         parts.push('Batch #' + run.batchIssues.join(', #'));
       }
       return parts.length ? parts.join(' · ') : 'Run';

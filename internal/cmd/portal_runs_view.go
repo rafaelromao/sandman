@@ -382,7 +382,7 @@ func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
 			}
 			continue
 		}
-		if idx, ok := parents[run.IssueNumber]; !ok || run.StartedAt.After(runs[idx].StartedAt) {
+		if idx, ok := parents[run.IssueNumber]; !ok || run.StartedAt.Before(runs[idx].StartedAt) {
 			parents[run.IssueNumber] = i
 		}
 	}
@@ -413,6 +413,8 @@ func reviewVerdictForStatus(status string) string {
 		return "Changes requested"
 	case "aborted":
 		return "Aborted"
+	case "blocked":
+		return "Blocked"
 	default:
 		return ""
 	}

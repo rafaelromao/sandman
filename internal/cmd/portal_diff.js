@@ -209,7 +209,6 @@
   function batchText(run) {
     const issues = batchIssues(run);
     if (issues.length <= 1) return '';
-    if (run.reviewCount > 0) return '';
     if (run.reason === 'review' || run.reason === 'auto-select') return '';
     return 'Part of batch: ' + issues.map((n) => '#' + n).join(', ');
   }

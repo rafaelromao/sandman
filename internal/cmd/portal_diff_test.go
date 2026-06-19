@@ -90,7 +90,10 @@ const createdParent = SandmanPortalDiff.insertRunRow(body, parentRun, opts);
 const parentMeta = createdParent.row.querySelector('[data-cell="title"]').children[0].children[1];
 if (!parentMeta.textContent.includes('2 reviews')) throw new Error('expected review count in meta, got ' + parentMeta.textContent);
 if (!parentMeta.textContent.includes('Approved')) throw new Error('expected latest verdict in meta, got ' + parentMeta.textContent);
-if (body.querySelector('tr.batch-row[data-batch-for="issue-1"]')) throw new Error('expected grouped batch chip removed from parent row');
+const parentBatchRow = body.querySelector('tr.batch-row[data-batch-for="issue-1"]');
+if (!parentBatchRow) throw new Error('expected parent batch chip to remain for canonical issue row');
+const parentBatchChip = parentBatchRow.querySelector('.batch-membership');
+if (!parentBatchChip || !parentBatchChip.textContent.includes('Part of batch:')) throw new Error('expected batch membership chip in parent batch row');
 const createdGrouped = SandmanPortalDiff.insertRunRow(body, groupedReview, opts);
 if (body.querySelector('tr.context-row[data-context-for="PR42"]')) throw new Error('expected grouped review chip removed');
 const groupedTitle = createdGrouped.row.querySelector('[data-cell="title"]').children[0];
@@ -1793,7 +1796,7 @@ const renderRunMeta = (run) => {
     parts.push(count + ' review' + (count === 1 ? '' : 's'));
     if (run.reviewVerdict) parts.push(run.reviewVerdict);
   }
-  if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1 && Number(run.reviewCount || 0) === 0) {
+  if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
     parts.push('Batch #' + run.batchIssues.join(', #'));
   }
   return parts.length ? parts.join(' · ') : 'Run';
