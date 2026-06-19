@@ -19,12 +19,16 @@ import (
 )
 
 func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot, err := os.MkdirTemp("/tmp", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-1-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-1-1")
 	sockPath := filepath.Join(runDir, "run.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -129,7 +133,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 	ln.Close()
 
 	active := portalActiveRun{
-		Key:          "20250617-143052-abcd-issue-42",
+		Key:          "abcd-260618113825-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -138,7 +142,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 
 	started := time.Now().Add(-1 * time.Minute)
 	state := &events.RunState{
-		RunID: "20250617-143052-abcd-issue-42",
+		RunID: "abcd-260618113825-issue-42",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -174,7 +178,7 @@ func TestPortal_RunFromActiveMatchSetsCompletedWhenSocketDead(t *testing.T) {
 
 	match := portalRunMatch{
 		instance: portalActiveRun{
-			Key:         "run-prompt-1",
+			Key:         "abcd-260618113825-prompt",
 			SocketPath:  sockPath,
 			IssueNumber: 0,
 			ModTime:     time.Now().Add(-1 * time.Minute),
@@ -210,7 +214,7 @@ func TestPortal_RunFromStateSetsCompletedWhenActiveButSocketDead(t *testing.T) {
 
 	started := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "run-active-1",
+		RunID: "abcd-260618113825-active-1",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -218,7 +222,7 @@ func TestPortal_RunFromStateSetsCompletedWhenActiveButSocketDead(t *testing.T) {
 	}
 
 	active := &portalActiveRun{
-		Key:        "run-active-1",
+		Key:        "abcd-260618113825-active-1",
 		SocketPath: sockPath,
 	}
 
@@ -247,7 +251,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 	t.Cleanup(func() { _ = ln.Close() })
 
 	active := portalActiveRun{
-		Key:          "20250617-143052-abcd-issue-42",
+		Key:          "abcd-260618113825-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -256,7 +260,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 
 	started := time.Now().Add(-1 * time.Minute)
 	state := &events.RunState{
-		RunID: "20250617-143052-abcd-issue-42",
+		RunID: "abcd-260618113825-issue-42",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -292,7 +296,7 @@ func TestPortal_RunFromActiveMatchKeepsActiveWhenSocketAlive(t *testing.T) {
 
 	match := portalRunMatch{
 		instance: portalActiveRun{
-			Key:         "run-prompt-1",
+			Key:         "abcd-260618113825-prompt",
 			SocketPath:  sockPath,
 			IssueNumber: 0,
 			ModTime:     time.Now().Add(-1 * time.Minute),
@@ -328,7 +332,7 @@ func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
 
 	started := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "run-active-1",
+		RunID: "abcd-260618113825-active-1",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -336,7 +340,7 @@ func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
 	}
 
 	active := &portalActiveRun{
-		Key:        "run-active-1",
+		Key:        "abcd-260618113825-active-1",
 		SocketPath: sockPath,
 	}
 
@@ -363,7 +367,7 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *tes
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	runsDir := filepath.Join(repoRoot, ".sandman", "runs", "run-gone-1")
+	runsDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-gone-1")
 	if err := os.MkdirAll(runsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +377,7 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *tes
 
 	started := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "run-gone-1",
+		RunID: "abcd-260618113825-gone-1",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -398,7 +402,7 @@ func TestPortal_RunFromState_MarksCompletedWhenRunDirMissing(t *testing.T) {
 
 	started := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "run-missing-1",
+		RunID: "abcd-260618113825-missing-1",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -423,14 +427,14 @@ func TestPortal_RunFromState_MarksCompletedWhenRunDirExistsButSocketMissing(t *t
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	runsDir := filepath.Join(repoRoot, ".sandman", "runs", "run-missing-sock-1")
+	runsDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-missing-sock-1")
 	if err := os.MkdirAll(runsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	started := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "run-missing-sock-1",
+		RunID: "abcd-260618113825-missing-sock-1",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -581,7 +585,7 @@ func TestPortal_RunFromState_PopulatesIssueTitle(t *testing.T) {
 	}
 
 	runState := events.RunState{
-		RunID: "run-1-1",
+		RunID: "abcd-260618113825-1-1",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload: map[string]any{
@@ -604,7 +608,7 @@ func TestPortal_RunFromState_EmptyIssueTitleWhenMissing(t *testing.T) {
 	}
 
 	runState := events.RunState{
-		RunID: "run-1-1",
+		RunID: "abcd-260618113825-1-1",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload:   map[string]any{},
@@ -620,8 +624,8 @@ func TestPortal_RunFromState_EmptyIssueTitleWhenMissing(t *testing.T) {
 
 func TestPortal_PortalRunJSONIncludesRetriesFieldsWhenFinished(t *testing.T) {
 	run := portalRun{
-		Key:          "run-1-1",
-		RunID:        "run-1-1",
+		Key:          "abcd-260618113825-1-1",
+		RunID:        "abcd-260618113825-1-1",
 		Kind:         "completed",
 		Status:       "success",
 		IssueLabel:   "#42",
@@ -650,8 +654,8 @@ func TestPortal_PortalRunJSONIncludesRetriesFieldsWhenFinished(t *testing.T) {
 
 func TestPortal_PortalRunJSONOmitsRetriesFieldsWhenZero(t *testing.T) {
 	run := portalRun{
-		Key:         "run-1-1",
-		RunID:       "run-1-1",
+		Key:         "abcd-260618113825-1-1",
+		RunID:       "abcd-260618113825-1-1",
 		Kind:        "completed",
 		Status:      "success",
 		IssueLabel:  "#42",
@@ -681,7 +685,7 @@ func TestPortal_RunFromState_PopulatesRetriesFromFinishedPayload(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runState := events.RunState{
-		RunID: "run-1",
+		RunID: "abcd-260618113825-issue-1",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload:   map[string]any{"branch": "sandman/42-fix"},
@@ -714,7 +718,7 @@ func TestPortal_RunFromState_LeavesRetriesZeroWhenActive(t *testing.T) {
 	}
 
 	runState := events.RunState{
-		RunID: "run-active",
+		RunID: "abcd-260618113825-active",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-30 * time.Second),
 			Payload:   map[string]any{"branch": "sandman/42-fix"},
@@ -749,7 +753,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	t.Cleanup(func() { _ = ln.Close() })
 
 	active := portalActiveRun{
-		Key:          "20250617-143052-abcd-issue-42",
+		Key:          "abcd-260618113825-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -757,7 +761,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	}
 
 	state := &events.RunState{
-		RunID: "20250617-143052-abcd-issue-42",
+		RunID: "abcd-260618113825-issue-42",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload: map[string]any{
@@ -792,7 +796,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForQueued(t *testing.
 
 	queuedAt := time.Now().Add(-2 * time.Minute)
 	active := portalActiveRun{
-		Key:          "run-962-1",
+		Key:          "abcd-260618113825-962-1",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{962, 960, 961},
@@ -801,7 +805,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForQueued(t *testing.
 	queued := &events.Event{
 		Type:      "run.queued",
 		Timestamp: queuedAt,
-		RunID:     "run-962-1",
+		RunID:     "abcd-260618113825-962-1",
 		Issue:     962,
 		Payload: map[string]any{
 			"blocked_by":  []int{960, 961},
@@ -839,7 +843,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 	queuedAt := time.Now().Add(-2 * time.Minute)
 	blockedAt := time.Now().Add(-1 * time.Minute)
 	active := portalActiveRun{
-		Key:          "run-962-1",
+		Key:          "abcd-260618113825-962-1",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{962, 960, 961},
@@ -848,7 +852,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 	queued := &events.Event{
 		Type:      "run.queued",
 		Timestamp: queuedAt,
-		RunID:     "run-962-1",
+		RunID:     "abcd-260618113825-962-1",
 		Issue:     962,
 		Payload: map[string]any{
 			"blocked_by":  []int{960, 961},
@@ -858,7 +862,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 	blocked := &events.Event{
 		Type:      "run.blocked",
 		Timestamp: blockedAt,
-		RunID:     "run-962-1",
+		RunID:     "abcd-260618113825-962-1",
 		Issue:     962,
 		Payload: map[string]any{
 			"blocked_by": []int{960, 961},
@@ -894,7 +898,7 @@ func TestPortal_RunFromActiveBatchIssue_MixedBatchCarriesBatchIssues(t *testing.
 
 	startedAt := time.Now().Add(-2 * time.Minute)
 	active := portalActiveRun{
-		Key:          "run-860-123",
+		Key:          "abcd-260618113825-860-123",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{860, 854},
@@ -930,7 +934,7 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 
 	startedAt := time.Now().Add(-1 * time.Minute)
 	active := portalActiveRun{
-		Key:          "20250617-143052-abcd-issue-42",
+		Key:          "abcd-260618113825-issue-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -945,14 +949,18 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 }
 
 func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot, err := os.MkdirTemp("/tmp", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Dir name implies issue 999, but the manifest lists [42, 43] —
 	// the portal must take issue identity from the manifest.
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-999-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-999-1")
 	sockPath := filepath.Join(runDir, "run.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -983,7 +991,11 @@ func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
 }
 
 func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot, err := os.MkdirTemp("/tmp", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -991,7 +1003,7 @@ func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
 	// Run dir name implies issue 999, but no manifest exists.
 	// The portal must NOT infer issue 999 from the dir name; the
 	// instance is treated as manifest-less (prompt-only routing).
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-999-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-999-1")
 	sockPath := filepath.Join(runDir, "run.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -1033,7 +1045,7 @@ func TestPortal_DiscoverActiveRuns_SkipsDeadSocketFromFinishedBatch(t *testing.T
 	// one issue. The listener exists only so the socket file persists
 	// on disk with the socket bit set; the liveness probe is stubbed
 	// to false so the listener's actual dialability is irrelevant.
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-42-1")
 	sockPath := filepath.Join(runDir, "run.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -1139,7 +1151,11 @@ func TestPortal_SavedLogFile_PreservesPrefixByteForByteModuloANSI(t *testing.T) 
 }
 
 func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot, err := os.MkdirTemp("/tmp", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1147,7 +1163,7 @@ func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
 
 	// Dir name suggests issue 999, but the manifest lists [860, 854] —
 	// the JSON payload for the portal must reflect the manifest.
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-999-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-999-1")
 	sockPath := filepath.Join(runDir, "run.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -1337,7 +1353,11 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 	})
 
 	t.Run("prompt only run unaffected", func(t *testing.T) {
-		repoRoot := t.TempDir()
+		repoRoot, err := os.MkdirTemp("/tmp", "r")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -1345,7 +1365,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		// run-<ts> dir with live socket and no event log entries —
 		// the portal must keep treating it as an in-flight prompt-only
 		// run, not confuse it with a review run.
-		runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-999-1")
+		runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-999-1")
 		sockPath := filepath.Join(runDir, "run.sock")
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
@@ -1729,7 +1749,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 	t.Run("regular issue-driven run has empty Reason", func(t *testing.T) {
 		startedAt := time.Now().Add(-3 * time.Minute)
 		state := events.RunState{
-			RunID: "run-42-1",
+			RunID: "abcd-260618113825-42-1",
 			Started: events.Event{
 				Timestamp: startedAt,
 				Issue:     42,
@@ -1753,7 +1773,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 	t.Run("prompt-only run has empty Reason", func(t *testing.T) {
 		startedAt := time.Now().Add(-1 * time.Minute)
 		state := events.RunState{
-			RunID: "run-prompt-1",
+			RunID: "abcd-260618113825-prompt",
 			Started: events.Event{
 				Timestamp: startedAt,
 				Payload:   map[string]any{"branch": "sandman/prompt"},
@@ -1775,7 +1795,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		// "issue" and Reason must be "".
 		startedAt := time.Now().Add(-10 * time.Minute)
 		state := events.RunState{
-			RunID: "run-42-2",
+			RunID: "abcd-260618113825-42-2",
 			Started: events.Event{
 				Timestamp: startedAt,
 				Issue:     42,
@@ -1839,7 +1859,7 @@ func TestPortal_ActiveMatch_ReasonDerivedFromSocket(t *testing.T) {
 
 		match := portalRunMatch{
 			instance: portalActiveRun{
-				Key:        "run-99-1",
+				Key:        "abcd-260618113825-99-1",
 				SocketPath: sockPath,
 				ModTime:    time.Now().Add(-1 * time.Minute),
 			},
@@ -1998,8 +2018,8 @@ func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 		// production shape where the first attempt was aborted
 		// and the second attempt is mid-flight, leaving an
 		// aborted row in the event log.
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl"}},
-		{Type: "run.aborted", Timestamp: abortedAt, RunID: "run-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl", "status": "aborted"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-issue-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl"}},
+		{Type: "run.aborted", Timestamp: abortedAt, RunID: "abcd-260618113825-issue-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl", "status": "aborted"}},
 		// Review run for PR 1075 of issue 1066 — finished. The
 		// orchestrator stamps `issue: 1066` on the finished event
 		// (and `issue_number: 1066` in the payload), so both the
@@ -2018,7 +2038,7 @@ func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 	var implRun, reviewRun *portalRun
 	for i := range runs {
 		switch runs[i].RunID {
-		case "run-1066-impl":
+		case "abcd-260618113825-issue-1066-impl":
 			implRun = &runs[i]
 		case "PR1075":
 			reviewRun = &runs[i]

@@ -35,12 +35,12 @@ type spyBatchRunner struct {
 // events hard-code. The values are intentionally stable (no time /
 // random component) so the tests can use full-string equality.
 const (
-	testRunTS      = "20250617-143052"
+	testRunTS      = "260618113825"
 	testRunShortID = "abcd"
 
-	testRunIDIssue42First  = testRunTS + "-" + testRunShortID + "-issue-42-1"
-	testRunIDIssue42Second = testRunTS + "-" + testRunShortID + "-issue-42-2"
-	testRunIDIssue42Prev   = testRunTS + "-" + testRunShortID + "-issue-42-prev"
+	testRunIDIssue42First  = testRunShortID + "-" + testRunTS + "-issue-42-1"
+	testRunIDIssue42Second = testRunShortID + "-" + testRunTS + "-issue-42-2"
+	testRunIDIssue42Prev   = testRunShortID + "-" + testRunTS + "-issue-42-prev"
 )
 
 func (s *spyBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
@@ -4427,7 +4427,7 @@ func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 }
 
 // TestRun_IssueDrivenBatchUsesNewIDScheme verifies that `sandman run 42`
-// builds a directory id matching the new <ts>-<shortid>-1-issues-first-42
+// builds a directory id matching the new <shortid>-<ts>-<N>+<N>
 // shape (acceptance criterion #1) and that the (ts, shortid) pair is
 // propagated into batch.Request.RunTS / RunShortID so the orchestrator
 // can build per-row RunIDs from it.
@@ -4458,9 +4458,9 @@ func TestRun_IssueDrivenBatchUsesNewIDScheme(t *testing.T) {
 		t.Errorf("expected req.RunShortID to be populated for issue-driven batch")
 	}
 	// RunDir is captured on the session; verify the dir id matches the
-	// new <ts>-<shortid>-1-issues-first-42 format.
+	// new <shortid>-<ts>-42+1 format.
 	dir := spy.req.RunDir
-	want := filepath.Join(".sandman", "runs", spy.req.RunTS+"-"+spy.req.RunShortID+"-1-issues-first-42")
+	want := filepath.Join(".sandman", "runs", spy.req.RunShortID+"-"+spy.req.RunTS+"-42+1")
 	if dir != want {
 		t.Fatalf("expected run dir %q, got %q", want, dir)
 	}
