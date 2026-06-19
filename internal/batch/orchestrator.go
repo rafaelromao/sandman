@@ -31,7 +31,7 @@ import (
 // (*runSession).execute go through this helper so every per-row RunID
 // shares the batch's (ts, shortid) prefix.
 func buildRunID(num int, ts, shortid string) string {
-	return runid.NewRunID(runid.KindIssue, fmt.Sprintf("issue-%d", num), ts, shortid)
+	return runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", num), ts, shortid)
 }
 
 func issueRef(num int) *int {

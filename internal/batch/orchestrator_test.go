@@ -41,7 +41,7 @@ const (
 // runIDFor returns the new-shape RunID for issue n. Used both for
 // fixture setup and assertion comparison.
 func runIDFor(n int) string {
-	return runid.NewRunID(runid.KindIssue, fmt.Sprintf("issue-%d", n), orchTestRunTS, orchTestRunShortID)
+	return runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", n), orchTestRunTS, orchTestRunShortID)
 }
 
 func TestMain(m *testing.M) {
