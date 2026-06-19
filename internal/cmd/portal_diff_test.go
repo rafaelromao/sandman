@@ -80,6 +80,26 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffCreateRunRow_RendersReviewSummaryAndDropsGroupedChips(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 2, reviewVerdict: 'Approved', batchIssues: [1, 2, 3] };
+const groupedReview = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, reason: 'review', groupedReview: true };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const createdParent = SandmanPortalDiff.insertRunRow(body, parentRun, opts);
+const parentMeta = createdParent.row.querySelector('[data-cell="title"]').children[0].children[1];
+if (!parentMeta.textContent.includes('2 reviews')) throw new Error('expected review count in meta, got ' + parentMeta.textContent);
+if (!parentMeta.textContent.includes('Approved')) throw new Error('expected latest verdict in meta, got ' + parentMeta.textContent);
+if (body.querySelector('tr.batch-row[data-batch-for="issue-1"]')) throw new Error('expected grouped batch chip removed from parent row');
+const createdGrouped = SandmanPortalDiff.insertRunRow(body, groupedReview, opts);
+if (body.querySelector('tr.context-row[data-context-for="PR42"]')) throw new Error('expected grouped review chip removed');
+const groupedTitle = createdGrouped.row.querySelector('[data-cell="title"]').children[0];
+if (groupedTitle.children.length !== 2) throw new Error('expected grouped review title to keep label and meta only');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateCells_DurationChangeUpdatesOnlyDuration(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1', branch: 'main', duration: '5s' };
@@ -1766,8 +1786,17 @@ const renderStatusBadge = (run) => {
   return '<span class="badge ' + escapeHTML(k) + '"><span class="dot"></span>' + escapeHTML(label) + '</span>';
 };
 const renderRunMeta = (run) => {
-  if (run.runId) return 'ID ' + run.runId;
-  return 'Run';
+  const parts = [];
+  if (run.runId) parts.push('ID ' + run.runId);
+  if (Number(run.reviewCount || 0) > 0) {
+    const count = Number(run.reviewCount || 0);
+    parts.push(count + ' review' + (count === 1 ? '' : 's'));
+    if (run.reviewVerdict) parts.push(run.reviewVerdict);
+  }
+  if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1 && Number(run.reviewCount || 0) === 0) {
+    parts.push('Batch #' + run.batchIssues.join(', #'));
+  }
+  return parts.length ? parts.join(' · ') : 'Run';
 };
 const renderTerminalContent = (text) => {
   const value = String(text || '');

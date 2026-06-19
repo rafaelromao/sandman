@@ -90,7 +90,7 @@
   }
 
   function contextText(run) {
-    if (run.reason === 'review' && run.prNumber > 0) {
+    if (run.reason === 'review' && run.prNumber > 0 && !run.groupedReview) {
       const issuePart = run.issueNumber > 0 ? ' for issue #' + run.issueNumber : '';
       return 'Reviewing PR #' + run.prNumber + issuePart;
     }
@@ -209,6 +209,7 @@
   function batchText(run) {
     const issues = batchIssues(run);
     if (issues.length <= 1) return '';
+    if (run.reviewCount > 0) return '';
     if (run.reason === 'review' || run.reason === 'auto-select') return '';
     return 'Part of batch: ' + issues.map((n) => '#' + n).join(', ');
   }
