@@ -90,10 +90,6 @@
   }
 
   function contextText(run) {
-    if (run.reason === 'review' && run.prNumber > 0 && !run.groupedReview) {
-      const issuePart = run.issueNumber > 0 ? ' for issue #' + run.issueNumber : '';
-      return 'Reviewing PR #' + run.prNumber + issuePart;
-    }
     if (run.reason === 'auto-select' && Array.isArray(run.candidates) && run.candidates.length > 0) {
       return 'Auto-select candidates: ' + run.candidates.map((n) => '#' + n).join(', ');
     }
@@ -523,8 +519,8 @@
     return related.map(subjectRunValue).join('|');
   }
 
-  function buildSubjectSelector(panel, run, opts) {
-    const related = subjectRunsFor(run, opts);
+  function buildSubjectSelector(panel, rowRun, subjectRun, opts) {
+    const related = subjectRunsFor(rowRun, opts);
     if (!related.length) return;
     const row = global.document.createElement('div');
     row.classList.add('detail-subject-picker');
@@ -532,8 +528,8 @@
     label.textContent = 'Subject';
     const select = global.document.createElement('select');
     select.setAttribute('data-action', 'set-subject');
-    select.setAttribute('data-run-key', run.key);
-    const currentValue = subjectRunValue(run);
+    select.setAttribute('data-run-key', rowRun.key);
+    const currentValue = subjectRunValue(subjectRun || rowRun);
     for (const subject of related) {
       const option = global.document.createElement('option');
       const value = subjectRunValue(subject);
@@ -742,8 +738,8 @@
   }
 
   function buildDetailContent(panel, rowRun, subjectRun, tabName, helpers, opts) {
-    const subjectFp = subjectFingerprint(subjectRun, opts);
-    buildSubjectSelector(panel, rowRun, opts);
+    const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
+    buildSubjectSelector(panel, rowRun, subjectRun, opts);
     buildTabsRow(panel, rowRun, tabName);
     const content = global.document.createElement('div');
     content.classList.add('detail-content');
@@ -801,7 +797,7 @@
         setAttr(btn, 'aria-pressed', want);
       }
     }
-    const subjectFp = subjectFingerprint(subjectRun, opts);
+    const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
     const content = detailRow.querySelector('.detail-content');
     if (!content) return;
     if (content.getAttribute('data-rendered-subject-fingerprint') !== subjectFp) {

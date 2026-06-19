@@ -57,22 +57,22 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffUpdateCells_RemovesStaleReviewBadgeFromContextRow(t *testing.T) {
+func TestPortalDiffUpdateCells_AddsAutoSelectContextRowWhenReasonAppears(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1', reason: 'review', prNumber: 42, issueNumber: 1 };
-const runNew = Object.assign({}, runOld, { issueLabel: 'Issue 1 updated', reason: '' });
+const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
+const runNew = Object.assign({}, runOld, { issueLabel: 'Issue 1 updated', reason: 'auto-select', candidates: [42] });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!ctxRow) throw new Error('expected context row for review run');
-const chip = ctxRow.querySelector('.context-chip');
-if (!chip) throw new Error('expected context chip');
-if (!chip.textContent.includes('Reviewing PR #42')) throw new Error('expected review chip text');
+if (body.querySelector('tr.context-row[data-context-for="a"]')) throw new Error('expected no context row before reason appears');
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true');
-if (body.querySelector('tr.context-row[data-context-for="a"]')) throw new Error('expected context row removed when reason clears');
+const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
+if (!ctxRow) throw new Error('expected context row when reason becomes auto-select');
+const chip = ctxRow.querySelector('.context-chip');
+if (!chip) throw new Error('expected context chip');
+if (!chip.textContent.includes('Auto-select candidates: #42')) throw new Error('expected auto-select chip text');
 const titleWrap = created.row.querySelector('[data-cell="title"]').children[0];
 if (titleWrap.children[0].textContent !== 'Issue 1 updated') throw new Error('expected updated issue label');
 console.log('PASS');
@@ -1380,6 +1380,30 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetail_SwitchingSubjectRebuildsContent(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, log: 'parent log' };
+const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
+const stopGroups = new Set();
+const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre1 || pre1.textContent.indexOf('parent log') === -1) throw new Error('expected parent log initially');
+const opts2 = { helpers, stopGroups, expandedKey: 'PR42', tabs: { 'PR42': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('switching subject should mutate the detail row, got 0');
+const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect || subjectSelect.value !== 'PR42') throw new Error('expected selected review subject after switch, got ' + (subjectSelect && subjectSelect.value));
+const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre2 || pre2.textContent.indexOf('review log') === -1) throw new Error('expected review log after subject switch, got ' + (pre2 && pre2.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetail_RebuildsAfterTabRoundTrip(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'log text', events: [{ type: 'start', timestamp: 1, payload: { ok: true } }] };
@@ -2330,7 +2354,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffCreateRunRow_RendersReviewChipInTitle(t *testing.T) {
+func TestPortalDiffCreateRunRow_OmitsReviewBatchContextRow(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = {
   key: 'PR42',
@@ -2346,14 +2370,7 @@ const run = {
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
-const ctxRow = body.querySelector('tr.context-row[data-context-for="PR42"]');
-if (!ctxRow) throw new Error('expected context row for review run');
-const chip = ctxRow.querySelector('.context-chip');
-if (!chip) throw new Error('expected .context-chip in context row');
-const text = chip.textContent || '';
-if (!text.includes('Reviewing PR #42 for issue #1')) {
-  throw new Error('expected chip text "Reviewing PR #42 for issue #1", got ' + JSON.stringify(text));
-}
+if (body.querySelector('tr.context-row[data-context-for="PR42"]')) throw new Error('expected no context row for review run');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -2442,18 +2459,14 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffUpdateCells_ReasonChangeSwapsChipKind(t *testing.T) {
+func TestPortalDiffUpdateCells_ReasonChangeAddsAutoSelectContextRow(t *testing.T) {
 	js := `const body = makeMockBody();
-const runOld = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: 'PR42', reason: 'review', prNumber: 42, issueNumber: 1 };
+const runOld = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: 'PR42' };
 const runNew = Object.assign({}, runOld, { reason: 'auto-select', candidates: [1, 2] });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-const before = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!before) throw new Error('expected initial context row');
-const beforeChip = before.querySelector('.context-chip');
-if (!beforeChip) throw new Error('expected context chip');
-if (!beforeChip.textContent.includes('Reviewing PR #42')) throw new Error('expected initial chip to be review');
+if (body.querySelector('tr.context-row[data-context-for="a"]')) throw new Error('expected no context row before reason appears');
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 const after = body.querySelector('tr.context-row[data-context-for="a"]');
@@ -2485,7 +2498,7 @@ const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, runs, opts);
 
-if (body.children.length !== 5) throw new Error('expected 5 rows (3 data + 2 context), got ' + body.children.length);
+if (body.children.length !== 4) throw new Error('expected 4 rows (3 data + 1 context), got ' + body.children.length);
 
 const autoCtx = body.querySelector('tr.context-row[data-context-for="auto-select-1700000000000"]');
 if (!autoCtx) throw new Error('expected auto-select context row');
@@ -2493,11 +2506,7 @@ const autoChip = autoCtx.querySelector('.context-chip');
 if (!autoChip) throw new Error('expected auto-select context chip');
 if (!autoChip.textContent.includes('Auto-select candidates: #1, #2, #3')) throw new Error('expected auto-select candidates text, got ' + autoChip.textContent);
 
-const reviewCtx = body.querySelector('tr.context-row[data-context-for="PR42"]');
-if (!reviewCtx) throw new Error('expected review context row');
-const reviewChip = reviewCtx.querySelector('.context-chip');
-if (!reviewChip) throw new Error('expected review context chip');
-if (!reviewChip.textContent.includes('Reviewing PR #42 for issue #1')) throw new Error('expected review text, got ' + reviewChip.textContent);
+  if (body.querySelector('tr.context-row[data-context-for="PR42"]')) throw new Error('expected no review context row');
 
 const issueCtx = body.querySelector('tr.context-row[data-context-for="a"]');
 if (issueCtx) throw new Error('issue row should not have context row');
@@ -2641,18 +2650,14 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffCreateRunRow_SuppressesBatchRowWhenReasonIsReview(t *testing.T) {
+func TestPortalDiffCreateRunRow_OmitsReviewContextRow(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', runId: 'r1', kind: 'active', status: 'running', issueLabel: '#42', issueNumber: 42, batchKey: 'run-42-1', batchIssues: [1, 2, 3], reason: 'review', prNumber: 42 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch-row for review run with batchIssues');
-const ctx = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!ctx) throw new Error('expected context-row for review run');
-const chip = ctx.querySelector('.context-chip');
-if (!chip) throw new Error('expected context chip');
-if (!chip.textContent.includes('Reviewing PR #42')) throw new Error('expected review text');
+if (body.querySelector('tr.context-row[data-context-for="a"]')) throw new Error('expected no context-row for review run');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -2721,11 +2726,10 @@ SandmanPortalDiff.diffRuns(body, runs, opts);
 const aRow = body.querySelector('tr[data-run-key="a"]');
 const bRow = body.querySelector('tr[data-run-key="b"]');
 const cRow = body.querySelector('tr[data-run-key="c"]');
-const ctxA = body.querySelector('tr.context-row[data-context-for="a"]');
-const ctxB = body.querySelector('tr.context-row[data-context-for="b"]');
-const ctxC = body.querySelector('tr.context-row[data-context-for="c"]');
 if (!aRow || !bRow || !cRow) throw new Error('expected all data rows');
-if (!ctxA || !ctxB || !ctxC) throw new Error('expected all context rows');
+if (body.querySelector('tr.context-row[data-context-for="a"]')) throw new Error('expected no review context row for a');
+if (body.querySelector('tr.context-row[data-context-for="b"]')) throw new Error('expected no review context row for b');
+if (body.querySelector('tr.context-row[data-context-for="c"]')) throw new Error('expected no review context row for c');
 clearLog(body);
 SandmanPortalDiff.resetCounters();
 const modifiedRuns = [
