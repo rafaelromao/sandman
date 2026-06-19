@@ -333,6 +333,42 @@ func TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted(t *t
 	}
 }
 
+// TestPortal_OrphanReviewStaysStandalone keeps orphan review rows visible
+// as normal portal rows when no issue-parent row exists in output.
+func TestPortal_OrphanReviewStaysStandalone(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-5 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"review": true, "pr_number": 42, "issue_number": 1066, "branch": "sandman/review-PR42"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "PR42", Issue: 1066, Payload: map[string]any{"review": true, "pr_number": 42, "issue_number": 1066, "branch": "sandman/review-PR42", "status": "success"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d: %#v", len(runs), runs)
+	}
+	run := runs[0]
+	if !run.Review {
+		t.Fatal("expected review run")
+	}
+	if run.GroupedReview {
+		t.Fatal("expected orphan review to stay ungrouped")
+	}
+	if run.ReviewCount != 0 {
+		t.Fatalf("expected no review count on orphan review row, got %d", run.ReviewCount)
+	}
+	if run.ReviewVerdict != "" {
+		t.Fatalf("expected no review verdict on orphan review row, got %q", run.ReviewVerdict)
+	}
+}
+
 // TestPortal_MarkCompletedIfSocketDead_LeavesCompletedRowsAlone pins the
 // dead-socket reaper's invariant: a terminal row whose Kind is already
 // "completed" is not touched, even if its socket is dead. A regression
