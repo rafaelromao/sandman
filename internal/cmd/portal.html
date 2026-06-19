@@ -3395,6 +3395,7 @@
         groupedReview: false,
         reviewCount: summary.count,
         reviewVerdict: summary.verdict,
+        sourceExists: false,
         status: summary.status || (summary.live ? 'reviewing' : String(source.status || '').trim()),
         kind: summary.kind,
         issueLabel: source.issueLabel && String(source.issueLabel).trim() ? source.issueLabel : ('#' + String(issueNumber)),
@@ -3456,6 +3457,7 @@
     function isRunArchivable(run) {
       if (!run || run.kind !== 'completed') return false;
       if (run.archived) return false;
+      if (run.sourceExists === false) return false;
       if (!run.runId) return false;
       return true;
     }

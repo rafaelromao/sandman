@@ -102,6 +102,11 @@ type portalRun struct {
 	// Active runs are never marked archived, even when an archive
 	// directory with the matching RunID happens to exist on disk.
 	Archived bool `json:"archived"`
+	// SourceExists reports whether the run still has a backing directory
+	// under .sandman/runs/<run-id>. The portal uses this to avoid showing
+	// Archive actions for stale historical rows whose source directory is
+	// already gone.
+	SourceExists bool `json:"sourceExists"`
 }
 
 type portalActiveRun struct {
@@ -244,9 +249,11 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		// Skipping the disk probe for active rows also keeps the hot
 		// path allocation-free when the portal polls every few seconds.
 		if runs[i].Kind != "completed" {
+			runs[i].SourceExists = true
 			continue
 		}
 		runs[i].Archived = v.isRunArchived(repoRoot, runs[i].RunID)
+		runs[i].SourceExists = v.runDirExists(repoRoot, runs[i].RunID)
 	}
 	// Staleness signal for active rows: the saved-run-log mtime (with a
 	// StartedAt fallback). Computed here so every runFrom* constructor and
@@ -1164,6 +1171,18 @@ func (v *portalRunsView) isRunArchived(repoRoot, runID string) bool {
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	info, err := os.Stat(filepath.Join(layout.ArchiveDir, runID))
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
+}
+
+func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
+	if runID == "" {
+		return false
+	}
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	info, err := os.Stat(filepath.Join(layout.RunsDir, runID))
 	if err != nil {
 		return false
 	}

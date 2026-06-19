@@ -30,6 +30,33 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffCreateRunRow_ArchiveButtonHiddenWhenSourceMissing ensures the
+// portal does not offer an Archive action for stale rows whose source run
+// directory is already gone.
+func TestPortalDiffCreateRunRow_ArchiveButtonHiddenWhenSourceMissing(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = {
+  key: 'a',
+  kind: 'completed',
+  status: 'success',
+  issueLabel: '#42',
+  runId: 'abcd-260618113825-archive-stale',
+  archived: false,
+  sourceExists: false,
+};
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const actionsCell = row.querySelector('[data-cell="actions"]');
+if (!actionsCell) throw new Error('expected actions cell');
+const btn = actionsCell.querySelector('button[data-action="archive-run"]');
+if (btn) throw new Error('stale completed row must not render archive button');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalDiffCreateRunRow_ArchiveButtonHiddenForActive covers slice #7:
 // an active run never renders the archive button.
 func TestPortalDiffCreateRunRow_ArchiveButtonHiddenForActive(t *testing.T) {
@@ -41,6 +68,7 @@ const run = {
   issueLabel: '#42',
   runId: 'abcd-260618113825-archive-2',
   archived: false,
+  sourceExists: true,
   batchKey: 'abcd-260618113825-42',
 };
 const stopGroups = new Set();
@@ -68,6 +96,7 @@ const run = {
   issueLabel: '#42',
   runId: 'abcd-260618113825-archive-3',
   archived: true,
+  sourceExists: false,
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -94,6 +123,7 @@ const runOld = {
   issueLabel: '#42',
   runId: 'abcd-260618113825-archive-4',
   archived: false,
+  sourceExists: true,
 };
 const runNew = Object.assign({}, runOld, { archived: true });
 const stopGroups = new Set();
@@ -124,6 +154,7 @@ const runOld = {
   issueLabel: '#42',
   runId: 'abcd-260618113825-archive-5',
   archived: true,
+  sourceExists: true,
 };
 const runNew = Object.assign({}, runOld, { archived: false });
 const stopGroups = new Set();
@@ -153,6 +184,7 @@ const run = {
   issueLabel: '#42',
   runId: 'abcd-260618113825-archive-6',
   archived: false,
+  sourceExists: true,
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
