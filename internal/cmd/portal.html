@@ -620,7 +620,7 @@
     .col-title { width: 480px; }
     .col-badge { width: 88px; }
     .col-started { width: 180px; }
-    .col-duration { width: 90px; }
+    .col-duration { width: 112px; }
     .col-issue-title { width: 180px; }
     .col-actions { width: 90px; }
     thead th {
@@ -784,20 +784,6 @@
     .badge.archived .dot { background: var(--muted); }
     tbody tr.run-row.row-archived td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
     tbody tr.run-row.row-archived .run-title .name { color: color-mix(in oklch, var(--muted) 60%, var(--text)); }
-    .retry-chip {
-      display: inline-flex;
-      align-items: center;
-      margin-left: auto;
-      padding: 2px 8px;
-      border-radius: 999px;
-      border: 1px solid color-mix(in oklch, var(--warning) 36%, var(--border));
-      background: color-mix(in oklch, var(--warning) 12%, var(--surface-2));
-      color: var(--warning);
-      font-size: 11px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      white-space: nowrap;
-    }
     .stale-chip {
       display: inline-flex;
       align-items: center;
@@ -912,6 +898,7 @@
       align-items: center;
       gap: 10px;
       padding: 14px 16px 0;
+      margin-bottom: 8px;
       min-width: 0;
       flex: 0 0 auto;
     }
@@ -1601,7 +1588,7 @@
       .col-title { width: 360px; }
       .col-badge { width: 104px; }
       .col-started { width: 196px; }
-      .col-duration { width: 90px; }
+      .col-duration { width: 112px; }
       .col-issue-title { width: auto; }
       .col-actions { width: 120px; }
       tbody td[data-cell="actions"] {
@@ -2135,7 +2122,7 @@
     }
     const portalScroll = window.SandmanPortalScroll;
     const portalDiff = window.SandmanPortalDiff;
-    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, sortBy: 'server', sortDir: 'desc' };
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, sortBy: 'started', sortDir: 'desc' };
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -2262,7 +2249,7 @@
       selectedStatus: 'all',
       activeBatches: false,
       showArchived: persistedPortalState.showArchived === true,
-      sortBy: persistedPortalState.sortBy || 'server',
+      sortBy: persistedPortalState.sortBy || 'started',
       sortDir: persistedPortalState.sortDir || 'desc',
       loading: true,
     };
@@ -3387,18 +3374,21 @@
       const summary = summarizeReviewGroup(group.filter((run) => run.review));
       const source = summary.source || group[0];
       if (!source) return null;
+      const issueLabel = String(source.issueLabel || '').trim();
+      const issueLikeFallback = issueLabel.startsWith('#');
+      const fallbackKey = issueLikeFallback ? 'issue-' + String(issueNumber) : 'review-stub-' + String(issueNumber);
       return {
         ...source,
-        key: 'review-stub-' + String(issueNumber),
-        runId: 'review-stub-' + String(issueNumber),
+        key: fallbackKey,
+        runId: fallbackKey,
         review: false,
         groupedReview: false,
         reviewCount: summary.count,
         reviewVerdict: summary.verdict,
-        sourceExists: false,
+        ...(issueLikeFallback ? {} : { sourceExists: false }),
         status: summary.status || (summary.live ? 'reviewing' : String(source.status || '').trim()),
         kind: summary.kind,
-        issueLabel: source.issueLabel && String(source.issueLabel).trim() ? source.issueLabel : ('#' + String(issueNumber)),
+        issueLabel: issueLabel || ('#' + String(issueNumber)),
       };
     }
 
@@ -3476,18 +3466,21 @@
       const summary = summarizeReviewGroup(group.filter((run) => run.review));
       const source = summary.source || group[0];
       if (!source) return null;
+      const issueLabel = String(source.issueLabel || '').trim();
+      const issueLikeFallback = issueLabel.startsWith('#');
+      const fallbackKey = issueLikeFallback ? 'issue-' + String(issueNumber) : 'review-stub-' + String(issueNumber);
       return {
         ...source,
-        key: 'review-stub-' + String(issueNumber),
-        runId: 'review-stub-' + String(issueNumber),
+        key: fallbackKey,
+        runId: fallbackKey,
         review: false,
         groupedReview: false,
         reviewCount: summary.count,
         reviewVerdict: summary.verdict,
-        sourceExists: false,
+        ...(issueLikeFallback ? {} : { sourceExists: false }),
         status: summary.status || (summary.live ? 'reviewing' : String(source.status || '').trim()),
         kind: summary.kind,
-        issueLabel: source.issueLabel && String(source.issueLabel).trim() ? source.issueLabel : ('#' + String(issueNumber)),
+        issueLabel: issueLabel || ('#' + String(issueNumber)),
       };
     }
 
@@ -3514,17 +3507,23 @@
       return visible;
     }
     function renderRunMeta(run) {
-      const parts = [];
-      if (run.runId) parts.push('RunID ' + run.runId);
+      const lines = [];
+      if (run.runId) lines.push(run.runId);
+      const summary = [];
+      if (Number(run.retriesDone || 0) > 0) {
+        const count = Number(run.retriesDone || 0);
+        summary.push(count + ' retri' + (count === 1 ? 'y' : 'es'));
+      }
       if (Number(run.reviewCount || 0) > 0) {
         const count = Number(run.reviewCount || 0);
-        parts.push(count + ' review' + (count === 1 ? '' : 's'));
-        if (run.reviewVerdict) parts.push(run.reviewVerdict);
+        summary.push(count + ' review' + (count === 1 ? '' : 's'));
+        if (run.reviewVerdict) summary.push(run.reviewVerdict);
       }
       if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
-        parts.push('Batch #' + run.batchIssues.join(', #'));
+        summary.push('Batch #' + run.batchIssues.join(', #'));
       }
-      return parts.length ? parts.join(' · ') : 'Run';
+      if (summary.length) lines.push(summary.join(' - '));
+      return lines.length ? lines.join('\n') : 'Run';
     }
 
     function renderTerminalContent(text) {
@@ -3620,7 +3619,7 @@
         pollHealthEl.title = 'Portal poll health';
         return;
       }
-      pollHealthUpdated.textContent = 'updated ' + formatUpdatedAt(lastPollAt);
+      pollHealthUpdated.textContent = formatUpdatedAt(lastPollAt);
       if (pollFailCount >= pollHealthWarnThreshold) {
         pollHealthEl.classList.remove('ok');
         pollHealthEl.classList.add('warn');
@@ -3830,12 +3829,14 @@
           const runId = run?.backendKey || run?.key || run?.runId || button.getAttribute('data-run-id');
           if (!runId) return;
           const label = run?.issueLabel || 'this run';
+          if (typeof window.confirm === 'function' && !window.confirm('Archive ' + label + '?')) return;
           archiveRun(button, runId, label);
           return;
         }
         if (action === 'set-tab') {
           const tab = button.getAttribute('data-tab') || 'log';
-          const subjectKey = subjectTabKey(runKey);
+          const currentKey = state.expandedRunKey || runKey;
+          const subjectKey = subjectTabKey(currentKey);
           state.tabs[subjectKey] = tab;
           state.expandedRunKey = subjectKey;
           persistPortalViewState();

@@ -1388,21 +1388,8 @@ func TestPortal_PageExposesRetryChipStyles(t *testing.T) {
 	}
 	content := string(body)
 
-	// .retry-chip must use the --warning color tokens, render in 11px
-	// uppercase letter-spacing, and sit inside the data-cell="badge" cell
-	// without adding extra vertical padding.
-	chipBlock := regexp.MustCompile(`(?s)\.retry-chip\s*\{[^}]*\}`).FindString(content)
-	if chipBlock == "" {
-		t.Fatalf("page is missing the .retry-chip CSS block\n%s", content[:1000])
-	}
-	if !strings.Contains(chipBlock, "var(--warning)") {
-		t.Fatalf(".retry-chip block must reference var(--warning), got: %s", chipBlock)
-	}
-	if !strings.Contains(chipBlock, "11px") {
-		t.Fatalf(".retry-chip block must declare an 11px font-size, got: %s", chipBlock)
-	}
-	if !strings.Contains(chipBlock, "uppercase") {
-		t.Fatalf(".retry-chip block must declare uppercase letter-spacing, got: %s", chipBlock)
+	if strings.Contains(content, ".retry-chip") {
+		t.Fatalf("page should no longer render retry chip CSS\n%s", content[:1000])
 	}
 }
 
@@ -3485,8 +3472,8 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := &portalRunsView{}
-	log17 := view.portalLogPath(repoRoot, 0, branch17)
-	log18 := view.portalLogPath(repoRoot, 0, branch18)
+	log17 := view.portalLogPathForRun(repoRoot, 0, branch17, true, 17)
+	log18 := view.portalLogPathForRun(repoRoot, 0, branch18, true, 18)
 	if err := os.WriteFile(log17, []byte("review 17 log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

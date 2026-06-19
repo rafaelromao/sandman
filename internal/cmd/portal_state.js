@@ -7,7 +7,7 @@
   let storageKey = DEFAULT_STORAGE_KEY;
 
   function defaultState() {
-    return { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, sortBy: 'server', sortDir: 'desc' };
+    return { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, sortBy: 'started', sortDir: 'desc' };
   }
 
   function readStorage() {
@@ -58,7 +58,7 @@
       tabs: cleanTabs(current.tabs),
       commandFormCollapsed: typeof current.commandFormCollapsed === 'boolean' ? current.commandFormCollapsed : false,
       showArchived: typeof current.showArchived === 'boolean' ? current.showArchived : false,
-      sortBy: VALID_SORT_BY.has(String(current.sortBy || '').trim()) ? String(current.sortBy).trim() : 'server',
+      sortBy: VALID_SORT_BY.has(String(current.sortBy || '').trim()) ? String(current.sortBy).trim() : 'started',
       sortDir: VALID_SORT_DIR.has(String(current.sortDir || '').trim()) ? String(current.sortDir).trim() : 'desc',
     };
   }

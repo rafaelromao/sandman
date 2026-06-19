@@ -252,8 +252,9 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 			runs[i].SourceExists = true
 			continue
 		}
-		runs[i].Archived = v.isRunArchived(repoRoot, runs[i].RunID)
-		runs[i].SourceExists = v.runDirExists(repoRoot, runs[i].RunID)
+		dirID := v.sourceDirID(runs[i])
+		runs[i].Archived = v.isRunArchived(repoRoot, dirID)
+		runs[i].SourceExists = v.runDirExists(repoRoot, dirID)
 	}
 	// Staleness signal for active rows: the saved-run-log mtime (with a
 	// StartedAt fallback). Computed here so every runFrom* constructor and
@@ -659,8 +660,8 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		IssueNumber: issueNumber,
 		StartedAt:   active.StartedAt,
 		SocketPath:  active.SocketPath,
-		LogPath:     v.portalLogPath(repoRoot, issueNumber, ""),
-		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, ""),
+		LogPath:     v.portalLogPathForRun(repoRoot, issueNumber, "", false, 0),
+		LogURL:      v.portalLogDownloadURLForRun(repoRoot, issueNumber, "", false, 0),
 		Log:         "Queued. Waiting to start.",
 		BatchKey:    active.Key,
 	}
@@ -790,6 +791,13 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	if match.state != nil {
 		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun)
 		run.BatchKey = match.instance.Key
+		if match.state.Finished != nil {
+			if saved := v.readPortalTextFile(run.LogPath); strings.TrimSpace(saved) != "" {
+				run.Log = saved
+			} else if strings.TrimSpace(run.Log) == "" {
+				run.Log = "No log file yet."
+			}
+		}
 		return run
 	}
 
@@ -811,7 +819,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		status = "reviewing"
 		review = true
 	}
-	logPath := v.portalLogPath(repoRoot, issueNumber, "")
+	logPath := v.portalLogPathForRun(repoRoot, issueNumber, "", review, prNumber)
 	eventKey := match.instance.Key
 	if match.instance.RunID != "" {
 		eventKey = match.instance.RunID
@@ -838,7 +846,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
-		LogURL:      v.portalLogDownloadURL(repoRoot, issueNumber, ""),
+		LogURL:      v.portalLogDownloadURLForRun(repoRoot, issueNumber, "", review, prNumber),
 		Log:         match.instance.LiveOutput,
 		Events:      eventsByRun[eventKey],
 		BatchKey:    match.instance.Key,
@@ -878,8 +886,9 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	if runState.Finished != nil {
 		finishedAt = &runState.Finished.Timestamp
 	}
+	review, prNumber := v.reviewContext(runState)
 
-	logPath := v.portalLogPath(repoRoot, issueNumber, branch)
+	logPath := v.portalLogPathForRun(repoRoot, issueNumber, branch, review, prNumber)
 	logContent := v.readPortalTextFile(logPath)
 	if active != nil {
 		logContent = active.LiveOutput
@@ -898,7 +907,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		FinishedAt:   finishedAt,
 		Duration:     v.durationForRun(runState),
 		LogPath:      logPath,
-		LogURL:       v.portalLogDownloadURL(repoRoot, issueNumber, branch),
+		LogURL:       v.portalLogDownloadURLForRun(repoRoot, issueNumber, branch, review, prNumber),
 		Log:          logContent,
 		Events:       eventsByRun[runID],
 		Review:       runState.IsReview(),
@@ -906,8 +915,8 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		RetriesTotal: runState.RetriesTotal(),
 		RetriesDone:  runState.RetriesDone(),
 	}
-	if review, pr := v.reviewContext(runState); review {
-		portalRun.PRNumber = pr
+	if review {
+		portalRun.PRNumber = prNumber
 		if issueNum := v.reviewIssueNumber(runState.Started.Payload); issueNum > 0 {
 			portalRun.IssueNumber = issueNum
 			portalRun.IssueLabel = fmt.Sprintf("#%d", issueNum)
@@ -1177,6 +1186,13 @@ func (v *portalRunsView) isRunArchived(repoRoot, runID string) bool {
 	return info.IsDir()
 }
 
+func (v *portalRunsView) sourceDirID(run portalRun) string {
+	if run.BatchKey != "" {
+		return run.BatchKey
+	}
+	return run.RunID
+}
+
 func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
 	if runID == "" {
 		return false
@@ -1189,8 +1205,11 @@ func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
 	return info.IsDir()
 }
 
-func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {
+func (v *portalRunsView) portalLogPathForRun(repoRoot string, issueNumber int, branch string, review bool, prNumber int) string {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	if review && prNumber > 0 {
+		return filepath.Join(layout.LogDir, fmt.Sprintf("PR%d.log", prNumber))
+	}
 	if issueNumber > 0 {
 		return filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNumber))
 	}
@@ -1201,8 +1220,12 @@ func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch 
 	return filepath.Join(layout.LogDir, layout.SafeLogFilename(branch)+".log")
 }
 
-func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, branch string) string {
-	logPath := v.portalLogPath(repoRoot, issueNumber, branch)
+func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {
+	return v.portalLogPathForRun(repoRoot, issueNumber, branch, false, 0)
+}
+
+func (v *portalRunsView) portalLogDownloadURLForRun(repoRoot string, issueNumber int, branch string, review bool, prNumber int) string {
+	logPath := v.portalLogPathForRun(repoRoot, issueNumber, branch, review, prNumber)
 	if logPath == "" {
 		return ""
 	}
@@ -1212,6 +1235,10 @@ func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, 
 		return ""
 	}
 	return "/api/logs?path=" + url.QueryEscape(relPath)
+}
+
+func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, branch string) string {
+	return v.portalLogDownloadURLForRun(repoRoot, issueNumber, branch, false, 0)
 }
 
 // readPortalTextFile returns the contents of a saved portal log file.

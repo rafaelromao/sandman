@@ -1218,6 +1218,9 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+			t.Fatal(err)
+		}
 		ln, err := net.Listen("unix", sockPath)
 		if err != nil {
 			t.Fatal(err)
@@ -1270,6 +1273,9 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+			t.Fatal(err)
+		}
 		ln, err := net.Listen("unix", sockPath)
 		if err != nil {
 			t.Fatal(err)
@@ -1307,6 +1313,48 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		}
 		if got.Reason != "review" {
 			t.Fatalf("expected Reason 'review' on completed review run, got %q", got.Reason)
+		}
+	})
+
+	t.Run("active review prefers saved log", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
+		sockPath := filepath.Join(runDir, "run.sock")
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "PR42.log"), []byte("saved review log\nmore review output\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		startedAt := time.Now().Add(-5 * time.Minute)
+		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+			{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
+		})
+
+		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+		if err != nil {
+			t.Fatalf("compute: %v", err)
+		}
+		if len(runs) != 1 {
+			t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+		}
+		got := runs[0]
+		if !strings.Contains(got.Log, "saved review log") || !strings.Contains(got.Log, "more review output") {
+			t.Fatalf("expected saved review log to win over live socket, got %#v", got.Log)
 		}
 	})
 

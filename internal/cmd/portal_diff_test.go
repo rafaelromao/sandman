@@ -80,16 +80,19 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffCreateRunRow_RendersReviewSummaryAndDropsGroupedChips(t *testing.T) {
+func TestPortalDiffCreateRunRow_RendersRetryAndReviewSummaryAndDropsGroupedChips(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 2, reviewVerdict: 'Approved', batchIssues: [1, 2, 3] };
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, retriesDone: 3, retriesTotal: 3, reviewCount: 2, reviewVerdict: 'Approved', batchIssues: [1, 2, 3] };
 const groupedReview = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, reason: 'review', groupedReview: true };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const createdParent = SandmanPortalDiff.insertRunRow(body, parentRun, opts);
 const parentMeta = createdParent.row.querySelector('[data-cell="title"]').children[0].children[1];
+if (!parentMeta.textContent.includes('3 retries')) throw new Error('expected retry count in meta, got ' + parentMeta.textContent);
 if (!parentMeta.textContent.includes('2 reviews')) throw new Error('expected review count in meta, got ' + parentMeta.textContent);
 if (!parentMeta.textContent.includes('Approved')) throw new Error('expected latest verdict in meta, got ' + parentMeta.textContent);
+if (parentMeta.textContent.includes('RunID')) throw new Error('expected RunID label removed from meta, got ' + parentMeta.textContent);
+if (!parentMeta.textContent.includes('\n3 retries - 2 reviews - Approved')) throw new Error('expected retry summary before reviews on new line, got ' + JSON.stringify(parentMeta.textContent));
 const parentBatchRow = body.querySelector('tr.batch-row[data-batch-for="issue-1"]');
 if (!parentBatchRow) throw new Error('expected parent batch chip to remain for canonical issue row');
 const parentBatchChip = parentBatchRow.querySelector('.batch-membership');
@@ -221,8 +224,8 @@ if (!subjectSelect) throw new Error('expected subject selector in detail row');
 if (subjectSelect.children.length !== 2) throw new Error('expected selector for parent and one child review, got ' + subjectSelect.children.length);
 if (subjectSelect.children[0].getAttribute('value') !== 'issue-1') throw new Error('expected parent option value to use run ID, got ' + subjectSelect.children[0].getAttribute('value'));
 if (subjectSelect.children[1].getAttribute('value') !== 'PR42') throw new Error('expected child review option value to use run ID, got ' + subjectSelect.children[1].getAttribute('value'));
-if (!subjectSelect.children[0].textContent.includes('RunID issue-1')) throw new Error('expected parent label to include RunID, got ' + subjectSelect.children[0].textContent);
-if (!subjectSelect.children[1].textContent.includes('RunID PR42')) throw new Error('expected review label to include RunID, got ' + subjectSelect.children[1].textContent);
+if (subjectSelect.children[0].textContent !== 'issue-1') throw new Error('expected parent label to be run ID only, got ' + subjectSelect.children[0].textContent);
+if (subjectSelect.children[1].textContent !== 'PR42') throw new Error('expected review label to be run ID only, got ' + subjectSelect.children[1].textContent);
 const tabButtons = created.detailRow.querySelectorAll('button[data-action="set-tab"]');
 if (tabButtons.length !== 3) throw new Error('expected 3 tab buttons, got ' + tabButtons.length);
 const tabs = tabButtons.map(b => b.getAttribute('data-tab'));
@@ -541,7 +544,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffBuildBadgeCell_RetryChipPresentWhenRetriesDoneGreaterThanZero(t *testing.T) {
+func TestPortalDiffBuildBadgeCell_RetryChipRemovedWhenRetriesDoneGreaterThanZero(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', retriesTotal: 3, retriesDone: 2 };
 const stopGroups = new Set();
@@ -551,15 +554,13 @@ const row = body.children[0];
 const badgeCell = row.querySelector('[data-cell="badge"]');
 if (!badgeCell) throw new Error('expected badge cell');
 const chip = badgeCell.querySelector('.retry-chip');
-if (!chip) throw new Error('expected .retry-chip in badge cell when retriesDone=2');
-if (chip.textContent !== '\u21bb 2 retries') throw new Error('expected chip text "\u21bb 2 retries", got ' + JSON.stringify(chip.textContent));
-if (chip.getAttribute('title') !== 'retried 2 of 3 attempts \u2014 see Events tab') throw new Error('expected chip title "retried 2 of 3 attempts \u2014 see Events tab", got ' + JSON.stringify(chip.getAttribute('title')));
+if (chip) throw new Error('expected NO .retry-chip in badge cell when retriesDone=2, got ' + JSON.stringify(chip.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffBuildBadgeCell_RetryChipUsesSingularWhenRetriesDoneIsOne(t *testing.T) {
+func TestPortalDiffBuildBadgeCell_RetryChipRemovedWhenRetriesDoneIsOne(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', retriesTotal: 1, retriesDone: 1 };
 const stopGroups = new Set();
@@ -568,8 +569,7 @@ SandmanPortalDiff.insertRunRow(body, run, opts);
 const row = body.children[0];
 const badgeCell = row.querySelector('[data-cell="badge"]');
 const chip = badgeCell.querySelector('.retry-chip');
-if (!chip) throw new Error('expected .retry-chip in badge cell when retriesDone=1');
-if (chip.textContent !== '\u21bb 1 retry') throw new Error('expected chip text "\u21bb 1 retry", got ' + JSON.stringify(chip.textContent));
+if (chip) throw new Error('expected NO .retry-chip in badge cell when retriesDone=1, got ' + JSON.stringify(chip.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -785,9 +785,7 @@ SandmanPortalDiff.diffRuns(body, runs, opts);
 const row = body.children[0];
 if (!row) throw new Error('expected data row');
 const chip = row.querySelector('.retry-chip');
-if (!chip) throw new Error('expected .retry-chip in row when server JSON has retriesDone=2');
-if (chip.textContent !== '\u21bb 2 retries') throw new Error('expected chip text "\u21bb 2 retries", got ' + JSON.stringify(chip.textContent));
-if (chip.getAttribute('title') !== 'retried 2 of 3 attempts \u2014 see Events tab') throw new Error('expected chip title "retried 2 of 3 attempts \u2014 see Events tab", got ' + JSON.stringify(chip.getAttribute('title')));
+if (chip) throw new Error('expected NO .retry-chip in row when server JSON has retriesDone=2, got ' + JSON.stringify(chip.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -814,7 +812,7 @@ console.log('PASS');
 }
 
 func TestPortalJSONToHTMLRender_RetryChipUsesSingularWhenRetriesDoneIsOne(t *testing.T) {
-	// retriesDone: 1 must render the singular '↻ 1 retry' text in the chip.
+	// retriesDone: 1 should still not render retry chip.
 	serverJSON := []byte(`[{"key":"a","runId":"a","kind":"completed","status":"success","issueLabel":"#42","issueNumber":42,"retriesTotal":1,"retriesDone":1,"startedAt":"2025-01-01T12:00:00Z"}]`)
 	var runs []map[string]any
 	if err := json.Unmarshal(serverJSON, &runs); err != nil {
@@ -828,9 +826,7 @@ SandmanPortalDiff.diffRuns(body, runs, opts);
 const row = body.children[0];
 if (!row) throw new Error('expected data row');
 const chip = row.querySelector('.retry-chip');
-if (!chip) throw new Error('expected .retry-chip in row when server JSON has retriesDone=1');
-if (chip.textContent !== '\u21bb 1 retry') throw new Error('expected chip text "\u21bb 1 retry", got ' + JSON.stringify(chip.textContent));
-if (chip.getAttribute('title') !== 'retried 1 of 1 attempts \u2014 see Events tab') throw new Error('expected chip title "retried 1 of 1 attempts \u2014 see Events tab", got ' + JSON.stringify(chip.getAttribute('title')));
+if (chip) throw new Error('expected NO .retry-chip in row when server JSON has retriesDone=1, got ' + JSON.stringify(chip.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1882,17 +1878,23 @@ const renderStatusBadge = (run) => {
   return '<span class="badge ' + escapeHTML(k) + '"><span class="dot"></span>' + escapeHTML(label) + '</span>';
 };
 const renderRunMeta = (run) => {
-  const parts = [];
-  if (run.runId) parts.push('ID ' + run.runId);
+  const lines = [];
+  if (run.runId) lines.push(run.runId);
+  const summary = [];
+  if (Number(run.retriesDone || 0) > 0) {
+    const count = Number(run.retriesDone || 0);
+    summary.push(count + ' retri' + (count === 1 ? 'y' : 'es'));
+  }
   if (Number(run.reviewCount || 0) > 0) {
     const count = Number(run.reviewCount || 0);
-    parts.push(count + ' review' + (count === 1 ? '' : 's'));
-    if (run.reviewVerdict) parts.push(run.reviewVerdict);
+    summary.push(count + ' review' + (count === 1 ? '' : 's'));
+    if (run.reviewVerdict) summary.push(run.reviewVerdict);
   }
   if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
-    parts.push('Batch #' + run.batchIssues.join(', #'));
+    summary.push('Batch #' + run.batchIssues.join(', #'));
   }
-  return parts.length ? parts.join(' · ') : 'Run';
+  if (summary.length) lines.push(summary.join(' - '));
+  return lines.length ? lines.join('\n') : 'Run';
 };
 const renderTerminalContent = (text) => {
   const value = String(text || '');
