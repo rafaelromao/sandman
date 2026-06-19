@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -148,6 +149,35 @@ exit 0
 	dockerfile = append(dockerfile, []byte("\nCOPY .sandman/bin/opencode /usr/local/bin/opencode\nRUN chmod +x /usr/local/bin/opencode\nENV PATH=\"/usr/local/bin:$PATH\"\n")...)
 	if err := os.WriteFile(dockerfilePath, dockerfile, 0644); err != nil {
 		t.Fatalf("append fake opencode to Dockerfile: %v", err)
+	}
+}
+
+func writeMergedFakeGHShim(t *testing.T, dir string) {
+	t.Helper()
+
+	writeFakeGHShim(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "pr-state"), []byte("merged\n"), 0644); err != nil {
+		t.Fatalf("seed merged pr state: %v", err)
+	}
+}
+
+func writeMergedFakeGHShimForContainer(t *testing.T, dir string) {
+	t.Helper()
+
+	writeMergedFakeGHShim(t, dir)
+}
+
+func forcePodmanSandbox(t *testing.T, repoDir string) {
+	t.Helper()
+
+	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Sandbox = "podman"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
 	}
 }
 

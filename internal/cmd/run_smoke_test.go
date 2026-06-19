@@ -147,7 +147,11 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 	preflightSmokeWorktree(t, repoDir, tc.wantBranch)
 
 	issue = tc.issue
-	gh := &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: &issue}}
+	branch := tc.wantBranch
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{issue.Number: &issue},
+		prs:    map[string]*github.PR{branch: mergedPR(branch, "")},
+	}
 	store := &fakeStore{config: depsCfg}
 	deps = Dependencies{
 		BatchRunner:  batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
@@ -213,6 +217,10 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	}
 
 	assertSmokeProviderRun(t, out, tc, repoDir, issue)
+}
+
+func mergedPR(branch, sha string) *github.PR {
+	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}
 }
 
 func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...string) {

@@ -819,6 +819,10 @@ JSON
     exit 1
     ;;
   auth)
+    if [ "${2:-}" = "token" ]; then
+      printf 'ghp_xxxxxxxxxxxxxxxxxxxx\n'
+      exit 0
+    fi
     if [ "${2:-}" = "status" ]; then
       cat <<'JSON'
 github.com
@@ -1050,6 +1054,10 @@ JSON
     exit 1
     ;;
   auth)
+    if [ "${2:-}" = "token" ]; then
+      printf 'ghp_xxxxxxxxxxxxxxxxxxxx\n'
+      exit 0
+    fi
     if [ "${2:-}" = "status" ]; then
       cat <<'JSON'
 github.com
@@ -1896,6 +1904,10 @@ JSON
     exit 1
     ;;
   auth)
+    if [ "${2:-}" = "token" ]; then
+      printf 'ghp_xxxxxxxxxxxxxxxxxxxx\n'
+      exit 0
+    fi
     if [ "${2:-}" = "status" ]; then
       cat <<'JSON'
 github.com
@@ -2042,6 +2054,10 @@ JSON
     exit 1
     ;;
   auth)
+    if [ "${2:-}" = "token" ]; then
+      printf 'ghp_xxxxxxxxxxxxxxxxxxxx\n'
+      exit 0
+    fi
     if [ "${2:-}" = "status" ]; then
       cat <<'JSON'
 github.com
