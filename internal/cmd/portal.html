@@ -890,22 +890,34 @@
     }
     .tabs {
       display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 14px;
+      width: 100%;
+      gap: 0;
+      margin-bottom: 0;
+      border-bottom: 1px solid var(--border);
     }
-    .tab-btn { min-width: 76px; }
+    .tab-btn {
+      min-width: 76px;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 10px 0 12px;
+      justify-content: flex-start;
+      flex: 1 1 0;
+      border-bottom: 2px solid transparent;
+      transform: none;
+    }
     .tab-btn[aria-pressed="true"] {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: var(--accent-ink);
+      background: transparent;
+      border-color: transparent transparent var(--accent) transparent;
+      color: var(--text);
     }
     .detail-panel {
-      padding: 18px;
+      padding: 0;
       border-top: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 0;
       min-height: clamp(420px, 68vh, 780px);
       max-height: clamp(420px, 68vh, 780px);
     }
@@ -915,14 +927,17 @@
       display: flex;
       flex-direction: column;
       overflow: auto;
+      width: 100%;
     }
     .tab-pane {
       min-height: 0;
+      width: 100%;
     }
     .tab-pane.fill {
       display: flex;
       flex-direction: column;
       flex: 1 1 auto;
+      width: 100%;
     }
     .detail-grid {
       display: grid;
@@ -932,24 +947,17 @@
       min-height: 0;
     }
     .detail-box {
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      background: color-mix(in oklch, var(--bg) 40%, var(--surface-2));
-      overflow: hidden;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      overflow: visible;
     }
     .detail-box h3 {
-      margin: 0;
-      padding: 12px 16px 10px;
-      border-bottom: 1px solid var(--border);
-      background: color-mix(in oklch, var(--bg) 50%, var(--surface-2));
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--muted);
+      display: none;
     }
     pre {
       margin: 0;
-      padding: 14px;
+      padding: 16px 18px;
       white-space: pre-wrap;
       word-break: break-word;
       flex: 1 1 auto;
@@ -957,9 +965,9 @@
       overflow: auto;
       line-height: 1.5;
       font-size: 12.5px;
-      background: color-mix(in oklch, var(--bg) 72%, var(--surface-2));
+      background: transparent;
       color: var(--text);
-      text-shadow: 0 1px 0 oklch(0 0 0 / 0.2);
+      text-shadow: none;
     }
     .terminal-text {
       font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
@@ -972,37 +980,9 @@
     .json-boolean { color: color-mix(in oklch, var(--danger) 55%, var(--text)); }
     .json-null { color: var(--muted); }
     .json-punctuation { color: color-mix(in oklch, var(--muted) 50%, var(--text)); }
-    .tab-events {
-      display: grid;
-      gap: 0;
-      align-content: start;
-      margin: 0 16px 16px;
-    }
-    .tab-events .event-row {
-      padding: 12px 14px 0;
-    }
-    .tab-events .event-row:last-child { border-bottom: 0; }
-    .events-list {
-      margin: 0;
-      padding: 0;
-      list-style: none;
-      display: grid;
-    }
-    .events-list li {
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--border);
-    }
-    .events-list li:last-child { border-bottom: 0; }
     .event-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: baseline;
       margin-bottom: 8px;
-      font-size: 12px;
     }
-    .event-type { font-weight: 650; }
-    .event-time { color: var(--muted); font-variant-numeric: tabular-nums; }
     .event-payload {
       margin: 0;
       white-space: pre-wrap;
@@ -1016,6 +996,12 @@
       text-align: center;
       color: var(--muted);
       background: linear-gradient(180deg, color-mix(in oklch, var(--surface-2) 88%, transparent), transparent);
+    }
+    .log-reason {
+      margin: 0;
+      padding: 0 18px 10px;
+      color: var(--muted);
+      font-size: 12px;
     }
     .detail-meta {
       display: grid;

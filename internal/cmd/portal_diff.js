@@ -447,6 +447,21 @@
     return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(d);
   }
 
+  function batchPeers(run) {
+    const issues = Array.isArray(run && run.batchIssues) ? run.batchIssues : [];
+    if (!issues.length) return [];
+    return issues.filter((n) => n !== run.issueNumber);
+  }
+
+  function eventsJSON(run) {
+    const events = Array.isArray(run && run.events) ? run.events : [];
+    return JSON.stringify(events.map((event) => ({
+      type: event && event.type ? event.type : 'event',
+      timestamp: event && event.timestamp ? event.timestamp : null,
+      payload: event && event.payload ? event.payload : {},
+    })), null, 2);
+  }
+
   function buildLogPre(run, helpers) {
     const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
     const pre = global.document.createElement('pre');
@@ -575,18 +590,11 @@
 
   function detailsData(run, helpers) {
     return {
-      key: run.key || '',
-      issueLabel: run.issueLabel || '',
-      issueNumber: run.issueNumber || null,
-      kind: run.kind || '',
       runId: run.runId || '',
-      status: run.status || '',
-      startedAt: run.startedAt || null,
-      finishedAt: run.finishedAt || null,
-      duration: run.duration || '',
       branch: run.branch || '',
-      source: helpers.formatSource(run),
-      logUrl: run.logUrl || '',
+      batch: run.batchKey || '',
+      logPath: run.logPath || '',
+      peers: batchPeers(run),
     };
   }
 
@@ -595,15 +603,25 @@
   }
 
   function detailsFingerprint(run, helpers) {
-    return detailsJSON(run, helpers);
+    const data = detailsData(run, helpers);
+    if (run && run.kind === 'active') {
+      // Active rows tick duration every poll. Keep the Details pane stable
+      // while the run is live; the summary row already shows live duration.
+      data.duration = '';
+    }
+    return JSON.stringify(data, null, 2);
   }
 
   function buildLogContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
-    const h3 = global.document.createElement('h3');
-    h3.textContent = 'Log';
-    section.appendChild(h3);
+    const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
+    if (log === 'No log file yet.') {
+      const reason = global.document.createElement('p');
+      reason.classList.add('log-reason');
+      reason.textContent = 'Waiting for first output from this run.';
+      section.appendChild(reason);
+    }
     const pre = buildLogPre(run, helpers);
     section.appendChild(pre);
     content.appendChild(section);
@@ -612,81 +630,20 @@
   function buildEventsContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
-    const h3 = global.document.createElement('h3');
-    h3.textContent = 'Events';
-    section.appendChild(h3);
-    const events = Array.isArray(run.events) ? run.events : [];
-    if (!events.length) {
-      const empty = global.document.createElement('div');
-      empty.classList.add('empty-state');
-      empty.textContent = 'No events captured for this run yet.';
-      section.appendChild(empty);
-    } else {
-      const list = global.document.createElement('div');
-      list.classList.add('tab-events');
-      for (const event of events) {
-        const row = global.document.createElement('div');
-        row.classList.add('event-row');
-        const head = global.document.createElement('div');
-        head.classList.add('event-head');
-        const type = global.document.createElement('span');
-        type.classList.add('event-type');
-        type.textContent = event.type || 'event';
-        head.appendChild(type);
-        const time = global.document.createElement('span');
-        time.classList.add('event-time');
-        time.textContent = formatEventTime(event.timestamp);
-        head.appendChild(time);
-        row.appendChild(head);
-        if (event.type === 'run.retry' || event.type === 'run.idle_timeout') {
-          row.appendChild(buildRetryEventCard(event));
-        } else if (event.payload && Object.keys(event.payload).length) {
-          const pre = global.document.createElement('pre');
-          pre.classList.add('event-payload');
-          pre.innerHTML = highlightJSON(JSON.stringify(event.payload, null, 2));
-          row.appendChild(pre);
-        }
-        list.appendChild(row);
-      }
-      section.appendChild(list);
-    }
+    const pre = global.document.createElement('pre');
+    pre.classList.add('terminal-text');
+    const json = eventsJSON(run);
+    fillTerminalPre(pre, json, {
+      renderTerminalContent: highlightJSON,
+    });
+    pre.setAttribute('data-rendered-json', json);
+    section.appendChild(pre);
     content.appendChild(section);
-  }
-
-  function buildRetryEventCard(event) {
-    const card = global.document.createElement('div');
-    card.classList.add('retry-event-card');
-    const payload = event && event.payload ? event.payload : {};
-    const attempt = payload.attempt;
-    const maxAttempts = payload.max_attempts;
-    if (attempt != null && maxAttempts != null) {
-      const attemptLine = global.document.createElement('div');
-      attemptLine.classList.add('retry-line');
-      attemptLine.textContent = 'attempt ' + attempt + ' of ' + maxAttempts;
-      card.appendChild(attemptLine);
-    }
-    if (payload.previous_status != null) {
-      const statusLine = global.document.createElement('div');
-      statusLine.classList.add('retry-line');
-      statusLine.textContent = 'previous_status: ' + payload.previous_status;
-      card.appendChild(statusLine);
-    }
-    const lines = Array.isArray(payload.last_log_lines) ? payload.last_log_lines : [];
-    if (lines.length) {
-      const pre = global.document.createElement('pre');
-      pre.classList.add('retry-log');
-      pre.textContent = lines.join('\n');
-      card.appendChild(pre);
-    }
-    return card;
   }
 
   function buildDetailsContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
-    const h3 = global.document.createElement('h3');
-    h3.textContent = 'Run details';
-    section.appendChild(h3);
     const pre = global.document.createElement('pre');
     pre.classList.add('terminal-text');
     const json = detailsJSON(run, helpers);
@@ -784,7 +741,7 @@
     }
     let fingerprint = tabName;
     if (tabName === 'events') {
-      fingerprint = 'events|' + eventsFingerprint(run);
+      fingerprint = 'events|' + eventsJSON(run);
     } else {
       fingerprint = 'details|' + detailsFingerprint(run, opts.helpers);
     }
