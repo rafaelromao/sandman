@@ -97,6 +97,11 @@
       changed = true;
     }
 
+    if (current.expandedRunKey && !runKeys.has(current.expandedRunKey)) {
+      current.expandedRunKey = null;
+      changed = true;
+    }
+
     for (const [legacyKey, subjectKey] of keyToSubject.entries()) {
       if (!VALID_TABS.has(current.tabs[subjectKey]) && VALID_TABS.has(current.tabs[legacyKey])) {
         current.tabs[subjectKey] = current.tabs[legacyKey];
