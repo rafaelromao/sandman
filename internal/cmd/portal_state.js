@@ -30,6 +30,16 @@
     return text || null;
   }
 
+  function runIdentity(run) {
+    if (!run || typeof run !== 'object') return null;
+    return cleanKey(run.runId || run.key);
+  }
+
+  function runKey(run) {
+    if (!run || typeof run !== 'object') return null;
+    return cleanKey(run.key);
+  }
+
   function cleanTabs(value) {
     const tabs = {};
     if (!value || typeof value !== 'object') return tabs;
@@ -70,13 +80,33 @@
 
   function normalize(state, runs) {
     const current = sanitizeState(state);
-    const runList = Array.isArray(runs) ? runs.map((run) => cleanKey(run && run.key)).filter(Boolean) : [];
+    const runList = Array.isArray(runs) ? runs.map(runIdentity).filter(Boolean) : [];
     const runKeys = new Set(runList);
+    const keyToSubject = new Map();
+    if (Array.isArray(runs)) {
+      for (const run of runs) {
+        const subjectKey = runIdentity(run);
+        const legacyKey = runKey(run);
+        if (subjectKey && legacyKey) keyToSubject.set(legacyKey, subjectKey);
+      }
+    }
     let changed = false;
+
+    if (current.expandedRunKey && keyToSubject.has(current.expandedRunKey)) {
+      current.expandedRunKey = keyToSubject.get(current.expandedRunKey);
+      changed = true;
+    }
 
     if (current.expandedRunKey && !runKeys.has(current.expandedRunKey)) {
       current.expandedRunKey = null;
       changed = true;
+    }
+
+    for (const [legacyKey, subjectKey] of keyToSubject.entries()) {
+      if (!VALID_TABS.has(current.tabs[subjectKey]) && VALID_TABS.has(current.tabs[legacyKey])) {
+        current.tabs[subjectKey] = current.tabs[legacyKey];
+        changed = true;
+      }
     }
 
     for (const runKey of runKeys) {

@@ -36,7 +36,7 @@
       issueTitleText: h.formatIssueTitle(run),
       canAbort: opts.abortSupported !== false && h.isRunAbortable(run, opts.abortReservations),
       canArchive: opts.archiveSupported !== false && h.isRunArchivable(run),
-      ariaExpanded: String(opts.expandedKey === run.key),
+      ariaExpanded: String(matchesExpandedSubject(run, opts.expandedKey)),
     };
     const stale = stalenessOf(run);
     snap.staleText = stale ? stale.text : '';
@@ -391,7 +391,7 @@
     tr.setAttribute('role', 'button');
     tr.setAttribute('tabindex', '0');
     tr.setAttribute('aria-controls', detailIDForKey(run.key));
-    tr.setAttribute('aria-expanded', String(opts.expandedKey === run.key));
+    tr.setAttribute('aria-expanded', String(matchesExpandedSubject(run, opts.expandedKey)));
 
     const titleCell = makeRowCell('title', tr);
     buildTitleCell(titleCell, run, opts.helpers);
@@ -460,6 +460,83 @@
       timestamp: event && event.timestamp ? event.timestamp : null,
       payload: event && event.payload ? event.payload : {},
     })), null, 2);
+  }
+
+  function subjectRunValue(run) {
+    if (!run) return '';
+    return String(run.runId || run.key || '').trim();
+  }
+
+  function matchesExpandedSubject(run, expandedKey) {
+    if (!run) return false;
+    const subjectKey = subjectRunValue(run);
+    return expandedKey === subjectKey || expandedKey === run.key;
+  }
+
+  function subjectRunLabel(run) {
+    if (!run) return 'Run';
+    const value = subjectRunValue(run) || 'Run';
+    if (run.review) return 'Review RunID ' + value;
+    return 'Parent RunID ' + value;
+  }
+
+  function subjectRunsFor(run, opts) {
+    const visible = Array.isArray(opts && opts.runs) ? opts.runs : [];
+    if (!run || run.issueNumber <= 0) return [];
+    const seen = new Set();
+    const parents = [];
+    const reviews = [];
+    for (const candidate of visible) {
+      if (!candidate || candidate.issueNumber !== run.issueNumber) continue;
+      const value = subjectRunValue(candidate);
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      if (candidate.review) reviews.push(candidate);
+      else parents.push(candidate);
+    }
+    const canonicalParent = parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || (parents.length === 1 ? parents[0] : null) || (!run.review && Number(run.reviewCount || 0) > 0 ? run : null);
+    const related = [];
+    if (canonicalParent) related.push(canonicalParent);
+    reviews.sort((a, b) => {
+      const aStarted = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+      const bStarted = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+      if (aStarted !== bStarted) return bStarted - aStarted;
+      return subjectRunValue(a).localeCompare(subjectRunValue(b));
+    });
+    for (const candidate of reviews) {
+      related.push(candidate);
+    }
+    return related;
+  }
+
+  function subjectFingerprint(run, opts) {
+    const related = subjectRunsFor(run, opts);
+    return related.map(subjectRunValue).join('|');
+  }
+
+  function buildSubjectSelector(panel, run, opts) {
+    const related = subjectRunsFor(run, opts);
+    if (!related.length) return;
+    const row = global.document.createElement('div');
+    row.classList.add('detail-subject-picker');
+    const label = global.document.createElement('label');
+    label.textContent = 'Subject';
+    const select = global.document.createElement('select');
+    select.setAttribute('data-action', 'set-subject');
+    select.setAttribute('data-run-key', run.key);
+    const currentValue = subjectRunValue(run);
+    for (const subject of related) {
+      const option = global.document.createElement('option');
+      const value = subjectRunValue(subject);
+      option.setAttribute('value', value);
+      option.textContent = subjectRunLabel(subject);
+      if (value === currentValue) option.setAttribute('selected', 'selected');
+      select.appendChild(option);
+    }
+    select.value = currentValue;
+    label.appendChild(select);
+    row.appendChild(label);
+    panel.appendChild(row);
   }
 
   function buildLogPre(run, helpers) {
@@ -655,22 +732,30 @@
     content.appendChild(section);
   }
 
-  function buildDetailContent(panel, run, tabName, helpers) {
+  function buildDetailContent(panel, run, tabName, helpers, opts) {
+    const subjectFp = subjectFingerprint(run, opts);
+    buildSubjectSelector(panel, run, opts);
     buildTabsRow(panel, run, tabName);
     const content = global.document.createElement('div');
     content.classList.add('detail-content');
+    content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
     panel.appendChild(content);
     if (tabName === 'log') buildLogContent(content, run, helpers);
     else if (tabName === 'events') {
       buildEventsContent(content, run, helpers);
-      content.setAttribute('data-rendered-fingerprint', 'events|' + eventsFingerprint(run));
+      content.setAttribute('data-rendered-fingerprint', 'events|' + eventsFingerprint(run) + '|subjects:' + subjectFp);
     } else {
       buildDetailsContent(content, run, helpers);
-      content.setAttribute('data-rendered-fingerprint', 'details|' + detailsFingerprint(run, helpers));
+      content.setAttribute('data-rendered-fingerprint', 'details|' + detailsFingerprint(run, helpers) + '|subjects:' + subjectFp);
     }
   }
 
   function tabNameFor(run, opts) {
+    const subjectKey = subjectRunValue(run);
+    if (opts.tabs && Object.prototype.hasOwnProperty.call(opts.tabs, subjectKey)) {
+      const t = String(opts.tabs[subjectKey] || '').trim();
+      if (t === 'log' || t === 'events' || t === 'details') return t;
+    }
     if (opts.tabs && Object.prototype.hasOwnProperty.call(opts.tabs, run.key)) {
       const t = String(opts.tabs[run.key] || '').trim();
       if (t === 'log' || t === 'events' || t === 'details') return t;
@@ -689,7 +774,7 @@
     td.setAttribute('colspan', '6');
     const panel = global.document.createElement('div');
     panel.classList.add('detail-panel');
-    buildDetailContent(panel, run, tabNameFor(run, opts), opts.helpers);
+    buildDetailContent(panel, run, tabNameFor(run, opts), opts.helpers, opts);
     td.appendChild(panel);
     tr.appendChild(td);
     body.appendChild(tr);
@@ -705,8 +790,17 @@
         setAttr(btn, 'aria-pressed', want);
       }
     }
+    const subjectFp = subjectFingerprint(run, opts);
     const content = detailRow.querySelector('.detail-content');
     if (!content) return;
+    if (content.getAttribute('data-rendered-subject-fingerprint') !== subjectFp) {
+      const panel = detailRow.querySelector('.detail-panel');
+      if (!panel) return;
+      while (panel.firstChild) panel.removeChild(panel.firstChild);
+      buildDetailContent(panel, run, tabName, opts.helpers, opts);
+      mutationCount += 1;
+      return;
+    }
     if (tabName === 'log') {
       // While the Log tab is being fed by a live SSE stream
       // (opts.streamingKeys), the stream owns this <pre>; the poll path
@@ -739,12 +833,13 @@
       mutationCount += 1;
       return;
     }
-    let fingerprint = tabName;
+    let fingerprint = tabName + '|' + subjectFp;
     if (tabName === 'events') {
       fingerprint = 'events|' + eventsJSON(run);
     } else {
       fingerprint = 'details|' + detailsFingerprint(run, opts.helpers);
     }
+    fingerprint += '|subjects:' + subjectFp;
     if (content.getAttribute('data-rendered-fingerprint') === fingerprint) {
       return;
     }
@@ -762,7 +857,7 @@
     const built = buildDataRow(body, run, opts);
     setRowData(built.row, run);
     let detailTr = null;
-    if (opts.expandedKey === run.key) {
+    if (matchesExpandedSubject(run, opts.expandedKey)) {
       detailTr = buildDetailRow(body, run, opts);
       setDetailData(detailTr, run);
     }
@@ -1020,7 +1115,7 @@
       const r = updateRunRowCells(dataRow, oldRun, newRun, opts);
       if (r.mutated) updated += 1;
 
-      const wantDetail = opts.expandedKey === key;
+      const wantDetail = matchesExpandedSubject(newRun, opts.expandedKey);
       const detail = detailRowOf(body, key);
       if (wantDetail && !detail) {
         const newDetail = buildDetailRow(body, newRun, opts);

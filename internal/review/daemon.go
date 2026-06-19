@@ -423,9 +423,9 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 
 	var subject string
 	if reviewIssueNumber > 0 {
-		subject = fmt.Sprintf("issue-%d-review-PR%d", reviewIssueNumber, prNumber)
+		subject = fmt.Sprintf("%d-PR%d", reviewIssueNumber, prNumber)
 	} else {
-		subject = fmt.Sprintf("review-PR%d", prNumber)
+		subject = fmt.Sprintf("PR%d", prNumber)
 	}
 	perRowRunID := runid.NewRunID(runid.KindReview, subject, ts, shortid)
 

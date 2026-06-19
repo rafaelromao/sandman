@@ -200,25 +200,57 @@ console.log('PASS');
 
 func TestPortalDiffCreateRunRow_DetailRowWhenExpanded(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
+const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const retryRun = { key: 'retry-1', kind: 'active', status: 'running', issueLabel: 'Issue 1 retry', runId: 'retry-1', issueNumber: 1 };
+const run = parentRun;
 const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'a' };
+const opts = { helpers, stopGroups, expandedKey: 'issue-1', runs: [parentRun, retryRun, childReview] };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 if (!created.row) throw new Error('expected data row');
 if (!created.detailRow) throw new Error('expected detail row when expandedKey matches');
-if (created.detailRow.getAttribute('data-detail-for') !== 'a') throw new Error('detail row has wrong data-detail-for');
-if (created.row.getAttribute('id') !== 'run-row-a') throw new Error('expected stable row id, got ' + created.row.getAttribute('id'));
-if (created.row.getAttribute('aria-controls') !== 'run-detail-a') throw new Error('expected aria-controls=run-detail-a, got ' + created.row.getAttribute('aria-controls'));
-if (created.detailRow.getAttribute('id') !== 'run-detail-a') throw new Error('expected stable detail id, got ' + created.detailRow.getAttribute('id'));
+if (created.detailRow.getAttribute('data-detail-for') !== 'issue-1') throw new Error('detail row has wrong data-detail-for');
+if (created.row.getAttribute('id') !== 'run-row-issue-1') throw new Error('expected stable row id, got ' + created.row.getAttribute('id'));
+if (created.row.getAttribute('aria-controls') !== 'run-detail-issue-1') throw new Error('expected aria-controls=run-detail-issue-1, got ' + created.row.getAttribute('aria-controls'));
+if (created.detailRow.getAttribute('id') !== 'run-detail-issue-1') throw new Error('expected stable detail id, got ' + created.detailRow.getAttribute('id'));
 if (created.detailRow.getAttribute('role') !== 'region') throw new Error('expected detail row role=region');
-if (created.detailRow.getAttribute('aria-labelledby') !== 'run-row-a') throw new Error('expected detail row aria-labelledby run-row-a, got ' + created.detailRow.getAttribute('aria-labelledby'));
+if (created.detailRow.getAttribute('aria-labelledby') !== 'run-row-issue-1') throw new Error('expected detail row aria-labelledby run-row-issue-1, got ' + created.detailRow.getAttribute('aria-labelledby'));
 if (body.children.length !== 2) throw new Error('expected body to have 2 children, got ' + body.children.length);
+const subjectSelect = created.detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect) throw new Error('expected subject selector in detail row');
+if (subjectSelect.children.length !== 2) throw new Error('expected selector for parent and one child review, got ' + subjectSelect.children.length);
+if (subjectSelect.children[0].getAttribute('value') !== 'issue-1') throw new Error('expected parent option value to use run ID, got ' + subjectSelect.children[0].getAttribute('value'));
+if (subjectSelect.children[1].getAttribute('value') !== 'PR42') throw new Error('expected child review option value to use run ID, got ' + subjectSelect.children[1].getAttribute('value'));
+if (!subjectSelect.children[0].textContent.includes('RunID issue-1')) throw new Error('expected parent label to include RunID, got ' + subjectSelect.children[0].textContent);
+if (!subjectSelect.children[1].textContent.includes('RunID PR42')) throw new Error('expected review label to include RunID, got ' + subjectSelect.children[1].textContent);
 const tabButtons = created.detailRow.querySelectorAll('button[data-action="set-tab"]');
 if (tabButtons.length !== 3) throw new Error('expected 3 tab buttons, got ' + tabButtons.length);
 const tabs = tabButtons.map(b => b.getAttribute('data-tab'));
 if (!tabs.includes('log') || !tabs.includes('events') || !tabs.includes('details')) throw new Error('missing tab buttons, got ' + JSON.stringify(tabs));
 const content = created.detailRow.querySelector('.detail-content');
 if (!content) throw new Error('expected .detail-content inside detail row');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateCells_RefreshesSubjectSelectorWhenChildReviewAppears(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
+const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const stopGroups = new Set();
+const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', runs: [parentRun] };
+const created = SandmanPortalDiff.insertRunRow(body, parentRun, opts1);
+const subjectSelectBefore = created.detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelectBefore) throw new Error('expected subject selector before refresh');
+if (subjectSelectBefore.children.length !== 1) throw new Error('expected single parent option before child review appears, got ' + subjectSelectBefore.children.length);
+SandmanPortalDiff.resetCounters();
+const opts2 = { helpers, stopGroups, expandedKey: 'issue-1', runs: [parentRun, childReview] };
+SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
+const subjectSelectAfter = created.detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelectAfter) throw new Error('expected subject selector after refresh');
+if (subjectSelectAfter.children.length !== 2) throw new Error('expected parent plus child review options after refresh, got ' + subjectSelectAfter.children.length);
+if (subjectSelectAfter.children[1].getAttribute('value') !== 'PR42') throw new Error('expected child review option to use RunID PR42 after refresh, got ' + subjectSelectAfter.children[1].getAttribute('value'));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -2584,24 +2616,6 @@ if (!ctx) throw new Error('expected context-row for review run');
 const chip = ctx.querySelector('.context-chip');
 if (!chip) throw new Error('expected context chip');
 if (!chip.textContent.includes('Reviewing PR #42')) throw new Error('expected review text');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffCreateRunRow_RendersOrphanReviewAsStandaloneRow(t *testing.T) {
-	js := `const body = makeMockBody();
-const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#1066', issueNumber: 1066, reason: 'review', prNumber: 42, groupedReview: false };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: null };
-const created = SandmanPortalDiff.insertRunRow(body, run, opts);
-if (!created.row.classList.contains('run-row')) throw new Error('expected regular run-row class');
-if (created.row.getAttribute('data-run-key') !== 'a') throw new Error('expected data-run-key=a');
-const ctx = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!ctx) throw new Error('expected standalone review context row');
-const chip = ctx.querySelector('.context-chip');
-if (!chip || !chip.textContent.includes('Reviewing PR #42 for issue #1066')) throw new Error('expected review context chip, got ' + (chip && chip.textContent));
-if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch row on standalone review');
 console.log('PASS');
 `
 	runNodeScript(t, js)

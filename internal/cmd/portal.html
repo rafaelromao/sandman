@@ -907,6 +907,27 @@
       min-height: clamp(420px, 68vh, 780px);
       max-height: clamp(420px, 68vh, 780px);
     }
+    .detail-subject-picker {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px 0;
+      min-width: 0;
+      flex: 0 0 auto;
+    }
+    .detail-subject-picker label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .detail-subject-picker select {
+      min-width: min(360px, 100%);
+      max-width: 100%;
+    }
     .detail-content {
       flex: 1 1 auto;
       min-height: 0;
@@ -2272,6 +2293,7 @@
     function startRunStream(run) {
       if (!run || run.kind !== 'active' || !run.socketPath) return;
       if (streamSources[run.key]) return;
+      const backendKey = run.backendKey || run.key;
       // Reset the <pre> so the broadcaster's connect-replay refills it
       // authoritatively; the snapshot we had is a subset of the replay.
       const pre = streamPreFor(run.key);
@@ -2279,7 +2301,7 @@
         while (pre.firstChild) pre.removeChild(pre.firstChild);
         pre.setAttribute('data-rendered-log', '');
       }
-      const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(run.key));
+      const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
       src.onmessage = function (ev) { appendStreamLine(run.key, ev.data); };
       src.onerror = function () {
         stopRunStream(run.key);
@@ -2311,13 +2333,18 @@
     function reconcileRunStreams() {
       const key = state.expandedRunKey;
       if (!key) { stopAllRunStreams(); return; }
-      const run = findRunByKey(key);
-      const tab = state.tabs[key] || 'log';
+      const run = findRunByIdentity(key);
+      const runKey = run ? run.key : key;
+      const subjectKey = subjectRunIdentity(run) || key;
+      const tab = state.tabs[subjectKey] || state.tabs[key] || 'log';
       const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath;
+      for (const openKey of Object.keys(streamSources)) {
+        if (openKey !== runKey) stopRunStream(openKey);
+      }
       if (wantStream) {
         startRunStream(run);
       } else {
-        stopRunStream(key);
+        stopRunStream(runKey);
       }
     }
 
@@ -2856,6 +2883,32 @@
       return state.runs.find((run) => run && run.key === runKey) || null;
     }
 
+    function findRunByIdentity(runIdentity) {
+      if (!runIdentity || !Array.isArray(state.runs)) return null;
+      return state.runs.find((run) => run && (run.key === runIdentity || run.runId === runIdentity)) || null;
+    }
+
+    function normalizeRunIdentity(run) {
+      if (!run || !run.runId) return run;
+      if (run.key === run.runId) return run;
+      return { ...run, backendKey: run.key, key: run.runId };
+    }
+
+    function subjectRunIdentity(run) {
+      return run ? (run.runId || run.key || '') : '';
+    }
+
+    function findRunRowByIdentity(runIdentity) {
+      const run = findRunByIdentity(runIdentity);
+      const runKey = run ? run.key : runIdentity;
+      return Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey) || null;
+    }
+
+    function subjectTabKey(runIdentity) {
+      const run = findRunByIdentity(runIdentity);
+      return subjectRunIdentity(run) || runIdentity || '';
+    }
+
     function continueIssueValue(command) {
       if (!command) return '';
       if (Number.isInteger(command.issueNumber) && command.issueNumber > 0) return String(command.issueNumber);
@@ -3323,6 +3376,10 @@
       normalizePortalViewState();
       let filtered = state.runs.filter(shouldShowRun);
       filtered = sortedVisibleRuns(filtered);
+      const selectedRun = state.expandedRunKey ? findRunByIdentity(state.expandedRunKey) : null;
+      if (selectedRun && !filtered.some((run) => run && run.key === selectedRun.key)) {
+        filtered = [selectedRun, ...filtered];
+      }
       syncSortButtons();
       const activeCount = state.runs.filter((run) => run && run.kind === 'active').length;
       const completedCount = state.runs.filter((run) => run && run.kind === 'completed').length;
@@ -3348,6 +3405,8 @@
         archiveSupported: true,
         expandedKey: state.expandedRunKey,
         tabs: state.tabs,
+        runs: state.runs,
+        visibleRuns: filtered,
         streamingKeys: streamingKeys,
       };
       if (!state.runs.length) {
@@ -3401,10 +3460,27 @@
 
     async function refresh() {
       try {
+        const prevRuns = Array.isArray(state.runs) ? state.runs.slice() : [];
         const res = await fetch(apiPath, { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const payload = await res.json();
-        state.runs = Array.isArray(payload.runs) ? payload.runs : [];
+        const nextRuns = Array.isArray(payload.runs) ? payload.runs.map(normalizeRunIdentity) : [];
+        if (state.expandedRunKey) {
+          const cached = prevRuns.find((run) => run && (run.key === state.expandedRunKey || run.runId === state.expandedRunKey));
+          const issueNumber = cached ? cached.issueNumber : 0;
+          const issueParent = issueNumber > 0 ? prevRuns.find((run) => {
+            if (!run || run.issueNumber !== issueNumber || run.review) return false;
+            const label = String(run.issueLabel || '').trim();
+            return Number(run.reviewCount || 0) > 0 || !!run.reviewVerdict || label === ('#' + String(issueNumber));
+          }) : null;
+          for (const issueRun of [cached, issueParent]) {
+            if (!issueRun) continue;
+            if (!nextRuns.some((run) => run && (run.key === issueRun.key || run.runId === issueRun.runId))) {
+              nextRuns.unshift(issueRun);
+            }
+          }
+        }
+        state.runs = nextRuns;
         state.loading = false;
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';
@@ -3423,21 +3499,19 @@
 
     function toggleRun(runKey) {
       const prevExpandedRunKey = state.expandedRunKey;
-      if (state.expandedRunKey === runKey) {
+      const run = findRunByIdentity(runKey);
+      const subjectKey = subjectRunIdentity(run) || runKey;
+      if (state.expandedRunKey === subjectKey) {
         state.expandedRunKey = null;
       } else {
-        state.expandedRunKey = runKey;
+        state.expandedRunKey = subjectKey;
       }
       persistPortalViewState();
       render();
       if (state.expandedRunKey !== null && state.expandedRunKey !== prevExpandedRunKey) {
-        const detailRow = Array.from(runsBody.children).find(
-          (child) => child.getAttribute('data-detail-for') === state.expandedRunKey
-        );
+        const detailRow = findRunRowByIdentity(state.expandedRunKey);
         if (detailRow) {
-          const parentRow = Array.from(runsBody.children).find(
-            (child) => child.getAttribute('data-run-key') === state.expandedRunKey
-          );
+          const parentRow = findRunRowByIdentity(state.expandedRunKey);
           if (parentRow) {
             parentRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
           } else {
@@ -3446,9 +3520,7 @@
         }
       }
       if (prevExpandedRunKey !== null && state.expandedRunKey === null) {
-        const row = Array.from(runsBody.children).find(
-          (child) => child.getAttribute('data-run-key') === prevExpandedRunKey
-        );
+        const row = findRunRowByIdentity(prevExpandedRunKey);
         if (row) {
           row.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
@@ -3571,24 +3643,27 @@
         }
         if (action === 'abort-run') {
           event.preventDefault();
-          const issue = Number(button.getAttribute('data-issue') || findRunByKey(runKey)?.issueNumber || 0);
-          const label = findRunByKey(runKey)?.issueLabel || 'this run';
+          const run = findRunByKey(runKey);
+          const issue = Number(button.getAttribute('data-issue') || run?.issueNumber || 0);
+          const label = run?.issueLabel || 'this run';
           if (typeof window.confirm === 'function' && !window.confirm('Abort ' + label + '?')) return;
-          abortRun(button, runKey, issue);
+          abortRun(button, run?.backendKey || runKey, issue);
           return;
         }
         if (action === 'archive-run') {
           event.preventDefault();
-          const runId = button.getAttribute('data-run-id') || findRunByKey(runKey)?.runId;
+          const run = findRunByKey(runKey);
+          const runId = run?.backendKey || run?.key || run?.runId || button.getAttribute('data-run-id');
           if (!runId) return;
-          const label = findRunByKey(runKey)?.issueLabel || 'this run';
+          const label = run?.issueLabel || 'this run';
           archiveRun(button, runId, label);
           return;
         }
         if (action === 'set-tab') {
           const tab = button.getAttribute('data-tab') || 'log';
-          state.tabs[runKey] = tab;
-          state.expandedRunKey = runKey;
+          const subjectKey = subjectTabKey(runKey);
+          state.tabs[subjectKey] = tab;
+          state.expandedRunKey = subjectKey;
           persistPortalViewState();
           render();
         }
@@ -3600,6 +3675,24 @@
       const runKey = row.getAttribute('data-run-key');
       if (!runKey) return;
       toggleRun(runKey);
+    });
+
+    runsBody.addEventListener('change', (event) => {
+      const select = event.target.closest('select[data-action="set-subject"]');
+      if (!select) return;
+      const nextRun = findRunByIdentity(select.value);
+      if (!nextRun) return;
+      const nextRunKey = nextRun.runId || nextRun.key;
+      if (state.expandedRunKey === nextRunKey) return;
+      const currentRunKey = state.expandedRunKey;
+      const currentTabKey = currentRunKey ? subjectTabKey(currentRunKey) : '';
+      const currentTab = currentTabKey && state.tabs[currentTabKey] ? state.tabs[currentTabKey] : 'log';
+      if (!state.tabs[nextRunKey]) {
+        state.tabs[nextRunKey] = currentTab;
+      }
+      state.expandedRunKey = nextRunKey;
+      persistPortalViewState();
+      render();
     });
 
     runsBody.addEventListener('keydown', (event) => {

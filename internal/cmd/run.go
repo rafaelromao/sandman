@@ -217,7 +217,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						if err := os.MkdirAll(issueRunDir, 0o700); err != nil {
 							return fmt.Errorf("create issue batch dir: %w", err)
 						}
-						autoIssueRunID = runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d-issues", len(issues)), autoTS, autoShortID)
+						autoIssueRunID = runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", issues[0]), autoTS, autoShortID)
 						if deps.EventLog != nil {
 							if err := deps.EventLog.Log(events.Event{
 								Type:      "run.started",
