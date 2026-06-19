@@ -90,7 +90,7 @@
   }
 
   function contextText(run) {
-    if (run.reason === 'review' && run.prNumber > 0) {
+    if (run.reason === 'review' && run.prNumber > 0 && !run.groupedReview) {
       const issuePart = run.issueNumber > 0 ? ' for issue #' + run.issueNumber : '';
       return 'Reviewing PR #' + run.prNumber + issuePart;
     }

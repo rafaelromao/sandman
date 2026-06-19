@@ -3290,6 +3290,11 @@
     function renderRunMeta(run) {
       const parts = [];
       if (run.runId) parts.push('RunID ' + run.runId);
+      if (Number(run.reviewCount || 0) > 0) {
+        const count = Number(run.reviewCount || 0);
+        parts.push(count + ' review' + (count === 1 ? '' : 's'));
+        if (run.reviewVerdict) parts.push(run.reviewVerdict);
+      }
       if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
         parts.push('Batch #' + run.batchIssues.join(', #'));
       }

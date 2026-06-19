@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -204,6 +205,72 @@ func TestPortal_StatusOrDefault_PreservesTerminalStatusesForAutoSelectAndReview(
 				t.Fatalf("statusOrDefault(%q, %v, %v, %v) = %q, want %q", tc.status, tc.active, tc.isReview, tc.isAutoSelect, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	terminalReviewAt := startedAt.Add(2 * time.Minute)
+	reviewRunDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42-live")
+	createUnixRunSocket(t, filepath.Join(reviewRunDir, "run.sock"))
+	if err := daemon.WriteManifest(reviewRunDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: startedAt, RunID: "PR42-live"}); err != nil {
+		t.Fatal(err)
+	}
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+		{Type: "run.started", Timestamp: startedAt.Add(90 * time.Second), RunID: "PR43-done", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 43, "branch": "sandman/review-PR43"}},
+		{Type: "run.finished", Timestamp: terminalReviewAt, RunID: "PR43-done", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 43, "branch": "sandman/review-PR43", "status": "success"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var issueRow *portalRun
+	var reviewRows int
+	var groupedReviewRows int
+	for i := range runs {
+		run := &runs[i]
+		if run.IssueNumber != 1 {
+			continue
+		}
+		if run.Review {
+			reviewRows++
+			if run.GroupedReview {
+				groupedReviewRows++
+			}
+			continue
+		}
+		issueRow = run
+	}
+	if issueRow == nil {
+		t.Fatalf("expected issue row for #1, got %#v", runs)
+	}
+	if issueRow.RunID != "issue-1" {
+		t.Fatalf("expected canonical issue row runID issue-1, got %q", issueRow.RunID)
+	}
+	if issueRow.Status != "reviewing" {
+		t.Fatalf("expected parent status reviewing while child review is live, got %q", issueRow.Status)
+	}
+	if issueRow.ReviewCount != 2 {
+		t.Fatalf("expected review count 2, got %d", issueRow.ReviewCount)
+	}
+	if issueRow.ReviewVerdict != "Approved" {
+		t.Fatalf("expected latest terminal review verdict Approved, got %q", issueRow.ReviewVerdict)
+	}
+	if reviewRows != 2 {
+		t.Fatalf("expected 2 review child rows, got %d from %#v", reviewRows, runs)
+	}
+	if groupedReviewRows != 2 {
+		t.Fatalf("expected 2 grouped review child rows, got %d from %#v", groupedReviewRows, runs)
 	}
 }
 
