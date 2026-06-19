@@ -181,30 +181,31 @@
       display: flex;
       flex-direction: column;
     }
-    /* Compact topbar: flat, minimal chrome, works on both phone and wide.
-       The runs table owns the viewport; the topbar is a lean command rail.
-       One restrained accent moment remains: the active-run dot in the table. */
+    /* Topbar: match mockup. Flat rail, left brand + repo, right controls. */
     .masthead {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 6px 16px;
-      padding: 8px 14px;
-      margin-bottom: 10px;
+      justify-content: space-between;
+      gap: 10px 16px;
+      padding: 12px 16px 14px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 78%, var(--bg));
     }
-    .topbar-left {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 4px 12px;
-      flex: 1 1 auto;
-      min-width: 0;
-    }
+    .topbar-left,
     .topbar-right {
       display: flex;
-      flex-wrap: wrap;
       align-items: center;
-      gap: 8px;
+      min-width: 0;
+    }
+    .topbar-left {
+      flex: 1 1 auto;
+      gap: 12px;
+    }
+    .topbar-right {
+      flex: 0 0 auto;
+      gap: 10px;
+      margin-left: auto;
     }
     .masthead-copy {
       display: contents;
@@ -212,8 +213,9 @@
     .masthead-brand {
       display: inline-flex;
       align-items: center;
-      gap: 7px;
+      gap: 8px;
       color: var(--text);
+      flex: 0 0 auto;
     }
     .masthead-brand svg {
       width: 18px;
@@ -224,35 +226,51 @@
       display: inline-flex;
       align-items: baseline;
       gap: 6px;
-      line-height: 1.2;
+      line-height: 1.1;
+      white-space: nowrap;
     }
     .masthead-brand-text strong {
       font-size: 12px;
-      letter-spacing: 0.07em;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
     }
     .masthead-tagline {
+      display: none;
+    }
+    .masthead-divider {
+      width: 1px;
+      align-self: stretch;
+      min-height: 16px;
+      background: color-mix(in oklch, var(--border) 86%, var(--text));
+      opacity: 0.8;
+      flex: 0 0 auto;
+    }
+    .masthead-repo {
+      min-width: 0;
       color: var(--muted);
-      font-size: 11px;
-      font-weight: 400;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-    .status-bar {
-      display: contents;
+    .masthead-repo code {
+      font-family: inherit;
+      font-size: inherit;
+      color: inherit;
     }
-    /* Poll-health pill: the masthead half of the staleness story. Shows the
-       poll cadence and age since the last successful poll; the dot escalates
-       to --warning after consecutive failures so a wedged poll is visible
-       without a new color. Restrained: one pill, no chrome. */
+    /* Poll-health pill: one chip, live state + relative update age. */
     .poll-health {
       display: inline-flex;
       align-items: center;
       gap: 7px;
-      padding: 4px 10px;
+      height: 36px;
+      padding: 0 12px;
       border-radius: 999px;
       border: 1px solid var(--border);
       background: var(--surface-2);
       color: var(--muted);
       font-size: 11.5px;
+      line-height: 1;
       white-space: nowrap;
     }
     .poll-health .dot {
@@ -260,6 +278,7 @@
       height: 7px;
       border-radius: 999px;
       background: var(--muted);
+      flex: 0 0 auto;
     }
     .poll-health.ok .dot {
       background: var(--success);
@@ -272,11 +291,8 @@
     .poll-health.warn .dot {
       background: var(--warning);
     }
-    /* Slim status strip visible only on narrow viewports.
-       Shows repo path, live dot, and updated time without
-       taking vertical space on wide screens. */
-    .status-strip {
-      display: none;
+    .poll-health-updated {
+      font-variant-numeric: tabular-nums;
     }
     .settings-wrap {
       display: flex;
@@ -294,77 +310,6 @@
     }
     .brand-mark {
       display: block;
-    }
-    .meta-line {
-      margin-top: 10px;
-      display: grid;
-      grid-auto-flow: column;
-      grid-template-columns: auto minmax(0, 1fr);
-      gap: 4px 10px;
-      align-items: baseline;
-      color: var(--muted);
-      font-size: 12px;
-      min-width: 0;
-      overflow-wrap: anywhere;
-    }
-    .meta-line span {
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      font-size: 10px;
-    }
-    .meta-line code,
-    .meta-line strong {
-      color: var(--muted);
-      font-weight: 400;
-    }
-    .status-bar .meta-line {
-      margin-top: 0;
-    }
-    /* Status strip: slim one-liner shown only on narrow viewports.
-       Keeps repo scope, live dot, and updated time visible without
-       taking vertical space on wide screens where the topbar shows all. */
-    .status-strip {
-      display: none;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px 12px;
-      padding: 5px 12px;
-      font-size: 11px;
-      color: var(--muted);
-    }
-    .status-strip-scope {
-      font-size: 10px;
-      color: var(--muted);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 40vw;
-    }
-    .status-strip-scope code {
-      font-family: inherit;
-      font-size: inherit;
-      color: inherit;
-    }
-    .status-strip-live {
-      display: flex;
-      align-items: center;
-    }
-    .status-strip-live .dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 999px;
-      background: var(--muted);
-    }
-    .status-strip-updated {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      white-space: nowrap;
-    }
-    .status-strip-updated span {
-      font-size: 9px;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
     }
     /* Context and batch chips live in their own tr (so a single td can
        span all six columns), but visually they are part of the run row
@@ -553,6 +498,17 @@
       margin: 2px 4px;
       background: var(--border);
     }
+    .filter-toggle-group {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      align-items: center;
+      margin-left: 12px;
+    }
+    .filter-toggle-group .fchip.fchip-toggle {
+      min-width: 0;
+      justify-content: center;
+    }
     .fchip {
       display: inline-flex;
       align-items: center;
@@ -662,8 +618,8 @@
       font-size: 13px;
     }
     .col-title { width: 480px; }
-    .col-badge { width: 110px; }
-    .col-started { width: 140px; }
+    .col-badge { width: 88px; }
+    .col-started { width: 180px; }
     .col-duration { width: 90px; }
     .col-issue-title { width: 180px; }
     .col-actions { width: 90px; }
@@ -737,9 +693,8 @@
        the viewport is wide; ellipsis truncates long titles. */
     tbody td[data-cell="issue-title"] {
       min-width: 240px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
     tbody td[data-cell="started"] {
       overflow: hidden;
@@ -761,6 +716,30 @@
       font-weight: 700;
       letter-spacing: -0.02em;
       font-size: 14px;
+    }
+    .meta-line {
+      display: grid;
+      grid-auto-flow: column;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 4px 10px;
+      align-items: baseline;
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .meta-line span {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 10px;
+    }
+    .meta-line code,
+    .meta-line strong {
+      color: var(--muted);
+      font-weight: 400;
+    }
+    .masthead > .meta-line {
+      display: none;
     }
     .run-title .meta-line,
     .muted {
@@ -888,14 +867,14 @@
       border-color: var(--accent);
       color: var(--accent-ink);
     }
-    .tabs {
-      display: flex;
-      width: 100%;
-      gap: 0;
-      margin-bottom: 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .tab-btn {
+      .tabs {
+        display: flex;
+        width: 100%;
+        gap: 0;
+        margin-bottom: 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .tab-btn {
       min-width: 76px;
       border: none;
       border-radius: 0;
@@ -904,9 +883,16 @@
       padding: 10px 0 12px;
       justify-content: flex-start;
       flex: 1 1 0;
-      border-bottom: 2px solid transparent;
-      transform: none;
-    }
+        border-bottom: 2px solid transparent;
+        transform: none;
+      }
+      .tabs {
+        padding-inline: 8px;
+      }
+      .tab-btn {
+        padding-left: 12px;
+        padding-right: 12px;
+      }
     .tab-btn[aria-pressed="true"] {
       background: transparent;
       border-color: transparent transparent var(--accent) transparent;
@@ -1560,11 +1546,7 @@
         color: var(--accent-ink);
       }
       .fchip.fchip-toggle {
-        margin-left: 12px;
         padding: 8px 12px;
-      }
-      .fchip.fchip-toggle + .fchip.fchip-toggle {
-        margin-left: 8px;
       }
       .fchip.fchip-toggle:hover {
         background: var(--surface-2);
@@ -1595,8 +1577,8 @@
         border-radius: 0 0 22px 22px;
       }
       .col-title { width: 360px; }
-      .col-badge { width: 150px; }
-      .col-started { width: 150px; }
+      .col-badge { width: 104px; }
+      .col-started { width: 196px; }
       .col-duration { width: 90px; }
       .col-issue-title { width: auto; }
       .col-actions { width: 120px; }
@@ -1628,8 +1610,15 @@
       .detail-grid {
         grid-template-columns: 1fr;
       }
+      .topbar-right {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-left: 0;
+      }
       .command-grid.two { grid-template-columns: 1fr; }
-      .settings-wrap { justify-items: start; }
+      .settings-wrap { justify-self: auto; margin-left: auto; }
       .detail-panel { min-height: 0; max-height: calc(100vh - 220px); overflow: auto; }
       .detail-grid { grid-template-columns: 1fr; }
       .detail-content,
@@ -1663,10 +1652,21 @@
       }
       .status-select {
         display: block;
-        grid-column: 1 / -1;
+        grid-column: 1 / 2;
+        min-width: 0;
+        padding-inline: 12px 28px;
+        color: var(--text);
+        -webkit-text-fill-color: var(--text);
       }
       .filter-chips,
       .fchip-divider {
+        display: none;
+      }
+      .toolbar .status-pill {
+        margin-left: auto;
+        align-self: center;
+      }
+      .toolbar .status-pill .summary-label {
         display: none;
       }
       .fchip.fchip-toggle {
@@ -1692,14 +1692,17 @@
         grid-template-columns: minmax(0, 1fr) auto;
         grid-template-areas:
           "title badge"
-          "issue issue"
-          "started duration"
-          "actions actions";
-        gap: 8px 10px;
+          "issue actions"
+          "started duration";
+        gap: 6px 10px;
         padding: 14px 12px;
         border-bottom: 1px solid var(--border);
         background: var(--surface);
         align-items: start;
+      }
+      tbody tr.run-row:has(+ tr.context-row),
+      tbody tr.run-row:has(+ tr.batch-row) {
+        border-bottom: none;
       }
       tbody tr.run-row:hover,
       tbody tr.run-row.active {
@@ -1746,6 +1749,7 @@
         grid-area: actions;
         display: flex;
         justify-content: flex-end;
+        align-items: flex-start;
         gap: 8px;
       }
       tbody tr.run-row td[data-cell="actions"] .action-btn {
@@ -1770,13 +1774,18 @@
       tbody tr.context-row,
       tbody tr.batch-row {
         display: block;
-        background: var(--surface);
+        background: transparent;
+        margin-top: -16px;
+      }
+      tbody tr.run-row:hover + tr.context-row,
+      tbody tr.run-row.active + tr.context-row {
+        background: color-mix(in oklch, var(--accent) 10%, var(--surface));
       }
       tbody tr.context-row td,
       tbody tr.batch-row td {
         display: block;
-        padding: 0 12px 10px;
-        border-bottom: 1px solid var(--border);
+        padding: 0 12px 4px;
+        border-bottom: none;
       }
     }
     @media (max-width: 760px) {
@@ -1813,25 +1822,17 @@
       .command-row .col-command {
         flex: 0 0 auto;
       }
-      /* Show compact status strip on narrow screens; hide the wrapped
-         meta lines and poll pill from topbar-left since status-strip
-         shows equivalent info in a single line. */
-      .status-strip { display: flex; order: -1; width: 100%; }
       .masthead {
         flex-direction: column;
-        padding: 0;
-        gap: 0;
+        align-items: stretch;
       }
       .topbar-left,
       .topbar-right {
         width: 100%;
       }
-      .topbar-left .meta-line,
-      .topbar-left .poll-health,
-      .topbar-left .subtitle { display: none; }
       .masthead {
-        padding: 6px 12px;
-        gap: 4px 10px;
+        padding: 10px 12px 12px;
+        gap: 8px;
       }
       .masthead-brand svg {
         width: 16px;
@@ -1914,21 +1915,14 @@
             <span class="masthead-tagline">{{.PortalTitle}}</span>
           </div>
         </div>
-        <p class="subtitle">{{.PortalSubtitle}}</p>
-        <div class="meta-line">
-          <span class="meta-label">Repo</span>
-          <code>{{.RepoRoot}}</code>
-        </div>
-        <div class="meta-line">
-          <span class="meta-label">Updated</span>
-          <strong id="last-updated">Waiting for first refresh</strong>
-        </div>
-        <span class="poll-health" id="poll-health" title="Portal poll health" role="status" aria-live="polite">
-          <span class="dot"></span>
-          <span class="poll-health-label">Waiting for first poll</span>
-        </span>
+        <span class="masthead-divider" aria-hidden="true"></span>
+        <code class="masthead-repo">{{.RepoRoot}}</code>
       </div>
       <div class="topbar-right">
+        <span class="poll-health" id="poll-health" title="Portal poll health" role="status" aria-live="polite">
+          <span class="dot"></span>
+          <strong class="poll-health-updated" id="last-updated">Waiting for first refresh</strong>
+        </span>
         <div class="settings-wrap">
           <button id="commands-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="commands-panel" aria-label="Commands">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
@@ -1937,15 +1931,6 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
         </div>
-      </div>
-      <!-- Slim status strip: visible only on narrow viewports.
-           Placed last in DOM so string searches for Repo/Updated find the
-           real topbar-left elements first; uses CSS order to appear
-           visually at the top on narrow screens. -->
-      <div class="status-strip" aria-hidden="true">
-        <span class="status-strip-scope"><code>{{.RepoRoot}}</code></span>
-        <span class="status-strip-live"><span class="dot"></span></span>
-        <span class="status-strip-updated"><span>Updated</span><strong id="last-updated-strip">—</strong></span>
       </div>
     </header>
 
@@ -2044,16 +2029,18 @@
         </select>
         <div class="filter-chips" id="status-chips" role="group" aria-label="Filter runs by status"></div>
         <span class="fchip-divider" aria-hidden="true"></span>
-        <label class="fchip fchip-toggle">
-          <input id="active-batches" type="checkbox">
-          <span>Active</span>
-        </label>
-        <label class="fchip fchip-toggle">
-          <input id="archived-toggle" type="checkbox">
-          <span>Archive</span>
-        </label>
+        <div class="filter-toggle-group" role="group" aria-label="Active and archive filters">
+          <label class="fchip fchip-toggle">
+            <input id="active-batches" type="checkbox">
+            <span>Active</span>
+          </label>
+          <label class="fchip fchip-toggle">
+            <input id="archived-toggle" type="checkbox">
+            <span>Archive</span>
+          </label>
+        </div>
       </div>
-      <div id="summary-pill" class="status-pill"><span class="dot"></span><strong>0</strong> runs visible</div>
+      <div id="summary-pill" class="status-pill"><span class="dot"></span><strong>0</strong><span class="summary-label">runs visible</span></div>
     </section>
 
     <section class="table-shell" aria-label="Sandman runs">
@@ -2118,7 +2105,6 @@
     const commandExecuteButton = document.getElementById('command-execute');
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
-    const lastUpdated = document.getElementById('last-updated');
     const abortSupported = {{.PortalAbortSupported}};
     const launchDefaults = {{.LaunchDataJSON}};
     const portalState = window.SandmanPortalState;
@@ -3304,7 +3290,6 @@
     function renderRunMeta(run) {
       const parts = [];
       if (run.runId) parts.push('RunID ' + run.runId);
-      if (run.branch) parts.push(run.branch);
       if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
         parts.push('Batch #' + run.batchIssues.join(', #'));
       }
@@ -3341,7 +3326,7 @@
       syncSortButtons();
       const activeCount = state.runs.filter((run) => run && run.kind === 'active').length;
       const completedCount = state.runs.filter((run) => run && run.kind === 'completed').length;
-      summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong> runs visible';
+      summaryPill.innerHTML = '<span class="dot"></span><strong>' + filtered.length + '</strong><span class="summary-label">runs visible</span>';
       const scrollStates = portalScroll ? portalScroll.capture(runsBody.querySelectorAll('[data-scroll-key]')) : {};
       const abortReservations = new Set();
       const diffOpts = {
@@ -3382,38 +3367,36 @@
       reconcileRunStreams();
     }
 
-    function updateLastUpdated() {
-      const now = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date());
-      lastUpdated.textContent = now;
-    }
-
-    // Poll-health tracking: the masthead half of the staleness story. The
-    // pill shows cadence + age since the last successful poll and escalates
-    // to --warning after consecutive failures so a wedged poll is visible.
+    // Poll-health tracking: one chip shows last successful refresh time.
+    // Warn after consecutive failures so a wedged poll is visible.
     const pollHealthEl = document.getElementById('poll-health');
-    const pollHealthLabel = pollHealthEl ? pollHealthEl.querySelector('.poll-health-label') : null;
+    const pollHealthUpdated = document.getElementById('last-updated');
     const pollHealthWarnThreshold = 2;
     let lastPollAt = null;
     let pollFailCount = 0;
 
+    function formatUpdatedAt(timestamp) {
+      return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(timestamp));
+    }
+
     function updatePollHealth() {
-      if (!pollHealthEl || !pollHealthLabel) return;
-      const cadence = Math.max(0.5, Math.round(pollInterval / 1000 * 10) / 10);
+      if (!pollHealthEl || !pollHealthUpdated) return;
       if (lastPollAt === null) {
-        pollHealthLabel.textContent = 'Waiting for first poll';
+        pollHealthUpdated.textContent = 'Waiting for first refresh';
         pollHealthEl.classList.remove('ok', 'warn');
+        pollHealthEl.title = 'Portal poll health';
         return;
       }
-      const ageSec = Math.max(0, Math.round((Date.now() - lastPollAt) / 1000));
+      pollHealthUpdated.textContent = 'updated ' + formatUpdatedAt(lastPollAt);
       if (pollFailCount >= pollHealthWarnThreshold) {
-        pollHealthLabel.textContent = 'poll failing \u00b7 ' + ageSec + 's ago';
         pollHealthEl.classList.remove('ok');
         pollHealthEl.classList.add('warn');
+        pollHealthEl.title = 'Portal poll health (poll failing)';
         return;
       }
-      pollHealthLabel.textContent = 'every ' + cadence + 's \u00b7 ' + ageSec + 's ago';
       pollHealthEl.classList.remove('warn');
       pollHealthEl.classList.add('ok');
+      pollHealthEl.title = 'Portal poll health';
     }
 
     async function refresh() {
@@ -3425,7 +3408,6 @@
         state.loading = false;
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';
-        updateLastUpdated();
         lastPollAt = Date.now();
         pollFailCount = 0;
         updatePollHealth();
@@ -3456,12 +3438,11 @@
           const parentRow = Array.from(runsBody.children).find(
             (child) => child.getAttribute('data-run-key') === state.expandedRunKey
           );
-          const rowHeight = parentRow ? parentRow.offsetHeight : 0;
-          const rect = detailRow.getBoundingClientRect();
-          window.scrollTo({
-            top: window.scrollY + rect.top - rowHeight,
-            behavior: 'smooth'
-          });
+          if (parentRow) {
+            parentRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } else {
+            detailRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
         }
       }
       if (prevExpandedRunKey !== null && state.expandedRunKey === null) {
@@ -3469,7 +3450,7 @@
           (child) => child.getAttribute('data-run-key') === prevExpandedRunKey
         );
         if (row) {
-          row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          row.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       }
     }

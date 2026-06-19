@@ -1014,7 +1014,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active", "Archive", "Log", "Events", "Details", "Actions", "data-rendered-json", "JSON.stringify(detailsData", "settings-toggle", "theme-picker", "poll-interval", "Repo", "Updated", "Sandman", "Sleep while your agents code", "AFK coding agents orchestration", "Sandman Light", "Catppuccin", "Gruvbox", "Evergreen", "Tokyo Night", `const apiPath = "\/api\/runs";`, "const defaultTheme = 'sandman';", "html[data-theme=\"sandman\"]", `id="status-chips"`, `id="status-filter"`, `>All<`, `data-sort="status"`, `data-sort="started"`, `data-sort="duration"`} {
+	for _, want := range []string{"Active", "Archive", "Log", "Events", "Details", "Actions", "data-rendered-json", "JSON.stringify(detailsData", "settings-toggle", "theme-picker", "poll-interval", "masthead-repo", `id="last-updated"`, "poll-health", "Sandman", "Sleep while your agents code", "Sandman Light", "Catppuccin", "Gruvbox", "Evergreen", "Tokyo Night", `const apiPath = "\/api\/runs";`, "const defaultTheme = 'sandman';", "html[data-theme=\"sandman\"]", `id="status-chips"`, `id="status-filter"`, `>All<`, `data-sort="status"`, `data-sort="started"`, `data-sort="duration"`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
@@ -1128,7 +1128,7 @@ func TestPortal_PageAbortedBadgeCSSIsDistinctFromArchived(t *testing.T) {
 	}
 }
 
-func TestPortal_PageMastheadMetadataStacksUpdatedBelowRepo(t *testing.T) {
+func TestPortal_PageMastheadShowsRepoAndUpdatedChip(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1148,31 +1148,17 @@ func TestPortal_PageMastheadMetadataStacksUpdatedBelowRepo(t *testing.T) {
 	}
 	content := string(body)
 
-	firstBlock := regexp.MustCompile(`(?s)<div class="meta-line">.*?</div>`).FindString(content)
-	if firstBlock == "" {
-		t.Fatalf("page is missing the first <div class=\"meta-line\"> block\n%s", content[:min(800, len(content))])
+	if !strings.Contains(content, `class="masthead-repo"`) {
+		t.Fatalf("page is missing masthead repo path\n%s", content[:min(800, len(content))])
 	}
-	if !strings.Contains(firstBlock, ">Repo<") {
-		t.Fatalf("first meta-line block should still contain the Repo label\n%s", firstBlock)
-	}
-	if strings.Contains(firstBlock, ">Updated<") {
-		t.Fatalf("first meta-line block should not contain the Updated label; Updated must stack below Repo\n%s", firstBlock)
-	}
-
 	if !strings.Contains(content, `id="last-updated"`) {
 		t.Fatalf("page is missing the #last-updated element\n%s", content[:min(800, len(content))])
 	}
 
-	repoIdx := strings.Index(content, ">Repo<")
-	updatedIdx := strings.Index(content, ">Updated<")
-	if updatedIdx < 0 {
-		t.Fatalf("page is missing the Updated label\n%s", content[:min(800, len(content))])
-	}
-	if repoIdx < 0 {
-		t.Fatalf("page is missing the Repo label\n%s", content[:min(800, len(content))])
-	}
+	repoIdx := strings.Index(content, `class="masthead-repo"`)
+	updatedIdx := strings.Index(content, `id="last-updated"`)
 	if updatedIdx <= repoIdx {
-		t.Fatalf("Updated label must appear after the Repo block in the rendered masthead\nrepoIdx=%d updatedIdx=%d", repoIdx, updatedIdx)
+		t.Fatalf("updated chip must appear after repo path in the rendered masthead\nrepoIdx=%d updatedIdx=%d", repoIdx, updatedIdx)
 	}
 }
 
@@ -1196,10 +1182,13 @@ func TestPortal_PageExposesPollHealthPill(t *testing.T) {
 	}
 	content := string(body)
 
-	for _, want := range []string{`id="poll-health"`, "poll-health-label", "updatePollHealth", "pollFailCount"} {
+	for _, want := range []string{`id="poll-health"`, `id="last-updated"`, "updatePollHealth", "pollFailCount", "poll-health-updated"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing poll-health marker %q\n%s", want, content[:min(800, len(content))])
 		}
+	}
+	if strings.Contains(content, "poll-health-label") {
+		t.Fatalf("poll-health pill should no longer include live label\n%s", content[:min(800, len(content))])
 	}
 	// The pill must start neutral (no ok/warn class) so the first paint
 	// does not falsely claim a healthy or failing poll.
