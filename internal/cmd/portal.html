@@ -907,6 +907,27 @@
       min-height: clamp(420px, 68vh, 780px);
       max-height: clamp(420px, 68vh, 780px);
     }
+    .detail-subject-picker {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px 0;
+      min-width: 0;
+      flex: 0 0 auto;
+    }
+    .detail-subject-picker label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .detail-subject-picker select {
+      min-width: min(360px, 100%);
+      max-width: 100%;
+    }
     .detail-content {
       flex: 1 1 auto;
       min-height: 0;
@@ -2861,6 +2882,11 @@
       return state.runs.find((run) => run && run.key === runKey) || null;
     }
 
+    function findRunByIdentity(runIdentity) {
+      if (!runIdentity || !Array.isArray(state.runs)) return null;
+      return state.runs.find((run) => run && (run.key === runIdentity || run.runId === runIdentity)) || null;
+    }
+
     function continueIssueValue(command) {
       if (!command) return '';
       if (Number.isInteger(command.issueNumber) && command.issueNumber > 0) return String(command.issueNumber);
@@ -3353,6 +3379,7 @@
         archiveSupported: true,
         expandedKey: state.expandedRunKey,
         tabs: state.tabs,
+        runs: filtered,
         streamingKeys: streamingKeys,
       };
       if (!state.runs.length) {
@@ -3605,6 +3632,17 @@
       const runKey = row.getAttribute('data-run-key');
       if (!runKey) return;
       toggleRun(runKey);
+    });
+
+    runsBody.addEventListener('change', (event) => {
+      const select = event.target.closest('select[data-action="set-subject"]');
+      if (!select) return;
+      const nextRun = findRunByIdentity(select.value);
+      if (!nextRun) return;
+      if (state.expandedRunKey === nextRun.key) return;
+      state.expandedRunKey = nextRun.key;
+      persistPortalViewState();
+      render();
     });
 
     runsBody.addEventListener('keydown', (event) => {
