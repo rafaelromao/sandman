@@ -9,11 +9,10 @@ Three mutually exclusive chips, each rendered in a secondary `tr.context-row` be
 | Run kind | Secondary-row chip text | Data source |
 |---|---|---|
 | Issue in batch (>1 issues) | `Part of batch: #N, #N` | `portalRun.BatchIssues` *(inline in title cell for now; pending #1055)* |
-| Review | `Reviewing PR #N for issue #M` | `portalRun.PRNumber` + issue lookup |
 | Auto-select | `Auto-select candidates: #N, #N` | `portalRun.Candidates` (new field) |
 | Regular issue / prompt-only / continuation | *(no chip)* | — |
 
-Chips are mutually exclusive: a row is in exactly one of these categories and shows at most one chip. A review run in a batch shows the review chip (`Reviewing PR #N for issue #M`), not the batch chip. An auto-select run in a batch shows the auto-select chip, not the batch chip. This avoids stacking multiple muted blocks in the secondary row and keeps the chip's meaning unambiguous.
+Chips are mutually exclusive: a row is in exactly one of these categories and shows at most one chip. An auto-select run in a batch shows the auto-select chip, not the batch chip. This avoids stacking multiple muted blocks in the secondary row and keeps the chip's meaning unambiguous.
 
 The status vocabulary is extended:
 
@@ -30,9 +29,8 @@ The inline `.badge.kind-chip` chip in the title cell (introduced by #973 / PR #1
 ## Consequences
 
 - The `● review` / `● auto-select` inline chip (PR #1047) is deleted and replaced with the secondary-row pattern.
-- The secondary row now carries three possible chip types: batch membership, review target, and auto-select candidates. Each has a distinct label prefix (`Part of batch:`, `Reviewing PR`, `Auto-select candidates:`).
+- The secondary row now carries two possible chip types: batch membership and auto-select candidates. Each has a distinct label prefix (`Part of batch:`, `Auto-select candidates:`).
 - The `statusOrDefault` function gains a single special-case branch for `auto-selecting`, mirroring the existing `reviewing` branch.
 - The `Candidates []int` field is added to `portalRun` — a small, additive JSON contract change (omitted when empty, so no breakage for non-auto-select rows).
 - The `run.started` event for review runs gains `issue_number` in the payload — a breaking change to the event contract for review runs only. Older event logs without this field will fall back to the current behavior (`IssueNumber = 0`, `IssueLabel = PR42`).
-- The review chip renders `Reviewing PR #N for issue #M` using `portalRun.PRNumber` and `portalRun.IssueNumber`, both now populated for review runs.
 - Selected items from a successful auto-select run are surfaced in the agent log, not in the chip. The chip shows candidates only, keeping the chip's information density stable across active and terminal states.

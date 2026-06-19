@@ -208,7 +208,7 @@ _Avoid_: dashboard, monitor, control panel.
 
 **Reviewing**:
 The in-flight portal status for an active review run (a run whose `run.started` event carried `payload.review = true`). Displayed in the status badge as `● reviewing`. The `Status` field is set to `"reviewing"` by `statusOrDefault` when `active && isReview` is true. Terminal review runs use `success`, `failure`, or `aborted` like any other run.
-_Avoid_: reviewing status, review-in-progress.
+_Avoid_: reviewing status, review-in-progress. No secondary-row review chip.
 
 **Auto-selecting**:
 The in-flight portal status for an active auto-select run (a run whose `run.started` event carried `payload.run_kind = "auto-select"`). Displayed in the status badge as `● auto-selecting`. The `Status` field is set to `"auto-selecting"` by `statusOrDefault` when `active && isAutoSelect` is true. Terminal auto-select runs use `success`, `failure`, or `aborted` like any other run.
