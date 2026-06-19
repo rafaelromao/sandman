@@ -396,10 +396,10 @@ func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
 		if summary.live {
 			runs[idx].Status = "reviewing"
 		}
-		for i := range runs {
-			if runs[i].IssueNumber == issueNumber && runs[i].Review {
-				runs[i].GroupedReview = true
-			}
+	}
+	for i := range runs {
+		if runs[i].Review {
+			runs[i].GroupedReview = true
 		}
 	}
 	return runs
@@ -411,10 +411,6 @@ func reviewVerdictForStatus(status string) string {
 		return "Approved"
 	case "failure":
 		return "Changes requested"
-	case "aborted":
-		return "Aborted"
-	case "blocked":
-		return "Blocked"
 	default:
 		return ""
 	}
