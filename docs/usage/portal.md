@@ -99,7 +99,7 @@ Runs `sandman run` with full launch form parameters (issues, prompt, agent, mode
 
 ### `continue`
 
-Runs `sandman run --continue <issue1> <issue2> ...` through the portal preset. Continuation resumes from stored handoff text:
+Runs `sandman run --continue <issue1> <issue2> ...` through the portal preset. Continuation resumes from the stored task file:
 
 ```json
 {"command": "continue", "issues": [123, 124]}
