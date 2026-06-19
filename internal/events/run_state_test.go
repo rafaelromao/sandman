@@ -164,6 +164,50 @@ func TestProjectRunStates_UnfinishedRunHasEmptyStatus(t *testing.T) {
 	}
 }
 
+func TestProjectRunStates_QueuedThenStartedRunIsActive(t *testing.T) {
+	queuedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	startedAt := queuedAt.Add(30 * time.Second)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-started", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-queued-started", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if !run.IsActive() {
+		t.Fatal("expected run to be active after run.started following run.queued")
+	}
+	if got := run.Status(); got != "" {
+		t.Fatalf("expected empty status for active run, got %q", got)
+	}
+}
+
+func TestProjectRunStates_QueuedThenContinuedRunIsActive(t *testing.T) {
+	queuedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	continuedAt := queuedAt.Add(30 * time.Second)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-continued", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-queued-continued", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if !run.IsActive() {
+		t.Fatal("expected run to be active after run.continued following run.queued")
+	}
+	if got := run.Status(); got != "" {
+		t.Fatalf("expected empty status for active run, got %q", got)
+	}
+}
+
 func TestProjectRunStates_UnknownPayloadStatusRoundTripsThroughStatus(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
