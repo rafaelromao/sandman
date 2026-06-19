@@ -9,12 +9,11 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 - implement
 - tdd
 - review
+- pr-review
+- back-merge
+- pr-merge
 
 > **Note:** The `tdd` and `review` skills were originally created by Matt Pocock. We strongly recommend checking out his work at [aihero.dev](https://www.aihero.dev/).
-- pr-review
-- merge
-- pr-merge
-- handoff
 
 `docs/usage/default-prompt.md` now acts as a bootstrap that passes issue context, branch context, and the configured review command into the installed `sandman` skill.
 
