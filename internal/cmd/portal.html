@@ -3465,10 +3465,18 @@
 
     async function refresh() {
       try {
+        const prevRuns = Array.isArray(state.runs) ? state.runs.slice() : [];
         const res = await fetch(apiPath, { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const payload = await res.json();
-        state.runs = Array.isArray(payload.runs) ? payload.runs.map(normalizeRunIdentity) : [];
+        const nextRuns = Array.isArray(payload.runs) ? payload.runs.map(normalizeRunIdentity) : [];
+        if (state.expandedRunKey) {
+          const cached = prevRuns.find((run) => run && (run.key === state.expandedRunKey || run.runId === state.expandedRunKey));
+          if (cached && !nextRuns.some((run) => run && (run.key === cached.key || run.runId === cached.runId))) {
+            nextRuns.unshift(cached);
+          }
+        }
+        state.runs = nextRuns;
         state.loading = false;
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';

@@ -494,13 +494,7 @@
       if (candidate.review) reviews.push(candidate);
       else parents.push(candidate);
     }
-    const issueTag = '#' + String(run.issueNumber);
-    const canonicalParent = parents.find((candidate) => {
-      const label = String(candidate.issueLabel || '').trim();
-      if (label === issueTag || label.startsWith(issueTag + ' ') || label.startsWith(issueTag + '(')) return true;
-      const runID = String(candidate.runId || candidate.key || '').trim();
-      return /(?:^|-)issue-\d+$/.test(runID) && runID.endsWith('-issue-' + String(run.issueNumber));
-    }) || (!run.review && String(run.issueLabel || '').trim().startsWith(issueTag) ? run : null);
+    const canonicalParent = parents[0] || (!run.review ? run : null);
     const related = [];
     if (canonicalParent) related.push(canonicalParent);
     reviews.sort((a, b) => {
