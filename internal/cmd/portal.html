@@ -718,14 +718,11 @@
       font-size: 14px;
     }
     .meta-line {
-      display: grid;
-      grid-auto-flow: column;
-      grid-template-columns: auto minmax(0, 1fr);
-      gap: 4px 10px;
-      align-items: baseline;
+      display: block;
       color: var(--muted);
       font-size: 12px;
       min-width: 0;
+      white-space: pre-line;
       overflow-wrap: anywhere;
     }
     .meta-line span {
@@ -3514,17 +3511,19 @@
       return visible;
     }
     function renderRunMeta(run) {
-      const parts = [];
-      if (run.runId) parts.push('RunID ' + run.runId);
+      const lines = [];
+      if (run.runId) lines.push(run.runId);
+      const summary = [];
       if (Number(run.reviewCount || 0) > 0) {
         const count = Number(run.reviewCount || 0);
-        parts.push(count + ' review' + (count === 1 ? '' : 's'));
-        if (run.reviewVerdict) parts.push(run.reviewVerdict);
+        summary.push(count + ' review' + (count === 1 ? '' : 's'));
+        if (run.reviewVerdict) summary.push(run.reviewVerdict);
       }
       if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
-        parts.push('Batch #' + run.batchIssues.join(', #'));
+        summary.push('Batch #' + run.batchIssues.join(', #'));
       }
-      return parts.length ? parts.join(' · ') : 'Run';
+      if (summary.length) lines.push('- ' + summary.join(' - '));
+      return lines.length ? lines.join('\n') : 'Run';
     }
 
     function renderTerminalContent(text) {

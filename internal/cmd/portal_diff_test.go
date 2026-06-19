@@ -90,6 +90,8 @@ const createdParent = SandmanPortalDiff.insertRunRow(body, parentRun, opts);
 const parentMeta = createdParent.row.querySelector('[data-cell="title"]').children[0].children[1];
 if (!parentMeta.textContent.includes('2 reviews')) throw new Error('expected review count in meta, got ' + parentMeta.textContent);
 if (!parentMeta.textContent.includes('Approved')) throw new Error('expected latest verdict in meta, got ' + parentMeta.textContent);
+if (parentMeta.textContent.includes('RunID')) throw new Error('expected RunID label removed from meta, got ' + parentMeta.textContent);
+if (!parentMeta.textContent.includes('\n- 2 reviews - Approved')) throw new Error('expected review summary on new line, got ' + JSON.stringify(parentMeta.textContent));
 const parentBatchRow = body.querySelector('tr.batch-row[data-batch-for="issue-1"]');
 if (!parentBatchRow) throw new Error('expected parent batch chip to remain for canonical issue row');
 const parentBatchChip = parentBatchRow.querySelector('.batch-membership');
@@ -221,8 +223,8 @@ if (!subjectSelect) throw new Error('expected subject selector in detail row');
 if (subjectSelect.children.length !== 2) throw new Error('expected selector for parent and one child review, got ' + subjectSelect.children.length);
 if (subjectSelect.children[0].getAttribute('value') !== 'issue-1') throw new Error('expected parent option value to use run ID, got ' + subjectSelect.children[0].getAttribute('value'));
 if (subjectSelect.children[1].getAttribute('value') !== 'PR42') throw new Error('expected child review option value to use run ID, got ' + subjectSelect.children[1].getAttribute('value'));
-if (!subjectSelect.children[0].textContent.includes('RunID issue-1')) throw new Error('expected parent label to include RunID, got ' + subjectSelect.children[0].textContent);
-if (!subjectSelect.children[1].textContent.includes('RunID PR42')) throw new Error('expected review label to include RunID, got ' + subjectSelect.children[1].textContent);
+if (!subjectSelect.children[0].textContent.includes('Implementation issue-1')) throw new Error('expected parent label to include Implementation, got ' + subjectSelect.children[0].textContent);
+if (!subjectSelect.children[1].textContent.includes('Review PR42')) throw new Error('expected review label to include Review, got ' + subjectSelect.children[1].textContent);
 const tabButtons = created.detailRow.querySelectorAll('button[data-action="set-tab"]');
 if (tabButtons.length !== 3) throw new Error('expected 3 tab buttons, got ' + tabButtons.length);
 const tabs = tabButtons.map(b => b.getAttribute('data-tab'));
@@ -1882,17 +1884,19 @@ const renderStatusBadge = (run) => {
   return '<span class="badge ' + escapeHTML(k) + '"><span class="dot"></span>' + escapeHTML(label) + '</span>';
 };
 const renderRunMeta = (run) => {
-  const parts = [];
-  if (run.runId) parts.push('ID ' + run.runId);
+  const lines = [];
+  if (run.runId) lines.push(run.runId);
+  const summary = [];
   if (Number(run.reviewCount || 0) > 0) {
     const count = Number(run.reviewCount || 0);
-    parts.push(count + ' review' + (count === 1 ? '' : 's'));
-    if (run.reviewVerdict) parts.push(run.reviewVerdict);
+    summary.push(count + ' review' + (count === 1 ? '' : 's'));
+    if (run.reviewVerdict) summary.push(run.reviewVerdict);
   }
   if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
-    parts.push('Batch #' + run.batchIssues.join(', #'));
+    summary.push('Batch #' + run.batchIssues.join(', #'));
   }
-  return parts.length ? parts.join(' · ') : 'Run';
+  if (summary.length) lines.push('- ' + summary.join(' - '));
+  return lines.length ? lines.join('\n') : 'Run';
 };
 const renderTerminalContent = (text) => {
   const value = String(text || '');

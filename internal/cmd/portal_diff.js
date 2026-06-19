@@ -481,8 +481,8 @@
   function subjectRunLabel(run) {
     if (!run) return 'Run';
     const value = subjectRunValue(run) || 'Run';
-    if (run.review) return 'Review RunID ' + value;
-    return 'Parent RunID ' + value;
+    if (run.review) return 'Review ' + value;
+    return 'Implementation ' + value;
   }
 
   function subjectRunsFor(run, opts) {
