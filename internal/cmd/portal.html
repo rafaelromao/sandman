@@ -1538,6 +1538,105 @@
       background: color-mix(in oklch, var(--danger) 10%, var(--surface));
       color: var(--text);
     }
+    @media (min-width: 961px) {
+      .toolbar {
+        margin-bottom: 0;
+        border-bottom: none;
+        border-radius: 22px 22px 0 0;
+      }
+      .filters {
+        flex: 1 1 auto;
+        min-width: 0;
+        gap: 12px;
+      }
+      .filter-chips {
+        gap: 0;
+      }
+      .filter-chips .fchip[data-status] {
+        border-radius: 0;
+        padding: 8px 14px;
+        background: transparent;
+      }
+      .filter-chips .fchip[data-status] + .fchip[data-status] {
+        margin-left: -1px;
+      }
+      .filter-chips .fchip[data-status]:first-child {
+        border-top-left-radius: 12px;
+        border-bottom-left-radius: 12px;
+      }
+      .filter-chips .fchip[data-status]:last-child {
+        border-top-right-radius: 12px;
+        border-bottom-right-radius: 12px;
+      }
+      .filter-chips .fchip[data-status][aria-pressed="true"] {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-ink);
+      }
+      .fchip.fchip-toggle {
+        margin-left: 12px;
+        padding: 8px 12px;
+      }
+      .fchip.fchip-toggle + .fchip.fchip-toggle {
+        margin-left: 8px;
+      }
+      .fchip.fchip-toggle:hover {
+        background: var(--surface-2);
+      }
+      .fchip.fchip-toggle:has(input:checked) {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-ink);
+      }
+      .fchip-divider {
+        display: none;
+      }
+      .toolbar .status-pill {
+        margin-left: auto;
+        padding: 0;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+      }
+      .toolbar .status-pill strong {
+        color: inherit;
+      }
+      .toolbar .status-pill .dot {
+        background: var(--muted);
+      }
+      .table-shell {
+        border-top: none;
+        border-radius: 0 0 22px 22px;
+      }
+      .col-title { width: 360px; }
+      .col-badge { width: 150px; }
+      .col-started { width: 150px; }
+      .col-duration { width: 90px; }
+      .col-issue-title { width: auto; }
+      .col-actions { width: 120px; }
+      tbody td[data-cell="actions"] {
+        text-align: right;
+        white-space: nowrap;
+      }
+      tbody td[data-cell="actions"] .action-btn {
+        padding: 6px 8px;
+        border-color: transparent;
+        background: transparent;
+        color: var(--muted);
+      }
+      tbody td[data-cell="actions"] .action-btn:hover {
+        border-color: var(--border);
+        background: var(--surface-3);
+        color: var(--text);
+      }
+      tbody td[data-cell="actions"] .action-btn.danger {
+        border-color: transparent;
+        background: transparent;
+      }
+      tbody td[data-cell="actions"] .action-btn.danger:hover {
+        border-color: color-mix(in oklch, var(--danger) 30%, var(--border));
+      }
+    }
     @media (max-width: 960px) {
       .masthead,
       .detail-grid {
@@ -3070,7 +3169,6 @@
 
     function syncStatusOptions(runs) {
       const statuses = new Set(['all', 'success', 'failure', 'aborted']);
-      for (const run of runs) statuses.add(statusFilterValue(run));
       const nextStatuses = sortStatusValues(statuses);
       const current = state.selectedStatus || 'all';
       const want = nextStatuses.includes(current) ? current : 'all';
