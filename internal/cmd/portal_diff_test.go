@@ -200,7 +200,7 @@ console.log('PASS');
 
 func TestPortalDiffCreateRunRow_DetailRowWhenExpanded(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1 };
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const retryRun = { key: 'retry-1', kind: 'active', status: 'running', issueLabel: 'Issue 1 retry', runId: 'retry-1', issueNumber: 1 };
 const run = parentRun;
@@ -236,7 +236,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateCells_RefreshesSubjectSelectorWhenChildReviewAppears(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1 };
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', runs: [parentRun] };
