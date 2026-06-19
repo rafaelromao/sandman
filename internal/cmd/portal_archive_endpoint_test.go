@@ -72,7 +72,7 @@ func TestPortal_ArchiveEndpointMovesCompletedRunToArchiveDirectory(t *testing.T)
 		t.Fatal(err)
 	}
 
-	runID := "run-archive-ok"
+	runID := "abcd-260618113825-archive-ok"
 	runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestPortal_ArchiveEndpoint_RejectsActiveRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "run-archive-active"
+	runID := "abcd-260618113825-archive-active"
 	runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestPortal_ArchiveEndpoint_RejectsAlreadyArchivedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "run-archive-dup"
+	runID := "abcd-260618113825-archive-dup"
 	runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -255,7 +255,7 @@ func TestPortal_ArchiveEndpoint_Returns404ForMissingRun(t *testing.T) {
 	}
 	t.Cleanup(func() { portalRunArchiver = originalArchiver })
 
-	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), "run-archive-missing")
+	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), "abcd-260618113825-archive-missing")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing run, got %d: %s", resp.StatusCode, body)
 	}
@@ -323,7 +323,7 @@ func TestPortal_ArchiveEndpoint_SurfaceArchivedFlagInRunsAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "run-archive-flag"
+	runID := "abcd-260618113825-archive-flag"
 	runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -391,7 +391,7 @@ func TestPortal_ArchiveEndpoint_SurfaceArchivedFlagInRunsAPI(t *testing.T) {
 // contract that the events log's RunID equals the .sandman/runs/<dir>
 // directory name. A regression where the two diverge would silently 404
 // in production. This test uses a randomly-named runID (mirroring the
-// "run-<issue>-<timestamp>" format the orchestrator emits) and asserts
+// "{shortid}-{ts}-{issue}" format the orchestrator emits) and asserts
 // the archive endpoint succeeds against the matching directory.
 func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-e2e-")
@@ -403,7 +403,7 @@ func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "run-42-1700000000"
+	runID := "abcd-260618113825-issue-42"
 	runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)

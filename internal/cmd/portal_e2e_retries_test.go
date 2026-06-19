@@ -30,7 +30,7 @@ func TestPortal_E2E_RetriesContract_RetryRunCarriesCountsAndEvents(t *testing.T)
 		t.Fatal(err)
 	}
 
-	const runID = "run-retry-1"
+	const runID = "abcd-260618113825-retry"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(10 * time.Minute)
 	retryPayload := map[string]any{
@@ -146,7 +146,7 @@ func TestPortal_E2E_RetriesContract_CleanRunOmitsFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const runID = "run-clean-1"
+	const runID = "abcd-260618113825-clean"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -211,7 +211,7 @@ func TestPortal_E2E_RetriesContract_LegacyFinishedRunDefaultsToZero(t *testing.T
 		t.Fatal(err)
 	}
 
-	const runID = "run-legacy-1"
+	const runID = "abcd-260618113825-legacy"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 

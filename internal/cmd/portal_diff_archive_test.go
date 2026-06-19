@@ -12,7 +12,7 @@ const run = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'run-archive-1',
+  runId: 'abcd-260618113825-archive-1',
   archived: false,
 };
 const stopGroups = new Set();
@@ -24,7 +24,7 @@ if (!actionsCell) throw new Error('expected actions cell');
 const btn = actionsCell.querySelector('button[data-action="archive-run"]');
 if (!btn) throw new Error('expected archive-run button on completed non-archived run');
 if (btn.textContent.trim() !== 'Archive') throw new Error('expected label "Archive", got ' + JSON.stringify(btn.textContent));
-if (btn.getAttribute('data-run-id') !== 'run-archive-1') throw new Error('expected data-run-id="run-archive-1", got ' + btn.getAttribute('data-run-id'));
+if (btn.getAttribute('data-run-id') !== 'abcd-260618113825-archive-1') throw new Error('expected data-run-id="abcd-260618113825-archive-1", got ' + btn.getAttribute('data-run-id'));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -39,9 +39,9 @@ const run = {
   kind: 'active',
   status: 'running',
   issueLabel: '#42',
-  runId: 'run-archive-2',
+  runId: 'abcd-260618113825-archive-2',
   archived: false,
-  batchKey: 'run-42-1',
+  batchKey: 'abcd-260618113825-42',
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -66,7 +66,7 @@ const run = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'run-archive-3',
+  runId: 'abcd-260618113825-archive-3',
   archived: true,
 };
 const stopGroups = new Set();
@@ -92,7 +92,7 @@ const runOld = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'run-archive-4',
+  runId: 'abcd-260618113825-archive-4',
   archived: false,
 };
 const runNew = Object.assign({}, runOld, { archived: true });
@@ -122,7 +122,7 @@ const runOld = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'run-archive-5',
+  runId: 'abcd-260618113825-archive-5',
   archived: true,
 };
 const runNew = Object.assign({}, runOld, { archived: false });
@@ -151,7 +151,7 @@ const run = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'run-archive-6',
+  runId: 'abcd-260618113825-archive-6',
   archived: false,
 };
 const stopGroups = new Set();
