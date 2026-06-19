@@ -36,7 +36,7 @@
       issueTitleText: h.formatIssueTitle(run),
       canAbort: opts.abortSupported !== false && h.isRunAbortable(run, opts.abortReservations),
       canArchive: opts.archiveSupported !== false && h.isRunArchivable(run),
-      ariaExpanded: String(matchesExpandedSubject(run, opts.expandedKey)),
+      ariaExpanded: String(matchesExpandedSubject(run, opts.expandedKey, opts)),
     };
     const stale = stalenessOf(run);
     snap.staleText = stale ? stale.text : '';
@@ -90,10 +90,6 @@
   }
 
   function contextText(run) {
-    if (run.reason === 'review' && run.prNumber > 0 && !run.groupedReview) {
-      const issuePart = run.issueNumber > 0 ? ' for issue #' + run.issueNumber : '';
-      return 'Reviewing PR #' + run.prNumber + issuePart;
-    }
     if (run.reason === 'auto-select' && Array.isArray(run.candidates) && run.candidates.length > 0) {
       return 'Auto-select candidates: ' + run.candidates.map((n) => '#' + n).join(', ');
     }
@@ -391,7 +387,7 @@
     tr.setAttribute('role', 'button');
     tr.setAttribute('tabindex', '0');
     tr.setAttribute('aria-controls', detailIDForKey(run.key));
-    tr.setAttribute('aria-expanded', String(matchesExpandedSubject(run, opts.expandedKey)));
+    tr.setAttribute('aria-expanded', String(matchesExpandedSubject(run, opts.expandedKey, opts)));
 
     const titleCell = makeRowCell('title', tr);
     buildTitleCell(titleCell, run, opts.helpers);
@@ -467,10 +463,19 @@
     return String(run.runId || run.key || '').trim();
   }
 
-  function matchesExpandedSubject(run, expandedKey) {
+  function findRunByIdentity(runIdentity, opts) {
+    if (!runIdentity || !Array.isArray(opts && opts.runs)) return null;
+    return opts.runs.find((run) => run && (run.key === runIdentity || run.runId === runIdentity)) || null;
+  }
+
+  function matchesExpandedSubject(run, expandedKey, opts) {
     if (!run) return false;
     const subjectKey = subjectRunValue(run);
-    return expandedKey === subjectKey || expandedKey === run.key;
+    if (expandedKey === subjectKey || expandedKey === run.key) return true;
+    const expandedRun = expandedKey ? findRunByIdentity(expandedKey, opts) : null;
+    if (!expandedRun) return false;
+    if (!Number.isInteger(run.issueNumber) || run.issueNumber <= 0) return false;
+    return run.issueNumber === expandedRun.issueNumber;
   }
 
   function subjectRunLabel(run) {
@@ -514,8 +519,8 @@
     return related.map(subjectRunValue).join('|');
   }
 
-  function buildSubjectSelector(panel, run, opts) {
-    const related = subjectRunsFor(run, opts);
+  function buildSubjectSelector(panel, rowRun, subjectRun, opts) {
+    const related = subjectRunsFor(rowRun, opts);
     if (!related.length) return;
     const row = global.document.createElement('div');
     row.classList.add('detail-subject-picker');
@@ -523,8 +528,8 @@
     label.textContent = 'Subject';
     const select = global.document.createElement('select');
     select.setAttribute('data-action', 'set-subject');
-    select.setAttribute('data-run-key', run.key);
-    const currentValue = subjectRunValue(run);
+    select.setAttribute('data-run-key', rowRun.key);
+    const currentValue = subjectRunValue(subjectRun || rowRun);
     for (const subject of related) {
       const option = global.document.createElement('option');
       const value = subjectRunValue(subject);
@@ -732,21 +737,21 @@
     content.appendChild(section);
   }
 
-  function buildDetailContent(panel, run, tabName, helpers, opts) {
-    const subjectFp = subjectFingerprint(run, opts);
-    buildSubjectSelector(panel, run, opts);
-    buildTabsRow(panel, run, tabName);
+  function buildDetailContent(panel, rowRun, subjectRun, tabName, helpers, opts) {
+    const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
+    buildSubjectSelector(panel, rowRun, subjectRun, opts);
+    buildTabsRow(panel, rowRun, tabName);
     const content = global.document.createElement('div');
     content.classList.add('detail-content');
     content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
     panel.appendChild(content);
-    if (tabName === 'log') buildLogContent(content, run, helpers);
+    if (tabName === 'log') buildLogContent(content, subjectRun, helpers);
     else if (tabName === 'events') {
-      buildEventsContent(content, run, helpers);
-      content.setAttribute('data-rendered-fingerprint', 'events|' + eventsFingerprint(run) + '|subjects:' + subjectFp);
+      buildEventsContent(content, subjectRun, helpers);
+      content.setAttribute('data-rendered-fingerprint', 'events|' + eventsFingerprint(subjectRun) + '|subjects:' + subjectFp);
     } else {
-      buildDetailsContent(content, run, helpers);
-      content.setAttribute('data-rendered-fingerprint', 'details|' + detailsFingerprint(run, helpers) + '|subjects:' + subjectFp);
+      buildDetailsContent(content, subjectRun, helpers);
+      content.setAttribute('data-rendered-fingerprint', 'details|' + detailsFingerprint(subjectRun, helpers) + '|subjects:' + subjectFp);
     }
   }
 
@@ -764,6 +769,7 @@
   }
 
   function buildDetailRow(body, run, opts) {
+    const subjectRun = findRunByIdentity(opts.expandedKey, opts) || run;
     const tr = global.document.createElement('tr');
     tr.classList.add('detail-row');
     tr.setAttribute('data-detail-for', run.key);
@@ -774,7 +780,7 @@
     td.setAttribute('colspan', '6');
     const panel = global.document.createElement('div');
     panel.classList.add('detail-panel');
-    buildDetailContent(panel, run, tabNameFor(run, opts), opts.helpers, opts);
+    buildDetailContent(panel, run, subjectRun, tabNameFor(subjectRun, opts), opts.helpers, opts);
     td.appendChild(panel);
     tr.appendChild(td);
     body.appendChild(tr);
@@ -782,7 +788,8 @@
   }
 
   function updateDetailContent(detailRow, run, opts) {
-    const tabName = tabNameFor(run, opts);
+    const subjectRun = findRunByIdentity(opts.expandedKey, opts) || run;
+    const tabName = tabNameFor(subjectRun, opts);
     const tabButtons = detailRow.querySelectorAll('button[data-tab]');
     for (const btn of tabButtons) {
       const want = String(btn.getAttribute('data-tab') === tabName);
@@ -790,14 +797,14 @@
         setAttr(btn, 'aria-pressed', want);
       }
     }
-    const subjectFp = subjectFingerprint(run, opts);
+    const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
     const content = detailRow.querySelector('.detail-content');
     if (!content) return;
     if (content.getAttribute('data-rendered-subject-fingerprint') !== subjectFp) {
       const panel = detailRow.querySelector('.detail-panel');
       if (!panel) return;
       while (panel.firstChild) panel.removeChild(panel.firstChild);
-      buildDetailContent(panel, run, tabName, opts.helpers, opts);
+      buildDetailContent(panel, run, subjectRun, tabName, opts.helpers, opts);
       mutationCount += 1;
       return;
     }
@@ -809,7 +816,7 @@
         return;
       }
       const pre = content.querySelector('pre[data-scroll-key]');
-      const newLog = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
+      const newLog = subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : 'No log file yet.';
       if (pre) {
         const oldLog = pre.getAttribute('data-rendered-log') || '';
         if (oldLog === newLog) {
@@ -829,15 +836,15 @@
       }
       while (content.firstChild) content.removeChild(content.firstChild);
       content.removeAttribute('data-rendered-fingerprint');
-      buildLogContent(content, run, opts.helpers);
+      buildLogContent(content, subjectRun, opts.helpers);
       mutationCount += 1;
       return;
     }
     let fingerprint = tabName + '|' + subjectFp;
     if (tabName === 'events') {
-      fingerprint = 'events|' + eventsJSON(run);
+      fingerprint = 'events|' + eventsJSON(subjectRun);
     } else {
-      fingerprint = 'details|' + detailsFingerprint(run, opts.helpers);
+      fingerprint = 'details|' + detailsFingerprint(subjectRun, opts.helpers);
     }
     fingerprint += '|subjects:' + subjectFp;
     if (content.getAttribute('data-rendered-fingerprint') === fingerprint) {
@@ -845,9 +852,9 @@
     }
     while (content.firstChild) content.removeChild(content.firstChild);
     if (tabName === 'events') {
-      buildEventsContent(content, run, opts.helpers);
+      buildEventsContent(content, subjectRun, opts.helpers);
     } else {
-      buildDetailsContent(content, run, opts.helpers);
+      buildDetailsContent(content, subjectRun, opts.helpers);
     }
     content.setAttribute('data-rendered-fingerprint', fingerprint);
     mutationCount += 1;
@@ -857,7 +864,7 @@
     const built = buildDataRow(body, run, opts);
     setRowData(built.row, run);
     let detailTr = null;
-    if (matchesExpandedSubject(run, opts.expandedKey)) {
+    if (matchesExpandedSubject(run, opts.expandedKey, opts)) {
       detailTr = buildDetailRow(body, run, opts);
       setDetailData(detailTr, run);
     }
@@ -1061,9 +1068,10 @@
 
   function diffRuns(body, runs, opts) {
     const before = mutationCount;
+    const renderRuns = Array.isArray(opts && opts.visibleRuns) ? opts.visibleRuns : runs;
     const newKeys = new Set();
     const newRuns = new Map();
-    for (const run of runs) {
+    for (const run of renderRuns) {
       if (!run || !run.key) continue;
       newKeys.add(run.key);
       newRuns.set(run.key, run);
@@ -1115,7 +1123,7 @@
       const r = updateRunRowCells(dataRow, oldRun, newRun, opts);
       if (r.mutated) updated += 1;
 
-      const wantDetail = matchesExpandedSubject(newRun, opts.expandedKey);
+      const wantDetail = matchesExpandedSubject(newRun, opts.expandedKey, opts);
       const detail = detailRowOf(body, key);
       if (wantDetail && !detail) {
         const newDetail = buildDetailRow(body, newRun, opts);
@@ -1138,8 +1146,8 @@
     }
 
     let pos = 0;
-    for (let i = 0; i < runs.length; i += 1) {
-      const run = runs[i];
+    for (let i = 0; i < renderRuns.length; i += 1) {
+      const run = renderRuns[i];
       if (!run || !run.key) continue;
       const dataRow = dataRowOf(body, run.key);
       if (!dataRow) continue;
