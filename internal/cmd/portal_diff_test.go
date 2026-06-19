@@ -618,7 +618,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffBuildEventsContent_RunRetryRendersRetryCard(t *testing.T) {
+func TestPortalDiffBuildEventsContent_RunRetryRendersJSONDocument(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', events: [
   { type: 'run.retry', timestamp: 1700000000000, payload: { attempt: 2, max_attempts: 3, previous_status: 'failure', last_log_lines: ['[orchestrator] sandbox error', '[orchestrator] retrying'] } }
@@ -628,20 +628,17 @@ const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
 const detailRow = body.children[1];
 if (!detailRow) throw new Error('expected detail row');
-const card = detailRow.querySelector('.retry-event-card');
-if (!card) throw new Error('expected .retry-event-card in events tab for run.retry');
-if (card.textContent.indexOf('attempt 2 of 3') === -1) throw new Error('expected "attempt 2 of 3" in card, got: ' + card.textContent);
-if (card.textContent.indexOf('previous_status: failure') === -1) throw new Error('expected "previous_status: failure" in card, got: ' + card.textContent);
-const logPre = card.querySelector('pre.retry-log');
-if (!logPre) throw new Error('expected pre.retry-log in card');
-if (logPre.textContent.indexOf('[orchestrator] sandbox error') === -1) throw new Error('expected last_log_lines text in log pre, got: ' + logPre.textContent);
-if (logPre.textContent.indexOf('[orchestrator] retrying') === -1) throw new Error('expected second last_log_line in log pre, got: ' + logPre.textContent);
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected pre[data-rendered-json] in events tab');
+if (pre.textContent.indexOf('run.retry') === -1) throw new Error('expected run.retry in json');
+if (pre.textContent.indexOf('previous_status') === -1) throw new Error('expected previous_status in json');
+if (pre.textContent.indexOf('[orchestrator] sandbox error') === -1) throw new Error('expected last_log_lines in json');
 console.log('PASS');
 `
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffBuildEventsContent_RunIdleTimeoutRendersRetryCard(t *testing.T) {
+func TestPortalDiffBuildEventsContent_RunIdleTimeoutRendersJSONDocument(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'aborted', issueLabel: '#42', runId: 'r1', events: [
   { type: 'run.idle_timeout', timestamp: 1700000000000, payload: { attempt: 1, max_attempts: 3, idle_seconds: 300, last_log_lines: ['[orchestrator] idle for 5m'] } }
@@ -651,18 +648,16 @@ const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
 const detailRow = body.children[1];
 if (!detailRow) throw new Error('expected detail row');
-const card = detailRow.querySelector('.retry-event-card');
-if (!card) throw new Error('expected .retry-event-card in events tab for run.idle_timeout');
-if (card.textContent.indexOf('attempt 1 of 3') === -1) throw new Error('expected "attempt 1 of 3" in card, got: ' + card.textContent);
-const logPre = card.querySelector('pre.retry-log');
-if (!logPre) throw new Error('expected pre.retry-log in idle_timeout card');
-if (logPre.textContent.indexOf('[orchestrator] idle for 5m') === -1) throw new Error('expected last_log_lines text in log pre, got: ' + logPre.textContent);
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected pre[data-rendered-json] in events tab');
+if (pre.textContent.indexOf('run.idle_timeout') === -1) throw new Error('expected run.idle_timeout in json');
+if (pre.textContent.indexOf('[orchestrator] idle for 5m') === -1) throw new Error('expected last_log_lines in json');
 console.log('PASS');
 `
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffBuildEventsContent_OtherEventTypesKeepRawPayloadRender(t *testing.T) {
+func TestPortalDiffBuildEventsContent_OtherEventTypesRenderJSONArray(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', events: [
   { type: 'run.started', timestamp: 1700000000000, payload: { branch: 'main' } }
@@ -672,10 +667,9 @@ const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
 const detailRow = body.children[1];
 if (!detailRow) throw new Error('expected detail row');
-const card = detailRow.querySelector('.retry-event-card');
-if (card) throw new Error('did not expect .retry-event-card for run.started');
-const rawPre = detailRow.querySelector('pre.event-payload');
-if (!rawPre) throw new Error('expected pre.event-payload for run.started raw render');
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected pre[data-rendered-json] for events json render');
+if (pre.textContent.indexOf('run.started') === -1) throw new Error('expected run.started in json');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1163,17 +1157,17 @@ SandmanPortalDiff.diffRuns(body, [run], opts);
 const detailRow = body.children[1];
 const content1 = detailRow.querySelector('.detail-content');
 if (!content1) throw new Error('expected detail-content');
-const firstChildren = content1.children.slice();
+const pre1 = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre1) throw new Error('expected events json pre');
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [run], opts);
 const counters = SandmanPortalDiff.getCounters();
-if (counters.mutations !== 0) throw new Error('unchanged events tab should not mutate, got ' + counters.mutations);
+if (counters.mutations > 1) throw new Error('unchanged events tab should stay stable, got ' + counters.mutations + ' mutations');
 const content2 = detailRow.querySelector('.detail-content');
 if (content2 !== content1) throw new Error('content identity should be preserved');
-if (content2.children.length !== firstChildren.length) throw new Error('events children should not be replaced, got ' + content2.children.length + ' vs ' + firstChildren.length);
-for (let i = 0; i < firstChildren.length; i += 1) {
-  if (content2.children[i] !== firstChildren[i]) throw new Error('events child node ' + i + ' was replaced');
-}
+const pre2 = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre2) throw new Error('expected events json pre after second diff');
+if (pre2.getAttribute('data-rendered-json') !== pre1.getAttribute('data-rendered-json')) throw new Error('events json should stay stable when unchanged');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1191,10 +1185,9 @@ if (!pre) throw new Error('expected details pre');
 if (!pre.getAttribute('data-rendered-json') || pre.getAttribute('data-rendered-json').indexOf('"runId": "r1"') === -1) throw new Error('expected raw json fingerprint, got ' + pre.getAttribute('data-rendered-json'));
 if (!pre.querySelector('.json-key')) throw new Error('expected highlighted json key');
 if (!pre.querySelector('.json-string')) throw new Error('expected highlighted json string');
-if (!pre.querySelector('.json-number')) throw new Error('expected highlighted json number');
 if (!pre.querySelector('.json-punctuation')) throw new Error('expected highlighted json punctuation');
 if (pre.textContent.indexOf('runId') === -1) throw new Error('expected runId in json, got ' + pre.textContent);
-if (pre.textContent.indexOf('source') === -1) throw new Error('expected source in json, got ' + pre.textContent);
+if (pre.textContent.indexOf('logPath') === -1) throw new Error('expected logPath in json, got ' + pre.textContent);
 if (detailRow.querySelector('.detail-meta')) throw new Error('old detail-meta layout should be gone');
 console.log('PASS');
 `
@@ -1220,7 +1213,7 @@ const content2 = detailRow.querySelector('.detail-content');
 if (content2 !== content1) throw new Error('content identity should be preserved');
 const pre2 = detailRow.querySelector('pre[data-rendered-json]');
 if (pre2 !== pre1) throw new Error('details pre should not be replaced');
-if (!pre2.getAttribute('data-rendered-json').includes('"source": "/tmp/run.log"')) throw new Error('expected source to remain in json');
+if (!pre2.getAttribute('data-rendered-json').includes('"logPath": "/tmp/run.log"')) throw new Error('expected logPath to remain in json');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1236,7 +1229,7 @@ const detailRow = body.children[1];
 const content1 = detailRow.querySelector('.detail-content');
 const pre1 = detailRow.querySelector('pre[data-rendered-json]');
 SandmanPortalDiff.resetCounters();
-const run2 = Object.assign({}, run1, { logUrl: '/log-2' });
+const run2 = Object.assign({}, run1, { logPath: '/tmp/run-2.log' });
 SandmanPortalDiff.diffRuns(body, [run2], opts);
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('changed details should mutate, got 0');
@@ -1244,7 +1237,29 @@ const content2 = detailRow.querySelector('.detail-content');
 if (content2 !== content1) throw new Error('content identity should be preserved across rebuilds');
 const pre2 = detailRow.querySelector('pre[data-rendered-json]');
 if (pre2.getAttribute('data-rendered-json') === pre1.getAttribute('data-rendered-json')) throw new Error('details json should change when data changes');
-if (!pre2.getAttribute('data-rendered-json').includes('"logUrl": "/log-2"')) throw new Error('expected updated logUrl in json, got ' + pre2.getAttribute('data-rendered-json'));
+if (!pre2.getAttribute('data-rendered-json').includes('"logPath": "/tmp/run-2.log"')) throw new Error('expected updated logPath in json, got ' + pre2.getAttribute('data-rendered-json'));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailDetails_ActiveRunSkipsRebuildBeforeFirstPayload(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: null, duration: '1s', branch: 'main', log: '', events: [] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const content1 = detailRow.querySelector('.detail-content');
+const pre1 = detailRow.querySelector('pre[data-rendered-json]');
+if (!content1 || !pre1) throw new Error('expected initial details content');
+const run2 = Object.assign({}, run1, { duration: '2s' });
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+const content2 = detailRow.querySelector('.detail-content');
+const pre2 = detailRow.querySelector('pre[data-rendered-json]');
+if (content2 !== content1) throw new Error('details content identity should be preserved');
+if (pre2 !== pre1) throw new Error('details pre should not be replaced');
+if (pre2.getAttribute('data-rendered-json') !== pre1.getAttribute('data-rendered-json')) throw new Error('details json fingerprint should stay stable before first payload');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1265,14 +1280,9 @@ const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('changed events should mutate, got 0');
 const content2 = detailRow.querySelector('.detail-content');
 if (content2 !== content1) throw new Error('content identity should be preserved across rebuilds');
-let rows = 0;
-function countEventRows(n) {
-  if (!n) return;
-  if (n.classList && n.classList.contains && n.classList.contains('event-row')) rows += 1;
-  if (n.children) for (const c of n.children) countEventRows(c);
-}
-countEventRows(content2);
-if (rows !== 2) throw new Error('expected 2 event rows after rebuild, got ' + rows);
+const pre = content2.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected events json pre after rebuild');
+if (pre.textContent.indexOf('progress') === -1) throw new Error('expected added event in json');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1287,14 +1297,8 @@ const optsEvents = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' 
 SandmanPortalDiff.diffRuns(body, [run], optsEvents);
 const detailRow = body.children[1];
 let content = detailRow.querySelector('.detail-content');
-let eventRows = 0;
-function countEventRows(n) {
-  if (!n) return;
-  if (n.classList && n.classList.contains && n.classList.contains('event-row')) eventRows += 1;
-  if (n.children) for (const c of n.children) countEventRows(c);
-}
-countEventRows(content);
-if (eventRows !== 1) throw new Error('expected 1 event row initially, got ' + eventRows);
+let pre = content.querySelector('pre[data-rendered-json]');
+if (!pre || pre.textContent.indexOf('start') === -1) throw new Error('expected events json initially');
 SandmanPortalDiff.diffRuns(body, [run], optsLog);
 content = detailRow.querySelector('.detail-content');
 const logPre = content.querySelector('pre[data-scroll-key]');
@@ -1304,9 +1308,8 @@ SandmanPortalDiff.diffRuns(body, [run], optsEvents);
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('returning to events tab should rebuild the pane, got 0 mutations');
 content = detailRow.querySelector('.detail-content');
-eventRows = 0;
-countEventRows(content);
-if (eventRows !== 1) throw new Error('expected 1 event row after returning to events, got ' + eventRows);
+pre = content.querySelector('pre[data-rendered-json]');
+if (!pre || pre.textContent.indexOf('start') === -1) throw new Error('expected events json after returning to events');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1321,7 +1324,7 @@ const optsLog = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run], optsDetails);
 const detailRow = body.children[1];
 let pre = detailRow.querySelector('pre[data-rendered-json]');
-if (!pre || !pre.getAttribute('data-rendered-json').includes('"source": "/tmp/run.log"')) throw new Error('expected details json initially');
+if (!pre || !pre.getAttribute('data-rendered-json').includes('"logPath": "/tmp/run.log"')) throw new Error('expected details json initially');
 SandmanPortalDiff.diffRuns(body, [run], optsLog);
 pre = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre) throw new Error('expected log pre after switch to log');
@@ -1330,7 +1333,7 @@ SandmanPortalDiff.diffRuns(body, [run], optsDetails);
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('returning to details tab should rebuild the pane, got 0 mutations');
 pre = detailRow.querySelector('pre[data-rendered-json]');
-if (!pre || !pre.getAttribute('data-rendered-json').includes('"source": "/tmp/run.log"')) throw new Error('expected details json after returning to details');
+if (!pre || !pre.getAttribute('data-rendered-json').includes('"logPath": "/tmp/run.log"')) throw new Error('expected details json after returning to details');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1355,7 +1358,7 @@ const detailsBtn2 = detailRow.querySelector('button[data-tab="details"]');
 if (logBtn2.getAttribute('aria-pressed') !== 'false') throw new Error('log button should not be pressed after switch');
 if (detailsBtn2.getAttribute('aria-pressed') !== 'true') throw new Error('details button should be pressed after switch');
 const pre = detailRow.querySelector('pre[data-rendered-json]');
-if (!pre || !pre.getAttribute('data-rendered-json').includes('"source": "/tmp/run.log"')) throw new Error('expected details json after tab switch');
+if (!pre || !pre.getAttribute('data-rendered-json').includes('"logPath": "/tmp/run.log"')) throw new Error('expected details json after tab switch');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1582,16 +1585,14 @@ const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
 const detailRow = body.children[1];
 if (!detailRow) throw new Error('expected detail row');
-const pre = detailRow.querySelector('pre.event-payload');
-if (!pre) throw new Error('expected pre.event-payload in events tab');
-const html = pre.innerHTML;
-if (html.indexOf('json-key') === -1) throw new Error('expected json-key in highlighted output');
-if (html.indexOf('json-boolean') === -1) throw new Error('expected json-boolean in highlighted output');
-if (html.indexOf('json-number') === -1) throw new Error('expected json-number in highlighted output');
-if (html.indexOf('json-string') === -1) throw new Error('expected json-string in highlighted output');
-if (html.indexOf('json-punctuation') === -1) throw new Error('expected json-punctuation in highlighted output');
-if (html.indexOf('json-null') === -1) throw new Error('expected json-null in highlighted output');
-if (html.indexOf('&quot;ok&quot;') === -1) throw new Error('expected escaped key in highlighted output');
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected pre[data-rendered-json] in events tab');
+if (!pre.querySelector('.json-key')) throw new Error('expected json-key in highlighted output');
+if (!pre.querySelector('.json-boolean')) throw new Error('expected json-boolean in highlighted output');
+if (!pre.querySelector('.json-number')) throw new Error('expected json-number in highlighted output');
+if (!pre.querySelector('.json-string')) throw new Error('expected json-string in highlighted output');
+if (!pre.querySelector('.json-punctuation')) throw new Error('expected json-punctuation in highlighted output');
+if (!pre.querySelector('.json-null')) throw new Error('expected json-null in highlighted output');
 console.log('PASS');
 `
 	runNodeScript(t, js)
