@@ -475,34 +475,37 @@
 
   function subjectRunLabel(run) {
     if (!run) return 'Run';
-    const base = String(run.issueLabel || run.runId || run.key || 'Run').trim() || 'Run';
-    if (run.review) return 'Review ' + base;
-    return 'Parent ' + base;
+    const value = subjectRunValue(run) || 'Run';
+    if (run.review) return 'Review RunID ' + value;
+    return 'Parent RunID ' + value;
   }
 
   function subjectRunsFor(run, opts) {
     const visible = Array.isArray(opts && opts.runs) ? opts.runs : [];
     if (!run || run.issueNumber <= 0) return [];
     const seen = new Set();
-    const related = [];
+    const parents = [];
+    const reviews = [];
     for (const candidate of visible) {
       if (!candidate || candidate.issueNumber !== run.issueNumber) continue;
       const value = subjectRunValue(candidate);
       if (!value || seen.has(value)) continue;
       seen.add(value);
-      related.push(candidate);
+      if (candidate.review) reviews.push(candidate);
+      else parents.push(candidate);
     }
-    const currentValue = subjectRunValue(run);
-    if (currentValue && !seen.has(currentValue)) {
-      related.push(run);
-    }
-    related.sort((a, b) => {
-      if (!!a.review !== !!b.review) return a.review ? 1 : -1;
+    const canonicalParent = parents.find((candidate) => subjectRunValue(candidate) === subjectRunValue(run)) || parents[0] || (!run.review ? run : null);
+    const related = [];
+    if (canonicalParent) related.push(canonicalParent);
+    reviews.sort((a, b) => {
       const aStarted = a.startedAt ? new Date(a.startedAt).getTime() : 0;
       const bStarted = b.startedAt ? new Date(b.startedAt).getTime() : 0;
       if (aStarted !== bStarted) return bStarted - aStarted;
       return subjectRunValue(a).localeCompare(subjectRunValue(b));
     });
+    for (const candidate of reviews) {
+      related.push(candidate);
+    }
     return related;
   }
 

@@ -2889,6 +2889,12 @@
       return state.runs.find((run) => run && (run.key === runIdentity || run.runId === runIdentity)) || null;
     }
 
+    function normalizeRunIdentity(run) {
+      if (!run || !run.runId) return run;
+      if (run.key === run.runId) return run;
+      return { ...run, key: run.runId };
+    }
+
     function subjectRunIdentity(run) {
       return run ? (run.runId || run.key || '') : '';
     }
@@ -3453,7 +3459,7 @@
         const res = await fetch(apiPath, { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const payload = await res.json();
-        state.runs = Array.isArray(payload.runs) ? payload.runs : [];
+        state.runs = Array.isArray(payload.runs) ? payload.runs.map(normalizeRunIdentity) : [];
         state.loading = false;
         errorBanner.style.display = 'none';
         errorBanner.textContent = '';
