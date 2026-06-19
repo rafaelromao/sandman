@@ -2589,6 +2589,24 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffCreateRunRow_RendersOrphanReviewAsStandaloneRow(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#1066', issueNumber: 1066, reason: 'review', prNumber: 42, groupedReview: false };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+if (!created.row.classList.contains('run-row')) throw new Error('expected regular run-row class');
+if (created.row.getAttribute('data-run-key') !== 'a') throw new Error('expected data-run-key=a');
+const ctx = body.querySelector('tr.context-row[data-context-for="a"]');
+if (!ctx) throw new Error('expected standalone review context row');
+const chip = ctx.querySelector('.context-chip');
+if (!chip || !chip.textContent.includes('Reviewing PR #42 for issue #1066')) throw new Error('expected review context chip, got ' + (chip && chip.textContent));
+if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch row on standalone review');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffCreateRunRow_SuppressesBatchRowWhenReasonIsAutoSelect(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: 'auto-select', candidates: [1, 2, 3], batchIssues: [1, 2, 3], reason: 'auto-select' };

@@ -399,7 +399,9 @@ func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
 	}
 	for i := range runs {
 		if runs[i].Review {
-			runs[i].GroupedReview = true
+			if _, ok := parents[runs[i].IssueNumber]; ok {
+				runs[i].GroupedReview = true
+			}
 		}
 	}
 	return runs
