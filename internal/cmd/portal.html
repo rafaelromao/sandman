@@ -3381,6 +3381,10 @@
       normalizePortalViewState();
       let filtered = state.runs.filter(shouldShowRun);
       filtered = sortedVisibleRuns(filtered);
+      const selectedRun = state.expandedRunKey ? findRunByIdentity(state.expandedRunKey) : null;
+      if (selectedRun && !filtered.some((run) => run && run.key === selectedRun.key)) {
+        filtered = [selectedRun, ...filtered];
+      }
       syncSortButtons();
       const activeCount = state.runs.filter((run) => run && run.kind === 'active').length;
       const completedCount = state.runs.filter((run) => run && run.kind === 'completed').length;

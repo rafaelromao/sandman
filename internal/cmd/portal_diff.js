@@ -497,7 +497,9 @@
     const issueTag = '#' + String(run.issueNumber);
     const canonicalParent = parents.find((candidate) => {
       const label = String(candidate.issueLabel || '').trim();
-      return label === issueTag || label.startsWith(issueTag + ' ') || label.startsWith(issueTag + '(');
+      if (label === issueTag || label.startsWith(issueTag + ' ') || label.startsWith(issueTag + '(')) return true;
+      const runID = String(candidate.runId || candidate.key || '').trim();
+      return /(?:^|-)issue-\d+$/.test(runID) && runID.endsWith('-issue-' + String(run.issueNumber));
     }) || (!run.review && String(run.issueLabel || '').trim().startsWith(issueTag) ? run : null);
     const related = [];
     if (canonicalParent) related.push(canonicalParent);
