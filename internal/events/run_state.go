@@ -37,6 +37,7 @@ func ProjectRunStates(events []Event) []RunState {
 		case "run.started", "run.continued":
 			state := getOrCreate(event.RunID)
 			state.Started = event
+			state.Finished = nil
 		case "run.blocked":
 			state := getOrCreate(event.RunID)
 			state.Started = event
