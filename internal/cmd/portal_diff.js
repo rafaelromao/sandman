@@ -498,7 +498,7 @@
     const canonicalParent = parents.find((candidate) => {
       const label = String(candidate.issueLabel || '').trim();
       return label === issueTag || label.startsWith(issueTag + ' ') || label.startsWith(issueTag + '(');
-    }) || parents.find((candidate) => subjectRunValue(candidate) === subjectRunValue(run)) || parents[0] || (!run.review ? run : null);
+    }) || (!run.review && String(run.issueLabel || '').trim().startsWith(issueTag) ? run : null);
     const related = [];
     if (canonicalParent) related.push(canonicalParent);
     reviews.sort((a, b) => {
