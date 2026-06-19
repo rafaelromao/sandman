@@ -2343,6 +2343,9 @@
       const subjectKey = subjectRunIdentity(run) || key;
       const tab = state.tabs[subjectKey] || state.tabs[key] || 'log';
       const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath;
+      for (const openKey of Object.keys(streamSources)) {
+        if (openKey !== runKey) stopRunStream(openKey);
+      }
       if (wantStream) {
         startRunStream(run);
       } else {
@@ -3403,7 +3406,8 @@
         archiveSupported: true,
         expandedKey: state.expandedRunKey,
         tabs: state.tabs,
-        runs: filtered,
+        runs: state.runs,
+        visibleRuns: filtered,
         streamingKeys: streamingKeys,
       };
       if (!state.runs.length) {

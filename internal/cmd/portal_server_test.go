@@ -1242,7 +1242,7 @@ func TestPortal_PageWiresSubjectSelector(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{`data-action="set-subject"`, `findRunByIdentity`, `detail-subject-picker`, `runs: filtered`} {
+  for _, want := range []string{`data-action="set-subject"`, `findRunByIdentity`, `detail-subject-picker`, `runs: state.runs`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
