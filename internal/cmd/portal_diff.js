@@ -36,7 +36,7 @@
       issueTitleText: h.formatIssueTitle(run),
       canAbort: opts.abortSupported !== false && h.isRunAbortable(run, opts.abortReservations),
       canArchive: opts.archiveSupported !== false && h.isRunArchivable(run),
-      ariaExpanded: String(opts.expandedKey === run.key),
+      ariaExpanded: String(matchesExpandedSubject(run, opts.expandedKey)),
     };
     const stale = stalenessOf(run);
     snap.staleText = stale ? stale.text : '';
@@ -391,7 +391,7 @@
     tr.setAttribute('role', 'button');
     tr.setAttribute('tabindex', '0');
     tr.setAttribute('aria-controls', detailIDForKey(run.key));
-    tr.setAttribute('aria-expanded', String(opts.expandedKey === run.key));
+    tr.setAttribute('aria-expanded', String(matchesExpandedSubject(run, opts.expandedKey)));
 
     const titleCell = makeRowCell('title', tr);
     buildTitleCell(titleCell, run, opts.helpers);
@@ -465,6 +465,12 @@
   function subjectRunValue(run) {
     if (!run) return '';
     return String(run.runId || run.key || '').trim();
+  }
+
+  function matchesExpandedSubject(run, expandedKey) {
+    if (!run) return false;
+    const subjectKey = subjectRunValue(run);
+    return expandedKey === subjectKey || expandedKey === run.key;
   }
 
   function subjectRunLabel(run) {
@@ -742,6 +748,11 @@
   }
 
   function tabNameFor(run, opts) {
+    const subjectKey = subjectRunValue(run);
+    if (opts.tabs && Object.prototype.hasOwnProperty.call(opts.tabs, subjectKey)) {
+      const t = String(opts.tabs[subjectKey] || '').trim();
+      if (t === 'log' || t === 'events' || t === 'details') return t;
+    }
     if (opts.tabs && Object.prototype.hasOwnProperty.call(opts.tabs, run.key)) {
       const t = String(opts.tabs[run.key] || '').trim();
       if (t === 'log' || t === 'events' || t === 'details') return t;
@@ -843,7 +854,7 @@
     const built = buildDataRow(body, run, opts);
     setRowData(built.row, run);
     let detailTr = null;
-    if (opts.expandedKey === run.key) {
+    if (matchesExpandedSubject(run, opts.expandedKey)) {
       detailTr = buildDetailRow(body, run, opts);
       setDetailData(detailTr, run);
     }
@@ -1101,7 +1112,7 @@
       const r = updateRunRowCells(dataRow, oldRun, newRun, opts);
       if (r.mutated) updated += 1;
 
-      const wantDetail = opts.expandedKey === key;
+      const wantDetail = matchesExpandedSubject(newRun, opts.expandedKey);
       const detail = detailRowOf(body, key);
       if (wantDetail && !detail) {
         const newDetail = buildDetailRow(body, newRun, opts);

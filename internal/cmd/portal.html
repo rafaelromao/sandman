@@ -2337,13 +2337,15 @@
     function reconcileRunStreams() {
       const key = state.expandedRunKey;
       if (!key) { stopAllRunStreams(); return; }
-      const run = findRunByKey(key);
-      const tab = state.tabs[key] || 'log';
+      const run = findRunByIdentity(key);
+      const runKey = run ? run.key : key;
+      const subjectKey = subjectRunIdentity(run) || key;
+      const tab = state.tabs[subjectKey] || state.tabs[key] || 'log';
       const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath;
       if (wantStream) {
         startRunStream(run);
       } else {
-        stopRunStream(key);
+        stopRunStream(runKey);
       }
     }
 
@@ -2885,6 +2887,21 @@
     function findRunByIdentity(runIdentity) {
       if (!runIdentity || !Array.isArray(state.runs)) return null;
       return state.runs.find((run) => run && (run.key === runIdentity || run.runId === runIdentity)) || null;
+    }
+
+    function subjectRunIdentity(run) {
+      return run ? (run.runId || run.key || '') : '';
+    }
+
+    function findRunRowByIdentity(runIdentity) {
+      const run = findRunByIdentity(runIdentity);
+      const runKey = run ? run.key : runIdentity;
+      return Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey) || null;
+    }
+
+    function subjectTabKey(runIdentity) {
+      const run = findRunByIdentity(runIdentity);
+      return subjectRunIdentity(run) || runIdentity || '';
     }
 
     function continueIssueValue(command) {
@@ -3455,21 +3472,19 @@
 
     function toggleRun(runKey) {
       const prevExpandedRunKey = state.expandedRunKey;
-      if (state.expandedRunKey === runKey) {
+      const run = findRunByIdentity(runKey);
+      const subjectKey = subjectRunIdentity(run) || runKey;
+      if (state.expandedRunKey === subjectKey) {
         state.expandedRunKey = null;
       } else {
-        state.expandedRunKey = runKey;
+        state.expandedRunKey = subjectKey;
       }
       persistPortalViewState();
       render();
       if (state.expandedRunKey !== null && state.expandedRunKey !== prevExpandedRunKey) {
-        const detailRow = Array.from(runsBody.children).find(
-          (child) => child.getAttribute('data-detail-for') === state.expandedRunKey
-        );
+        const detailRow = findRunRowByIdentity(state.expandedRunKey);
         if (detailRow) {
-          const parentRow = Array.from(runsBody.children).find(
-            (child) => child.getAttribute('data-run-key') === state.expandedRunKey
-          );
+          const parentRow = findRunRowByIdentity(state.expandedRunKey);
           if (parentRow) {
             parentRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
           } else {
@@ -3478,9 +3493,7 @@
         }
       }
       if (prevExpandedRunKey !== null && state.expandedRunKey === null) {
-        const row = Array.from(runsBody.children).find(
-          (child) => child.getAttribute('data-run-key') === prevExpandedRunKey
-        );
+        const row = findRunRowByIdentity(prevExpandedRunKey);
         if (row) {
           row.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
@@ -3619,8 +3632,9 @@
         }
         if (action === 'set-tab') {
           const tab = button.getAttribute('data-tab') || 'log';
-          state.tabs[runKey] = tab;
-          state.expandedRunKey = runKey;
+          const subjectKey = subjectTabKey(runKey);
+          state.tabs[subjectKey] = tab;
+          state.expandedRunKey = subjectKey;
           persistPortalViewState();
           render();
         }
@@ -3639,8 +3653,15 @@
       if (!select) return;
       const nextRun = findRunByIdentity(select.value);
       if (!nextRun) return;
-      if (state.expandedRunKey === nextRun.key) return;
-      state.expandedRunKey = nextRun.key;
+      const nextRunKey = nextRun.runId || nextRun.key;
+      if (state.expandedRunKey === nextRunKey) return;
+      const currentRunKey = state.expandedRunKey;
+      const currentTabKey = currentRunKey ? subjectTabKey(currentRunKey) : '';
+      const currentTab = currentTabKey && state.tabs[currentTabKey] ? state.tabs[currentTabKey] : 'log';
+      if (!state.tabs[nextRunKey]) {
+        state.tabs[nextRunKey] = currentTab;
+      }
+      state.expandedRunKey = nextRunKey;
       persistPortalViewState();
       render();
     });
