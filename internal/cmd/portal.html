@@ -3672,7 +3672,8 @@
         const stubMatch = runKey.match(/^(?:issue|review-stub)-(\d+)$/);
         if (stubMatch) {
           const issueNum = Number(stubMatch[1]);
-          run = state.runs.find(r => r && r.issueNumber === issueNum) || null;
+          const group = (state.runs || []).filter(r => r && r.issueNumber === issueNum);
+          if (group.length) run = visibleRunForIssueGroup(issueNum, group);
         }
       }
       const subjectKey = subjectRunIdentity(run) || runKey;
