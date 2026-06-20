@@ -441,18 +441,19 @@ func TestAgentRun_Execute_PromptOnlyUsesSanitizedFilename(t *testing.T) {
 	}
 }
 
-func TestAgentRun_Execute_PromptOnlyEmptyBranchUsesPromptOnly(t *testing.T) {
+func TestAgentRun_Execute_PromptOnlyEmptyBranchUsesRunID(t *testing.T) {
 	repo := t.TempDir()
 	sb := &fakeSandbox{execStdout: "hello world\n"}
 
 	run := NewAgentRunWithLayout(nil, "", sb, paths.NewLayout(&config.Config{}, repo))
+	run.runID = "prompt-run-123"
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	wantPath := filepath.Join(repo, ".sandman", "logs", "prompt-only.log")
+	wantPath := filepath.Join(repo, ".sandman", "logs", "prompt-run-123.log")
 	if _, err := os.Stat(wantPath); err != nil {
-		t.Fatalf("expected prompt-only log file at %s: %v", wantPath, err)
+		t.Fatalf("expected runID log file at %s: %v", wantPath, err)
 	}
 }
 

@@ -87,8 +87,14 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 	var logName string
 	if r.issue != nil {
 		logName = fmt.Sprintf("%d.log", r.issue.Number)
+	} else if r.review && strings.TrimSpace(r.branch) != "" {
+		logName = r.layout.SafeLogFilename(strings.TrimSpace(r.branch)) + ".log"
+	} else if runID := strings.TrimSpace(r.runID); runID != "" {
+		logName = r.layout.SafeLogFilename(runID) + ".log"
+	} else if branch := strings.TrimSpace(r.branch); branch != "" {
+		logName = r.layout.SafeLogFilename(branch) + ".log"
 	} else {
-		logName = r.layout.SafeLogFilename(r.branch) + ".log"
+		return fmt.Errorf("missing log identifier")
 	}
 	logPath := filepath.Join(logDir, logName)
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)

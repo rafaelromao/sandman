@@ -782,7 +782,7 @@ func TestAgentLogPath(t *testing.T) {
 		filename string
 	}{
 		{"numeric log", "42.log"},
-		{"prompt-only log", "prompt-only.log"},
+		{"prompt-only log", "prompt-run-123.log"},
 		{"bare filename", "foo"},
 	}
 	for _, tt := range tests {
@@ -2033,14 +2033,14 @@ func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "", nil, 0, "", "")
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "prompt-run-123", nil, 0, "", "")
 	if !started {
 		t.Fatal("expected prompt-only run to start")
 	}
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success", result.Status)
 	}
-	wantLogPath := filepath.Join(workDir, ".sandman", "logs", "prompt-only.log")
+	wantLogPath := filepath.Join(workDir, ".sandman", "logs", "prompt-run-123.log")
 	if markerPath != wantLogPath {
 		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
 	}
@@ -2120,7 +2120,7 @@ func TestRunPromptOnlySingle_PrefixesOutputPromptOnlyWhenNotReview(t *testing.T)
 	}
 }
 
-func TestRunPromptOnlySingle_ReviewRunUsesPRLogPath(t *testing.T) {
+func TestRunPromptOnlySingle_ReviewRunUsesBranchLogPath(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -2158,7 +2158,7 @@ func TestRunPromptOnlySingle_ReviewRunUsesPRLogPath(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success", result.Status)
 	}
-	wantLogPath := filepath.Join(workDir, ".sandman", "logs", "PR17.log")
+	wantLogPath := filepath.Join(workDir, ".sandman", "logs", paths.NewLayout(&config.Config{}, workDir).SafeLogFilename("sandman/review-17-1")+".log")
 	if markerPath != wantLogPath {
 		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
 	}

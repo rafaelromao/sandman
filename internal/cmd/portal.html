@@ -727,6 +727,7 @@
       font-size: 12px;
       min-width: 0;
       overflow-wrap: anywhere;
+      white-space: pre-line;
     }
     .meta-line span {
       text-transform: uppercase;
@@ -3682,18 +3683,7 @@
       persistPortalViewState();
       render();
       if (state.expandedRunKey !== null && state.expandedRunKey !== prevExpandedRunKey) {
-        const detailRow = findRunRowByIdentity(state.expandedRunKey);
-        if (detailRow) {
-          const parentRow = findRunRowByIdentity(state.expandedRunKey);
-          if (parentRow) {
-            parentRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          } else {
-            detailRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
-        }
-      }
-      if (prevExpandedRunKey !== null && state.expandedRunKey === null) {
-        const row = findRunRowByIdentity(prevExpandedRunKey);
+        const row = findRunRowByIdentity(state.expandedRunKey);
         if (row) {
           row.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }

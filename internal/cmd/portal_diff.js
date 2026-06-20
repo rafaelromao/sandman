@@ -508,9 +508,8 @@
     if (!related.length) return;
     const row = global.document.createElement('div');
     row.classList.add('detail-subject-picker');
-    const label = global.document.createElement('label');
-    label.textContent = 'Subject';
     const select = global.document.createElement('select');
+    select.setAttribute('aria-label', 'Subject');
     select.setAttribute('data-action', 'set-subject');
     select.setAttribute('data-run-key', rowRun.key);
     const currentValue = subjectRunValue(subjectRun || rowRun);
@@ -523,8 +522,7 @@
       select.appendChild(option);
     }
     select.value = currentValue;
-    label.appendChild(select);
-    row.appendChild(label);
+    row.appendChild(select);
     panel.appendChild(row);
   }
 
@@ -682,12 +680,6 @@
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
     const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
-    if (log === 'No log file yet.') {
-      const reason = global.document.createElement('p');
-      reason.classList.add('log-reason');
-      reason.textContent = 'Waiting for first output from this run.';
-      section.appendChild(reason);
-    }
     const pre = buildLogPre(run, helpers);
     section.appendChild(pre);
     content.appendChild(section);
@@ -771,7 +763,7 @@
     return tr;
   }
 
-  function updateDetailContent(detailRow, run, opts) {
+  function updateDetailContent(detailRow, oldRun, run, opts) {
     const subjectRun = findRunByIdentity(opts.expandedKey, opts) || run;
     const tabName = tabNameFor(subjectRun, opts);
     const tabButtons = detailRow.querySelectorAll('button[data-tab]');
@@ -807,6 +799,9 @@
           return;
         }
         if (oldLog && oldLog !== 'No log file yet.' && newLog === 'No log file yet.') {
+          return;
+        }
+        if (oldRun && oldRun.kind === 'active' && run.kind !== 'active' && oldLog && oldLog !== 'No log file yet.' && newLog && newLog !== oldLog && !String(newLog).startsWith(oldLog)) {
           return;
         }
         if (oldLog && newLog.length >= oldLog.length && newLog.startsWith(oldLog)) {
@@ -1118,7 +1113,7 @@
         clearDetailData(detail);
         removed += 1;
       } else if (wantDetail && detail) {
-        updateDetailContent(detail, newRun, opts);
+        updateDetailContent(detail, oldRun, newRun, opts);
         setDetailData(detail, newRun);
       }
     }
