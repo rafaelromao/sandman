@@ -512,13 +512,22 @@
     .filter-toggle-group .fchip.fchip-toggle {
       min-width: 0;
       justify-content: center;
-      border: none;
       border-radius: 0;
       padding: 8px 14px;
-      background: transparent;
+      background: var(--surface);
+      border-color: var(--border);
+      color: var(--muted);
     }
     .filter-toggle-group .fchip.fchip-toggle + .fchip.fchip-toggle {
       border-left: 1px solid var(--border);
+    }
+    .filter-toggle-group .fchip.fchip-toggle[aria-pressed="true"] {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-ink);
+    }
+    .filter-toggle-group .fchip.fchip-toggle[aria-pressed="true"]:hover {
+      color: var(--accent);
     }
     .fchip {
       display: inline-flex;
