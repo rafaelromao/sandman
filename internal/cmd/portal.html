@@ -3673,7 +3673,15 @@
         if (stubMatch) {
           const issueNum = Number(stubMatch[1]);
           const group = (state.runs || []).filter(r => r && r.issueNumber === issueNum);
-          if (group.length) run = visibleRunForIssueGroup(issueNum, group);
+          if (group.length) {
+            const parents = group.filter(r => !r.review);
+            if (parents.length) {
+              run = parents.find(c => Number(c.reviewCount || 0) > 0 || c.reviewVerdict) || parents[0];
+            } else {
+              const summary = summarizeReviewGroup(group.filter(r => r.review));
+              run = summary.source || null;
+            }
+          }
         }
       }
       const subjectKey = subjectRunIdentity(run) || runKey;
