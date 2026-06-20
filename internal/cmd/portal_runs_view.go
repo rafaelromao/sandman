@@ -564,7 +564,7 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 	usedRunIDs := make(map[string]struct{})
 	for _, issueNumber := range active.IssueNumbers {
 		state := v.latestRunStateForIssue(runStates, issueNumber, batchStart)
-		if state != nil && state.Status() == "queued" {
+		if state != nil && state.Status() == "queued" && !state.IsActive() {
 			state = nil
 		}
 		blocked := v.latestBlockedEventForIssue(eventList, issueNumber, batchStart)
