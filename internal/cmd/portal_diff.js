@@ -32,6 +32,7 @@
       contextText: contextText(run),
       batchText: batchText(run),
       startedText: h.formatTime(run.startedAt),
+      archivedText: run.archived ? 'Archived' : '',
       durationText: h.formatDuration(run.duration),
       issueTitleText: h.formatIssueTitle(run),
       canAbort: opts.abortSupported !== false && h.isRunAbortable(run, opts.abortReservations),
@@ -75,6 +76,19 @@
     return td;
   }
 
+  function rowColspan(opts) {
+    return opts && opts.showArchived ? '7' : '6';
+  }
+
+  function setFirstCellColspan(row, colspan) {
+    if (!row || !row.children || !row.children.length) return;
+    const cell = row.children[0];
+    if (cell && cell.getAttribute && cell.getAttribute('colspan') !== colspan) {
+      cell.setAttribute('colspan', colspan);
+      mutationCount += 1;
+    }
+  }
+
   function buildTitleCell(td, run, helpers) {
     const wrap = global.document.createElement('div');
     wrap.classList.add('run-title');
@@ -96,14 +110,14 @@
     return '';
   }
 
-  function buildContextRow(run) {
+  function buildContextRow(run, opts) {
     const text = contextText(run);
     if (!text) return null;
     const tr = global.document.createElement('tr');
     tr.classList.add('context-row');
     tr.setAttribute('data-context-for', run.key);
     const td = global.document.createElement('td');
-    td.setAttribute('colspan', '6');
+    td.setAttribute('colspan', rowColspan(opts));
     td.appendChild(buildContextChip(text));
     tr.appendChild(td);
     return tr;
@@ -120,7 +134,7 @@
     return body.querySelector('tr.context-row[data-context-for="' + runKey + '"]');
   }
 
-  function reconcileContextRow(body, dataRow, oldRun, newRun) {
+  function reconcileContextRow(body, dataRow, oldRun, newRun, opts) {
     const oldText = contextText(oldRun);
     const newText = contextText(newRun);
     if (oldText === newText) return;
@@ -137,9 +151,10 @@
       if (chip) {
         setText(chip, newText);
       }
+      setFirstCellColspan(existing, rowColspan(opts));
       return;
     }
-    const fresh = buildContextRow(newRun);
+    const fresh = buildContextRow(newRun, opts);
     if (!fresh) return;
     const nextRow = dataRow.nextElementSibling;
     if (nextRow && (nextRow.classList.contains('detail-row') || nextRow.classList.contains('context-row') || nextRow.classList.contains('batch-row'))) {
@@ -150,7 +165,7 @@
     mutationCount += 1;
   }
 
-  function reconcileBatchRow(body, dataRow, oldRun, newRun) {
+  function reconcileBatchRow(body, dataRow, oldRun, newRun, opts) {
     const oldBatchText = batchText(oldRun);
     const newBatchText = batchText(newRun);
     if (oldBatchText === newBatchText) return;
@@ -167,9 +182,10 @@
       if (chip) {
         setText(chip, newBatchText);
       }
+      setFirstCellColspan(existing, rowColspan(opts));
       return;
     }
-    const fresh = buildBatchRow(newRun);
+    const fresh = buildBatchRow(newRun, opts);
     if (!fresh) return;
     const anchor = nextSiblingAnchorRow(dataRow);
     if (anchor) {
@@ -209,14 +225,14 @@
     return 'Part of batch: ' + issues.map((n) => '#' + n).join(', ');
   }
 
-  function buildBatchRow(run) {
+  function buildBatchRow(run, opts) {
     const text = batchText(run);
     if (!text) return null;
     const tr = global.document.createElement('tr');
     tr.classList.add('batch-row');
     tr.setAttribute('data-batch-for', run.key);
     const td = global.document.createElement('td');
-    td.setAttribute('colspan', '6');
+    td.setAttribute('colspan', rowColspan(opts));
     const chip = global.document.createElement('span');
     chip.classList.add('batch-membership', 'mono');
     chip.setAttribute('data-batch-membership', '1');
@@ -243,9 +259,16 @@
     labelSpan.textContent = label;
     badge.appendChild(labelSpan);
     td.appendChild(badge);
-    if (run.archived) appendArchivedBadge(td);
     const stale = stalenessOf(run);
     if (stale) appendStaleChip(td, stale.text, stale.warn);
+  }
+
+  function buildArchivedCell(td, run) {
+    if (run.archived) {
+      appendArchivedBadge(td);
+      return;
+    }
+    td.textContent = '—';
   }
 
   function appendArchivedBadge(td) {
@@ -381,6 +404,9 @@
     const badgeCell = makeRowCell('badge', tr);
     buildBadgeCell(badgeCell, run, opts.helpers);
 
+    const archivedCell = makeRowCell('archived', tr);
+    buildArchivedCell(archivedCell, run);
+
     const startedCell = makeRowCell('started', tr);
     buildMonoCell(startedCell, opts.helpers.formatTime(run.startedAt));
 
@@ -393,10 +419,10 @@
     const actionsCell = makeRowCell('actions', tr);
     buildActionsCell(actionsCell, run, opts);
 
-    const contextTr = buildContextRow(run);
+    const contextTr = buildContextRow(run, opts);
     if (contextTr) body.appendChild(contextTr);
 
-    const batchTr = buildBatchRow(run);
+    const batchTr = buildBatchRow(run, opts);
     if (batchTr) body.appendChild(batchTr);
 
     return { row: tr, contextRow: contextTr, batchRow: batchTr };
@@ -753,7 +779,7 @@
     tr.setAttribute('role', 'region');
     tr.setAttribute('aria-labelledby', rowIDForKey(run.key));
     const td = global.document.createElement('td');
-    td.setAttribute('colspan', '6');
+    td.setAttribute('colspan', rowColspan(opts));
     const panel = global.document.createElement('div');
     panel.classList.add('detail-panel');
     buildDetailContent(panel, run, subjectRun, tabNameFor(subjectRun, opts), opts.helpers, opts);
@@ -857,6 +883,17 @@
     }
   }
 
+  function updateArchivedCell(cell, oldSnap, newSnap) {
+    if (oldSnap.archived === newSnap.archived) return;
+    cell.innerHTML = '';
+    if (newSnap.archived) {
+      appendArchivedBadge(cell);
+    } else {
+      cell.textContent = '—';
+    }
+    mutationCount += 1;
+  }
+
   function setClass(node, name, present) {
     if (present && !node.classList.contains(name)) {
       node.classList.add(name);
@@ -901,28 +938,7 @@
         setText(labelSpan, newSnap.badgeLabel);
       }
     }
-    if (oldSnap.archived !== newSnap.archived) {
-      reconcileArchivedBadge(cell, newSnap.archived);
-    }
     reconcileStaleChip(cell, newSnap.staleText, newSnap.staleWarn);
-  }
-
-  function reconcileArchivedBadge(cell, archived) {
-    let existing = null;
-    for (const child of cell.querySelectorAll('.badge')) {
-      if (child.classList.contains('archived')) { existing = child; break; }
-    }
-    if (archived) {
-      if (!existing) {
-        appendArchivedBadge(cell);
-        mutationCount += 1;
-      }
-      return;
-    }
-    if (existing) {
-      cell.removeChild(existing);
-      mutationCount += 1;
-    }
   }
 
   function updateMonoCell(cell, newText) {
@@ -987,6 +1003,9 @@
     const badgeCell = cellOf(row, 'badge');
     if (badgeCell) updateBadgeCell(badgeCell, oldSnap, newSnap);
 
+    const archivedCell = cellOf(row, 'archived');
+    if (archivedCell) updateArchivedCell(archivedCell, oldSnap, newSnap);
+
     const startedCell = cellOf(row, 'started');
     if (startedCell) updateMonoCell(startedCell, newSnap.startedText);
 
@@ -1001,8 +1020,12 @@
 
     const body = row.parentNode;
     if (body) {
-      reconcileContextRow(body, row, oldRun, newRun);
-      reconcileBatchRow(body, row, oldRun, newRun);
+      reconcileContextRow(body, row, oldRun, newRun, opts);
+      reconcileBatchRow(body, row, oldRun, newRun, opts);
+      const detail = detailRowOf(body, newRun.key);
+      if (detail) {
+        setFirstCellColspan(detail, rowColspan(opts));
+      }
     }
 
     setRowData(row, newRun);
@@ -1036,10 +1059,10 @@
     return removed;
   }
 
-  function setEmpty(body, html) {
+  function setEmpty(body, html, colspan) {
     const placeholder = global.document.createElement('tr');
     const td = global.document.createElement('td');
-    td.setAttribute('colspan', '6');
+    td.setAttribute('colspan', String(colspan || 6));
     td.innerHTML = html;
     placeholder.appendChild(td);
     body.replaceChildren(placeholder);

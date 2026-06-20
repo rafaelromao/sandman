@@ -101,6 +101,28 @@ const createdGrouped = SandmanPortalDiff.insertRunRow(body, groupedReview, opts)
 if (body.querySelector('tr.context-row[data-context-for="PR42"]')) throw new Error('expected grouped review chip removed');
 const groupedTitle = createdGrouped.row.querySelector('[data-cell="title"]').children[0];
 if (groupedTitle.children.length !== 2) throw new Error('expected grouped review title to keep label and meta only');
+
+const singularRun = { key: 'issue-2', kind: 'active', status: 'reviewing', issueLabel: '#2', runId: 'issue-2', issueNumber: 2, retriesDone: 1, retriesTotal: 1 };
+SandmanPortalDiff.insertRunRow(body, singularRun, opts);
+const singularMeta = body.querySelector('tr[data-run-key="issue-2"]').querySelector('[data-cell="title"]').children[0].children[1];
+if (!singularMeta.textContent.includes('1 retry')) throw new Error('expected singular retry label, got ' + singularMeta.textContent);
+if (singularMeta.textContent.includes('retriy')) throw new Error('misspelling "retriy" must not appear, got ' + singularMeta.textContent);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffCreateRunRow_RendersArchivedBadgeInArchivedColumn(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'archived-1', kind: 'completed', status: 'success', archived: true, issueLabel: '#1', runId: 'archived-1', issueNumber: 1 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null, showArchived: true };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+const archivedCell = created.row.querySelector('[data-cell="archived"]');
+if (!archivedCell) throw new Error('expected archived cell');
+if (!archivedCell.textContent.includes('Archived')) throw new Error('expected archived badge in archived cell');
+const statusCell = created.row.querySelector('[data-cell="badge"]');
+if (statusCell.textContent.includes('Archived')) throw new Error('expected status cell to stay free of archived badge text');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1907,7 +1929,7 @@ const renderRunMeta = (run) => {
   const summary = [];
   if (Number(run.retriesDone || 0) > 0) {
     const count = Number(run.retriesDone || 0);
-    summary.push(count + ' retri' + (count === 1 ? 'y' : 'es'));
+    summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
   }
   if (Number(run.reviewCount || 0) > 0) {
     const count = Number(run.reviewCount || 0);
@@ -2564,15 +2586,10 @@ const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 const badgeCell = created.row.querySelector('[data-cell="badge"]');
 if (!badgeCell) throw new Error('expected badge cell');
-const badges = badgeCell.querySelectorAll('.badge');
-let archived = null;
-for (const b of badges) {
-  if (b.classList.contains('archived')) { archived = b; break; }
-}
-if (!archived) throw new Error('expected .badge.archived in badge cell, got badges: ' + badges.length);
-const label = archived.querySelector('.badge-label');
-if (!label) throw new Error('expected .badge-label on .badge.archived');
-if (label.textContent !== 'Archived') throw new Error('expected badge label "Archived", got ' + JSON.stringify(label.textContent));
+if (badgeCell.textContent.includes('Archived')) throw new Error('expected badge cell to stay free of archived text, got: ' + badgeCell.textContent);
+const archivedCell = created.row.querySelector('[data-cell="archived"]');
+if (!archivedCell) throw new Error('expected archived cell');
+if (!archivedCell.textContent.includes('Archived')) throw new Error('expected archived badge in archived cell, got: ' + archivedCell.textContent);
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -2610,7 +2627,7 @@ const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
 const beforeRow = created.row;
-const beforeBadgeCell = created.row.querySelector('[data-cell="badge"]');
+const beforeArchivedCell = created.row.querySelector('[data-cell="archived"]');
 SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true on archived false->true');
@@ -2618,13 +2635,11 @@ if (body.children.indexOf(beforeRow) < 0) throw new Error('expected row identity
 if (!created.row.classList.contains('row-archived')) {
   throw new Error('expected row-archived class added after toggle');
 }
-const badgeCellAfter = created.row.querySelector('[data-cell="badge"]');
-if (badgeCellAfter !== beforeBadgeCell) throw new Error('expected badge cell identity preserved');
-let foundArchived = false;
-for (const b of badgeCellAfter.querySelectorAll('.badge')) {
-  if (b.classList.contains('archived')) { foundArchived = true; break; }
-}
-if (!foundArchived) throw new Error('expected .badge.archived added after toggle');
+const archivedCellAfter = created.row.querySelector('[data-cell="archived"]');
+if (archivedCellAfter !== beforeArchivedCell) throw new Error('expected archived cell identity preserved');
+const archivedLabelAfter = archivedCellAfter.querySelector('.badge-label');
+if (!archivedLabelAfter || archivedLabelAfter.textContent !== 'Archived') throw new Error('expected archived badge text added after toggle');
+if (created.row.querySelector('[data-cell="badge"]').textContent.includes('Archived')) throw new Error('expected status cell to stay free of archived text after toggle');
 
 // Toggle back to non-archived.
 const runNew2 = Object.assign({}, runNew, { archived: false });
@@ -2634,11 +2649,8 @@ if (!result2.mutated) throw new Error('expected mutated=true on archived true->f
 if (created.row.classList.contains('row-archived')) {
   throw new Error('expected row-archived class removed after toggle back');
 }
-let stillArchived = false;
-for (const b of created.row.querySelector('[data-cell="badge"]').querySelectorAll('.badge')) {
-  if (b.classList.contains('archived')) { stillArchived = true; break; }
-}
-if (stillArchived) throw new Error('expected .badge.archived removed after toggle back');
+if (created.row.querySelector('[data-cell="archived"]').querySelector('.badge-label')) throw new Error('expected archived badge removed after toggle back');
+if (created.row.querySelector('[data-cell="badge"]').textContent.includes('Archived')) throw new Error('expected status cell to stay free of archived text after toggle back');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -2655,11 +2667,8 @@ SandmanPortalDiff.diffRuns(body, runs, opts);
 const firstRow = body.querySelector('tr[data-run-key="a"]');
 if (!firstRow) throw new Error('expected first row');
 if (!firstRow.classList.contains('row-archived')) throw new Error('expected row-archived on first render');
-let firstArchived = false;
-for (const b of firstRow.querySelector('[data-cell="badge"]').querySelectorAll('.badge')) {
-  if (b.classList.contains('archived')) { firstArchived = true; break; }
-}
-if (!firstArchived) throw new Error('expected .badge.archived on first render');
+if (!firstRow.querySelector('[data-cell="archived"]').textContent.includes('Archived')) throw new Error('expected archived text on first render');
+if (firstRow.querySelector('[data-cell="badge"]').textContent.includes('Archived')) throw new Error('expected status cell to stay free of archived text on first render');
 
 // Second poll: same data, expect the same DOM node to be reused.
 SandmanPortalDiff.diffRuns(body, runs, opts);
@@ -2667,11 +2676,8 @@ const secondRow = body.querySelector('tr[data-run-key="a"]');
 if (!secondRow) throw new Error('expected second row');
 if (secondRow !== firstRow) throw new Error('expected same DOM node identity across polls (row was rebuilt)');
 if (!secondRow.classList.contains('row-archived')) throw new Error('expected row-archived preserved on second render');
-let secondArchived = false;
-for (const b of secondRow.querySelector('[data-cell="badge"]').querySelectorAll('.badge')) {
-  if (b.classList.contains('archived')) { secondArchived = true; break; }
-}
-if (!secondArchived) throw new Error('expected .badge.archived preserved on second render');
+if (!secondRow.querySelector('[data-cell="archived"]').textContent.includes('Archived')) throw new Error('expected archived text preserved on second render');
+if (secondRow.querySelector('[data-cell="badge"]').textContent.includes('Archived')) throw new Error('expected status cell to stay free of archived text on second render');
 console.log('PASS');
 `
 	runNodeScript(t, js)
