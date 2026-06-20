@@ -2120,7 +2120,7 @@ func TestRunPromptOnlySingle_PrefixesOutputPromptOnlyWhenNotReview(t *testing.T)
 	}
 }
 
-func TestRunPromptOnlySingle_ReviewRunUsesPRLogPath(t *testing.T) {
+func TestRunPromptOnlySingle_ReviewRunUsesBranchLogPath(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -2158,7 +2158,7 @@ func TestRunPromptOnlySingle_ReviewRunUsesPRLogPath(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success", result.Status)
 	}
-	wantLogPath := filepath.Join(workDir, ".sandman", "logs", "PR17.log")
+	wantLogPath := filepath.Join(workDir, ".sandman", "logs", paths.NewLayout(&config.Config{}, workDir).SafeLogFilename("sandman/review-17-1")+".log")
 	if markerPath != wantLogPath {
 		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
 	}

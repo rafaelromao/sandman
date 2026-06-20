@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -1316,26 +1317,27 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("active review prefers saved log", func(t *testing.T) {
+	t.Run("active review uses saved log when live output is empty", func(t *testing.T) {
 		repoRoot := t.TempDir()
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 
-		runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
-		sockPath := filepath.Join(runDir, "run.sock")
-		if err := os.MkdirAll(runDir, 0755); err != nil {
+		sockDir, err := os.MkdirTemp("", "p")
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
-			t.Fatal(err)
-		}
+		sockPath := filepath.Join(sockDir, "s.sock")
 		ln, err := net.Listen("unix", sockPath)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = ln.Close() })
-		if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "PR42.log"), []byte("saved review log\nmore review output\n"), 0644); err != nil {
+		if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		logName := paths.NewLayout(&config.Config{}, repoRoot).SafeLogFilename("sandman/review-PR42") + ".log"
+		if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", logName), []byte("saved review log\nmore review output\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 
@@ -1354,7 +1356,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		}
 		got := runs[0]
 		if !strings.Contains(got.Log, "saved review log") || !strings.Contains(got.Log, "more review output") {
-			t.Fatalf("expected saved review log to win over live socket, got %#v", got.Log)
+			t.Fatalf("expected saved review log when live output is empty, got %#v", got.Log)
 		}
 	})
 
@@ -1574,6 +1576,7 @@ func TestPortal_MetaLineCSS_AllowsLongTokenToBreak(t *testing.T) {
 		{"grid-template-columns: auto minmax(0, 1fr)", "value track can shrink below its min-content so the cell can be narrower than the longest token"},
 		{"overflow-wrap: anywhere", "long unbreakable run-id token can break inside the value cell"},
 		{"min-width: 0", "grid container can be narrower than its content (prevents forcing the column wider)"},
+		{"white-space: pre-line", "newline in run meta must render as a visible line break"},
 	}
 	for _, r := range required {
 		if !strings.Contains(body, r.token) {

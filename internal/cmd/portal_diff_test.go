@@ -1180,9 +1180,29 @@ const detailRow = body.children[1];
 const pre = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre) throw new Error('expected log pre');
 if (pre.getAttribute('data-rendered-log') !== 'No log file yet.') throw new Error('expected placeholder');
+if (pre.textContent !== 'No log file yet.') throw new Error('expected only placeholder text, got ' + JSON.stringify(pre.textContent));
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'real log line', helpers);
 if (pre.getAttribute('data-rendered-log') !== 'real log line') throw new Error('expected real log attr');
+if (pre.textContent !== 'real log line') throw new Error('expected real log text, got ' + JSON.stringify(pre.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffDiffRuns_RemovesPlaceholderAfterRealLog(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: '' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+if (pre.textContent !== 'No log file yet.') throw new Error('expected placeholder text, got ' + JSON.stringify(pre.textContent));
+const run2 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'real log line' };
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [run2], opts);
 if (pre.textContent !== 'real log line') throw new Error('expected real log text, got ' + JSON.stringify(pre.textContent));
 console.log('PASS');
 `
@@ -1199,7 +1219,7 @@ const detailRow = body.children[1];
 const pre = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre) throw new Error('expected log pre');
 if (pre.textContent !== 'review output line 1\nreview output line 2') throw new Error('expected live review log, got ' + JSON.stringify(pre.textContent));
-const completedRun = { key: 'PR17', kind: 'completed', status: 'success', review: true, issueLabel: 'PR17', runId: 'PR17', log: '' };
+const completedRun = { key: 'PR17', kind: 'completed', status: 'success', review: true, issueLabel: 'PR17', runId: 'PR17', log: 'saved review log\nmore review output' };
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [completedRun], opts);
 if (pre.textContent === 'No log file yet.') throw new Error('completion should not wipe live review log');
@@ -1391,7 +1411,11 @@ SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('switching subject should mutate the detail row, got 0');
+const subjectPicker = detailRow.querySelector('.detail-subject-picker');
+if (!subjectPicker) throw new Error('expected subject picker');
+if (subjectPicker.querySelector('label')) throw new Error('subject label should not be visible');
 const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (subjectSelect.getAttribute('aria-label') !== 'Subject') throw new Error('subject select should keep aria-label');
 if (!subjectSelect || subjectSelect.value !== 'PR42') throw new Error('expected selected review subject after switch, got ' + (subjectSelect && subjectSelect.value));
 const pre2 = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre2 || pre2.textContent.indexOf('review log') === -1) throw new Error('expected review log after subject switch, got ' + (pre2 && pre2.textContent));

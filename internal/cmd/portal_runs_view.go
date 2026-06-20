@@ -792,10 +792,12 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun)
 		run.BatchKey = match.instance.Key
 		if match.state.Finished != nil {
-			if saved := v.readPortalTextFile(run.LogPath); strings.TrimSpace(saved) != "" {
-				run.Log = saved
-			} else if strings.TrimSpace(run.Log) == "" {
-				run.Log = "No log file yet."
+			if strings.TrimSpace(run.Log) == "" {
+				if saved := v.readPortalTextFile(run.LogPath); strings.TrimSpace(saved) != "" {
+					run.Log = saved
+				} else {
+					run.Log = "No log file yet."
+				}
 			}
 		}
 		return run
@@ -1207,17 +1209,22 @@ func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
 
 func (v *portalRunsView) portalLogPathForRun(repoRoot string, issueNumber int, branch string, review bool, prNumber int) string {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	if review && prNumber > 0 {
-		return filepath.Join(layout.LogDir, fmt.Sprintf("PR%d.log", prNumber))
+	branch = strings.TrimSpace(branch)
+	if review {
+		if branch != "" {
+			return filepath.Join(layout.LogDir, layout.SafeLogFilename(branch)+".log")
+		}
+		if prNumber > 0 {
+			return filepath.Join(layout.LogDir, fmt.Sprintf("PR%d.log", prNumber))
+		}
 	}
 	if issueNumber > 0 {
 		return filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNumber))
 	}
-	branch = strings.TrimSpace(branch)
-	if branch == "" {
-		return ""
+	if branch != "" {
+		return filepath.Join(layout.LogDir, layout.SafeLogFilename(branch)+".log")
 	}
-	return filepath.Join(layout.LogDir, layout.SafeLogFilename(branch)+".log")
+	return ""
 }
 
 func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {

@@ -3459,13 +3459,16 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 	}
 
 	started := time.Now().Add(-5 * time.Minute)
+	issueStarted := started.Add(-2 * time.Minute)
 	branch17 := "sandman/review-17-fixed"
 	branch18 := "sandman/review-18-fixed"
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: started, RunID: "PR17", Issue: 0, Payload: map[string]any{"branch": branch17, "review": true, "pr_number": 17}},
-		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "PR17", Issue: 0, Payload: map[string]any{"status": "success", "branch": branch17, "review": true}},
-		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "PR18", Issue: 0, Payload: map[string]any{"branch": branch18, "review": true, "pr_number": 18}},
-		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "PR18", Issue: 0, Payload: map[string]any{"status": "success", "branch": branch18, "review": true}},
+		{Type: "run.started", Timestamp: issueStarted, RunID: "issue-1177", Issue: 1177, Payload: map[string]any{"branch": "sandman/1177-fix"}},
+		{Type: "run.finished", Timestamp: issueStarted.Add(30 * time.Second), RunID: "issue-1177", Issue: 1177, Payload: map[string]any{"status": "success", "branch": "sandman/1177-fix"}},
+		{Type: "run.started", Timestamp: started, RunID: "review-17-a", Issue: 0, Payload: map[string]any{"branch": branch17, "review": true, "pr_number": 17}},
+		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "review-17-a", Issue: 0, Payload: map[string]any{"status": "success", "branch": branch17, "review": true}},
+		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "review-17-b", Issue: 0, Payload: map[string]any{"branch": branch18, "review": true, "pr_number": 17}},
+		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "review-17-b", Issue: 0, Payload: map[string]any{"status": "success", "branch": branch18, "review": true}},
 	})
 
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
@@ -3473,7 +3476,13 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 	}
 	view := &portalRunsView{}
 	log17 := view.portalLogPathForRun(repoRoot, 0, branch17, true, 17)
-	log18 := view.portalLogPathForRun(repoRoot, 0, branch18, true, 18)
+	log18 := view.portalLogPathForRun(repoRoot, 0, branch18, true, 17)
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "PR17.log"), []byte("wrong review log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1177.log"), []byte("main run log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(log17, []byte("review 17 log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -3485,14 +3494,19 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
-	if len(runs) != 2 {
-		t.Fatalf("expected 2 parallel review runs, got %d: %#v", len(runs), runs)
+	if len(runs) != 3 {
+		t.Fatalf("expected issue row plus 2 review runs, got %d: %#v", len(runs), runs)
 	}
 	byRunID := map[string]portalRun{}
 	for _, run := range runs {
 		byRunID[run.RunID] = run
 	}
-	for _, runID := range []string{"PR17", "PR18"} {
+	if run, ok := byRunID["issue-1177"]; !ok {
+		t.Fatalf("expected issue run 1177 to remain visible, got %#v", runs)
+	} else if !strings.Contains(run.Log, "main run log") {
+		t.Fatalf("expected issue run to keep 1177.log, got %#v", run)
+	}
+	for _, runID := range []string{"review-17-a", "review-17-b"} {
 		run, ok := byRunID[runID]
 		if !ok {
 			t.Fatalf("expected review run %s to remain visible, got %#v", runID, runs)
@@ -3500,8 +3514,15 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 		if !run.Review {
 			t.Fatalf("expected %s to remain a review run, got %#v", runID, run)
 		}
-		if !strings.Contains(run.Log, "review "+strings.TrimPrefix(runID, "PR")+" log") {
-			t.Fatalf("expected %s to keep its log, got %#v", runID, run)
+		wantLog := "review 17 log"
+		if runID == "review-17-b" {
+			wantLog = "review 18 log"
+		}
+		if !strings.Contains(run.Log, wantLog) {
+			t.Fatalf("expected %s to keep %q, got %#v", runID, wantLog, run)
+		}
+		if strings.Contains(run.Log, "wrong review log") {
+			t.Fatalf("expected %s not to load shared PR log, got %#v", runID, run)
 		}
 	}
 }
