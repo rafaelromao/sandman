@@ -139,3 +139,157 @@ func TestPortal_EventPayloadCSS_OnlyOneRuleAndNoPseudoElementDividers(t *testing
 		t.Errorf(".event-payload::after rule introduced in portal.html; no pseudo-element divider allowed between head and payload")
 	}
 }
+
+// TestPortal_DrawerShellCSS_IsFlatSurfaceAndKeepsBorderDivider asserts the
+// `.commands-panel` and `.settings-panel` rules (the two slide-out drawers)
+// declare a flat `--surface` background, no `linear-gradient`, no
+// `box-shadow`, and keep the `border-left: 1px solid var(--border)` divider
+// that separates them from the main page surface. This is the slice-1
+// contract of the flatten-drawers refactor (issue #1189).
+func TestPortal_DrawerShellCSS_IsFlatSurfaceAndKeepsBorderDivider(t *testing.T) {
+	html := readPortalHTML(t)
+
+	for _, sel := range []string{".commands-panel", ".settings-panel"} {
+		body := extractCSSRuleBody(t, html, sel)
+
+		for _, forbidden := range []string{
+			"linear-gradient",
+			"box-shadow",
+		} {
+			if strings.Contains(body, forbidden) {
+				t.Errorf("%s rule contains %q; drawer shell must be a flat surface (issue #1189)", sel, forbidden)
+			}
+		}
+
+		for _, required := range []struct {
+			token string
+			why   string
+		}{
+			{"background: var(--surface)", "flat surface like the main page"},
+			{"border-left: 1px solid var(--border)", "off-page divider preserved"},
+		} {
+			if !strings.Contains(body, required.token) {
+				t.Errorf("%s rule missing %q (%s)", sel, required.token, required.why)
+			}
+		}
+	}
+}
+
+// TestPortal_CommandSectionCSS_HasNoCardChrome asserts the `.command-section`
+// rule (the Run sub-panel card) is a flat container: no `border`,
+// `border-radius`, or `--surface-2` background. It still carries the layout
+// tokens (`display: grid`, `gap`, `padding`, `min-width: 0`) so the section
+// spacing inside the panel body is preserved. Slice 2 of issue #1189.
+func TestPortal_CommandSectionCSS_HasNoCardChrome(t *testing.T) {
+	html := readPortalHTML(t)
+	body := extractCSSRuleBody(t, html, ".command-section")
+
+	for _, forbidden := range []string{
+		"border:", "border :",
+		"border-top", "border-bottom", "border-left", "border-right",
+		"border-radius",
+		"background:", "background :",
+		"background-color:", "background-color :",
+		"var(--surface-2)",
+		"box-shadow",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf(".command-section rule contains %q; card chrome removed (issue #1189)", forbidden)
+		}
+	}
+
+	for _, required := range []struct {
+		token string
+		why   string
+	}{
+		{"display: grid", "layout grid preserved"},
+		{"gap:", "section spacing preserved"},
+		{"padding:", "section padding preserved"},
+		{"min-width: 0", "grid item shrink preserved"},
+	} {
+		if !strings.Contains(body, required.token) {
+			t.Errorf(".command-section rule missing %q (%s)", required.token, required.why)
+		}
+	}
+}
+
+// TestPortal_LaunchRadioCSS_HasChipShapeAndFlatRestingSurface asserts the
+// `.launch-radio` rule (the radio pill in the Run sub-panel) uses the same
+// pill shape as the toolbar filter chips (`border-radius: 999px`) and
+// declares the AC-mandated `--surface-2` resting background (so it reads
+// against the flat `--surface` panel body). Slice 3 of issue #1189.
+func TestPortal_LaunchRadioCSS_HasChipShapeAndFlatRestingSurface(t *testing.T) {
+	html := readPortalHTML(t)
+	body := extractCSSRuleBody(t, html, ".launch-radio")
+
+	for _, required := range []struct {
+		token string
+		why   string
+	}{
+		{"border-radius: 999px", "pill shape mirrors toolbar filter chips"},
+		{"background: var(--surface-2)", "flat resting surface per AC"},
+		{"border: 1px solid var(--border)", "pill outline matches chip family"},
+	} {
+		if !strings.Contains(body, required.token) {
+			t.Errorf(".launch-radio rule missing %q (%s)", required.token, required.why)
+		}
+	}
+}
+
+// TestPortal_LaunchRadioCSS_HasAccentTintedCheckedState asserts that when a
+// radio inside `.launch-radio` is `:checked`, the pill takes on the same
+// accent-tinted treatment the toolbar filter chips use (`--accent`
+// background, `--accent-ink` foreground, accent border, `font-weight: 600`
+// so the selected pill reads as selected, not just colored). The selector
+// uses `:has(input:checked)` so the pill reacts to its native control, which
+// works for both radios (Launch mode) and checkboxes (Continue/Clean/Archive
+// confirm). Slice 4 of issue #1189.
+func TestPortal_LaunchRadioCSS_HasAccentTintedCheckedState(t *testing.T) {
+	html := readPortalHTML(t)
+
+	if !strings.Contains(html, ".launch-radio:has(input:checked)") {
+		t.Fatalf("expected .launch-radio:has(input:checked) rule in portal.html so checked pills mirror toolbar chip family (issue #1189)")
+	}
+
+	body := extractCSSRuleBody(t, html, ".launch-radio:has(input:checked)")
+
+	for _, required := range []struct {
+		token string
+		why   string
+	}{
+		{"background: var(--accent)", "accent-tinted background mirrors .fchip[aria-pressed=\"true\"]"},
+		{"color: var(--accent-ink)", "accent-ink foreground mirrors toolbar chip family"},
+		{"border-color: var(--accent)", "accent border mirrors toolbar chip family"},
+		{"font-weight: 600", "selected pill is visually distinguished, not just colored"},
+	} {
+		if !strings.Contains(body, required.token) {
+			t.Errorf(".launch-radio:has(input:checked) rule missing %q (%s)", required.token, required.why)
+		}
+	}
+}
+
+// TestPortal_CommandsPanelFooterCSS_DividerOnly asserts the
+// `.commands-panel-footer` rule keeps only the `border-top` divider that
+// matches the panel head/body dividers. The previous tinted background and
+// `box-shadow` highlight are removed so the footer sits flat on `--surface`
+// like the rest of the panel. Slice 5 of issue #1189.
+func TestPortal_CommandsPanelFooterCSS_DividerOnly(t *testing.T) {
+	html := readPortalHTML(t)
+	body := extractCSSRuleBody(t, html, ".commands-panel-footer")
+
+	for _, forbidden := range []string{
+		"linear-gradient",
+		"color-mix", // the prior gradient used color-mix(in oklch, ...); reject it explicitly so the seam fix is unambiguous
+		"box-shadow",
+		"background:", "background :",
+		"background-color:", "background-color :",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf(".commands-panel-footer rule contains %q; footer must be a flat surface with only a divider (issue #1189)", forbidden)
+		}
+	}
+
+	if !strings.Contains(body, "border-top: 1px solid var(--border)") {
+		t.Errorf(".commands-panel-footer rule missing %q (single border-top divider matching head/body)", "border-top: 1px solid var(--border)")
+	}
+}

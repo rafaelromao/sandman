@@ -325,7 +325,6 @@
     stack.appendChild(buildStaleLine(staleText, staleWarn));
     mutationCount += 1;
   }
-
   function buildActionsCell(td, run, opts) {
     td.classList.add('run-actions');
     if (reserveAbortButton(run, opts)) {
