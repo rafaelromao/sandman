@@ -8,30 +8,24 @@ import (
 	"testing"
 )
 
-// readFileSource returns the contents of a file next to this test source,
-// keyed by basename (e.g. "portal_visual_test.go"). Used by the slice-9
-// test that asserts the chromium fixture does not pin drawer chrome.
-func readFileSource(t *testing.T, basename string) (string, error) {
+// readPortalVisualTestSource returns the contents of `portal_visual_test.go`
+// (sibling of this test source) as a string. The slice-9 test below reads
+// the chromium fixture builder to assert it does not pin drawer chrome,
+// following the same `runtime.Caller` pattern used by `readPortalHTML` in
+// `portal_event_payload_css_test.go`.
+func readPortalVisualTestSource(t *testing.T) string {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
-		return "", errLocate
+		t.Fatal("locate test file")
 	}
-	path := filepath.Join(filepath.Dir(currentFile), basename)
+	path := filepath.Join(filepath.Dir(currentFile), "portal_visual_test.go")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		t.Fatalf("read %s: %v", path, err)
 	}
-	return string(data), nil
+	return string(data)
 }
-
-// errLocate is returned by readFileSource when runtime.Caller can't locate
-// the test source. Kept package-private; the test fails fast in that case.
-var errLocate = errLocateType{}
-
-type errLocateType struct{}
-
-func (errLocateType) Error() string { return "locate test file" }
 
 // headerSlice extracts the bytes of `portal.html` between the opening tag
 // of the first element that matches `startMarker` and the closing tag of the
@@ -139,16 +133,11 @@ func TestPortal_PanelHeadersHTML_KeepAriaLabelledByAnchors(t *testing.T) {
 func TestPortal_VisualTestFixtureHTML_HasNoDrawerMarkup(t *testing.T) {
 	// The fixture is composed inside `buildVisualFixture` in
 	// `portal_visual_test.go`. We assert the contract by reading that test
-	// file and rejecting any drawer-chrome selector (`.commands-panel` /
-	// `.settings-panel` / drawer-only class names) in the fixture builder.
-	data, err := readFileSource(t, "portal_visual_test.go")
-	if err != nil {
-		t.Fatalf("read portal_visual_test.go: %v", err)
-	}
+	// file and rejecting any drawer-chrome class (`.commands-panel` /
+	// `.settings-panel`) inside the fixture builder so the snapshot never
+	// pins drawer styling.
+	data := readPortalVisualTestSource(t)
 
-	// Locate the fixture-builder body (between `fixture :=` and the first
-	// standalone backtick close). Crude but enough to scope the assertion to
-	// the fixture string instead of the test names themselves.
 	start := strings.Index(data, "fixture := `")
 	if start < 0 {
 		t.Fatalf("could not find fixture literal in portal_visual_test.go")

@@ -239,7 +239,8 @@ func TestPortal_LaunchRadioCSS_HasChipShapeAndFlatRestingSurface(t *testing.T) {
 // TestPortal_LaunchRadioCSS_HasAccentTintedCheckedState asserts that when a
 // radio inside `.launch-radio` is `:checked`, the pill takes on the same
 // accent-tinted treatment the toolbar filter chips use (`--accent`
-// background, `--accent-ink` foreground, accent border). The selector
+// background, `--accent-ink` foreground, accent border, `font-weight: 600`
+// so the selected pill reads as selected, not just colored). The selector
 // uses `:has(input:checked)` so the pill reacts to its native control, which
 // works for both radios (Launch mode) and checkboxes (Continue/Clean/Archive
 // confirm). Slice 4 of issue #1189.
@@ -259,6 +260,7 @@ func TestPortal_LaunchRadioCSS_HasAccentTintedCheckedState(t *testing.T) {
 		{"background: var(--accent)", "accent-tinted background mirrors .fchip[aria-pressed=\"true\"]"},
 		{"color: var(--accent-ink)", "accent-ink foreground mirrors toolbar chip family"},
 		{"border-color: var(--accent)", "accent border mirrors toolbar chip family"},
+		{"font-weight: 600", "selected pill is visually distinguished, not just colored"},
 	} {
 		if !strings.Contains(body, required.token) {
 			t.Errorf(".launch-radio:has(input:checked) rule missing %q (%s)", required.token, required.why)
