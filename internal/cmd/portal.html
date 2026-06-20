@@ -785,7 +785,7 @@
     .badge.archived .dot { background: var(--muted); }
     tbody tr.run-row.row-archived td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
     tbody tr.run-row.row-archived .run-title .name { color: color-mix(in oklch, var(--muted) 60%, var(--text)); }
-    .cell-duration {
+    .cell-duration .cell-duration-stack {
       display: flex;
       flex-direction: column;
       align-items: flex-start;
@@ -793,8 +793,7 @@
       line-height: 1.2;
     }
     .cell-duration .duration-value {
-      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
-      font-variant-numeric: tabular-nums;
+      display: inline-block;
     }
     .stale-line {
       font-size: 11px;
