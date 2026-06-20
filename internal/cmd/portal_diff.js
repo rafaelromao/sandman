@@ -244,8 +244,6 @@
     badge.appendChild(labelSpan);
     td.appendChild(badge);
     if (run.archived) appendArchivedBadge(td);
-    const stale = stalenessOf(run);
-    if (stale) appendStaleChip(td, stale.text, stale.warn);
   }
 
   function appendArchivedBadge(td) {
@@ -274,8 +272,8 @@
   // stalenessOf derives the per-row staleness signal from the server-provided
   // lastOutputAt (saved-run-log mtime with a startedAt fallback, set by
   // compute()). Returns null for non-active rows or rows younger than the
-  // chip threshold, so healthy quiet agents are not flagged. The warn tier
-  // escalates the chip to the --warning token past the second threshold; no
+  // line threshold, so healthy quiet agents are not flagged. The warn tier
+  // escalates the line to the --warning token past the second threshold; no
   // new color is introduced.
   function stalenessOf(run) {
     if (!run || run.kind !== 'active' || !run.lastOutputAt) return null;
@@ -286,32 +284,42 @@
     return { text: 'stale \u00b7 ' + formatStaleDuration(seconds), warn: seconds >= STALE_WARN_SECONDS };
   }
 
-  function appendStaleChip(td, staleText, staleWarn) {
-    const chip = global.document.createElement('span');
-    chip.classList.add('stale-chip');
-    if (staleWarn) chip.classList.add('warn');
-    chip.setAttribute('data-stale', '1');
-    chip.textContent = staleText;
-    td.appendChild(chip);
+  function buildMonoCell(td, text, extraClass) {
+    if (extraClass) td.classList.add(extraClass);
+    td.classList.add('mono');
+    td.textContent = text;
   }
 
-  function reconcileStaleChip(cell, staleText, staleWarn) {
+  function buildDurationCell(td, run, helpers) {
+    td.classList.add('cell-duration');
+    const value = global.document.createElement('span');
+    value.classList.add('duration-value');
+    value.textContent = helpers.formatDuration(run.duration);
+    td.appendChild(value);
+    const stale = stalenessOf(run);
+    if (stale) appendStaleLine(td, stale.text, stale.warn);
+  }
+
+  function appendStaleLine(td, staleText, staleWarn) {
+    const line = global.document.createElement('span');
+    line.classList.add('stale-line');
+    if (staleWarn) line.classList.add('warn');
+    line.setAttribute('data-stale', '1');
+    line.textContent = staleText;
+    td.appendChild(line);
+  }
+
+  function reconcileStaleLine(cell, staleText, staleWarn) {
     let existing = null;
-    for (const child of cell.querySelectorAll('.stale-chip')) { existing = child; break; }
+    for (const child of cell.querySelectorAll('.stale-line')) { existing = child; break; }
     if (!staleText) {
       if (existing) { cell.removeChild(existing); mutationCount += 1; }
       return;
     }
     if (existing && existing.textContent === staleText && existing.classList.contains('warn') === Boolean(staleWarn)) return;
     if (existing) cell.removeChild(existing);
-    appendStaleChip(cell, staleText, staleWarn);
+    appendStaleLine(cell, staleText, staleWarn);
     mutationCount += 1;
-  }
-
-  function buildMonoCell(td, text, extraClass) {
-    if (extraClass) td.classList.add(extraClass);
-    td.classList.add('mono');
-    td.textContent = text;
   }
 
   function buildActionsCell(td, run, opts) {
@@ -385,7 +393,7 @@
     buildMonoCell(startedCell, opts.helpers.formatTime(run.startedAt));
 
     const durationCell = makeRowCell('duration', tr);
-    buildMonoCell(durationCell, opts.helpers.formatDuration(run.duration));
+    buildDurationCell(durationCell, run, opts.helpers);
 
     const issueTitleCell = makeRowCell('issue-title', tr);
     buildMonoCell(issueTitleCell, opts.helpers.formatIssueTitle(run));
@@ -904,7 +912,14 @@
     if (oldSnap.archived !== newSnap.archived) {
       reconcileArchivedBadge(cell, newSnap.archived);
     }
-    reconcileStaleChip(cell, newSnap.staleText, newSnap.staleWarn);
+  }
+
+  function updateDurationCell(cell, oldSnap, newSnap) {
+    const value = cell.querySelector('.duration-value');
+    if (value && oldSnap.durationText !== newSnap.durationText) {
+      setText(value, newSnap.durationText);
+    }
+    reconcileStaleLine(cell, newSnap.staleText, newSnap.staleWarn);
   }
 
   function reconcileArchivedBadge(cell, archived) {
@@ -991,7 +1006,7 @@
     if (startedCell) updateMonoCell(startedCell, newSnap.startedText);
 
     const durationCell = cellOf(row, 'duration');
-    if (durationCell) updateMonoCell(durationCell, newSnap.durationText);
+    if (durationCell) updateDurationCell(durationCell, oldSnap, newSnap);
 
     const issueTitleCell = cellOf(row, 'issue-title');
     if (issueTitleCell) updateMonoCell(issueTitleCell, newSnap.issueTitleText);
