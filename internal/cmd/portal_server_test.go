@@ -3475,11 +3475,8 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := &portalRunsView{}
-	log17 := view.portalLogPathForRun(repoRoot, 0, branch17, true, 17)
-	log18 := view.portalLogPathForRun(repoRoot, 0, branch18, true, 17)
-	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "PR17.log"), []byte("wrong review log\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	log17 := view.portalLogPathForRun(repoRoot, 0, branch17, "review-17-a", true, 17)
+	log18 := view.portalLogPathForRun(repoRoot, 0, branch18, "review-17-b", true, 17)
 	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1177.log"), []byte("main run log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -3505,6 +3502,9 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 		t.Fatalf("expected issue run 1177 to remain visible, got %#v", runs)
 	} else if !strings.Contains(run.Log, "main run log") {
 		t.Fatalf("expected issue run to keep 1177.log, got %#v", run)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".sandman", "logs", "PR17.log")); !os.IsNotExist(err) {
+		t.Fatalf("expected shared PR17.log not to exist")
 	}
 	for _, runID := range []string{"review-17-a", "review-17-b"} {
 		run, ok := byRunID[runID]

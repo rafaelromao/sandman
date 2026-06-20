@@ -88,7 +88,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 	if r.issue != nil {
 		logName = fmt.Sprintf("%d.log", r.issue.Number)
 	} else {
-		logName = r.layout.SafeLogFilename(r.branch) + ".log"
+		logName = r.layout.SafeLogFilename(strings.TrimSpace(r.runID)) + ".log"
 	}
 	logPath := filepath.Join(logDir, logName)
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)

@@ -38,6 +38,8 @@ func TestPortal_PageWiresArchiveAction(t *testing.T) {
 		`const archivePath = "/api/runs/archive";`,
 		`async function archiveRun(`,
 		`const currentKey = state.expandedRunKey || runKey;`,
+		`if (state.expandedRunKey !== null && state.expandedRunKey !== prevExpandedRunKey) {`,
+		`row.scrollIntoView({ behavior: 'smooth', block: 'start' });`,
 		`action === 'archive-run'`,
 		`archiveRun(button, runId, label);`,
 		`fetch(archivePath, {`,
@@ -50,6 +52,9 @@ func TestPortal_PageWiresArchiveAction(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
+	}
+	if strings.Contains(content, `if (prevExpandedRunKey !== null && state.expandedRunKey === null) {`) {
+		t.Fatalf("page should not scroll on collapse")
 	}
 
 	// The diff helper must own the data-action="archive-run" attribute.

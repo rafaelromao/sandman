@@ -2178,13 +2178,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 
 	var logFilename string
-	if trimmed := strings.TrimSpace(branch); trimmed != "" {
-		logFilename = s.o.layout.SafeLogFilename(trimmed) + ".log"
-	} else if s.review && s.prNumber > 0 {
-		logFilename = fmt.Sprintf("PR%d.log", s.prNumber)
-	} else {
-		logFilename = "prompt-only.log"
-	}
+	logFilename = s.o.layout.SafeLogFilename(strings.TrimSpace(runID)) + ".log"
 	logPath := s.o.agentLogPath(logFilename)
 	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
