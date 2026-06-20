@@ -1256,11 +1256,11 @@ func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
 func (v *portalRunsView) portalLogPathForRun(repoRoot string, issueNumber int, branch string, runID string, review bool, prNumber int) string {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	branch = strings.TrimSpace(branch)
-	if issueNumber > 0 {
-		return filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNumber))
-	}
 	if review && branch != "" {
 		return filepath.Join(layout.LogDir, layout.SafeLogFilename(branch)+".log")
+	}
+	if issueNumber > 0 {
+		return filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNumber))
 	}
 	runID = strings.TrimSpace(runID)
 	if runID != "" {

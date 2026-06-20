@@ -3527,6 +3527,63 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 	}
 }
 
+func TestPortal_ReviewRunLogPathPrefersBranchLogWhenFinishedEventHasIssue(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now().Add(-5 * time.Minute)
+	issueStarted := started.Add(-2 * time.Minute)
+	branch := "sandman/review-1177-fixed"
+	implBranch := "sandman/1177-fix"
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: issueStarted, RunID: "issue-1177", Issue: 1177, Payload: map[string]any{"branch": implBranch}},
+		{Type: "run.finished", Timestamp: issueStarted.Add(30 * time.Second), RunID: "issue-1177", Issue: 1177, Payload: map[string]any{"status": "success", "branch": implBranch}},
+		{Type: "run.started", Timestamp: started, RunID: "review-1177-1", Issue: 0, IssueRef: nil, Payload: map[string]any{"branch": branch, "review": true, "pr_number": float64(1187), "issue_number": float64(1177)}},
+		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "review-1177-1", Issue: 1177, Payload: map[string]any{"status": "success", "branch": branch, "review": true, "pr_number": float64(1187), "issue_number": float64(1177)}},
+	})
+
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	view := &portalRunsView{}
+	reviewLogPath := view.portalLogPathForRun(repoRoot, 1177, branch, "review-1177-1", true, 1187)
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1177.log"), []byte("main run log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reviewLogPath, []byte("review log for issue 1177\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := view.compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	var review *portalRun
+	for i := range runs {
+		if runs[i].RunID == "review-1177-1" {
+			review = &runs[i]
+			break
+		}
+	}
+	if review == nil {
+		t.Fatalf("expected review run review-1177-1 in portal output, got %#v", runs)
+	}
+	if !review.Review {
+		t.Fatalf("expected review flag set, got %#v", review)
+	}
+	if review.PRNumber != 1187 {
+		t.Fatalf("expected review PRNumber=1187, got %d", review.PRNumber)
+	}
+	if review.LogPath == "" || strings.HasSuffix(review.LogPath, "1177.log") {
+		t.Fatalf("expected review run to use branch-based log path, got %q", review.LogPath)
+	}
+	if !strings.Contains(review.Log, "review log for issue 1177") {
+		t.Fatalf("expected review run to load branch log content, got %#v", review)
+	}
+}
+
 func TestPortal_RunsTableHasColgroupAndFixedLayout(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
