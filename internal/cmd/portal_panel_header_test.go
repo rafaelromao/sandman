@@ -157,3 +157,25 @@ func TestPortal_VisualTestFixtureHTML_HasNoDrawerMarkup(t *testing.T) {
 		}
 	}
 }
+
+// TestPortal_HeaderRevampHTML_StillExposesTheRevampSurface asserts the live
+// portal HTML keeps the header/filter pieces introduced by #1167: the compact
+// masthead, the poll-health pill, the grouped archive filters, and the sortable
+// started header. This protects the revamp from being lost in later merges.
+func TestPortal_HeaderRevampHTML_StillExposesTheRevampSurface(t *testing.T) {
+	html := readPortalHTML(t)
+	for _, want := range []string{
+		"masthead-divider",
+		"masthead-repo",
+		"poll-health",
+		"status-filter",
+		"filter-toggle-group",
+		"active-batches",
+		"archived-toggle",
+		"data-sort=\"started\"",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("portal HTML missing %q from the header revamp surface", want)
+		}
+	}
+}

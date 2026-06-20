@@ -3300,8 +3300,9 @@
     }
 
     function shouldShowRun(run) {
-      if (state.activeBatches && run.kind !== 'active') return false;
-      if (!state.showArchived && run.archived) return false;
+      if (state.activeBatches) return run.kind === 'active';
+      if (state.showArchived) return !!run.archived;
+      if (run.archived) return false;
       if (state.selectedStatus !== 'all' && statusFilterValue(run) !== state.selectedStatus) return false;
       return true;
     }
@@ -3902,11 +3903,19 @@
 
     activeBatchesToggle.addEventListener('change', () => {
       state.activeBatches = activeBatchesToggle.checked;
+      if (state.activeBatches && archivedToggle.checked) {
+        state.showArchived = false;
+        archivedToggle.checked = false;
+      }
       render();
-	});
+    });
 
     archivedToggle.addEventListener('change', () => {
       state.showArchived = archivedToggle.checked;
+      if (state.showArchived && activeBatchesToggle.checked) {
+        state.activeBatches = false;
+        activeBatchesToggle.checked = false;
+      }
       persistPortalViewState();
       render();
     });
