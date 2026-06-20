@@ -2779,3 +2779,23 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+func TestPortalDiffDiffRuns_ExpandedRealRunIDRendersDetailRow(t *testing.T) {
+	js := `const body = makeMockBody();
+const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const stub = { key: 'review-stub-1', kind: 'completed', status: 'success', review: false, groupedReview: false, issueLabel: 'PR42', runId: 'review-stub-1', issueNumber: 1, reviewCount: 1, reviewVerdict: 'Approved' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [review], visibleRuns: [stub] };
+const result = SandmanPortalDiff.diffRuns(body, [review], opts);
+if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
+if (body.querySelector('tr[data-run-key="PR42"]')) throw new Error('expected review row hidden from table');
+const expandedRow = body.querySelector('tr[data-run-key="review-stub-1"]');
+if (!expandedRow) throw new Error('expected stub row visible');
+const expandedAria = expandedRow.getAttribute('aria-expanded');
+if (expandedAria !== 'true') throw new Error('expected aria-expanded=true on expanded stub row, got ' + expandedAria);
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="review-stub-1"]');
+if (!detailRow) throw new Error('expected detail row for expanded stub');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}

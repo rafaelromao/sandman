@@ -3667,7 +3667,14 @@
 
     function toggleRun(runKey) {
       const prevExpandedRunKey = state.expandedRunKey;
-      const run = findRunByIdentity(runKey);
+      let run = findRunByIdentity(runKey);
+      if (!run) {
+        const stubMatch = runKey.match(/^(?:issue|review-stub)-(\d+)$/);
+        if (stubMatch) {
+          const issueNum = Number(stubMatch[1]);
+          run = state.runs.find(r => r && r.issueNumber === issueNum) || null;
+        }
+      }
       const subjectKey = subjectRunIdentity(run) || runKey;
       if (state.expandedRunKey === subjectKey) {
         state.expandedRunKey = null;
