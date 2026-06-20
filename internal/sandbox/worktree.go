@@ -371,6 +371,14 @@ func BranchExists(repoPath, branch string) bool {
 	return err == nil
 }
 
+// IsGitDir reports whether the given path is inside a valid git directory
+// (worktree or bare repo). It runs `git rev-parse --git-dir` and checks
+// whether the command succeeds, which is the canonical way to test this.
+func IsGitDir(path string) bool {
+	_, err := gitRevParse(path, "--git-dir")
+	return err == nil
+}
+
 // Exec runs a command in the worktree, writing stdout and stderr to the given writers.
 func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	cmd := exec.Command("sh", "-c", command)

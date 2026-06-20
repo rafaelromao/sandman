@@ -9351,6 +9351,38 @@ func TestReconcileWorktreeBranch_LogsAndContinuesOnFailure(t *testing.T) {
 	}
 }
 
+func TestReconcileWorktreeBranch_LogsAndSkipsOnBrokenWorktree(t *testing.T) {
+	branch := "sandman/42-fix-bug"
+	wrong := "sandman/42-wrong-branch"
+	_, _, worktreePath, sb := stageReconcileWorktree(t, branch, wrong)
+
+	// Corrupt the .git file to point to a nonexistent worktree
+	// registration, simulating the stale-gitdir race that produces
+	// "fatal: not a git repository: (null)". The worktree directory
+	// itself still exists, so the empty-workDir guard does not fire.
+	gitfilePath := filepath.Join(worktreePath, ".git")
+	staleGitdir := filepath.Join(worktreePath, ".stale-registration")
+	if err := os.WriteFile(gitfilePath, []byte("gitdir: "+staleGitdir+"\n"), 0644); err != nil {
+		t.Fatalf("write corrupted .git file: %v", err)
+	}
+
+	var errorBuf bytes.Buffer
+	s := &runSession{
+		o:        &Orchestrator{errorLog: &errorBuf},
+		branches: map[int]string{42: branch},
+	}
+
+	s.reconcileWorktreeBranch(sb, branch)
+
+	logged := errorBuf.String()
+	if !strings.Contains(logged, "not a valid git directory") {
+		t.Errorf("expected warning about broken worktree, got %q", logged)
+	}
+	if strings.Contains(logged, "(null)") {
+		t.Errorf("should not contain (null) in warning, got %q", logged)
+	}
+}
+
 func TestBuildRunID_IssueKind(t *testing.T) {
 	got := buildRunID(42, orchTestRunTS, orchTestRunShortID)
 	want := runIDFor(42)
