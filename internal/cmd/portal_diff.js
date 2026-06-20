@@ -291,34 +291,38 @@
   }
 
   function buildDurationCell(td, run, helpers) {
-    td.classList.add('cell-duration');
+    td.classList.add('mono', 'cell-duration');
+    const stack = global.document.createElement('div');
+    stack.classList.add('cell-duration-stack');
     const value = global.document.createElement('span');
     value.classList.add('duration-value');
     value.textContent = helpers.formatDuration(run.duration);
-    td.appendChild(value);
+    stack.appendChild(value);
     const stale = stalenessOf(run);
-    if (stale) appendStaleLine(td, stale.text, stale.warn);
+    if (stale) stack.appendChild(buildStaleLine(stale.text, stale.warn));
+    td.appendChild(stack);
   }
 
-  function appendStaleLine(td, staleText, staleWarn) {
+  function buildStaleLine(staleText, staleWarn) {
     const line = global.document.createElement('span');
     line.classList.add('stale-line');
     if (staleWarn) line.classList.add('warn');
     line.setAttribute('data-stale', '1');
     line.textContent = staleText;
-    td.appendChild(line);
+    return line;
   }
 
   function reconcileStaleLine(cell, staleText, staleWarn) {
-    let existing = null;
-    for (const child of cell.querySelectorAll('.stale-line')) { existing = child; break; }
+    const stack = cell.querySelector('.cell-duration-stack');
+    if (!stack) return;
+    let existing = stack.querySelector('.stale-line');
     if (!staleText) {
-      if (existing) { cell.removeChild(existing); mutationCount += 1; }
+      if (existing) { stack.removeChild(existing); mutationCount += 1; }
       return;
     }
     if (existing && existing.textContent === staleText && existing.classList.contains('warn') === Boolean(staleWarn)) return;
-    if (existing) cell.removeChild(existing);
-    appendStaleLine(cell, staleText, staleWarn);
+    if (existing) stack.removeChild(existing);
+    stack.appendChild(buildStaleLine(staleText, staleWarn));
     mutationCount += 1;
   }
 
