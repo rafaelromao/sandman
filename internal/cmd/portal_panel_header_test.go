@@ -171,6 +171,7 @@ func TestPortal_HeaderRevampHTML_StillExposesTheRevampSurface(t *testing.T) {
 		"status-filter",
 		"filter-toggle-group",
 		"active-batches",
+		"archived-toggle",
 		"data-sort=\"started\"",
 	} {
 		if !strings.Contains(html, want) {

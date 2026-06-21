@@ -2032,8 +2032,9 @@
         </select>
         <div class="filter-chips" id="status-chips" role="group" aria-label="Filter runs by status"></div>
         <span class="fchip-divider" aria-hidden="true"></span>
-        <div class="filter-toggle-group" role="group" aria-label="Active and all filters">
+        <div class="filter-toggle-group" role="group" aria-label="Active and archive filters">
           <button id="active-batches" class="fchip fchip-toggle" type="button" aria-pressed="false">Active</button>
+          <button id="archived-toggle" class="fchip fchip-toggle" type="button" aria-pressed="false">Archive</button>
         </div>
       </div>
       <div id="summary-pill" class="status-pill"><span class="dot"></span><strong>0</strong><span class="summary-label">runs visible</span></div>
@@ -2085,6 +2086,7 @@
     const statusFilter = document.getElementById('status-filter');
     const sortButtons = Array.from(document.querySelectorAll('.th-sort'));
     const activeBatchesToggle = document.getElementById('active-batches');
+    const archivedToggle = document.getElementById('archived-toggle');
     const runsBody = document.getElementById('runs-body');
     const commandsToggle = document.getElementById('commands-toggle');
     const commandsOverlay = document.getElementById('commands-overlay');
@@ -2108,7 +2110,7 @@
     }
     const portalScroll = window.SandmanPortalScroll;
     const portalDiff = window.SandmanPortalDiff;
-    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -2234,6 +2236,7 @@
       tabs: persistedPortalState.tabs || {},
       selectedStatus: 'all',
       activeBatches: persistedPortalState.activeBatches === true,
+      showArchived: persistedPortalState.showArchived === true,
       sortBy: persistedPortalState.sortBy || 'started',
       sortDir: persistedPortalState.sortDir || 'desc',
       loading: true,
@@ -2323,6 +2326,7 @@
 
     function syncFilterToggleButtons() {
       if (activeBatchesToggle) activeBatchesToggle.setAttribute('aria-pressed', String(state.activeBatches));
+      if (archivedToggle) archivedToggle.setAttribute('aria-pressed', String(state.showArchived));
     }
 
     function persistPortalViewState() {
@@ -2331,6 +2335,7 @@
         expandedRunKey: state.expandedRunKey,
         tabs: state.tabs,
         commandFormCollapsed: !commandFormExpanded,
+        showArchived: state.showArchived,
         activeBatches: state.activeBatches,
         sortBy: state.sortBy,
         sortDir: state.sortDir,
@@ -3301,6 +3306,7 @@
 
     function shouldShowRun(run) {
       if (state.activeBatches) return run.kind === 'active';
+      if (state.showArchived) return !!run.archived;
       if (run.archived) return false;
       if (state.selectedStatus !== 'all' && statusFilterValue(run) !== state.selectedStatus) return false;
       return true;
@@ -3903,6 +3909,15 @@
 
     activeBatchesToggle.addEventListener('click', () => {
       state.activeBatches = !state.activeBatches;
+      if (state.activeBatches) state.showArchived = false;
+      syncFilterToggleButtons();
+      persistPortalViewState();
+      render();
+    });
+
+    archivedToggle.addEventListener('click', () => {
+      state.showArchived = !state.showArchived;
+      if (state.showArchived) state.activeBatches = false;
       syncFilterToggleButtons();
       persistPortalViewState();
       render();
