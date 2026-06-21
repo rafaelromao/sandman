@@ -513,21 +513,24 @@
       min-width: 0;
       justify-content: center;
       border-radius: 0;
+      border: none;
       padding: 8px 14px;
       background: var(--surface);
-      border-color: var(--border);
       color: var(--muted);
+    }
+    .filter-toggle-group .fchip.fchip-toggle:hover {
+      background: var(--surface-2);
+      color: var(--text);
     }
     .filter-toggle-group .fchip.fchip-toggle + .fchip.fchip-toggle {
       border-left: 1px solid var(--border);
     }
     .filter-toggle-group .fchip.fchip-toggle[aria-pressed="true"] {
       background: var(--accent);
-      border-color: var(--accent);
       color: var(--accent-ink);
     }
     .filter-toggle-group .fchip.fchip-toggle[aria-pressed="true"]:hover {
-      color: var(--accent);
+      color: var(--accent-ink);
     }
     .fchip {
       display: inline-flex;
