@@ -247,6 +247,66 @@ if (afterRefresh.showArchived !== true) {
 	}
 }
 
+func TestPortalStatePersistsActiveBatches(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for portal state helper test")
+	}
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	portalStatePath := filepath.Join(filepath.Dir(currentFile), "portal_state.js")
+
+	script := `const fs = require('fs');
+const vm = require('vm');
+const helperPath = process.argv[1];
+const source = fs.readFileSync(helperPath, 'utf8');
+const storage = new Map();
+const sandbox = {
+  window: {},
+  globalThis: {},
+  sessionStorage: {
+    getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+    setItem(key, value) { storage.set(key, String(value)); },
+    removeItem(key) { storage.delete(key); },
+  },
+  Set, Map, JSON, console,
+};
+sandbox.window = sandbox;
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox, { filename: helperPath });
+const api = sandbox.SandmanPortalState;
+
+const defaults = api.load();
+if (defaults.activeBatches !== false) {
+  throw new Error('expected default activeBatches to be false, got ' + JSON.stringify(defaults.activeBatches));
+}
+
+storage.set(api.storageKey, JSON.stringify({
+  expandedRunKey: null,
+  tabs: {},
+  commandFormCollapsed: false,
+  showArchived: false,
+  activeBatches: true,
+}));
+const loadedTrue = api.load();
+if (loadedTrue.activeBatches !== true) {
+  throw new Error('expected activeBatches true to survive load, got ' + JSON.stringify(loadedTrue.activeBatches));
+}
+
+api.save({ expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, activeBatches: true });
+const persisted = JSON.parse(storage.get(api.storageKey));
+if (persisted.activeBatches !== true) {
+  throw new Error('expected saved state to include activeBatches, got ' + JSON.stringify(persisted));
+}
+`
+	cmd := exec.Command("node", "-e", script, portalStatePath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("portal state helper failed: %v\n%s", err, out)
+	}
+}
+
 func TestPortalStatePersistsSortPreference(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required for portal state helper test")

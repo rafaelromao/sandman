@@ -1014,7 +1014,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active", "Archive", "Log", "Events", "Details", "Actions", "data-rendered-json", "JSON.stringify(detailsData", "settings-toggle", "theme-picker", "poll-interval", "masthead-repo", `id="last-updated"`, "poll-health", "Sandman", "Sleep while your agents code", "Sandman Light", "Catppuccin", "Gruvbox", "Evergreen", "Tokyo Night", `const apiPath = "\/api\/runs";`, "const defaultTheme = 'sandman';", "html[data-theme=\"sandman\"]", `id="status-chips"`, `id="status-filter"`, `>All<`, `data-sort="status"`, `data-sort="started"`, `data-sort="duration"`} {
+	for _, want := range []string{"Active", "Archive", "Log", "Events", "Details", "Actions", "data-rendered-json", "JSON.stringify(detailsData", "settings-toggle", "theme-picker", "poll-interval", "masthead-repo", `id="last-updated"`, "poll-health", "Sandman", "Sleep while your agents code", "Sandman Light", "Catppuccin", "Gruvbox", "Evergreen", "Tokyo Night", `const apiPath = "\/api\/runs";`, "const defaultTheme = 'sandman';", "html[data-theme=\"sandman\"]", `id="status-chips"`, `id="status-filter"`, `>All<`, `data-sort="status"`, `data-sort="started"`, `data-sort="duration"`, `data-sort="archived"`, `id="active-batches"`, `id="archived-toggle"`, `syncFilterToggleButtons`, `syncArchivedColumnVisibility`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
@@ -1272,14 +1272,13 @@ func TestPortal_PageExposesArchivedFilter(t *testing.T) {
 		`id="archived-toggle"`,
 		`Archive`,
 		`showArchived: persistedPortalState.showArchived === true`,
+		`activeBatches: persistedPortalState.activeBatches === true`,
 		`showArchived: state.showArchived`,
-		`archivedToggle.addEventListener('change'`,
-		`archivedToggle.checked = state.showArchived`,
+		`archivedToggle.addEventListener('click'`,
+		`activeBatchesToggle.addEventListener('click'`,
 		`if (state.activeBatches) return run.kind === 'active';`,
 		`if (state.showArchived) return !!run.archived;`,
 		`if (run.archived) return false;`,
-		`if (state.activeBatches && archivedToggle.checked) {`,
-		`if (state.showArchived && activeBatchesToggle.checked) {`,
 		`const visibleRuns = state.runs.filter(shouldShowRun)`,
 	} {
 		if !strings.Contains(content, want) {

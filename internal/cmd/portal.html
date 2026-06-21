@@ -499,15 +499,38 @@
       background: var(--border);
     }
     .filter-toggle-group {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0;
       align-items: center;
       margin-left: 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--surface);
     }
     .filter-toggle-group .fchip.fchip-toggle {
       min-width: 0;
       justify-content: center;
+      border-radius: 0;
+      border: none;
+      padding: 8px 14px;
+      background: var(--surface);
+      color: var(--muted);
+    }
+    .filter-toggle-group .fchip.fchip-toggle:hover {
+      background: var(--surface-2);
+      color: var(--text);
+    }
+    .filter-toggle-group .fchip.fchip-toggle + .fchip.fchip-toggle {
+      border-left: 1px solid var(--border);
+    }
+    .filter-toggle-group .fchip.fchip-toggle[aria-pressed="true"] {
+      background: var(--accent);
+      color: var(--accent-ink);
+    }
+    .filter-toggle-group .fchip.fchip-toggle[aria-pressed="true"]:hover {
+      color: var(--accent-ink);
     }
     .fchip {
       display: inline-flex;
@@ -528,6 +551,9 @@
       background: var(--surface-2);
       color: var(--text);
     }
+    .fchip[aria-pressed="true"]:hover {
+      color: var(--accent);
+    }
     .fchip:focus-visible {
       outline: 2px solid color-mix(in oklch, var(--accent) 72%, var(--surface-3));
       outline-offset: 2px;
@@ -538,28 +564,11 @@
       color: var(--accent-ink);
       font-weight: 600;
     }
-    /* Checkbox-backed chip variant for the two toggle filters. The native
-       checkbox is hidden but stays focusable/checked via its label, so the
-       existing change/checked wiring is unchanged. */
     .fchip.fchip-toggle {
-      position: relative;
-    }
-    .fchip.fchip-toggle input[type="checkbox"] {
-      position: absolute;
-      opacity: 0;
-      width: 1px;
-      height: 1px;
-      pointer-events: none;
-    }
-    .fchip.fchip-toggle:has(input:checked) {
       background: var(--accent);
       border-color: var(--accent);
       color: var(--accent-ink);
       font-weight: 600;
-    }
-    .fchip.fchip-toggle:has(input:focus-visible) {
-      outline: 2px solid color-mix(in oklch, var(--accent) 72%, var(--surface-3));
-      outline-offset: 2px;
     }
     .field {
       display: inline-flex;
@@ -619,6 +628,7 @@
     }
     .col-title { width: 480px; }
     .col-badge { width: 88px; }
+    .col-archived { width: 96px; }
     .col-started { width: 180px; }
     .col-duration { width: 112px; }
     .col-issue-title { width: 180px; }
@@ -1554,20 +1564,12 @@
         border-color: var(--accent);
         color: var(--accent-ink);
       }
-      .fchip.fchip-toggle {
-        padding: 8px 12px;
-      }
-      .fchip.fchip-toggle:hover {
-        background: var(--surface-2);
-      }
-      .fchip.fchip-toggle:has(input:checked) {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: var(--accent-ink);
-      }
-      .fchip-divider {
-        display: none;
-      }
+       .fchip.fchip-toggle:hover {
+         background: var(--surface-2);
+       }
+       .fchip-divider {
+         display: none;
+       }
       .toolbar .status-pill {
         margin-left: auto;
         padding: 0;
@@ -1701,6 +1703,7 @@
         grid-template-columns: minmax(0, 1fr) auto;
         grid-template-areas:
           "title badge"
+          "archived archived"
           "issue actions"
           "started duration"
           "archived archived";
@@ -1735,6 +1738,13 @@
       }
       tbody tr.run-row td[data-cell="badge"] {
         grid-area: badge;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+      tbody tr.run-row td[data-cell="archived"] {
+        grid-area: archived;
         display: flex;
         flex-wrap: wrap;
         justify-content: flex-end;
@@ -2034,14 +2044,8 @@
         <div class="filter-chips" id="status-chips" role="group" aria-label="Filter runs by status"></div>
         <span class="fchip-divider" aria-hidden="true"></span>
         <div class="filter-toggle-group" role="group" aria-label="Active and archive filters">
-          <label class="fchip fchip-toggle">
-            <input id="active-batches" type="checkbox">
-            <span>Active</span>
-          </label>
-          <label class="fchip fchip-toggle">
-            <input id="archived-toggle" type="checkbox">
-            <span>Archive</span>
-          </label>
+          <button id="active-batches" class="fchip fchip-toggle" type="button" aria-pressed="false">Active</button>
+          <button id="archived-toggle" class="fchip fchip-toggle" type="button" aria-pressed="false">Archive</button>
         </div>
       </div>
       <div id="summary-pill" class="status-pill"><span class="dot"></span><strong>0</strong><span class="summary-label">runs visible</span></div>
@@ -2052,6 +2056,7 @@
         <colgroup>
           <col class="col-title">
           <col class="col-badge">
+          <col class="col-archived">
           <col class="col-started">
           <col class="col-duration">
           <col class="col-issue-title">
@@ -2061,6 +2066,7 @@
           <tr>
             <th>Run</th>
             <th data-col="status"><button type="button" class="th-sort" data-sort="status" aria-pressed="false">Status<span class="sort-indicator"></span></button></th>
+            <th data-col="archived"><button type="button" class="th-sort" data-sort="archived" aria-pressed="false">Archived<span class="sort-indicator"></span></button></th>
             <th data-col="started"><button type="button" class="th-sort" data-sort="started" aria-pressed="false">Started<span class="sort-indicator"></span></button></th>
             <th data-col="duration"><button type="button" class="th-sort" data-sort="duration" aria-pressed="false">Duration<span class="sort-indicator"></span></button></th>
             <th data-col="issue-title">Issue Title</th>
@@ -2068,7 +2074,7 @@
           </tr>
         </thead>
         <tbody id="runs-body">
-          <tr><td colspan="6"><div class="empty-state">Loading runs.</div></td></tr>
+          <tr><td colspan="7"><div class="empty-state">Loading runs.</div></td></tr>
         </tbody>
       </table>
     </section>
@@ -2117,7 +2123,7 @@
     }
     const portalScroll = window.SandmanPortalScroll;
     const portalDiff = window.SandmanPortalDiff;
-    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, sortBy: 'started', sortDir: 'desc' };
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -2242,7 +2248,7 @@
       expandedRunKey: persistedPortalState.expandedRunKey || null,
       tabs: persistedPortalState.tabs || {},
       selectedStatus: 'all',
-      activeBatches: false,
+      activeBatches: persistedPortalState.activeBatches === true,
       showArchived: persistedPortalState.showArchived === true,
       sortBy: persistedPortalState.sortBy || 'started',
       sortDir: persistedPortalState.sortDir || 'desc',
@@ -2331,8 +2337,23 @@
       }
     }
 
-    if (archivedToggle) {
-      archivedToggle.checked = state.showArchived;
+    function syncFilterToggleButtons() {
+      if (activeBatchesToggle) activeBatchesToggle.setAttribute('aria-pressed', String(state.activeBatches));
+      if (archivedToggle) archivedToggle.setAttribute('aria-pressed', String(state.showArchived));
+    }
+
+    function syncArchivedColumnVisibility() {
+      const visible = state.showArchived;
+      for (const node of document.querySelectorAll('[data-col="archived"], [data-cell="archived"], .col-archived')) {
+        node.hidden = !visible;
+      }
+    }
+
+    function normalizeArchivedSort() {
+      if (state.showArchived || state.sortBy !== 'archived') return false;
+      state.sortBy = 'started';
+      state.sortDir = 'desc';
+      return true;
     }
 
     function persistPortalViewState() {
@@ -2342,6 +2363,7 @@
         tabs: state.tabs,
         commandFormCollapsed: !commandFormExpanded,
         showArchived: state.showArchived,
+        activeBatches: state.activeBatches,
         sortBy: state.sortBy,
         sortDir: state.sortDir,
       });
@@ -3222,6 +3244,11 @@
 
     function toggleSort(key) {
       if (!key) return;
+      if (key === 'archived' && !state.showArchived) {
+        state.showArchived = true;
+        state.activeBatches = false;
+        syncFilterToggleButtons();
+      }
       if (state.sortBy !== key) {
         state.sortBy = key;
         state.sortDir = key === 'status' ? 'asc' : 'desc';
@@ -3260,7 +3287,15 @@
     }
 
     function sortedVisibleRuns(runs) {
-      if (state.sortBy === 'server') return runs;
+      if (state.sortBy === 'server') {
+        return runs
+          .map((run, index) => ({ run, index }))
+          .sort((a, b) => {
+            const cmp = runStartedValue(b.run) - runStartedValue(a.run);
+            return cmp !== 0 ? cmp : a.index - b.index;
+          })
+          .map((entry) => entry.run);
+      }
       const dir = state.sortDir === 'asc' ? 1 : -1;
       return runs
         .map((run, index) => ({ run, index }))
@@ -3268,6 +3303,8 @@
           let cmp = 0;
           if (state.sortBy === 'status') {
             cmp = String(a.run.status || '').localeCompare(String(b.run.status || ''));
+          } else if (state.sortBy === 'archived') {
+            cmp = Number(Boolean(a.run.archived)) - Number(Boolean(b.run.archived));
           } else if (state.sortBy === 'started') {
             cmp = runStartedValue(a.run) - runStartedValue(b.run);
           } else if (state.sortBy === 'duration') {
@@ -3508,7 +3545,7 @@
       const summary = [];
       if (Number(run.retriesDone || 0) > 0) {
         const count = Number(run.retriesDone || 0);
-        summary.push(count + ' retri' + (count === 1 ? 'y' : 'es'));
+        summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
       }
       if (Number(run.reviewCount || 0) > 0) {
         const count = Number(run.reviewCount || 0);
@@ -3548,6 +3585,9 @@
     function render() {
       syncStatusOptions(state.runs);
       normalizePortalViewState();
+      syncFilterToggleButtons();
+      if (normalizeArchivedSort()) persistPortalViewState();
+      syncArchivedColumnVisibility();
       const filtered = sortedVisibleRuns(visibleRunsForTable(state.runs.filter(shouldShowRun)));
       syncSortButtons();
       const activeCount = state.runs.filter((run) => run && run.kind === 'active').length;
@@ -3572,6 +3612,7 @@
         abortReservations: abortReservations,
         abortSupported: abortSupported,
         archiveSupported: true,
+        showArchived: state.showArchived,
         expandedKey: state.expandedRunKey,
         tabs: state.tabs,
         runs: state.runs,
@@ -3579,12 +3620,12 @@
         streamingKeys: streamingKeys,
       };
       if (!state.runs.length) {
-        portalDiff.setEmpty(runsBody, '<div class="empty-state">' + escapeHTML(state.loading ? 'Loading runs.' : 'No Sandman runs found.') + '</div>');
+        portalDiff.setEmpty(runsBody, '<div class="empty-state">' + escapeHTML(state.loading ? 'Loading runs.' : 'No Sandman runs found.') + '</div>', state.showArchived ? 7 : 6);
       } else if (!filtered.length) {
         if (!state.loading && activeCount === 0 && completedCount > 0) {
-          portalDiff.setEmpty(runsBody, '<div class="empty-state">All clear — 0 active, ' + escapeHTML(String(completedCount)) + ' completed.</div>');
+          portalDiff.setEmpty(runsBody, '<div class="empty-state">All clear — 0 active, ' + escapeHTML(String(completedCount)) + ' completed.</div>', state.showArchived ? 7 : 6);
         } else {
-          portalDiff.setEmpty(runsBody, '<div class="empty-state">No runs match the current filters.</div>');
+          portalDiff.setEmpty(runsBody, '<div class="empty-state">No runs match the current filters.</div>', state.showArchived ? 7 : 6);
         }
       } else {
         portalDiff.diffRuns(runsBody, filtered, diffOpts);
@@ -3901,21 +3942,20 @@
       button.addEventListener('click', () => toggleSort(button.getAttribute('data-sort') || ''));
     }
 
-    activeBatchesToggle.addEventListener('change', () => {
-      state.activeBatches = activeBatchesToggle.checked;
-      if (state.activeBatches && archivedToggle.checked) {
-        state.showArchived = false;
-        archivedToggle.checked = false;
-      }
+    activeBatchesToggle.addEventListener('click', () => {
+      state.activeBatches = !state.activeBatches;
+      if (state.activeBatches) state.showArchived = false;
+      syncFilterToggleButtons();
+      syncArchivedColumnVisibility();
+      persistPortalViewState();
       render();
     });
 
-    archivedToggle.addEventListener('change', () => {
-      state.showArchived = archivedToggle.checked;
-      if (state.showArchived && activeBatchesToggle.checked) {
-        state.activeBatches = false;
-        activeBatchesToggle.checked = false;
-      }
+    archivedToggle.addEventListener('click', () => {
+      state.showArchived = !state.showArchived;
+      if (state.showArchived) state.activeBatches = false;
+      syncFilterToggleButtons();
+      syncArchivedColumnVisibility();
       persistPortalViewState();
       render();
     });
