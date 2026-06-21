@@ -1014,7 +1014,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"Active", "Archive", "Log", "Events", "Details", "Actions", "data-rendered-json", "JSON.stringify(detailsData", "settings-toggle", "theme-picker", "poll-interval", "masthead-repo", `id="last-updated"`, "poll-health", "Sandman", "Sleep while your agents code", "Sandman Light", "Catppuccin", "Gruvbox", "Evergreen", "Tokyo Night", `const apiPath = "\/api\/runs";`, "const defaultTheme = 'sandman';", "html[data-theme=\"sandman\"]", `id="status-chips"`, `id="status-filter"`, `>All<`, `data-sort="status"`, `data-sort="started"`, `data-sort="duration"`, `data-sort="archived"`, `id="active-batches"`, `id="archived-toggle"`, `syncFilterToggleButtons`, `syncArchivedColumnVisibility`} {
+	for _, want := range []string{"Active", "Archive", "Log", "Events", "Details", "Actions", "data-rendered-json", "JSON.stringify(detailsData", "settings-toggle", "theme-picker", "poll-interval", "masthead-repo", `id="last-updated"`, "poll-health", "Sandman", "Sleep while your agents code", "Sandman Light", "Catppuccin", "Gruvbox", "Evergreen", "Tokyo Night", `const apiPath = "\/api\/runs";`, "const defaultTheme = 'sandman';", "html[data-theme=\"sandman\"]", `id="status-chips"`, `id="status-filter"`, `>All<`, `data-sort="status"`, `data-sort="started"`, `data-sort="duration"`, `id="active-batches"`, `id="archived-toggle"`, `syncFilterToggleButtons`} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
@@ -1123,8 +1123,8 @@ func TestPortal_PageAbortedBadgeCSSIsDistinctFromArchived(t *testing.T) {
 	if !strings.Contains(content, `.badge.aborted { background: color-mix(in oklch, var(--danger) 8%, var(--surface));`) {
 		t.Fatalf("page missing the distinct aborted badge background rule\n%s", content[:min(1200, len(content))])
 	}
-	if !strings.Contains(content, `.badge.archived { background: color-mix(in oklch, var(--muted) 12%, var(--surface));`) {
-		t.Fatalf("page missing the archived badge rule\n%s", content[:min(1200, len(content))])
+	if strings.Contains(content, `.badge.archived`) {
+		t.Fatalf("archived badge CSS must not remain on the page\n%s", content[:min(1200, len(content))])
 	}
 }
 
@@ -1269,13 +1269,11 @@ func TestPortal_PageExposesArchivedFilter(t *testing.T) {
 	}
 	content := string(body)
 	for _, want := range []string{
-		`id="archived-toggle"`,
-		`Archive`,
 		`showArchived: persistedPortalState.showArchived === true`,
 		`activeBatches: persistedPortalState.activeBatches === true`,
 		`showArchived: state.showArchived`,
-		`archivedToggle.addEventListener('click'`,
 		`activeBatchesToggle.addEventListener('click'`,
+		`archivedToggle.addEventListener('click'`,
 		`if (state.activeBatches) return run.kind === 'active';`,
 		`if (state.showArchived) return !!run.archived;`,
 		`if (run.archived) return false;`,

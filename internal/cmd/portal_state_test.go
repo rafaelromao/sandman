@@ -179,13 +179,11 @@ sandbox.globalThis = sandbox;
 vm.runInNewContext(source, sandbox, { filename: helperPath });
 const api = sandbox.SandmanPortalState;
 
-// Test 1: defaultState includes showArchived: false
 const defaults = api.load();
 if (defaults.showArchived !== false) {
   throw new Error('expected default showArchived to be false, got ' + JSON.stringify(defaults.showArchived));
 }
 
-// Test 2: save and load showArchived: true
 storage.set(api.storageKey, JSON.stringify({
   expandedRunKey: null,
   tabs: {},
@@ -197,7 +195,6 @@ if (loadedTrue.showArchived !== true) {
   throw new Error('expected showArchived true to survive load, got ' + JSON.stringify(loadedTrue.showArchived));
 }
 
-// Test 3: save and load showArchived: false
 storage.set(api.storageKey, JSON.stringify({
   expandedRunKey: null,
   tabs: {},
@@ -209,7 +206,6 @@ if (loadedFalse.showArchived !== false) {
   throw new Error('expected showArchived false to survive load, got ' + JSON.stringify(loadedFalse.showArchived));
 }
 
-// Test 4: missing showArchived defaults to false (migration from old state)
 storage.set(api.storageKey, JSON.stringify({
   expandedRunKey: null,
   tabs: {},
@@ -220,7 +216,6 @@ if (loadedMissing.showArchived !== false) {
   throw new Error('expected missing showArchived to default to false, got ' + JSON.stringify(loadedMissing.showArchived));
 }
 
-// Test 5: save includes showArchived
 api.save({
   expandedRunKey: null,
   tabs: {},
@@ -232,8 +227,6 @@ if (persisted.showArchived !== true) {
   throw new Error('expected saved state to include showArchived, got ' + JSON.stringify(persisted));
 }
 
-// Test 6: page refresh round trip - save() through the public API, then a
-// fresh load() (simulating a new page) returns the persisted showArchived value
 storage.delete(api.storageKey);
 api.save({ expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: true });
 const afterRefresh = api.load();
@@ -287,7 +280,6 @@ storage.set(api.storageKey, JSON.stringify({
   expandedRunKey: null,
   tabs: {},
   commandFormCollapsed: false,
-  showArchived: false,
   activeBatches: true,
 }));
 const loadedTrue = api.load();
@@ -295,7 +287,7 @@ if (loadedTrue.activeBatches !== true) {
   throw new Error('expected activeBatches true to survive load, got ' + JSON.stringify(loadedTrue.activeBatches));
 }
 
-api.save({ expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, activeBatches: true });
+api.save({ expandedRunKey: null, tabs: {}, commandFormCollapsed: false, activeBatches: true });
 const persisted = JSON.parse(storage.get(api.storageKey));
 if (persisted.activeBatches !== true) {
   throw new Error('expected saved state to include activeBatches, got ' + JSON.stringify(persisted));
@@ -347,7 +339,6 @@ storage.set(api.storageKey, JSON.stringify({
   expandedRunKey: null,
   tabs: {},
   commandFormCollapsed: false,
-  showArchived: false,
   sortBy: 'status',
   sortDir: 'asc',
 }));
@@ -362,7 +353,7 @@ if (migrated.sortBy !== 'started' || migrated.sortDir !== 'desc') {
   throw new Error('expected invalid sort state to normalize to {started,desc}, got ' + JSON.stringify({ sortBy: migrated.sortBy, sortDir: migrated.sortDir }));
 }
 
-api.save({ expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, sortBy: 'duration', sortDir: 'asc' });
+api.save({ expandedRunKey: null, tabs: {}, commandFormCollapsed: false, sortBy: 'duration', sortDir: 'asc' });
 const persisted = JSON.parse(storage.get(api.storageKey));
 if (persisted.sortBy !== 'duration' || persisted.sortDir !== 'asc') {
   throw new Error('expected save() to persist sort fields, got ' + JSON.stringify(persisted));

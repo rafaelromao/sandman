@@ -2,7 +2,7 @@
   const DEFAULT_STORAGE_KEY = 'sandman.portal.view-state.v1';
   const DEFAULT_TAB = 'log';
   const VALID_TABS = new Set(['log', 'events', 'details']);
-  const VALID_SORT_BY = new Set(['server', 'status', 'started', 'duration', 'archived']);
+  const VALID_SORT_BY = new Set(['server', 'status', 'started', 'duration']);
   const VALID_SORT_DIR = new Set(['asc', 'desc']);
   let storageKey = DEFAULT_STORAGE_KEY;
 
