@@ -1276,7 +1276,9 @@ func TestPortal_PageExposesArchivedFilter(t *testing.T) {
 		`showArchived: state.showArchived`,
 		`archivedToggle.addEventListener('click'`,
 		`activeBatchesToggle.addEventListener('click'`,
-		`if (!state.showArchived && run.archived) return false;`,
+		`if (state.activeBatches) return run.kind === 'active';`,
+		`if (state.showArchived) return !!run.archived;`,
+		`if (run.archived) return false;`,
 		`const visibleRuns = state.runs.filter(shouldShowRun)`,
 	} {
 		if !strings.Contains(content, want) {

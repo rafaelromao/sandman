@@ -1955,6 +1955,14 @@ func (s *runSession) reconcileWorktreeBranch(wt sandbox.Sandbox, branch string) 
 	if workDir == "" {
 		return
 	}
+	// Guard: if the worktree directory is not a valid git directory
+	// (e.g. its .git file points to a stale/removed worktree
+	// registration), skip the checkout to avoid the
+	// "not a git repository: (null)" error. See #1189.
+	if !sandbox.IsGitDir(workDir) {
+		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: worktree at %q is not a valid git directory; skipping checkout\n", workDir)
+		return
+	}
 	expectedRef := "refs/heads/" + branch
 	if currentRef, err := sandbox.CurrentBranchRef(workDir); err == nil && currentRef == expectedRef {
 		return

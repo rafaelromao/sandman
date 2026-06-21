@@ -795,23 +795,23 @@
     .badge.archived .dot { background: var(--muted); }
     tbody tr.run-row.row-archived td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
     tbody tr.run-row.row-archived .run-title .name { color: color-mix(in oklch, var(--muted) 60%, var(--text)); }
-    .stale-chip {
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 8px;
-      border-radius: 999px;
-      border: 1px solid color-mix(in oklch, var(--muted) 30%, var(--border));
-      background: color-mix(in oklch, var(--muted) 8%, var(--surface-2));
-      color: var(--muted);
+    .cell-duration .cell-duration-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      line-height: 1.2;
+    }
+    .cell-duration .duration-value {
+      display: inline-block;
+    }
+    .stale-line {
       font-size: 11px;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.02em;
       white-space: nowrap;
+      color: var(--muted);
     }
-    .stale-chip.warn {
-      border-color: color-mix(in oklch, var(--warning) 36%, var(--border));
-      background: color-mix(in oklch, var(--warning) 12%, var(--surface-2));
-      color: var(--warning);
-    }
+    .stale-line.warn { color: var(--warning); }
     .retry-event-card {
       display: flex;
       flex-direction: column;
@@ -1705,7 +1705,8 @@
           "title badge"
           "archived archived"
           "issue actions"
-          "started duration";
+          "started duration"
+          "archived archived";
         gap: 6px 10px;
         padding: 14px 12px;
         border-bottom: 1px solid var(--border);
@@ -3336,8 +3337,9 @@
     }
 
     function shouldShowRun(run) {
-      if (state.activeBatches && run.kind !== 'active') return false;
-      if (!state.showArchived && run.archived) return false;
+      if (state.activeBatches) return run.kind === 'active';
+      if (state.showArchived) return !!run.archived;
+      if (run.archived) return false;
       if (state.selectedStatus !== 'all' && statusFilterValue(run) !== state.selectedStatus) return false;
       return true;
     }
@@ -3707,7 +3709,23 @@
 
     function toggleRun(runKey) {
       const prevExpandedRunKey = state.expandedRunKey;
-      const run = findRunByIdentity(runKey);
+      let run = findRunByIdentity(runKey);
+      if (!run) {
+        const stubMatch = runKey.match(/^(?:issue|review-stub)-(\d+)$/);
+        if (stubMatch) {
+          const issueNum = Number(stubMatch[1]);
+          const group = (state.runs || []).filter(r => r && r.issueNumber === issueNum);
+          if (group.length) {
+            const parents = group.filter(r => !r.review);
+            if (parents.length) {
+              run = parents.find(c => Number(c.reviewCount || 0) > 0 || c.reviewVerdict) || parents[0];
+            } else {
+              const summary = summarizeReviewGroup(group.filter(r => r.review));
+              run = summary.source || null;
+            }
+          }
+        }
+      }
       const subjectKey = subjectRunIdentity(run) || runKey;
       if (state.expandedRunKey === subjectKey) {
         state.expandedRunKey = null;
