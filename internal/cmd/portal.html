@@ -628,7 +628,7 @@
     }
     .col-title { width: 480px; }
     .col-badge { width: 88px; }
-    .col-archived { width: 96px; }
+
     .col-started { width: 180px; }
     .col-duration { width: 112px; }
     .col-issue-title { width: 180px; }
@@ -791,8 +791,6 @@
        Keep it calmer than failure but visibly separate from the archived mute. */
     .badge.aborted { background: color-mix(in oklch, var(--danger) 8%, var(--surface)); border-color: color-mix(in oklch, var(--danger) 24%, var(--border)); }
     .badge.aborted .dot { background: color-mix(in oklch, var(--danger) 72%, var(--muted)); }
-    .badge.archived { background: color-mix(in oklch, var(--muted) 12%, var(--surface)); border-color: color-mix(in oklch, var(--muted) 24%, var(--border)); }
-    .badge.archived .dot { background: var(--muted); }
     tbody tr.run-row.row-archived td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
     tbody tr.run-row.row-archived .run-title .name { color: color-mix(in oklch, var(--muted) 60%, var(--text)); }
     .cell-duration .cell-duration-stack {
@@ -1703,10 +1701,8 @@
         grid-template-columns: minmax(0, 1fr) auto;
         grid-template-areas:
           "title badge"
-          "archived archived"
           "issue actions"
-          "started duration"
-          "archived archived";
+          "started duration";
         gap: 6px 10px;
         padding: 14px 12px;
         border-bottom: 1px solid var(--border);
@@ -1738,13 +1734,6 @@
       }
       tbody tr.run-row td[data-cell="badge"] {
         grid-area: badge;
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-        gap: 6px;
-      }
-      tbody tr.run-row td[data-cell="archived"] {
-        grid-area: archived;
         display: flex;
         flex-wrap: wrap;
         justify-content: flex-end;
@@ -2043,9 +2032,8 @@
         </select>
         <div class="filter-chips" id="status-chips" role="group" aria-label="Filter runs by status"></div>
         <span class="fchip-divider" aria-hidden="true"></span>
-        <div class="filter-toggle-group" role="group" aria-label="Active and archive filters">
+        <div class="filter-toggle-group" role="group" aria-label="Active and all filters">
           <button id="active-batches" class="fchip fchip-toggle" type="button" aria-pressed="false">Active</button>
-          <button id="archived-toggle" class="fchip fchip-toggle" type="button" aria-pressed="false">Archive</button>
         </div>
       </div>
       <div id="summary-pill" class="status-pill"><span class="dot"></span><strong>0</strong><span class="summary-label">runs visible</span></div>
@@ -2056,7 +2044,6 @@
         <colgroup>
           <col class="col-title">
           <col class="col-badge">
-          <col class="col-archived">
           <col class="col-started">
           <col class="col-duration">
           <col class="col-issue-title">
@@ -2066,7 +2053,6 @@
           <tr>
             <th>Run</th>
             <th data-col="status"><button type="button" class="th-sort" data-sort="status" aria-pressed="false">Status<span class="sort-indicator"></span></button></th>
-            <th data-col="archived"><button type="button" class="th-sort" data-sort="archived" aria-pressed="false">Archived<span class="sort-indicator"></span></button></th>
             <th data-col="started"><button type="button" class="th-sort" data-sort="started" aria-pressed="false">Started<span class="sort-indicator"></span></button></th>
             <th data-col="duration"><button type="button" class="th-sort" data-sort="duration" aria-pressed="false">Duration<span class="sort-indicator"></span></button></th>
             <th data-col="issue-title">Issue Title</th>
@@ -2099,7 +2085,6 @@
     const statusFilter = document.getElementById('status-filter');
     const sortButtons = Array.from(document.querySelectorAll('.th-sort'));
     const activeBatchesToggle = document.getElementById('active-batches');
-    const archivedToggle = document.getElementById('archived-toggle');
     const runsBody = document.getElementById('runs-body');
     const commandsToggle = document.getElementById('commands-toggle');
     const commandsOverlay = document.getElementById('commands-overlay');
@@ -2123,7 +2108,7 @@
     }
     const portalScroll = window.SandmanPortalScroll;
     const portalDiff = window.SandmanPortalDiff;
-    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
     const commandState = {
       run: {
         launchMode: 'issue-driven',
@@ -2249,7 +2234,6 @@
       tabs: persistedPortalState.tabs || {},
       selectedStatus: 'all',
       activeBatches: persistedPortalState.activeBatches === true,
-      showArchived: persistedPortalState.showArchived === true,
       sortBy: persistedPortalState.sortBy || 'started',
       sortDir: persistedPortalState.sortDir || 'desc',
       loading: true,
@@ -2339,21 +2323,6 @@
 
     function syncFilterToggleButtons() {
       if (activeBatchesToggle) activeBatchesToggle.setAttribute('aria-pressed', String(state.activeBatches));
-      if (archivedToggle) archivedToggle.setAttribute('aria-pressed', String(state.showArchived));
-    }
-
-    function syncArchivedColumnVisibility() {
-      const visible = state.showArchived;
-      for (const node of document.querySelectorAll('[data-col="archived"], [data-cell="archived"], .col-archived')) {
-        node.hidden = !visible;
-      }
-    }
-
-    function normalizeArchivedSort() {
-      if (state.showArchived || state.sortBy !== 'archived') return false;
-      state.sortBy = 'started';
-      state.sortDir = 'desc';
-      return true;
     }
 
     function persistPortalViewState() {
@@ -2362,7 +2331,6 @@
         expandedRunKey: state.expandedRunKey,
         tabs: state.tabs,
         commandFormCollapsed: !commandFormExpanded,
-        showArchived: state.showArchived,
         activeBatches: state.activeBatches,
         sortBy: state.sortBy,
         sortDir: state.sortDir,
@@ -3244,11 +3212,6 @@
 
     function toggleSort(key) {
       if (!key) return;
-      if (key === 'archived' && !state.showArchived) {
-        state.showArchived = true;
-        state.activeBatches = false;
-        syncFilterToggleButtons();
-      }
       if (state.sortBy !== key) {
         state.sortBy = key;
         state.sortDir = key === 'status' ? 'asc' : 'desc';
@@ -3338,7 +3301,6 @@
 
     function shouldShowRun(run) {
       if (state.activeBatches) return run.kind === 'active';
-      if (state.showArchived) return !!run.archived;
       if (run.archived) return false;
       if (state.selectedStatus !== 'all' && statusFilterValue(run) !== state.selectedStatus) return false;
       return true;
@@ -3586,8 +3548,6 @@
       syncStatusOptions(state.runs);
       normalizePortalViewState();
       syncFilterToggleButtons();
-      if (normalizeArchivedSort()) persistPortalViewState();
-      syncArchivedColumnVisibility();
       const filtered = sortedVisibleRuns(visibleRunsForTable(state.runs.filter(shouldShowRun)));
       syncSortButtons();
       const activeCount = state.runs.filter((run) => run && run.kind === 'active').length;
@@ -3612,7 +3572,6 @@
         abortReservations: abortReservations,
         abortSupported: abortSupported,
         archiveSupported: true,
-        showArchived: state.showArchived,
         expandedKey: state.expandedRunKey,
         tabs: state.tabs,
         runs: state.runs,
@@ -3620,12 +3579,12 @@
         streamingKeys: streamingKeys,
       };
       if (!state.runs.length) {
-        portalDiff.setEmpty(runsBody, '<div class="empty-state">' + escapeHTML(state.loading ? 'Loading runs.' : 'No Sandman runs found.') + '</div>', state.showArchived ? 7 : 6);
+        portalDiff.setEmpty(runsBody, '<div class="empty-state">' + escapeHTML(state.loading ? 'Loading runs.' : 'No Sandman runs found.') + '</div>', 6);
       } else if (!filtered.length) {
         if (!state.loading && activeCount === 0 && completedCount > 0) {
-          portalDiff.setEmpty(runsBody, '<div class="empty-state">All clear — 0 active, ' + escapeHTML(String(completedCount)) + ' completed.</div>', state.showArchived ? 7 : 6);
+          portalDiff.setEmpty(runsBody, '<div class="empty-state">All clear — 0 active, ' + escapeHTML(String(completedCount)) + ' completed.</div>', 6);
         } else {
-          portalDiff.setEmpty(runsBody, '<div class="empty-state">No runs match the current filters.</div>', state.showArchived ? 7 : 6);
+          portalDiff.setEmpty(runsBody, '<div class="empty-state">No runs match the current filters.</div>', 6);
         }
       } else {
         portalDiff.diffRuns(runsBody, filtered, diffOpts);
@@ -3944,18 +3903,7 @@
 
     activeBatchesToggle.addEventListener('click', () => {
       state.activeBatches = !state.activeBatches;
-      if (state.activeBatches) state.showArchived = false;
       syncFilterToggleButtons();
-      syncArchivedColumnVisibility();
-      persistPortalViewState();
-      render();
-    });
-
-    archivedToggle.addEventListener('click', () => {
-      state.showArchived = !state.showArchived;
-      if (state.showArchived) state.activeBatches = false;
-      syncFilterToggleButtons();
-      syncArchivedColumnVisibility();
       persistPortalViewState();
       render();
     });
