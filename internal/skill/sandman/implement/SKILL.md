@@ -37,13 +37,17 @@ After setting up the branch, run a pre-flight check to detect if the issue's wor
 
 ```bash
 gh issue view <ID> --json state --jq '.state'
-gh search prs --merged --repo "$(gh repo view --json nameWithOwner --jq '.nameWithOwner')" -- "Closes #<ID> OR Fixes #<ID>" in:body
+gh search prs --merged --repo "$(gh repo view --json nameWithOwner --jq '.nameWithOwner')" --json number --jq 'length'
 ```
 
-- If issue state is `CLOSED` OR a merged PR is found closing this issue → append to `.sandman/task.md`:
+- If issue state is `CLOSED` OR the merged PR search returned a non-zero count → run:
 
-```
+```bash
+mkdir -p .sandman
+cat >> .sandman/task.md <<'EOF'
+
 ## SKIP: Issue already resolved
+EOF
 ```
 
 Then **stop without loading `sandman-plan` or `sandman-tdd`**.
