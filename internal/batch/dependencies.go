@@ -74,6 +74,9 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 		activeBlockers := make([]int, 0, len(blockers))
 
 		for _, blocker := range blockers {
+			if blocker == issueNum {
+				continue
+			}
 			blockerIssue, err := fetchDependencyIssue(ctx, r.githubClient, issueCache, blocker)
 			if err != nil {
 				if includeDeps {
