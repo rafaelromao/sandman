@@ -176,11 +176,16 @@ func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe) error 
 	return nil
 }
 
-// archivePortalRun relocates a run directory from <repoRoot>/.sandman/batches/<batchID>
-// to <repoRoot>/.sandman/archive/<batchID>. Full batch folder archive is Phase 4.
+// archivePortalRun relocates a run directory from <repoRoot>/.sandman/runs/<runID>
+// to <repoRoot>/.sandman/archive/<runID>. It is the repo-root-aware counterpart
+// of runArchiveRun used by the portal HTTP endpoint, so the same move
+// semantics back both the CLI and the portal. Existence and liveness
+// preconditions live with the caller (the portal handler surfaces typed
+// errors for them); this helper does the move and refuses to clobber an
+// existing archive target as a defense-in-depth guard.
 func archivePortalRun(repoRoot, runID string) error {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	runDir := filepath.Join(layout.BatchesDir, runID)
+	runDir := filepath.Join(layout.RunsDir, runID)
 	dest := filepath.Join(layout.ArchiveDir, runID)
 	if info, err := os.Stat(dest); err == nil && info.IsDir() {
 		return fmt.Errorf("archive %q already exists", runID)

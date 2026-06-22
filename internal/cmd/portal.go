@@ -220,10 +220,11 @@ type portalArchiveError struct {
 func (e *portalArchiveError) Error() string { return e.message }
 
 // portalRunDir returns the absolute run directory path for a given
-// repo root and run id. In Phase 1, uses BatchesDir. Full layout is Phase 3-4.
+// repo root and run id. The HTTP handler uses it to drive the liveness
+// and "already archived" checks before invoking the archiver.
 func portalRunDir(repoRoot, runID string) string {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	return filepath.Join(layout.BatchesDir, runID)
+	return filepath.Join(layout.RunsDir, runID)
 }
 
 // portalArchiveDir returns the absolute archive directory path for a

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -1354,7 +1355,46 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 	})
 
 	t.Run("active review uses saved log when live output is empty", func(t *testing.T) {
-		t.Skip("Phase 1: saved log file path deferred to Phase 2")
+		repoRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		sockDir, err := os.MkdirTemp("", "p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sockPath := filepath.Join(sockDir, "s.sock")
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		logName := paths.NewLayout(&config.Config{}, repoRoot).SafeLogFilename("sandman/review-PR42") + ".log"
+		if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", logName), []byte("saved review log\nmore review output\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		startedAt := time.Now().Add(-5 * time.Minute)
+		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+			{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
+		})
+
+		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+		if err != nil {
+			t.Fatalf("compute: %v", err)
+		}
+		if len(runs) != 1 {
+			t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+		}
+		got := runs[0]
+		if !strings.Contains(got.Log, "saved review log") || !strings.Contains(got.Log, "more review output") {
+			t.Fatalf("expected saved review log when live output is empty, got %#v", got.Log)
+		}
 	})
 
 	t.Run("event log only keeps review metadata", func(t *testing.T) {

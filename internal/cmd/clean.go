@@ -159,10 +159,14 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 							_ = gr.pruneAndDeleteBranch(branch)
 						}
 					}
+					if issueNum := run.IssueNumber(); issueNum > 0 {
+						_ = os.RemoveAll(filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNum)))
+					}
 				}
 				removed, _ := gr.removeOrphanBranches()
 				_ = os.RemoveAll(layout.WorktreeDir)
-				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale branches and %d stale run snapshots\n", removed, staleRemoved)
+				_ = os.RemoveAll(layout.LogDir)
+				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale branches and logs and %d stale run snapshots\n", removed, staleRemoved)
 				return nil
 			}
 
@@ -189,6 +193,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 					if err := gr.removeWorktree(wtPath); err != nil {
 						_ = gr.pruneAndDeleteBranch(branch)
 					}
+				}
+				if issueNum := run.IssueNumber(); issueNum > 0 {
+					_ = os.RemoveAll(filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNum)))
 				}
 				removed++
 			}

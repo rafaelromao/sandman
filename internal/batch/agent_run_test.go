@@ -374,7 +374,6 @@ func TestAgentRun_Execute_PrefixesOutput(t *testing.T) {
 }
 
 func TestAgentRun_Execute_WritesLogFile(t *testing.T) {
-	t.Skip("Phase 1: file logging deferred to Phase 2")
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -406,7 +405,6 @@ func TestAgentRun_Execute_WritesLogFile(t *testing.T) {
 }
 
 func TestAgentRun_Execute_UsesLayoutLogDir_IgnoresCWD(t *testing.T) {
-	t.Skip("Phase 1: file logging deferred to Phase 2")
 	repo := t.TempDir()
 	other := t.TempDir()
 	t.Chdir(other)
@@ -430,7 +428,6 @@ func TestAgentRun_Execute_UsesLayoutLogDir_IgnoresCWD(t *testing.T) {
 }
 
 func TestAgentRun_Execute_PromptOnlyUsesSanitizedFilename(t *testing.T) {
-	t.Skip("Phase 1: file logging deferred to Phase 2")
 	repo := t.TempDir()
 	sb := &fakeSandbox{execStdout: "hello world\n"}
 
@@ -446,7 +443,6 @@ func TestAgentRun_Execute_PromptOnlyUsesSanitizedFilename(t *testing.T) {
 }
 
 func TestAgentRun_Execute_PromptOnlyEmptyBranchUsesRunID(t *testing.T) {
-	t.Skip("Phase 1: file logging deferred to Phase 2")
 	repo := t.TempDir()
 	sb := &fakeSandbox{execStdout: "hello world\n"}
 
@@ -864,7 +860,6 @@ func TestAgentRun_Run_InvalidEnvKeyFails(t *testing.T) {
 }
 
 func TestAgentRun_Execute_LogFilePrefixed(t *testing.T) {
-	t.Skip("Phase 1: file logging deferred to Phase 2")
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -897,7 +892,6 @@ func TestAgentRun_Execute_LogFilePrefixed(t *testing.T) {
 }
 
 func TestAgentRun_Execute_LogFilePrefixed_PromptOnly(t *testing.T) {
-	t.Skip("Phase 1: file logging deferred to Phase 2")
 	dir := t.TempDir()
 	sb := &fakeSandbox{execStdout: "hello world\nsecond line\n", execStderr: "warn line\n"}
 
@@ -927,7 +921,6 @@ func TestAgentRun_Execute_LogFilePrefixed_PromptOnly(t *testing.T) {
 }
 
 func TestAgentRun_Execute_LogFilePrefixed_FlushesPartialLine(t *testing.T) {
-	t.Skip("Phase 1: file logging deferred to Phase 2")
 	dir := t.TempDir()
 	t.Chdir(dir)
 

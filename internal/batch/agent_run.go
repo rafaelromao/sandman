@@ -77,9 +77,32 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 	return nil
 }
 
-// Execute runs the agent command inside the sandbox, writing prefixed output to the given writers.
-// File logging to run folders is implemented in Phase 2 (run/write paths).
+// Execute runs the agent command inside the sandbox, writing prefixed output to the given writers
+// and to the layout's LogDir (saved log file is also prefixed).
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	logDir := r.layout.LogDir
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("create log dir: %w", err)
+	}
+	var logName string
+	if r.issue != nil {
+		logName = fmt.Sprintf("%d.log", r.issue.Number)
+	} else if r.review && strings.TrimSpace(r.branch) != "" {
+		logName = r.layout.SafeLogFilename(strings.TrimSpace(r.branch)) + ".log"
+	} else if runID := strings.TrimSpace(r.runID); runID != "" {
+		logName = r.layout.SafeLogFilename(runID) + ".log"
+	} else if branch := strings.TrimSpace(r.branch); branch != "" {
+		logName = r.layout.SafeLogFilename(branch) + ".log"
+	} else {
+		return fmt.Errorf("missing log identifier")
+	}
+	logPath := filepath.Join(logDir, logName)
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("create log file: %w", err)
+	}
+	defer logFile.Close()
+
 	if r.outputWriter != nil {
 		stdout = io.MultiWriter(stdout, r.outputWriter)
 		stderr = io.MultiWriter(stderr, r.outputWriter)
@@ -87,12 +110,19 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 
 	prefixedOut := NewLinePrefixWriter(r.prefixLabel(), stdout)
 	prefixedErr := NewLinePrefixWriter(r.prefixLabel(), stderr)
+	logPrefixedOut := NewLinePrefixWriter(r.prefixLabel(), logFile)
+	logPrefixedErr := NewLinePrefixWriter(r.prefixLabel(), logFile)
 
-	if err := r.sandbox.Exec(ctx, command, prefixedOut, prefixedErr); err != nil {
+	combinedOut := io.MultiWriter(prefixedOut, logPrefixedOut)
+	combinedErr := io.MultiWriter(prefixedErr, logPrefixedErr)
+
+	if err := r.sandbox.Exec(ctx, command, combinedOut, combinedErr); err != nil {
 		return fmt.Errorf("execute agent: %w", err)
 	}
 	_ = prefixedOut.Flush()
 	_ = prefixedErr.Flush()
+	_ = logPrefixedOut.Flush()
+	_ = logPrefixedErr.Flush()
 	return nil
 }
 

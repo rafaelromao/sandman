@@ -83,10 +83,10 @@ func readTailLines(path string, n int) []string {
 	return parts[len(parts)-n:]
 }
 
-// agentLogPath returns the canonical absolute log path for the given filename.
-// In Phase 1 (foundations), logs are not written to disk - run folder logging is Phase 2.
+// agentLogPath returns the canonical absolute log path for the given filename
+// under the orchestrator's layout LogDir.
 func (o *Orchestrator) agentLogPath(filename string) string {
-	return ""
+	return filepath.Join(o.layout.LogDir, filename)
 }
 func gitTopLevel(repoPath string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
@@ -842,7 +842,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		branches := collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog)
 		for _, branch := range branches {
-			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, "", o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile)
+			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, o.layout.LogDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile)
 		}
 	}
 
@@ -2190,10 +2190,17 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		_ = o.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}
 
-	logPath := s.o.agentLogPath("")
-	if logPath == "" {
+	var logFilename string
+	if s.review && strings.TrimSpace(branch) != "" {
+		logFilename = s.o.layout.SafeLogFilename(strings.TrimSpace(branch)) + ".log"
+	} else if trimmed := strings.TrimSpace(runID); trimmed != "" {
+		logFilename = s.o.layout.SafeLogFilename(trimmed) + ".log"
+	} else if trimmed := strings.TrimSpace(branch); trimmed != "" {
+		logFilename = s.o.layout.SafeLogFilename(trimmed) + ".log"
+	} else {
 		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 	}
+	logPath := s.o.agentLogPath(logFilename)
 	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
 			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
@@ -2355,9 +2362,10 @@ func isMissingBranchError(err error, out []byte) bool {
 //
 // When `strandedReconcile` is nil, today's belt-and-suspenders behaviour
 // is preserved (the failure is logged and the function continues);
-// ClearIssueArtifacts removes worktree and branch artifacts for an issue.
-// Log file deletion is skipped in Phase 1 - logs move to run folders in Phase 2.
-// logDir is accepted but ignored in Phase 1.
+// false is the explicit opt-out (`--no-reconcile-stranded`).
+//
+// `baseBranch` is the branch the function falls back to when no stranded
+// worktree is found; when empty, the fallback path is skipped.
 func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool) {
 	wtPath := filepath.Join(worktreeDir, branch)
 
@@ -2391,6 +2399,11 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, log
 	// dir that git never registered), remove it directly. Idempotent.
 	if err := os.RemoveAll(wtPath); err != nil {
 		fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, err)
+	}
+
+	// Remove log file
+	if err := os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))); err != nil {
+		fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
 	}
 
 	// Remove events for this issue
