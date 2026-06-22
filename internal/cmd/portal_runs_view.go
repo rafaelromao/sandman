@@ -958,7 +958,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		portalRun.SocketPath = active.SocketPath
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 	} else if portalRun.Kind == "active" {
-		sockPath := filepath.Join(paths.NewLayout(&config.Config{}, repoRoot).RunsDir, runState.RunID, "run.sock")
+		sockPath := filepath.Join(paths.NewLayout(&config.Config{}, repoRoot).BatchesDir, runState.RunID, "run.sock")
 		if _, err := os.Lstat(sockPath); err == nil {
 			portalRun.SocketPath = sockPath
 			v.markCompletedIfSocketDead(&portalRun, sockPath)
@@ -1246,7 +1246,7 @@ func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
 		return false
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	info, err := os.Stat(filepath.Join(layout.RunsDir, runID))
+	info, err := os.Stat(filepath.Join(layout.BatchesDir, runID))
 	if err != nil {
 		return false
 	}
@@ -1254,21 +1254,6 @@ func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
 }
 
 func (v *portalRunsView) portalLogPathForRun(repoRoot string, issueNumber int, branch string, runID string, review bool, prNumber int) string {
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	branch = strings.TrimSpace(branch)
-	if review && branch != "" {
-		return filepath.Join(layout.LogDir, layout.SafeLogFilename(branch)+".log")
-	}
-	if issueNumber > 0 {
-		return filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNumber))
-	}
-	runID = strings.TrimSpace(runID)
-	if runID != "" {
-		return filepath.Join(layout.LogDir, layout.SafeLogFilename(runID)+".log")
-	}
-	if branch != "" {
-		return filepath.Join(layout.LogDir, layout.SafeLogFilename(branch)+".log")
-	}
 	return ""
 }
 
