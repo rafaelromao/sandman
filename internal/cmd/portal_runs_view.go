@@ -700,7 +700,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
 		if state.Finished == nil {
-			run.Log = v.filterPortalIssueOutput(liveOutput, state.RunID)
+			run.Log = v.filterPortalLogByRunID(liveOutput, state.RunID)
 			if strings.TrimSpace(run.Log) == "" {
 				run.Log = "No live output captured yet."
 			}
@@ -1048,7 +1048,7 @@ func (v *portalRunsView) durationForRun(runState events.RunState) string {
 	return runState.Duration().String()
 }
 
-func (v *portalRunsView) filterPortalIssueOutput(text string, runID string) string {
+func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) string {
 	prefix := "[" + runID + "] "
 	lines := strings.Split(text, "\n")
 	filtered := make([]string, 0, len(lines))
@@ -1295,9 +1295,10 @@ func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, 
 
 // readPortalTextFile returns the contents of a saved portal log file.
 // Saved log files are persisted in the same `[<label>] HH:MM:SS ` prefixed
-// format as the live stream. Mixed-batch log files (if any) may contain
-// sibling-issue prefixes; the reader preserves them verbatim. Pre-change log
-// files (saved before slice 1) may be un-prefixed; the reader tolerates both.
+// format as the live stream. For portal display, labels are stripped so the
+// UI shows "HH:MM:SS msg" instead of "[<label>] HH:MM:SS msg". Pre-change
+// log files (saved before slice 1) may be un-prefixed; the reader tolerates
+// both. The raw file is unchanged; log download (/api/logs) serves it raw.
 func (v *portalRunsView) readPortalTextFile(path string) string {
 	if path == "" {
 		return ""

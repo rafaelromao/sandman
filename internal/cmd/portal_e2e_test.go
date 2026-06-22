@@ -290,9 +290,9 @@ func TestPortal_E2E_MixedBatchShowsBatchMembershipAndKeepsIssuePrefixes(t *testi
 
 	for _, issue := range []int{860, 854} {
 		run := byIssue[issue]
-		ownPrefix := fmt.Sprintf("[issue-%d]", issue)
-		if !strings.Contains(run.Log, ownPrefix) {
-			t.Fatalf("issue %d: expected own prefix %q in log, got:\n%s", issue, ownPrefix, run.Log)
+		ownTimestamp := fmt.Sprintf("18:51:0%d", issue%10)
+		if !strings.Contains(run.Log, ownTimestamp) {
+			t.Fatalf("issue %d: expected own timestamp %q in log, got:\n%s", issue, ownTimestamp, run.Log)
 		}
 	}
 	for _, issue := range []int{860, 854} {
@@ -301,9 +301,9 @@ func TestPortal_E2E_MixedBatchShowsBatchMembershipAndKeepsIssuePrefixes(t *testi
 			if other == issue {
 				continue
 			}
-			otherPrefix := fmt.Sprintf("[issue-%d]", other)
-			if strings.Contains(run.Log, otherPrefix) {
-				t.Fatalf("issue %d: log leaked sibling prefix %q:\n%s", issue, otherPrefix, run.Log)
+			otherTimestamp := fmt.Sprintf("18:51:0%d", other%10)
+			if strings.Contains(run.Log, otherTimestamp) {
+				t.Fatalf("issue %d: log leaked sibling timestamp %q:\n%s", issue, otherTimestamp, run.Log)
 			}
 		}
 	}

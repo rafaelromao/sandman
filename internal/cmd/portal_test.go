@@ -1114,7 +1114,7 @@ func TestPortal_FilterIssueOutput_StripsLabelsFromMatchingLines(t *testing.T) {
 		"[run-abc] 18:51:06 more PR work",
 	}, "\n")
 
-	filtered := (&portalRunsView{}).filterPortalIssueOutput(live, "run-abc")
+	filtered := (&portalRunsView{}).filterPortalLogByRunID(live, "run-abc")
 
 	for _, want := range []string{"18:51:05 working on PR", "18:51:06 more PR work"} {
 		if !strings.Contains(filtered, want) {
