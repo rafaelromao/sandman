@@ -122,17 +122,19 @@ func (idx *Index) Save(indexPath string) error {
 		oldMode = uint32(stat.Mode())
 	}
 
+	bakPath := indexPath + ".bak"
+	if oldMode != 0 {
+		if err := os.WriteFile(bakPath, data, os.FileMode(oldMode)); err != nil {
+			return fmt.Errorf("write index bak: %w", err)
+		}
+	}
+
 	if err := os.WriteFile(tmpPath, data, os.FileMode(oldMode)); err != nil {
 		return fmt.Errorf("write index tmp: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, indexPath); err != nil {
 		return fmt.Errorf("rename index tmp: %w", err)
-	}
-
-	bakPath := indexPath + ".bak"
-	if oldMode != 0 {
-		_ = os.WriteFile(bakPath, data, os.FileMode(oldMode))
 	}
 
 	return nil

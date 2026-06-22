@@ -11,13 +11,13 @@ import (
 // field is resolved against RepoRoot so the orchestrator, agent run, portal,
 // and clean command stop hand-rolling filepath.Join(".sandman", ...).
 type Layout struct {
-	RepoRoot      string
-	SandmanDir    string
-	WorktreeDir   string
-	BatchesDir    string
-	BatchesIndex  string
-	EventsLogPath string
-	ArchiveDir    string
+	RepoRoot         string
+	SandmanDir       string
+	WorktreeDir      string
+	BatchesDir       string
+	BatchesIndexPath string
+	EventsLogPath    string
+	ArchiveDir       string
 }
 
 // NewLayout resolves a Layout for the given repo root, honoring cfg.WorktreeDir
@@ -35,12 +35,12 @@ func NewLayout(cfg *config.Config, repoRoot string) Layout {
 		}
 	}
 	return Layout{
-		RepoRoot:      repoRoot,
-		SandmanDir:    filepath.Join(repoRoot, ".sandman"),
-		WorktreeDir:   worktreeDir,
-		BatchesDir:    filepath.Join(repoRoot, ".sandman", "batches"),
-		BatchesIndex:  filepath.Join(repoRoot, ".sandman", "batches.json"),
-		EventsLogPath: filepath.Join(repoRoot, ".sandman", "events.jsonl"),
-		ArchiveDir:    filepath.Join(repoRoot, ".sandman", "archive"),
+		RepoRoot:         repoRoot,
+		SandmanDir:       filepath.Join(repoRoot, ".sandman"),
+		WorktreeDir:      worktreeDir,
+		BatchesDir:       filepath.Join(repoRoot, ".sandman", "batches"),
+		BatchesIndexPath: filepath.Join(repoRoot, ".sandman", "batches.json"),
+		EventsLogPath:    filepath.Join(repoRoot, ".sandman", "events.jsonl"),
+		ArchiveDir:       filepath.Join(repoRoot, ".sandman", "archive"),
 	}
 }

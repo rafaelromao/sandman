@@ -22,8 +22,8 @@ func TestNewLayout_DefaultAndCustomFields(t *testing.T) {
 	if got, want := defaultLayout.BatchesDir, filepath.Join(repoRoot, ".sandman", "batches"); got != want {
 		t.Errorf("defaultLayout.BatchesDir = %q, want %q", got, want)
 	}
-	if got, want := defaultLayout.BatchesIndex, filepath.Join(repoRoot, ".sandman", "batches.json"); got != want {
-		t.Errorf("defaultLayout.BatchesIndex = %q, want %q", got, want)
+	if got, want := defaultLayout.BatchesIndexPath, filepath.Join(repoRoot, ".sandman", "batches.json"); got != want {
+		t.Errorf("defaultLayout.BatchesIndexPath = %q, want %q", got, want)
 	}
 	if got, want := defaultLayout.EventsLogPath, filepath.Join(repoRoot, ".sandman", "events.jsonl"); got != want {
 		t.Errorf("defaultLayout.EventsLogPath = %q, want %q", got, want)
@@ -52,7 +52,7 @@ func TestNewLayout_NilConfig(t *testing.T) {
 	if got, want := l.BatchesDir, filepath.Join(repoRoot, ".sandman", "batches"); got != want {
 		t.Errorf("BatchesDir with nil cfg = %q, want %q", got, want)
 	}
-	if got, want := l.BatchesIndex, filepath.Join(repoRoot, ".sandman", "batches.json"); got != want {
-		t.Errorf("BatchesIndex with nil cfg = %q, want %q", got, want)
+	if got, want := l.BatchesIndexPath, filepath.Join(repoRoot, ".sandman", "batches.json"); got != want {
+		t.Errorf("BatchesIndexPath with nil cfg = %q, want %q", got, want)
 	}
 }
