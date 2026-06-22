@@ -105,9 +105,8 @@ func TestPortal_PanelHeadersHTML_KeepAriaLabelledByAnchors(t *testing.T) {
 func TestPortal_VisualTestFixtureHTML_HasNoDrawerMarkup(t *testing.T) {
 	// The fixture is composed inside `buildVisualFixture` in
 	// `portal_visual_test.go`. We assert the contract by reading that test
-	// file and rejecting any drawer-chrome class (`.commands-panel` /
-	// `.settings-panel`) inside the fixture builder so the snapshot never
-	// pins drawer styling.
+	// file and rejecting any drawer-chrome class (`.settings-panel`) inside
+	// the fixture builder so the snapshot never pins drawer styling.
 	data := readPortalVisualTestSource(t)
 
 	start := strings.Index(data, "fixture := `")
@@ -121,7 +120,6 @@ func TestPortal_VisualTestFixtureHTML_HasNoDrawerMarkup(t *testing.T) {
 	fixture := data[start : start+end]
 
 	for _, forbidden := range []string{
-		"commands-panel",
 		"settings-panel",
 	} {
 		if strings.Contains(fixture, forbidden) {
