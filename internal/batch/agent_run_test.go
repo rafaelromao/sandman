@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -351,13 +350,14 @@ func TestAgentRun_Execute_PrefixesOutput(t *testing.T) {
 	var outBuf bytes.Buffer
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.runID = "issue-42"
 	if err := run.Execute(context.Background(), "echo hello", &outBuf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	output := outBuf.String()
 	if !strings.Contains(output, "[issue-42]") {
-		t.Errorf("expected output to contain issue prefix, got %q", output)
+		t.Errorf("expected output to contain runID prefix, got %q", output)
 	}
 	if !strings.Contains(output, "hello world") {
 		t.Errorf("expected output to contain agent text, got %q", output)
@@ -381,6 +381,7 @@ func TestAgentRun_Execute_WritesLogFile(t *testing.T) {
 	sb := &fakeSandbox{execStdout: "hello world\n", execStderr: "error line\n"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.runID = "issue-42"
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -518,6 +519,7 @@ func TestAgentRun_Execute_WritesToOutputWriter(t *testing.T) {
 	var buf bytes.Buffer
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.runID = "issue-42"
 	run.outputWriter = &buf
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -865,6 +867,7 @@ func TestAgentRun_Execute_LogFilePrefixed(t *testing.T) {
 	sb := &fakeSandbox{execStdout: "hello world\nsecond line\n", execStderr: "warn line\n"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.runID = "issue-42"
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -881,7 +884,7 @@ func TestAgentRun_Execute_LogFilePrefixed(t *testing.T) {
 		if line == "" {
 			continue
 		}
-		expectedPrefix := fmt.Sprintf("[issue-%d]", issue.Number)
+		expectedPrefix := "[issue-42]"
 		if !strings.HasPrefix(line, expectedPrefix) {
 			t.Errorf("expected line to start with %q, got %q", expectedPrefix, line)
 		}
@@ -893,6 +896,7 @@ func TestAgentRun_Execute_LogFilePrefixed_PromptOnly(t *testing.T) {
 	sb := &fakeSandbox{execStdout: "hello world\nsecond line\n", execStderr: "warn line\n"}
 
 	run := NewAgentRunWithLayout(nil, "prompt-test", sb, paths.NewLayout(&config.Config{}, dir))
+	run.runID = "prompt-test"
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -909,7 +913,7 @@ func TestAgentRun_Execute_LogFilePrefixed_PromptOnly(t *testing.T) {
 		if line == "" {
 			continue
 		}
-		expectedPrefix := "[prompt-only]"
+		expectedPrefix := "[prompt-test]"
 		if !strings.HasPrefix(line, expectedPrefix) {
 			t.Errorf("expected line to start with %q, got %q", expectedPrefix, line)
 		}
@@ -924,6 +928,7 @@ func TestAgentRun_Execute_LogFilePrefixed_FlushesPartialLine(t *testing.T) {
 	sb := &fakeSandbox{execStdout: "complete line\npartial line"}
 
 	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run.runID = "issue-42"
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -940,7 +945,7 @@ func TestAgentRun_Execute_LogFilePrefixed_FlushesPartialLine(t *testing.T) {
 		if line == "" {
 			continue
 		}
-		expectedPrefix := fmt.Sprintf("[issue-%d]", issue.Number)
+		expectedPrefix := "[issue-42]"
 		if !strings.HasPrefix(line, expectedPrefix) {
 			t.Errorf("expected line to start with %q, got %q", expectedPrefix, line)
 		}

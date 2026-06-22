@@ -252,11 +252,5 @@ func (r *AgentRun) issueData() github.Issue {
 }
 
 func (r *AgentRun) prefixLabel() string {
-	if r.issue != nil {
-		return fmt.Sprintf("issue-%d", r.issue.Number)
-	}
-	if r.review && r.runID != "" {
-		return r.runID
-	}
-	return "prompt-only"
+	return r.runID
 }

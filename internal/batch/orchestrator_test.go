@@ -2112,11 +2112,8 @@ func TestRunPromptOnlySingle_PrefixesOutputPromptOnlyWhenNotReview(t *testing.T)
 		t.Fatalf("expected RunID run-123, got %q", result.RunID)
 	}
 	got := output.String()
-	if !strings.Contains(got, "[prompt-only]") {
-		t.Fatalf("expected output prefix [prompt-only], got %q", got)
-	}
-	if strings.Contains(got, "[run-123]") {
-		t.Fatalf("expected output not to use run ID prefix, got %q", got)
+	if !strings.Contains(got, "[run-123]") {
+		t.Fatalf("expected output prefix [run-123], got %q", got)
 	}
 }
 

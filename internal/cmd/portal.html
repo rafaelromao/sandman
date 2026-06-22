@@ -2593,9 +2593,12 @@
       if (!state.tabs[nextRunKey]) {
         state.tabs[nextRunKey] = currentTab;
       }
+      if (currentRunKey) {
+        stopRunStream(currentRunKey);
+      }
       state.expandedRunKey = nextRunKey;
       persistPortalViewState();
-      render();
+      window.requestAnimationFrame(() => render());
     });
 
     runsBody.addEventListener('keydown', (event) => {
