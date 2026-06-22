@@ -36,11 +36,11 @@ gh issue view <ID> --json title,number
 After setting up the branch, run a pre-flight check to detect if the issue's work is already complete:
 
 ```bash
-gh issue view <ID> --json state
-gh search prs --state=merged -- "Closes #<ID>" in:body
+gh issue view <ID> --json state --jq '.state'
+gh search prs --merged -- "Closes #<ID>" in:body
 ```
 
-- If issue is **closed** OR a merged PR is found closing this issue → append to `.sandman/task.md`:
+- If issue state is `CLOSED` OR a merged PR is found closing this issue → append to `.sandman/task.md`:
 
 ```
 ## SKIP: Issue already resolved
