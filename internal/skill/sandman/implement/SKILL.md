@@ -37,7 +37,7 @@ After setting up the branch, run a pre-flight check to detect if the issue's wor
 
 ```bash
 gh issue view <ID> --json state --jq '.state'
-gh search prs --merged -- "Closes #<ID>" in:body
+gh search prs --merged --repo "$(gh repo view --json nameWithOwner --jq '.nameWithOwner')" -- "Closes #<ID> OR Fixes #<ID>" in:body
 ```
 
 - If issue state is `CLOSED` OR a merged PR is found closing this issue → append to `.sandman/task.md`:
