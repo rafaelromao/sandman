@@ -1702,12 +1702,16 @@
         grid-template-areas:
           "title badge"
           "issue actions"
-          "started duration";
+          "started duration"
+          "archived archived";
         gap: 6px 10px;
         padding: 14px 12px;
         border-bottom: 1px solid var(--border);
         background: var(--surface);
         align-items: start;
+      }
+      tbody tr.run-row td[data-cell="archived"] {
+        display: none;
       }
       tbody tr.run-row:has(+ tr.context-row),
       tbody tr.run-row:has(+ tr.batch-row) {
