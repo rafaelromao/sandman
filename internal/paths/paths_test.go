@@ -20,17 +20,17 @@ func TestNewLayout_DefaultAndCustomFields(t *testing.T) {
 	if got, want := defaultLayout.WorktreeDir, filepath.Join(repoRoot, ".sandman", "worktrees"); got != want {
 		t.Errorf("defaultLayout.WorktreeDir = %q, want %q", got, want)
 	}
-	if got, want := defaultLayout.LogDir, filepath.Join(repoRoot, ".sandman", "logs"); got != want {
-		t.Errorf("defaultLayout.LogDir = %q, want %q", got, want)
+	if got, want := defaultLayout.BatchesDir, filepath.Join(repoRoot, ".sandman", "batches"); got != want {
+		t.Errorf("defaultLayout.BatchesDir = %q, want %q", got, want)
+	}
+	if got, want := defaultLayout.BatchesIndexPath, filepath.Join(repoRoot, ".sandman", "batches.json"); got != want {
+		t.Errorf("defaultLayout.BatchesIndexPath = %q, want %q", got, want)
 	}
 	if got, want := defaultLayout.EventsLogPath, filepath.Join(repoRoot, ".sandman", "events.jsonl"); got != want {
 		t.Errorf("defaultLayout.EventsLogPath = %q, want %q", got, want)
 	}
 	if got, want := defaultLayout.ArchiveDir, filepath.Join(repoRoot, ".sandman", "archive"); got != want {
 		t.Errorf("defaultLayout.ArchiveDir = %q, want %q", got, want)
-	}
-	if got, want := defaultLayout.RunsDir, filepath.Join(repoRoot, ".sandman", "runs"); got != want {
-		t.Errorf("defaultLayout.RunsDir = %q, want %q", got, want)
 	}
 
 	customLayout := NewLayout(&config.Config{WorktreeDir: "custom/wt"}, repoRoot)
@@ -49,6 +49,12 @@ func TestNewLayout_NilConfig(t *testing.T) {
 	l := NewLayout(nil, repoRoot)
 	if got, want := l.WorktreeDir, filepath.Join(repoRoot, ".sandman", "worktrees"); got != want {
 		t.Errorf("WorktreeDir with nil cfg = %q, want %q", got, want)
+	}
+	if got, want := l.BatchesDir, filepath.Join(repoRoot, ".sandman", "batches"); got != want {
+		t.Errorf("BatchesDir with nil cfg = %q, want %q", got, want)
+	}
+	if got, want := l.BatchesIndexPath, filepath.Join(repoRoot, ".sandman", "batches.json"); got != want {
+		t.Errorf("BatchesIndexPath with nil cfg = %q, want %q", got, want)
 	}
 }
 

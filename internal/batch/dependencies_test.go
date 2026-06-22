@@ -429,3 +429,27 @@ func TestDependencyResolverResolve_DoesNotWarnForLargeExplicitBatch(t *testing.T
 		t.Fatalf("expected no expansion warning, got %q", warnings.String())
 	}
 }
+
+func TestDependencyResolverResolve_IgnoresSelfReferentialBlocker(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1222: {Number: 1222, Title: "Self-referential issue", BlockedBy: []int{1222}},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{1222}, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Issues, []int{1222}) {
+		t.Fatalf("expected issues [1222], got %v", resolved.Issues)
+	}
+
+	if !reflect.DeepEqual(resolved.Deps[1222], []int(nil)) {
+		t.Fatalf("expected no blockers for 1222, got %v", resolved.Deps[1222])
+	}
+}

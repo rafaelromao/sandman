@@ -1662,24 +1662,32 @@ func (s *runSession) runOnce(
 		}
 		result.RetriesTotal = attempt + 1
 
+		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
+		taskContent, _, _ := ReadTaskContent(taskPath)
+		alreadyResolved := strings.Contains(taskContent, "## Status: already resolved")
 		if mergeRequired {
 			prMerged := checkPRMerged(o.githubClient, branch)
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue
 			}
-			if prMerged {
+			if prMerged || alreadyResolved {
 				if ctx.Err() != nil {
 					break
 				}
 				result.Status = "success"
 				break
 			}
+			if github.IsIssueClosed(issue) {
+				if events.RunStatusFromPayload(result.Status).IsSuccess() {
+					break
+				}
+			}
 			result.Status = "failure"
 		} else {
 			if events.RunStatusFromPayload(result.Status).IsSuccess() {
 				if issue != nil && o.githubClient != nil {
 					prMerged := checkPRMerged(o.githubClient, branch)
-					if prMerged {
+					if prMerged || alreadyResolved {
 						break
 					}
 					result.Status = "failure"
@@ -1893,13 +1901,13 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			if checkPRMerged(o.githubClient, branch) {
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
 			}
+			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
 			// Always pass the task content verbatim (or empty template if
 			// missing). The agent reads its next instruction from the task
 			// document's ## Next Step field directly. The openPR value is only
 			// used below to decide whether to reset the branch — the agent
 			// receives the same task content regardless of open-PR state.
-			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 			taskContent, taskExists, err := ReadTaskContent(taskPath)
 			if err != nil {
 				fmt.Fprintf(o.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)

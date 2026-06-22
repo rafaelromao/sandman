@@ -10,14 +10,29 @@ import (
 // Layout groups the canonical on-disk locations for a Sandman repo. Every
 // field is resolved against RepoRoot so the orchestrator, agent run, portal,
 // and clean command stop hand-rolling filepath.Join(".sandman", ...).
+// BatchesDir and BatchesIndexPath are added in Phase 1; LogDir and RunsDir
+// are deprecated but retained for backward compatibility with slices 2+.
 type Layout struct {
-	RepoRoot      string
-	SandmanDir    string
-	WorktreeDir   string
-	LogDir        string
-	EventsLogPath string
-	ArchiveDir    string
-	RunsDir       string
+	RepoRoot         string
+	SandmanDir       string
+	WorktreeDir      string
+	BatchesDir       string
+	BatchesIndexPath string
+	EventsLogPath    string
+	ArchiveDir       string
+	LogDir           string
+	RunsDir          string
+}
+
+// SafeLogFilename translates a branch name (or any string with /, space, or
+// path-separator characters) into a single filename-safe component. Returns
+// "prompt-only" when the input is empty.
+func (l Layout) SafeLogFilename(branch string) string {
+	name := strings.NewReplacer("/", "-", string(filepath.Separator), "-", " ", "-").Replace(branch)
+	if name == "" {
+		return "prompt-only"
+	}
+	return name
 }
 
 // NewLayout resolves a Layout for the given repo root, honoring cfg.WorktreeDir
@@ -35,23 +50,14 @@ func NewLayout(cfg *config.Config, repoRoot string) Layout {
 		}
 	}
 	return Layout{
-		RepoRoot:      repoRoot,
-		SandmanDir:    filepath.Join(repoRoot, ".sandman"),
-		WorktreeDir:   worktreeDir,
-		LogDir:        filepath.Join(repoRoot, ".sandman", "logs"),
-		EventsLogPath: filepath.Join(repoRoot, ".sandman", "events.jsonl"),
-		ArchiveDir:    filepath.Join(repoRoot, ".sandman", "archive"),
-		RunsDir:       filepath.Join(repoRoot, ".sandman", "runs"),
+		RepoRoot:         repoRoot,
+		SandmanDir:       filepath.Join(repoRoot, ".sandman"),
+		WorktreeDir:      worktreeDir,
+		BatchesDir:       filepath.Join(repoRoot, ".sandman", "batches"),
+		BatchesIndexPath: filepath.Join(repoRoot, ".sandman", "batches.json"),
+		EventsLogPath:    filepath.Join(repoRoot, ".sandman", "events.jsonl"),
+		ArchiveDir:       filepath.Join(repoRoot, ".sandman", "archive"),
+		LogDir:           filepath.Join(repoRoot, ".sandman", "logs"),
+		RunsDir:          filepath.Join(repoRoot, ".sandman", "runs"),
 	}
-}
-
-// SafeLogFilename translates a branch name (or any string with /, space, or
-// path-separator characters) into a single filename-safe component. Returns
-// "prompt-only" when the input is empty.
-func (l Layout) SafeLogFilename(branch string) string {
-	name := strings.NewReplacer("/", "-", string(filepath.Separator), "-", " ", "-").Replace(branch)
-	if name == "" {
-		return "prompt-only"
-	}
-	return name
 }
