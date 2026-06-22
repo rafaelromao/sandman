@@ -44,6 +44,7 @@ type RunSession struct {
 var (
 	ErrStepMkdir         = errors.New("daemon: RunSession.Prepare failed at MkdirAll")
 	ErrStepManifest      = errors.New("daemon: RunSession.Prepare failed at WriteManifest")
+	ErrStepBatchesIndex  = errors.New("daemon: RunSession.Prepare failed at BatchesIndex")
 	ErrStepControlSocket = errors.New("daemon: RunSession.Prepare failed at ControlSocket.Start")
 	ErrStepCommandServer = errors.New("daemon: RunSession.Prepare failed at CommandServer.Start")
 )
@@ -106,7 +107,7 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 
 	idx, err := batchindex.Load(BatchesIndexPath(s.baseDir))
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrStepManifest, err)
+		return fmt.Errorf("%w: %v", ErrStepBatchesIndex, err)
 	}
 
 	pr := 0
@@ -123,7 +124,7 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 		PR:        pr,
 	})
 	if err := idx.Save(BatchesIndexPath(s.baseDir)); err != nil {
-		return fmt.Errorf("%w: %v", ErrStepManifest, err)
+		return fmt.Errorf("%w: %v", ErrStepBatchesIndex, err)
 	}
 
 	s.ctlSocket = NewControlSocket(s.runDir, s.broadcaster)

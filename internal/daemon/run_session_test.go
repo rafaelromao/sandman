@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/batchindex"
 )
 
 // mustParseTime parses an RFC3339 timestamp or fails the test.
@@ -227,6 +229,49 @@ func TestRunSession_Prepare_PropagatesMkdirError(t *testing.T) {
 type nilCommander struct{}
 
 func (*nilCommander) AbortIssue(int) error { return nil }
+
+// TestRunSession_Prepare_AppendsToBatchesIndex asserts that Prepare
+// appends an entry to batches.json with the expected id, kind, status,
+// issues, and pr fields.
+func TestRunSession_Prepare_AppendsToBatchesIndex(t *testing.T) {
+	dir := t.TempDir()
+	rs := NewRunSession(dir, "index-test-run-1")
+	t.Cleanup(func() { _ = rs.Close() })
+
+	prNum := 42
+	manifest := BatchManifest{
+		BatchId:   "index-test-run-1",
+		RunKind:   "review",
+		Issues:    []int{10, 20},
+		PR:        &prNum,
+		CreatedAt: mustParseTime(t, "2024-06-01T00:00:00Z"),
+	}
+	if err := rs.Prepare(manifest, nil); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	idx, err := batchindex.Load(BatchesIndexPath(dir))
+	if err != nil {
+		t.Fatalf("Load batches index: %v", err)
+	}
+
+	entry := idx.Resolve("index-test-run-1")
+	if entry == nil {
+		t.Fatal("batches index must contain entry for index-test-run-1")
+	}
+	if entry.Kind != batchindex.KindReview {
+		t.Errorf("entry.Kind = %v, want %v", entry.Kind, batchindex.KindReview)
+	}
+	if entry.Status != batchindex.StatusActive {
+		t.Errorf("entry.Status = %v, want %v", entry.Status, batchindex.StatusActive)
+	}
+	if len(entry.Issues) != 2 || entry.Issues[0] != 10 || entry.Issues[1] != 20 {
+		t.Errorf("entry.Issues = %v, want [10, 20]", entry.Issues)
+	}
+	if entry.PR != 42 {
+		t.Errorf("entry.PR = %v, want 42", entry.PR)
+	}
+}
 
 // TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil guards the
 // reflect-based nil check in Prepare. A typed-nil IssueCommander
