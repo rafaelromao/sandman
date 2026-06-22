@@ -146,7 +146,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 
 	rs := daemon.NewRunSession(".sandman", fmt.Sprintf("PR%d", pr.Number))
-	manifest := daemon.BatchManifest{Issues: []int{pr.Number}, CreatedAt: time.Now()}
+	manifest := daemon.BatchManifest{BatchId: fmt.Sprintf("PR%d", pr.Number), CreatedAt: time.Now(), RunKind: "review", Issues: []int{pr.Number}, PR: &pr.Number}
 	if err := rs.Prepare(manifest, nil); err != nil {
 		_ = rs.Close()
 		return fmt.Errorf("bootstrap review session: %w", err)

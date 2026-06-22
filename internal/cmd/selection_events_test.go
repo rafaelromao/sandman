@@ -326,10 +326,10 @@ func TestRunSelectionPhaseWithEvents_CreatesDirManifestAndSocketsOnFailure(t *te
 		t.Fatal("expected run.started event")
 	}
 
-	runDir := filepath.Join(sandmanDir, "runs")
+	runDir := filepath.Join(sandmanDir, "batches")
 	entries, err := os.ReadDir(runDir)
 	if err != nil {
-		t.Fatalf("failed to read runs dir: %v", err)
+		t.Fatalf("failed to read batches dir: %v", err)
 	}
 	if len(entries) != 1 {
 		t.Fatalf("expected exactly one run dir, got %d", len(entries))
@@ -372,10 +372,10 @@ func TestRunSelectionPhaseWithEvents_LeavesRunDirOnFailure(t *testing.T) {
 		t.Fatal("expected error from agent failure")
 	}
 
-	runDir := filepath.Join(sandmanDir, "runs")
+	runDir := filepath.Join(sandmanDir, "batches")
 	entries, err := os.ReadDir(runDir)
 	if err != nil {
-		t.Fatalf("cannot read runs dir after failure: %v", err)
+		t.Fatalf("cannot read batches dir after failure: %v", err)
 	}
 	if len(entries) != 1 {
 		t.Fatalf("expected exactly one run dir left on disk after failure, got %d", len(entries))

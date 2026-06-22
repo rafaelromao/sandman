@@ -439,7 +439,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	// portal's stale-recovery sweep to emit run.aborted (issue
 	// #1024).
 	rs := daemon.NewRunSession(d.BaseDir, batchDirName)
-	manifest := daemon.BatchManifest{Issues: []int{}, CreatedAt: time.Now(), RunID: perRowRunID}
+	manifest := daemon.BatchManifest{BatchId: batchDirName, CreatedAt: time.Now(), RunKind: "review", Issues: []int{}, PR: &prNumber}
 	if err := rs.Prepare(manifest, nil); err != nil {
 		_ = rs.Close()
 		return fmt.Errorf("prepare review run session: %w", err)

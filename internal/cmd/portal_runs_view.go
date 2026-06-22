@@ -541,8 +541,8 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		manifest, manifestErr := daemon.ReadManifest(runDir)
 		prNumber := 0
 		runID := instance.Name
-		if manifestErr == nil && manifest.RunID != "" {
-			runID = manifest.RunID
+		if manifestErr == nil && manifest.BatchId != "" {
+			runID = manifest.BatchId
 			prNumber = v.prNumberFromEvent(eventsByRun[runID])
 		}
 		issueNumbers := []int(nil)
@@ -1227,13 +1227,13 @@ func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) (map[string]str
 	}
 	dirIDs := make(map[string]string, len(deadBatches))
 	for _, batch := range deadBatches {
-		if batch.Manifest.RunID == "" {
+		if batch.Manifest.BatchId == "" {
 			continue
 		}
-		if _, ok := dirIDs[batch.Manifest.RunID]; ok {
+		if _, ok := dirIDs[batch.Manifest.BatchId]; ok {
 			continue
 		}
-		dirIDs[batch.Manifest.RunID] = filepath.Base(batch.RunDir)
+		dirIDs[batch.Manifest.BatchId] = filepath.Base(batch.RunDir)
 	}
 	if len(dirIDs) == 0 {
 		return nil, nil

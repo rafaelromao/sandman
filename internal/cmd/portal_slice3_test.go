@@ -218,7 +218,7 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	terminalReviewAt := startedAt.Add(2 * time.Minute)
 	reviewRunDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42-live")
 	createUnixRunSocket(t, filepath.Join(reviewRunDir, "run.sock"))
-	if err := daemon.WriteManifest(reviewRunDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: startedAt, RunID: "PR42-live"}); err != nil {
+	if err := daemon.WriteManifest(reviewRunDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: startedAt, BatchId: "PR42-live"}); err != nil {
 		t.Fatal(err)
 	}
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -841,7 +841,7 @@ func TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists(t *testing.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt, RunID: runID}); err != nil {
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt, BatchId: runID}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
@@ -881,7 +881,7 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
-	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt, RunID: runID}); err != nil {
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt, BatchId: runID}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 

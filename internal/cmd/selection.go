@@ -84,53 +84,22 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 	}
 	batchID := runid.NewBatchID(runid.KindAutoSelect, effectiveCount, "", ts, shortid)
 	runID := runid.NewRunID(runid.KindAutoSelect, fmt.Sprintf("auto-%d", effectiveCount), ts, shortid)
-	runDir := daemon.RunDir(sandmanDir, batchID)
 
 	manifest := daemon.BatchManifest{
 		RunKind:    "auto-select",
-		RunID:      runID,
+		BatchId:    batchID,
 		Candidates: append([]int(nil), candidates...),
 		Query:      query,
 		Count:      effectiveCount,
 		CreatedAt:  time.Now(),
 	}
 
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		return nil, "", "", fmt.Errorf("create run dir: %w", err)
+	rs := daemon.NewRunSession(sandmanDir, batchID)
+	if err := rs.Prepare(manifest, nil); err != nil {
+		_ = rs.Close()
+		return nil, "", "", fmt.Errorf("prepare run session: %w", err)
 	}
-
-	if err := daemon.WriteManifest(runDir, manifest); err != nil {
-		os.RemoveAll(runDir)
-		return nil, "", "", fmt.Errorf("write manifest: %w", err)
-	}
-
-	broadcaster := daemon.NewBroadcaster()
-	ctrlSock := daemon.NewControlSocket(runDir, broadcaster)
-	if err := ctrlSock.Start(); err != nil {
-		os.RemoveAll(runDir)
-		return nil, "", "", fmt.Errorf("control socket start: %w", err)
-	}
-
-	cmdServer := daemon.NewCommandServer(runDir, nil)
-	if err := cmdServer.Start(); err != nil {
-		ctrlSock.Stop()
-		os.RemoveAll(runDir)
-		return nil, "", "", fmt.Errorf("command server start: %w", err)
-	}
-
-	cleanup := func() {
-		cmdServer.Stop()
-		ctrlSock.Stop()
-	}
-
-	success := false
-	defer func() {
-		cleanup()
-		if success {
-			os.RemoveAll(runDir)
-		}
-		// On failure, leave runDir on disk for RecoverStaleRuns
-	}()
+	defer rs.Close()
 
 	_ = eventLog.Log(events.Event{
 		Type:      "run.started",
@@ -190,7 +159,6 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 		return nil, "", "", err
 	}
 	emitAutoSelectFinished(eventLog, runID, "success", "", selected)
-	success = true
 	return selected, ts, shortid, nil
 }
 

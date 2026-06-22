@@ -127,16 +127,16 @@ func TestRun_CreatesControlSocketInRunDir(t *testing.T) {
 
 	<-deps.BatchRunner.(*blockedBatchRunner).started
 
-	runsDir := filepath.Join(sandmanDir, "runs")
-	entries, err := os.ReadDir(runsDir)
+	batchesDir := filepath.Join(sandmanDir, "batches")
+	entries, err := os.ReadDir(batchesDir)
 	if err != nil {
-		t.Fatalf("read runs dir: %v", err)
+		t.Fatalf("read batches dir: %v", err)
 	}
 	if len(entries) != 1 {
-		t.Fatalf("expected 1 run dir, got %d", len(entries))
+		t.Fatalf("expected 1 batch dir, got %d", len(entries))
 	}
 
-	sockPath := filepath.Join(runsDir, entries[0].Name(), "run.sock")
+	sockPath := filepath.Join(batchesDir, entries[0].Name(), "run.sock")
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
 		t.Fatalf("socket should exist during run: %v", err)
@@ -228,16 +228,16 @@ func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
 
 	<-runner.started
 
-	runsDir := filepath.Join(sandmanDir, "runs")
-	entries, err := os.ReadDir(runsDir)
+	batchesDir := filepath.Join(sandmanDir, "batches")
+	entries, err := os.ReadDir(batchesDir)
 	if err != nil {
-		t.Fatalf("read runs dir: %v", err)
+		t.Fatalf("read batches dir: %v", err)
 	}
 	if len(entries) != 1 {
-		t.Fatalf("expected 1 run dir, got %d", len(entries))
+		t.Fatalf("expected 1 batch dir, got %d", len(entries))
 	}
 
-	cmdSockPath := filepath.Join(runsDir, entries[0].Name(), "cmd.sock")
+	cmdSockPath := filepath.Join(batchesDir, entries[0].Name(), "cmd.sock")
 	conn, err := net.Dial("unix", cmdSockPath)
 	if err != nil {
 		t.Fatalf("cmd.sock should exist during run: %v", err)
@@ -358,13 +358,13 @@ func TestRun_AllowsConcurrentRuns(t *testing.T) {
 	startRun("43", depsWithSocket(runner2))
 	<-runner2.started
 
-	runsDir := filepath.Join(sandmanDir, "runs")
-	entries, err := os.ReadDir(runsDir)
+	batchesDir := filepath.Join(sandmanDir, "batches")
+	entries, err := os.ReadDir(batchesDir)
 	if err != nil {
-		t.Fatalf("read runs dir: %v", err)
+		t.Fatalf("read batches dir: %v", err)
 	}
 	if len(entries) != 2 {
-		t.Fatalf("expected 2 run dirs for concurrent runs, got %d", len(entries))
+		t.Fatalf("expected 2 batch dirs for concurrent runs, got %d", len(entries))
 	}
 
 	close(release)
@@ -381,7 +381,7 @@ func TestRun_AllowsConcurrentRuns(t *testing.T) {
 	}
 }
 
-func TestRun_RemovesSocketAndRunDirOnError(t *testing.T) {
+func TestRun_LeavesBatchDirOnError(t *testing.T) {
 	dir := chdirToSandmanDir(t)
 	deps := depsWithSocket(&spyBatchRunner{result: nil, err: os.ErrClosed})
 	sandmanDir := filepath.Join(dir, ".sandman")
@@ -397,13 +397,13 @@ func TestRun_RemovesSocketAndRunDirOnError(t *testing.T) {
 		t.Fatal("expected error from batch runner")
 	}
 
-	runsDir := filepath.Join(sandmanDir, "runs")
-	entries, err := os.ReadDir(runsDir)
+	batchesDir := filepath.Join(sandmanDir, "batches")
+	entries, err := os.ReadDir(batchesDir)
 	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("read runs dir: %v", err)
+		t.Fatalf("read batches dir: %v", err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("expected run dirs to be cleaned up after error, got %d", len(entries))
+	if len(entries) != 1 {
+		t.Fatalf("expected batch dir to remain after error, got %d", len(entries))
 	}
 }
 
@@ -425,10 +425,7 @@ func TestRun_SetsRunDirOnBatchRequest(t *testing.T) {
 	if spy.req.RunDir == "" {
 		t.Fatal("expected RunDir to be set on batch.Request")
 	}
-	if !strings.HasPrefix(spy.req.RunDir, ".sandman/runs/") {
-		t.Errorf("expected RunDir %q to be under .sandman/runs/", spy.req.RunDir)
-	}
-	if _, err := os.Stat(spy.req.RunDir); !os.IsNotExist(err) {
-		t.Errorf("expected RunDir to be cleaned up after run, got stat err: %v", err)
+	if !strings.HasPrefix(spy.req.RunDir, ".sandman/batches/") {
+		t.Errorf("expected RunDir %q to be under .sandman/batches/", spy.req.RunDir)
 	}
 }

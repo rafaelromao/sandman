@@ -129,8 +129,8 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 		manifest, manifestErr := idx.readManifestCached(runDir)
 		prNumber := 0
 		runID := instance.Name
-		if manifestErr == nil && manifest.RunID != "" {
-			runID = manifest.RunID
+		if manifestErr == nil && manifest.BatchId != "" {
+			runID = manifest.BatchId
 			prNumber = idx.view.prNumberFromEvent(eventsByRun[runID])
 		}
 		issueNumbers := []int(nil)
