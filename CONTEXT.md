@@ -183,7 +183,7 @@ A Unix domain socket at `.sandman/runs/<run-id>/run.sock` that accepts attach cl
 _Avoid_: IPC socket, management socket.
 
 **Saved Run Log**:
-The persisted twin of the live attach stream, written to `.sandman/logs/<N>.log` for issue-driven runs or `prompt-only.log` / `<branch>.log` for prompt-only and review runs. Each line carries the same `[<label>] HH:MM:SS ` prefix as the live stream (label is `issue-<N>`, `prompt-only`, or the full runID for review). The file is opened with `O_APPEND` during `AgentRun.Execute` and is read by `readPortalTextFile` in the portal; it is never truncated mid-run. Pre-change log files may contain un-prefixed lines.
+The persisted twin of the live attach stream, written to `.sandman/logs/<N>.log` for issue-driven runs or `prompt-only.log` / `<branch>.log` for prompt-only and review runs. Each line carries the same `[<runID>] HH:MM:SS ` prefix as the live stream, where `<runID>` is the per-run identifier produced by `runid.NewRunID`. The file is opened with `O_APPEND` during `AgentRun.Execute` and is read by `readPortalTextFile` in the portal; it is never truncated mid-run. Pre-change log files may contain un-prefixed lines or the older `[issue-<N>]`/`[prompt-only]` labels.
 _Avoid_: Log file, run log.
 
 **Command Server**:
