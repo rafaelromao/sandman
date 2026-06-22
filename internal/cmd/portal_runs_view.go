@@ -395,7 +395,7 @@ func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
 				summaries[run.IssueNumber] = summary
 			}
 			summary.count++
-			if run.Kind == "active" {
+			if run.Status == "reviewing" {
 				summary.live = true
 			}
 			if verdict := reviewVerdictForStatus(run.Status); verdict != "" {
