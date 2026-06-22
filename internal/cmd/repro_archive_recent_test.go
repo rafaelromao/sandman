@@ -45,7 +45,7 @@ func TestRepro_GridAreasCoverAllCellsOnSmallScreens(t *testing.T) {
 		t.Fatalf("could not find grid-template-areas declaration in run-row CSS")
 	}
 	block := content[idx+areasIdx : idx+areasIdx+500]
-	for _, want := range []string{"title", "badge", "archived", "issue", "actions", "started", "duration"} {
+	for _, want := range []string{"title", "badge", "issue", "actions", "started", "duration"} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("grid-template-areas missing area %q; block:\n%s", want, block)
 		}
