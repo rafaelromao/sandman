@@ -165,9 +165,7 @@
       color: var(--text);
       background: var(--bg);
     }
-    body.commands-open {
-      overflow: hidden;
-    }
+
     a { color: inherit; }
     code, pre, .mono {
       font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
@@ -1049,377 +1047,6 @@
     }
     .settings-toggle:hover { background: var(--surface-3); }
     .settings-toggle[aria-expanded="true"] { background: var(--surface-3); }
-    .commands-overlay {
-      position: fixed;
-      inset: 0;
-      background: color-mix(in oklch, var(--bg) 64%, transparent);
-      z-index: 38;
-    }
-    .commands-panel {
-      position: fixed;
-      top: 0;
-      right: 0;
-      width: min(480px, 100vw);
-      height: 100dvh;
-      display: flex;
-      flex-direction: column;
-      background: var(--surface);
-      border-left: 1px solid var(--border);
-      transform: translateX(100%);
-      transition: transform 300ms cubic-bezier(0.165, 0.84, 0.44, 1);
-      will-change: transform;
-      z-index: 39;
-      pointer-events: none;
-    }
-    .commands-panel.open {
-      transform: translateX(0);
-      pointer-events: auto;
-    }
-    .commands-panel-shell {
-      display: flex;
-      flex: 1 1 auto;
-      flex-direction: column;
-      min-height: 0;
-    }
-    .commands-panel-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: start;
-      padding: 20px 20px 16px;
-      border-bottom: 1px solid var(--border);
-    }
-    .commands-panel-head h2 {
-      margin: 0;
-      font-size: 18px;
-      line-height: 1.2;
-      letter-spacing: -0.03em;
-    }
-    .commands-panel-close {
-      align-self: start;
-      flex: 0 0 auto;
-    }
-    .commands-panel-form {
-      display: flex;
-      flex: 1 1 auto;
-      flex-direction: column;
-      min-height: 0;
-    }
-    .commands-panel-body {
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      padding: 18px 20px 20px;
-      overflow: hidden;
-      min-height: 0;
-      flex: 1 1 auto;
-      align-items: stretch;
-    }
-    .command-form-section {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      flex-shrink: 0;
-      min-width: 0;
-    }
-    .command-form-section-head {
-      display: flex;
-      align-items: end;
-      gap: 10px;
-      min-width: 0;
-    }
-    .command-picker-field {
-      display: grid;
-      gap: 6px;
-      flex: 1 1 auto;
-      min-width: 0;
-    }
-    .command-form-toggle {
-      width: 28px;
-      height: 28px;
-      padding: 0;
-      flex: 0 0 auto;
-      align-self: end;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: var(--surface-3);
-      color: var(--text);
-      transition: background-color 180ms ease-out, border-color 180ms ease-out, color 180ms ease-out;
-    }
-    .command-form-toggle:hover {
-      background: var(--surface-2);
-    }
-    .command-form-toggle:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-    }
-    .command-form-toggle .disclosure-chevron {
-      width: 16px;
-      height: 16px;
-      transition: transform 280ms cubic-bezier(0.165, 0.84, 0.44, 1);
-      transform: rotate(0deg);
-      transform-origin: center;
-    }
-    .command-form-toggle[aria-expanded="false"] .disclosure-chevron {
-      transform: rotate(-90deg);
-    }
-    .command-form-body {
-      max-height: 2000px;
-      opacity: 1;
-      overflow: hidden;
-      transition: max-height 280ms cubic-bezier(0.165, 0.84, 0.44, 1), opacity 280ms cubic-bezier(0.165, 0.84, 0.44, 1);
-    }
-    .command-form-body.collapsed {
-      max-height: 0;
-      opacity: 0;
-      overflow: hidden;
-    }
-    .command-pane-tabs {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 2px;
-    }
-    .command-pane-tabs .tab-btn {
-      min-width: 0;
-      padding: 8px 14px;
-      border: none;
-      border-radius: 0;
-      background: transparent;
-      color: var(--muted);
-      font-weight: 500;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-      transition: color 180ms ease-out, border-color 180ms ease-out;
-    }
-    .command-pane-tabs .tab-btn:hover {
-      background: transparent;
-      color: var(--text);
-      transform: none;
-    }
-    .command-pane-tabs .tab-btn[aria-selected="true"] {
-      background: transparent;
-      border-color: transparent;
-      color: var(--text);
-      border-bottom-color: var(--accent);
-    }
-    .command-pane {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      min-height: 0;
-      overflow: auto;
-      padding-top: 2px;
-    }
-    .command-picker-field > span,
-    .command-field > span,
-    .command-history-head span {
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-    }
-    .command-picker-field select,
-    .command-field input,
-    .command-field textarea,
-    .command-field select {
-      width: 100%;
-      min-width: 0;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 10px 12px;
-      background: var(--surface-3);
-      color: var(--text);
-      font: inherit;
-    }
-    .command-field {
-      display: grid;
-      gap: 6px;
-      min-width: 0;
-    }
-    .command-field textarea {
-      min-height: 88px;
-      resize: vertical;
-    }
-    .command-field input[type="number"] {
-      width: 120px;
-    }
-    .command-grid {
-      display: grid;
-      gap: 12px;
-    }
-    .command-grid.two {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .command-section {
-      display: grid;
-      gap: 12px;
-      padding: 16px;
-      min-width: 0;
-    }
-    .command-section h3 {
-      margin: 0;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--muted);
-    }
-    .command-note {
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    .command-radio-group {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    .launch-radio {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      background: var(--surface-2);
-      color: var(--text);
-      white-space: nowrap;
-    }
-    .launch-radio:has(input:checked) {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: var(--accent-ink);
-      font-weight: 600;
-    }
-    .launch-radio input {
-      accent-color: var(--accent);
-    }
-    .command-history {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      padding-top: 2px;
-      min-height: 0;
-      flex: 1 1 auto;
-    }
-    .command-history-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 12px;
-    }
-    .command-history-head h3 {
-      margin: 0;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--muted);
-    }
-    .command-list {
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      flex: 1 1 auto;
-      overflow: auto;
-    }
-    .command-row {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--border);
-      cursor: pointer;
-      transition: background 120ms ease-out;
-    }
-    .command-row:hover {
-      background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
-    }
-    .command-row.active {
-      background: color-mix(in oklch, var(--accent) 12%, var(--surface));
-    }
-    .command-row:focus-visible {
-      background: color-mix(in oklch, var(--accent) 12%, var(--surface));
-    }
-    .command-row .col-command {
-      flex: 1;
-      min-width: 0;
-      word-break: break-word;
-    }
-    .command-row .col-started {
-      color: var(--muted);
-      font-size: 11px;
-      white-space: nowrap;
-    }
-    .command-row-detail {
-      padding: 14px;
-      background: var(--surface-2);
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      font-size: 12px;
-    }
-    .command-row-detail .kv {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .command-row-detail .kv span {
-      color: var(--muted);
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-    .command-row-detail .kv strong {
-      font-weight: 600;
-      word-break: break-word;
-    }
-    .command-row-detail .kv code {
-      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
-      font-size: 12px;
-      word-break: break-word;
-      background: var(--surface-3);
-      padding: 6px 8px;
-      border-radius: 6px;
-    }
-    .command-row-detail .kv .output-pre {
-      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
-      font-size: 12px;
-      word-break: break-word;
-      white-space: pre-wrap;
-      background: var(--surface-3);
-      padding: 6px 8px;
-      border-radius: 6px;
-      margin: 0;
-      max-height: 200px;
-      overflow-y: auto;
-    }
-    .commands-panel-footer {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      padding: 16px 20px 20px;
-      border-top: 1px solid var(--border);
-    }
-    .commands-panel-footer .status-pill {
-      flex: 1;
-      min-width: 0;
-    }
-    .commands-panel-footer .status-pill strong,
-    .commands-panel-footer .status-pill code {
-      display: block;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
-      font-size: 11.5px;
-      font-weight: 500;
-    }
     .settings-overlay {
       position: fixed;
       inset: 0;
@@ -1626,7 +1253,6 @@
         gap: 8px;
         margin-left: 0;
       }
-      .command-grid.two { grid-template-columns: 1fr; }
       .settings-wrap { justify-self: auto; margin-left: auto; }
       .detail-panel { min-height: 0; max-height: calc(100vh - 220px); overflow: auto; }
       .detail-grid { grid-template-columns: 1fr; }
@@ -1635,16 +1261,12 @@
       .tab-pane.fill {
         min-width: 0;
       }
-      .commands-panel,
       .settings-panel {
         left: 0;
         right: 0;
         width: auto;
         border-left: 0;
       }
-      .commands-panel-head,
-      .commands-panel-body,
-      .commands-panel-footer,
       .settings-panel-head,
       .settings-panel-body {
         padding-left: 16px;
@@ -1822,19 +1444,6 @@
       .kv span {
         font-size: 10px;
       }
-      .command-row {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 6px;
-        padding: 12px;
-      }
-      .command-row .col-status {
-        flex: 0 0 auto;
-        align-self: flex-start;
-      }
-      .command-row .col-command {
-        flex: 0 0 auto;
-      }
       .masthead {
         flex-direction: column;
         align-items: stretch;
@@ -1857,20 +1466,10 @@
       .settings-wrap {
         gap: 4px;
       }
-      .command-row .col-command {
-        font-size: 13px;
-      }
-      .command-row .col-started {
-        font-size: 10px;
-      }
-      .commands-panel,
       .settings-panel {
         width: 100vw;
         border-left: 0;
       }
-      .commands-panel-head,
-      .commands-panel-body,
-      .commands-panel-footer,
       .settings-panel-head,
       .settings-panel-body {
         padding-left: 16px;
@@ -1883,16 +1482,11 @@
       }
     }
     @media (prefers-reduced-motion: reduce) {
-      .commands-panel,
       .settings-panel {
         transition: none;
       }
-      .commands-overlay,
       .settings-overlay {
         backdrop-filter: none;
-      }
-      .command-form-body {
-        transition: none;
       }
     }
   </style>
@@ -1937,65 +1531,12 @@
           <strong class="poll-health-updated" id="last-updated">Waiting for first refresh</strong>
         </span>
         <div class="settings-wrap">
-          <button id="commands-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="commands-panel" aria-label="Commands">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-          </button>
           <button id="settings-toggle" class="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel" aria-label="Settings">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
         </div>
       </div>
     </header>
-
-    <div id="commands-overlay" class="commands-overlay" hidden></div>
-    <aside id="commands-panel" class="commands-panel" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="commands-panel-title">
-      <div class="commands-panel-shell">
-        <div class="commands-panel-head">
-          <h2 id="commands-panel-title">Commands</h2>
-          <button id="commands-close" class="settings-toggle commands-panel-close" type="button">Close</button>
-        </div>
-
-        <form id="command-panel-form" class="commands-panel-form">
-          <div class="commands-panel-body">
-            <div class="command-form-section">
-              <div class="command-form-section-head">
-                <label class="command-picker-field" for="command-picker">
-                  <span>Command</span>
-                  <select id="command-picker" name="command">
-                    <option value="run" selected>Run</option>
-                    <option value="continue">Continue</option>
-                    <option value="status">Status</option>
-                    <option value="history">History</option>
-                    <option value="clean">Clean</option>
-                    <option value="config">Config</option>
-                    <option value="archive">Archive</option>
-                  </select>
-                </label>
-                <button id="command-form-toggle" class="command-form-toggle" type="button" aria-expanded="true" aria-controls="command-form-body" aria-label="Toggle command options">
-                  <svg class="disclosure-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="6 9 12 15 18 9"/></svg>
-                </button>
-              </div>
-              <div id="command-form-body" class="command-form-body">
-                <div id="command-panel-body"></div>
-              </div>
-            </div>
-            <section class="command-history" aria-label="Command history">
-              <div class="command-history-head">
-                <h3>Recent commands</h3>
-              </div>
-              <div id="commands-list" class="command-list">
-                <div class="empty-state">Loading commands.</div>
-              </div>
-            </section>
-          </div>
-
-          <div class="commands-panel-footer">
-            <div id="command-execute-status" class="status-pill"><span class="dot"></span><strong>Ready</strong></div>
-            <button id="command-execute" type="submit" class="action-btn">Execute</button>
-          </div>
-        </form>
-      </div>
-    </aside>
 
     <div id="settings-overlay" class="settings-overlay" hidden></div>
     <aside id="settings-panel" class="settings-panel" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="settings-panel-title">
@@ -2022,10 +1563,7 @@
       </div>
     </aside>
 
-    <template id="launch-mode-options">{{.LaunchData.LaunchModeOptionsHTML}}</template>
-    <template id="selection-mode-options">{{.LaunchData.SelectionModeOptionsHTML}}</template>
-    <template id="agent-options">{{.LaunchData.AgentOptionsHTML}}</template>
-    <template id="sandbox-options">{{.LaunchData.SandboxOptionsHTML}}</template>
+    
 
     <div id="error-banner" class="error-banner" role="status" aria-live="polite"></div>
 
@@ -2073,7 +1611,6 @@
 
   <script>
     const apiPath = "{{.RefreshPath}}";
-    const commandsPath = "{{.CommandsPath}}";
     const abortPath = "/api/runs/abort";
     const archivePath = "/api/runs/archive";
     const streamPath = "/api/runs/stream";
@@ -2092,61 +1629,16 @@
     const activeBatchesToggle = document.getElementById('active-batches');
     const archivedToggle = document.getElementById('archived-toggle');
     const runsBody = document.getElementById('runs-body');
-    const commandsToggle = document.getElementById('commands-toggle');
-    const commandsOverlay = document.getElementById('commands-overlay');
-    const commandsPanel = document.getElementById('commands-panel');
-    const commandsClose = document.getElementById('commands-close');
-    const commandPanelForm = document.getElementById('command-panel-form');
-    const commandPicker = document.getElementById('command-picker');
-    const commandFormToggle = document.getElementById('command-form-toggle');
-    const commandFormBody = document.getElementById('command-form-body');
-    const commandPanelBody = document.getElementById('command-panel-body');
-    const commandsList = document.getElementById('commands-list');
-    const commandExecuteStatus = document.getElementById('command-execute-status');
-    const commandExecuteButton = document.getElementById('command-execute');
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
     const abortSupported = {{.PortalAbortSupported}};
-    const launchDefaults = {{.LaunchDataJSON}};
     const portalState = window.SandmanPortalState;
     if (portalState && portalState.configure) {
       portalState.configure({ storageKey: "{{.PortalStateStorageKey}}" });
     }
     const portalScroll = window.SandmanPortalScroll;
     const portalDiff = window.SandmanPortalDiff;
-    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, commandFormCollapsed: false, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
-    const commandState = {
-      run: {
-        launchMode: 'issue-driven',
-        selectionMode: 'issues',
-        issues: '',
-        label: '',
-        query: '',
-        autoMaxCount: '',
-        runPane: 'run',
-        includeDependencies: false,
-        prompt: '',
-        template: '',
-        promptArgs: '',
-        agent: '',
-        model: '',
-        baseBranch: '',
-        sandbox: '',
-        parallel: '',
-        startDelay: '',
-        containerCapacity: '',
-        maxContainers: '',
-      },
-      continue: { issue: '', issues: '', prompt: '' },
-      clean: { cleanMode: 'success', confirmed: false },
-      config: { configMode: 'get', configKey: '', configValue: '' },
-      archive: { archiveMode: 'run', archiveRunId: '', archiveOlderThanDays: '', confirmed: false },
-      status: {},
-      history: {},
-    };
-    let commandPanelType = commandPicker ? commandPicker.value || 'run' : 'run';
-    let commandPanelOpen = false;
-    let commandFormExpanded = true;
+    const persistedPortalState = portalState ? portalState.load() : { expandedRunKey: null, tabs: {}, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
     let settingsPanelOpen = false;
 
     function systemTheme() {
@@ -2195,7 +1687,6 @@
       settingsOverlay.hidden = !open;
       settingsToggle.setAttribute('aria-expanded', String(open));
       if (open) {
-        if (commandPanelOpen) setCommandPanelOpen(false);
         window.requestAnimationFrame(() => {
           if (themePicker) themePicker.focus({ preventScroll: true });
         });
@@ -2234,8 +1725,6 @@
 
     const state = {
       runs: [],
-      commands: [],
-      commandExpandedId: null,
       expandedRunKey: persistedPortalState.expandedRunKey || null,
       tabs: persistedPortalState.tabs || {},
       selectedStatus: 'all',
@@ -2338,7 +1827,6 @@
       portalState.save({
         expandedRunKey: state.expandedRunKey,
         tabs: state.tabs,
-        commandFormCollapsed: !commandFormExpanded,
         showArchived: state.showArchived,
         activeBatches: state.activeBatches,
         sortBy: state.sortBy,
@@ -2395,471 +1883,6 @@
       return '—';
     }
 
-    function templateHTML(id) {
-      const template = document.getElementById(id);
-      return template ? template.innerHTML.trim() : '';
-    }
-
-    function commandField(label, content, extraClass) {
-      return '<div class="command-field' + (extraClass ? ' ' + escapeHTML(extraClass) : '') + '"><span>' + escapeHTML(label) + '</span>' + content + '</div>';
-    }
-
-    function commandSection(title, content) {
-      return ['<section class="command-section">', '<h3>' + escapeHTML(title) + '</h3>', content, '</section>'].join('');
-    }
-
-    function commandNote(text) {
-      return '<div class="command-note">' + escapeHTML(text) + '</div>';
-    }
-
-    function renderPaneTab(activePane, pane, label) {
-      const active = activePane === pane;
-      return '<button type="button" id="command-pane-tab-' + escapeHTML(pane) + '" class="tab-btn" data-action="set-run-pane" data-run-pane="' + escapeHTML(pane) + '" role="tab" aria-selected="' + (active ? 'true' : 'false') + '" aria-controls="command-pane" tabindex="' + (active ? '0' : '-1') + '">' + escapeHTML(label) + '</button>';
-    }
-
-    function renderRunPane(state, pane) {
-      if (pane === 'scope') {
-        if (state.launchMode === 'prompt-only') {
-          return commandSection('Scope', commandNote('Not used in prompt-only mode. Switch to Issue-driven to configure issue selection.'));
-        }
-        const scopeField = (() => {
-          const sm = state.selectionMode || 'issues';
-          if (sm === 'issues') return commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || '') + '">');
-          if (sm === 'label') return commandField('Label', '<input name="label" type="text" placeholder="ready-for-agent" value="' + escapeHTML(state.label || '') + '">');
-          if (sm === 'query') return commandField('Query', '<input name="query" type="text" placeholder="is:open label:ready-for-agent" value="' + escapeHTML(state.query || '') + '">');
-          if (sm === 'auto') return commandField('Number of issues for Auto Mode', '<input name="autoMaxCount" type="number" min="0" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.autoMaxCount || 50)) + '" value="' + escapeHTML(state.autoMaxCount || '') + '">');
-          return '';
-        })();
-        return commandSection('Scope', [
-          '<div class="command-grid">',
-          scopeField,
-          '</div>',
-          commandField('Dependencies', '<label class="launch-radio"><input name="includeDependencies" type="checkbox"' + (state.includeDependencies ? ' checked' : '') + '> Include dependencies</label>'),
-        ].join(''));
-      }
-
-      if (pane === 'prompt') {
-        return commandSection('Prompt', [
-          commandField('Prompt', '<textarea name="prompt" placeholder="finish the tests">' + escapeHTML(state.prompt || '') + '</textarea>'),
-          commandField('Template', '<input name="template" type="text" placeholder="prompts/launch.md" value="' + escapeHTML(state.template || '') + '">'),
-          commandField('Prompt args', '<textarea name="promptArgs" placeholder="key=value\nmode=fast">' + escapeHTML(state.promptArgs || '') + '</textarea>'),
-        ].join(''));
-      }
-
-      if (pane === 'runtime') {
-        return commandSection('Runtime', [
-          '<div class="command-grid two">',
-          commandField('Agent', '<select name="agent">' + templateHTML('agent-options') + '</select>'),
-          commandField('Model', '<input name="model" type="text" placeholder="' + escapeHTML(launchDefaults.model || 'opencode-4.0') + '" value="' + escapeHTML(state.model || '') + '">'),
-          commandField('Base branch', '<input name="baseBranch" type="text" placeholder="' + escapeHTML(launchDefaults.baseBranch || 'main') + '" value="' + escapeHTML(state.baseBranch || '') + '">'),
-          commandField('Sandbox', '<select name="sandbox">' + templateHTML('sandbox-options') + '</select>'),
-          commandField('Parallel', '<input name="parallel" type="number" min="0" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.parallel ?? 0)) + '" value="' + escapeHTML(state.parallel || '') + '">'),
-          commandField('Start delay', '<input name="startDelay" type="number" min="0" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.startDelay ?? 0)) + '" value="' + escapeHTML(state.startDelay || '') + '">'),
-          commandField('Container capacity', '<input name="containerCapacity" type="number" min="0" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.containerCapacity ?? 0)) + '" value="' + escapeHTML(state.containerCapacity || '') + '">'),
-          commandField('Max containers', '<input name="maxContainers" type="number" min="0" step="1" inputmode="numeric" placeholder="' + escapeHTML(String(launchDefaults.maxContainers ?? 0)) + '" value="' + escapeHTML(state.maxContainers || '') + '">'),
-          '</div>',
-        ].join(''));
-      }
-
-      const smVisible = state.launchMode !== 'prompt-only';
-      return commandSection('Run', [
-        '<div class="command-grid' + (smVisible ? ' two' : '') + '">',
-        commandField('Launch mode', '<div class="command-radio-group">' + templateHTML('launch-mode-options') + '</div>'),
-        smVisible ? commandField('Selection mode', '<div class="command-radio-group">' + templateHTML('selection-mode-options') + '</div>') : '',
-        '</div>',
-        smVisible ? '' : commandNote('Selection and scope fields are not used in prompt-only mode.'),
-      ].join(''));
-    }
-
-    function maybeInt(value) {
-      const text = String(value ?? '').trim();
-      if (!text) return null;
-      const num = Number.parseInt(text, 10);
-      return Number.isFinite(num) ? num : null;
-    }
-
-    function setCommandExecuteStatus(message) {
-      if (!commandExecuteStatus) return;
-      commandExecuteStatus.innerHTML = '<span class="dot"></span><strong>' + escapeHTML(message) + '</strong>';
-    }
-
-    function buildCommandLine() {
-      const type = commandPanelType || (commandPicker ? commandPicker.value || 'run' : 'run');
-      const s = commandState[type] || {};
-      const ag = launchDefaults.agent || '';
-      const mo = launchDefaults.model || '';
-      const bb = launchDefaults.baseBranch || '';
-      const sa = launchDefaults.sandbox || '';
-
-      let cmd = 'sandman ';
-      if (type === 'run') {
-        if (s.launchMode === 'prompt-only') {
-          cmd += 'run';
-          if (s.prompt) cmd += ' --prompt "' + s.prompt.replace(/["\n\r]/g, (c) => c === '"' ? '\\"' : c === '\n' ? '\\n' : '\\r') + '"';
-          else if (s.template) cmd += ' --template ' + s.template;
-        } else {
-          const sm = s.selectionMode || 'issues';
-          if (sm === 'issues' && s.issues) cmd += 'run ' + s.issues.replace(/,/g, ' ');
-          else if (sm === 'label' && s.label) {
-            cmd += 'run --label ' + s.label;
-          } else if (sm === 'query' && s.query) {
-            cmd += 'run --query "' + s.query.replace(/"/g, '\\"') + '"';
-          } else if (sm === 'auto') {
-            const count = s.autoMaxCount || String(launchDefaults.autoMaxCount || 50);
-            cmd += 'run --auto';
-            if (parseInt(count, 10) > 0) cmd += ' --count ' + count;
-            if (s.label) cmd += ' --label ' + s.label;
-            if (s.query) cmd += ' --query "' + s.query.replace(/"/g, '\\"') + '"';
-          }
-          else cmd += 'run';
-        }
-        if (s.agent && s.agent !== ag) cmd += ' --agent ' + s.agent;
-        if (s.model && s.model !== mo) cmd += ' --model ' + s.model;
-        if (s.baseBranch && s.baseBranch !== bb) cmd += ' --base-branch ' + s.baseBranch;
-        if (s.sandbox && s.sandbox !== sa) cmd += ' --sandbox ' + s.sandbox;
-      } else if (type === 'continue') {
-        const issues = (s.issues || '').replace(/,/g, ' ').trim();
-        cmd += 'continue ' + (issues || '?') + ' "' + ((s.prompt || '').replace(/["\n\r]/g, (c) => c === '"' ? '\\"' : c === '\n' ? '\\n' : '\\r') || '...') + '"';
-      } else if (type === 'status') {
-        cmd += 'status';
-      } else if (type === 'history') {
-        cmd += 'history';
-      } else if (type === 'clean') {
-        cmd += 'clean --' + (s.cleanMode || 'success');
-      } else if (type === 'config') {
-        cmd += 'config ' + (s.configMode || 'get') + ' ' + (s.configKey || '?');
-        if (s.configMode === 'set' && s.configValue) cmd += ' "' + s.configValue.replace(/"/g, '\\"') + '"';
-      } else if (type === 'archive') {
-        const mode = s.archiveMode || 'run';
-        cmd += 'archive ' + mode;
-        if (mode === 'run') {
-          cmd += ' ' + (s.archiveRunId || '?');
-        } else if (mode === 'older-than') {
-          cmd += ' ' + (s.archiveOlderThanDays || '?');
-        }
-      }
-      return cmd;
-    }
-
-    function updateExecuteSummary() {
-      if (!commandExecuteStatus) return;
-      const cmd = buildCommandLine();
-      commandExecuteStatus.innerHTML = '<span class="dot"></span><code>' + escapeHTML(cmd) + '</code>';
-    }
-
-    function renderRunCommandBody(state) {
-      const activePane = state.runPane || 'run';
-      return [
-        '<div class="command-pane-tabs" role="tablist" aria-label="Run command panes">',
-        renderPaneTab(activePane, 'run', 'Run'),
-        renderPaneTab(activePane, 'scope', 'Scope'),
-        renderPaneTab(activePane, 'prompt', 'Prompt'),
-        renderPaneTab(activePane, 'runtime', 'Runtime'),
-        '</div>',
-        '<div id="command-pane" class="command-pane" role="tabpanel" aria-labelledby="command-pane-tab-' + escapeHTML(activePane) + '">',
-        renderRunPane(state, activePane),
-        '</div>',
-      ].join('');
-    }
-
-    function renderContinueCommandBody(state) {
-      return [
-        commandSection('Continue', [
-          commandNote('Resume one or more repo-scoped tasks by issue number and optional prompt.'),
-          '<div class="command-grid">',
-          commandField('Issues', '<input name="issues" type="text" inputmode="numeric" placeholder="42, 43" value="' + escapeHTML(state.issues || state.issue || '') + '">'),
-          commandField('Prompt', '<textarea name="prompt" placeholder="finish the tests">' + escapeHTML(state.prompt || '') + '</textarea>'),
-          '</div>',
-        ].join('')),
-      ].join('');
-    }
-
-    function renderStatusCommandBody() {
-      return commandSection('Status', commandNote('No inputs required. Launches `sandman status`.'));
-    }
-
-    function renderHistoryCommandBody() {
-      return commandSection('History', commandNote('No inputs required. Launches `sandman history`.'));
-    }
-
-    function renderCleanCommandBody(state) {
-      return commandSection('Clean', [
-        commandNote('Choose a cleanup scope, then confirm before executing.'),
-        '<div class="command-grid two">',
-        commandField('Scope', '<select name="cleanMode"><option value="success"' + (state.cleanMode === 'success' ? ' selected' : '') + '>Success only</option><option value="failed"' + (state.cleanMode === 'failed' ? ' selected' : '') + '>Failed only</option><option value="all"' + (state.cleanMode === 'all' ? ' selected' : '') + '>All</option></select>'),
-        commandField('Confirm', '<label class="launch-radio"><input name="confirmed" type="checkbox"' + (state.confirmed ? ' checked' : '') + '> Confirm cleanup</label>'),
-        '</div>',
-      ].join(''));
-    }
-
-    function renderConfigCommandBody(state) {
-      const isGet = state.configMode === 'get';
-      return commandSection('Config', [
-        commandNote('Read or write repo-scoped configuration values.'),
-        '<div class="command-grid two">',
-        commandField('Mode', '<select name="configMode"><option value="get"' + (state.configMode === 'get' ? ' selected' : '') + '>Get</option><option value="set"' + (state.configMode === 'set' ? ' selected' : '') + '>Set</option></select>'),
-        commandField('Key', '<input name="configKey" type="text" placeholder="agent" value="' + escapeHTML(state.configKey || '') + '">'),
-        isGet ? '' : commandField('Value', '<input name="configValue" type="text" placeholder="opencode" value="' + escapeHTML(state.configValue || '') + '">'),
-        '</div>',
-      ].join(''));
-    }
-
-    function renderArchiveCommandBody(state) {
-      const mode = state.archiveMode || 'run';
-      const isRun = mode === 'run';
-      const isOlderThan = mode === 'older-than';
-      const isStale = mode === 'stale';
-      const isBulk = isOlderThan || isStale;
-      return commandSection('Archive', [
-        commandNote('Move run directories to .sandman/archive. ' + (isBulk ? 'Bulk modes touch every matching run — confirm before executing.' : 'Pick a mode, then supply the inputs that mode requires.')),
-        '<div class="command-grid two">',
-        commandField('Mode', '<select name="archiveMode"><option value="run"' + (isRun ? ' selected' : '') + '>Run</option><option value="older-than"' + (isOlderThan ? ' selected' : '') + '>Older than</option><option value="stale"' + (isStale ? ' selected' : '') + '>Stale</option></select>'),
-        isRun ? commandField('Run id', '<input name="archiveRunId" type="text" placeholder="run-42" value="' + escapeHTML(state.archiveRunId || '') + '">') : '',
-        isOlderThan ? commandField('Days', '<input name="archiveOlderThanDays" type="number" min="0" step="1" placeholder="7" value="' + escapeHTML(state.archiveOlderThanDays || '') + '">') : '',
-        isStale ? commandNote('No additional inputs required. Recovers stale runs and archives dead-and-terminal runs.') : '',
-        commandField('Confirm', '<label class="launch-radio"><input name="confirmed" type="checkbox"' + (state.confirmed ? ' checked' : '') + '> Confirm archive</label>'),
-        '</div>',
-      ].join(''));
-    }
-
-    function renderCommandPanelBody(type) {
-      const state = commandState[type] || {};
-      if (!commandPanelBody) return;
-      commandPanelBody.innerHTML = '';
-      if (type === 'run') {
-        commandPanelBody.innerHTML = renderRunCommandBody(state);
-      } else if (type === 'continue') {
-        commandPanelBody.innerHTML = renderContinueCommandBody(state);
-      } else if (type === 'status') {
-        commandPanelBody.innerHTML = renderStatusCommandBody();
-      } else if (type === 'history') {
-        commandPanelBody.innerHTML = renderHistoryCommandBody();
-      } else if (type === 'clean') {
-        commandPanelBody.innerHTML = renderCleanCommandBody(state);
-      } else if (type === 'config') {
-        commandPanelBody.innerHTML = renderConfigCommandBody(state);
-      } else if (type === 'archive') {
-        commandPanelBody.innerHTML = renderArchiveCommandBody(state);
-      }
-      applyCommandFieldState(type, state);
-      updateExecuteSummary();
-      updateCommandFormBodyHeight();
-    }
-
-    function focusActiveRunPaneTab() {
-      if (!commandPanelBody) return;
-      const tab = commandPanelBody.querySelector('button[aria-selected="true"]');
-      if (tab) tab.focus({ preventScroll: true });
-    }
-
-    function setRunPane(pane) {
-      syncCommandPanelState('run');
-      commandState.run = {
-        ...(commandState.run || {}),
-        runPane: pane || 'run',
-      };
-      renderCommandPanelBody('run');
-      window.requestAnimationFrame(() => {
-        focusActiveRunPaneTab();
-      });
-    }
-
-    function applyCommandFieldState(type, state) {
-      if (!commandPanelBody) return;
-      const setValue = (name, value) => {
-        const field = commandPanelBody.querySelector('[name="' + name + '"]');
-        if (!field) return;
-        if (field.type === 'checkbox') {
-          field.checked = Boolean(value);
-          return;
-        }
-        if (field.type === 'radio') {
-          commandPanelBody.querySelectorAll('[name="' + name + '"][type="radio"]').forEach((input) => {
-            input.checked = input.value === String(value);
-          });
-          return;
-        }
-        if (field.tagName === 'SELECT' && !value) return;
-        field.value = value == null ? '' : String(value);
-      };
-
-      if (type === 'run') {
-        setValue('launchMode', state.launchMode || 'issue-driven');
-        setValue('selectionMode', state.selectionMode || 'issues');
-        setValue('issues', state.issues || '');
-        setValue('label', state.label || '');
-        setValue('query', state.query || '');
-        setValue('autoMaxCount', state.autoMaxCount || '');
-        setValue('includeDependencies', state.includeDependencies);
-        setValue('prompt', state.prompt || '');
-        setValue('template', state.template || '');
-        setValue('promptArgs', state.promptArgs || '');
-        setValue('agent', state.agent || '');
-        setValue('model', state.model || '');
-        setValue('baseBranch', state.baseBranch || '');
-        setValue('sandbox', state.sandbox || '');
-        setValue('parallel', state.parallel || '');
-        setValue('startDelay', state.startDelay || '');
-        setValue('containerCapacity', state.containerCapacity || '');
-        setValue('maxContainers', state.maxContainers || '');
-      } else if (type === 'continue') {
-        setValue('issues', state.issues || state.issue || '');
-        setValue('prompt', state.prompt || '');
-      } else if (type === 'clean') {
-        setValue('cleanMode', state.cleanMode || 'success');
-        setValue('confirmed', state.confirmed);
-      } else if (type === 'config') {
-        setValue('configMode', state.configMode || 'get');
-        setValue('configKey', state.configKey || '');
-        setValue('configValue', state.configValue || '');
-      } else if (type === 'archive') {
-        setValue('archiveMode', state.archiveMode || 'run');
-        setValue('archiveRunId', state.archiveRunId || '');
-        setValue('archiveOlderThanDays', state.archiveOlderThanDays || '');
-        setValue('confirmed', state.confirmed);
-      }
-    }
-
-    function readCommandFieldState(type) {
-      if (!commandPanelForm) return commandState[type] || {};
-      const formData = new FormData(commandPanelForm);
-      const current = commandState[type] || {};
-
-      const getVal = (name, fb) => {
-        if (!commandPanelForm.querySelector('[name="' + name + '"]')) return current[name] ?? fb;
-        const v = formData.get(name);
-        return v != null ? String(v) : (current[name] ?? fb);
-      };
-      const getCheck = (name) => {
-        if (!commandPanelForm.querySelector('[name="' + name + '"]')) return current[name] ?? false;
-        return formData.get(name) === 'on';
-      };
-
-      if (type === 'run') {
-        return {
-          launchMode: getVal('launchMode', 'issue-driven'),
-          selectionMode: getVal('selectionMode', 'issues'),
-          issues: getVal('issues', ''),
-          label: getVal('label', ''),
-          query: getVal('query', ''),
-          autoMaxCount: getVal('autoMaxCount', ''),
-          includeDependencies: getCheck('includeDependencies'),
-          prompt: getVal('prompt', ''),
-          template: getVal('template', ''),
-          promptArgs: getVal('promptArgs', ''),
-          agent: getVal('agent', ''),
-          model: getVal('model', ''),
-          baseBranch: getVal('baseBranch', ''),
-          sandbox: getVal('sandbox', ''),
-          parallel: getVal('parallel', ''),
-          startDelay: getVal('startDelay', ''),
-          containerCapacity: getVal('containerCapacity', ''),
-          maxContainers: getVal('maxContainers', ''),
-        };
-      }
-      if (type === 'continue') {
-        const issues = getVal('issues', '');
-        return {
-          issue: issues,
-          issues: issues,
-          prompt: getVal('prompt', ''),
-        };
-      }
-      if (type === 'clean') {
-        return {
-          cleanMode: getVal('cleanMode', 'success'),
-          confirmed: getCheck('confirmed'),
-        };
-      }
-      if (type === 'config') {
-        return {
-          configMode: getVal('configMode', 'get'),
-          configKey: getVal('configKey', ''),
-          configValue: getVal('configValue', ''),
-        };
-      }
-      if (type === 'archive') {
-        return {
-          archiveMode: getVal('archiveMode', 'run'),
-          archiveRunId: getVal('archiveRunId', ''),
-          archiveOlderThanDays: getVal('archiveOlderThanDays', ''),
-          confirmed: getCheck('confirmed'),
-        };
-      }
-      return commandState[type] || {};
-    }
-
-    function syncCommandPanelState(type) {
-      const nextType = type || commandPanelType || (commandPicker ? commandPicker.value || 'run' : 'run');
-      commandState[nextType] = {
-        ...(commandState[nextType] || {}),
-        ...readCommandFieldState(nextType),
-      };
-      return nextType;
-    }
-
-    function commandPanelFocusables() {
-      if (!commandsPanel) return [];
-      return Array.from(commandsPanel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter((element) => !element.hasAttribute('disabled') && !element.hidden && !element.closest('[inert]'));
-    }
-
-    function trapCommandPanelFocus(event) {
-      if (!commandPanelOpen || event.key !== 'Tab' || !commandsPanel) return;
-      const focusables = commandPanelFocusables();
-      if (!focusables.length) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (event.shiftKey) {
-        if (document.activeElement === first || !commandsPanel.contains(document.activeElement)) {
-          event.preventDefault();
-          last.focus();
-        }
-        return;
-      }
-      if (document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    function setCommandPanelOpen(open) {
-      if (!commandsPanel || !commandsOverlay || !commandsToggle) return;
-      commandPanelOpen = open;
-      commandsPanel.classList.toggle('open', open);
-      commandsPanel.setAttribute('aria-hidden', String(!open));
-      commandsPanel.toggleAttribute('inert', !open);
-      commandsOverlay.hidden = !open;
-      commandsToggle.setAttribute('aria-expanded', String(open));
-      document.body.classList.toggle('commands-open', open);
-      if (open && settingsPanelOpen) setSettingsPanelOpen(false);
-      if (open) {
-        setCommandFormExpanded(!persistedPortalState.commandFormCollapsed);
-        renderCommandPanelBody(commandPanelType);
-        refreshCommands();
-        window.requestAnimationFrame(() => {
-          if (commandPicker) commandPicker.focus({ preventScroll: true });
-        });
-      } else {
-        commandsToggle.focus();
-      }
-    }
-
-    function updateCommandFormBodyHeight() {
-      if (!commandFormBody) return;
-      commandFormBody.style.maxHeight = commandFormExpanded ? '' : '0px';
-    }
-
-    function setCommandFormExpanded(expanded) {
-      if (!commandFormToggle || !commandFormBody) return;
-      commandFormExpanded = expanded;
-      commandFormToggle.setAttribute('aria-expanded', String(expanded));
-      commandFormBody.classList.toggle('collapsed', !expanded);
-      commandFormBody.toggleAttribute('inert', !expanded);
-      commandFormBody.setAttribute('aria-hidden', String(!expanded));
-      updateCommandFormBodyHeight();
-      if (!expanded) commandFormToggle.focus();
-    }
-
     function findRunByKey(runKey) {
       if (!runKey || !Array.isArray(state.runs)) return null;
       return state.runs.find((run) => run && run.key === runKey) || null;
@@ -2889,151 +1912,6 @@
     function subjectTabKey(runIdentity) {
       const run = findRunByIdentity(runIdentity);
       return subjectRunIdentity(run) || runIdentity || '';
-    }
-
-    function continueIssueValue(command) {
-      if (!command) return '';
-      if (Number.isInteger(command.issueNumber) && command.issueNumber > 0) return String(command.issueNumber);
-      const issueLabel = String(command.issueLabel || '');
-      const match = issueLabel.match(/#?(\d+)/);
-      if (match) return match[1];
-      return '';
-    }
-
-    function launchContinueFromRun(command) {
-      const issue = continueIssueValue(command);
-      syncCommandPanelState(commandPanelType);
-      commandState.continue = {
-        issue: issue,
-        issues: issue,
-        prompt: '',
-      };
-      commandPanelType = 'continue';
-      if (commandPicker) commandPicker.value = 'continue';
-      setCommandPanelOpen(true);
-      setCommandFormExpanded(true);
-      renderCommandPanelBody('continue');
-      window.requestAnimationFrame(() => {
-        const promptField = commandPanelBody ? commandPanelBody.querySelector('textarea[name="prompt"]') : null;
-        if (promptField) promptField.focus({ preventScroll: true });
-      });
-    }
-
-    function buildCommandPayload(type) {
-      const state = commandState[type] || {};
-      if (type === 'run') {
-        const payload = {
-          command: 'run',
-          launchMode: state.launchMode || 'issue-driven',
-          selectionMode: state.selectionMode || 'issues',
-          issues: state.issues || '',
-          label: state.label || '',
-          query: state.query || '',
-          includeDependencies: Boolean(state.includeDependencies),
-          prompt: state.prompt || '',
-          template: state.template || '',
-          promptArgs: state.promptArgs || '',
-        };
-        if (state.agent) payload.agent = state.agent;
-        if (state.model) payload.model = state.model;
-        if (state.baseBranch) payload.baseBranch = state.baseBranch;
-        if (state.sandbox) payload.sandbox = state.sandbox;
-        const autoMaxCount = maybeInt(state.autoMaxCount);
-        if (autoMaxCount != null) payload.autoMaxCount = autoMaxCount;
-        const parallel = maybeInt(state.parallel);
-        if (parallel != null) payload.parallel = parallel;
-        const startDelay = maybeInt(state.startDelay);
-        if (startDelay != null) payload.startDelay = startDelay;
-        const containerCapacity = maybeInt(state.containerCapacity);
-        if (containerCapacity != null) payload.containerCapacity = containerCapacity;
-        const maxContainers = maybeInt(state.maxContainers);
-        if (maxContainers != null) payload.maxContainers = maxContainers;
-        if (payload.launchMode === 'prompt-only' && !String(payload.prompt || '').trim() && !String(payload.template || '').trim()) {
-          throw new Error('prompt-only mode requires a prompt or template');
-        }
-        if (payload.launchMode !== 'prompt-only') {
-          if (payload.selectionMode === 'issues' && !String(payload.issues || '').trim()) throw new Error('run requires issue numbers');
-          if (payload.selectionMode === 'label' && !String(payload.label || '').trim()) throw new Error('run requires a label');
-          if (payload.selectionMode === 'query' && !String(payload.query || '').trim()) throw new Error('run requires a query');
-          if (payload.selectionMode === 'auto' && payload.autoMaxCount == null) payload.autoMaxCount = launchDefaults.autoMaxCount || 50;
-        }
-        return payload;
-      }
-      if (type === 'continue') {
-        const issuesStr = (state.issues || state.issue || '').trim();
-        if (!issuesStr) throw new Error('continue requires issue numbers');
-        const issues = issuesStr.split(',').map((s) => maybeInt(s)).filter((n) => n != null);
-        if (issues.length === 0) throw new Error('continue requires valid issue numbers');
-        if (!String(state.prompt || '').trim()) throw new Error('continue requires a prompt');
-        return { command: 'continue', issues, prompt: state.prompt || '' };
-      }
-      if (type === 'status' || type === 'history') {
-        return { command: type };
-      }
-      if (type === 'clean') {
-        if (!state.confirmed) throw new Error('clean requires confirmation');
-        return { command: 'clean', cleanMode: state.cleanMode || 'success', confirmed: true };
-      }
-      if (type === 'config') {
-        if (!String(state.configKey || '').trim()) throw new Error('config requires a key');
-        const payload = { command: 'config', configMode: state.configMode || 'get', configKey: state.configKey || '' };
-        if (payload.configMode === 'set') {
-          if (!String(state.configValue || '').trim()) throw new Error('config set requires a value');
-          payload.configValue = state.configValue || '';
-        }
-        return payload;
-      }
-      if (type === 'archive') {
-        const mode = state.archiveMode || 'run';
-        if (!state.confirmed) throw new Error('archive requires confirmation');
-        const payload = { command: 'archive', archiveMode: mode, confirmed: true };
-        if (mode === 'run') {
-          if (!String(state.archiveRunId || '').trim()) throw new Error('archive run requires a run id');
-          payload.archiveRunId = state.archiveRunId || '';
-        } else if (mode === 'older-than') {
-          const days = String(state.archiveOlderThanDays || '').trim();
-          if (!days) throw new Error('archive older-than requires a day count');
-          if (!/^\d+$/.test(days)) throw new Error('archive older-than days must be a non-negative integer');
-          payload.archiveOlderThanDays = days;
-        }
-        return payload;
-      }
-      throw new Error('unknown command');
-    }
-
-    async function executeCommand() {
-      const type = commandPicker ? commandPicker.value || 'run' : 'run';
-      syncCommandPanelState();
-      setCommandExecuteStatus('Launching...');
-      if (commandExecuteButton) commandExecuteButton.disabled = true;
-      try {
-        const payload = buildCommandPayload(type);
-        const res = await fetch(commandsPath, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const text = await res.text();
-        let body;
-        try {
-          body = JSON.parse(text);
-        } catch {
-          body = {};
-        }
-        if (!res.ok) throw new Error(body.error || body.message || text.trim() || 'launch failed');
-        errorBanner.style.display = 'none';
-        errorBanner.textContent = '';
-        setCommandExecuteStatus('Started');
-        await refresh();
-        await refreshCommands();
-        setCommandExecuteStatus('Ready');
-      } catch (err) {
-        setCommandExecuteStatus('Failed: ' + err.message);
-        errorBanner.textContent = 'Launch failed: ' + err.message;
-        errorBanner.style.display = 'block';
-      } finally {
-        if (commandExecuteButton) commandExecuteButton.disabled = false;
-      }
     }
 
     async function abortRun(button, runKey, issue) {
@@ -3101,59 +1979,6 @@
           button.disabled = false;
           button.textContent = previousLabel || 'Archive';
         }
-      }
-    }
-
-    function renderCommandItem(command) {
-      const isOpen = state.commandExpandedId === command.id;
-      const klass = statusClass(command);
-      const statusLabel = command.status || 'running';
-      return [
-        '<div class="command-row' + (isOpen ? ' active' : '') + '" id="command-row-' + escapeHTML(command.id) + '" data-action="toggle-command" data-command-id="' + escapeHTML(command.id) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">',
-        '  <div class="col-status"><span class="badge ' + escapeHTML(klass) + '"><span class="dot"></span>' + escapeHTML(statusLabel) + '</span></div>',
-        '  <div class="col-command mono">' + escapeHTML(command.command || '') + '</div>',
-        '  <div class="col-started mono">' + escapeHTML(formatTime(command.startedAt)) + '</div>',
-        '</div>',
-        isOpen ? (
-          '<div class="command-row-detail" role="region" aria-labelledby="command-row-' + escapeHTML(command.id) + '">'
-          + '<div class="kv"><span>Command</span><code>' + escapeHTML(command.command || '') + '</code></div>'
-          + (command.args && command.args.length ? '<div class="kv"><span>Arguments</span><strong class="mono">' + escapeHTML(command.args.join(' ')) + '</strong></div>' : '')
-          + (command.repoRoot ? '<div class="kv"><span>Repository root</span><strong class="mono">' + escapeHTML(command.repoRoot) + '</strong></div>' : '')
-          + (command.exitCode !== undefined ? '<div class="kv"><span>Exit code</span><code>' + command.exitCode + '</code></div>' : '')
-          + (command.output ? '<div class="kv"><span>Stdout</span><pre class="output-pre">' + escapeHTML(command.output) + '</pre></div>' : '')
-          + '</div>'
-        ) : ''
-      ].join('');
-    }
-
-    function toggleCommand(commandId) {
-      if (state.commandExpandedId === commandId) {
-        state.commandExpandedId = null;
-      } else {
-        state.commandExpandedId = commandId;
-      }
-      renderCommands();
-      const row = Array.from(commandsList.children).find((child) => child.getAttribute('data-command-id') === commandId);
-      if (row) row.focus({ preventScroll: true });
-    }
-
-    function renderCommands() {
-      if (!state.commands.length) {
-        commandsList.innerHTML = '<div class="empty-state">No launched commands yet.</div>';
-        return;
-      }
-      commandsList.innerHTML = state.commands.map(renderCommandItem).join('');
-    }
-
-    async function refreshCommands() {
-      try {
-        const res = await fetch(commandsPath, { cache: 'no-store' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const payload = await res.json();
-        state.commands = Array.isArray(payload.commands) ? payload.commands : [];
-        renderCommands();
-      } catch (err) {
-        commandsList.innerHTML = '<div class="empty-state">Failed to load commands.</div>';
       }
     }
 
@@ -3711,120 +2536,12 @@
       }
     }
 
-    if (commandPicker) {
-      renderCommandPanelBody(commandPanelType);
-      commandPicker.addEventListener('change', () => {
-        syncCommandPanelState(commandPanelType);
-        commandPanelType = commandPicker.value || 'run';
-        commandState[commandPanelType] = commandState[commandPanelType] || {};
-        renderCommandPanelBody(commandPanelType);
-      });
-    }
-
-    if (commandFormToggle) {
-      commandFormToggle.addEventListener('click', () => {
-        setCommandFormExpanded(!commandFormExpanded);
-        persistPortalViewState();
-      });
-    }
-
-    if (commandsToggle) {
-      commandsToggle.addEventListener('click', () => setCommandPanelOpen(!commandPanelOpen));
-    }
-
-    if (commandsClose) {
-      commandsClose.addEventListener('click', () => setCommandPanelOpen(false));
-    }
-
-    if (commandsOverlay) {
-      commandsOverlay.addEventListener('click', () => setCommandPanelOpen(false));
-    }
-
-    if (commandPanelForm) {
-      commandPanelForm.addEventListener('input', () => {
-        syncCommandPanelState(commandPanelType);
-        updateExecuteSummary();
-      });
-      commandPanelForm.addEventListener('change', () => {
-        syncCommandPanelState(commandPanelType);
-      });
-      commandPanelForm.addEventListener('submit', (event) => {
-        event.preventDefault();
-        executeCommand();
-      });
-    }
-
-    if (commandPanelBody) {
-      commandPanelBody.addEventListener('click', (event) => {
-        const button = event.target.closest('button[data-action="set-run-pane"]');
-        if (!button || commandPanelType !== 'run') return;
-        setRunPane(button.getAttribute('data-run-pane') || 'run');
-      });
-
-      commandPanelBody.addEventListener('change', (event) => {
-        const radio = event.target.closest('[name="launchMode"], [name="selectionMode"]');
-        const configMode = event.target.closest('select[name="configMode"]');
-        if ((commandPanelType === 'run' || commandPanelType === 'config') && (radio || configMode)) {
-          syncCommandPanelState(commandPanelType);
-          renderCommandPanelBody(commandPanelType);
-          return;
-        }
-        syncCommandPanelState(commandPanelType);
-        updateExecuteSummary();
-      });
-
-      commandPanelBody.addEventListener('keydown', (event) => {
-        if (commandPanelType !== 'run') return;
-        const tab = event.target.closest('[role="tab"]');
-        if (!tab) return;
-        const tabs = Array.from(commandPanelBody.querySelectorAll('[role="tab"]'));
-        if (!tabs.length) return;
-        const currentIndex = tabs.indexOf(tab);
-        if (currentIndex < 0) return;
-        let nextIndex = null;
-        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
-        else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
-        else if (event.key === 'Home') nextIndex = 0;
-        else if (event.key === 'End') nextIndex = tabs.length - 1;
-        else return;
-        event.preventDefault();
-        const nextPane = tabs[nextIndex].getAttribute('data-run-pane') || 'run';
-        setRunPane(nextPane);
-      });
-    }
-
-    setCommandFormExpanded(!persistedPortalState.commandFormCollapsed);
-
-    window.addEventListener('resize', () => {
-      if (commandFormExpanded) updateCommandFormBodyHeight();
-    });
-
-    document.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape' || !commandPanelOpen) return;
-      if (commandFormExpanded) {
-        setCommandFormExpanded(false);
-        event.preventDefault();
-        return;
-      }
-      setCommandPanelOpen(false);
-      event.preventDefault();
-    });
-
-    document.addEventListener('keydown', (event) => {
-      trapCommandPanelFocus(event);
-    });
-
     runsBody.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
       if (button) {
         const runKey = button.getAttribute('data-run-key');
         if (!runKey) return;
         const action = button.getAttribute('data-action');
-        if (action === 'launch-continue') {
-          event.preventDefault();
-          launchContinueFromRun(findRunByKey(runKey));
-          return;
-        }
         if (action === 'abort-run') {
           event.preventDefault();
           const run = findRunByKey(runKey);
@@ -3891,22 +2608,6 @@
       if (runKey) toggleRun(runKey);
     });
 
-    commandsList.addEventListener('click', (event) => {
-      const row = event.target.closest('[data-action="toggle-command"]');
-      if (!row) return;
-      const commandId = row.getAttribute('data-command-id');
-      if (commandId) toggleCommand(commandId);
-    });
-
-    commandsList.addEventListener('keydown', (event) => {
-      const row = event.target.closest('[data-action="toggle-command"]');
-      if (!row) return;
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault();
-      const commandId = row.getAttribute('data-command-id');
-      if (commandId) toggleCommand(commandId);
-    });
-
     for (const button of sortButtons) {
       button.addEventListener('click', () => toggleSort(button.getAttribute('data-sort') || ''));
     }
@@ -3942,7 +2643,6 @@
     window.addEventListener('pagehide', stopAllRunStreams);
 
     refresh();
-    refreshCommands();
     restartPolling();
     setInterval(updatePollHealth, 1000);
   </script>

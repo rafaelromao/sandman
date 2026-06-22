@@ -15,7 +15,7 @@ import (
 
 func newPortalArchiveHandlerForTest(t *testing.T, repoRoot string) http.Handler {
 	t.Helper()
-	return newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	return newPortalHandler(repoRoot)
 }
 
 func postPortalArchive(t *testing.T, handler http.Handler, runID string) (*http.Response, []byte) {

@@ -46,33 +46,6 @@ func headerSlice(t *testing.T, html, startMarker string) string {
 	return html[start : start+end]
 }
 
-// TestPortal_CommandsPanelHeaderHTML_DedupedToSingleHeading asserts that
-// the commands drawer header has exactly one `<h2 id="commands-panel-title">`
-// with the text "Commands" (so the dialog title and the dialog
-// aria-labelledby target are the same word) and that no `<p class="eyebrow">`
-// paragraph carries the redundant "Commands" label. Slice 6 of issue #1189.
-func TestPortal_CommandsPanelHeaderHTML_DedupedToSingleHeading(t *testing.T) {
-	html := readPortalHTML(t)
-	header := headerSlice(t, html, "<aside id=\"commands-panel\"")
-
-	if strings.Contains(header, "<p class=\"eyebrow\">Commands</p>") {
-		t.Errorf("commands-panel header still contains the redundant <p class=\"eyebrow\">Commands</p> eyebrow (issue #1189)")
-	}
-
-	const wantHeading = "<h2 id=\"commands-panel-title\">Commands</h2>"
-	if !strings.Contains(header, wantHeading) {
-		t.Errorf("commands-panel header missing %q (single heading with id and text \"Commands\")", wantHeading)
-	}
-
-	if strings.Contains(header, "Launch typed commands") {
-		t.Errorf("commands-panel header still contains the old %q text; the heading text should be just \"Commands\" (issue #1189)", "Launch typed commands")
-	}
-
-	if got := strings.Count(header, "<h2 id=\"commands-panel-title\">"); got != 1 {
-		t.Errorf("commands-panel header has %d occurrences of <h2 id=\"commands-panel-title\">; expected exactly 1", got)
-	}
-}
-
 // TestPortal_SettingsPanelHeaderHTML_DedupedToSingleHeading asserts that
 // the settings drawer header has exactly one `<h2 id="settings-panel-title">`
 // with the text "Settings" and that no `<p class="eyebrow">` paragraph
@@ -111,7 +84,6 @@ func TestPortal_PanelHeadersHTML_KeepAriaLabelledByAnchors(t *testing.T) {
 		labelledBy string
 		headingID  string
 	}{
-		{"<aside id=\"commands-panel\"", "aria-labelledby=\"commands-panel-title\"", "id=\"commands-panel-title\""},
 		{"<aside id=\"settings-panel\"", "aria-labelledby=\"settings-panel-title\"", "id=\"settings-panel-title\""},
 	} {
 		aside := headerSlice(t, html, tc.aside)
@@ -133,9 +105,8 @@ func TestPortal_PanelHeadersHTML_KeepAriaLabelledByAnchors(t *testing.T) {
 func TestPortal_VisualTestFixtureHTML_HasNoDrawerMarkup(t *testing.T) {
 	// The fixture is composed inside `buildVisualFixture` in
 	// `portal_visual_test.go`. We assert the contract by reading that test
-	// file and rejecting any drawer-chrome class (`.commands-panel` /
-	// `.settings-panel`) inside the fixture builder so the snapshot never
-	// pins drawer styling.
+	// file and rejecting any drawer-chrome class (`.settings-panel`) inside
+	// the fixture builder so the snapshot never pins drawer styling.
 	data := readPortalVisualTestSource(t)
 
 	start := strings.Index(data, "fixture := `")
@@ -149,7 +120,6 @@ func TestPortal_VisualTestFixtureHTML_HasNoDrawerMarkup(t *testing.T) {
 	fixture := data[start : start+end]
 
 	for _, forbidden := range []string{
-		"commands-panel",
 		"settings-panel",
 	} {
 		if strings.Contains(fixture, forbidden) {

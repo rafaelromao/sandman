@@ -274,6 +274,67 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	}
 }
 
+// TestPortal_TerminalReviewChild_ParentNotStuck is the slice-1 regression
+// test for the bug where a review child with a terminal run.finished event
+// keeps Kind=="active" because the socket is still alive on disk. This caused
+// the parent aggregate to incorrectly stay on "reviewing" even though the child
+// had a terminal event-log status. The fix: gate the live flag on Status
+// instead of Kind so terminal status wins.
+func TestPortal_TerminalReviewChild_ParentNotStuck(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	reviewFinishedAt := startedAt.Add(2 * time.Minute)
+
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
+	sockPath := filepath.Join(runDir, "run.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42", "status": "success"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var issueRow *portalRun
+	var reviewRows int
+	for i := range runs {
+		run := &runs[i]
+		if run.IssueNumber != 1 {
+			continue
+		}
+		if run.Review {
+			reviewRows++
+			continue
+		}
+		issueRow = run
+	}
+	if issueRow == nil {
+		t.Fatalf("expected issue row for #1, got %#v", runs)
+	}
+	if reviewRows != 1 {
+		t.Fatalf("expected 1 review child row, got %d", reviewRows)
+	}
+	if issueRow.Status != "running" {
+		t.Fatalf("Status = %q, want %q (parent must return to running when all review children have terminal event-log entries, even with live socket)", issueRow.Status, "running")
+	}
+}
+
 // TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted
 // pins kindForRun. A finished run is "completed" regardless of run kind.
 func TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted(t *testing.T) {

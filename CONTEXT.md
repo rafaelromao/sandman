@@ -138,10 +138,6 @@ The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`
 **Command template key**:
 The substitution keys available in agent command templates: `{{.PromptFile}}` (relative path of `.sandman/task.md`) and `{{.SessionName}}` (pre-formatted session display title supplied by the caller, e.g. `"Sandman run-42-1712345678901: "`). `SessionName` must not contain single quotes — the template shells it as `--title '{{.SessionName}}'` and the renderer rejects any value containing `'` with an error. Templates that reference `{{.SessionName}}` should guard the substitution with `{{if .SessionName}}` to avoid emitting a bare `--title ''` when the field is empty.
 
-**Portal launcher**:
-A repo-scoped browser launcher in `sandman portal` that can start Sandman commands from typed presets while observing live runs in the current repository.
-_Avoid_: run dashboard only.
-
 **ResolvedBatch**:
 A batch where all issues have been fetched, their BlockedBy relationships resolved, and the execution order topologically sorted. Ready for the Orchestrator.
 _Avoid_: planned batch, execution plan.
@@ -203,7 +199,7 @@ Connect a terminal to a running daemon via the control socket to stream its outp
 _Avoid_: Tail, follow.
 
 **Portal**:
-A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the current repository's `.sandman/runs/` tree on each poll, shows active and recent Sandman instances, and exposes a typed preset launcher for repo-scoped Sandman commands. It does not manage daemon lifecycle.
+A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the current repository's `.sandman/runs/` tree on each poll and shows active and recent Sandman instances. It does not manage daemon lifecycle. (Note: the preset launcher was removed in #1204.)
 _Avoid_: dashboard, monitor, control panel.
 
 **Reviewing**:

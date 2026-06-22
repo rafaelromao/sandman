@@ -119,6 +119,7 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 func cleanPortalStreamLine(line string) string {
 	line = portalANSISequence.ReplaceAllString(line, "")
 	line = strings.TrimRight(line, "\r\n")
+	line = stripLogLabel(line)
 	return strings.Map(func(r rune) rune {
 		if r == '\t' {
 			return r

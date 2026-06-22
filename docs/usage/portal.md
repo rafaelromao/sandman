@@ -1,6 +1,6 @@
 # Portal
 
-`sandman portal` starts a local browser view for the current repository's Sandman instances and launcher presets. It is repo-scoped, so it only shows runs discovered under the checked-out project's `.sandman/runs/` tree.
+`sandman portal` starts a local browser view for the current repository's Sandman instances. It is repo-scoped, so it only shows runs discovered under the checked-out project's `.sandman/runs/` tree.
 
 ## Start it
 
@@ -41,7 +41,7 @@ When the server starts, it prints the URL to open in your browser.
 
 The runs table displays these columns: **Run**, **Status**, **Started**, **Duration**, **Issue Title**, **Branch**, and **Actions**. The Issue Title column shows the GitHub issue title for runs with that data available, or an em-dash for historical or prompt-only runs. Source information (socket and log file paths) remains visible in the Details tab when expanding a run.
 
-The portal rescans the repository on each poll, so new `sandman run` processes appear without restarting it. It also provides a typed preset launcher for common repo-scoped Sandman commands.
+The portal rescans the repository on each poll, so new `sandman run` processes appear without restarting it.
 
 ## Stop (Abort)
 
@@ -85,110 +85,10 @@ Serves log files from `.sandman/logs/`. The path must be relative and cannot esc
 
 Returns the file as an attachment with the log filename in `Content-Disposition`.
 
-## Launch presets
-
-The portal's **Launcher** section provides quick commands for common `sandman` operations. Send a POST to `/api/commands` with a `command` field set to one of:
-
-### `run`
-
-Runs `sandman run` with full launch form parameters (issues, prompt, agent, model, parallel, etc.):
-
-```json
-{"command": "run", "launchMode": "issue-driven", "selectionMode": "issues", "issues": [123, 124]}
-```
-
-### `continue`
-
-Runs `sandman run --continue <issue1> <issue2> ...` through the portal preset. Continuation resumes from the stored task file:
-
-```json
-{"command": "continue", "issues": [123, 124]}
-```
-
-### `clean`
-
-Runs `sandman clean --all|--success|--failed`. Requires `confirmed: true`:
-
-```json
-{"command": "clean", "cleanMode": "success", "confirmed": true}
-```
-
-Default scope is `success`. Available scopes: `all`, `success`, `failed`.
-
-### `status`
-
-Runs `sandman status`:
-
-```json
-{"command": "status"}
-```
-
-### `history`
-
-Runs `sandman history`:
-
-```json
-{"command": "history"}
-```
-
-### `config`
-
-Runs `sandman config get <key>` or `sandman config set <key> <value>`. Default mode is `get`:
-
-```json
-{"command": "config", "configMode": "get", "configKey": "agent"}
-```
-
-```json
-{"command": "config", "configMode": "set", "configKey": "agent", "configValue": "opencode"}
-```
-
-## Launch form
-
-The portal's run form has two modes and several selection options.
-
-### Launch mode
-
-| Mode | Description |
-|------|-------------|
-| `issue-driven` | Sandman selects issues using one of the selection modes below |
-| `prompt-only` | Sandman runs against a provided prompt with no issue selection |
-
-### Selection mode
-
-Selection fields are only shown in `issue-driven` mode.
-
-| Mode | Description |
-|------|-------------|
-| `issues` | Pass issue numbers directly |
-| `label` | Select issues with a GitHub label |
-| `query` | Select issues using a GitHub query |
-| `auto` | Run Auto Mode — an integer count for iterative processing, optionally filtered by label and/or query |
-
-### Form fields
-
-| Field | Description | Default |
-|-------|-------------|---------|
-| `agent` | Agent provider name | Config's `agent`, else `opencode` |
-| `model` | Model identifier | Config's `model` or resolved from agent |
-| `parallel` | Number of parallel worktrees | Config's `parallel` or `4` |
-| `startDelay` | Seconds to wait before starting | Config's `start-delay` or `0` |
-| `containerCapacity` | Container pool size | Config's `container-capacity` or `4` |
-| `maxContainers` | Maximum containers | Config's `max-containers` or `0` |
-| `sandbox` | Sandbox mode | Config's `sandbox` or `podman` |
-
-Additional fields:
-
-| Field | Description |
-|-------|-------------|
-| `includeDependencies` | Include dependency issues (issue-driven mode only) |
-| `template` | Path to a prompt template file |
-| `promptArgs` | Multi-line; each line becomes a `--prompt-arg` |
-
 ## Notes
 
 - Run it from inside the repository you want to inspect.
-- The portal observes runs and also launches new Sandman commands from the repo-scoped launcher shell.
+- The portal observes runs and displays them in a read-only dashboard.
 - Use `Ctrl+C` to stop the server.
 
 ## Themes

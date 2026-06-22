@@ -53,7 +53,7 @@ func TestPortal_E2E_RetriesContract_RetryRunCarriesCountsAndEvents(t *testing.T)
 		}},
 	})
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 
 	body := readPortalRunsRawBody(t, server.URL)
@@ -158,7 +158,7 @@ func TestPortal_E2E_RetriesContract_CleanRunOmitsFields(t *testing.T) {
 		}},
 	})
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 
 	body := readPortalRunsRawBody(t, server.URL)
@@ -223,7 +223,7 @@ func TestPortal_E2E_RetriesContract_LegacyFinishedRunDefaultsToZero(t *testing.T
 		}},
 	})
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 
 	rows := readPortalRuns(t, server.URL)
