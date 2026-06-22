@@ -1677,6 +1677,11 @@ func (s *runSession) runOnce(
 				result.Status = "success"
 				break
 			}
+			if github.IsIssueClosed(issue) {
+				if events.RunStatusFromPayload(result.Status).IsSuccess() {
+					break
+				}
+			}
 			result.Status = "failure"
 		} else {
 			if events.RunStatusFromPayload(result.Status).IsSuccess() {
