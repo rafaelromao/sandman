@@ -499,3 +499,56 @@ func TestRunPromptOnly_EmitsZeroRunRetryEventsOnSingleAttempt(t *testing.T) {
 		t.Errorf("expected run.finished event in event log")
 	}
 }
+
+func TestRunSingle_ClosedIssueNoPRReturnsSuccess(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	rtSandbox := &retrySandbox{
+		workDir: filepath.Join(workDir, "worktree"),
+	}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	eventLog := &events.JSONLLogger{Path: eventsPath}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "closed"}},
+			prs:    map[string]*github.PR{},
+		},
+		renderer: &retryRenderer{result: "rendered prompt"},
+		errorLog: io.Discard,
+		layout:   paths.NewLayout(&config.Config{}, workDir),
+		eventLog: eventLog,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{
+			{IssueNumber: 42, Status: "success", Branch: branch},
+			{IssueNumber: 42, Status: "failure", Branch: branch},
+		}},
+	}
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	resultFactory := o.runnableFactory.(*fakeRunnableFactory)
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatalf("expected run to start, result.Status=%q, created=%d", result.Status, len(resultFactory.created))
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success (closed issue with no PR on branch should be success)", result.Status)
+	}
+}
