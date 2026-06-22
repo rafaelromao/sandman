@@ -52,7 +52,7 @@ Before performing the review, ensure the PR is in a healthy state:
    gh api "/repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/comments" --paginate
    gh api "/repos/{owner}/{repo}/issues/{{PR_NUMBER}}/comments" --paginate
    ```
-   Compare the prior feedback against what has changed since the last review cycle. Report which items were addressed, partially resolved, or remain outstanding. If both responses are empty (no review comments and no issue comments), skip this step entirely and **do not mention `## Previous review progress` anywhere in the posted comment — no heading, no placeholder, no prose acknowledgement. Omit it entirely.**
+   Compare the prior feedback against what has changed since the last review cycle. Report which items were addressed, partially resolved, or remain outstanding. If both responses are empty (no review comments and no issue comments), skip this step entirely and **omit** the `## Previous review progress` section from the posted comment.
 
 5. **Cross-reference against the original task specification.** Look for an issue reference in the PR body (e.g. `Fixes #N`, `Closes #N`, `#N`, or `refs N`). If found, fetch the issue body:
    ```bash
@@ -97,7 +97,7 @@ Format the body as Markdown with the following sections:
 - `## Findings` — bulleted list grouped by severity (`Blocking`, `Important`, `Nit`). If there are no findings in a group, omit it. Every `Nit` must cite a specific documented rule from step 7 (file + section); otherwise omit it. Do not pad the section — empty means `APPROVED`.
 - `## Suggested next steps` — the minimum set of follow-ups for the author. Do not suggest splitting the PR; review the diff as one unit.
 - `## Decision` — If there are zero `Blocking` or `Important` findings, place a single line: `**APPROVED**`. Otherwise, place `**CHANGES_REQUESTED**`.
-- `## Previous review progress` — Render this section **only** when prior comments exist (check both review comments and issue comments from step 4). When they exist, list each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**. When there are no prior comments, **omit this section entirely** — do not include the heading, do not write a placeholder, do not mention it in prose. Not even a single sentence.
+- `## Previous review progress` — Render this section **only** when prior comments exist (check both review comments and issue comments from step 4). When they exist, list each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**. Do not render this section if there are no prior reviews. Do not write a placeholder such as "No previous reviews found."
 
 Keep the comment terse and actionable. Do not post review commentary outside the single `gh pr comment` invocation.
 
