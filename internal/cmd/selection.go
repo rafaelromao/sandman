@@ -78,7 +78,7 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 		return issues, "", "", err
 	}
 
-	ts, shortid, err := runid.NewBatchIn(filepath.Join(sandmanDir, "runs"))
+	ts, shortid, err := runid.NewBatchIn(filepath.Join(sandmanDir, "batches"))
 	if err != nil {
 		return nil, "", "", fmt.Errorf("generate batch id: %w", err)
 	}

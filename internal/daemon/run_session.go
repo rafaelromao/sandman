@@ -49,13 +49,13 @@ var (
 )
 
 // NewRunSession returns a session bound to the batch directory that
-// BatchDir(baseDir, runID) computes. The directory is not created
+// BatchDir(baseDir, batchID) computes. The directory is not created
 // yet — Prepare does that as the first boot step.
-func NewRunSession(baseDir, runID string) *RunSession {
+func NewRunSession(baseDir, batchID string) *RunSession {
 	return &RunSession{
 		baseDir:     baseDir,
-		runID:       runID,
-		runDir:      BatchDir(baseDir, runID),
+		runID:       batchID,
+		runDir:      BatchDir(baseDir, batchID),
 		broadcaster: NewBroadcaster(),
 	}
 }
