@@ -23,9 +23,9 @@ const (
 type Status string
 
 const (
-	StatusActive     Status = "active"
-	StatusArchived   Status = "archived"
-	StatusUnvailable Status = "unavailable"
+	StatusActive      Status = "active"
+	StatusArchived    Status = "archived"
+	StatusUnavailable Status = "unavailable"
 )
 
 type Index struct {
@@ -34,14 +34,14 @@ type Index struct {
 }
 
 type Entry struct {
-	ID         string    `json:"id"`
-	Path       string    `json:"path"`
-	Kind       Kind      `json:"kind"`
-	Status     Status    `json:"status"`
-	CreatedAt  time.Time `json:"createdAt"`
-	Issues     []int     `json:"issues,omitempty"`
-	PR         int       `json:"pr,omitempty"`
-	ArchivedAt time.Time `json:"archivedAt,omitempty"`
+	ID         string     `json:"id"`
+	Path       string     `json:"path"`
+	Kind       Kind       `json:"kind"`
+	Status     Status     `json:"status"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	Issues     []int      `json:"issues,omitempty"`
+	PR         int        `json:"pr,omitempty"`
+	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
 }
 
 type RunManifest struct {
@@ -88,6 +88,10 @@ func Load(repoRoot string) (*Index, error) {
 		return nil, fmt.Errorf("decode batches index: %w", err)
 	}
 
+	if idx.Version != IndexVersion {
+		return nil, fmt.Errorf("unsupported batches index version %d", idx.Version)
+	}
+
 	if err := idx.probeStatus(); err != nil {
 		return nil, err
 	}
@@ -101,7 +105,7 @@ func (idx *Index) probeStatus() error {
 		if e.Status == StatusActive || e.Status == StatusArchived {
 			if _, err := os.Stat(e.Path); err != nil {
 				if os.IsNotExist(err) {
-					e.Status = StatusUnvailable
+					e.Status = StatusUnavailable
 				}
 			}
 		}
@@ -115,26 +119,30 @@ func (idx *Index) Save(indexPath string) error {
 		return fmt.Errorf("marshal index: %w", err)
 	}
 
+	dir := filepath.Dir(indexPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	prev, err := os.ReadFile(indexPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
 	tmpPath := indexPath + ".tmp"
-	stat, err := os.Stat(indexPath)
-	oldMode := uint32(0644)
-	if err == nil {
-		oldMode = uint32(stat.Mode())
-	}
-
-	bakPath := indexPath + ".bak"
-	if oldMode != 0 {
-		if err := os.WriteFile(bakPath, data, os.FileMode(oldMode)); err != nil {
-			return fmt.Errorf("write index bak: %w", err)
-		}
-	}
-
-	if err := os.WriteFile(tmpPath, data, os.FileMode(oldMode)); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return fmt.Errorf("write index tmp: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, indexPath); err != nil {
 		return fmt.Errorf("rename index tmp: %w", err)
+	}
+
+	if prev != nil {
+		bakPath := indexPath + ".bak"
+		if err := os.WriteFile(bakPath, prev, 0644); err != nil {
+			return fmt.Errorf("write index bak: %w", err)
+		}
 	}
 
 	return nil

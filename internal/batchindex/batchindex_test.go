@@ -186,8 +186,8 @@ func TestProbeStatus_ENOENT_SetsUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if loaded.Entries[0].Status != StatusUnvailable {
-		t.Errorf("Status = %q, want %q", loaded.Entries[0].Status, StatusUnvailable)
+	if loaded.Entries[0].Status != StatusUnavailable {
+		t.Errorf("Status = %q, want %q", loaded.Entries[0].Status, StatusUnavailable)
 	}
 }
 
@@ -225,8 +225,8 @@ func TestProbeStatus_NonENOENT_LeavesStatus(t *testing.T) {
 		if e.ID == "realbatch" && e.Status != StatusActive {
 			t.Errorf("realbatch Status = %q, want %q", e.Status, StatusActive)
 		}
-		if e.ID == "missing" && e.Status != StatusUnvailable {
-			t.Errorf("missing Status = %q, want %q", e.Status, StatusUnvailable)
+		if e.ID == "missing" && e.Status != StatusUnavailable {
+			t.Errorf("missing Status = %q, want %q", e.Status, StatusUnavailable)
 		}
 	}
 }
@@ -314,7 +314,7 @@ func TestEntry_JSONSchema(t *testing.T) {
 		Status:     StatusActive,
 		CreatedAt:  now,
 		Issues:     []int{1213, 1214},
-		ArchivedAt: time.Time{},
+		ArchivedAt: nil,
 	}
 
 	data, err := json.Marshal(entry)
