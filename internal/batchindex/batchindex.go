@@ -159,14 +159,20 @@ func (idx *Index) Resolve(id string) *Entry {
 }
 
 func (idx *Index) Add(entry Entry) {
-	entry.Status = StatusActive
 	for i, e := range idx.Entries {
 		if e.ID == entry.ID {
 			entry.CreatedAt = e.CreatedAt
+			if e.Status == StatusArchived {
+				entry.Status = StatusArchived
+				entry.ArchivedAt = e.ArchivedAt
+			} else {
+				entry.Status = StatusActive
+			}
 			idx.Entries[i] = entry
 			return
 		}
 	}
+	entry.Status = StatusActive
 	idx.Entries = append(idx.Entries, entry)
 }
 

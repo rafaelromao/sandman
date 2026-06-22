@@ -2,6 +2,7 @@ package paths
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -54,5 +55,32 @@ func TestNewLayout_NilConfig(t *testing.T) {
 	}
 	if got, want := l.BatchesIndexPath, filepath.Join(repoRoot, ".sandman", "batches.json"); got != want {
 		t.Errorf("BatchesIndexPath with nil cfg = %q, want %q", got, want)
+	}
+}
+
+func TestSafeLogFilename_Slashes(t *testing.T) {
+	l := NewLayout(&config.Config{}, t.TempDir())
+	if got, want := l.SafeLogFilename("sandman/42-foo bar"), "sandman-42-foo-bar"; got != want {
+		t.Errorf("SafeLogFilename = %q, want %q", got, want)
+	}
+}
+
+func TestSafeLogFilename_Empty(t *testing.T) {
+	l := NewLayout(&config.Config{}, t.TempDir())
+	if got, want := l.SafeLogFilename(""), "prompt-only"; got != want {
+		t.Errorf("SafeLogFilename(\"\") = %q, want %q", got, want)
+	}
+}
+
+func TestSafeLogFilename_AllSeparators(t *testing.T) {
+	l := NewLayout(&config.Config{}, t.TempDir())
+	for _, in := range []string{"sandman/42", "sandman 42", "sandman" + string(filepath.Separator) + "42"} {
+		got := l.SafeLogFilename(in)
+		if strings.ContainsAny(got, "/ "+string(filepath.Separator)) {
+			t.Errorf("SafeLogFilename(%q) = %q, must not contain /, space, or path separator", in, got)
+		}
+		if got == "" {
+			t.Errorf("SafeLogFilename(%q) returned empty", in)
+		}
 	}
 }
