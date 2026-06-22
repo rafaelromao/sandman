@@ -700,7 +700,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
 		if state.Finished == nil {
-			run.Log = v.filterPortalIssueOutput(liveOutput, issueNumber)
+			run.Log = v.filterPortalIssueOutput(liveOutput, state.RunID)
 			if strings.TrimSpace(run.Log) == "" {
 				run.Log = "No live output captured yet."
 			}
@@ -870,7 +870,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
 		LogURL:      v.portalLogDownloadURLForRun(repoRoot, issueNumber, "", match.instance.RunID, review, prNumber),
-		Log:         match.instance.LiveOutput,
+		Log:         stripLogLabels(match.instance.LiveOutput),
 		Events:      eventsByRun[eventKey],
 		BatchKey:    match.instance.Key,
 	}
@@ -914,7 +914,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	logPath := v.portalLogPathForRun(repoRoot, issueNumber, branch, runID, review, prNumber)
 	logContent := v.readPortalTextFile(logPath)
 	if active != nil {
-		logContent = active.LiveOutput
+		logContent = stripLogLabels(active.LiveOutput)
 	}
 
 	portalRun := portalRun{
@@ -1048,13 +1048,13 @@ func (v *portalRunsView) durationForRun(runState events.RunState) string {
 	return runState.Duration().String()
 }
 
-func (v *portalRunsView) filterPortalIssueOutput(text string, issueNumber int) string {
-	prefix := fmt.Sprintf("[issue-%d] ", issueNumber)
+func (v *portalRunsView) filterPortalIssueOutput(text string, runID string) string {
+	prefix := "[" + runID + "] "
 	lines := strings.Split(text, "\n")
 	filtered := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if strings.HasPrefix(line, prefix) {
-			filtered = append(filtered, line)
+			filtered = append(filtered, stripLogLabel(line))
 		}
 	}
 	return strings.TrimSpace(strings.Join(filtered, "\n"))
@@ -1311,9 +1311,9 @@ func (v *portalRunsView) readPortalTextFile(path string) string {
 	}
 	if len(data) > portalReadLimit {
 		tail := data[len(data)-portalReadLimit:]
-		return v.cleanPortalText("[truncated]\n" + string(tail))
+		return stripLogLabels(v.cleanPortalText("[truncated]\n" + string(tail)))
 	}
-	return v.cleanPortalText(string(data))
+	return stripLogLabels(v.cleanPortalText(string(data)))
 }
 
 func (v *portalRunsView) readPortalSocketOutput(sockPath string) string {
@@ -1405,4 +1405,24 @@ func (v *portalRunsView) groupEventsByRun(eventsList []events.Event) map[string]
 		})
 	}
 	return grouped
+}
+
+func stripLogLabel(line string) string {
+	if !strings.HasPrefix(line, "[") {
+		return line
+	}
+	end := strings.Index(line, "]")
+	if end < 0 {
+		return line
+	}
+	rest := line[end+1:]
+	return strings.TrimLeft(rest, " ")
+}
+
+func stripLogLabels(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = stripLogLabel(line)
+	}
+	return strings.Join(lines, "\n")
 }

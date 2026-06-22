@@ -106,9 +106,9 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 
 	events := readSSEEvents(t, resp.Body)
 	want := []string{
-		"[issue-42] 12:00:01 starting work",
-		"[issue-42] 12:00:02 warning: low disk",
-		"[issue-42] 12:00:03 done",
+		"12:00:01 starting work",
+		"12:00:02 warning: low disk",
+		"12:00:03 done",
 	}
 	if len(events) < len(want) {
 		t.Fatalf("expected at least %d events, got %d: %v", len(want), len(events), events)
