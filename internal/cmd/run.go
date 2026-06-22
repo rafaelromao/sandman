@@ -501,7 +501,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					previousRunIDs[num] = lastRun.RunID
 					branches[num] = strings.TrimSpace(branch)
 					baseBranches[num] = strings.TrimSpace(baseBranchValue)
-					taskPrompts[num] = prompt.BuildTaskPrompt(prompt.ParseTask(content))
+					taskPrompts[num] = prompt.ContinuationTaskPrompt(content)
 				}
 			}
 			var continuationReq batch.Request

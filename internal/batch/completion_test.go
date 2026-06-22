@@ -50,7 +50,7 @@ Continue the work.`
 	}
 }
 
-func TestReadTaskContent_MissingFile_ThenBuildTaskPrompt(t *testing.T) {
+func TestReadTaskContent_MissingFile_DefaultsToDefaultPrompt(t *testing.T) {
 	dir := t.TempDir()
 	taskPath := filepath.Join(dir, "nonexistent", "task.md")
 
@@ -62,24 +62,27 @@ func TestReadTaskContent_MissingFile_ThenBuildTaskPrompt(t *testing.T) {
 		t.Fatal("expected exists=false for missing file")
 	}
 	if content != EmptyTaskTemplate {
-		t.Fatalf("expected EmptyTaskTemplate, got %q", content)
+		t.Fatalf("expected EmptyTaskTemplate to mirror DefaultPrompt, got %q", content[:min(80, len(content))])
+	}
+	if content != prompt.DefaultPrompt() {
+		t.Fatalf("expected EmptyTaskTemplate to equal DefaultPrompt, got %q", content[:min(80, len(content))])
 	}
 
-	doc := prompt.ParseTask(content)
-	result := prompt.BuildTaskPrompt(doc)
+	resume := prompt.ContinuationTaskPrompt(content)
+	if !strings.Contains(resume, "# Task") {
+		t.Fatalf("expected continuation prompt to start with '# Task', got:\n%s", firstLines(resume, 10))
+	}
+	if !strings.Contains(resume, "## Execution Checklist") {
+		t.Fatalf("expected continuation prompt to preserve ## Execution Checklist, got:\n%s", firstLines(resume, 40))
+	}
+}
 
-	if !strings.Contains(result, "## Prior Context") {
-		t.Fatalf("expected ## Prior Context in resume prompt, got:\n%s", result)
+func firstLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
 	}
-	if !strings.Contains(result, "## Source Prompt") {
-		t.Fatalf("expected ## Source Prompt in resume prompt, got:\n%s", result)
-	}
-	if !strings.Contains(result, "## Update Task Context") {
-		t.Fatalf("expected ## Update Task Context in task prompt, got:\n%s", result)
-	}
-	if !strings.Contains(result, "Continue the work.") {
-		t.Fatalf("expected 'Continue the work.' in resume prompt, got:\n%s", result)
-	}
+	return strings.Join(lines[:n], "\n") + "\n... (truncated)"
 }
 
 func TestReadTaskContent_ReadError(t *testing.T) {

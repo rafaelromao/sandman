@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 func parseLogForCompletion(logPath string) bool {
@@ -100,22 +101,15 @@ func findOpenPRByBranch(client github.Client, branch string) (*github.PR, error)
 }
 
 // EmptyTaskTemplate is the fallback prompt used when the task document
-// is missing (the file does not exist). It tells the agent to continue the
-// work without prior context.
-const EmptyTaskTemplate = `## Completed
-
-
-## Pending
-
-
-## Blockers
-
-
-## Key Decisions
-
-
-## Next Step
-Continue the work.`
+// is missing (the file does not exist). The continuation prompt now passes
+// the original .sandman/task.md content verbatim, so the missing-file
+// fallback must mirror the original default-task-prompt.md layout
+// (# Task, ## Execution Checklist, …) rather than the obsolete
+// Completed/Pending/Blockers/Key Decisions/Next Step scratchpad. The
+// embedded template carries placeholder keys like {{ISSUE_NUMBER}} that
+// the agent must substitute; the orchestration layer never pre-renders
+// them on this path because no issue data is available here.
+var EmptyTaskTemplate = prompt.DefaultPrompt()
 
 var readFileFn = os.ReadFile
 

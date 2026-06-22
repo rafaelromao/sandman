@@ -89,7 +89,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 			previousRunIDs[num] = lastRun.RunID
 			branches[num] = strings.TrimSpace(branch)
 			baseBranches[num] = strings.TrimSpace(baseBranch)
-			taskPrompts[num] = prompt.BuildTaskPrompt(prompt.ParseTask(content))
+			taskPrompts[num] = prompt.ContinuationTaskPrompt(content)
 			modes[num] = batch.ModeContinue
 		}
 	} else {
@@ -116,7 +116,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 		if err != nil {
 			return batch.Request{}, fmt.Errorf("read task %q: %w", taskPath, err)
 		}
-		taskPromptContent = prompt.BuildTaskPrompt(prompt.ParseTask(content))
+		taskPromptContent = prompt.ContinuationTaskPrompt(content)
 		modes[0] = batch.ModeContinue
 	}
 
