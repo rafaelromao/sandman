@@ -79,6 +79,53 @@ func TestSyncInstallsExactIssueClosingGuardInImplementSkill(t *testing.T) {
 	}
 }
 
+func TestSyncInstallsPreFlightCheckInImplementSkill(t *testing.T) {
+	home := t.TempDir()
+
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "implement", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read implement skill: %v", err)
+	}
+	text := string(data)
+
+	checks := []string{
+		"gh issue view <ID> --json state",
+		"GitHub rules",
+		"## Status: already resolved",
+		"stop without running",
+		"acceptance criteria",
+		"base branch",
+	}
+	for _, want := range checks {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected implement skill pre-flight to contain %q, got:\n%s", want, text)
+		}
+	}
+
+	step1Idx := strings.Index(text, "### 1. Setup branch")
+	step2Idx := strings.Index(text, "### 2. Plan")
+	preFlightIdx := strings.Index(text, "Pre-flight")
+	if step1Idx == -1 {
+		t.Fatal("expected ### 1. Setup branch to be present")
+	}
+	if step2Idx == -1 {
+		t.Fatal("expected ### 2. Plan to be present")
+	}
+	if preFlightIdx == -1 {
+		t.Fatal("expected Pre-flight step to be present")
+	}
+	if preFlightIdx <= step1Idx {
+		t.Fatal("expected Pre-flight step to come after ### 1. Setup branch")
+	}
+	if preFlightIdx >= step2Idx {
+		t.Fatal("expected Pre-flight step to come before ### 2. Plan")
+	}
+}
+
 func TestSyncOverwritesManagedTreeWithoutPrompt(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/old-review"}); err != nil {

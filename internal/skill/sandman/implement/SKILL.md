@@ -31,6 +31,17 @@ gh issue view <ID> --json title,number
 - Create and switch to branch: `issue-<ID>/<slugified-title>`
 - Report the issue title and branch name to user
 
+### 1.5. Pre-flight check
+
+After setting up the branch, determine whether the issue's work is already complete before running `sandman-plan` or `sandman-tdd`.
+
+A merged PR that closes an issue will, by GitHub rules, automatically close the issue — so there is no need to search for a closing PR separately.
+
+1. Run: `gh issue view <ID> --json state`
+2. Decision matrix:
+   - **Issue is closed** → write `## Status: already resolved` to `.sandman/task.md`, then stop without running `sandman-plan` or `sandman-tdd`
+   - **Issue is open** → read the issue acceptance criteria and compare against the current state of the base branch. If all acceptance criteria are already met in the base branch, write `## Status: already resolved` to `.sandman/task.md` and stop. Otherwise, proceed to step 2 (Plan) as normal.
+
 ### 2. Plan
 
 - Read the issue body and any linked context
