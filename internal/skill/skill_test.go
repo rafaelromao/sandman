@@ -94,11 +94,11 @@ func TestSyncInstallsPreFlightCheckInImplementSkill(t *testing.T) {
 
 	checks := []string{
 		"gh issue view <ID> --json state",
-		"gh pr list --state=merged",
-		"Fixes #",
+		"GitHub rules",
 		"## Status: already resolved",
 		"stop without running",
-		"## Status: continue anyway",
+		"acceptance criteria",
+		"base branch",
 	}
 	for _, want := range checks {
 		if !strings.Contains(text, want) {
