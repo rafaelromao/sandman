@@ -1538,18 +1538,6 @@ func TestPortal_LaunchEndpointIsRemoved(t *testing.T) {
 	}
 }
 
-func sameStrings(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func TestPortal_DownloadsLogFiles(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
