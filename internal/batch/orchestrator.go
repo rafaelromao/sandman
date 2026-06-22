@@ -1670,7 +1670,7 @@ func (s *runSession) runOnce(
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue
 			}
-			if prMerged || alreadyResolved || github.IsIssueClosed(issue) {
+			if prMerged || alreadyResolved {
 				if ctx.Err() != nil {
 					break
 				}
