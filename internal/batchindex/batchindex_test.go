@@ -68,6 +68,24 @@ func TestLoad_AbsentFile_ReturnsZeroIndex(t *testing.T) {
 	}
 }
 
+func TestLoad_UnsupportedVersion(t *testing.T) {
+	repoRoot := t.TempDir()
+	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
+		t.Fatalf("create dir: %v", err)
+	}
+	data, _ := json.Marshal(map[string]any{"version": 999, "entries": []any{}})
+	if err := os.WriteFile(indexPath, data, 0644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+
+	_, err := Load(indexPath)
+	if err == nil {
+		t.Fatal("Load succeeded, want error for unsupported version")
+	}
+}
+
 func TestSave_AtomicRename(t *testing.T) {
 	repoRoot := t.TempDir()
 	batchesDir := filepath.Join(repoRoot, ".sandman", "batches")
