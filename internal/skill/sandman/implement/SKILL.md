@@ -38,10 +38,10 @@ This step fires after branch setup. It is reachable when the orchestrator's `fil
 ```bash
 gh issue view <ID> --json state --jq '.state'
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-gh search prs --merged --repo "$REPO" "Closes #<ID> OR Fixes #<ID>" in:body --json number --jq 'length'
+gh pr list --state merged --repo "$REPO" --search "Closes #<ID> in:body" --json number --jq 'length'
 ```
 
-- If issue state is `CLOSED` OR the merged PR search returned a non-zero count → run:
+- If issue state is `CLOSED` OR a merged PR is found closing this issue → run:
 
 ```bash
 mkdir -p .sandman
