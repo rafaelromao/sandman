@@ -3877,7 +3877,7 @@
       }
       state.expandedRunKey = nextRunKey;
       persistPortalViewState();
-      requestAnimationFrame(() => render());
+      window.requestAnimationFrame(() => render());
     });
 
     runsBody.addEventListener('keydown', (event) => {

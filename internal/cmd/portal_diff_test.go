@@ -1445,7 +1445,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffUpdateDetail_SwitchingSubjectClosesPriorSSE(t *testing.T) {
+func TestPortalDiffUpdateDetail_SwitchingSubjectMutationsAndContent(t *testing.T) {
 	js := `const body = makeMockBody();
 const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, log: 'parent log', socketPath: '/tmp/sock' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
