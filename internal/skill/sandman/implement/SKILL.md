@@ -37,7 +37,8 @@ After setting up the branch, run a pre-flight check to detect if the issue's wor
 
 ```bash
 gh issue view <ID> --json state --jq '.state'
-gh search prs --merged --repo "$(gh repo view --json nameWithOwner --jq '.nameWithOwner')" --json number --jq 'length'
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+gh search prs --merged --repo "$REPO" --limit 5 -- "Closes #<ID> OR Fixes #<ID>" in:body --json number --jq 'length'
 ```
 
 - If issue state is `CLOSED` OR the merged PR search returned a non-zero count → run:
