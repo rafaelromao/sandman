@@ -15,15 +15,10 @@ type Layout struct {
 	BatchesIndexPath string
 	EventsLogPath    string
 	ArchiveDir       string
-	// Deprecated: LogDir is kept for backward compatibility. Use run folder logging instead.
-	LogDir string
-	// Deprecated: RunsDir is kept for backward compatibility. Use BatchesDir instead.
-	RunsDir string
+	LogDir           string
+	RunsDir          string
 }
 
-// SafeLogFilename translates a branch name (or any string with /, space, or
-// path-separator characters) into a single filename-safe component. Returns
-// "prompt-only" when the input is empty.
 func (l Layout) SafeLogFilename(branch string) string {
 	name := strings.NewReplacer("/", "-", string(filepath.Separator), "-", " ", "-").Replace(branch)
 	if name == "" {

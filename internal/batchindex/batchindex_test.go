@@ -37,7 +37,7 @@ func TestLoad_ValidIndex(t *testing.T) {
 		t.Fatalf("write index: %v", err)
 	}
 
-	loaded, err := Load(repoRoot)
+	loaded, err := Load(indexPath)
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -54,8 +54,9 @@ func TestLoad_ValidIndex(t *testing.T) {
 
 func TestLoad_AbsentFile_ReturnsZeroIndex(t *testing.T) {
 	repoRoot := t.TempDir()
+	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
 
-	idx, err := Load(repoRoot)
+	idx, err := Load(indexPath)
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -137,9 +138,9 @@ func TestResolve_FindsEntry(t *testing.T) {
 		},
 	}
 
-	entry, found := idx.Resolve("abc123")
-	if !found {
-		t.Fatal("Resolve returned false, want true")
+	entry := idx.Resolve("abc123")
+	if entry == nil {
+		t.Fatal("Resolve returned nil, want entry")
 	}
 	if entry.ID != "abc123" {
 		t.Errorf("entry.ID = %q, want %q", entry.ID, "abc123")
@@ -154,10 +155,7 @@ func TestResolve_NotFound(t *testing.T) {
 		},
 	}
 
-	entry, found := idx.Resolve("nonexistent")
-	if found {
-		t.Fatal("Resolve returned true, want false")
-	}
+	entry := idx.Resolve("nonexistent")
 	if entry != nil {
 		t.Errorf("entry = %v, want nil", entry)
 	}
@@ -182,9 +180,12 @@ func TestProbeStatus_ENOENT_SetsUnavailable(t *testing.T) {
 		t.Fatalf("write index: %v", err)
 	}
 
-	loaded, err := Load(repoRoot)
+	loaded, err := Load(indexPath)
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
+	}
+	if err := loaded.EnsureStatus(); err != nil {
+		t.Fatalf("EnsureStatus failed: %v", err)
 	}
 	if loaded.Entries[0].Status != StatusUnavailable {
 		t.Errorf("Status = %q, want %q", loaded.Entries[0].Status, StatusUnavailable)
@@ -216,9 +217,12 @@ func TestProbeStatus_NonENOENT_LeavesStatus(t *testing.T) {
 		t.Fatalf("write index: %v", err)
 	}
 
-	loaded, err := Load(repoRoot)
+	loaded, err := Load(indexPath)
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
+	}
+	if err := loaded.EnsureStatus(); err != nil {
+		t.Fatalf("EnsureStatus failed: %v", err)
 	}
 
 	for _, e := range loaded.Entries {
@@ -343,13 +347,16 @@ func TestEntry_JSONSchema(t *testing.T) {
 
 func TestAddEntry_New(t *testing.T) {
 	idx := &Index{Version: IndexVersion}
-	entry := Entry{ID: "abc123", Kind: KindIssue, Status: StatusActive}
-	idx.AddEntry(entry)
+	entry := Entry{ID: "abc123", Kind: KindIssue}
+	idx.Add(entry)
 	if len(idx.Entries) != 1 {
 		t.Fatalf("Entries len = %d, want 1", len(idx.Entries))
 	}
 	if idx.Entries[0].ID != "abc123" {
 		t.Errorf("Entries[0].ID = %q, want %q", idx.Entries[0].ID, "abc123")
+	}
+	if idx.Entries[0].Status != StatusActive {
+		t.Errorf("Entries[0].Status = %q, want %q", idx.Entries[0].Status, StatusActive)
 	}
 }
 
@@ -360,16 +367,16 @@ func TestAddEntry_Existing(t *testing.T) {
 			{ID: "abc123", Kind: KindIssue, Status: StatusActive},
 		},
 	}
-	newEntry := Entry{ID: "abc123", Kind: KindReview, Status: StatusArchived}
-	idx.AddEntry(newEntry)
+	newEntry := Entry{ID: "abc123", Kind: KindReview}
+	idx.Add(newEntry)
 	if len(idx.Entries) != 1 {
 		t.Fatalf("Entries len = %d, want 1", len(idx.Entries))
 	}
 	if idx.Entries[0].Kind != KindReview {
 		t.Errorf("Entries[0].Kind = %q, want %q", idx.Entries[0].Kind, KindReview)
 	}
-	if idx.Entries[0].Status != StatusArchived {
-		t.Errorf("Entries[0].Status = %q, want %q", idx.Entries[0].Status, StatusArchived)
+	if idx.Entries[0].Status != StatusActive {
+		t.Errorf("Entries[0].Status = %q, want %q", idx.Entries[0].Status, StatusActive)
 	}
 }
 

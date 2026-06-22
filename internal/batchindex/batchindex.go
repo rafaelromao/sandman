@@ -28,8 +28,10 @@ const (
 )
 
 type Index struct {
-	Version int     `json:"version"`
-	Entries []Entry `json:"entries"`
+	Version   int                                    `json:"version"`
+	Entries   []Entry                                `json:"entries"`
+	StatFn    func(path string) (os.FileInfo, error) `json:"-"`
+	indexPath string
 }
 
 type Entry struct {
@@ -72,12 +74,11 @@ type ReviewState struct {
 	Claims       map[string]Claim `json:"claims"`
 }
 
-func Load(repoRoot string) (*Index, error) {
-	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
-	data, err := os.ReadFile(indexPath)
+func Load(path string) (*Index, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &Index{Version: IndexVersion, Entries: nil}, nil
+			return &Index{Version: IndexVersion, Entries: nil, StatFn: os.Stat, indexPath: path}, nil
 		}
 		return nil, fmt.Errorf("read batches index: %w", err)
 	}
@@ -91,18 +92,19 @@ func Load(repoRoot string) (*Index, error) {
 		return nil, fmt.Errorf("unsupported batches index version %d", idx.Version)
 	}
 
-	if err := idx.probeStatus(); err != nil {
-		return nil, err
+	if idx.StatFn == nil {
+		idx.StatFn = os.Stat
 	}
+	idx.indexPath = path
 
 	return &idx, nil
 }
 
-func (idx *Index) probeStatus() error {
+func (idx *Index) EnsureStatus() error {
 	for i := range idx.Entries {
 		e := &idx.Entries[i]
 		if e.Status == StatusActive || e.Status == StatusArchived {
-			if _, err := os.Stat(e.Path); err != nil {
+			if _, err := idx.StatFn(e.Path); err != nil {
 				if os.IsNotExist(err) {
 					e.Status = StatusUnavailable
 				}
@@ -147,23 +149,46 @@ func (idx *Index) Save(indexPath string) error {
 	return nil
 }
 
-func (idx *Index) Resolve(id string) (*Entry, bool) {
+func (idx *Index) Resolve(id string) *Entry {
 	for i := range idx.Entries {
 		if idx.Entries[i].ID == id {
-			return &idx.Entries[i], true
+			return &idx.Entries[i]
 		}
 	}
-	return nil, false
+	return nil
 }
 
-func (idx *Index) AddEntry(entry Entry) {
+func (idx *Index) Add(entry Entry) {
+	entry.Status = StatusActive
 	for i, e := range idx.Entries {
 		if e.ID == entry.ID {
+			entry.CreatedAt = e.CreatedAt
 			idx.Entries[i] = entry
 			return
 		}
 	}
 	idx.Entries = append(idx.Entries, entry)
+}
+
+func (idx *Index) ArchiveBatch(id string, archivedAt time.Time) error {
+	for i := range idx.Entries {
+		if idx.Entries[i].ID == id {
+			idx.Entries[i].Status = StatusArchived
+			idx.Entries[i].ArchivedAt = &archivedAt
+			return idx.Save(idx.indexPath)
+		}
+	}
+	return fmt.Errorf("batch not found: %s", id)
+}
+
+func (idx *Index) RemoveBatch(id string) error {
+	for i := range idx.Entries {
+		if idx.Entries[i].ID == id {
+			idx.Entries = append(idx.Entries[:i], idx.Entries[i+1:]...)
+			return idx.Save(idx.indexPath)
+		}
+	}
+	return fmt.Errorf("batch not found: %s", id)
 }
 
 func WriteManifest(runDir string, manifest RunManifest) error {
