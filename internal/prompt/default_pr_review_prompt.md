@@ -10,6 +10,15 @@ Review pull request #{{PR_NUMBER}}: {{PR_TITLE}}
 
 {{REVIEW_FOCUS}}
 
+## Reviewer Posture
+
+Reviews are acceptance-criteria-first, then documented-standards-only, then correctness/safety.
+
+Skip these by default:
+- Formatting, import order, comment phrasing.
+- Renaming suggestions without a behaviour impact.
+- Suggestions to split the PR. Prefer to review the whole diff as one unit. Only flag splitting if a subset is genuinely unreviewable as part of this PR; otherwise note unrelated parts as a single `Important` finding and move on.
+
 ## Runtime Context
 
 - You are running inside a Sandman-created worktree on a dedicated review branch.
@@ -38,12 +47,12 @@ Before performing the review, ensure the PR is in a healthy state:
 
 3. Fetch the PR diff with `gh pr diff {{PR_NUMBER}}` and read it end to end.
 
-4. **Analyse previous review progress.** Fetch prior review comments and reviews on this PR:
+4. **Analyse previous review progress.** Fetch all prior comments on this PR (review comments and issue comments):
    ```bash
    gh api "/repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/comments" --paginate
-   gh api "/repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/reviews" --paginate
+   gh api "/repos/{owner}/{repo}/issues/{{PR_NUMBER}}/comments" --paginate
    ```
-   Compare the prior feedback against what has changed since the last review cycle. Report which items were addressed, partially resolved, or remain outstanding. If there are no prior reviews, skip this step entirely and **omit** the `## Previous review progress` section from the posted comment.
+   Compare the prior feedback against what has changed since the last review cycle. Report which items were addressed, partially resolved, or remain outstanding. If both responses are empty (no review comments and no issue comments), skip this step entirely and **do not mention `## Previous review progress` anywhere in the posted comment — no heading, no placeholder, no prose acknowledgement. Omit it entirely.**
 
 5. **Cross-reference against the original task specification.** Look for an issue reference in the PR body (e.g. `Fixes #N`, `Closes #N`, `#N`, or `refs N`). If found, fetch the issue body:
    ```bash
@@ -51,24 +60,26 @@ Before performing the review, ensure the PR is in a healthy state:
    ```
    Verify that the implementation matches the issue's requirements and acceptance criteria. If the issue body references a spec or design doc, check those too. If no issue reference is found, skip this step gracefully.
 
-6. **Cross-reference parent issue acceptance criteria.** Look for a `## Parent` section in the PR body or the linked issue body that references another issue (e.g. `Parent: #N` or `## Parent\n#N`). If found, fetch that parent issue:
+6. **Cross-reference parent issue for context.** Look for a `## Parent` section in the PR body or the linked issue body that references another issue (e.g. `Parent: #N` or `## Parent\n#N`). If found, fetch that parent issue:
    ```bash
    gh issue view <N> --json title,body
    ```
-   Verify that the implementation satisfies the parent issue's acceptance criteria. This mirrors the existing issue-reference logic but handles the structured parent reference used in this repo's issue templates. If no parent reference is found, skip this step gracefully.
+   Use the parent issue as context for *why* the change is being made and what shape it is expected to take. Do **not** gate the review on the parent issue's own acceptance criteria — those belong to the PR that closes the parent. If no parent reference is found, skip this step gracefully.
 
 7. Read the repo's documented coding standards in `CLAUDE.md` (or `AGENTS.md` if present) and domain vocabulary in `CONTEXT.md`, plus the ADRs in `docs/adr/` that overlap with the changed code. Check for:
    - Coding style and conventions documented in `CLAUDE.md`.
    - Domain terminology defined in `CONTEXT.md` — flag names, file paths, function names, and error messages should match.
    - ADR decisions that constrain the area being modified.
 
-8. For every file in the diff, compare the change against those standards and the surrounding code. Look for:
-   - Behaviour that breaks an ADR or a documented invariant in `CONTEXT.md`.
-   - Bugs, race conditions, or error paths the diff did not cover.
-   - Missing tests for new behaviour, edge cases, or failure modes.
+8. For every file in the diff, check:
+   - Does it satisfy the acceptance criteria of the linked issue (the one the PR claims to close)?
+   - Does it break an ADR or an explicit invariant in `CONTEXT.md`?
+   - Did it introduce bugs, race conditions, or unhandled error paths?
+   - Are required tests present for new behaviour?
+   - Are there security issues (unsanitised input, injection, auth/authz gaps, secret leakage, unsafe deserialisation, unsafe filesystem/network operations)?
+   - Are there unsafe, destructive, or surprising operations (force pushes, hard deletes, broad `chmod`, unanchored curls, etc.)?
    - Inconsistencies with the repo's language and naming (domain vocabulary, flag terms, file paths).
    - Inconsistencies with existing patterns in the surrounding code — if neighbouring functions use a certain style or abstraction, the new code should follow suit.
-   - Unsafe, destructive, or surprising operations (force pushes, hard deletes, broad `chmod`, unanchored curls, etc.).
 
 9. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.
 
@@ -83,10 +94,10 @@ gh pr comment {{PR_NUMBER}} --body "..."
 Format the body as Markdown with the following sections:
 
 - `## Summary` — one paragraph describing what the PR does.
-- `## Findings` — bulleted list. Group by severity (`Blocking`, `Important`, `Nit`). If there are no findings in a group, omit it.
-- `## Suggested next steps` — the minimum set of follow-ups for the author.
+- `## Findings` — bulleted list grouped by severity (`Blocking`, `Important`, `Nit`). If there are no findings in a group, omit it. Every `Nit` must cite a specific documented rule from step 7 (file + section); otherwise omit it. Do not pad the section — empty means `APPROVED`.
+- `## Suggested next steps` — the minimum set of follow-ups for the author. Do not suggest splitting the PR; review the diff as one unit.
 - `## Decision` — If there are zero `Blocking` or `Important` findings, place a single line: `**APPROVED**`. Otherwise, place `**CHANGES_REQUESTED**`.
-- `## Previous review progress` — Do not render this section if there are no prior reviews. Do not write a placeholder such as "No previous reviews found." Only render this section when prior reviews exist, and in that case list each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**.
+- `## Previous review progress` — Render this section **only** when prior comments exist (check both review comments and issue comments from step 4). When they exist, list each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**. When there are no prior comments, **omit this section entirely** — do not include the heading, do not write a placeholder, do not mention it in prose. Not even a single sentence.
 
 Keep the comment terse and actionable. Do not post review commentary outside the single `gh pr comment` invocation.
 
