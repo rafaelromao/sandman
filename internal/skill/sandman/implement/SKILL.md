@@ -33,12 +33,12 @@ gh issue view <ID> --json title,number
 
 ### 1.5. Pre-flight check
 
-After setting up the branch, run a pre-flight check to detect if the issue's work is already complete:
+This step fires after branch setup. It is reachable when the orchestrator's `filterClosedIssues` gate (issue #1213) is bypassed (e.g. `--continue` re-entry or manual worktree creation). Skip this step if `.sandman/task.md` already exists from a prior run.
 
 ```bash
 gh issue view <ID> --json state --jq '.state'
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-gh search prs --merged --repo "$REPO" --limit 5 -- "Closes #<ID> OR Fixes #<ID>" in:body --json number --jq 'length'
+gh search prs --merged --repo "$REPO" -- "Closes #<ID> OR Fixes #<ID>" in:body --json number --jq 'length'
 ```
 
 - If issue state is `CLOSED` OR the merged PR search returned a non-zero count → run:
@@ -51,7 +51,7 @@ cat >> .sandman/task.md <<'EOF'
 EOF
 ```
 
-Then **stop without loading `sandman-plan` or `sandman-tdd`**.
+Then **stop without loading `sandman-plan` or `sandman-tdd`**. The orchestrator escape hatch (issue #1213) can override this via `--continue`.
 
 - If issue is **open** and no merged PR is found closing this issue → proceed to step 2 (Plan) unchanged.
 
