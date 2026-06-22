@@ -709,32 +709,6 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    /* Long issue titles and branch names must not force the run row
-       to wrap to many lines (which would also stretch the title cell
-       to the same height). We use the CSS "table-to-block" trick:
-       display:block on the td takes it out of the table layout, so
-       width/max-width actually work, and white-space:nowrap +
-       overflow:hidden + text-overflow:ellipsis keeps the text on a
-       single line. The td reverts to table-cell at desktop sizes via
-       the media query below. */
-    tbody td[data-cell="issue-title"].mono,
-    tbody td[data-cell="branch"].mono {
-      display: block;
-      max-width: 100%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    @media (min-width: 720px) {
-      tbody td[data-cell="issue-title"].mono,
-      tbody td[data-cell="branch"].mono {
-        display: table-cell;
-        max-width: none;
-        white-space: normal;
-        overflow: visible;
-        text-overflow: clip;
-      }
-    }
     /* Long unbreakable tokens (long run-id, long branch, long issue
        title) must not force the column wider than the table can afford.
        min-width:0 on the flex child lets the parent shrink; overflow-
