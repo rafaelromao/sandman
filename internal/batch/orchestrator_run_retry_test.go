@@ -551,4 +551,10 @@ func TestRunSingle_ClosedIssueNoPRReturnsSuccess(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success (closed issue with no PR on branch should be success)", result.Status)
 	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("RetriesTotal = %d, want 1 (closed issue with no PR should succeed without retry)", result.RetriesTotal)
+	}
+	if len(resultFactory.created) != 1 {
+		t.Fatalf("created runnables = %d, want 1 (closed issue with no PR should succeed without retry)", len(resultFactory.created))
+	}
 }

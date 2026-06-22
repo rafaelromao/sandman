@@ -1676,6 +1676,7 @@ func (s *runSession) runOnce(
 			}
 			if github.IsIssueClosed(issue) {
 				result.Status = "success"
+				break
 			} else {
 				result.Status = "failure"
 			}
