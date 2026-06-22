@@ -14,10 +14,10 @@ type Layout struct {
 	RepoRoot      string
 	SandmanDir    string
 	WorktreeDir   string
-	LogDir        string
+	BatchesDir    string
+	BatchesIndex  string
 	EventsLogPath string
 	ArchiveDir    string
-	RunsDir       string
 }
 
 // NewLayout resolves a Layout for the given repo root, honoring cfg.WorktreeDir
@@ -38,20 +38,9 @@ func NewLayout(cfg *config.Config, repoRoot string) Layout {
 		RepoRoot:      repoRoot,
 		SandmanDir:    filepath.Join(repoRoot, ".sandman"),
 		WorktreeDir:   worktreeDir,
-		LogDir:        filepath.Join(repoRoot, ".sandman", "logs"),
+		BatchesDir:    filepath.Join(repoRoot, ".sandman", "batches"),
+		BatchesIndex:  filepath.Join(repoRoot, ".sandman", "batches.json"),
 		EventsLogPath: filepath.Join(repoRoot, ".sandman", "events.jsonl"),
 		ArchiveDir:    filepath.Join(repoRoot, ".sandman", "archive"),
-		RunsDir:       filepath.Join(repoRoot, ".sandman", "runs"),
 	}
-}
-
-// SafeLogFilename translates a branch name (or any string with /, space, or
-// path-separator characters) into a single filename-safe component. Returns
-// "prompt-only" when the input is empty.
-func (l Layout) SafeLogFilename(branch string) string {
-	name := strings.NewReplacer("/", "-", string(filepath.Separator), "-", " ", "-").Replace(branch)
-	if name == "" {
-		return "prompt-only"
-	}
-	return name
 }
