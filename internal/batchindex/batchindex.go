@@ -2,7 +2,6 @@ package batchindex
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,7 +53,7 @@ type RunManifest struct {
 	Kind         Kind      `json:"kind"`
 	CreatedAt    time.Time `json:"createdAt"`
 	PR           int       `json:"pr,omitempty"`
-	Status       string    `json:"status"`
+	Status       Status    `json:"status"`
 }
 
 type SeenComment struct {
@@ -156,8 +155,6 @@ func (idx *Index) Resolve(id string) (*Entry, bool) {
 	}
 	return nil, false
 }
-
-var ErrNotFound = errors.New("entry not found")
 
 func (idx *Index) AddEntry(entry Entry) {
 	for i, e := range idx.Entries {
