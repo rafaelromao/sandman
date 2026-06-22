@@ -89,6 +89,7 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 	ghShimDir := shortTempDir(t)
 	writeFakeGHShim(t, ghShimDir)
 	writeBlockingOpencodeShim(t, ghShimDir)
+	writeSandmanDockerfile(t, repoDir)
 	writeBlockingOpencodeShimForContainer(t, repoDir)
 	prependPath(t, ghShimDir)
 
@@ -350,7 +351,7 @@ func writeAbortE2EConfig(t *testing.T, repoDir string) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
-	configYAML := []byte("agent: opencode\nsandbox: worktree\nreview_command: /oc review\ngit:\n  base_branch: main\n")
+	configYAML := []byte("agent: opencode\nsandbox: worktree\nretries: 0\nreview_command: /oc review\ngit:\n  base_branch: main\n")
 	if err := os.WriteFile(configPath, configYAML, 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -653,6 +654,32 @@ func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 			_ = conn.Close()
 		}
 	}()
+
+	// Write per-issue run.started events so the portal finds a RunState
+	// for each issue in the batch and populates the log from live socket
+	// output instead of showing "Queued. Waiting to start."
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatalf("create .sandman dir: %v", err)
+	}
+	var buf bytes.Buffer
+	for _, issue := range []int{860, 854} {
+		event := events.Event{
+			Type:      "run.started",
+			Timestamp: time.Now(),
+			RunID:     fmt.Sprintf("%s-%d", runName, issue),
+			Issue:     issue,
+		}
+		data, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("marshal event for issue %d: %v", issue, err)
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(sandmanDir, "events.jsonl"), buf.Bytes(), 0644); err != nil {
+		t.Fatalf("write events.jsonl: %v", err)
+	}
 
 	return runDir
 }
