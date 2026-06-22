@@ -1445,6 +1445,30 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetail_SwitchingSubjectClosesPriorSSE(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, log: 'parent log', socketPath: '/tmp/sock' };
+const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
+const stopGroups = new Set();
+const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre1 || pre1.textContent.indexOf('parent log') === -1) throw new Error('expected parent log initially');
+const opts2 = { helpers, stopGroups, expandedKey: 'PR42', tabs: { 'PR42': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('switching subject should mutate the detail row, got 0');
+const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect || subjectSelect.value !== 'PR42') throw new Error('expected selected review subject after switch, got ' + (subjectSelect && subjectSelect.value));
+const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre2 || pre2.textContent.indexOf('review log') === -1) throw new Error('expected review log after subject switch, got ' + (pre2 && pre2.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetail_RebuildsAfterTabRoundTrip(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'log text', events: [{ type: 'start', timestamp: 1, payload: { ok: true } }] };
