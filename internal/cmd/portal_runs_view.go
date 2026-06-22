@@ -260,13 +260,14 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		}
 	}
 	for i := range runs {
-		// Active runs are never marked archived, even if a directory
-		// matching the run ID happens to exist under .sandman/archive.
-		// Skipping the disk probe for active rows also keeps the hot
-		// path allocation-free when the portal polls every few seconds.
 		if runs[i].Kind != "completed" {
 			runs[i].SourceExists = true
 			continue
+		}
+		if runs[i].BatchKey != "" {
+			if !v.runDirExists(repoRoot, runs[i].BatchKey) {
+				runs[i].BatchKey = ""
+			}
 		}
 		if runs[i].BatchKey == "" && len(deadBatchDirIDs) > 0 {
 			if batchKey, ok := deadBatchDirIDs[runs[i].RunID]; ok {

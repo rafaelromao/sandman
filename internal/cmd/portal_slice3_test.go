@@ -956,6 +956,55 @@ func TestPortal_Compute_CompletedRunWithSourceDir_ReportsSourceExists(t *testing
 	}
 }
 
+// TestPortal_Compute_CompletedRunWithStaleBatchKey_ReportsSourceExists
+// is the regression test for the "last batch runs" bug: a completed run
+// that had BatchKey set while the daemon was alive (active batch) but
+// the batch directory was subsequently cleaned up must still surface
+// SourceExists=true after recovering BatchKey from the dead batch scan.
+// Before the fix, needDeadBatchScan only triggered when BatchKey was
+// already empty, so a stale non-empty BatchKey would cause runDirExists
+// to check a non-existent directory and incorrectly set SourceExists=false,
+// hiding the Archive button.
+func TestPortal_Compute_CompletedRunWithStaleBatchKey_ReportsSourceExists(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const runID = "abcd-260618113825-issue-42"
+	const batchKey = "batch-42"
+	runDir := filepath.Join(repoRoot, ".sandman", "runs", batchKey)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt, RunID: runID}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	got := runs[0]
+	if got.BatchKey != batchKey {
+		t.Fatalf("BatchKey = %q, want %q (should be recovered from dead batch scan)", got.BatchKey, batchKey)
+	}
+	if !got.SourceExists {
+		t.Fatalf("SourceExists = false, want true (batch dir exists under .sandman/runs/%s)", batchKey)
+	}
+}
+
 // TestPortal_Compute_ActiveRunNeverArchived is the cycle-3 test. An
 // active run (live control socket on disk) must NEVER carry the
 // Archived flag, even when an archive directory with the same RunID
