@@ -116,7 +116,7 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 	}
 	idx.Add(batchindex.Entry{
 		ID:        manifest.BatchId,
-		Path:      fmt.Sprintf(".sandman/batches/%s", manifest.BatchId),
+		Path:      s.runDir,
 		Kind:      batchindex.Kind(manifest.RunKind),
 		Status:    batchindex.StatusActive,
 		CreatedAt: manifest.CreatedAt,
