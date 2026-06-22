@@ -274,14 +274,12 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	}
 }
 
-// TestPortal_AggregateReviewChildren_TerminalReviewChild_ParentNotStuckOnReviewing
-// is the slice-1 regression test for the bug where a review child with a
-// terminal run.finished event keeps Kind=="active" because the socket is still
-// alive on disk (line 709 in portal_runs_view.go). This caused
-// aggregateReviewChildren to incorrectly set summary.live=true and keep the
-// parent on "reviewing" even though the child had a terminal event-log status.
-// The fix: aggregateReviewChildren gates on Status=="reviewing" (actual projected
-// status) instead of Kind=="active" (socket-liveness proxy).
+// TestPortal_TerminalReviewChild_ParentNotStuck is the slice-1 regression
+// test for the bug where a review child with a terminal run.finished event
+// keeps Kind=="active" because the socket is still alive on disk. This caused
+// the parent aggregate to incorrectly stay on "reviewing" even though the child
+// had a terminal event-log status. The fix: gate the live flag on Status
+// instead of Kind so terminal status wins.
 func TestPortal_TerminalReviewChild_ParentNotStuck(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
