@@ -1662,29 +1662,27 @@ func (s *runSession) runOnce(
 		}
 		result.RetriesTotal = attempt + 1
 
+		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
+		taskContent, _, _ := ReadTaskContent(taskPath)
+		alreadyResolved := strings.Contains(taskContent, "## Status: already resolved")
 		if mergeRequired {
 			prMerged := checkPRMerged(o.githubClient, branch)
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue
 			}
-			if prMerged {
+			if prMerged || alreadyResolved {
 				if ctx.Err() != nil {
 					break
 				}
 				result.Status = "success"
 				break
 			}
-			if github.IsIssueClosed(issue) {
-				result.Status = "success"
-				break
-			} else {
-				result.Status = "failure"
-			}
+			result.Status = "failure"
 		} else {
 			if events.RunStatusFromPayload(result.Status).IsSuccess() {
 				if issue != nil && o.githubClient != nil {
 					prMerged := checkPRMerged(o.githubClient, branch)
-					if prMerged {
+					if prMerged || alreadyResolved {
 						break
 					}
 					result.Status = "failure"
