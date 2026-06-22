@@ -82,7 +82,7 @@ When `sandman run` uses `--prompt` or `--template` without any issue selectors a
 sandman portal
 ```
 
-`sandman portal` gives you a repo-scoped view of current and recent runs plus launcher presets. It rescans `.sandman/runs/` on each poll, so multiple Sandman instances in the same repository show up as they start. This is useful when you want to watch live output, review logs, compare runs, and launch new Sandman commands without jumping between terminals.
+`sandman portal` gives you a repo-scoped view of current and recent runs. It rescans `.sandman/runs/` on each poll, so multiple Sandman instances in the same repository show up as they start. This is useful when you want to watch live output, review logs, and compare runs without jumping between terminals.
 
 ## Continuing a previous run
 

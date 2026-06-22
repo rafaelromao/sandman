@@ -20,7 +20,7 @@ func TestPortal_PageWiresArchiveAction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")

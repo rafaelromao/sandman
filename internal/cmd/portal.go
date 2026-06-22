@@ -104,12 +104,6 @@ func NewPortalCmd(deps Dependencies) *cobra.Command {
 				return err
 			}
 
-			cfg, err := loadPortalLaunchConfig(deps.ConfigStore)
-			if err != nil {
-				return fmt.Errorf("load config: %w", err)
-			}
-			launchData := portalLaunchDataFromConfig(cfg)
-
 			cwd, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("get working directory: %w", err)
@@ -122,7 +116,7 @@ func NewPortalCmd(deps Dependencies) *cobra.Command {
 			ctx, stop := signalContext(cmd.Context())
 			defer stop()
 
-			return runPortalServer(ctx, repoRoot, port, host, cmd.OutOrStdout(), launchData, cfg)
+			return runPortalServer(ctx, repoRoot, port, host, cmd.OutOrStdout())
 		},
 	}
 
@@ -147,7 +141,7 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 	return ctx, cancel
 }
 
-func runPortalServer(ctx context.Context, repoRoot string, port int, host string, out io.Writer, launchData portalLaunchFormData, cfg *config.Config) error {
+func runPortalServer(ctx context.Context, repoRoot string, port int, host string, out io.Writer) error {
 	bindHost := strings.TrimSpace(host)
 	if bindHost == "" {
 		bindHost = portalDefaultHost
@@ -168,7 +162,7 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, host string
 		return fmt.Errorf("write portal address: %w", err)
 	}
 
-	server := newPortalHTTPServer(repoRoot, launchData, cfg)
+	server := newPortalHTTPServer(repoRoot)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Serve(listener)
@@ -195,9 +189,9 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, host string
 // newPortalHTTPServer constructs the hardened HTTP server that backs the
 // portal command. The exported factory is the testable seam: tests assert that
 // the timeouts are configured without having to drive a real connection.
-func newPortalHTTPServer(repoRoot string, launchData portalLaunchFormData, cfg *config.Config) *http.Server {
+func newPortalHTTPServer(repoRoot string) *http.Server {
 	return &http.Server{
-		Handler:           newPortalHandler(repoRoot, launchData, cfg),
+		Handler:           newPortalHandler(repoRoot),
 		ReadTimeout:       portalReadHeaderTimeout,
 		ReadHeaderTimeout: portalReadHeaderTimeout,
 		WriteTimeout:      portalWriteTimeout,

@@ -84,7 +84,7 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
 	})
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
@@ -135,7 +135,7 @@ func TestPortal_RunStream_RejectsNonActiveRun(t *testing.T) {
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "abcd-260618113825-issue-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
 	})
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 

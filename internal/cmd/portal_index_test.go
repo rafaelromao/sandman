@@ -88,7 +88,7 @@ func TestPortalHandler_RunsServesSharedRunsIndexSnapshot(t *testing.T) {
 	idx.snapshotCache = []portalRun{{Key: "abcd-260618113825-issue-99", RunID: "abcd-260618113825-issue-99", Kind: "completed", Status: "success", IssueLabel: "#99"}}
 	idx.mu.Unlock()
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
