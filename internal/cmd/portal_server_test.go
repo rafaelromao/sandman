@@ -1519,7 +1519,7 @@ func TestPortal_MobileTableShellIsNotFixedHeightTrap(t *testing.T) {
 	}
 }
 
-func TestPortal_LaunchRouteNotFound(t *testing.T) {
+func TestPortal_LaunchEndpointIsRemoved(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
