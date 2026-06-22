@@ -1884,7 +1884,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	logPath := s.o.agentLogPath(fmt.Sprintf("%d.log", s.issueNumber))
 	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
-		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 		if attempt > 0 {
 			// Pre-retry guard: if the PR was merged between attempts (e.g. the
 			// agent merged it on attempt 0 but exited non-zero due to a
@@ -1897,6 +1896,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			if checkPRMerged(o.githubClient, branch) {
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
 			}
+			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
 			// Always pass the task content verbatim (or empty template if
 			// missing). The agent reads its next instruction from the task
@@ -1926,17 +1926,9 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 					fmt.Fprintf(o.errorLog, "warning: write retry marker for issue %d: %v\n", s.issueNumber, err)
 				}
 			}
-		} else {
-			// First attempt: check if the task doc already contains ## Status: already resolved
-			// (written by the skill's pre-flight check before the agent ran).
-			taskContent, _, _ := ReadTaskContent(taskPath)
-			if strings.Contains(taskContent, "## Status: already resolved") {
-				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: 1}
-			}
-			if err := logRunMarkerFn(logPath, attempt, s.retries); err != nil {
-				if o.errorLog != nil {
-					fmt.Fprintf(o.errorLog, "warning: write run marker for issue %d: %v\n", s.issueNumber, err)
-				}
+		} else if err := logRunMarkerFn(logPath, attempt, s.retries); err != nil {
+			if o.errorLog != nil {
+				fmt.Fprintf(o.errorLog, "warning: write run marker for issue %d: %v\n", s.issueNumber, err)
 			}
 		}
 		return attemptRenderCfg, nil
