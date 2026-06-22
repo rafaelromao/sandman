@@ -1074,29 +1074,61 @@ func TestPortal_DiscoverActiveRuns_SkipsDeadSocketFromFinishedBatch(t *testing.T
 	}
 }
 
-func TestPortal_FilterIssueOutput_PreservesIssuePrefixes(t *testing.T) {
+func TestPortal_StripLogLabel_StripsPrefixedLine(t *testing.T) {
+	got := stripLogLabel("[run-123] 10:00:00 some message")
+	want := "10:00:00 some message"
+	if got != want {
+		t.Fatalf("stripLogLabel(%q): got %q, want %q", "[run-123] 10:00:00 some message", got, want)
+	}
+}
+
+func TestPortal_StripLogLabel_PassesThroughUnprefixedLine(t *testing.T) {
+	got := stripLogLabel("10:00:00 some message")
+	want := "10:00:00 some message"
+	if got != want {
+		t.Fatalf("stripLogLabel(%q): got %q, want %q", "10:00:00 some message", got, want)
+	}
+}
+
+func TestPortal_StripLogLabel_PassesThroughEmptyLine(t *testing.T) {
+	got := stripLogLabel("")
+	want := ""
+	if got != want {
+		t.Fatalf("stripLogLabel(%q): got %q, want %q", "", got, want)
+	}
+}
+
+func TestPortal_StripLogLabel_HandlesLineWithoutClosingBracket(t *testing.T) {
+	got := stripLogLabel("[no closing bracket here")
+	want := "[no closing bracket here"
+	if got != want {
+		t.Fatalf("stripLogLabel(%q): got %q, want %q", "[no closing bracket here", got, want)
+	}
+}
+
+func TestPortal_FilterIssueOutput_StripsLabelsFromMatchingLines(t *testing.T) {
 	live := strings.Join([]string{
-		"[issue-860] 18:51:05 working on PR",
-		"[issue-854] 18:51:05 sibling work",
+		"[run-abc] 18:51:05 working on PR",
+		"[run-xyz] 18:51:05 sibling work",
 		"unprefixed noise",
-		"[issue-860] 18:51:06 more PR work",
+		"[run-abc] 18:51:06 more PR work",
 	}, "\n")
 
-	filtered := (&portalRunsView{}).filterPortalIssueOutput(live, 860)
+	filtered := (&portalRunsView{}).filterPortalLogByRunID(live, "run-abc")
 
-	for _, want := range []string{"[issue-860] 18:51:05 working on PR", "[issue-860] 18:51:06 more PR work"} {
+	for _, want := range []string{"18:51:05 working on PR", "18:51:06 more PR work"} {
 		if !strings.Contains(filtered, want) {
 			t.Fatalf("expected filtered output to contain %q, got:\n%s", want, filtered)
 		}
 	}
-	for _, banned := range []string{"[issue-854]", "unprefixed noise"} {
+	for _, banned := range []string{"[run-xyz]", "unprefixed noise", "[run-abc]"} {
 		if strings.Contains(filtered, banned) {
 			t.Fatalf("expected filtered output to drop %q, got:\n%s", banned, filtered)
 		}
 	}
 }
 
-func TestPortal_SavedLogFile_KeepsIssuePrefixesIntact(t *testing.T) {
+func TestPortal_SavedLogFile_StripsLabelsInPortalDisplay(t *testing.T) {
 	repoRoot := t.TempDir()
 	logsDir := filepath.Join(repoRoot, ".sandman", "logs")
 	if err := os.MkdirAll(logsDir, 0755); err != nil {
@@ -1113,20 +1145,25 @@ func TestPortal_SavedLogFile_KeepsIssuePrefixesIntact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// readPortalTextFile is the on-disk reader for saved logs. The
-	// portal must surface the saved log byte-for-byte (modulo ANSI
-	// stripping), so a reader looking at a mixed-batch issue can still
-	// see the sibling-issue prefixes that the file already records.
+	// readPortalTextFile strips labels from saved log content for portal
+	// display. The raw file is unchanged (log download serves it raw).
+	// Labels are stripped so the portal shows "HH:MM:SS msg" instead of
+	// "[<label>] HH:MM:SS msg".
 	got := (&portalRunsView{}).readPortalTextFile(logPath)
 
-	for _, want := range []string{"[issue-860] 18:51:05 working on PR", "[issue-854] 18:51:05 sibling work", "[issue-860] 18:51:06 more PR work"} {
+	for _, want := range []string{"18:51:05 working on PR", "18:51:05 sibling work", "18:51:06 more PR work"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("expected saved log to contain %q, got:\n%s", want, got)
+			t.Fatalf("expected portal display to show %q, got:\n%s", want, got)
+		}
+	}
+	for _, banned := range []string{"[issue-860]", "[issue-854]"} {
+		if strings.Contains(got, banned) {
+			t.Fatalf("expected portal display to strip label %q, got:\n%s", banned, got)
 		}
 	}
 }
 
-func TestPortal_SavedLogFile_PreservesPrefixByteForByteModuloANSI(t *testing.T) {
+func TestPortal_SavedLogFile_StripsLabelsModuloANSI(t *testing.T) {
 	repoRoot := t.TempDir()
 	logsDir := filepath.Join(repoRoot, ".sandman", "logs")
 	if err := os.MkdirAll(logsDir, 0755); err != nil {
@@ -1140,14 +1177,14 @@ func TestPortal_SavedLogFile_PreservesPrefixByteForByteModuloANSI(t *testing.T) 
 
 	got := (&portalRunsView{}).readPortalTextFile(logPath)
 
-	if !strings.Contains(got, "[issue-42] 10:30:00 ") {
-		t.Fatalf("expected saved log to preserve issue prefix, got:\n%s", got)
-	}
-	if !strings.Contains(got, "[issue-42] 10:30:01 plain line") {
-		t.Fatalf("expected saved log to preserve plain line with prefix, got:\n%s", got)
+	if strings.Contains(got, "[issue-42]") {
+		t.Fatalf("expected portal display to strip issue prefix, got:\n%s", got)
 	}
 	if strings.Contains(got, "\x1b[32m") {
 		t.Fatalf("expected ANSI sequences to be stripped, got:\n%s", got)
+	}
+	if !strings.Contains(got, "10:30:00 green log line") {
+		t.Fatalf("expected portal display to show stripped line, got:\n%s", got)
 	}
 }
 

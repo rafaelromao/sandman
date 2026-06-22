@@ -11,33 +11,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/rafaelromao/sandman/internal/config"
 )
 
 type portalHandler struct {
 	repoRoot     string
-	launchData   portalLaunchFormData
-	cfg          *config.Config
-	launcher     *portalLauncher
-	launcherErr  error
 	runsIndex    *portalRunsIndex
 	staleCleaner func(string) error
 }
 
-func newPortalHandler(repoRoot string, launchData portalLaunchFormData, cfg *config.Config) http.Handler {
+func newPortalHandler(repoRoot string) http.Handler {
 	h := &portalHandler{
 		repoRoot:     repoRoot,
-		launchData:   launchData,
-		cfg:          cfg,
-		launcherErr:  nil,
 		runsIndex:    getPortalRunsIndex(repoRoot),
 		staleCleaner: portalStaleCleaner,
 	}
-	h.launcher, h.launcherErr = newPortalLauncher(repoRoot)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/commands", h.handleCommands)
 	mux.HandleFunc("/api/instances", h.handleInstances)
 	mux.HandleFunc("/api/runs", h.handleRuns)
 	mux.HandleFunc("/api/runs/stream", h.handleRunStream)
@@ -60,95 +49,6 @@ func (h *portalHandler) startStaleCleaner() {
 			log.Printf("portal: stale cleanup failed: %v", err)
 		}
 	}()
-}
-
-func (h *portalHandler) handleCommands(w http.ResponseWriter, r *http.Request) {
-	if h.launcherErr != nil {
-		http.Error(w, h.launcherErr.Error(), http.StatusInternalServerError)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		commands, err := h.launcher.list()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]any{"repoRoot": h.repoRoot, "commands": commands})
-	case http.MethodPost:
-		req, err := parsePortalUnifiedLaunchRequest(r)
-		if err != nil {
-			writeJSONError(w, "invalid command payload", http.StatusBadRequest)
-			return
-		}
-
-		var (
-			args []string
-			resp any
-		)
-		switch strings.TrimSpace(req.Command) {
-		case "run":
-			args, err = buildPortalRunArgs(h.repoRoot, h.cfg, req.runRequest())
-			if err != nil {
-				writeJSONError(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			if err := portalStartRun(r.Context(), h.repoRoot, args); err != nil {
-				writeJSONError(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			h.runsIndex.Invalidate()
-			if _, err := h.launcher.record(args); err != nil {
-				writeJSONError(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			resp = portalLaunchResponse{Message: "Started sandman run.", Args: args}
-		case "continue":
-			commandReq := req.commandRequest()
-			commandReq.Preset = req.Command
-			args, err = buildPortalCommandArgs(commandReq)
-			if err != nil {
-				writeJSONError(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			if err := portalStartRun(r.Context(), h.repoRoot, args); err != nil {
-				writeJSONError(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			h.runsIndex.Invalidate()
-			command, err := h.launcher.record(args)
-			if err != nil {
-				writeJSONError(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			resp = command
-		case "status", "history", "clean", "config", "archive":
-			commandReq := req.commandRequest()
-			commandReq.Preset = req.Command
-			args, err = buildPortalCommandArgs(commandReq)
-			if err != nil {
-				writeJSONError(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			command, err := h.launcher.launch(r.Context(), args)
-			if err != nil {
-				writeJSONError(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			resp = command
-		default:
-			writeJSONError(w, "unknown command", http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(resp)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
 }
 
 func (h *portalHandler) handleInstances(w http.ResponseWriter, r *http.Request) {
@@ -300,7 +200,7 @@ func (h *portalHandler) handlePage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	data, err := buildPortalPageData(h.repoRoot, h.launchData)
+	data, err := buildPortalPageData(h.repoRoot)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -77,7 +77,7 @@ func TestPortal_APIRescansRunsOnEachRequest(t *testing.T) {
 
 	createUnixRunSocket(t, filepath.Join(repoRoot, ".sandman", "runs", "run-1", "run.sock"))
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
@@ -190,7 +190,7 @@ func TestPortal_RunsAPI_OmitsRowsForFinishedBatchWithDeadSocket(t *testing.T) {
 	portalRunLivenessProbe = func(string) bool { return false }
 	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
@@ -391,7 +391,7 @@ func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
 		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "run-prompt-1", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/prompt-only-1"}},
 	})
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
@@ -455,7 +455,7 @@ func TestPortal_RunsEndpoint_RoundTripsReasonForReviewAndAutoSelect(t *testing.T
 		{Type: "run.finished", Timestamp: started.Add(5 * time.Minute), RunID: "run-issue-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "status": "success"}},
 	})
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
@@ -672,7 +672,7 @@ func TestPortal_AbortRunEndpointAbortsActiveRunAndRefreshesStatus(t *testing.T) 
 		return os.RemoveAll(runDir)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/abort", strings.NewReader(`{"runKey":"run-42-1","issue":42}`))
@@ -858,7 +858,7 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 			return &portalAbortError{status: http.StatusConflict, message: "batch: no such issue"}
 		}
 
-		server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+		server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 		defer server.Close()
 
 		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/abort", strings.NewReader(`{"runKey":"run-42-1","issue":9999}`))
@@ -889,7 +889,7 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 			return &portalAbortError{status: http.StatusBadGateway, message: "daemon silent"}
 		}
 
-		server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+		server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 		defer server.Close()
 
 		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/abort", strings.NewReader(`{"runKey":"run-42-1","issue":42}`))
@@ -972,7 +972,7 @@ func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	runs := readPortalRuns(t, server.URL)
@@ -1001,7 +1001,7 @@ func TestPortal_PageExposesFiltersAndTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1052,7 +1052,7 @@ func TestPortal_PageUsesPlainEscapedTerminalRendering(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1083,7 +1083,7 @@ func TestPortal_PageIncludesAllClearEmptyStateMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1107,7 +1107,7 @@ func TestPortal_PageAbortedBadgeCSSIsDistinctFromArchived(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1134,7 +1134,7 @@ func TestPortal_PageMastheadShowsRepoAndUpdatedChip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1168,7 +1168,7 @@ func TestPortal_PageExposesPollHealthPill(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1203,7 +1203,7 @@ func TestPortal_PageWiresPortalViewStatePersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1229,7 +1229,7 @@ func TestPortal_PageWiresSubjectSelector(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1255,7 +1255,7 @@ func TestPortal_PageExposesArchivedFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1291,7 +1291,7 @@ func TestPortal_PageWiresLogScrollPreservation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1317,7 +1317,7 @@ func TestPortal_DetailPanelHasFixedHeightWithScroll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1348,7 +1348,7 @@ func TestPortal_SyntaxHighlightingHasNoSizeCutoff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1375,7 +1375,7 @@ func TestPortal_PageExposesRetryChipStyles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1400,7 +1400,7 @@ func TestPortal_PageExposesRetryEventCardStyles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1420,67 +1420,13 @@ func TestPortal_PageExposesRetryEventCardStyles(t *testing.T) {
 	}
 }
 
-func TestPortal_PageExposesCommandPanelShell(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(body)
-	for _, want := range []string{
-		"Commands",
-		`id="commands-toggle"`,
-		`id="commands-panel"`,
-		`id="command-picker"`,
-		`class="command-form-section"`,
-		`id="command-form-toggle"`,
-		`aria-expanded="true"`,
-		`aria-controls="command-form-body"`,
-		`aria-label="Toggle command options"`,
-		`class="disclosure-chevron"`,
-		`id="command-form-body"`,
-		`id="command-panel-form"`,
-		`id="command-panel-body"`,
-		`id="command-execute-status"`,
-		`value="run"`,
-		`value="continue"`,
-		`value="status"`,
-		`value="history"`,
-		`value="clean"`,
-		`value="config"`,
-		`value="archive"`,
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("page missing %q\n%s", want, content[:1000])
-		}
-	}
-	if strings.Contains(content, "class=\"launcher\"") {
-		t.Fatalf("expected launcher section to be removed\n%s", content[:1000])
-	}
-	if !strings.Contains(content, `points="6 9 12 15 18 9"`) {
-		t.Fatalf("disclosure chevron missing down-chevron polyline points\n%s", content[:1000])
-	}
-}
-
 func TestPortal_PageExposesMobileExpandedRunPanelStyles(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1511,7 +1457,7 @@ func TestPortal_PageExposesMobileRunDetailFactsLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1548,189 +1494,13 @@ func TestPortal_PageExposesMobileRunDetailFactsLayout(t *testing.T) {
 	}
 }
 
-func TestPortal_PageExposesContinueFromRunShortcut(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(body)
-	for _, want := range []string{
-		`function launchContinueFromRun(command)`,
-		`state.issues || state.issue || ''`,
-		`commandPicker.value = 'continue'`,
-		`textarea[name="prompt"]`,
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("page missing %q\n%s", want, content[:1000])
-		}
-	}
-
-	diffContent, err := os.ReadFile("portal_diff.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		`detailsData(`,
-		`data-rendered-json`,
-		`Run details`,
-		`JSON.stringify(detailsData`,
-	} {
-		if !strings.Contains(string(diffContent), want) {
-			t.Fatalf("portal_diff.js missing %q\n%s", want, string(diffContent[:1000]))
-		}
-	}
-}
-
-func TestPortal_PageExposesCollapsibleCommandFormStyles(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(body)
-	for _, want := range []string{
-		`.command-form-section {`,
-		`flex-shrink: 0;`,
-		`.command-form-toggle {`,
-		`:focus-visible`,
-		`.command-form-body {`,
-		`max-height: 2000px;`,
-		`transition: max-height 280ms cubic-bezier(0.165, 0.84, 0.44, 1), opacity 280ms cubic-bezier(0.165, 0.84, 0.44, 1);`,
-		`.command-form-body.collapsed {`,
-		`max-height: 0;`,
-		`opacity: 0;`,
-		`[aria-expanded="false"] .disclosure-chevron`,
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("page missing %q\n%s", want, content[:min(1000, len(content))])
-		}
-	}
-	if !strings.Contains(content, `@media (prefers-reduced-motion: reduce)`) {
-		t.Fatalf("page missing prefers-reduced-motion media query\n%s", content[:min(1000, len(content))])
-	}
-	if !strings.Contains(content, `      .command-form-body {
-        transition: none;
-      }`) {
-		t.Fatalf("page missing command-form-body transition:none in reduced-motion block\n%s", content[:min(1000, len(content))])
-	}
-}
-
-func TestPortal_PageClosesCommandFormOnEscapeFirst(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(body)
-	if !strings.Contains(content, `setCommandFormExpanded(false)`) {
-		t.Fatalf("page missing setCommandFormExpanded(false) in Escape handler\n%s", content[:min(1000, len(content))])
-	}
-}
-
-func TestPortal_PageIncludesCommandFormFocusManagement(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(body)
-	if !strings.Contains(content, `commandFormToggle.focus()`) {
-		t.Fatalf("page missing commandFormToggle.focus() in setCommandFormExpanded\n%s", content[:min(1000, len(content))])
-	}
-}
-
-func TestPortal_PageIncludesMobileCommandHistoryLayout(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(body)
-	for _, want := range []string{
-		"@media (max-width: 760px)",
-		".command-row {",
-		"flex-direction: column;",
-		"gap: 6px;",
-		".command-row .col-status {",
-		"align-self: flex-start;",
-		".command-row .col-command {",
-		"font-size: 13px;",
-		".command-row .col-started {",
-		"font-size: 10px;",
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("page missing %q\n%s", want, content[:min(1000, len(content))])
-		}
-	}
-}
 func TestPortal_MobileTableShellIsNotFixedHeightTrap(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
@@ -1749,190 +1519,13 @@ func TestPortal_MobileTableShellIsNotFixedHeightTrap(t *testing.T) {
 	}
 }
 
-func TestPortal_CommandsEndpointPersistsAsyncLaunches(t *testing.T) {
+func TestPortal_LaunchEndpointIsRemoved(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	prevRun := portalStartRun
-	prevStart := portalStartCommand
-	defer func() {
-		portalStartRun = prevRun
-		portalStartCommand = prevStart
-	}()
-	var gotRunArgs []string
-	var gotStartArgs []string
-	portalStartRun = func(ctx context.Context, repoRoot string, args []string) error {
-		gotRunArgs = append([]string(nil), args...)
-		return nil
-	}
-	portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
-		gotStartArgs = append([]string(nil), args...)
-		return &portalCommandResult{}
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	t.Run("run", func(t *testing.T) {
-		gotRunArgs = nil
-		gotStartArgs = nil
-		body := strings.NewReader(`{"command":"run","issues":"42","prompt":"finish the tests"}`)
-		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusCreated {
-			data, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected 201, got %d: %s", resp.StatusCode, data)
-		}
-		if len(gotRunArgs) == 0 || gotRunArgs[0] != "run" || !strings.Contains(strings.Join(gotRunArgs, " "), "42") {
-			t.Fatalf("unexpected run args: %#v", gotRunArgs)
-		}
-		if len(gotStartArgs) != 0 {
-			t.Fatalf("expected subcommand launcher to stay idle, got %#v", gotStartArgs)
-		}
-
-		commands := readPortalCommands(t, server.URL)
-		runCmds := filterCommandsByPrefix(commands, "sandman run ")
-		if len(runCmds) == 0 {
-			t.Fatalf("expected run command persisted, got %#v", commands)
-		}
-	})
-
-	t.Run("continue", func(t *testing.T) {
-		gotRunArgs = nil
-		gotStartArgs = nil
-		body := strings.NewReader(`{"command":"continue","issues":[1,42],"prompt":"finish the tests"}`)
-		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusCreated {
-			data, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected 201, got %d: %s", resp.StatusCode, data)
-		}
-		joined := strings.Join(gotRunArgs, " ")
-		if len(gotRunArgs) == 0 || gotRunArgs[0] != "run" || !strings.Contains(joined, "--continue") || !strings.Contains(joined, "42") {
-			t.Fatalf("unexpected run args: %#v", gotRunArgs)
-		}
-		if len(gotStartArgs) != 0 {
-			t.Fatalf("expected subcommand launcher to stay idle, got %#v", gotStartArgs)
-		}
-
-		commands := readPortalCommands(t, server.URL)
-		continueCmds := filterCommandsByPrefix(commands, "sandman run --continue ")
-		if len(continueCmds) == 0 {
-			t.Fatalf("expected continue command persisted, got %#v", commands)
-		}
-	})
-
-	server.Close()
-	server = startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	reloaded := readPortalCommands(t, server.URL)
-	if len(reloaded) < 2 {
-		t.Fatalf("expected persisted commands after restart, got %#v", reloaded)
-	}
-}
-
-func filterCommandsByPrefix(commands []portalCommandRecord, prefix string) []portalCommandRecord {
-	var out []portalCommandRecord
-	for _, c := range commands {
-		if strings.HasPrefix(c.Command, prefix) {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-func TestPortal_CommandsEndpointPersistsPresetLaunches(t *testing.T) {
-	prevStart := portalStartCommand
-	defer func() { portalStartCommand = prevStart }()
-
-	cases := []struct {
-		name string
-		body string
-		want []string
-	}{
-		{name: "status", body: `{"command":"status"}`, want: []string{"status"}},
-		{name: "history", body: `{"command":"history"}`, want: []string{"history"}},
-		{name: "clean", body: `{"command":"clean","cleanMode":"failed","confirmed":true}`, want: []string{"clean", "--failed"}},
-		{name: "config", body: `{"command":"config","configMode":"set","configKey":"agent","configValue":"opencode"}`, want: []string{"config", "set", "agent", "opencode"}},
-		{name: "archive-run", body: `{"command":"archive","archiveMode":"run","archiveRunId":"abc","confirmed":true}`, want: []string{"archive", "run", "abc"}},
-		{name: "archive-older-than", body: `{"command":"archive","archiveMode":"older-than","archiveOlderThanDays":"7","confirmed":true}`, want: []string{"archive", "older-than", "7"}},
-		{name: "archive-stale", body: `{"command":"archive","archiveMode":"stale","confirmed":true}`, want: []string{"archive", "stale"}},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			repoRoot := t.TempDir()
-			if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-				t.Fatal(err)
-			}
-
-			prevStart := portalStartCommand
-			t.Cleanup(func() { portalStartCommand = prevStart })
-
-			var gotArgs []string
-			portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
-				gotArgs = append([]string(nil), args...)
-				return &portalCommandResult{}
-			}
-
-			server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-			defer server.Close()
-
-			req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", strings.NewReader(tc.body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			req.Header.Set("Content-Type", "application/json")
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusCreated {
-				data, _ := io.ReadAll(resp.Body)
-				t.Fatalf("expected 201, got %d: %s", resp.StatusCode, data)
-			}
-			if !sameStrings(gotArgs, tc.want) {
-				t.Fatalf("unexpected launch args: %#v", gotArgs)
-			}
-
-			commands := readPortalCommands(t, server.URL)
-			if len(commands) != 1 {
-				t.Fatalf("expected 1 persisted command, got %#v", commands)
-			}
-			if commands[0].Command != strings.Join(append([]string{"sandman"}, tc.want...), " ") {
-				t.Fatalf("unexpected command record: %#v", commands[0])
-			}
-		})
-	}
-}
-
-func TestPortal_CommandsEndpointRejectsLaunchRoute(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Post(server.URL+"/api/launch", "application/json", strings.NewReader(`{"command":"run"}`))
@@ -1943,165 +1536,6 @@ func TestPortal_CommandsEndpointRejectsLaunchRoute(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}
-}
-
-func TestPortal_CommandsEndpointReturnsJSONErrors(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	t.Run("invalid payload", func(t *testing.T) {
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`not json`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-			t.Fatalf("expected application/json, got %q", ct)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error == "" {
-			t.Fatal("expected non-empty error message")
-		}
-	})
-
-	t.Run("unknown command", func(t *testing.T) {
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"nope"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-			t.Fatalf("expected application/json, got %q", ct)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error != "unknown command" {
-			t.Fatalf("expected 'unknown command', got %q", body.Error)
-		}
-	})
-
-	t.Run("unknown archive mode", func(t *testing.T) {
-		prevStart := portalStartCommand
-		t.Cleanup(func() { portalStartCommand = prevStart })
-		portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
-			return &portalCommandResult{}
-		}
-
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"archive","archiveMode":"bogus","confirmed":true}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-			t.Fatalf("expected application/json, got %q", ct)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error == "" {
-			t.Fatal("expected non-empty error message for unknown archive mode")
-		}
-	})
-
-	t.Run("launch failure", func(t *testing.T) {
-		prevStart := portalStartCommand
-		t.Cleanup(func() { portalStartCommand = prevStart })
-		portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
-			return &portalCommandResult{Err: fmt.Errorf("exec: not found")}
-		}
-
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"status"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusInternalServerError {
-			t.Fatalf("expected 500, got %d", resp.StatusCode)
-		}
-		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-			t.Fatalf("expected application/json, got %q", ct)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error != "exec: not found" {
-			t.Fatalf("expected 'exec: not found', got %q", body.Error)
-		}
-	})
-
-	t.Run("archive without confirmation", func(t *testing.T) {
-		prevStart := portalStartCommand
-		t.Cleanup(func() { portalStartCommand = prevStart })
-		portalStartCommand = func(ctx context.Context, repoRoot string, args []string) *portalCommandResult {
-			return &portalCommandResult{}
-		}
-
-		resp, err := http.Post(server.URL+"/api/commands", "application/json", strings.NewReader(`{"command":"archive","archiveMode":"stale"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", resp.StatusCode)
-		}
-		var body struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error == "" {
-			t.Fatal("expected non-empty error message for unconfirmed archive")
-		}
-	})
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func sameStrings(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func TestPortal_DownloadsLogFiles(t *testing.T) {
@@ -2117,7 +1551,7 @@ func TestPortal_DownloadsLogFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	href := "/api/logs?path=" + url.QueryEscape(filepath.Join(".sandman", "logs", "1.log"))
@@ -2155,7 +1589,7 @@ func TestPortal_LogsRejectsPathTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	cases := []string{
@@ -2197,7 +1631,7 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- runPortalServer(ctx, t.TempDir(), port, portalDefaultHost, out, portalLaunchFormData{}, nil)
+		errCh <- runPortalServer(ctx, t.TempDir(), port, portalDefaultHost, out)
 	}()
 
 	select {
@@ -2207,32 +1641,6 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for bind failure")
-	}
-}
-
-func TestPortal_CommandsRejectsOversizedBody(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
-	defer server.Close()
-
-	oversized := strings.Repeat("a", 2*1024*1024)
-	body := `{"command":"status","prompt":"` + oversized + `"}`
-	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/commands", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 400 || resp.StatusCode >= 500 {
-		t.Fatalf("expected 4xx for oversized body, got %d", resp.StatusCode)
 	}
 }
 
@@ -2248,7 +1656,7 @@ func TestPortal_AbortRejectsOversizedBody(t *testing.T) {
 		return nil
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	oversized := strings.Repeat("a", 2*1024*1024)
@@ -2274,7 +1682,7 @@ func TestPortal_HTTPServerHasReadWriteIdleTimeouts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := newPortalHTTPServer(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	server := newPortalHTTPServer(repoRoot)
 	if server.ReadTimeout == 0 {
 		t.Fatal("expected ReadTimeout to be set on portal http.Server, got zero")
 	}
@@ -2314,7 +1722,7 @@ func TestPortal_OptInWildcardBind(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runPortalServer(ctx, repoRoot, 0, "0.0.0.0", out, portalLaunchFormData{}, nil)
+		done <- runPortalServer(ctx, repoRoot, 0, "0.0.0.0", out)
 	}()
 
 	select {
@@ -2365,7 +1773,7 @@ func TestPortal_PrintListeningURL(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runPortalServer(ctx, repoRoot, 0, portalDefaultHost, out, portalLaunchFormData{}, nil)
+		done <- runPortalServer(ctx, repoRoot, 0, portalDefaultHost, out)
 	}()
 
 	select {
@@ -2470,25 +1878,6 @@ func readPortalRuns(t *testing.T, baseURL string) []portalRun {
 		t.Fatal(err)
 	}
 	return payload.Runs
-}
-
-func readPortalCommands(t *testing.T, baseURL string) []portalCommandRecord {
-	t.Helper()
-	resp, err := http.Get(baseURL + "/api/commands")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-	var payload struct {
-		Commands []portalCommandRecord `json:"commands"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
-	return payload.Commands
 }
 
 type portalHTTPServer struct {
@@ -2713,7 +2102,7 @@ func TestPortal_BatchWithBlockedIssue_ShowsOneRow(t *testing.T) {
 	prev := portalStaleCleaner
 	portalStaleCleaner = func(string) error { return nil }
 	t.Cleanup(func() { portalStaleCleaner = prev })
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	runs := readPortalRuns(t, server.URL)
@@ -2762,7 +2151,7 @@ func TestPortal_BatchWithMixedBlockedAndQueued_ShowsBlockedAndQueuedSeparately(t
 	prev := portalStaleCleaner
 	portalStaleCleaner = func(string) error { return nil }
 	t.Cleanup(func() { portalStaleCleaner = prev })
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	runs := readPortalRuns(t, server.URL)
@@ -3267,7 +2656,7 @@ func TestPortal_StaleCleanerRunsOnceOnStartupAndNotOnPoll(t *testing.T) {
 		return nil
 	}
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
@@ -3316,7 +2705,7 @@ func TestPortal_StaleCleanerErrorDoesNotBlockServing(t *testing.T) {
 		return errors.New("boom")
 	}
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
@@ -3358,7 +2747,7 @@ func TestPortal_StaleCleanerRecoversDeadBatchBeforeFirstPoll(t *testing.T) {
 	prev := portalStaleCleaner
 	t.Cleanup(func() { portalStaleCleaner = prev })
 
-	handler := newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil)
+	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
@@ -3591,7 +2980,7 @@ func TestPortal_RunsTableHasColgroupAndFixedLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := startPortalHTTPServer(t, newPortalHandler(repoRoot, portalLaunchDataFromConfig(nil), nil))
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/")
