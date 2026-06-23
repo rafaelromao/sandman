@@ -173,7 +173,7 @@ func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
 	manifest := BatchManifest{Issues: []int{1}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
 	err := rs.Prepare(manifest, nil)
 	if err == nil {
-		t.Fatal("Prepare must fail when run.sock cannot be bound")
+		t.Fatal("Prepare must fail when batch.sock cannot be bound")
 	}
 	if !errors.Is(err, ErrStepControlSocket) {
 		t.Errorf("Prepare error = %v, want wrap of ErrStepControlSocket", err)
