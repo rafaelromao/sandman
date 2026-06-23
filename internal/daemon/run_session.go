@@ -93,7 +93,7 @@ func (s *RunSession) Broadcaster() *Broadcaster {
 //
 // Per-run artifacts (run.json, run.log, run.sock) are created by the
 // orchestrator in the per-row execution path, not by Prepare.
-func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) error {
+func (s *RunSession) Prepare(manifest BatchManifest) error {
 	s.runDir = s.RunDir()
 
 	if err := os.MkdirAll(s.runDir, 0o700); err != nil {

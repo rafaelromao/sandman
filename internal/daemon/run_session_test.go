@@ -46,7 +46,7 @@ func TestRunSession_Prepare_CreatesRunDirManifestAndSockets(t *testing.T) {
 
 	manifest := BatchManifest{Issues: []int{42}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
 
-	if err := rs.Prepare(manifest, &stubCommander{}); err != nil {
+	if err := rs.Prepare(manifest); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
 	t.Cleanup(func() { _ = rs.Close() })
@@ -119,7 +119,7 @@ func TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil(t *testing.T) {
 	t.Cleanup(func() { _ = rs.Close() })
 
 	manifest := BatchManifest{Issues: []int{}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
-	if err := rs.Prepare(manifest, nil); err != nil {
+	if err := rs.Prepare(manifest); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
 
@@ -171,7 +171,7 @@ func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
 	}
 
 	manifest := BatchManifest{Issues: []int{1}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
-	err := rs.Prepare(manifest, nil)
+	err := rs.Prepare(manifest)
 	if err == nil {
 		t.Fatal("Prepare must fail when batch.sock cannot be bound")
 	}
@@ -188,7 +188,7 @@ func TestRunSession_Close_StopsListenersButKeepsDirectory(t *testing.T) {
 	rs := NewRunSession(dir, "closing-run-1")
 
 	manifest := BatchManifest{Issues: []int{42}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
-	if err := rs.Prepare(manifest, &stubCommander{}); err != nil {
+	if err := rs.Prepare(manifest); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
 	runDir := rs.RunDir()
@@ -230,7 +230,7 @@ func TestRunSession_Prepare_PropagatesMkdirError(t *testing.T) {
 	t.Cleanup(func() { _ = rs.Close() })
 
 	manifest := BatchManifest{Issues: []int{1}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
-	err := rs.Prepare(manifest, nil)
+	err := rs.Prepare(manifest)
 	if err == nil {
 		t.Fatal("Prepare must fail when MkdirAll cannot create batchDir")
 	}
@@ -262,7 +262,7 @@ func TestRunSession_Prepare_AppendsToBatchesIndex(t *testing.T) {
 		PR:        &prNum,
 		CreatedAt: mustParseTime(t, "2024-06-01T00:00:00Z"),
 	}
-	if err := rs.Prepare(manifest, nil); err != nil {
+	if err := rs.Prepare(manifest); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
 
@@ -298,10 +298,9 @@ func TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil(t *testing.T) {
 	rs := NewRunSession(dir, "typed-nil-run-1")
 	t.Cleanup(func() { _ = rs.Close() })
 
-	var commander IssueCommander = (*nilCommander)(nil)
 	manifest := BatchManifest{Issues: []int{1}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
-	if err := rs.Prepare(manifest, commander); err != nil {
-		t.Fatalf("Prepare must succeed for typed-nil commander: %v", err)
+	if err := rs.Prepare(manifest); err != nil {
+		t.Fatalf("Prepare must succeed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(rs.RunDir(), "run.sock")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("run.sock must NOT exist for typed-nil commander, stat err = %v", err)
