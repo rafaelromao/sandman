@@ -159,6 +159,63 @@ func BuildTaskPrompt(doc TaskDoc) string {
 	return b.String()
 }
 
+// ContinuationTaskPrompt returns the resume prompt for `sandman run --continue`
+// from the verbatim content of `.sandman/task.md`. The previous
+// implementation routed the file through ParseTask → BuildTaskPrompt, which
+// rewrote the file into a different scaffold (## Completed / ## Pending /
+// ## Blockers / ## Key Decisions / ## Next Step) and silently destroyed the
+// original default-task-prompt.md layout (# Task, ## Issue Context, ##
+// Runtime Context, ## Execution Checklist). The continuation contract from
+// docs/usage/default-prompt.md is "pass the contents of the task file
+// verbatim" — this function is the single seam that enforces it.
+//
+// To prevent the secondary bug surfaced by #1193 — the carried-forward
+// `## Blockers` section containing a stale PR/issue pointer — the blockers
+// section is stripped from the returned prompt. Blockers are freeform text
+// the agent wrote on a prior run and were never revalidated against the
+// live GitHub state; carrying them forward unchecked is what caused the
+// agent to believe PR #1208 was still blocked after its blocker was
+// already resolved. Any new blockers must be re-discovered by the agent
+// against the current state of the world, not inherited from the file.
+//
+// When content is empty (e.g. the file existed but was blank), this falls
+// back to DefaultPrompt() so the agent still gets a usable scaffold. The
+// "no task file" path lives in batch.ReadTaskContent and returns its own
+// EmptyTaskTemplate.
+func ContinuationTaskPrompt(content string) string {
+	if strings.TrimSpace(content) == "" {
+		return DefaultPrompt()
+	}
+	return stripBlockersSection(content)
+}
+
+// stripBlockersSection removes the `## Blockers` H2 block from content.
+// The block is matched as `## Blockers` at the start of a (trimmed) line
+// through the next `## ` heading or end of content. Other H2 sections are
+// preserved verbatim — the goal is to drop only the stale-freeform-blocker
+// carry-forward, not to rewrite the file.
+func stripBlockersSection(content string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	inBlockers := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			if strings.EqualFold(trimmed, "## Blockers") {
+				inBlockers = true
+				continue
+			}
+			if inBlockers {
+				inBlockers = false
+			}
+		}
+		if !inBlockers {
+			out = append(out, line)
+		}
+	}
+	return strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+}
+
 func extractNextStep(body string) string {
 	if body == "" {
 		return "Continue the work."

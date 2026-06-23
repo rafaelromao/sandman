@@ -1151,11 +1151,14 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
-	if !strings.Contains(string(data), "## Prior Context") {
-		t.Fatalf("expected Prior Context in retry prompt, got: %q", string(data))
-	}
 	if !strings.Contains(string(data), "Keep going.") {
-		t.Fatalf("expected body content in retry prompt, got: %q", string(data))
+		t.Fatalf("expected verbatim task body content in retry prompt, got: %q", string(data))
+	}
+	if strings.Contains(string(data), "## Prior Context") {
+		t.Fatalf("retry prompt must not rewrite the original task.md, got: %q", string(data))
+	}
+	if !strings.Contains(string(data), "## Source Prompt: .sandman/task.md") {
+		t.Fatalf("retry prompt must preserve the original task.md header, got: %q", string(data))
 	}
 	if !strings.Contains(string(data), "## Source Prompt: .sandman/task.md") {
 		t.Fatalf("expected Source Prompt in retry prompt, got: %q", string(data))
@@ -1166,8 +1169,8 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	if !strings.Contains(string(data), "## Last Skill Status: complete") {
 		t.Fatalf("expected Last Skill Status in retry prompt, got: %q", string(data))
 	}
-	if !strings.Contains(string(data), "## Update Task Context") {
-		t.Fatalf("expected Update Task Context in retry prompt, got: %q", string(data))
+	if strings.Contains(string(data), "## Update Task Context") {
+		t.Fatalf("retry prompt must not rewrite the original task.md with the new scaffold, got: %q", string(data))
 	}
 }
 
@@ -1246,8 +1249,11 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read continue prompt: %v", err)
 	}
-	if !strings.Contains(string(data), "Continue the work.") {
-		t.Fatalf("expected empty task template, got %q", string(data))
+	if !strings.Contains(string(data), "# Task") {
+		t.Fatalf("expected default task template (missing-task fallback), got %q", string(data))
+	}
+	if !strings.Contains(string(data), "## Execution Checklist") {
+		t.Fatalf("expected default task template to include ## Execution Checklist, got %q", string(data))
 	}
 }
 
@@ -1642,8 +1648,11 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read task.md: %v", err)
 	}
-	if !strings.Contains(string(data), "Continue the work.") {
-		t.Fatalf("expected empty task template, got %q", string(data))
+	if !strings.Contains(string(data), "# Task") {
+		t.Fatalf("expected default task template (missing-task fallback), got %q", string(data))
+	}
+	if !strings.Contains(string(data), "## Execution Checklist") {
+		t.Fatalf("expected default task template to include ## Execution Checklist, got %q", string(data))
 	}
 }
 
