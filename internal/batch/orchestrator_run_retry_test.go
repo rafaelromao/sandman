@@ -191,7 +191,6 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 // value withHeartbeat writes after the status flip. This pins the
 // integration with the existing heartbeat.
 func TestRunSingle_EmitsRunRetryWithAbortedStatusAfterHeartbeatKill(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -209,7 +208,7 @@ func TestRunSingle_EmitsRunRetryWithAbortedStatusAfterHeartbeatKill(t *testing.T
 	sb := &fakeSandbox{workDir: worktreePath, process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 
-	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
+	logPath := filepath.Join(workDir, ".sandman", "batches", "68cb-260622105532", "runs", "68cb-260622105532-42", "run.log")
 	stall := &heartbeatStallRunnable{logPath: logPath, proc: proc}
 	success := &fakeRunnable{result: AgentRunResult{IssueNumber: heartbeatTestIssueNum, Status: "success", Branch: branch}}
 	runFactory := &heartbeatDualRunnableFactory{first: stall, second: success}
@@ -245,7 +244,7 @@ func TestRunSingle_EmitsRunRetryWithAbortedStatusAfterHeartbeatKill(t *testing.T
 	}
 	o.runSessionOpts.killTimeout = 50 * time.Millisecond
 
-	result, started := o.runSingle(context.Background(), context.Background(), heartbeatTestIssueNum, cfg, "test-agent", config.Agent{Command: "true"}, false, nil, noopIdentityResolver(), map[int]string{heartbeatTestIssueNum: branch}, prompt.RenderConfig{}, nil, factory, nil, false, "main", nil, 0, 0, 1, heartbeatTestIdle, "", 0, false, 0, false, false, false, "", "")
+	result, started := o.runSingle(context.Background(), context.Background(), heartbeatTestIssueNum, cfg, "test-agent", config.Agent{Command: "true"}, false, nil, noopIdentityResolver(), map[int]string{heartbeatTestIssueNum: branch}, prompt.RenderConfig{}, nil, factory, nil, false, "main", nil, 0, 0, 1, heartbeatTestIdle, "", 0, false, 0, false, false, false, "260622105532", "68cb")
 	if !started {
 		t.Fatal("expected run to start")
 	}

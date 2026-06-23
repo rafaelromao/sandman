@@ -143,10 +143,9 @@ func findEvent(snapshot []events.Event, t string) *events.Event {
 }
 
 func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	client, proc, sb, factory, workDir := heartbeatTestSetup(t)
 	_ = sb
-	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
+	logPath := filepath.Join(workDir, ".sandman", "batches", "68cb-260622105532", "runs", "68cb-260622105532-42", "run.log")
 	runnable := &heartbeatStallRunnable{logPath: logPath, proc: proc}
 	runFactory := &heartbeatSingleRunnableFactory{runnable: runnable}
 	spyLog := &spyEventLog{}
@@ -157,6 +156,8 @@ func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
 		Issues:            []int{heartbeatTestIssueNum},
 		RunIdleTimeoutSet: true,
 		RunIdleTimeout:    heartbeatTestIdle,
+		RunTS:             "260622105532",
+		RunShortID:        "68cb",
 	})
 	elapsed := time.Since(start)
 
