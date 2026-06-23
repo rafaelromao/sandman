@@ -582,6 +582,74 @@
     );
   }
 
+  function highlightTerminalLog(text) {
+    var value = String(text || '');
+    if (!value) return '';
+    var _e = function(v) {
+      return String(v == null ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    };
+    var escaped = _e(value);
+    return escaped.split('\n').map(function(line) {
+      // Strip ANSI escape codes
+      line = line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+      // Shell command prefix
+      if (/^\$ /.test(line)) {
+        return '<span class="term-prompt">$ </span>' + line.slice(2);
+      }
+      // Tool indicators
+      line = line.replace(/^(\s*)([→←✱]) /, '$1<span class="term-tool">$2</span> ');
+      // Markdown/terminal headers: ## Heading or > build · ...
+      line = line.replace(/^(&gt; build.*)$/, '<span class="term-heading">$1</span>');
+      line = line.replace(/^(#{1,6} .*)$/, '<span class="term-heading">$1</span>');
+      // Todo checklists
+      line = line.replace(/\[(✓|✔)\]/g, '<span class="term-todo-done">[✓]</span>');
+      line = line.replace(/\[•\]/g, '<span class="term-todo-active">[•]</span>');
+      line = line.replace(/^(\s*)\[ \]/g, '$1<span class="term-todo-pending">[ ]</span>');
+      // Go test results
+      line = line.replace(/(--- PASS:.*$)/gm, '<span class="term-pass">$1</span>');
+      line = line.replace(/(--- FAIL:.*$)/gm, '<span class="term-fail">$1</span>');
+      line = line.replace(/(FAIL\s+\S+)/g, '<span class="term-fail">$1</span>');
+      line = line.replace(/(ok\s+\S+)/g, '<span class="term-pass">$1</span>');
+      // Python test results
+      line = line.replace(/\b(PASSED)\b/g, '<span class="term-pass">$1</span>');
+      line = line.replace(/\b(FAILED)\b/g, '<span class="term-fail">$1</span>');
+      // Node test results
+      line = line.replace(/(✓[^\n]*)/g, '<span class="term-pass">$1</span>');
+      line = line.replace(/(✕[^\n]*)/g, '<span class="term-fail">$1</span>');
+      // .NET test results
+      line = line.replace(/(Passed!.*$)/g, '<span class="term-pass">$1</span>');
+      line = line.replace(/(Failed!.*$)/g, '<span class="term-fail">$1</span>');
+      // Java test results
+      line = line.replace(/(Tests run:.*Failures: [1-9])/g, '<span class="term-fail">$1</span>');
+      line = line.replace(/(Tests run:.*Failures: 0)/g, '<span class="term-pass">$1</span>');
+      // Elixir test results
+      line = line.replace(/(\d+ tests?, \d+ failures?)/g, function(m) {
+        return /0 failures/.test(m) ? '<span class="term-pass">' + m + '</span>' : '<span class="term-fail">' + m + '</span>';
+      });
+      // Rust test results
+      line = line.replace(/(test result: ok.*)/g, '<span class="term-pass">$1</span>');
+      line = line.replace(/(test result: FAILED.*)/g, '<span class="term-fail">$1</span>');
+      // Ruby test results
+      line = line.replace(/(\d+ examples?, 0 failures)/g, '<span class="term-pass">$1</span>');
+      line = line.replace(/(\d+ examples?, [1-9]\d* failures?)/g, '<span class="term-fail">$1</span>');
+      // Verdict keywords (bold markdown)
+      line = line.replace(/(\*\*CHANGES_REQUESTED\*\*)/g, '<span class="term-fail">$1</span>');
+      line = line.replace(/(\*\*APPROVED\*\*)/g, '<span class="term-pass">$1</span>');
+      line = line.replace(/(\*\*APPROVED with comments\*\*)/g, '<span class="term-pass">$1</span>');
+      // URLs
+      line = line.replace(/(https?:\/\/[^\s<&]+)/g, '<span class="term-url">$1</span>');
+      // File paths with line numbers
+      line = line.replace(/([\/\w.\-]+\.(?:go|js|ts|jsx|tsx|py|rs|rb|java|cs|ex|exs|c|cpp|h|hpp|zig|mod|sum):\d+)/g, '<span class="term-path">$1</span>');
+      // Diff markers
+      line = line.replace(/^(\+\+\+ .*)$/gm, '<span class="term-path">$1</span>');
+      line = line.replace(/^(\-\-\- .*)$/gm, '<span class="term-path">$1</span>');
+      line = line.replace(/^(@@.*@@)/gm, '<span class="term-heading">$1</span>');
+      return line;
+    }).join('\n');
+  }
+
   function appendTerminalPre(pre, oldLog, newSuffix, helpers) {
     if (!newSuffix) return;
     if (appendStartsAtBoundary(oldLog, newSuffix)) {
@@ -1199,5 +1267,6 @@
     getCounters,
     updateDetailPanelLog,
     highlightJSON,
+    highlightTerminalLog,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
