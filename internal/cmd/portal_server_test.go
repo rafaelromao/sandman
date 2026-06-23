@@ -70,13 +70,12 @@ func TestPortal_FindsRepoRootFromSubdir(t *testing.T) {
 }
 
 func TestPortal_APIRescansRunsOnEachRequest(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	createUnixRunSocket(t, filepath.Join(repoRoot, ".sandman", "runs", "run-1", "run.sock"))
+	createUnixRunSocket(t, filepath.Join(repoRoot, ".sandman", "batches", "run-1", "batch.sock"))
 
 	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
@@ -87,7 +86,7 @@ func TestPortal_APIRescansRunsOnEachRequest(t *testing.T) {
 		t.Fatalf("expected 1 run-1 instance, got %#v", first)
 	}
 
-	createUnixRunSocket(t, filepath.Join(repoRoot, ".sandman", "runs", "run-2", "run.sock"))
+	createUnixRunSocket(t, filepath.Join(repoRoot, ".sandman", "batches", "run-2", "batch.sock"))
 
 	second := readPortalInstances(t, server.URL)
 	if len(second) != 2 {
@@ -103,10 +102,10 @@ func TestPortal_IgnoresNonSocketRunFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "runs", "run-file"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "batches", "run-file"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "runs", "run-file", "run.sock"), []byte("not a socket"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches", "run-file", "batch.sock"), []byte("not a socket"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,14 +124,14 @@ func TestPortal_IgnoresStaleSocketRunFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A finished batch leaves a run.sock inode with the socket bit set on
+	// A finished batch leaves a batch.sock inode with the socket bit set on
 	// disk, but the process that owned it is gone. The portal must not
 	// treat this as an active instance. The listener below exists only
 	// so the socket file persists on disk with the socket bit set; the
 	// liveness probe is stubbed to false so the listener's actual
 	// dialability is irrelevant.
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-stale-1")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-stale-1")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -167,13 +166,13 @@ func TestPortal_RunsAPI_OmitsRowsForFinishedBatchWithDeadSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Seed a finished batch: a run.sock inode, a batch.json listing
+	// Seed a finished batch: a batch.sock inode, a batch.json listing
 	// two issues, and no run.started events for either issue. The
 	// listener exists only so the socket file persists on disk with
 	// the socket bit set; the liveness probe is stubbed to false so
 	// the listener's actual dialability is irrelevant.
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -202,14 +201,17 @@ func TestPortal_RunsAPI_OmitsRowsForFinishedBatchWithDeadSocket(t *testing.T) {
 }
 
 func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
-	repoRoot := t.TempDir()
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	batchStartedAt := time.Now().Add(-10 * time.Minute)
 
-	activeSock := filepath.Join(repoRoot, ".sandman", "runs", "run-1-100", "run.sock")
+	activeSock := filepath.Join(repoRoot, ".sandman", "batches", "run-1-100", "batch.sock")
 	if err := os.MkdirAll(filepath.Dir(activeSock), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -242,10 +244,19 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1.log"), []byte("issue one log\n"), 0644); err != nil {
+	for _, runID := range []string{"run-1", "run-2"} {
+		runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-1-100", "runs", runID)
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches", "run-1-100", "runs", "run-1", "run.log"), []byte("issue one log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "2.log"), []byte("\x1b[0missue two log\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches", "run-1-100", "runs", "run-2", "run.log"), []byte("\x1b[0missue two log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "9.log"), []byte("issue nine log\n"), 0644); err != nil {
@@ -292,11 +303,11 @@ func TestPortal_ReviewRunShowsReviewingStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, runID := range []string{"run-review-1", "run-normal-1"} {
-		runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
+		runDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
 		}
-		sockPath := filepath.Join(runDir, "run.sock")
+		sockPath := filepath.Join(runDir, "batch.sock")
 		ln, err := net.Listen("unix", sockPath)
 		if err != nil {
 			t.Fatal(err)
@@ -358,14 +369,13 @@ func TestPortal_ReviewRunShowsReviewingStatus(t *testing.T) {
 }
 
 func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	sockDir := filepath.Join(repoRoot, ".sandman", "runs", "PR43")
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockDir := filepath.Join(repoRoot, ".sandman", "batches", "PR43")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -639,8 +649,8 @@ func TestPortal_AbortRunEndpointAbortsActiveRunAndRefreshesStatus(t *testing.T) 
 	}
 
 	startedAt := time.Now().Add(-10 * time.Minute)
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
-	activeSock := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
+	activeSock := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -704,7 +714,6 @@ func TestPortal_AbortRunEndpointAbortsActiveRunAndRefreshesStatus(t *testing.T) 
 }
 
 func TestAbortPortalRunSendsAbortRequestAndReturnsSuccess(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-stop-")
 	if err != nil {
 		t.Fatal(err)
@@ -715,9 +724,9 @@ func TestAbortPortalRunSendsAbortRequestAndReturnsSuccess(t *testing.T) {
 	}
 
 	startedAt := time.Now().Add(-10 * time.Minute)
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
-	activeSock := filepath.Join(runDir, "run.sock")
-	abortSock := filepath.Join(runDir, "cmd.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
+	activeSock := filepath.Join(runDir, "batch.sock")
+	abortSock := filepath.Join(runDir, "run.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -792,7 +801,6 @@ func TestAbortPortalRunSendsAbortRequestAndReturnsSuccess(t *testing.T) {
 }
 
 func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	t.Run("missing run", func(t *testing.T) {
 		repoRoot := t.TempDir()
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -819,12 +827,12 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
+		runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
 		}
-		activeSock := filepath.Join(runDir, "run.sock")
-		cmdSock := filepath.Join(runDir, "cmd.sock")
+		activeSock := filepath.Join(runDir, "batch.sock")
+		cmdSock := filepath.Join(runDir, "run.sock")
 		if err := os.WriteFile(cmdSock, []byte("offline"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -925,8 +933,8 @@ func TestAbortPortalRun_RejectsRunFromFinishedBatch(t *testing.T) {
 	}
 
 	startedAt := time.Now().Add(-10 * time.Minute)
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-1")
-	activeSock := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
+	activeSock := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -959,7 +967,6 @@ func TestAbortPortalRun_RejectsRunFromFinishedBatch(t *testing.T) {
 }
 
 func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -971,12 +978,14 @@ func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 		{Type: "run.continued", Timestamp: time.Now().Add(-15 * time.Minute), RunID: "run-2", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
 		{Type: "run.finished", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-2", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
 	})
-	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "run-2")
+	if err := os.MkdirAll(filepath.Join(batchDir, "runs", "run-2"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1.log"), []byte("continued run log\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(batchDir, "runs", "run-2", "run.log"), []byte("continued run log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
 
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
@@ -1545,15 +1554,15 @@ func TestPortal_LaunchEndpointIsRemoved(t *testing.T) {
 }
 
 func TestPortal_DownloadsLogFiles(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+	runLogDir := filepath.Join(repoRoot, ".sandman", "batches", "1", "runs", "1")
+	if err := os.MkdirAll(runLogDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	logPath := filepath.Join(repoRoot, ".sandman", "logs", "1.log")
+	logPath := filepath.Join(runLogDir, "run.log")
 	if err := os.WriteFile(logPath, []byte("full log\nline two\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1561,7 +1570,7 @@ func TestPortal_DownloadsLogFiles(t *testing.T) {
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
-	href := "/api/logs?path=" + url.QueryEscape(filepath.Join(".sandman", "logs", "1.log"))
+	href := "/api/logs?path=" + url.QueryEscape(filepath.Join(".sandman", "batches", "1", "runs", "1", "run.log"))
 	resp, err := http.Get(server.URL + href)
 	if err != nil {
 		t.Fatal(err)
@@ -1941,8 +1950,8 @@ func TestLoadPortalRuns_DedupsActiveBatchAndQueuedEvent(t *testing.T) {
 	}
 	batchStartedAt := time.Now().Add(-10 * time.Minute)
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "active-1")
-	activeSock := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "active-1")
+	activeSock := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1972,15 +1981,14 @@ func TestLoadPortalRuns_DedupsActiveBatchAndQueuedEvent(t *testing.T) {
 }
 
 func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	batchStartedAt := time.Now().Add(-10 * time.Minute)
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "active-1")
-	activeSock := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "active-1")
+	activeSock := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -2044,8 +2052,8 @@ func TestPortal_KeepsCompletedRunsThatStartAfterAnOlderActiveBatch(t *testing.T)
 	completedStartedAt := time.Now().Add(-5 * time.Minute)
 	completedFinishedAt := completedStartedAt.Add(2 * time.Minute)
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-380-1")
-	activeSock := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-380-1")
+	activeSock := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -2088,8 +2096,8 @@ func TestPortal_BatchWithBlockedIssue_ShowsOneRow(t *testing.T) {
 	}
 	batchStartedAt := time.Now().Add(-10 * time.Minute)
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "active-1")
-	activeSock := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "active-1")
+	activeSock := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -2127,7 +2135,6 @@ func TestPortal_BatchWithBlockedIssue_ShowsOneRow(t *testing.T) {
 }
 
 func TestPortal_BatchWithMixedBlockedAndQueued_ShowsBlockedAndQueuedSeparately(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
 	if err != nil {
 		t.Fatal(err)
@@ -2138,8 +2145,8 @@ func TestPortal_BatchWithMixedBlockedAndQueued_ShowsBlockedAndQueuedSeparately(t
 	}
 	batchStartedAt := time.Now().Add(-10 * time.Minute)
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "active-1")
-	activeSock := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "active-1")
+	activeSock := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -2197,7 +2204,7 @@ func TestPortalRunFromActiveBatchIssue_AbortedRunHasAbortedByOperatorLog(t *test
 	finishedAt := startedAt.Add(1 * time.Minute)
 	active := portalActiveRun{
 		Key:         "run-active",
-		SocketPath:  filepath.Join(repoRoot, ".sandman", "runs", "active-1", "run.sock"),
+		SocketPath:  filepath.Join(repoRoot, ".sandman", "batches", "active-1", "batch.sock"),
 		IssueNumber: 42,
 		StartedAt:   startedAt,
 		ModTime:     startedAt,
@@ -2282,16 +2289,19 @@ func TestDedupPortalRunGroup_AllZeroPriorityRowsAreUntouched(t *testing.T) {
 // 1-second tolerance window does not steal the active batch's row. The active
 // queued row must remain visible alongside the historical aborted row.
 func TestPortal_ActiveRowSurvivesOlderAbortedAtNearSameTime(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
-	repoRoot := t.TempDir()
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	newBatchStart := time.Now().Add(-5 * time.Minute)
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-new")
-	activeSock := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-new")
+	activeSock := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -2393,8 +2403,8 @@ func TestPortal_QueuedAndBlockedAgentRunDedupsToBlocked(t *testing.T) {
 	}
 
 	otherBatchStart := time.Now().Add(-1 * time.Minute)
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-99-other")
-	activeSock := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-99-other")
+	activeSock := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -2438,7 +2448,6 @@ func TestPortal_QueuedAndBlockedAgentRunDedupsToBlocked(t *testing.T) {
 // must keep both rows visible. The active row must not be deduped away by the
 // older aborted row that lives in a different batch.
 func TestPortal_CurrentActiveSurvivesOlderAbortedFromAnotherBatch(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
 	if err != nil {
 		t.Fatal(err)
@@ -2451,8 +2460,8 @@ func TestPortal_CurrentActiveSurvivesOlderAbortedFromAnotherBatch(t *testing.T) 
 	olderBatchStart := time.Now().Add(-2 * time.Hour)
 	newBatchStart := time.Now().Add(-5 * time.Minute)
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "run-42-current")
-	activeSock := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-current")
+	activeSock := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -2854,7 +2863,6 @@ func TestPortal_LoadPortalRunsReviewKindStaysActiveOrCompleted(t *testing.T) {
 }
 
 func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -2879,6 +2887,9 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 	view := &portalRunsView{}
 	log17 := view.portalLogPathForRun(repoRoot, 0, branch17, "review-17-a", true, 17)
 	log18 := view.portalLogPathForRun(repoRoot, 0, branch18, "review-17-b", true, 17)
+	if err := os.MkdirAll(filepath.Dir(log17), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1177.log"), []byte("main run log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -2930,7 +2941,6 @@ func TestPortal_LoadPortalRunsKeepsParallelReviewRunsAndLogs(t *testing.T) {
 }
 
 func TestPortal_ReviewRunLogPathPrefersBranchLogWhenFinishedEventHasIssue(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -2952,6 +2962,9 @@ func TestPortal_ReviewRunLogPathPrefersBranchLogWhenFinishedEventHasIssue(t *tes
 	}
 	view := &portalRunsView{}
 	reviewLogPath := view.portalLogPathForRun(repoRoot, 1177, branch, "review-1177-1", true, 1187)
+	if err := os.MkdirAll(filepath.Dir(reviewLogPath), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "logs", "1177.log"), []byte("main run log\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

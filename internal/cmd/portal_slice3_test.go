@@ -209,16 +209,19 @@ func TestPortal_StatusOrDefault_PreservesTerminalStatusesForAutoSelectAndReview(
 }
 
 func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
-	repoRoot := t.TempDir()
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	terminalReviewAt := startedAt.Add(2 * time.Minute)
-	reviewRunDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42-live")
-	createUnixRunSocket(t, filepath.Join(reviewRunDir, "run.sock"))
+	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42-live")
+	createUnixRunSocket(t, filepath.Join(reviewRunDir, "batch.sock"))
 	if err := daemon.WriteManifest(reviewRunDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: startedAt, BatchId: "PR42-live"}); err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +285,6 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 // had a terminal event-log status. The fix: gate the live flag on Status
 // instead of Kind so terminal status wins.
 func TestPortal_TerminalReviewChild_ParentNotStuck(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -291,8 +293,8 @@ func TestPortal_TerminalReviewChild_ParentNotStuck(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	reviewFinishedAt := startedAt.Add(2 * time.Minute)
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -671,12 +673,16 @@ func TestPortal_Polling_ReviewSuccessPreservesReviewFlagAndReason(t *testing.T) 
 // already carries a run.finished with status=success. The terminal
 // status must win; the user must not see "reviewing" indefinitely.
 func TestPortal_Polling_ReviewLiveSocketStillShowsTerminalSuccess(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -822,7 +828,6 @@ func TestPortal_Compute_CompletedRunWithoutArchiveDir_NotArchived(t *testing.T) 
 // the per-row RunID. The portal should still surface SourceExists=true so the
 // archive action remains available for live batch rows that already finished.
 func TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot, err := os.MkdirTemp("/tmp", "r")
 	if err != nil {
 		t.Fatal(err)
@@ -835,11 +840,11 @@ func TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists(t *testing.
 	const runID = "abcd-260618113825-issue-42"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "batch-42")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-42")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("unix", filepath.Join(runDir, "run.sock"))
+	ln, err := net.Listen("unix", filepath.Join(runDir, "batch.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -871,14 +876,13 @@ func TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists(t *testing.
 // on disk but the daemon is gone, the portal should recover the batch dir name
 // from the manifest so Archive stays available.
 func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	const runID = "abcd-260618113825-issue-42"
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "batch-42")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-42")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -921,7 +925,7 @@ func TestPortal_Compute_CompletedRunWithSourceDir_ReportsSourceExists(t *testing
 	}
 
 	const runID = "abcd-260618113825-archive-source-present"
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -978,8 +982,8 @@ func TestPortal_Compute_ActiveRunNeverArchived(t *testing.T) {
 	startedAt := time.Now().Add(-5 * time.Minute)
 
 	// Live control socket under .sandman/runs/<runID>/run.sock.
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", runID)
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}

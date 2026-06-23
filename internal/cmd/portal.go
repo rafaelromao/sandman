@@ -291,7 +291,7 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 		return &portalAbortError{status: http.StatusConflict, message: fmt.Sprintf("daemon for run %q is no longer live", runKey)}
 	}
 
-	cmdSock := filepath.Join(runDir, "cmd.sock")
+	cmdSock := daemon.CommandSocketPath(runDir)
 	if _, err := os.Stat(cmdSock); err != nil {
 		if os.IsNotExist(err) {
 			return &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}

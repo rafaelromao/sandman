@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"net"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -23,7 +22,6 @@ func TestBroadcaster_StoresAndReturnsBytes(t *testing.T) {
 }
 
 func TestBroadcaster_ClientReplayOnConnect(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := t.TempDir()
 	sock := NewControlSocket(dir, NewBroadcaster())
 	if err := sock.Start(); err != nil {
@@ -35,7 +33,7 @@ func TestBroadcaster_ClientReplayOnConnect(t *testing.T) {
 	broadcaster.Write([]byte("line one\n"))
 	broadcaster.Write([]byte("line two\n"))
 
-	conn, err := net.Dial("unix", filepath.Join(dir, "run.sock"))
+	conn, err := net.Dial("unix", sock.Path())
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -55,7 +53,6 @@ func TestBroadcaster_ClientReplayOnConnect(t *testing.T) {
 }
 
 func TestBroadcaster_ClientLiveStream(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := t.TempDir()
 	b := NewBroadcaster()
 	sock := NewControlSocket(dir, b)
@@ -64,7 +61,7 @@ func TestBroadcaster_ClientLiveStream(t *testing.T) {
 	}
 	defer sock.Stop()
 
-	conn, err := net.Dial("unix", filepath.Join(dir, "run.sock"))
+	conn, err := net.Dial("unix", sock.Path())
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -87,7 +84,6 @@ func TestBroadcaster_ClientLiveStream(t *testing.T) {
 }
 
 func TestBroadcaster_MultipleClientsAllReceiveSameData(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := t.TempDir()
 	b := NewBroadcaster()
 	sock := NewControlSocket(dir, b)
@@ -96,13 +92,13 @@ func TestBroadcaster_MultipleClientsAllReceiveSameData(t *testing.T) {
 	}
 	defer sock.Stop()
 
-	conn1, err := net.Dial("unix", filepath.Join(dir, "run.sock"))
+	conn1, err := net.Dial("unix", sock.Path())
 	if err != nil {
 		t.Fatalf("connect client 1: %v", err)
 	}
 	defer conn1.Close()
 
-	conn2, err := net.Dial("unix", filepath.Join(dir, "run.sock"))
+	conn2, err := net.Dial("unix", sock.Path())
 	if err != nil {
 		t.Fatalf("connect client 2: %v", err)
 	}
@@ -191,7 +187,6 @@ func TestBroadcaster_TrimsBufferOnOverflow(t *testing.T) {
 }
 
 func TestBroadcaster_NewClientGetsTrimmedReplay(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := t.TempDir()
 	b := NewBroadcaster()
 	sock := NewControlSocket(dir, b)
@@ -209,7 +204,7 @@ func TestBroadcaster_NewClientGetsTrimmedReplay(t *testing.T) {
 		b.Write(blob)
 	}
 
-	conn, err := net.Dial("unix", filepath.Join(dir, "run.sock"))
+	conn, err := net.Dial("unix", sock.Path())
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -230,7 +225,6 @@ func TestBroadcaster_NewClientGetsTrimmedReplay(t *testing.T) {
 }
 
 func TestBroadcaster_CloseClosesAllClients(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := t.TempDir()
 	b := NewBroadcaster()
 	sock := NewControlSocket(dir, b)
@@ -238,7 +232,7 @@ func TestBroadcaster_CloseClosesAllClients(t *testing.T) {
 		t.Fatalf("Start() failed: %v", err)
 	}
 
-	conn, err := net.Dial("unix", filepath.Join(dir, "run.sock"))
+	conn, err := net.Dial("unix", sock.Path())
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}

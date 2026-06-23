@@ -66,15 +66,14 @@ func startFakeRunDaemon(t *testing.T, sockPath string, lines []string, closeOnEO
 // strips the ANSI and emits one cleaned event per line, and the stream
 // ends cleanly when the daemon closes the socket.
 func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	startedAt := time.Now().Add(-5 * time.Minute)
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	startFakeRunDaemon(t, sockPath, []string{
 		"\x1b[32m[issue-42]\x1b[0m 12:00:01 starting work\r\n",
 		"[issue-42] 12:00:02 \x1b[1;33mwarning\x1b[0m: low disk\n",

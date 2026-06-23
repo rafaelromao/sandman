@@ -160,7 +160,6 @@ func readStartTimestamp(t *testing.T, dir string, issue int) int64 {
 // (max_containers=0) case where container_capacity equals the requested
 // parallel: all 4 issues share one container and run in parallel.
 func TestRun_BatchEffectiveParallel_AutoMode(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	issues := []int{21, 22, 23, 24}
 	out, dir := runEffectiveParallelE2E(t, issues, 4, 4, 0, prsForIssues(issues))
 	if !strings.Contains(out, "Summary: 4 succeeded") {
@@ -189,7 +188,6 @@ func TestRun_BatchEffectiveParallel_AutoMode(t *testing.T) {
 // spawns 2 concurrent containers (4/2 = 2) and all 4 issues run
 // concurrently.
 func TestRun_BatchEffectiveParallel_AutoModeSpawnsPerCapacity(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	issues := []int{31, 32, 33, 34}
 	out, dir := runEffectiveParallelE2E(t, issues, 4, 2, 0, prsForIssues(issues))
 	if !strings.Contains(out, "Summary: 4 succeeded") {
@@ -217,7 +215,6 @@ func TestRun_BatchEffectiveParallel_AutoModeSpawnsPerCapacity(t *testing.T) {
 // TestRun_BatchEffectiveParallel_ExplicitMax verifies the explicit
 // max_containers path: 4 slots across 2 containers means 4 concurrent starts.
 func TestRun_BatchEffectiveParallel_ExplicitMax(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	issues := []int{41, 42, 43, 44}
 	out, dir := runEffectiveParallelE2E(t, issues, 4, 2, 2, prsForIssues(issues))
 	if !strings.Contains(out, "Summary: 4 succeeded") {
@@ -246,7 +243,6 @@ func TestRun_BatchEffectiveParallel_ExplicitMax(t *testing.T) {
 // explicit max_containers=1 so the cap (capacity*max=1) forces serial
 // execution; auto mode (max=0) would now permit full parallelism.
 func TestRun_BatchEffectiveParallel_SerialByTurn(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	issues := []int{51, 52, 53, 54}
 	out, dir := runEffectiveParallelE2E(t, issues, 4, 1, 1, prsForIssues(issues))
 	if !strings.Contains(out, "Summary: 4 succeeded") {
@@ -272,7 +268,6 @@ func TestRun_BatchEffectiveParallel_SerialByTurn(t *testing.T) {
 // TestRun_BatchEffectiveParallel_UnlimitedParallel verifies the parallel=0
 // unlimited path: all 4 run in parallel, one per container.
 func TestRun_BatchEffectiveParallel_UnlimitedParallel(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	issues := []int{61, 62, 63, 64}
 	out, dir := runEffectiveParallelE2E(t, issues, 0, 1, 0, prsForIssues(issues))
 	if !strings.Contains(out, "Summary: 4 succeeded") {

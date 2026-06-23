@@ -25,7 +25,6 @@ func TestAttach_NoDaemonReturnsError(t *testing.T) {
 }
 
 func TestAttach_ReadsFromSocket(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -64,7 +63,6 @@ func TestAttach_ReadsFromSocket(t *testing.T) {
 }
 
 func TestAttach_ExitsOnEOF(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := t.TempDir()
 	t.Chdir(dir)
 

@@ -72,7 +72,7 @@ func TestClean_Stale_MutuallyExclusiveWithDryRun(t *testing.T) {
 
 func writeBatchManifest(t *testing.T, baseDir, runID string, issues []int, createdAt time.Time) {
 	t.Helper()
-	runDir := filepath.Join(baseDir, ".sandman", "runs", runID)
+	runDir := filepath.Join(baseDir, ".sandman", "batches", runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatalf("mkdir run dir: %v", err)
 	}
@@ -465,7 +465,6 @@ func TestClean_Stale_NoIndexChange(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_DeadBatchUnterminated_EmitsAborted(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
@@ -513,13 +512,12 @@ func TestRecoverStaleRuns_DeadBatchUnterminated_EmitsAborted(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_LiveBatch_NoEventEmitted(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
-	runDir := filepath.Join(dir, ".sandman", "runs", "run-live-1")
+	runDir := filepath.Join(dir, ".sandman", "batches", "run-live-1")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatalf("mkdir run dir: %v", err)
 	}
@@ -529,11 +527,11 @@ func TestRecoverStaleRuns_LiveBatch_NoEventEmitted(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	cmdServer := daemon.NewCommandServer(runDir, nil)
-	if err := cmdServer.Start(); err != nil {
-		t.Fatalf("start command server: %v", err)
+	ctlSocket := daemon.NewControlSocket(runDir, daemon.NewBroadcaster())
+	if err := ctlSocket.Start(); err != nil {
+		t.Fatalf("start control socket: %v", err)
 	}
-	defer cmdServer.Stop()
+	defer ctlSocket.Stop()
 
 	log := &fakeEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
@@ -664,7 +662,6 @@ func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_MultipleDeadBatches(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 

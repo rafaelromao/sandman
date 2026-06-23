@@ -143,7 +143,6 @@ func readJSONLEvents(t *testing.T, path string) []events.Event {
 // file under .sandman/logs/ is written, but .sandman/runs/<id>/ is missing.
 // This test fails in that scenario.
 func TestRun_BootArtifactsBeforeRunStarted(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	env := newRunSessionTestEnv(t)
 
 	gh := &fakeGitHubClient{
@@ -197,29 +196,36 @@ func TestRun_BootArtifactsBeforeRunStarted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read runs dir: %v", err)
 	}
-	if len(runsEntries) != 1 {
-		// The bug from #964: the run dir is missing entirely.
-		t.Fatalf("expected exactly 1 run dir under %s, got %d (issue #964 regression: run dir missing after run.started)", env.runsDir, len(runsEntries))
+	// Find the per-issue batch dir (named like "<batchID>-<issue>+<count>")
+	// inside the parent batch dir.
+	var perIssueBatch string
+	for _, e := range runsEntries {
+		if strings.Contains(e.Name(), "+") {
+			perIssueBatch = filepath.Join(env.runsDir, e.Name())
+			break
+		}
 	}
-	runDir := filepath.Join(env.runsDir, runsEntries[0].Name())
+	if perIssueBatch == "" {
+		t.Fatalf("expected per-issue batch dir under %s, got %d (issue #964 regression: run dir missing after run.started)", env.runsDir, len(runsEntries))
+	}
+	batchDir := perIssueBatch
 
-	runSockPath := filepath.Join(runDir, "run.sock")
+	runSockPath := filepath.Join(batchDir, "run.sock")
 	if _, err := os.Stat(runSockPath); err != nil {
 		t.Fatalf("expected run.sock at %s after run.started: %v (issue #964 regression)", runSockPath, err)
 	}
-	// Verify run.sock is live and connectable, not just a stale path.
 	if conn, err := net.Dial("unix", runSockPath); err != nil {
 		t.Fatalf("expected run.sock to be live, got dial err: %v", err)
 	} else {
 		conn.Close()
 	}
 
-	cmdSockPath := filepath.Join(runDir, "cmd.sock")
+	cmdSockPath := filepath.Join(batchDir, "batch.sock")
 	if _, err := os.Stat(cmdSockPath); err != nil {
-		t.Fatalf("expected cmd.sock at %s after run.started: %v (issue #964 regression)", cmdSockPath, err)
+		t.Fatalf("expected batch.sock (control) at %s after run.started: %v (issue #964 regression)", cmdSockPath, err)
 	}
 
-	manifestPath := filepath.Join(runDir, "batch.json")
+	manifestPath := filepath.Join(batchDir, "batch.json")
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("expected batch.json at %s after run.started: %v (issue #964 regression)", manifestPath, err)
 	}
@@ -246,7 +252,7 @@ func TestRun_BootArtifactsBeforeRunStarted(t *testing.T) {
 	// check would have caught that), AND because their mtimes will be
 	// strictly after events.jsonl's mtime.
 	evMtime := mustMtime(t, env.eventsPath)
-	for _, p := range []string{runSockPath, cmdSockPath, manifestPath, runDir} {
+	for _, p := range []string{runSockPath, cmdSockPath, manifestPath, batchDir} {
 		pm := mustMtime(t, p)
 		if pm.After(evMtime) {
 			t.Errorf("invariant violated: %s (mtime %s) was modified AFTER events.jsonl (mtime %s) — boot ordering regressed", p, pm.Format(time.RFC3339Nano), evMtime.Format(time.RFC3339Nano))
@@ -433,7 +439,6 @@ func TestRun_ContainerSandboxMode_RunDirAndSocketsBeforeAgentStart(t *testing.T)
 // unit-level TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil
 // covers the actual boot behavior.
 func TestRun_ContinueMode_RunDirAndSocketsBeforeContinuedEvent(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initRunIntegrationRepoWithRemote(t, dir)
@@ -537,15 +542,15 @@ func TestRun_ContinueMode_RunDirAndSocketsBeforeContinuedEvent(t *testing.T) {
 		t.Fatal("expected at least one batch dir after the agent was entered")
 	}
 	runDir := filepath.Join(sandmanDir, "batches", entries[0].Name())
-	if _, err := os.Stat(filepath.Join(runDir, "run.sock")); err != nil {
-		t.Fatalf("run.sock must exist at the time the agent is entered: %v", err)
+	if _, err := os.Stat(filepath.Join(runDir, "batch.sock")); err != nil {
+		t.Fatalf("batch.sock (control) must exist at the time the agent is entered: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(runDir, "batch.json")); err != nil {
 		t.Fatalf("batch.json must exist at the time the agent is entered: %v", err)
 	}
-	// cmd.sock must NOT exist when --continue is set.
-	if _, err := os.Stat(filepath.Join(runDir, "cmd.sock")); err == nil {
-		t.Fatalf("cmd.sock must not exist when --continue is set")
+	// run.sock must NOT exist when --continue is set (no commander).
+	if _, err := os.Stat(filepath.Join(runDir, "run.sock")); err == nil {
+		t.Fatalf("run.sock must not exist when --continue is set")
 	}
 
 	// Confirm events.jsonl has a run.continued line (not run.started).
