@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -95,6 +96,16 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		return fmt.Errorf("fetch PR #%d: %w", prNumber, err)
 	}
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	repoRoot, err := findRepoRoot(cwd)
+	if err != nil {
+		return err
+	}
+	sandmanDir := filepath.Join(repoRoot, ".sandman")
+
 	agentFlag, _ := cmd.Flags().GetString("agent")
 	modelFlag, _ := cmd.Flags().GetString("model")
 	sandboxFlag, _ := cmd.Flags().GetString("sandbox")
@@ -145,7 +156,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		sandboxMode = cfg.Sandbox
 	}
 
-	rs := daemon.NewRunSession(".sandman", fmt.Sprintf("PR%d", pr.Number))
+	rs := daemon.NewRunSession(sandmanDir, fmt.Sprintf("PR%d", pr.Number))
 	manifest := daemon.BatchManifest{BatchId: fmt.Sprintf("PR%d", pr.Number), CreatedAt: time.Now(), RunKind: "review", PR: &pr.Number}
 	if err := rs.Prepare(manifest, nil); err != nil {
 		_ = rs.Close()
@@ -253,7 +264,15 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 		}
 	}()
 
-	socketDir := ".sandman"
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	repoRoot, err := findRepoRoot(cwd)
+	if err != nil {
+		return err
+	}
+	socketDir := filepath.Join(repoRoot, ".sandman")
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
 	d := review.New(socketDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster)

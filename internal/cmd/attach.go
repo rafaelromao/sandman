@@ -15,7 +15,16 @@ func NewAttachCmd() *cobra.Command {
 		Use:   "attach",
 		Short: "Attach to a running sandman daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sockPath, err := findDaemonSocket(".sandman")
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("get working directory: %w", err)
+			}
+			repoRoot, err := findRepoRoot(cwd)
+			if err != nil {
+				return err
+			}
+			sandmanDir := filepath.Join(repoRoot, ".sandman")
+			sockPath, err := findDaemonSocket(sandmanDir)
 			if err != nil {
 				return err
 			}
