@@ -32,8 +32,9 @@ func (s *stubCommander) AbortIssue(issueNumber int) error { return s.abortErr }
 // TestRunSession_Prepare_CreatesRunDirManifestAndSockets is the unit-level
 // companion to the integration test in internal/cmd. It exercises the
 // RunSession boot in isolation: Prepare must produce the run directory,
-// the batch manifest, run.sock, and (when a commander is provided)
-// batch.sock — in that order — and Close must clean up afterwards.
+// the batch manifest, batch.sock (control), and (when a commander is
+// provided) run.sock (command) — in that order — and Close must clean
+// up afterwards.
 func TestRunSession_Prepare_CreatesRunDirManifestAndSockets(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "smn")
 	if err != nil {

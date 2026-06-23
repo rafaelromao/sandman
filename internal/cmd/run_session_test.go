@@ -220,9 +220,9 @@ func TestRun_BootArtifactsBeforeRunStarted(t *testing.T) {
 		conn.Close()
 	}
 
-	cmdSockPath := filepath.Join(batchDir, "batch.sock")
-	if _, err := os.Stat(cmdSockPath); err != nil {
-		t.Fatalf("expected batch.sock (control) at %s after run.started: %v (issue #964 regression)", cmdSockPath, err)
+	batchSockPath := filepath.Join(batchDir, "batch.sock")
+	if _, err := os.Stat(batchSockPath); err != nil {
+		t.Fatalf("expected batch.sock (control) at %s after run.started: %v (issue #964 regression)", batchSockPath, err)
 	}
 
 	manifestPath := filepath.Join(batchDir, "batch.json")
@@ -245,14 +245,14 @@ func TestRun_BootArtifactsBeforeRunStarted(t *testing.T) {
 
 	// File-creation ordering check: events.jsonl is the last artifact the
 	// daemon writes in the boot sequence. run.sock, batch.json, and
-	// cmd.sock must have been created at-or-before events.jsonl. This is
+	// batch.sock must have been created at-or-before events.jsonl. This is
 	// the structural assertion: any future regression that emits
 	// run.started before creating the run dir will fail this check
 	// because the run dir will not even exist (the earlier ReadDir
 	// check would have caught that), AND because their mtimes will be
 	// strictly after events.jsonl's mtime.
 	evMtime := mustMtime(t, env.eventsPath)
-	for _, p := range []string{runSockPath, cmdSockPath, manifestPath, batchDir} {
+	for _, p := range []string{runSockPath, batchSockPath, manifestPath, batchDir} {
 		pm := mustMtime(t, p)
 		if pm.After(evMtime) {
 			t.Errorf("invariant violated: %s (mtime %s) was modified AFTER events.jsonl (mtime %s) — boot ordering regressed", p, pm.Format(time.RFC3339Nano), evMtime.Format(time.RFC3339Nano))
