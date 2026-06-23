@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/spf13/cobra"
@@ -96,12 +97,24 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
+			repoRoot := deps.RepoRoot
+			if repoRoot == "" {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return fmt.Errorf("get working directory: %w", err)
+				}
+				repoRoot, err = findRepoRoot(cwd)
+				if err != nil {
+					return err
+				}
+			}
+			layout := paths.NewLayout(cfg, repoRoot)
 			overrideFlag, _ := cmd.Flags().GetBool("override")
 			continueFlag, _ := cmd.Flags().GetBool("continue")
 			if overrideFlag && continueFlag {
 				return MarkUsage(fmt.Errorf("--override cannot be combined with --continue"))
 			}
-			if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), ".sandman"); err != nil {
+			if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), layout.SandmanDir); err != nil {
 				return err
 			}
 			githubClient := newCachedGitHubClient(deps.GitHubClient)
@@ -610,7 +623,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}()
 
-			if staleRemoved, err := daemon.CleanupStaleRunSnapshots(".sandman"); err != nil {
+			if staleRemoved, err := daemon.CleanupStaleRunSnapshots(layout.SandmanDir); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", err)
 			} else if staleRemoved > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale run-owned config snapshots from previous runs\n", staleRemoved)
@@ -645,7 +658,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			// Prepare returns nil, so the orchestrator can never see a
 			// half-bootstrapped run. Close is deferred first so it runs
 			// last: the listener stops before the run dir is removed.
-			rs := daemon.NewRunSession(".sandman", sessionRunID)
+			rs := daemon.NewRunSession(layout.SandmanDir, sessionRunID)
 			// The comma-ok form matters: a typed-nil interface
 			// (`var c IssueCommander = (*concrete)(nil)`) is
 			// non-nil but unusable, and `Prepare` would then

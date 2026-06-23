@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -23,8 +24,8 @@ func NewAttachCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sandmanDir := filepath.Join(repoRoot, ".sandman")
-			sockPath, err := findDaemonSocket(sandmanDir)
+			layout := paths.NewLayout(nil, repoRoot)
+			sockPath, err := findDaemonSocket(layout.SandmanDir)
 			if err != nil {
 				return err
 			}

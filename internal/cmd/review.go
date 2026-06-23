@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -14,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/review"
 	"github.com/spf13/cobra"
@@ -104,7 +104,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	if err != nil {
 		return err
 	}
-	sandmanDir := filepath.Join(repoRoot, ".sandman")
+	layout := paths.NewLayout(cfg, repoRoot)
 
 	agentFlag, _ := cmd.Flags().GetString("agent")
 	modelFlag, _ := cmd.Flags().GetString("model")
@@ -156,7 +156,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		sandboxMode = cfg.Sandbox
 	}
 
-	rs := daemon.NewRunSession(sandmanDir, fmt.Sprintf("PR%d", pr.Number))
+	rs := daemon.NewRunSession(layout.SandmanDir, fmt.Sprintf("PR%d", pr.Number))
 	manifest := daemon.BatchManifest{BatchId: fmt.Sprintf("PR%d", pr.Number), CreatedAt: time.Now(), RunKind: "review", PR: &pr.Number}
 	if err := rs.Prepare(manifest, nil); err != nil {
 		_ = rs.Close()
@@ -272,10 +272,10 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	if err != nil {
 		return err
 	}
-	socketDir := filepath.Join(repoRoot, ".sandman")
+	layout := paths.NewLayout(cfg, repoRoot)
 	broadcaster := daemon.NewBroadcaster()
-	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
-	d := review.New(socketDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster)
+	ctlSocket := daemon.NewControlSocketWithName(layout.SandmanDir, "review.sock", broadcaster)
+	d := review.New(layout.SandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster)
 	d.Sandbox = sandbox
 	d.ContainerCapacity = cc
 	d.ContainerCapacitySet = ccSet
