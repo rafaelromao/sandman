@@ -2817,3 +2817,140 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// runPortalHTMLScript extracts the inline runtime script from portal.html
+// (the body inside <script>...</script> at line 1612) and runs it inside a
+// sandbox with a minimal DOM/document mock so the pure-data helpers such as
+// visibleRunsForTable are reachable from a Node test. The Go template
+// placeholders inside the script are stripped before evaluation, and the
+// resulting body is escaped so embedding it in a JS template literal does
+// not reinterpret "\n" / "\t" escapes that would split the script's
+// source lines.
+func runPortalHTMLScript(t *testing.T, js string) {
+	t.Helper()
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	data, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", htmlPath, err)
+	}
+	src := string(data)
+	const startMarker = "<script>\n    const apiPath"
+	const endMarker = "</script>"
+	start := strings.Index(src, startMarker)
+	if start < 0 {
+		t.Fatalf("could not find runtime inline <script> block in %s", htmlPath)
+	}
+	end := strings.Index(src[start:], endMarker)
+	if end < 0 {
+		t.Fatalf("could not find closing </script> for runtime inline block in %s", htmlPath)
+	}
+	scriptBody := src[start+len("<script>") : start+end]
+	tmplRe := regexp.MustCompile(`\{\{[^}]*\}\}`)
+	scriptBody = tmplRe.ReplaceAllString(scriptBody, "undefined")
+	escapedBody := strings.NewReplacer(
+		`\`, `\\`,
+		"`", "\\`",
+		`${`, `\${`,
+	).Replace(scriptBody)
+	prefix := sharedMockHelpers() + `
+const fs = require('fs');
+const vm = require('vm');
+const htmlPath = ` + "`" + htmlPath + "`" + `;
+const scriptBody = ` + "`" + escapedBody + "`" + `;
+const sandbox = { window: {}, globalThis: {}, Set, Map, WeakMap, JSON, Date, Math, console, localStorage: { getItem() { return null; } }, helpers };
+sandbox.window = sandbox;
+sandbox.globalThis = sandbox;
+sandbox.localStorage = { getItem() { return null; } };
+const fakeEl = {
+  children: [],
+  classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+  dataset: {},
+  style: {},
+  setAttribute() {}, getAttribute() { return null; }, removeAttribute() {},
+  appendChild(child) { this.children.push(child); return child; },
+  insertBefore(child) { this.children.push(child); return child; },
+  addEventListener() {}, removeEventListener() {},
+  querySelector() { return null; }, querySelectorAll() { return []; },
+  cloneNode() { return Object.assign({}, this); },
+  scrollIntoView() {},
+	};
+const fakeDocument = {
+  getElementById() { return fakeEl; },
+  querySelector() { return fakeEl; },
+  querySelectorAll() { return []; },
+  documentElement: { dataset: { theme: '' } },
+  createElement() { return Object.assign({}, fakeEl); },
+  createTextNode(text) { return { nodeType: 3, textContent: String(text) }; },
+  addEventListener() {}, removeEventListener() {},
+};
+sandbox.document = fakeDocument;
+sandbox.window.addEventListener = function () {};
+sandbox.window.removeEventListener = function () {};
+sandbox.fetch = function () { return Promise.reject(new Error('fetch unavailable in test')); };
+sandbox.window.SandmanPortalState = null;
+sandbox.window.SandmanPortalScroll = null;
+sandbox.window.SandmanPortalDiff = null;
+sandbox.setInterval = function () { return 0; };
+sandbox.clearInterval = function () {};
+sandbox.setTimeout = function () { return 0; };
+sandbox.clearTimeout = function () {};
+sandbox.window.setInterval = sandbox.setInterval;
+sandbox.window.clearInterval = sandbox.clearInterval;
+sandbox.requestAnimationFrame = function () {};
+sandbox.window.requestAnimationFrame = sandbox.requestAnimationFrame;
+sandbox.Intl = Intl;
+sandbox.window.Intl = Intl;
+vm.runInNewContext(scriptBody + '\n' + ` + "`" + js + "`" + `, Object.assign({}, sandbox, { helpers: sandbox.helpers }), { filename: htmlPath });
+`
+	cmd := exec.Command("node", "-e", prefix)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Logf("script output: %s", out)
+	}
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_PreservesReviewRunID is the
+// regression test for the bug where a review-only daemon (no parent issue
+// row in the same group) loses its real RunID in the synthesized "issue-N"
+// stub row, which breaks row expansion because the DOM row key no longer
+// matches any state.runs entry. The visibleRunForIssueGroup helper must
+// preserve the source row's runId so renderRunMeta continues to surface
+// the real run identifier in the meta line, and so findRunByIdentity can
+// locate the row from its data-run-key.
+func TestPortalRunsView_VisibleRunForIssueGroup_PreservesReviewRunID(t *testing.T) {
+	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
+const stub = visibleRunForIssueGroup(1223, [review]);
+if (!stub) throw new Error('expected stub row for review-only issue group');
+if (stub.runId !== 'a0c19-260622193226-1227') throw new Error('expected stub.runId to preserve source RunID, got ' + JSON.stringify(stub.runId));
+if (stub.key !== 'a0c19-260622193226-1227') throw new Error('expected stub.key to preserve source RunID, got ' + JSON.stringify(stub.key));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunsForTable_ReviewMetaLineShowsRealRunID
+// covers the user-visible symptom: the meta-line under the title cell is
+// fed by renderRunMeta(run), which reads run.runId. When
+// visibleRunsForTable clobbers runId to "issue-N", the meta-line shows
+// "issue-N" instead of the real run identifier. This test asserts on the
+// post-table run shape the renderer actually receives.
+func TestPortalRunsView_VisibleRunsForTable_ReviewMetaLineShowsRealRunID(t *testing.T) {
+	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
+const visible = visibleRunsForTable([review]);
+if (visible.length !== 1) throw new Error('expected 1 visible row, got ' + visible.length);
+const rendered = visible[0];
+if (rendered.runId !== 'a0c19-260622193226-1227') throw new Error('expected visible[0].runId to preserve source RunID for meta-line rendering, got ' + JSON.stringify(rendered.runId));
+const meta = helpers.renderRunMeta(rendered);
+if (!meta.includes('a0c19-260622193226-1227')) throw new Error('expected renderRunMeta to surface real run identifier, got ' + JSON.stringify(meta));
+if (meta.startsWith('issue-')) throw new Error('expected renderRunMeta not to start with synthetic "issue-" stub, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
