@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -219,14 +220,6 @@ type portalArchiveError struct {
 
 func (e *portalArchiveError) Error() string { return e.message }
 
-// portalRunDir returns the absolute run directory path for a given
-// repo root and run id. The HTTP handler uses it to drive the liveness
-// and "already archived" checks before invoking the archiver.
-func portalRunDir(repoRoot, runID string) string {
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	return filepath.Join(layout.RunsDir, runID)
-}
-
 // portalArchiveDir returns the absolute archive directory path for a
 // given repo root and run id.
 func portalArchiveDir(repoRoot, runID string) string {
@@ -240,15 +233,23 @@ func portalArchiveDir(repoRoot, runID string) string {
 // failure mode to a specific status code; the archiver itself is only
 // invoked on the happy path.
 func archivePortalRunHandler(repoRoot, runID string) error {
-	runDir := portalRunDir(repoRoot, runID)
-	if _, err := os.Stat(runDir); err != nil {
-		if os.IsNotExist(err) {
-			return &portalArchiveError{status: http.StatusNotFound, message: fmt.Sprintf("run %q not found in .sandman/runs/", runID)}
-		}
-		return &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("stat run dir: %v", err)}
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("load batches index: %v", err)}
 	}
 
-	if portalRunLivenessProbe(runDir) {
+	entry := idx.Resolve(runID)
+	if entry == nil {
+		return &portalArchiveError{status: http.StatusNotFound, message: fmt.Sprintf("batch %q not found in index", runID)}
+	}
+
+	if entry.Status != batchindex.StatusActive {
+		return &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is not active (status=%s)", runID, entry.Status)}
+	}
+
+	if portalRunLivenessProbe(entry.Path) {
 		return &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is still active; stop the daemon before archiving", runID)}
 	}
 

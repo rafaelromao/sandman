@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+
+	"github.com/rafaelromao/sandman/internal/batchindex"
 )
 
 // RunSession owns the on-disk artifacts and the per-run sockets that must
@@ -42,28 +44,33 @@ type RunSession struct {
 var (
 	ErrStepMkdir         = errors.New("daemon: RunSession.Prepare failed at MkdirAll")
 	ErrStepManifest      = errors.New("daemon: RunSession.Prepare failed at WriteManifest")
+	ErrStepBatchesIndex  = errors.New("daemon: RunSession.Prepare failed at BatchesIndex")
 	ErrStepControlSocket = errors.New("daemon: RunSession.Prepare failed at ControlSocket.Start")
 	ErrStepCommandServer = errors.New("daemon: RunSession.Prepare failed at CommandServer.Start")
 )
 
-// NewRunSession returns a session bound to the run directory that
-// RunDir(baseDir, runID) computes. The directory is not created
+// NewRunSession returns a session bound to the batch directory that
+// BatchDir(baseDir, batchID) computes. The directory is not created
 // yet — Prepare does that as the first boot step.
-func NewRunSession(baseDir, runID string) *RunSession {
+func NewRunSession(baseDir, batchID string) *RunSession {
 	return &RunSession{
 		baseDir:     baseDir,
-		runID:       runID,
-		runDir:      RunDir(baseDir, runID),
+		runID:       batchID,
+		runDir:      BatchDir(baseDir, batchID),
 		broadcaster: NewBroadcaster(),
 	}
 }
 
-// RunDir returns the run directory this session will own. It is
+// RunDir returns the batch directory this session will own. It is
 // available before Prepare (it is just a path computation) so callers
 // can wire it into batch.Request.RunDir without waiting for the boot
 // to complete. RunDir is not safe for concurrent use; the session is
 // expected to be constructed, queried, and torn down by a single
 // goroutine.
+//
+// Deprecated: RunDir is an alias for BatchDir. New code should use
+// BatchDir. This alias is kept for backward compatibility and will
+// be removed when .sandman/runs/ is wiped in Slice 5.
 func (s *RunSession) RunDir() string {
 	return s.runDir
 }
@@ -75,11 +82,12 @@ func (s *RunSession) Broadcaster() *Broadcaster {
 	return s.broadcaster
 }
 
-// Prepare creates the run directory, writes the batch manifest, and
-// starts the ControlSocket (and CommandServer if commander is non-nil)
-// in fixed order. The four steps are not reorderable: a future
-// refactor that moves any step after Prepare's return value would
-// break the boot invariant that issue #1024 enforces.
+// Prepare creates the batch directory, writes the batch manifest, starts
+// the ControlSocket (and CommandServer if commander is non-nil), and
+// appends an entry to the batches index — in that fixed order. The steps
+// are not reorderable: a future refactor that moves any step after
+// Prepare's return value would break the boot invariant that issue #1024
+// enforces.
 //
 // On failure, Prepare returns a wrapped sentinel error identifying
 // the failing step. The session is left in a partially-constructed
@@ -95,6 +103,28 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 
 	if err := WriteManifest(s.runDir, manifest); err != nil {
 		return fmt.Errorf("%w: %v", ErrStepManifest, err)
+	}
+
+	idx, err := batchindex.Load(BatchesIndexPath(s.baseDir))
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrStepBatchesIndex, err)
+	}
+
+	pr := 0
+	if manifest.PR != nil {
+		pr = *manifest.PR
+	}
+	idx.Add(batchindex.Entry{
+		ID:        manifest.BatchId,
+		Path:      s.runDir,
+		Kind:      batchindex.Kind(manifest.RunKind),
+		Status:    batchindex.StatusActive,
+		CreatedAt: manifest.CreatedAt,
+		Issues:    manifest.Issues,
+		PR:        pr,
+	})
+	if err := idx.Save(BatchesIndexPath(s.baseDir)); err != nil {
+		return fmt.Errorf("%w: %v", ErrStepBatchesIndex, err)
 	}
 
 	s.ctlSocket = NewControlSocket(s.runDir, s.broadcaster)
@@ -124,12 +154,9 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 //
 //  1. CommandServer.Stop (if started)
 //  2. ControlSocket.Stop (which also closes the broadcaster)
-//  3. Remove the run directory
 //
-// Removing the run directory last is intentional: the listeners must
-// stop and their socket files must be unlinked before the directory
-// is removed, otherwise net.UnixListener.Close races with the
-// filesystem removal on some platforms.
+// The batch directory is NOT removed — it persists on disk so the portal
+// can still recover runs from it in Slice 3.
 func (s *RunSession) Close() error {
 	if s.closeOnceRan {
 		return nil
@@ -141,9 +168,6 @@ func (s *RunSession) Close() error {
 	}
 	if s.ctlSocket != nil {
 		_ = s.ctlSocket.Stop()
-	}
-	if s.runDir != "" {
-		_ = os.RemoveAll(s.runDir)
 	}
 	return nil
 }

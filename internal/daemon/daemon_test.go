@@ -9,33 +9,33 @@ import (
 	"time"
 )
 
-func TestRunDir_JoinsBaseRunsAndDirID(t *testing.T) {
-	dir := RunDir("base", "abcd-260618113825-42+2")
-	want := filepath.Join("base", "runs", "abcd-260618113825-42+2")
+func TestBatchDir_JoinsBaseBatchesAndDirID(t *testing.T) {
+	dir := BatchDir("base", "abcd-260618113825-42+2")
+	want := filepath.Join("base", "batches", "abcd-260618113825-42+2")
 	if dir != want {
 		t.Fatalf("expected %q, got %q", want, dir)
 	}
 }
 
-func TestRunDir_PreservesDirIDVerbatim(t *testing.T) {
+func TestBatchDir_PreservesDirIDVerbatim(t *testing.T) {
 	dirID := "abcd-260618113825-42+2"
-	dir := RunDir("base", dirID)
+	dir := BatchDir("base", dirID)
 	if !strings.HasSuffix(dir, dirID) {
 		t.Fatalf("expected path to end with %q, got %q", dirID, dir)
 	}
 }
 
-func TestRunDir_IsUnderRuns(t *testing.T) {
-	dir := RunDir("base", "anything")
-	if !strings.HasPrefix(dir, filepath.Join("base", "runs")) {
-		t.Fatalf("expected path under base/runs, got %q", dir)
+func TestBatchDir_IsUnderBatches(t *testing.T) {
+	dir := BatchDir("base", "anything")
+	if !strings.HasPrefix(dir, filepath.Join("base", "batches")) {
+		t.Fatalf("expected path under base/batches, got %q", dir)
 	}
 }
 
-func TestRunDir_SubdirNotCreated(t *testing.T) {
-	dir := RunDir(t.TempDir(), "anything")
+func TestBatchDir_SubdirNotCreated(t *testing.T) {
+	dir := BatchDir(t.TempDir(), "anything")
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Fatal("RunDir should not create the directory")
+		t.Fatal("BatchDir should not create the directory")
 	}
 }
 

@@ -323,7 +323,7 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	if !strings.HasSuffix(runner.last.RunID, "-PR42") {
 		t.Errorf("expected RunID to end with '-PR42', got %q", runner.last.RunID)
 	}
-	wantRunDirPrefix := filepath.Join(d.BaseDir, "runs", "")
+	wantRunDirPrefix := filepath.Join(d.BaseDir, "batches", "")
 	if !strings.HasPrefix(runner.last.RunDir, wantRunDirPrefix) {
 		t.Errorf("expected RunDir to start with %q, got %q", wantRunDirPrefix, runner.last.RunDir)
 	}
@@ -1286,8 +1286,8 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 		t.Fatalf("launchReview: %v", err)
 	}
 
-	if _, err := os.Stat(capturedRunDir); !os.IsNotExist(err) {
-		t.Errorf("run directory should be removed after launchReview, but %s still exists", capturedRunDir)
+	if _, err := os.Stat(capturedRunDir); err != nil {
+		t.Errorf("batch directory should still exist after launchReview, but stat returned: %v", err)
 	}
 }
 
@@ -1321,8 +1321,8 @@ func TestDaemon_LaunchReviewCleansUpRunDirOnError(t *testing.T) {
 		t.Fatal("expected error from launchReview")
 	}
 
-	if _, err := os.Stat(capturedRunDir); !os.IsNotExist(err) {
-		t.Errorf("run directory should be removed after launchReview error, but %s still exists", capturedRunDir)
+	if _, err := os.Stat(capturedRunDir); err != nil {
+		t.Errorf("batch directory should still exist after launchReview error, but stat returned: %v", err)
 	}
 }
 
@@ -1389,8 +1389,8 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 		t.Fatal("timeout waiting for RunBatch to be called")
 	}
 
-	if _, err := os.Stat(capturedRunDir); !os.IsNotExist(err) {
-		t.Errorf("run directory should be removed after launchReview, but %s still exists", capturedRunDir)
+	if _, err := os.Stat(capturedRunDir); err != nil {
+		t.Errorf("batch directory should still exist after launchReview, but stat returned: %v", err)
 	}
 }
 
