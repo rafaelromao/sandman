@@ -187,6 +187,18 @@ func (idx *Index) ArchiveBatch(id string, archivedAt time.Time) error {
 	return fmt.Errorf("batch not found: %s", id)
 }
 
+func (idx *Index) SetArchived(id, archivePath string, archivedAt time.Time) error {
+	for i := range idx.Entries {
+		if idx.Entries[i].ID == id {
+			idx.Entries[i].Status = StatusArchived
+			idx.Entries[i].Path = archivePath
+			idx.Entries[i].ArchivedAt = &archivedAt
+			return nil
+		}
+	}
+	return fmt.Errorf("batch not found: %s", id)
+}
+
 func (idx *Index) RemoveBatch(id string) error {
 	for i := range idx.Entries {
 		if idx.Entries[i].ID == id {

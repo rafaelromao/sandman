@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -59,29 +60,49 @@ func (d DeadBatch) RunTimestamp() time.Time {
 	return info.ModTime()
 }
 
-// FindDeadRunBatches scans <baseDir>/runs/ for run directories that are
-// not currently owned by a live daemon and returns their parsed
-// manifests. Results are sorted lexicographically by RunDir for stable
-// iteration. A run dir with no `batch.json` is still returned with the
-// zero-value BatchManifest. Returns (nil, nil) if <baseDir>/runs/ is
-// missing so callers can treat a fresh repository the same as a clean
-// one.
+// FindDeadRunBatches scans <baseDir>/runs/ and <baseDir>/batches/ for run
+// directories that are not currently owned by a live daemon and returns
+// their parsed manifests. Results are sorted lexicographically by RunDir
+// for stable iteration. A run dir with no manifest is still returned with
+// the zero-value BatchManifest. Returns (nil, nil) if neither runs/ nor
+// batches/ exists so callers can treat a fresh repository the same as a
+// clean one.
 func FindDeadRunBatches(baseDir string) ([]DeadBatch, error) {
 	runsDir := filepath.Join(baseDir, "runs")
-	entries, err := os.ReadDir(runsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+	batchesDir := filepath.Join(baseDir, "batches")
+
+	var allDirs []string
+
+	if entries, err := os.ReadDir(runsDir); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read runs dir: %w", err)
 		}
-		return nil, fmt.Errorf("read runs dir: %w", err)
+	} else {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				allDirs = append(allDirs, filepath.Join(runsDir, entry.Name()))
+			}
+		}
+	}
+
+	if entries, err := os.ReadDir(batchesDir); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read batches dir: %w", err)
+		}
+	} else {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				allDirs = append(allDirs, filepath.Join(batchesDir, entry.Name()))
+			}
+		}
+	}
+
+	if len(allDirs) == 0 {
+		return nil, nil
 	}
 
 	var batches []DeadBatch
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		runPath := filepath.Join(runsDir, entry.Name())
+	for _, runPath := range allDirs {
 		if IsRunActive(runPath) {
 			continue
 		}
@@ -190,9 +211,25 @@ func WriteManifest(runDir string, manifest BatchManifest) error {
 	return nil
 }
 
-// ReadManifest decodes the batch manifest stored at ManifestPath(runDir).
-// The returned BatchManifest is the zero value if the file does not exist.
+// ReadManifest decodes the batch manifest stored at runDir. It first
+// tries run.json (new format), then falls back to batch.json (old format).
+// The returned BatchManifest is the zero value if neither file exists.
 func ReadManifest(runDir string) (BatchManifest, error) {
+	runManifestPath := filepath.Join(runDir, "run.json")
+	if data, err := os.ReadFile(runManifestPath); err == nil {
+		var runManifest batchindex.RunManifest
+		if err := json.Unmarshal(data, &runManifest); err == nil {
+			manifest := BatchManifest{
+				BatchId:   runManifest.BatchID,
+				CreatedAt: runManifest.CreatedAt,
+			}
+			if runManifest.Issue > 0 {
+				manifest.Issues = []int{runManifest.Issue}
+			}
+			return manifest, nil
+		}
+	}
+
 	data, err := os.ReadFile(ManifestPath(runDir))
 	if err != nil {
 		return BatchManifest{}, err
@@ -427,24 +464,28 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 		}
 	}
 
-	// Collect all batch manifests under runs/ (both live and dead dirs).
+	// Collect all batch manifests under runs/ and batches/ (both live and dead dirs).
 	type batchInfo struct {
 		dir      string
 		manifest BatchManifest
 	}
 	var batches []batchInfo
 	runsDir := filepath.Join(baseDir, "runs")
-	entries, err := os.ReadDir(runsDir)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return 0, fmt.Errorf("read runs dir for orphan scan: %w", err)
+	batchesDir := filepath.Join(baseDir, "batches")
+
+	for _, dir := range []string{runsDir, batchesDir} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return 0, fmt.Errorf("read dir for orphan scan: %w", err)
 		}
-	} else {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
 			}
-			runPath := filepath.Join(runsDir, entry.Name())
+			runPath := filepath.Join(dir, entry.Name())
 			manifest, err := ReadManifest(runPath)
 			if err != nil {
 				if os.IsNotExist(err) {

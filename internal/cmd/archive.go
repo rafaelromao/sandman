@@ -7,25 +7,20 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
 
-// runActivityProbe reports whether a run directory is currently owned by
-// a live daemon. It exists as an interface so tests can substitute a
-// deterministic probe without spinning up a real command server.
 type runActivityProbe func(runPath string) bool
 
-// NewArchiveCmd creates the archive command, which moves a run directory
-// from .sandman/runs/<id> to .sandman/archive/<id>. Refuses to archive
-// runs whose daemon is still live.
 func NewArchiveCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "archive",
 		Short: "Archive completed run directories",
-		Long:  "Move a run directory from .sandman/runs/<id> to .sandman/archive/<id> after confirming the run's daemon is no longer live. Use 'archive run' to move a single run by id, 'archive older-than <days>' to bulk-archive every dead run older than the given age, or 'archive stale' to recover unterminated runs in dead batches (emitting run.aborted) and then archive every dead-and-terminal run.",
+		Long:  "Move a run directory from .sandman/batches/<id> to .sandman/archive/<id> after confirming the run's daemon is no longer live. Use 'archive run' to move a single run by id, 'archive older-than <days>' to bulk-archive every dead run older than the given age, or 'archive stale' to recover unterminated runs in dead batches (emitting run.aborted) and then archive every dead-and-terminal run.",
 	}
 	cmd.AddCommand(newArchiveRunCmd(deps))
 	cmd.AddCommand(newArchiveOlderThanCmd(deps))
@@ -44,7 +39,7 @@ func newArchiveRunCmd(deps Dependencies) *cobra.Command {
 		Short:   "Archive a single run directory",
 		Args:    wrapArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runArchiveRun(cmd, args[0], probe)
+			return runArchiveRun(cmd, args[0], probe, deps.RepoRoot)
 		},
 	}
 }
@@ -53,10 +48,10 @@ func newArchiveOlderThanCmd(deps Dependencies) *cobra.Command {
 	return &cobra.Command{
 		Use:   "older-than <days>",
 		Short: "Archive dead run directories older than N days",
-		Long:  "Move every dead run directory under .sandman/runs/ whose manifest CreatedAt (or directory mtime when the manifest is missing) is older than <days> days to .sandman/archive/. Live daemons are never archived regardless of age.",
+		Long:  "Move every dead run directory whose index entry CreatedAt is older than <days> days to .sandman/archive/. Live daemons are never archived regardless of age.",
 		Args:  wrapArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runArchiveOlderThan(cmd, args[0])
+			return runArchiveOlderThan(cmd, args[0], deps.RepoRoot)
 		},
 	}
 }
@@ -88,120 +83,152 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 		return fmt.Errorf("recover stale runs: %w", err)
 	}
 
-	dead, err := daemon.FindDeadRunBatches(layout.SandmanDir)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
-		return fmt.Errorf("scan run directories: %w", err)
+		return fmt.Errorf("load batches index: %w", err)
 	}
 
-	if err := ensureArchiveDir(); err != nil {
-		return err
+	if err := idx.EnsureStatus(); err != nil {
+		return fmt.Errorf("ensure status: %w", err)
 	}
 
 	var archived int
-	for _, batch := range dead {
-		if err := moveBatchToArchive(cmd, batch); err != nil {
-			return err
+	now := time.Now().UTC()
+	for _, entry := range idx.Entries {
+		if entry.Status != batchindex.StatusActive {
+			continue
+		}
+		if daemon.IsRunActive(entry.Path) {
+			continue
+		}
+		archivePath := filepath.Join(layout.ArchiveDir, entry.ID)
+		if _, err := os.Stat(archivePath); err == nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "skip %q: archive already exists\n", entry.ID)
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat archive target %q: %w", archivePath, err)
+		}
+		if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
+			return fmt.Errorf("create archive dir: %w", err)
+		}
+		if err := os.Rename(entry.Path, archivePath); err != nil {
+			return fmt.Errorf("move batch %q: %w", entry.ID, err)
+		}
+		if err := idx.SetArchived(entry.ID, archivePath, now); err != nil {
+			return fmt.Errorf("set archived in index: %w", err)
 		}
 		archived++
+	}
+
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		return fmt.Errorf("save batches index: %w", err)
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs and archived %d dead batches.\n", recovered, archived)
 	return nil
 }
 
-// ensureArchiveDir creates the .sandman/archive root on first use so bulk
-// commands surface a stable directory even when no batches qualify for
-// archival.
-func ensureArchiveDir() error {
-	if err := os.MkdirAll(filepath.Join(".sandman", "archive"), 0755); err != nil {
-		return fmt.Errorf("create archive dir: %w", err)
+func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe, repoRoot string) error {
+	if repoRoot == "" {
+		repoRoot = "."
 	}
-	return nil
-}
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
-// moveBatchToArchive relocates a dead run directory from .sandman/runs/<id>
-// to .sandman/archive/<id>, creating the archive root on first use. If a
-// destination already exists the move is skipped (and a skip message is
-// written to the command's stderr) so the existing archive is left
-// untouched.
-func moveBatchToArchive(cmd *cobra.Command, batch daemon.DeadBatch) error {
-	archiveDir := filepath.Join(".sandman", "archive")
-	if err := os.MkdirAll(archiveDir, 0755); err != nil {
-		return fmt.Errorf("create archive dir: %w", err)
-	}
-	id := filepath.Base(batch.RunDir)
-	dest := filepath.Join(archiveDir, id)
-	if _, err := os.Stat(dest); err == nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "skip %q: archive already exists\n", id)
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("stat archive target %q: %w", dest, err)
-	}
-	if err := os.Rename(batch.RunDir, dest); err != nil {
-		return fmt.Errorf("move run %q: %w", id, err)
-	}
-	return nil
-}
-
-func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe) error {
-	runDir := filepath.Join(".sandman", "runs", id)
-	if _, err := os.Stat(runDir); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("run %q not found in .sandman/runs/", id)
-		}
-		return fmt.Errorf("stat run dir: %w", err)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return fmt.Errorf("load batches index: %w", err)
 	}
 
-	if probe(runDir) {
-		return fmt.Errorf("run %q is still active; stop the daemon before archiving", id)
+	entry := idx.Resolve(id)
+	if entry == nil {
+		return fmt.Errorf("batch %q not found in index", id)
 	}
 
-	archiveDir := filepath.Join(".sandman", "archive")
-	if err := os.MkdirAll(archiveDir, 0755); err != nil {
-		return fmt.Errorf("create archive dir: %w", err)
+	if entry.Status != batchindex.StatusActive {
+		return fmt.Errorf("batch %q is not active (status=%s); refusing to archive", id, entry.Status)
 	}
 
-	dest := filepath.Join(archiveDir, id)
-	if _, err := os.Stat(dest); err == nil {
+	if probe != nil && probe(entry.Path) {
+		return fmt.Errorf("batch %q is still active; stop the daemon before archiving", id)
+	}
+
+	archivePath := filepath.Join(layout.ArchiveDir, id)
+	if _, err := os.Stat(archivePath); err == nil {
 		return fmt.Errorf("archive %q already exists", id)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat archive target: %w", err)
 	}
 
-	if err := os.Rename(runDir, dest); err != nil {
-		return fmt.Errorf("move run dir: %w", err)
+	if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
+		return fmt.Errorf("create archive dir: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Archived run %q\n", id)
+	if err := os.Rename(entry.Path, archivePath); err != nil {
+		return fmt.Errorf("move batch dir: %w", err)
+	}
+
+	now := time.Now().UTC()
+	if err := idx.SetArchived(id, archivePath, now); err != nil {
+		return fmt.Errorf("set archived in index: %w", err)
+	}
+
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		return fmt.Errorf("save batches index: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Archived batch %q\n", id)
 	return nil
 }
 
-// archivePortalRun relocates a run directory from <repoRoot>/.sandman/runs/<runID>
-// to <repoRoot>/.sandman/archive/<runID>. It is the repo-root-aware counterpart
-// of runArchiveRun used by the portal HTTP endpoint, so the same move
-// semantics back both the CLI and the portal. Existence and liveness
-// preconditions live with the caller (the portal handler surfaces typed
-// errors for them); this helper does the move and refuses to clobber an
-// existing archive target as a defense-in-depth guard.
 func archivePortalRun(repoRoot, runID string) error {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	runDir := filepath.Join(layout.RunsDir, runID)
-	dest := filepath.Join(layout.ArchiveDir, runID)
-	if info, err := os.Stat(dest); err == nil && info.IsDir() {
+
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return fmt.Errorf("load batches index: %w", err)
+	}
+
+	entry := idx.Resolve(runID)
+	if entry == nil {
+		return fmt.Errorf("batch %q not found in index", runID)
+	}
+
+	if entry.Status != batchindex.StatusActive {
+		return fmt.Errorf("batch %q is not active (status=%s)", runID, entry.Status)
+	}
+
+	archivePath := filepath.Join(layout.ArchiveDir, runID)
+	if info, err := os.Stat(archivePath); err == nil && info.IsDir() {
 		return fmt.Errorf("archive %q already exists", runID)
 	} else if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("stat archive target: %w", err)
 	}
+
 	if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
-	if err := os.Rename(runDir, dest); err != nil {
-		return fmt.Errorf("move run dir: %w", err)
+
+	if err := os.Rename(entry.Path, archivePath); err != nil {
+		return fmt.Errorf("move batch dir: %w", err)
 	}
+
+	now := time.Now().UTC()
+	if err := idx.SetArchived(runID, archivePath, now); err != nil {
+		return fmt.Errorf("set archived in index: %w", err)
+	}
+
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		return fmt.Errorf("save batches index: %w", err)
+	}
+
 	return nil
 }
 
-func runArchiveOlderThan(cmd *cobra.Command, daysArg string) error {
+func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) error {
+	if repoRoot == "" {
+		repoRoot = "."
+	}
+
 	days, err := strconv.Atoi(daysArg)
 	if err != nil {
 		return fmt.Errorf("days %q is not a non-negative integer", daysArg)
@@ -212,26 +239,53 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string) error {
 
 	cutoff := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
 
-	if err := ensureArchiveDir(); err != nil {
-		return err
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return fmt.Errorf("load batches index: %w", err)
 	}
 
-	dead, err := daemon.FindDeadRunBatches(".sandman")
-	if err != nil {
-		return fmt.Errorf("scan run directories: %w", err)
+	if err := idx.EnsureStatus(); err != nil {
+		return fmt.Errorf("ensure status: %w", err)
+	}
+
+	if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
+		return fmt.Errorf("create archive dir: %w", err)
 	}
 
 	var archived int
-	for _, batch := range dead {
-		if batch.RunTimestamp().After(cutoff) {
+	now := time.Now().UTC()
+	for _, entry := range idx.Entries {
+		if entry.Status != batchindex.StatusActive {
 			continue
 		}
-		if err := moveBatchToArchive(cmd, batch); err != nil {
-			return err
+		if daemon.IsRunActive(entry.Path) {
+			continue
+		}
+		if !entry.CreatedAt.Before(cutoff) {
+			continue
+		}
+		archivePath := filepath.Join(layout.ArchiveDir, entry.ID)
+		if _, err := os.Stat(archivePath); err == nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "skip %q: archive already exists\n", entry.ID)
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat archive target %q: %w", archivePath, err)
+		}
+		if err := os.Rename(entry.Path, archivePath); err != nil {
+			return fmt.Errorf("move batch %q: %w", entry.ID, err)
+		}
+		if err := idx.SetArchived(entry.ID, archivePath, now); err != nil {
+			return fmt.Errorf("set archived in index: %w", err)
 		}
 		archived++
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Archived %d run(s) older than %d day(s)\n", archived, days)
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		return fmt.Errorf("save batches index: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Archived %d batch(es) older than %d day(s)\n", archived, days)
 	return nil
 }

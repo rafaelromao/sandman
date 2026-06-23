@@ -10,9 +10,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
+
+func writeBatchIndexForArchive(t *testing.T, baseDir string, entries []batchindex.Entry) {
+	t.Helper()
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: entries}
+	data, err := json.MarshalIndent(idx, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal index: %v", err)
+	}
+	batchesDir := filepath.Join(baseDir, ".sandman", "batches")
+	if err := os.MkdirAll(batchesDir, 0755); err != nil {
+		t.Fatalf("mkdir batches dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, ".sandman", "batches.json"), data, 0644); err != nil {
+		t.Fatalf("write batches.json: %v", err)
+	}
+}
+
+func writeBatchDirForArchive(t *testing.T, batchDir string, runManifest batchindex.RunManifest) {
+	t.Helper()
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("mkdir batch dir: %v", err)
+	}
+	data, err := json.MarshalIndent(runManifest, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(batchDir, "run.json"), data, 0644); err != nil {
+		t.Fatalf("write run.json: %v", err)
+	}
+}
 
 func TestArchiveRun_NoArgsReturnsUsageError(t *testing.T) {
 	var buf bytes.Buffer
@@ -49,6 +80,8 @@ func TestArchiveBatch_NonexistentBatchReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
+	writeBatchIndexForArchive(t, dir, nil)
+
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
 	cmd.SetOut(&buf)
@@ -71,6 +104,8 @@ func TestArchiveBatch_NonexistentBatchReturnsError(t *testing.T) {
 func TestArchiveRun_NonexistentRunReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
+
+	writeBatchIndexForArchive(t, dir, nil)
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -95,15 +130,19 @@ func TestArchiveRun_LiveRunReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runDir := filepath.Join(dir, ".sandman", "runs", "live-1")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte("{}"), 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "live-1")
+	now := time.Now()
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "live-1",
+		Kind:      batchindex.KindIssue,
+		CreatedAt: now,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "live-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+	})
 
-	cmdServer := daemon.NewCommandServer(runDir, nil)
+	cmdServer := daemon.NewCommandServer(batchDir, nil)
 	if err := cmdServer.Start(); err != nil {
 		t.Fatalf("start command server: %v", err)
 	}
@@ -119,8 +158,8 @@ func TestArchiveRun_LiveRunReturnsError(t *testing.T) {
 		t.Fatal("expected error for live run, got nil")
 	}
 
-	if _, err := os.Stat(runDir); err != nil {
-		t.Errorf("expected live run dir to be preserved on rejection, got: %v", err)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected live batch dir to be preserved on rejection, got: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "live-1")); !os.IsNotExist(err) {
 		t.Errorf("expected no archive/live-1 after rejection, got: %v", err)
@@ -131,13 +170,18 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runDir := filepath.Join(dir, ".sandman", "runs", "dead-1")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte(`{"issues":[42]}`), 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "dead-1")
+	now := time.Now()
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "dead-1",
+		Issue:     42,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: now,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "dead-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42}},
+	})
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -149,19 +193,23 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	archiveRunDir := filepath.Join(dir, ".sandman", "archive", "dead-1")
-	if _, err := os.Stat(archiveRunDir); err != nil {
-		t.Fatalf("expected archived run dir to exist: %v", err)
+	archiveBatchDir := filepath.Join(dir, ".sandman", "archive", "dead-1")
+	if _, err := os.Stat(archiveBatchDir); err != nil {
+		t.Fatalf("expected archived batch dir to exist: %v", err)
 	}
-	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
-		t.Errorf("expected source run dir to be gone after archive, got: %v", err)
+	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
+		t.Errorf("expected source batch dir to be gone after archive, got: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(archiveRunDir, "batch.json"))
+	data, err := os.ReadFile(filepath.Join(archiveBatchDir, "run.json"))
 	if err != nil {
-		t.Fatalf("read archived batch.json: %v", err)
+		t.Fatalf("read archived run.json: %v", err)
 	}
-	if string(data) != `{"issues":[42]}` {
-		t.Errorf("archived batch.json content = %q, want %q", string(data), `{"issues":[42]}`)
+	var manifest batchindex.RunManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("unmarshal run.json: %v", err)
+	}
+	if manifest.Issue != 42 {
+		t.Errorf("archived run.json issue = %v, want 42", manifest.Issue)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive")); err != nil {
 		t.Errorf("expected .sandman/archive/ to exist after archive: %v", err)
@@ -172,15 +220,19 @@ func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runDir := filepath.Join(dir, ".sandman", "runs", "live-1")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte("{}"), 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "live-1")
+	now := time.Now()
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "live-1",
+		Kind:      batchindex.KindIssue,
+		CreatedAt: now,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "live-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+	})
 
-	cmdServer := daemon.NewCommandServer(runDir, nil)
+	cmdServer := daemon.NewCommandServer(batchDir, nil)
 	if err := cmdServer.Start(); err != nil {
 		t.Fatalf("start command server: %v", err)
 	}
@@ -196,8 +248,8 @@ func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
 		t.Fatal("expected error for live batch, got nil")
 	}
 
-	if _, err := os.Stat(runDir); err != nil {
-		t.Errorf("expected live run dir to be preserved on rejection, got: %v", err)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected live batch dir to be preserved on rejection, got: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "live-1")); !os.IsNotExist(err) {
 		t.Errorf("expected no archive/live-1 after rejection, got: %v", err)
@@ -208,13 +260,18 @@ func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runDir := filepath.Join(dir, ".sandman", "runs", "dead-1")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte(`{"issues":[42]}`), 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "dead-1")
+	now := time.Now()
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "dead-1",
+		Issue:     42,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: now,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "dead-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42}},
+	})
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -226,19 +283,23 @@ func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	archiveRunDir := filepath.Join(dir, ".sandman", "archive", "dead-1")
-	if _, err := os.Stat(archiveRunDir); err != nil {
-		t.Fatalf("expected archived run dir to exist: %v", err)
+	archiveBatchDir := filepath.Join(dir, ".sandman", "archive", "dead-1")
+	if _, err := os.Stat(archiveBatchDir); err != nil {
+		t.Fatalf("expected archived batch dir to exist: %v", err)
 	}
-	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
-		t.Errorf("expected source run dir to be gone after archive, got: %v", err)
+	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
+		t.Errorf("expected source batch dir to be gone after archive, got: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(archiveRunDir, "batch.json"))
+	data, err := os.ReadFile(filepath.Join(archiveBatchDir, "run.json"))
 	if err != nil {
-		t.Fatalf("read archived batch.json: %v", err)
+		t.Fatalf("read archived run.json: %v", err)
 	}
-	if string(data) != `{"issues":[42]}` {
-		t.Errorf("archived batch.json content = %q, want %q", string(data), `{"issues":[42]}`)
+	var manifest batchindex.RunManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("unmarshal run.json: %v", err)
+	}
+	if manifest.Issue != 42 {
+		t.Errorf("archived run.json issue = %v, want 42", manifest.Issue)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive")); err != nil {
 		t.Errorf("expected .sandman/archive/ to exist after archive: %v", err)
@@ -249,13 +310,17 @@ func TestArchiveBatch_CollisionWithExistingArchiveDirReturnsError(t *testing.T) 
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runDir := filepath.Join(dir, ".sandman", "runs", "dead-2")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte("source"), 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "dead-2")
+	now := time.Now()
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "dead-2",
+		Kind:      batchindex.KindIssue,
+		CreatedAt: now,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "dead-2", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+	})
 
 	existingArchive := filepath.Join(dir, ".sandman", "archive", "dead-2")
 	if err := os.MkdirAll(existingArchive, 0755); err != nil {
@@ -275,8 +340,8 @@ func TestArchiveBatch_CollisionWithExistingArchiveDirReturnsError(t *testing.T) 
 		t.Fatal("expected error when destination already exists, got nil")
 	}
 
-	if _, err := os.Stat(runDir); err != nil {
-		t.Errorf("expected source run dir preserved on collision, got: %v", err)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected source batch dir preserved on collision, got: %v", err)
 	}
 	sentinel, err := os.ReadFile(filepath.Join(existingArchive, "sentinel.txt"))
 	if err != nil {
@@ -291,13 +356,17 @@ func TestArchiveRun_CollisionWithExistingArchiveDirReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runDir := filepath.Join(dir, ".sandman", "runs", "dead-2")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), []byte("source"), 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "dead-2")
+	now := time.Now()
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "dead-2",
+		Kind:      batchindex.KindIssue,
+		CreatedAt: now,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "dead-2", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+	})
 
 	existingArchive := filepath.Join(dir, ".sandman", "archive", "dead-2")
 	if err := os.MkdirAll(existingArchive, 0755); err != nil {
@@ -317,8 +386,8 @@ func TestArchiveRun_CollisionWithExistingArchiveDirReturnsError(t *testing.T) {
 		t.Fatal("expected error when destination already exists, got nil")
 	}
 
-	if _, err := os.Stat(runDir); err != nil {
-		t.Errorf("expected source run dir preserved on collision, got: %v", err)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected source batch dir preserved on collision, got: %v", err)
 	}
 	sentinel, err := os.ReadFile(filepath.Join(existingArchive, "sentinel.txt"))
 	if err != nil {
@@ -332,6 +401,8 @@ func TestArchiveRun_CollisionWithExistingArchiveDirReturnsError(t *testing.T) {
 func TestArchiveOlderThan_NoRunsLeavesEmptyArchiveDir(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
+
+	writeBatchIndexForArchive(t, dir, nil)
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -353,23 +424,22 @@ func TestArchiveOlderThan_NoRunsLeavesEmptyArchiveDir(t *testing.T) {
 	}
 }
 
-func TestArchiveOlderThan_ArchivesOldDeadRun(t *testing.T) {
+func TestArchiveOlderThan_ArchivesOldDeadBatch(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	old := time.Now().Add(-40 * 24 * time.Hour).UTC().Round(time.Second)
-	runDir := filepath.Join(dir, ".sandman", "runs", "old-dead")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	manifest := daemon.BatchManifest{Issues: []int{42}, CreatedAt: old}
-	data, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatalf("marshal manifest: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "old-dead")
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "old-dead",
+		Issue:     42,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: old,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "old-dead", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: old, Issues: []int{42}},
+	})
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -381,39 +451,31 @@ func TestArchiveOlderThan_ArchivesOldDeadRun(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	archiveRunDir := filepath.Join(dir, ".sandman", "archive", "old-dead")
-	if _, err := os.Stat(archiveRunDir); err != nil {
-		t.Fatalf("expected archived run dir to exist: %v", err)
+	archiveBatchDir := filepath.Join(dir, ".sandman", "archive", "old-dead")
+	if _, err := os.Stat(archiveBatchDir); err != nil {
+		t.Fatalf("expected archived batch dir to exist: %v", err)
 	}
-	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
-		t.Errorf("expected source run dir to be gone after archive, got: %v", err)
-	}
-	archived, err := os.ReadFile(filepath.Join(archiveRunDir, "batch.json"))
-	if err != nil {
-		t.Fatalf("read archived batch.json: %v", err)
-	}
-	if string(archived) != string(data) {
-		t.Errorf("archived batch.json content = %q, want %q", string(archived), string(data))
+	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
+		t.Errorf("expected source batch dir to be gone after archive, got: %v", err)
 	}
 }
 
-func TestArchiveOlderThan_SkipsYoungDeadRun(t *testing.T) {
+func TestArchiveOlderThan_SkipsYoungDeadBatch(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	young := time.Now().Add(-5 * 24 * time.Hour).UTC().Round(time.Second)
-	runDir := filepath.Join(dir, ".sandman", "runs", "young-dead")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	manifest := daemon.BatchManifest{Issues: []int{7}, CreatedAt: young}
-	data, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatalf("marshal manifest: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "young-dead")
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "young-dead",
+		Issue:     7,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: young,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "young-dead", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: young, Issues: []int{7}},
+	})
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -425,33 +487,32 @@ func TestArchiveOlderThan_SkipsYoungDeadRun(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, err := os.Stat(runDir); err != nil {
-		t.Errorf("expected young run dir to be preserved, got: %v", err)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected young batch dir to be preserved, got: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "young-dead")); !os.IsNotExist(err) {
-		t.Errorf("expected no archive entry for young run, got: %v", err)
+		t.Errorf("expected no archive entry for young batch, got: %v", err)
 	}
 }
 
-func TestArchiveOlderThan_SkipsLiveRun(t *testing.T) {
+func TestArchiveOlderThan_SkipsLiveBatch(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
 	old := time.Now().Add(-100 * 24 * time.Hour).UTC().Round(time.Second)
-	runDir := filepath.Join(dir, ".sandman", "runs", "old-live")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	manifest := daemon.BatchManifest{Issues: []int{99}, CreatedAt: old}
-	data, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatalf("marshal manifest: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "old-live")
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "old-live",
+		Issue:     99,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: old,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "old-live", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: old, Issues: []int{99}},
+	})
 
-	cmdServer := daemon.NewCommandServer(runDir, nil)
+	cmdServer := daemon.NewCommandServer(batchDir, nil)
 	if err := cmdServer.Start(); err != nil {
 		t.Fatalf("start command server: %v", err)
 	}
@@ -467,11 +528,11 @@ func TestArchiveOlderThan_SkipsLiveRun(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, err := os.Stat(runDir); err != nil {
-		t.Errorf("expected live run dir to be preserved regardless of age, got: %v", err)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected live batch dir to be preserved regardless of age, got: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "old-live")); !os.IsNotExist(err) {
-		t.Errorf("expected no archive entry for live run, got: %v", err)
+		t.Errorf("expected no archive entry for live batch, got: %v", err)
 	}
 }
 
@@ -482,10 +543,10 @@ func TestArchiveOlderThan_MixedBatchArchivesOnlyEligible(t *testing.T) {
 	oldTs := time.Now().Add(-40 * 24 * time.Hour).UTC().Round(time.Second)
 	youngTs := time.Now().Add(-5 * 24 * time.Hour).UTC().Round(time.Second)
 
-	oldDeadDir := filepath.Join(dir, ".sandman", "runs", "old-dead")
-	oldLiveDir := filepath.Join(dir, ".sandman", "runs", "old-live")
-	youngDeadDir := filepath.Join(dir, ".sandman", "runs", "young-dead")
-	youngLiveDir := filepath.Join(dir, ".sandman", "runs", "young-live")
+	oldDeadDir := filepath.Join(dir, ".sandman", "batches", "old-dead")
+	oldLiveDir := filepath.Join(dir, ".sandman", "batches", "old-live")
+	youngDeadDir := filepath.Join(dir, ".sandman", "batches", "young-dead")
+	youngLiveDir := filepath.Join(dir, ".sandman", "batches", "young-live")
 
 	for _, d := range []string{oldDeadDir, oldLiveDir, youngDeadDir, youngLiveDir} {
 		if err := os.MkdirAll(d, 0755); err != nil {
@@ -493,19 +554,17 @@ func TestArchiveOlderThan_MixedBatchArchivesOnlyEligible(t *testing.T) {
 		}
 	}
 
-	writeManifest := func(path string, created time.Time, issues []int) {
-		data, err := json.Marshal(daemon.BatchManifest{Issues: issues, CreatedAt: created})
-		if err != nil {
-			t.Fatalf("marshal: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(path, "batch.json"), data, 0644); err != nil {
-			t.Fatalf("write batch.json: %v", err)
-		}
-	}
-	writeManifest(oldDeadDir, oldTs, []int{1})
-	writeManifest(oldLiveDir, oldTs, []int{2})
-	writeManifest(youngDeadDir, youngTs, []int{3})
-	writeManifest(youngLiveDir, youngTs, []int{4})
+	writeBatchDirForArchive(t, oldDeadDir, batchindex.RunManifest{BatchID: "old-dead", Issue: 1, Kind: batchindex.KindIssue, CreatedAt: oldTs, Status: batchindex.StatusActive})
+	writeBatchDirForArchive(t, oldLiveDir, batchindex.RunManifest{BatchID: "old-live", Issue: 2, Kind: batchindex.KindIssue, CreatedAt: oldTs, Status: batchindex.StatusActive})
+	writeBatchDirForArchive(t, youngDeadDir, batchindex.RunManifest{BatchID: "young-dead", Issue: 3, Kind: batchindex.KindIssue, CreatedAt: youngTs, Status: batchindex.StatusActive})
+	writeBatchDirForArchive(t, youngLiveDir, batchindex.RunManifest{BatchID: "young-live", Issue: 4, Kind: batchindex.KindIssue, CreatedAt: youngTs, Status: batchindex.StatusActive})
+
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "old-dead", Path: oldDeadDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: oldTs, Issues: []int{1}},
+		{ID: "old-live", Path: oldLiveDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: oldTs, Issues: []int{2}},
+		{ID: "young-dead", Path: youngDeadDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: youngTs, Issues: []int{3}},
+		{ID: "young-live", Path: youngLiveDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: youngTs, Issues: []int{4}},
+	})
 
 	cmdServer := daemon.NewCommandServer(oldLiveDir, nil)
 	if err := cmdServer.Start(); err != nil {
@@ -549,7 +608,7 @@ func TestArchiveOlderThan_MixedBatchArchivesOnlyEligible(t *testing.T) {
 	}
 
 	if _, err := os.Stat(oldDeadDir); err != nil {
-		t.Errorf("expected old-dead run source preserved on collision, got: %v", err)
+		t.Errorf("expected old-dead source preserved on collision, got: %v", err)
 	}
 	if _, err := os.Stat(oldLiveDir); err != nil {
 		t.Errorf("expected old-live preserved, got: %v", err)
@@ -576,6 +635,8 @@ func TestArchiveOlderThan_NonIntegerDaysReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
+	writeBatchIndexForArchive(t, dir, nil)
+
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
 	cmd.SetOut(&buf)
@@ -594,6 +655,8 @@ func TestArchiveOlderThan_NonIntegerDaysReturnsError(t *testing.T) {
 func TestArchiveOlderThan_NegativeDaysReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
+
+	writeBatchIndexForArchive(t, dir, nil)
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -614,6 +677,8 @@ func TestArchiveOlderThan_MissingArgReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
+	writeBatchIndexForArchive(t, dir, nil)
+
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
 	cmd.SetOut(&buf)
@@ -630,17 +695,17 @@ func TestArchiveOlderThan_ZeroDaysArchivesAllDead(t *testing.T) {
 	t.Chdir(dir)
 
 	oneSecAgo := time.Now().UTC().Add(-1 * time.Second)
-	runDir := filepath.Join(dir, ".sandman", "runs", "just-now")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	data, err := json.Marshal(daemon.BatchManifest{Issues: []int{1}, CreatedAt: oneSecAgo})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "just-now")
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "just-now",
+		Issue:     1,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: oneSecAgo,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "just-now", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: oneSecAgo, Issues: []int{1}},
+	})
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -653,35 +718,7 @@ func TestArchiveOlderThan_ZeroDaysArchivesAllDead(t *testing.T) {
 	}
 
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "just-now")); err != nil {
-		t.Errorf("expected 0-day cutoff to archive every dead run, got: %v", err)
-	}
-}
-
-func TestArchiveOlderThan_FallsBackToDirectoryMtimeWhenManifestMissing(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
-
-	runDir := filepath.Join(dir, ".sandman", "runs", "no-manifest")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	oldMtime := time.Now().Add(-45 * 24 * time.Hour).UTC()
-	if err := os.Chtimes(runDir, oldMtime, oldMtime); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
-
-	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"older-than", "30"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "no-manifest")); err != nil {
-		t.Errorf("expected run archived by mtime fallback, got: %v", err)
+		t.Errorf("expected 0-day cutoff to archive every dead batch, got: %v", err)
 	}
 }
 
@@ -709,16 +746,19 @@ func TestArchiveStale_CollisionWithExistingArchivePreservesBoth(t *testing.T) {
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
-	runDir := filepath.Join(dir, ".sandman", "runs", "dead-collision")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	manifest := daemon.BatchManifest{Issues: []int{42}, CreatedAt: createdAt}
-	data, _ := json.Marshal(manifest)
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "source.txt"), []byte("source"), 0644); err != nil {
+	batchDir := filepath.Join(dir, ".sandman", "batches", "dead-collision")
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "dead-collision",
+		Issue:     42,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: createdAt,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "dead-collision", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: createdAt, Issues: []int{42}},
+	})
+
+	if err := os.WriteFile(filepath.Join(batchDir, "source.txt"), []byte("source"), 0644); err != nil {
 		t.Fatalf("write source sentinel: %v", err)
 	}
 
@@ -747,8 +787,8 @@ func TestArchiveStale_CollisionWithExistingArchivePreservesBoth(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, err := os.Stat(runDir); err != nil {
-		t.Errorf("expected source run dir preserved on collision, got: %v", err)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected source batch dir preserved on collision, got: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(existingArchive, "preserved.txt")); err != nil {
 		t.Errorf("expected existing archive sentinel preserved, got: %v", err)
@@ -763,15 +803,17 @@ func TestArchiveStale_MixedStatusDeadBatchEmitsAbortedAndArchives(t *testing.T) 
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
-	runDir := filepath.Join(dir, ".sandman", "runs", "dead-mixed")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	manifest := daemon.BatchManifest{Issues: []int{42, 43}, CreatedAt: createdAt}
-	data, _ := json.Marshal(manifest)
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "dead-mixed")
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "dead-mixed",
+		Issue:     42,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: createdAt,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "dead-mixed", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: createdAt, Issues: []int{42, 43}},
+	})
 
 	log := &fakeEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "run-43", Issue: 43, Timestamp: createdAt.Add(5 * time.Minute)},
@@ -791,11 +833,11 @@ func TestArchiveStale_MixedStatusDeadBatchEmitsAbortedAndArchives(t *testing.T) 
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
-		t.Errorf("expected source run dir to be gone, got: %v", err)
+	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
+		t.Errorf("expected source batch dir to be gone, got: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "dead-mixed")); err != nil {
-		t.Errorf("expected archived run dir to exist, got: %v", err)
+		t.Errorf("expected archived batch dir to exist, got: %v", err)
 	}
 
 	var abortedFor42 bool
@@ -827,15 +869,17 @@ func TestArchiveStale_AllTerminatedDeadBatchIsArchived(t *testing.T) {
 	t.Chdir(dir)
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
-	runDir := filepath.Join(dir, ".sandman", "runs", "dead-done")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	manifest := daemon.BatchManifest{Issues: []int{42}, CreatedAt: createdAt}
-	data, _ := json.Marshal(manifest)
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "dead-done")
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "dead-done",
+		Issue:     42,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: createdAt,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "dead-done", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: createdAt, Issues: []int{42}},
+	})
 
 	log := &fakeEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(5 * time.Minute)},
@@ -854,11 +898,11 @@ func TestArchiveStale_AllTerminatedDeadBatchIsArchived(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
-		t.Errorf("expected source run dir to be gone, got: %v", err)
+	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
+		t.Errorf("expected source batch dir to be gone, got: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "dead-done")); err != nil {
-		t.Errorf("expected archived run dir to exist, got: %v", err)
+		t.Errorf("expected archived batch dir to exist, got: %v", err)
 	}
 	for _, e := range log.logged {
 		if e.Type == "run.aborted" {
@@ -874,24 +918,27 @@ func TestArchiveStale_LiveBatchIsNoop(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runDir := filepath.Join(dir, ".sandman", "runs", "live-1")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
-	}
-	manifest := daemon.BatchManifest{Issues: []int{42}, CreatedAt: time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)}
-	data, _ := json.Marshal(manifest)
-	if err := os.WriteFile(filepath.Join(runDir, "batch.json"), data, 0644); err != nil {
-		t.Fatalf("write batch.json: %v", err)
-	}
+	batchDir := filepath.Join(dir, ".sandman", "batches", "live-1")
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "live-1",
+		Issue:     42,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: createdAt,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "live-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: createdAt, Issues: []int{42}},
+	})
 
-	cmdServer := daemon.NewCommandServer(runDir, nil)
+	cmdServer := daemon.NewCommandServer(batchDir, nil)
 	if err := cmdServer.Start(); err != nil {
 		t.Fatalf("start command server: %v", err)
 	}
 	defer cmdServer.Stop()
 
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: manifest.CreatedAt.Add(5 * time.Minute)},
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(5 * time.Minute)},
 	}}
 	deps := newTestDeps()
 	deps.EventLog = log
@@ -906,11 +953,11 @@ func TestArchiveStale_LiveBatchIsNoop(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, err := os.Stat(runDir); err != nil {
-		t.Errorf("expected live run dir to be preserved, got: %v", err)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected live batch dir to be preserved, got: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "live-1")); !os.IsNotExist(err) {
-		t.Errorf("expected no archive entry for live run, got: %v", err)
+		t.Errorf("expected no archive entry for live batch, got: %v", err)
 	}
 	if len(log.logged) != 0 {
 		t.Errorf("expected no events logged for live batch, got %d: %+v", len(log.logged), log.logged)
@@ -920,14 +967,18 @@ func TestArchiveStale_LiveBatchIsNoop(t *testing.T) {
 	}
 }
 
-func TestArchiveOlderThan_YoungMtimeKeepsUnmanifestedRun(t *testing.T) {
+func TestArchiveOlderThan_YoungMtimeKeepsUnmanifestedBatch(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runDir := filepath.Join(dir, ".sandman", "runs", "no-manifest-young")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("mkdir run dir: %v", err)
+	batchDir := filepath.Join(dir, ".sandman", "batches", "no-manifest-young")
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("mkdir batch dir: %v", err)
 	}
+
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "no-manifest-young", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
+	})
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -939,10 +990,10 @@ func TestArchiveOlderThan_YoungMtimeKeepsUnmanifestedRun(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, err := os.Stat(runDir); err != nil {
-		t.Errorf("expected recent-mtime run preserved, got: %v", err)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected recent batch preserved, got: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "no-manifest-young")); !os.IsNotExist(err) {
-		t.Errorf("expected no archive entry for young-mtime run, got: %v", err)
+		t.Errorf("expected no archive entry for young batch, got: %v", err)
 	}
 }
