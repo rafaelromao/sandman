@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -14,14 +15,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// gitRunner abstracts git operations for worktree/branch management.
 type gitRunner interface {
 	removeWorktree(path string) error
 	pruneAndDeleteBranch(branch string) error
 	removeOrphanBranches() (int, error)
 }
 
-// realGitRunner shells out to git.
 type realGitRunner struct {
 	repoPath string
 }
@@ -87,23 +86,25 @@ func (r *realGitRunner) removeOrphanBranches() (int, error) {
 	return removed, nil
 }
 
-// NewCleanCmd creates the clean command.
+type cleanAction struct {
+	BatchID   string
+	BatchPath string
+	Worktree  string
+	Kind      batchindex.Kind
+	IsUnavail bool
+}
+
 func NewCleanCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clean",
 		Short: "Clean up sandbox resources and stale worktrees",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			all, _ := cmd.Flags().GetBool("all")
-			success, _ := cmd.Flags().GetBool("success")
-			failed, _ := cmd.Flags().GetBool("failed")
+			archived, _ := cmd.Flags().GetBool("archived")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			stale, _ := cmd.Flags().GetBool("stale")
 
-			if !all && !success && !failed && !stale {
-				return fmt.Errorf("specify one of --all, --success, --failed, or --stale")
-			}
-
-			if stale && (all || success || failed) {
-				return fmt.Errorf("--stale is mutually exclusive with --all, --success, and --failed")
+			if stale && (archived || dryRun) {
+				return fmt.Errorf("--stale is mutually exclusive with --archived and --dry-run")
 			}
 
 			cfg, err := deps.ConfigStore.Load()
@@ -128,99 +129,160 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				gr = newRealGitRunner(layout.RepoRoot)
 			}
 
-			staleRemoved, staleErr := daemon.CleanupStaleRunSnapshots(layout.SandmanDir)
-			if staleErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", staleErr)
-			}
-
 			if stale {
 				eventsList, err := deps.EventLog.Read()
 				if err != nil {
 					return fmt.Errorf("read event log: %w", err)
 				}
+				staleRemoved, staleErr := daemon.CleanupStaleRunSnapshots(layout.SandmanDir)
+				if staleErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", staleErr)
+				}
 				recovered, deadDirs, err := runCleanStale(layout, eventsList, deps.EventLog)
 				if err != nil {
 					return fmt.Errorf("recover stale runs: %w", err)
 				}
+				_ = staleRemoved
 				fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs as aborted across %d dead directories.\n", recovered, deadDirs)
 				return nil
 			}
 
-			if all {
-				eventsList, err := deps.EventLog.Read()
-				if err != nil {
-					return fmt.Errorf("read event log: %w", err)
-				}
-				runs := events.ProjectRunStates(eventsList)
-				for _, run := range runs {
-					if branch := run.Branch(); branch != "" {
-						wtPath := filepath.Join(layout.WorktreeDir, branch)
-						if err := gr.removeWorktree(wtPath); err != nil {
-							_ = gr.pruneAndDeleteBranch(branch)
-						}
-					}
-					if issueNum := run.IssueNumber(); issueNum > 0 {
-						_ = os.RemoveAll(filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNum)))
-					}
-				}
-				removed, _ := gr.removeOrphanBranches()
-				_ = os.RemoveAll(layout.WorktreeDir)
-				_ = os.RemoveAll(layout.LogDir)
-				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale branches and logs and %d stale run snapshots\n", removed, staleRemoved)
+			idx, err := batchindex.Load(layout.BatchesIndexPath)
+			if err != nil {
+				return fmt.Errorf("load batches index: %w", err)
+			}
+
+			if err := idx.EnsureStatus(); err != nil {
+				return fmt.Errorf("ensure status: %w", err)
+			}
+
+			var targetStatus batchindex.Status
+			if archived {
+				targetStatus = batchindex.StatusArchived
+			} else {
+				targetStatus = batchindex.StatusActive
+			}
+
+			actions := collectCleanActions(idx, targetStatus)
+
+			if dryRun {
+				printDryRun(cmd, actions)
 				return nil
 			}
 
-			eventsList, err := deps.EventLog.Read()
+			removed, err := executeClean(actions, gr, layout)
 			if err != nil {
-				return fmt.Errorf("read event log: %w", err)
+				return fmt.Errorf("execute clean: %w", err)
 			}
 
-			runs := events.ProjectRunStates(eventsList)
+			fmt.Fprintf(cmd.OutOrStdout(), "Removed %d batch entries.\n", removed)
 
-			var removed int
-			for _, run := range runs {
-				status := run.Status()
-				if success && status != "success" {
-					continue
-				}
-				if failed && status != "failure" && status != "aborted" {
-					continue
-				}
+			wipeLegacyDirs(layout)
 
-				branch := run.Branch()
-				if branch != "" {
-					wtPath := filepath.Join(layout.WorktreeDir, branch)
-					if err := gr.removeWorktree(wtPath); err != nil {
-						_ = gr.pruneAndDeleteBranch(branch)
-					}
-				}
-				if issueNum := run.IssueNumber(); issueNum > 0 {
-					_ = os.RemoveAll(filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNum)))
-				}
-				removed++
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d runs and %d stale run snapshots\n", removed, staleRemoved)
 			return nil
 		},
 	}
-	cmd.Flags().Bool("all", false, "Remove all worktrees and logs")
-	cmd.Flags().Bool("success", false, "Remove successful runs only")
-	cmd.Flags().Bool("failed", false, "Remove failed runs only")
+	cmd.Flags().Bool("archived", false, "Remove archived batches (combined with unavailable)")
+	cmd.Flags().Bool("dry-run", false, "Print intended deletions without performing I/O")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
 	return cmd
 }
 
-// runCleanStale performs the body of `sandman clean --stale` against the
-// supplied event log. It reads the events, scans `.sandman/runs/` for dead
-// batches under the supplied layout's repo root, and emits a `run.aborted`
-// event for every manifest issue whose RunState has not reached a terminal
-// event. Returns the number of runs recovered and the number of dead
-// directories processed.
-//
-// This is the same code path the `--stale` CLI flag executes, factored out
-// so other long-lived commands (the portal) can invoke the same logic
-// in-process without shelling out.
+func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) []cleanAction {
+	var actions []cleanAction
+	for _, entry := range idx.Entries {
+		if entry.Status == targetStatus || entry.Status == batchindex.StatusUnavailable {
+			action := cleanAction{
+				BatchID:   entry.ID,
+				BatchPath: entry.Path,
+				Kind:      entry.Kind,
+				IsUnavail: entry.Status == batchindex.StatusUnavailable,
+			}
+			if !action.IsUnavail && entry.Path != "" {
+				manifest, err := batchindex.ReadManifest(entry.Path)
+				if err == nil && manifest.WorktreePath != "" {
+					action.Worktree = manifest.WorktreePath
+				}
+			}
+			actions = append(actions, action)
+		}
+	}
+	return actions
+}
+
+func printDryRun(cmd *cobra.Command, actions []cleanAction) {
+	if len(actions) == 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "No batches to clean.\n")
+		return
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Would remove %d batch entries:\n", len(actions))
+	for _, a := range actions {
+		what := "batch"
+		if a.Kind != "" {
+			what = string(a.Kind)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  - [%s] %s (path: %s", what, a.BatchID, a.BatchPath)
+		if a.Worktree != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), ", worktree: %s", a.Worktree)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), ")\n")
+	}
+}
+
+func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout) (int, error) {
+	if len(actions) == 0 {
+		return 0, nil
+	}
+
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return 0, err
+	}
+
+	var removed int
+	for _, a := range actions {
+		if a.Worktree != "" {
+			if err := gr.removeWorktree(a.Worktree); err != nil {
+				_ = gr.pruneAndDeleteBranch(filepath.Base(a.Worktree))
+			}
+		}
+		if a.BatchPath != "" && !a.IsUnavail {
+			_ = os.RemoveAll(a.BatchPath)
+		}
+		removed++
+	}
+
+	var kept []batchindex.Entry
+	for _, entry := range idx.Entries {
+		skip := false
+		for _, a := range actions {
+			if entry.ID == a.BatchID {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			kept = append(kept, entry)
+		}
+	}
+	idx.Entries = kept
+
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		return 0, fmt.Errorf("save batches index: %w", err)
+	}
+
+	return removed, nil
+}
+
+func wipeLegacyDirs(layout paths.Layout) {
+	if _, err := os.Stat(layout.RunsDir); err == nil {
+		_ = os.RemoveAll(layout.RunsDir)
+	}
+	if _, err := os.Stat(layout.LogDir); err == nil {
+		_ = os.RemoveAll(layout.LogDir)
+	}
+}
+
 func runCleanStale(layout paths.Layout, eventsList []events.Event, log events.EventLog) (recovered, deadDirs int, err error) {
 	return daemon.RecoverStaleRuns(layout.SandmanDir, eventsList, log)
 }
