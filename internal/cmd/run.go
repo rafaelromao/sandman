@@ -660,7 +660,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					commander = c
 				}
 			}
-			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), RunID: autoIssueRunID, RunKind: "issue"}
+			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), BatchId: autoIssueRunID, RunKind: "issue"}
 			if err := rs.Prepare(manifest, commander); err != nil {
 				_ = rs.Close()
 				// A daemon without a control socket is invisible

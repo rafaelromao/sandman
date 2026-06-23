@@ -710,7 +710,7 @@ func TestRecoverStaleRuns_RecoversAutoSelectFromDeadBatch(t *testing.T) {
 	runDir := filepath.Join(baseDir, "runs", autoSelectRunID+"-candidates")
 	writeManifestFile(t, runDir, BatchManifest{
 		RunKind:    "auto-select",
-		RunID:      autoSelectRunID,
+		BatchId:    autoSelectRunID,
 		Candidates: []int{1, 2, 3, 4, 5},
 		Count:      5,
 		Query:      "label:ready-for-agent is:open",
@@ -766,7 +766,7 @@ func TestRecoverStaleRuns_SkipsAutoSelectWithTerminalStatus(t *testing.T) {
 	runDir := filepath.Join(baseDir, "runs", autoSelectRunID+"-candidates")
 	writeManifestFile(t, runDir, BatchManifest{
 		RunKind:    "auto-select",
-		RunID:      autoSelectRunID,
+		BatchId:    autoSelectRunID,
 		Candidates: []int{1, 2, 3, 4, 5},
 		Count:      5,
 		CreatedAt:  createdAt,
