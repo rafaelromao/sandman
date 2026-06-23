@@ -139,28 +139,42 @@ type BatchManifest struct {
 	Issues     []int     `json:"issues,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 	RunKind    string    `json:"runKind,omitempty"`
-	RunID      string    `json:"runID,omitempty"`
+	BatchId    string    `json:"batchId,omitempty"`
+	PR         *int      `json:"pr,omitempty"`
 	Candidates []int     `json:"candidates,omitempty"`
 	Query      string    `json:"query,omitempty"`
 	Count      int       `json:"count,omitempty"`
 }
 
-// RunDir returns a run directory path under baseDir/runs/. The dirID
+// BatchDir returns a batch directory path under baseDir/batches/. The dirID
 // argument is the pre-built batch identifier (the result of
 // runid.NewBatchID for issue-driven batches, or a user-supplied
 // --run-id for prompt-only mode — see runid.IsValidUserRunID for
 // the validation rules the caller is expected to apply before
-// passing the value in). RunDir joins it verbatim without
+// passing the value in). BatchDir joins it verbatim without
 // auto-generation. The directory itself is not created; callers
 // decide when to mkdir.
+func BatchDir(baseDir, dirID string) string {
+	return filepath.Join(baseDir, "batches", dirID)
+}
+
+// RunDir is a deprecated alias for BatchDir. It is kept for backward
+// compatibility during the transition period (Slice 1-4). New code should
+// use BatchDir. This alias will be removed when .sandman/runs/ is wiped
+// in Slice 5.
 func RunDir(baseDir, dirID string) string {
-	return filepath.Join(baseDir, "runs", dirID)
+	return BatchDir(baseDir, dirID)
 }
 
 // ManifestPath returns the on-disk path of the batch manifest file
-// within a run directory.
-func ManifestPath(runDir string) string {
-	return filepath.Join(runDir, "batch.json")
+// within a batch directory.
+func ManifestPath(batchDir string) string {
+	return filepath.Join(batchDir, "batch.json")
+}
+
+// BatchesIndexPath returns the path to the batches index file.
+func BatchesIndexPath(baseDir string) string {
+	return filepath.Join(baseDir, "batches.json")
 }
 
 // WriteManifest serialises a BatchManifest as JSON and writes it to
@@ -244,7 +258,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	}
 	for _, batch := range dead {
 		if batch.Manifest.RunKind == "auto-select" {
-			autoSelectRunID := batch.Manifest.RunID
+			autoSelectRunID := batch.Manifest.BatchId
 			run, ok := runsByID[autoSelectRunID]
 			if !ok || !run.IsAutoSelect() {
 				continue

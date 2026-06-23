@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/batchindex"
 )
 
 // mustParseTime parses an RFC3339 timestamp or fails the test.
@@ -46,7 +48,7 @@ func TestRunSession_Prepare_CreatesRunDirManifestAndSockets(t *testing.T) {
 	if rs.RunDir() == "" {
 		t.Fatal("RunDir() must be non-empty after Prepare")
 	}
-	wantRunDir := filepath.Join(dir, "runs", "test-run-1")
+	wantRunDir := filepath.Join(dir, "batches", "test-run-1")
 	if rs.RunDir() != wantRunDir {
 		t.Errorf("RunDir = %q, want %q", rs.RunDir(), wantRunDir)
 	}
@@ -140,7 +142,7 @@ func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
 	// on the run dir is happy; the manifest write is happy; but
 	// net.Listen on a path that is an existing non-empty directory
 	// fails.
-	runDir := filepath.Join(dir, "runs", "failing-run-1")
+	runDir := filepath.Join(dir, "batches", "failing-run-1")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -162,10 +164,10 @@ func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
 	}
 }
 
-// TestRunSession_Close_RemovesRunDirAndStopsListeners asserts idempotent
-// teardown: calling Close removes the run dir, stops the broadcaster,
+// TestRunSession_Close_StopsListenersButKeepsDirectory asserts idempotent
+// teardown: calling Close stops the sockets, preserves the directory,
 // and is safe to call a second time.
-func TestRunSession_Close_RemovesRunDirAndStopsListeners(t *testing.T) {
+func TestRunSession_Close_StopsListenersButKeepsDirectory(t *testing.T) {
 	dir := t.TempDir()
 	rs := NewRunSession(dir, "closing-run-1")
 
@@ -178,8 +180,8 @@ func TestRunSession_Close_RemovesRunDirAndStopsListeners(t *testing.T) {
 	if err := rs.Close(); err != nil {
 		t.Fatalf("first Close: %v", err)
 	}
-	if _, err := os.Stat(runDir); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("run dir must be removed after Close, stat err = %v", err)
+	if _, err := os.Stat(runDir); err != nil {
+		t.Errorf("batch dir must still exist after Close, stat err = %v", err)
 	}
 	if _, err := net.Dial("unix", filepath.Join(runDir, "run.sock")); err == nil {
 		t.Errorf("run.sock must be gone after Close")
@@ -192,21 +194,21 @@ func TestRunSession_Close_RemovesRunDirAndStopsListeners(t *testing.T) {
 }
 
 // TestRunSession_Prepare_PropagatesMkdirError asserts that when the
-// run directory cannot be created (parent path is a non-directory),
-// Prepare returns a wrapped ErrStepMkdir error and the run dir is
+// batch directory cannot be created (parent path is a non-directory),
+// Prepare returns a wrapped ErrStepMkdir error and the batch dir is
 // NOT created.
 func TestRunSession_Prepare_PropagatesMkdirError(t *testing.T) {
 	dir := t.TempDir()
-	// Pre-create .sandman/runs as a regular file so MkdirAll
-	// returns "not a directory" for any runDir underneath.
+	// Pre-create .sandman/batches as a regular file so MkdirAll
+	// returns "not a directory" for any batchDir underneath.
 	if err := os.MkdirAll(filepath.Join(dir, "sandman-stub"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runsPath := filepath.Join(dir, "runs")
-	if err := os.WriteFile(runsPath, []byte("blocker"), 0o600); err != nil {
+	batchesPath := filepath.Join(dir, "batches")
+	if err := os.WriteFile(batchesPath, []byte("blocker"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Remove(runsPath) })
+	t.Cleanup(func() { _ = os.Remove(batchesPath) })
 
 	rs := NewRunSession(dir, "mkdir-fail-run")
 	t.Cleanup(func() { _ = rs.Close() })
@@ -214,7 +216,7 @@ func TestRunSession_Prepare_PropagatesMkdirError(t *testing.T) {
 	manifest := BatchManifest{Issues: []int{1}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
 	err := rs.Prepare(manifest, nil)
 	if err == nil {
-		t.Fatal("Prepare must fail when MkdirAll cannot create runDir")
+		t.Fatal("Prepare must fail when MkdirAll cannot create batchDir")
 	}
 	if !errors.Is(err, ErrStepMkdir) {
 		t.Errorf("Prepare error = %v, want wrap of ErrStepMkdir", err)
@@ -227,6 +229,49 @@ func TestRunSession_Prepare_PropagatesMkdirError(t *testing.T) {
 type nilCommander struct{}
 
 func (*nilCommander) AbortIssue(int) error { return nil }
+
+// TestRunSession_Prepare_AppendsToBatchesIndex asserts that Prepare
+// appends an entry to batches.json with the expected id, kind, status,
+// issues, and pr fields.
+func TestRunSession_Prepare_AppendsToBatchesIndex(t *testing.T) {
+	dir := t.TempDir()
+	rs := NewRunSession(dir, "index-test-run-1")
+	t.Cleanup(func() { _ = rs.Close() })
+
+	prNum := 42
+	manifest := BatchManifest{
+		BatchId:   "index-test-run-1",
+		RunKind:   "review",
+		Issues:    []int{10, 20},
+		PR:        &prNum,
+		CreatedAt: mustParseTime(t, "2024-06-01T00:00:00Z"),
+	}
+	if err := rs.Prepare(manifest, nil); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	idx, err := batchindex.Load(BatchesIndexPath(dir))
+	if err != nil {
+		t.Fatalf("Load batches index: %v", err)
+	}
+
+	entry := idx.Resolve("index-test-run-1")
+	if entry == nil {
+		t.Fatal("batches index must contain entry for index-test-run-1")
+	}
+	if entry.Kind != batchindex.KindReview {
+		t.Errorf("entry.Kind = %v, want %v", entry.Kind, batchindex.KindReview)
+	}
+	if entry.Status != batchindex.StatusActive {
+		t.Errorf("entry.Status = %v, want %v", entry.Status, batchindex.StatusActive)
+	}
+	if len(entry.Issues) != 2 || entry.Issues[0] != 10 || entry.Issues[1] != 20 {
+		t.Errorf("entry.Issues = %v, want [10, 20]", entry.Issues)
+	}
+	if entry.PR != 42 {
+		t.Errorf("entry.PR = %v, want 42", entry.PR)
+	}
+}
 
 // TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil guards the
 // reflect-based nil check in Prepare. A typed-nil IssueCommander

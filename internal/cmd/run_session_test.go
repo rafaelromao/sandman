@@ -102,7 +102,7 @@ func newRunSessionTestEnv(t *testing.T) *runSessionTestEnv {
 	return &runSessionTestEnv{
 		repoDir:    dir,
 		sandmanDir: sandmanDir,
-		runsDir:    filepath.Join(sandmanDir, "runs"),
+		runsDir:    filepath.Join(sandmanDir, "batches"),
 		eventsPath: filepath.Join(sandmanDir, "events.jsonl"),
 		markerPath: markerPath,
 	}
@@ -522,19 +522,19 @@ func TestRun_ContinueMode_RunDirAndSocketsBeforeContinuedEvent(t *testing.T) {
 
 	// Wait for the agent's start marker (proves the runnable was
 	// entered, which happens AFTER run.continued is logged) — then
-	// assert the run dir + run.sock + batch.json exist on disk
-	// under .sandman/runs. cmd.sock must NOT exist because
+	// assert the batch dir + run.sock + batch.json exist on disk
+	// under .sandman/batches. cmd.sock must NOT exist because
 	// --continue disables the per-issue abort server.
 	waitForPathTB(t, markerPath, 10*time.Second)
 
-	entries, err := os.ReadDir(filepath.Join(sandmanDir, "runs"))
+	entries, err := os.ReadDir(filepath.Join(sandmanDir, "batches"))
 	if err != nil {
-		t.Fatalf("read runs dir: %v", err)
+		t.Fatalf("read batches dir: %v", err)
 	}
 	if len(entries) == 0 {
-		t.Fatal("expected at least one run dir after the agent was entered")
+		t.Fatal("expected at least one batch dir after the agent was entered")
 	}
-	runDir := filepath.Join(sandmanDir, "runs", entries[0].Name())
+	runDir := filepath.Join(sandmanDir, "batches", entries[0].Name())
 	if _, err := os.Stat(filepath.Join(runDir, "run.sock")); err != nil {
 		t.Fatalf("run.sock must exist at the time the agent is entered: %v", err)
 	}
