@@ -274,17 +274,26 @@ func TestContinue_IsUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestClean_NoFlagsReturnsErrorFromRoot(t *testing.T) {
-	var buf bytes.Buffer
-	deps := newTestDeps()
-	rootCmd := NewRootCmd(deps)
-	rootCmd.SetOut(&buf)
-	rootCmd.SetErr(&buf)
-	rootCmd.SetArgs([]string{"clean"})
+func TestClean_NoFlagsAccepted(t *testing.T) {
+	dir := newSandmanDir(t)
+	t.Chdir(dir)
 
-	err := rootCmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when no filter flag provided")
+	deps := Dependencies{
+		RepoRoot:    dir,
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    &fakeEventLog{},
+		GitRunner:   &fakeGitRunner{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("expected clean without flags to be accepted, got: %v", err)
 	}
 }
 
