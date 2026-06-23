@@ -127,6 +127,10 @@ func waitForPath(t *testing.T, path string) {
 // inspect agent output cannot hardcode them.
 func findFirstRunLog(t *testing.T, dir string) ([]byte, error) {
 	t.Helper()
+	return findFirstRunLogBytes(dir)
+}
+
+func findFirstRunLogBytes(dir string) ([]byte, error) {
 	batchesDir := filepath.Join(dir, ".sandman", "batches")
 	entries, err := os.ReadDir(batchesDir)
 	if err != nil {
@@ -152,6 +156,39 @@ func findFirstRunLog(t *testing.T, dir string) ([]byte, error) {
 		}
 	}
 	return nil, os.ErrNotExist
+}
+
+// findRunLogForIssue searches .sandman/batches/ for the run.log of a specific
+// issue by matching the run directory suffix (<shortid>-<ts>-<issue>). It
+// fatally fails when no matching run log is found.
+func findRunLogForIssue(t *testing.T, dir string, issue int) string {
+	t.Helper()
+	batchesDir := filepath.Join(dir, ".sandman", "batches")
+	batches, err := os.ReadDir(batchesDir)
+	if err != nil {
+		t.Fatalf("list batches dir: %v", err)
+	}
+	suffix := fmt.Sprintf("-%d", issue)
+	for _, batch := range batches {
+		if !batch.IsDir() {
+			continue
+		}
+		runsDir := filepath.Join(batchesDir, batch.Name(), "runs")
+		runs, err := os.ReadDir(runsDir)
+		if err != nil {
+			continue
+		}
+		for _, run := range runs {
+			if !run.IsDir() {
+				continue
+			}
+			if strings.HasSuffix(run.Name(), suffix) {
+				return filepath.Join(runsDir, run.Name(), "run.log")
+			}
+		}
+	}
+	t.Fatalf("run log not found for issue %d under %s", issue, batchesDir)
+	return ""
 }
 
 func podmanAvailable(t *testing.T) bool {
@@ -675,9 +712,9 @@ touch "$repo_root/.sandman/agent-executed"
 		t.Fatalf("expected no agent marker, got %v", statErr)
 	}
 
-	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
-	if _, statErr := os.Stat(logPath); !os.IsNotExist(statErr) {
-		t.Fatalf("expected no agent log, got %v", statErr)
+	batchesDir := filepath.Join(dir, ".sandman", "batches")
+	if _, statErr := os.Stat(batchesDir); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no batch directory (agent never started), got %v", statErr)
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
@@ -726,11 +763,9 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 	}
 	deps := newRunIntegrationDepsWithSandbox(config.Agent{Name: "test-agent", Command: "pwd"}, "", gh)
 
-	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
-
 	out, err := executeRunCommand(t, deps, "42")
 	if err != nil {
-		if logData, logErr := os.ReadFile(logPath); logErr == nil {
+		if logData, logErr := findFirstRunLog(t, dir); logErr == nil {
 			t.Fatalf("unexpected error: %v\noutput:\n%s\nlog:\n%s", err, out, logData)
 		}
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
@@ -743,7 +778,7 @@ func TestRun_DefaultSandboxSingleIssueUsesContainerWorkdirAndCleansUpWorktree(t 
 		t.Fatalf("expected branch string in summary, got:\n%s", out)
 	}
 
-	logData, err := os.ReadFile(logPath)
+	logData, err := os.ReadFile(findRunLogForIssue(t, dir, 42))
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
@@ -816,7 +851,7 @@ printf 'container-workdir=%s\n' "$PWD"
 	if err != nil {
 		t.Fatalf("read log for issue 42: %v", err)
 	}
-	log100, err := os.ReadFile(filepath.Join(dir, ".sandman", "logs", "100.log"))
+	log100, err := os.ReadFile(findRunLogForIssue(t, dir, 100))
 	if err != nil {
 		t.Fatalf("read log for issue 100: %v", err)
 	}
@@ -952,7 +987,7 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log for issue 42: %v", err)
 	}
-	log100, err := os.ReadFile(filepath.Join(dir, ".sandman", "logs", "100.log"))
+	log100, err := os.ReadFile(findRunLogForIssue(t, dir, 100))
 	if err != nil {
 		t.Fatalf("read log for issue 100: %v", err)
 	}
@@ -1123,8 +1158,7 @@ sleep 1
 
 	hostnames := map[string]struct{}{}
 	for _, issue := range []int{11, 12, 13, 14} {
-		logPath := filepath.Join(dir, ".sandman", "logs", fmt.Sprintf("%d.log", issue))
-		logData, err := os.ReadFile(logPath)
+		logData, err := os.ReadFile(findRunLogForIssue(t, dir, issue))
 		if err != nil {
 			t.Fatalf("read log for issue %d: %v", issue, err)
 		}

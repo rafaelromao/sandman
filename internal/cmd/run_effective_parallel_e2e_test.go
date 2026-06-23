@@ -133,7 +133,7 @@ func slugForIssue(n int) string {
 
 func readQueueingLogField(t *testing.T, dir string, issue int, prefix string) string {
 	t.Helper()
-	logPath := filepath.Join(dir, ".sandman", "logs", fmt.Sprintf("%d.log", issue))
+	logPath := findRunLogForIssue(t, dir, issue)
 	logData, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log for issue %d: %v", issue, err)
@@ -148,7 +148,7 @@ func readQueueingLogField(t *testing.T, dir string, issue int, prefix string) st
 
 func readStartTimestamp(t *testing.T, dir string, issue int) int64 {
 	t.Helper()
-	logPath := filepath.Join(dir, ".sandman", "logs", fmt.Sprintf("%d.log", issue))
+	logPath := findRunLogForIssue(t, dir, issue)
 	info, err := os.Stat(logPath)
 	if err != nil {
 		t.Fatalf("stat log for issue %d: %v", issue, err)
