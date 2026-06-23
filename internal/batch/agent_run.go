@@ -84,6 +84,9 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	runFolder := r.runFolder
 	if runFolder == "" {
+		runFolder = r.sandbox.WorkDir()
+	}
+	if runFolder == "" {
 		return fmt.Errorf("runFolder not set")
 	}
 	if err := os.MkdirAll(runFolder, 0755); err != nil {
