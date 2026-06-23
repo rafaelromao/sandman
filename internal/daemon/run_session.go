@@ -4,26 +4,25 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"reflect"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
 )
 
-// RunSession owns the on-disk artifacts and the per-run sockets that must
-// exist *before* the daemon emits a run.started event and before any
-// AgentRun writes log output. Issue #1024 fixed a class of ghost rows in
-// the event log: a daemon could be killed after emitting run.started but
-// before creating .sandman/runs/<id>/, leaving the portal unable to
-// reconcile the run. RunSession collapses the four-step boot
-// (MkdirAll → WriteManifest → ControlSocket.Start → CommandServer.Start)
-// into a single Prepare call so the ordering is structural, not
-// procedural. A future refactor cannot reorder the steps without
-// rewriting Prepare itself.
+// RunSession owns the on-disk artifacts and the batch-level control socket
+// that must exist *before* the daemon emits a run.started event and before
+// any AgentRun writes log output. Issue #1024 fixed a class of ghost rows
+// in the event log: a daemon could be killed after emitting run.started
+// but before creating .sandman/runs/<id>/, leaving the portal unable to
+// reconcile the run. RunSession collapses the three-step boot
+// (MkdirAll → WriteManifest → ControlSocket.Start) into a single Prepare
+// call so the ordering is structural, not procedural. A future refactor
+// cannot reorder the steps without rewriting Prepare itself.
+//
+// Per-run artifacts (run.json, run.log, run.sock) are created by the
+// orchestrator in the per-row execution path.
 //
 // The session's lifetime is: NewRunSession → Prepare → ... → Close.
-// Close is idempotent and removes the run directory, so the caller
-// writes a single `defer rs.Close()` and never needs to track the
-// individual artifact lifetimes.
+// Close is idempotent and preserves the batch directory on disk.
 type RunSession struct {
 	baseDir string
 	runID   string
@@ -31,7 +30,6 @@ type RunSession struct {
 
 	broadcaster  *Broadcaster
 	ctlSocket    *ControlSocket
-	cmdServer    *CommandServer
 	started      bool
 	closeOnceRan bool
 }
@@ -46,7 +44,6 @@ var (
 	ErrStepManifest      = errors.New("daemon: RunSession.Prepare failed at WriteManifest")
 	ErrStepBatchesIndex  = errors.New("daemon: RunSession.Prepare failed at BatchesIndex")
 	ErrStepControlSocket = errors.New("daemon: RunSession.Prepare failed at ControlSocket.Start")
-	ErrStepCommandServer = errors.New("daemon: RunSession.Prepare failed at CommandServer.Start")
 )
 
 // NewRunSession returns a session bound to the batch directory that
@@ -83,17 +80,19 @@ func (s *RunSession) Broadcaster() *Broadcaster {
 }
 
 // Prepare creates the batch directory, writes the batch manifest, starts
-// the ControlSocket (and CommandServer if commander is non-nil), and
-// appends an entry to the batches index — in that fixed order. The steps
-// are not reorderable: a future refactor that moves any step after
-// Prepare's return value would break the boot invariant that issue #1024
-// enforces.
+// the ControlSocket, and appends an entry to the batches index — in that
+// fixed order. The steps are not reorderable: a future refactor that
+// moves any step after Prepare's return value would break the boot
+// invariant that issue #1024 enforces.
 //
 // On failure, Prepare returns a wrapped sentinel error identifying
 // the failing step. The session is left in a partially-constructed
 // state — the caller must still call Close to release whatever
 // resources were acquired. The orchestrator is never reached, so
 // run.started is never emitted when Prepare fails.
+//
+// Per-run artifacts (run.json, run.log, run.sock) are created by the
+// orchestrator in the per-row execution path, not by Prepare.
 func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) error {
 	s.runDir = s.RunDir()
 
@@ -132,18 +131,6 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 		return fmt.Errorf("%w: %v", ErrStepControlSocket, err)
 	}
 
-	// A typed-nil interface (e.g. `var c IssueCommander = (*T)(nil)`)
-	// is non-nil but unusable; calling cmdServer.Start with such a
-	// value would panic on the first abort request. reflect.IsNil
-	// detects the typed-nil trap by introspecting the dynamic value.
-	hasRealCommander := commander != nil && !reflect.ValueOf(commander).IsNil()
-	if hasRealCommander {
-		s.cmdServer = NewCommandServer(s.runDir, commander)
-		if err := s.cmdServer.Start(); err != nil {
-			return fmt.Errorf("%w: %v", ErrStepCommandServer, err)
-		}
-	}
-
 	s.started = true
 	return nil
 }
@@ -152,20 +139,16 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 // times; only the first call performs teardown. The teardown order
 // matches the boot order in reverse:
 //
-//  1. CommandServer.Stop (if started)
-//  2. ControlSocket.Stop (which also closes the broadcaster)
+//  1. ControlSocket.Stop (which also closes the broadcaster)
 //
 // The batch directory is NOT removed — it persists on disk so the portal
-// can still recover runs from it in Slice 3.
+// can still recover runs from it.
 func (s *RunSession) Close() error {
 	if s.closeOnceRan {
 		return nil
 	}
 	s.closeOnceRan = true
 
-	if s.cmdServer != nil {
-		_ = s.cmdServer.Stop()
-	}
 	if s.ctlSocket != nil {
 		_ = s.ctlSocket.Stop()
 	}

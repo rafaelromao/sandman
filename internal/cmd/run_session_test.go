@@ -136,11 +136,14 @@ func readJSONLEvents(t *testing.T, path string) []events.Event {
 //   - A real AgentRun is invoked (the agent process actually starts).
 //   - The test waits for the agent's start marker, which proves the runnable
 //     has been entered (i.e. the orchestrator's execute() reached runOnce).
-//   - The test then asserts that .sandman/runs/<id>/run.sock,
-//     .sandman/runs/<id>/batch.json, and events.jsonl all exist on disk.
+//   - The test then asserts that <batch>/batch.sock, <batch>/batch.json,
+//     and events.jsonl all exist on disk.
+//
+// Per-run artifacts (run.json, run.log, run.sock) are created by the
+// orchestrator in the per-row execution path, not by RunSession.Prepare.
 //
 // The issue's failure mode is: events.jsonl has run.started and the log
-// file under .sandman/logs/ is written, but .sandman/runs/<id>/ is missing.
+// file under .sandman/logs/ is written, but the batch directory is missing.
 // This test fails in that scenario.
 func TestRun_BootArtifactsBeforeRunStarted(t *testing.T) {
 	env := newRunSessionTestEnv(t)
@@ -210,16 +213,6 @@ func TestRun_BootArtifactsBeforeRunStarted(t *testing.T) {
 	}
 	batchDir := perIssueBatch
 
-	runSockPath := filepath.Join(batchDir, "run.sock")
-	if _, err := os.Stat(runSockPath); err != nil {
-		t.Fatalf("expected run.sock at %s after run.started: %v (issue #964 regression)", runSockPath, err)
-	}
-	if conn, err := net.Dial("unix", runSockPath); err != nil {
-		t.Fatalf("expected run.sock to be live, got dial err: %v", err)
-	} else {
-		conn.Close()
-	}
-
 	batchSockPath := filepath.Join(batchDir, "batch.sock")
 	if _, err := os.Stat(batchSockPath); err != nil {
 		t.Fatalf("expected batch.sock (control) at %s after run.started: %v (issue #964 regression)", batchSockPath, err)
@@ -252,7 +245,7 @@ func TestRun_BootArtifactsBeforeRunStarted(t *testing.T) {
 	// check would have caught that), AND because their mtimes will be
 	// strictly after events.jsonl's mtime.
 	evMtime := mustMtime(t, env.eventsPath)
-	for _, p := range []string{runSockPath, batchSockPath, manifestPath, batchDir} {
+	for _, p := range []string{batchSockPath, manifestPath, batchDir} {
 		pm := mustMtime(t, p)
 		if pm.After(evMtime) {
 			t.Errorf("invariant violated: %s (mtime %s) was modified AFTER events.jsonl (mtime %s) — boot ordering regressed", p, pm.Format(time.RFC3339Nano), evMtime.Format(time.RFC3339Nano))

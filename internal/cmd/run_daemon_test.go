@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -237,33 +236,12 @@ func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
 		t.Fatalf("expected 1 batch dir, got %d", len(entries))
 	}
 
-	cmdSockPath := filepath.Join(batchesDir, entries[0].Name(), "run.sock")
-	conn, err := net.Dial("unix", cmdSockPath)
+	batchSockPath := filepath.Join(batchesDir, entries[0].Name(), "batch.sock")
+	conn, err := net.Dial("unix", batchSockPath)
 	if err != nil {
-		t.Fatalf("cmd.sock should exist during run: %v", err)
-	}
-
-	req := map[string]any{"action": "abort", "issue": 42}
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	var resp map[string]string
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["status"] != "ok" {
-		t.Fatalf("expected status=ok, got %+v", resp)
+		t.Fatalf("batch.sock should exist during run: %v", err)
 	}
 	conn.Close()
-
-	select {
-	case n := <-runner.abortCalls:
-		if n != 42 {
-			t.Fatalf("expected abort(42), got %d", n)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected orchestrator to receive AbortIssue(42)")
-	}
 
 	close(runner.release)
 
