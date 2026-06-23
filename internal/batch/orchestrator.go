@@ -1915,8 +1915,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 				fmt.Fprintf(o.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			taskDoc := prompt.ParseTask(taskContent)
-			attemptRenderCfg.TaskPrompt = prompt.BuildTaskPrompt(taskDoc)
+			attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPrompt(taskContent)
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 			if !taskExists && openPR == nil {
 				if prLookupErr != nil {

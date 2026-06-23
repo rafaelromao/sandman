@@ -1229,8 +1229,11 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 	if spy.req.BaseBranches[42] != "main" {
 		t.Fatalf("expected BaseBranches[42]=main, got %q", spy.req.BaseBranches[42])
 	}
-	if !strings.Contains(spy.req.TaskPrompts[42], "## Prior Context") {
-		t.Fatalf("expected task prompt wrapper, got %q", spy.req.TaskPrompts[42])
+	if !strings.Contains(spy.req.TaskPrompts[42], "## Completed") {
+		t.Fatalf("expected verbatim task prompt (contains ## Completed from fixture), got %q", spy.req.TaskPrompts[42])
+	}
+	if strings.Contains(spy.req.TaskPrompts[42], "## Prior Context") {
+		t.Fatalf("expected verbatim task prompt (not rewritten wrapper), got %q", spy.req.TaskPrompts[42])
 	}
 	if spy.req.Agent != "opencode" {
 		t.Fatalf("expected agent replay, got %q", spy.req.Agent)
@@ -1326,8 +1329,11 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 	if spy.req.BaseBranches[42] != "trunk" {
 		t.Fatalf("expected per-issue base branch override, got %q", spy.req.BaseBranches[42])
 	}
-	if !strings.Contains(spy.req.TaskPrompts[42], "Continue the work.") {
-		t.Fatalf("expected empty-template task prompt, got %q", spy.req.TaskPrompts[42])
+	if !strings.Contains(spy.req.TaskPrompts[42], "# Task") {
+		t.Fatalf("expected default-task-prompt.md fallback (missing task file), got %q", spy.req.TaskPrompts[42])
+	}
+	if !strings.Contains(spy.req.TaskPrompts[42], "## Execution Checklist") {
+		t.Fatalf("expected default-task-prompt.md fallback to include ## Execution Checklist, got %q", spy.req.TaskPrompts[42])
 	}
 }
 
@@ -1475,8 +1481,11 @@ func TestRun_ContinueFlag_WarnsWhenIssueTaskMissing(t *testing.T) {
 	if !strings.Contains(buf.String(), "warning: no task found") {
 		t.Fatalf("expected missing-task warning, got %q", buf.String())
 	}
-	if !strings.Contains(spy.req.TaskPrompts[42], "Continue the work.") {
-		t.Fatalf("expected empty task template fallback, got %q", spy.req.TaskPrompts[42])
+	if !strings.Contains(spy.req.TaskPrompts[42], "# Task") {
+		t.Fatalf("expected default-task-prompt.md fallback when task missing, got %q", spy.req.TaskPrompts[42])
+	}
+	if !strings.Contains(spy.req.TaskPrompts[42], "## Execution Checklist") {
+		t.Fatalf("expected default-task-prompt.md fallback to include ## Execution Checklist, got %q", spy.req.TaskPrompts[42])
 	}
 }
 

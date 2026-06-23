@@ -60,8 +60,11 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun_E2E(t *testing.T) {
 	if spy.req.PromptConfig.Branch != branch {
 		t.Fatalf("expected PromptConfig.Branch=%q, got %q", branch, spy.req.PromptConfig.Branch)
 	}
-	if !strings.Contains(spy.req.PromptConfig.TaskPrompt, "## Prior Context") {
-		t.Fatalf("expected wrapped resume prompt, got %q", spy.req.PromptConfig.TaskPrompt)
+	if !strings.Contains(spy.req.PromptConfig.TaskPrompt, "## Stage: plan-approved") {
+		t.Fatalf("expected verbatim resume prompt with prior ## Stage, got %q", spy.req.PromptConfig.TaskPrompt)
+	}
+	if strings.Contains(spy.req.PromptConfig.TaskPrompt, "## Prior Context") {
+		t.Fatalf("expected verbatim resume prompt (not rewritten), got %q", spy.req.PromptConfig.TaskPrompt)
 	}
 	if strings.Contains(buf.String(), "warning: no task found") {
 		t.Fatalf("did not expect missing-task warning, got %q", buf.String())
