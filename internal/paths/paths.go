@@ -24,15 +24,15 @@ type Layout struct {
 	RunsDir          string
 }
 
-// SafeLogFilename translates a branch name (or any string with /, space, or
-// path-separator characters) into a single filename-safe component. Returns
-// "prompt-only" when the input is empty.
-func (l Layout) SafeLogFilename(branch string) string {
-	name := strings.NewReplacer("/", "-", string(filepath.Separator), "-", " ", "-").Replace(branch)
-	if name == "" {
-		return "prompt-only"
-	}
-	return name
+// BatchDir returns the root directory for a batch: .sandman/batches/<batchID>
+func (l Layout) BatchDir(batchID string) string {
+	return filepath.Join(l.BatchesDir, batchID)
+}
+
+// RunFolder returns the run folder inside a batch: .sandman/batches/<batchID>/runs/<runID>
+// This is where run.json, run.log, and run.sock live.
+func (l Layout) RunFolder(batchID, runID string) string {
+	return filepath.Join(l.BatchDir(batchID), "runs", runID)
 }
 
 // NewLayout resolves a Layout for the given repo root, honoring cfg.WorktreeDir

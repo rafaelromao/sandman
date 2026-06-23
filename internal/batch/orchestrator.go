@@ -1649,6 +1649,7 @@ func (s *runSession) runOnce(
 			agentRun.outputWriter = s.outputWriter
 			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
 			agentRun.sessionName = "Sandman " + runID + ": "
+			agentRun.runFolder = filepath.Join(s.o.layout.BatchesDir, s.runID, "runs", runID)
 		}
 
 		result = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
@@ -1886,7 +1887,8 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		})
 	}
 
-	logPath := s.o.agentLogPath(fmt.Sprintf("%d.log", s.issueNumber))
+	runFolder := filepath.Join(s.o.layout.BatchesDir, s.runID, "runs", runID)
+	logPath := filepath.Join(runFolder, "run.log")
 	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
@@ -2193,17 +2195,8 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		_ = o.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}
 
-	var logFilename string
-	if s.review && strings.TrimSpace(branch) != "" {
-		logFilename = s.o.layout.SafeLogFilename(strings.TrimSpace(branch)) + ".log"
-	} else if trimmed := strings.TrimSpace(runID); trimmed != "" {
-		logFilename = s.o.layout.SafeLogFilename(trimmed) + ".log"
-	} else if trimmed := strings.TrimSpace(branch); trimmed != "" {
-		logFilename = s.o.layout.SafeLogFilename(trimmed) + ".log"
-	} else {
-		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
-	}
-	logPath := s.o.agentLogPath(logFilename)
+	runFolder := filepath.Join(s.o.layout.BatchesDir, s.runID, "runs", runID)
+	logPath := filepath.Join(runFolder, "run.log")
 	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
 			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
@@ -2400,13 +2393,18 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, log
 	// Belt-and-suspenders: if the worktree directory still exists on disk
 	// (e.g. a previous run crashed mid-`git worktree add` and left an orphan
 	// dir that git never registered), remove it directly. Idempotent.
-	if err := os.RemoveAll(wtPath); err != nil {
-		fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, err)
+	// Skip in override mode — worktrees persist until sandman clean.
+	if strandedReconcile == nil || !*strandedReconcile {
+		if err := os.RemoveAll(wtPath); err != nil {
+			fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, err)
+		}
 	}
 
-	// Remove log file
-	if err := os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))); err != nil {
-		fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
+	// Remove log file. Skip in override mode — logs persist until sandman clean.
+	if strandedReconcile == nil || !*strandedReconcile {
+		if err := os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))); err != nil {
+			fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
+		}
 	}
 
 	// Remove events for this issue

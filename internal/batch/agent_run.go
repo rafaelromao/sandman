@@ -22,6 +22,7 @@ type AgentRun struct {
 	branch                     string
 	baseBranch                 string
 	runID                      string
+	batchID                    string
 	review                     bool
 	preset                     string
 	model                      string
@@ -35,6 +36,7 @@ type AgentRun struct {
 	env                        map[string]string
 	outputWriter               io.Writer
 	layout                     paths.Layout
+	runFolder                  string
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -78,25 +80,16 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 }
 
 // Execute runs the agent command inside the sandbox, writing prefixed output to the given writers
-// and to the layout's LogDir (saved log file is also prefixed).
+// and to the run folder's run.log (constant filename, O_APPEND preserved).
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	logDir := r.layout.LogDir
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return fmt.Errorf("create log dir: %w", err)
+	runFolder := r.runFolder
+	if runFolder == "" {
+		return fmt.Errorf("runFolder not set")
 	}
-	var logName string
-	if r.issue != nil {
-		logName = fmt.Sprintf("%d.log", r.issue.Number)
-	} else if r.review && strings.TrimSpace(r.branch) != "" {
-		logName = r.layout.SafeLogFilename(strings.TrimSpace(r.branch)) + ".log"
-	} else if runID := strings.TrimSpace(r.runID); runID != "" {
-		logName = r.layout.SafeLogFilename(runID) + ".log"
-	} else if branch := strings.TrimSpace(r.branch); branch != "" {
-		logName = r.layout.SafeLogFilename(branch) + ".log"
-	} else {
-		return fmt.Errorf("missing log identifier")
+	if err := os.MkdirAll(runFolder, 0755); err != nil {
+		return fmt.Errorf("create run folder: %w", err)
 	}
-	logPath := filepath.Join(logDir, logName)
+	logPath := filepath.Join(runFolder, "run.log")
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("create log file: %w", err)

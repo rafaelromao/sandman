@@ -9,23 +9,17 @@ import (
 	"sort"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
-// IsRunActive reports whether a run directory is currently owned by a live
-// daemon process. A run is considered active when its `run.sock` is
-// connectable. Run dirs that survived a crash (no live socket) are stale and
-// safe to clean up.
-func IsRunActive(runPath string) bool {
-	cmdSock := filepath.Join(runPath, "cmd.sock")
-	conn, err := net.DialTimeout("unix", cmdSock, 100*time.Millisecond)
-	if err == nil {
-		_ = conn.Close()
-		return true
-	}
-
-	runSock := filepath.Join(runPath, "run.sock")
-	conn, err = net.DialTimeout("unix", runSock, 100*time.Millisecond)
+// IsRunActive reports whether a batch directory is currently owned by a live
+// daemon process. A batch is considered active when its `batch.sock` is
+// connectable. Batch dirs that survived a crash (no live socket) are stale
+// and safe to clean up.
+func IsRunActive(batchPath string) bool {
+	batchSock := filepath.Join(batchPath, "batch.sock")
+	conn, err := net.DialTimeout("unix", batchSock, 100*time.Millisecond)
 	if err != nil {
 		return false
 	}
@@ -188,6 +182,38 @@ func ReadManifest(runDir string) (BatchManifest, error) {
 		return BatchManifest{}, fmt.Errorf("decode batch manifest: %w", err)
 	}
 	return manifest, nil
+}
+
+// RunFolder returns the per-run folder path for a given batch root and run ID.
+// It joins batchDir/runs/runID verbatim without auto-generation.
+func RunFolder(batchDir, runID string) string {
+	return filepath.Join(batchDir, "runs", runID)
+}
+
+// BatchSocketPath returns the path to the batch control socket at the batch root.
+func BatchSocketPath(batchDir string) string {
+	return filepath.Join(batchDir, "batch.sock")
+}
+
+// RunSocketPath returns the path to the per-run command socket inside a run folder.
+func RunSocketPath(batchDir, runID string) string {
+	return filepath.Join(RunFolder(batchDir, runID), "run.sock")
+}
+
+// WriteRunManifest writes a RunManifest to the per-run folder under the batch.
+// It creates the run folder if it does not exist.
+func WriteRunManifest(batchDir, runID string, manifest batchindex.RunManifest) error {
+	runDir := RunFolder(batchDir, runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		return fmt.Errorf("create run dir: %w", err)
+	}
+	return batchindex.WriteManifest(runDir, manifest)
+}
+
+// ReadRunManifest reads a RunManifest from the per-run folder under the batch.
+func ReadRunManifest(batchDir, runID string) (batchindex.RunManifest, error) {
+	runDir := RunFolder(batchDir, runID)
+	return batchindex.ReadManifest(runDir)
 }
 
 // RecoverStaleRuns scans dead run batches under baseDir and emits a

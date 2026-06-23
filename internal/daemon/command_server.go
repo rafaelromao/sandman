@@ -55,10 +55,10 @@ type CommandResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
-// CommandSocketPath returns the unix socket path used to send commands
-// to a running sandman daemon.
+// CommandSocketPath returns the unix socket path for the per-run command
+// server inside a run folder.
 func CommandSocketPath(dir string) string {
-	return filepath.Join(dir, "cmd.sock")
+	return filepath.Join(dir, "run.sock")
 }
 
 // CommandServer accepts one-shot JSON command requests on a unix socket

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -33,7 +35,7 @@ func NewAttachCmd() *cobra.Command {
 }
 
 // findDaemonSocket returns the path of the only active sandman socket
-// under baseDir. It looks for run sockets (.sandman/runs/<id>/run.sock)
+// under baseDir. It looks for batch sockets (.sandman/batches/<id>/batch.sock)
 // and the review daemon socket (.sandman/review.sock). If exactly one is
 // live, it is returned. Multiple live sockets is a hard error because it
 // is ambiguous which daemon the operator wants to attach to.
@@ -45,16 +47,17 @@ func findDaemonSocket(baseDir string) (string, error) {
 		candidates = append(candidates, reviewSock)
 	}
 
-	runsDir := filepath.Join(baseDir, "runs")
-	entries, err := os.ReadDir(runsDir)
+	layout := paths.NewLayout(&config.Config{}, baseDir)
+	batchesDir := layout.BatchesDir
+	entries, err := os.ReadDir(batchesDir)
 	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("read runs dir: %w", err)
+		return "", fmt.Errorf("read batches dir: %w", err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		sockPath := filepath.Join(runsDir, entry.Name(), "run.sock")
+		sockPath := filepath.Join(batchesDir, entry.Name(), "batch.sock")
 		if _, err := os.Stat(sockPath); err == nil {
 			candidates = append(candidates, sockPath)
 		}
@@ -66,6 +69,6 @@ func findDaemonSocket(baseDir string) (string, error) {
 	case 1:
 		return candidates[0], nil
 	default:
-		return "", fmt.Errorf("multiple sandman daemons are running; specify a run directory under .sandman/runs/")
+		return "", fmt.Errorf("multiple sandman daemons are running; specify a batch directory under .sandman/batches/")
 	}
 }
