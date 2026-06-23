@@ -2205,17 +2205,12 @@
       const source = summary.source || group[0];
       if (!source) return null;
       const issueLabel = String(source.issueLabel || '').trim();
-      const issueLikeFallback = issueLabel.startsWith('#');
-      const fallbackKey = issueLikeFallback ? 'issue-' + String(issueNumber) : 'review-stub-' + String(issueNumber);
       return {
         ...source,
-        key: fallbackKey,
-        runId: fallbackKey,
         review: false,
         groupedReview: false,
         reviewCount: summary.count,
         reviewVerdict: summary.verdict,
-        ...(issueLikeFallback ? {} : { sourceExists: false }),
         status: summary.status || (summary.live ? 'reviewing' : String(source.status || '').trim()),
         kind: summary.kind,
         issueLabel: issueLabel || ('#' + String(issueNumber)),
@@ -2297,17 +2292,12 @@
       const source = summary.source || group[0];
       if (!source) return null;
       const issueLabel = String(source.issueLabel || '').trim();
-      const issueLikeFallback = issueLabel.startsWith('#');
-      const fallbackKey = issueLikeFallback ? 'issue-' + String(issueNumber) : 'review-stub-' + String(issueNumber);
       return {
         ...source,
-        key: fallbackKey,
-        runId: fallbackKey,
         review: false,
         groupedReview: false,
         reviewCount: summary.count,
         reviewVerdict: summary.verdict,
-        ...(issueLikeFallback ? {} : { sourceExists: false }),
         status: summary.status || (summary.live ? 'reviewing' : String(source.status || '').trim()),
         kind: summary.kind,
         issueLabel: issueLabel || ('#' + String(issueNumber)),
