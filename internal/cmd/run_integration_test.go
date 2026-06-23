@@ -713,8 +713,13 @@ touch "$repo_root/.sandman/agent-executed"
 	}
 
 	batchesDir := filepath.Join(dir, ".sandman", "batches")
-	if _, statErr := os.Stat(batchesDir); !os.IsNotExist(statErr) {
-		t.Fatalf("expected no batch directory (agent never started), got %v", statErr)
+	entries, err := os.ReadDir(batchesDir)
+	if err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				t.Fatalf("expected no batch subdirectory (agent never started), found %s in batches/", e.Name())
+			}
+		}
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
@@ -847,7 +852,7 @@ printf 'container-workdir=%s\n' "$PWD"
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
-	log42, err := findFirstRunLog(t, dir)
+	log42, err := os.ReadFile(findRunLogForIssue(t, dir, 42))
 	if err != nil {
 		t.Fatalf("read log for issue 42: %v", err)
 	}
@@ -983,7 +988,7 @@ func TestRun_DefaultSandboxTwoIssuesQueueWithSingleContainerSlot(t *testing.T) {
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
-	log42, err := findFirstRunLog(t, dir)
+	log42, err := os.ReadFile(findRunLogForIssue(t, dir, 42))
 	if err != nil {
 		t.Fatalf("read log for issue 42: %v", err)
 	}
