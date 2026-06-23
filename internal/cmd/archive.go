@@ -95,6 +95,9 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 	var archived int
 	now := time.Now().UTC()
 	for _, entry := range idx.Entries {
+		if entry.Status != batchindex.StatusActive {
+			continue
+		}
 		if daemon.IsRunActive(entry.Path) {
 			continue
 		}
@@ -254,6 +257,9 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 	var archived int
 	now := time.Now().UTC()
 	for _, entry := range idx.Entries {
+		if entry.Status != batchindex.StatusActive {
+			continue
+		}
 		if daemon.IsRunActive(entry.Path) {
 			continue
 		}
