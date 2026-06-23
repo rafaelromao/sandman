@@ -170,7 +170,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				return nil
 			}
 
-			removed, err := executeClean(actions, gr, layout)
+			removed, err := executeClean(actions, gr, idx, layout)
 			if err != nil {
 				return fmt.Errorf("execute clean: %w", err)
 			}
@@ -229,14 +229,14 @@ func printDryRun(cmd *cobra.Command, actions []cleanAction) {
 	}
 }
 
-func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout) (int, error) {
+func executeClean(actions []cleanAction, gr gitRunner, idx *batchindex.Index, layout paths.Layout) (int, error) {
 	if len(actions) == 0 {
 		return 0, nil
 	}
 
-	idx, err := batchindex.Load(layout.BatchesIndexPath)
-	if err != nil {
-		return 0, err
+	actionIDs := make(map[string]bool)
+	for _, a := range actions {
+		actionIDs[a.BatchID] = true
 	}
 
 	var removed int
@@ -254,14 +254,7 @@ func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout) (int
 
 	var kept []batchindex.Entry
 	for _, entry := range idx.Entries {
-		skip := false
-		for _, a := range actions {
-			if entry.ID == a.BatchID {
-				skip = true
-				break
-			}
-		}
-		if !skip {
+		if !actionIDs[entry.ID] {
 			kept = append(kept, entry)
 		}
 	}
