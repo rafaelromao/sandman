@@ -23,6 +23,9 @@ import (
 func chdirToSandmanDir(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	sandmanDir := filepath.Join(dir, ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
 		t.Fatal(err)
