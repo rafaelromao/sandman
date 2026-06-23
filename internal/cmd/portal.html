@@ -982,6 +982,16 @@
     .json-boolean { color: color-mix(in oklch, var(--danger) 55%, var(--text)); }
     .json-null { color: var(--muted); }
     .json-punctuation { color: color-mix(in oklch, var(--muted) 50%, var(--text)); }
+    .term-prompt { color: var(--accent); font-weight: 600; }
+    .term-tool { color: var(--accent); }
+    .term-pass { color: var(--success); font-weight: 600; }
+    .term-fail { color: var(--danger); font-weight: 600; }
+    .term-heading { color: var(--text); font-weight: 700; }
+    .term-url { color: color-mix(in oklch, var(--accent) 70%, var(--text)); text-decoration: underline; }
+    .term-path { color: color-mix(in oklch, var(--success) 60%, var(--text)); }
+    .term-todo-done { color: var(--success); }
+    .term-todo-active { color: var(--warning); }
+    .term-todo-pending { color: var(--muted); }
     .event-head {
       margin-bottom: 8px;
     }
@@ -1752,7 +1762,10 @@
     function appendStreamLine(runKey, line) {
       const pre = streamPreFor(runKey);
       if (!pre) return;
-      pre.appendChild(document.createTextNode(line + '\n'));
+      const html = SandmanPortalDiff.highlightTerminalLog(line + '\n');
+      const scratch = document.createElement('div');
+      scratch.innerHTML = html;
+      while (scratch.firstChild) pre.appendChild(scratch.firstChild);
       pre.setAttribute('data-rendered-log', (pre.getAttribute('data-rendered-log') || '') + line + '\n');
       if (portalScroll && portalScroll.isSticky(runKey)) {
         pre.scrollTop = pre.scrollHeight;
@@ -2349,7 +2362,7 @@
     function renderTerminalContent(text) {
       const value = String(text || '');
       if (!value) return '';
-      return escapeHTML(value);
+      return SandmanPortalDiff.highlightTerminalLog(value);
     }
 
     function isRunAbortable(run, abortReservations) {

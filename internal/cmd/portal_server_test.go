@@ -1080,7 +1080,7 @@ func TestPortal_PageUsesPlainEscapedTerminalRendering(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"function renderTerminalContent(text)", "return escapeHTML(value);"} {
+	for _, want := range []string{"function renderTerminalContent(text)", "SandmanPortalDiff.highlightTerminalLog(value)"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing terminal-rendering marker %q\n%s", want, content[:min(800, len(content))])
 		}
