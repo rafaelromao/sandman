@@ -34,6 +34,31 @@ func buildRunID(num int, ts, shortid string) string {
 	return runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", num), ts, shortid)
 }
 
+// batchIDForIssue returns the per-row batch directory name for an
+// issue-driven session, derived from the (ts, shortid) pair. The name
+// is unique per batch and forms the segment between <batchesDir>/ and
+// runs/<runID>/ in the new layout.
+func batchIDForIssue(ts, shortid string) string {
+	if shortid == "" && ts == "" {
+		return ""
+	}
+	return shortid + "-" + ts
+}
+
+// batchIDForPromptOnly returns the per-row batch directory name for a
+// prompt-only session. When the caller supplied a user-provided run id
+// (s.runID), that is preferred as the directory name to match the legacy
+// layout; otherwise the (ts, shortid) pair is used.
+func batchIDForPromptOnly(ts, shortid, userRunID string) string {
+	if userRunID != "" {
+		return userRunID
+	}
+	if shortid == "" && ts == "" {
+		return ""
+	}
+	return shortid + "-" + ts
+}
+
 func issueRef(num int) *int {
 	n := num
 	return &n
@@ -1439,6 +1464,13 @@ type runSession struct {
 	// RunID in run.started events instead of an auto-generated fallback.
 	runID string
 
+	// batchID is the per-row batch identifier used to scope the run folder
+	// under <batchesDir>/<batchID>/runs/<runID>. For issue-driven runs it
+	// is derived from (runTS, runShortID); for prompt-only runs from
+	// (batchTS, batchShortID). Empty is treated as a guard failure by the
+	// execute path (returns AgentRunResult{Status: "failure", ...}).
+	batchID string
+
 	// batchTS and batchShortID are the timestamp and short-id components
 	// of the auto-generated batch id for prompt-only runs. Used to
 	// construct the per-row RunID in run.started events when runID is
@@ -1477,6 +1509,45 @@ type runSession struct {
 
 // applyOverrideAndIdentity applies the session mode override and the resolved git identity to wt.
 // On identity failure returns (_, false) so the caller can short-circuit.
+// runFolderFor returns the per-run folder path under the batch for the
+// given per-row runID. Replaces the legacy join that collapsed to
+// <batchesDir>/runs/<runID> when s.runID was empty (issue-driven runs).
+// When s.batchID is empty (e.g. legacy callers that did not pass
+// runTS/runShortID), it falls back to deriving a batchID from runID so
+// the path is still scoped under a per-batch directory rather than
+// dropping the batchID segment entirely.
+func (s *runSession) runFolderFor(runID string) string {
+	batchID := s.batchID
+	if batchID == "" {
+		batchID = batchIDFromRunID(runID)
+	}
+	if batchID == "" {
+		return filepath.Join(s.o.layout.BatchesDir, "runs", runID)
+	}
+	return s.o.layout.RunFolder(batchID, runID)
+}
+
+// batchIDFromRunID derives a stable batch directory name from a
+// per-row runID. The new runID format is `<shortid>-<ts>-<subject>`
+// (runid.NewRunID); we strip the subject suffix to recover the batch
+// prefix. For legacy runIDs without that prefix, the whole runID is
+// returned so the path still has a batchID segment.
+func batchIDFromRunID(runID string) string {
+	if runID == "" {
+		return ""
+	}
+	dashCount := 0
+	for i := 0; i < len(runID); i++ {
+		if runID[i] == '-' {
+			dashCount++
+			if dashCount == 2 {
+				return runID[:i]
+			}
+		}
+	}
+	return runID
+}
+
 func (s *runSession) applyOverrideAndIdentity(wt sandbox.Sandbox, branch string) (AgentRunResult, bool) {
 	o := s.o
 	wt.SetOverride(s.mode == ModeOverride)
@@ -1649,6 +1720,7 @@ func (s *runSession) runOnce(
 			agentRun.outputWriter = s.outputWriter
 			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
 			agentRun.sessionName = "Sandman " + runID + ": "
+			agentRun.runFolder = s.runFolderFor(runID)
 		}
 
 		result = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
@@ -1743,6 +1815,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context,
 		strandedReconcile:          strandedReconcile,
 		runTS:                      runTS,
 		runShortID:                 runShortID,
+		batchID:                    batchIDForIssue(runTS, runShortID),
 		parentCtx:                  parentCtx,
 		opts:                       o.runSessionOpts,
 	}
@@ -1886,7 +1959,8 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		})
 	}
 
-	logPath := s.o.agentLogPath(fmt.Sprintf("%d.log", s.issueNumber))
+	runFolder := s.runFolderFor(runID)
+	logPath := filepath.Join(runFolder, "run.log")
 	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
@@ -2073,6 +2147,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		runID:                      runID,
 		batchTS:                    batchTS,
 		batchShortID:               batchShortID,
+		batchID:                    batchIDForPromptOnly(batchTS, batchShortID, runID),
 		userProvidedRunID:          runID,
 		parentCtx:                  ctx,
 		opts:                       o.runSessionOpts,
@@ -2192,17 +2267,8 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		_ = o.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}
 
-	var logFilename string
-	if s.review && strings.TrimSpace(branch) != "" {
-		logFilename = s.o.layout.SafeLogFilename(strings.TrimSpace(branch)) + ".log"
-	} else if trimmed := strings.TrimSpace(runID); trimmed != "" {
-		logFilename = s.o.layout.SafeLogFilename(trimmed) + ".log"
-	} else if trimmed := strings.TrimSpace(branch); trimmed != "" {
-		logFilename = s.o.layout.SafeLogFilename(trimmed) + ".log"
-	} else {
-		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
-	}
-	logPath := s.o.agentLogPath(logFilename)
+	runFolder := s.runFolderFor(runID)
+	logPath := filepath.Join(runFolder, "run.log")
 	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
 			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
@@ -2399,13 +2465,18 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, log
 	// Belt-and-suspenders: if the worktree directory still exists on disk
 	// (e.g. a previous run crashed mid-`git worktree add` and left an orphan
 	// dir that git never registered), remove it directly. Idempotent.
-	if err := os.RemoveAll(wtPath); err != nil {
-		fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, err)
+	// Skip in override mode — worktrees persist until sandman clean.
+	if strandedReconcile == nil || !*strandedReconcile {
+		if err := os.RemoveAll(wtPath); err != nil {
+			fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, err)
+		}
 	}
 
-	// Remove log file
-	if err := os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))); err != nil {
-		fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
+	// Remove log file. Skip in override mode — logs persist until sandman clean.
+	if strandedReconcile == nil || !*strandedReconcile {
+		if err := os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))); err != nil {
+			fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
+		}
 	}
 
 	// Remove events for this issue

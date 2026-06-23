@@ -13,20 +13,13 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
-// IsRunActive reports whether a run directory is currently owned by a live
-// daemon process. A run is considered active when its `run.sock` is
-// connectable. Run dirs that survived a crash (no live socket) are stale and
-// safe to clean up.
-func IsRunActive(runPath string) bool {
-	cmdSock := filepath.Join(runPath, "cmd.sock")
-	conn, err := net.DialTimeout("unix", cmdSock, 100*time.Millisecond)
-	if err == nil {
-		_ = conn.Close()
-		return true
-	}
-
-	runSock := filepath.Join(runPath, "run.sock")
-	conn, err = net.DialTimeout("unix", runSock, 100*time.Millisecond)
+// IsRunActive reports whether a batch directory is currently owned by a live
+// daemon process. A batch is considered active when its `batch.sock` is
+// connectable. Batch dirs that survived a crash (no live socket) are stale
+// and safe to clean up.
+func IsRunActive(batchPath string) bool {
+	batchSock := filepath.Join(batchPath, "batch.sock")
+	conn, err := net.DialTimeout("unix", batchSock, 100*time.Millisecond)
 	if err != nil {
 		return false
 	}
@@ -34,10 +27,10 @@ func IsRunActive(runPath string) bool {
 	return true
 }
 
-// DeadBatch describes a run directory under <baseDir>/runs/ whose daemon
+// DeadBatch describes a batch directory under <baseDir>/batches/ whose daemon
 // process is no longer live, paired with the batch manifest that the
-// directory persisted. RunDir is the absolute path to the run directory.
-// A run dir with no manifest file is returned with the zero-value
+// directory persisted. RunDir is the absolute path to the batch directory.
+// A batch dir with no manifest file is returned with the zero-value
 // BatchManifest; only a malformed manifest is treated as an error.
 type DeadBatch struct {
 	RunDir   string
@@ -60,61 +53,41 @@ func (d DeadBatch) RunTimestamp() time.Time {
 	return info.ModTime()
 }
 
-// FindDeadRunBatches scans <baseDir>/runs/ and <baseDir>/batches/ for run
-// directories that are not currently owned by a live daemon and returns
-// their parsed manifests. Results are sorted lexicographically by RunDir
-// for stable iteration. A run dir with no manifest is still returned with
-// the zero-value BatchManifest. Returns (nil, nil) if neither runs/ nor
-// batches/ exists so callers can treat a fresh repository the same as a
-// clean one.
+// FindDeadRunBatches scans <baseDir>/batches/ for batch directories that are
+// not currently owned by a live daemon and returns their parsed
+// manifests. Results are sorted lexicographically by RunDir for stable
+// iteration. A batch dir with no `batch.json` is still returned with the
+// zero-value BatchManifest. Returns (nil, nil) if <baseDir>/batches/ is
+// missing so callers can treat a fresh repository the same as a clean
+// one.
 func FindDeadRunBatches(baseDir string) ([]DeadBatch, error) {
-	runsDir := filepath.Join(baseDir, "runs")
 	batchesDir := filepath.Join(baseDir, "batches")
-
-	var allDirs []string
-
-	if entries, err := os.ReadDir(runsDir); err != nil {
-		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("read runs dir: %w", err)
+	entries, err := os.ReadDir(batchesDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
 		}
-	} else {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				allDirs = append(allDirs, filepath.Join(runsDir, entry.Name()))
-			}
-		}
-	}
-
-	if entries, err := os.ReadDir(batchesDir); err != nil {
-		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("read batches dir: %w", err)
-		}
-	} else {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				allDirs = append(allDirs, filepath.Join(batchesDir, entry.Name()))
-			}
-		}
-	}
-
-	if len(allDirs) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("read batches dir: %w", err)
 	}
 
 	var batches []DeadBatch
-	for _, runPath := range allDirs {
-		if IsRunActive(runPath) {
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			continue
 		}
-		manifest, err := ReadManifest(runPath)
+		batchPath := filepath.Join(batchesDir, entry.Name())
+		if IsRunActive(batchPath) {
+			continue
+		}
+		manifest, err := ReadManifest(batchPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				manifest = BatchManifest{}
 			} else {
-				return nil, fmt.Errorf("read manifest for %s: %w", runPath, err)
+				return nil, fmt.Errorf("read manifest for %s: %w", batchPath, err)
 			}
 		}
-		batches = append(batches, DeadBatch{RunDir: runPath, Manifest: manifest})
+		batches = append(batches, DeadBatch{RunDir: batchPath, Manifest: manifest})
 	}
 	sort.SliceStable(batches, func(i, j int) bool {
 		return batches[i].RunDir < batches[j].RunDir
@@ -122,9 +95,9 @@ func FindDeadRunBatches(baseDir string) ([]DeadBatch, error) {
 	return batches, nil
 }
 
-// CleanupStaleRunSnapshots removes `<baseDir>/runs/<id>/config/` subtrees
-// for run dirs that are not currently active (no live `run.sock`). Returns
-// the number of snapshot directories removed. The run dir itself and its
+// CleanupStaleRunSnapshots removes `<baseDir>/batches/<id>/config/` subtrees
+// for batch dirs that are not currently active (no live `batch.sock`). Returns
+// the number of snapshot directories removed. The batch dir itself and its
 // manifest are left in place so operators can inspect them; the snapshot
 // subtree, which can contain secrets copied from the host, is the part
 // that must not accumulate after crashes.
@@ -239,6 +212,38 @@ func ReadManifest(runDir string) (BatchManifest, error) {
 		return BatchManifest{}, fmt.Errorf("decode batch manifest: %w", err)
 	}
 	return manifest, nil
+}
+
+// RunFolder returns the per-run folder path for a given batch root and run ID.
+// It joins batchDir/runs/runID verbatim without auto-generation.
+func RunFolder(batchDir, runID string) string {
+	return filepath.Join(batchDir, "runs", runID)
+}
+
+// BatchSocketPath returns the path to the batch control socket at the batch root.
+func BatchSocketPath(batchDir string) string {
+	return filepath.Join(batchDir, "batch.sock")
+}
+
+// RunSocketPath returns the path to the per-run command socket inside a run folder.
+func RunSocketPath(batchDir, runID string) string {
+	return filepath.Join(RunFolder(batchDir, runID), "run.sock")
+}
+
+// WriteRunManifest writes a RunManifest to the per-run folder under the batch.
+// It creates the run folder if it does not exist.
+func WriteRunManifest(batchDir, runID string, manifest batchindex.RunManifest) error {
+	runDir := RunFolder(batchDir, runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		return fmt.Errorf("create run dir: %w", err)
+	}
+	return batchindex.WriteManifest(runDir, manifest)
+}
+
+// ReadRunManifest reads a RunManifest from the per-run folder under the batch.
+func ReadRunManifest(batchDir, runID string) (batchindex.RunManifest, error) {
+	runDir := RunFolder(batchDir, runID)
+	return batchindex.ReadManifest(runDir)
 }
 
 // RecoverStaleRuns scans dead run batches under baseDir and emits a
@@ -449,7 +454,7 @@ func buildSupersededIssues(runs []events.RunState) map[int]bool {
 }
 
 // recoverOrphanActiveRuns recovers active RunStates that have no matching
-// batch directory under <baseDir>/runs/. In addition to truly active runs,
+// batch directory under <baseDir>/batches/. In addition to truly active runs,
 // queued and blocked runs are also recovered when no subsequent run.started
 // exists for the same issue (meaning the queued/blocked state was never
 // superseded by actual work — the batch was destroyed, not completed).
@@ -464,37 +469,34 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 		}
 	}
 
-	// Collect all batch manifests under runs/ and batches/ (both live and dead dirs).
+	// Collect all batch manifests under batches/ (both live and dead dirs).
 	type batchInfo struct {
 		dir      string
 		manifest BatchManifest
 	}
 	var batches []batchInfo
-	runsDir := filepath.Join(baseDir, "runs")
 	batchesDir := filepath.Join(baseDir, "batches")
-
-	for _, dir := range []string{runsDir, batchesDir} {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return 0, fmt.Errorf("read dir for orphan scan: %w", err)
+	entries, err := os.ReadDir(batchesDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return 0, fmt.Errorf("read batches dir for orphan scan: %w", err)
 		}
+	}
+	if entries != nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
 			}
-			runPath := filepath.Join(dir, entry.Name())
-			manifest, err := ReadManifest(runPath)
+			batchPath := filepath.Join(batchesDir, entry.Name())
+			manifest, err := ReadManifest(batchPath)
 			if err != nil {
 				if os.IsNotExist(err) {
 					manifest = BatchManifest{}
 				} else {
-					return 0, fmt.Errorf("read manifest for orphan scan %s: %w", runPath, err)
+					return 0, fmt.Errorf("read manifest for orphan scan %s: %w", batchPath, err)
 				}
 			}
-			batches = append(batches, batchInfo{dir: runPath, manifest: manifest})
+			batches = append(batches, batchInfo{dir: batchPath, manifest: manifest})
 		}
 	}
 

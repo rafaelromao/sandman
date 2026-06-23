@@ -94,7 +94,7 @@ func NewPortalCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "portal",
 		Short: "Serve a local portal for current Sandman runs",
-		Long:  "Serve a portal for the current repository and poll .sandman/runs for live Sandman instances. By default the server binds to 127.0.0.1; pass --host or set SANDMAN_PORTAL_HOST to opt in to a different interface (e.g. 0.0.0.0).",
+		Long:  "Serve a portal for the current repository and poll .sandman/batches for live Sandman instances. By default the server binds to 127.0.0.1; pass --host or set SANDMAN_PORTAL_HOST to opt in to a different interface (e.g. 0.0.0.0).",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port, err := cmd.Flags().GetInt("port")
 			if err != nil {
@@ -376,13 +376,13 @@ func hasGitMarker(dir string) bool {
 }
 
 func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
-	runsDir := filepath.Join(repoRoot, ".sandman", "runs")
-	entries, err := os.ReadDir(runsDir)
+	batchesDir := filepath.Join(repoRoot, ".sandman", "batches")
+	entries, err := os.ReadDir(batchesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("read runs dir: %w", err)
+		return nil, fmt.Errorf("read batches dir: %w", err)
 	}
 
 	instances := make([]portalInstance, 0, len(entries))
@@ -390,18 +390,13 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		runDir := filepath.Join(runsDir, entry.Name())
-		sockPath := filepath.Join(runDir, "run.sock")
+		batchDir := filepath.Join(batchesDir, entry.Name())
+		sockPath := filepath.Join(batchDir, "batch.sock")
 		info, err := os.Lstat(sockPath)
 		if err != nil || info.IsDir() || info.Mode()&os.ModeSocket == 0 {
 			continue
 		}
-		// A finished batch leaves a run.sock inode on disk with the
-		// socket bit set, but the process that owned it is gone. Lstat
-		// only checks file existence, not whether the socket is actually
-		// connectable, so we probe the run dir for a live daemon and skip
-		// entries that no longer have one.
-		if !portalRunLivenessProbe(runDir) {
+		if !portalRunLivenessProbe(batchDir) {
 			continue
 		}
 		instances = append(instances, portalInstance{Name: entry.Name(), SocketPath: sockPath})

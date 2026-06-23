@@ -16,7 +16,7 @@ type ControlSocket struct {
 }
 
 func NewControlSocket(dir string, broadcaster *Broadcaster) *ControlSocket {
-	return NewControlSocketWithName(dir, "run.sock", broadcaster)
+	return NewControlSocketWithName(dir, "batch.sock", broadcaster)
 }
 
 func NewControlSocketWithName(dir, name string, broadcaster *Broadcaster) *ControlSocket {

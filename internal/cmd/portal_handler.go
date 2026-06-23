@@ -172,11 +172,10 @@ func (h *portalHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing path", http.StatusBadRequest)
 		return
 	}
-	logDir := filepath.Join(h.repoRoot, ".sandman", "logs")
-	logPrefix := filepath.Join(".sandman", "logs")
-	name := strings.TrimPrefix(relPath, logPrefix)
+	sandmanPrefix := filepath.Join(".sandman")
+	name := strings.TrimPrefix(relPath, sandmanPrefix)
 	name = strings.TrimPrefix(name, string(filepath.Separator))
-	if name == "" {
+	if name == "" || name == relPath {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
@@ -184,13 +183,13 @@ func (h *portalHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	info, err := fs.Stat(os.DirFS(logDir), name)
+	info, err := fs.Stat(os.DirFS(h.repoRoot), name)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", info.Name()))
-	http.ServeFileFS(w, r, os.DirFS(logDir), name)
+	http.ServeFileFS(w, r, os.DirFS(h.repoRoot), name)
 }
 
 func (h *portalHandler) handlePage(w http.ResponseWriter, r *http.Request) {
