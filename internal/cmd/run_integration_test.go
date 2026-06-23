@@ -562,8 +562,6 @@ func TestRun_WorktreeSandboxSingleIssuePersistsLogAndRemovesWorktree(t *testing.
 		t.Fatalf("expected branch string in summary, got:\n%s", out)
 	}
 
-	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
-	_ = logPath
 	logData, err := findFirstRunLog(t, dir)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -612,11 +610,9 @@ func TestRun_WorktreeSandboxOverrideFlagClearsArtifacts(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
-	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
-	_ = logPath
 	verifyPath(worktreePath, true)
 	if _, err := findFirstRunLog(t, dir); err != nil {
-		t.Fatalf("expected first run.log to exist, got: %v", err)
+		t.Fatalf("expected first run.log to exist after override, got: %v", err)
 	}
 	staleMarkerPath := filepath.Join(worktreePath, "stale-marker.txt")
 	if err := os.WriteFile(staleMarkerPath, []byte("stale\n"), 0644); err != nil {
@@ -1179,8 +1175,6 @@ func TestRun_WorktreeSandboxSingleIssuePropagatesAgentEnvToLog(t *testing.T) {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, out)
 	}
 
-	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
-	_ = logPath
 	logData, err := findFirstRunLog(t, dir)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -1378,8 +1372,6 @@ func TestRun_PodmanSandboxUsesDotGitconfigIdentityWithoutMutatingWorktreeConfig(
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
-	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
-	_ = logPath
 	logData, err := findFirstRunLog(t, dir)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -1430,8 +1422,6 @@ func TestRun_PodmanSandboxUsesXDGGitIdentityWithoutMutatingWorktreeConfig(t *tes
 		t.Fatalf("expected worktree hint, got:\n%s", out)
 	}
 
-	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
-	_ = logPath
 	logData, err := findFirstRunLog(t, dir)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -1507,8 +1497,6 @@ func TestRun_WorktreeSandboxUsesHostGitIdentityWithoutMutatingWorktreeConfig(t *
 		t.Fatalf("expected worktree hint, got:\n%s", out)
 	}
 
-	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
-	_ = logPath
 	logData, err := findFirstRunLog(t, dir)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -1573,8 +1561,6 @@ git add test-file.txt
 		t.Fatalf("expected success summary, got:\n%s", out)
 	}
 
-	logPath := filepath.Join(dir, ".sandman", "logs", "42.log")
-	_ = logPath
 	logData, err := findFirstRunLog(t, dir)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
