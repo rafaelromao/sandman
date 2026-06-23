@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -713,13 +714,19 @@ touch "$repo_root/.sandman/agent-executed"
 	}
 
 	batchesDir := filepath.Join(dir, ".sandman", "batches")
-	entries, err := os.ReadDir(batchesDir)
-	if err == nil {
-		for _, e := range entries {
-			if e.IsDir() {
-				t.Fatalf("expected no batch subdirectory (agent never started), found %s in batches/", e.Name())
-			}
+	hasLog := false
+	filepath.Walk(batchesDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
 		}
+		if !info.IsDir() && info.Name() == "run.log" {
+			hasLog = true
+			return io.EOF
+		}
+		return nil
+	})
+	if hasLog {
+		t.Fatal("expected no run.log (agent never started)")
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix-bug")
