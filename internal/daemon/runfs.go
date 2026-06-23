@@ -220,7 +220,7 @@ func ReadManifest(runDir string) (BatchManifest, error) {
 		var runManifest batchindex.RunManifest
 		if err := json.Unmarshal(data, &runManifest); err == nil {
 			manifest := BatchManifest{
-				RunID:     runManifest.RunID,
+				BatchId:   runManifest.BatchID,
 				CreatedAt: runManifest.CreatedAt,
 			}
 			if runManifest.Issue > 0 {
