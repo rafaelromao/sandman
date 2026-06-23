@@ -64,6 +64,9 @@ func TestRun_AutoFlag_EmitsAutoSelectEventsForAgentDrivenPath(t *testing.T) {
 	if err := os.MkdirAll(".sandman", 0o755); err != nil {
 		t.Fatalf("mkdir .sandman: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(sandmanDir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatalf("create .git marker: %v", err)
+	}
 	promptPath := filepath.Join(".sandman", "auto-selection-prompt.md")
 	if err := os.WriteFile(promptPath, []byte("priority prompt"), 0644); err != nil {
 		t.Fatalf("create priority prompt: %v", err)
@@ -134,6 +137,9 @@ func TestRun_AutoFlag_AgentFailurePropagatesErrorAndEmitsFailureFinished(t *test
 	t.Chdir(sandmanDir)
 	if err := os.MkdirAll(".sandman", 0o755); err != nil {
 		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sandmanDir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatalf("create .git marker: %v", err)
 	}
 	promptPath := filepath.Join(".sandman", "auto-selection-prompt.md")
 	if err := os.WriteFile(promptPath, []byte("priority prompt"), 0644); err != nil {
@@ -727,6 +733,9 @@ func TestRun_AutoFlag_ExplicitPRDExpandsBeforeSelection(t *testing.T) {
 	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
 		t.Fatalf("create sandman dir: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatalf("create .git marker: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
 		t.Fatalf("create auto-selection-prompt.md: %v", err)
 	}
@@ -829,6 +838,9 @@ func TestRun_AutoFlag_LabelQueryExpandsPRD(t *testing.T) {
 	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
 		t.Fatalf("create sandman dir: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatalf("create .git marker: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
 		t.Fatalf("create auto-selection-prompt.md: %v", err)
 	}
@@ -929,6 +941,9 @@ func TestRun_AutoFlag_ExplicitArgsDedupeAfterExpansion(t *testing.T) {
 	sandmanDir := filepath.Join(repoDir, ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
 		t.Fatalf("create sandman dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatalf("create .git marker: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
 		t.Fatalf("create auto-selection-prompt.md: %v", err)
@@ -1071,6 +1086,9 @@ func TestRun_AutoFlag_PRDWithNoChildrenFailsBeforeSelection(t *testing.T) {
 	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
 		t.Fatalf("create sandman dir: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatalf("create .git marker: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
 		t.Fatalf("create auto-selection-prompt.md: %v", err)
 	}
@@ -1150,6 +1168,9 @@ func TestRun_AutoFlag_NestedPRDFailsBeforeSelection(t *testing.T) {
 	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
 		t.Fatalf("create sandman dir: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatalf("create .git marker: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
 		t.Fatalf("create auto-selection-prompt.md: %v", err)
 	}
@@ -1227,6 +1248,9 @@ func TestRun_AutoFlag_NonPRDPassthroughUntouched(t *testing.T) {
 	sandmanDir := filepath.Join(repoDir, ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
 		t.Fatalf("create sandman dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatalf("create .git marker: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
 		t.Fatalf("create auto-selection-prompt.md: %v", err)
@@ -1383,32 +1407,35 @@ func TestRun_AutoFlag_QueryFilterExpandsPRD(t *testing.T) {
 	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
 		t.Fatalf("create sandman dir: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatalf("create .git marker: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte("custom prompt"), 0o644); err != nil {
 		t.Fatalf("create auto-selection-prompt.md: %v", err)
 	}
 
 	agentDir := t.TempDir()
 	agentScript := `#!/bin/sh
-set -eu
-if [ ! -f .sandman/selection-prompt.md ]; then
-  echo "selection-prompt.md missing" >&2
-  exit 2
-fi
-if grep -q '^#1 ' .sandman/selection-prompt.md; then
-  echo "PRD #1 leaked into selection prompt" >&2
-  exit 3
-fi
-if ! grep -q '^#10 ' .sandman/selection-prompt.md; then
-  echo "child #10 missing from selection prompt" >&2
-  exit 4
-fi
-if ! grep -q '^#30 ' .sandman/selection-prompt.md; then
-  echo "regular #30 missing from selection prompt" >&2
-  exit 5
-fi
-mkdir -p .sandman
-printf '[10, 30]\n' > .sandman/selected-issues.json
-exit 0
+	set -eu
+	if [ ! -f .sandman/selection-prompt.md ]; then
+	  echo "selection-prompt.md missing" >&2
+	  exit 2
+	fi
+	if grep -q '^#1 ' .sandman/selection-prompt.md; then
+	  echo "PRD #1 leaked into selection prompt" >&2
+	  exit 3
+	fi
+	if ! grep -q '^#10 ' .sandman/selection-prompt.md; then
+	  echo "child #10 missing from selection prompt" >&2
+	  exit 4
+	fi
+	if ! grep -q '^#30 ' .sandman/selection-prompt.md; then
+	  echo "regular #30 missing from selection prompt" >&2
+	  exit 5
+	fi
+	mkdir -p .sandman
+	printf '[10, 30]\n' > .sandman/selected-issues.json
+	exit 0
 `
 	if err := os.WriteFile(filepath.Join(agentDir, "opencode"), []byte(agentScript), 0o755); err != nil {
 		t.Fatalf("write fake agent: %v", err)

@@ -96,6 +96,9 @@ func runGuardDeps(t testing.TB, runner batch.Runner, cfg *config.Config) Depende
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(dir)
 	return Dependencies{
 		BatchRunner:  runner,

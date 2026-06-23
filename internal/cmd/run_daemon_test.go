@@ -27,6 +27,9 @@ func chdirToSandmanDir(t testing.TB) string {
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +64,9 @@ func chdirToShortSandmanDir(t testing.TB) string {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sandmanDir := filepath.Join(dir, ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
