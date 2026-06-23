@@ -962,7 +962,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		portalRun.SocketPath = active.SocketPath
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 	} else if portalRun.Kind == "active" {
-		sockPath := filepath.Join(paths.NewLayout(&config.Config{}, repoRoot).RunsDir, runState.RunID, "run.sock")
+		sockPath := filepath.Join(paths.NewLayout(&config.Config{}, repoRoot).BatchesDir, runState.RunID, "batch.sock")
 		if _, err := os.Lstat(sockPath); err == nil {
 			portalRun.SocketPath = sockPath
 			v.markCompletedIfSocketDead(&portalRun, sockPath)
@@ -1250,7 +1250,7 @@ func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
 		return false
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	info, err := os.Stat(filepath.Join(layout.RunsDir, runID))
+	info, err := os.Stat(filepath.Join(layout.BatchesDir, runID))
 	if err != nil {
 		return false
 	}
@@ -1266,11 +1266,12 @@ func (v *portalRunsView) portalLogPathForRun(repoRoot string, issueNumber int, b
 		if len(batchDir) > 0 && batchDir[0] != "" {
 			return filepath.Join(batchDir[0], "runs", runID, "run.log")
 		}
-		return ""
+		// No batch dir — fall through to legacy per-issue/per-branch log
+		// path so historical (pre-batch-folder) runs still resolve.
 	}
 
 	if review && branch != "" {
-		return filepath.Join(layout.LogDir, fmt.Sprintf("review-%d.log", prNumber))
+		return filepath.Join(layout.LogDir, fmt.Sprintf("%s.log", branch))
 	}
 	if issueNumber > 0 {
 		return filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNumber))

@@ -127,7 +127,6 @@ func TestArchiveRun_NonexistentRunReturnsError(t *testing.T) {
 }
 
 func TestArchiveRun_LiveRunReturnsError(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
@@ -143,11 +142,11 @@ func TestArchiveRun_LiveRunReturnsError(t *testing.T) {
 		{ID: "live-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
-	cmdServer := daemon.NewCommandServer(batchDir, nil)
-	if err := cmdServer.Start(); err != nil {
-		t.Fatalf("start command server: %v", err)
+	ctlSocket := daemon.NewControlSocket(batchDir, daemon.NewBroadcaster())
+	if err := ctlSocket.Start(); err != nil {
+		t.Fatalf("start control socket: %v", err)
 	}
-	defer cmdServer.Stop()
+	defer ctlSocket.Stop()
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -218,7 +217,6 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 }
 
 func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
@@ -234,11 +232,11 @@ func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
 		{ID: "live-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
-	cmdServer := daemon.NewCommandServer(batchDir, nil)
-	if err := cmdServer.Start(); err != nil {
-		t.Fatalf("start command server: %v", err)
+	ctlSocket := daemon.NewControlSocket(batchDir, daemon.NewBroadcaster())
+	if err := ctlSocket.Start(); err != nil {
+		t.Fatalf("start control socket: %v", err)
 	}
-	defer cmdServer.Stop()
+	defer ctlSocket.Stop()
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -498,7 +496,6 @@ func TestArchiveOlderThan_SkipsYoungDeadBatch(t *testing.T) {
 }
 
 func TestArchiveOlderThan_SkipsLiveBatch(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
@@ -515,11 +512,11 @@ func TestArchiveOlderThan_SkipsLiveBatch(t *testing.T) {
 		{ID: "old-live", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: old, Issues: []int{99}},
 	})
 
-	cmdServer := daemon.NewCommandServer(batchDir, nil)
-	if err := cmdServer.Start(); err != nil {
-		t.Fatalf("start command server: %v", err)
+	ctlSocket := daemon.NewControlSocket(batchDir, daemon.NewBroadcaster())
+	if err := ctlSocket.Start(); err != nil {
+		t.Fatalf("start control socket: %v", err)
 	}
-	defer cmdServer.Stop()
+	defer ctlSocket.Stop()
 
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
@@ -540,7 +537,6 @@ func TestArchiveOlderThan_SkipsLiveBatch(t *testing.T) {
 }
 
 func TestArchiveOlderThan_MixedBatchArchivesOnlyEligible(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
@@ -570,17 +566,17 @@ func TestArchiveOlderThan_MixedBatchArchivesOnlyEligible(t *testing.T) {
 		{ID: "young-live", Path: youngLiveDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: youngTs, Issues: []int{4}},
 	})
 
-	cmdServer := daemon.NewCommandServer(oldLiveDir, nil)
-	if err := cmdServer.Start(); err != nil {
-		t.Fatalf("start live command server: %v", err)
+	oldLiveSock := daemon.NewControlSocket(oldLiveDir, daemon.NewBroadcaster())
+	if err := oldLiveSock.Start(); err != nil {
+		t.Fatalf("start old-live control socket: %v", err)
 	}
-	defer cmdServer.Stop()
+	defer oldLiveSock.Stop()
 
-	otherLive := daemon.NewCommandServer(youngLiveDir, nil)
-	if err := otherLive.Start(); err != nil {
-		t.Fatalf("start young-live command server: %v", err)
+	youngLiveSock := daemon.NewControlSocket(youngLiveDir, daemon.NewBroadcaster())
+	if err := youngLiveSock.Start(); err != nil {
+		t.Fatalf("start young-live control socket: %v", err)
 	}
-	defer otherLive.Stop()
+	defer youngLiveSock.Stop()
 
 	existingArchive := filepath.Join(dir, ".sandman", "archive", "old-dead")
 	if err := os.MkdirAll(existingArchive, 0755); err != nil {
@@ -919,7 +915,6 @@ func TestArchiveStale_AllTerminatedDeadBatchIsArchived(t *testing.T) {
 }
 
 func TestArchiveStale_LiveBatchIsNoop(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
@@ -936,11 +931,11 @@ func TestArchiveStale_LiveBatchIsNoop(t *testing.T) {
 		{ID: "live-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: createdAt, Issues: []int{42}},
 	})
 
-	cmdServer := daemon.NewCommandServer(batchDir, nil)
-	if err := cmdServer.Start(); err != nil {
-		t.Fatalf("start command server: %v", err)
+	ctlSocket := daemon.NewControlSocket(batchDir, daemon.NewBroadcaster())
+	if err := ctlSocket.Start(); err != nil {
+		t.Fatalf("start control socket: %v", err)
 	}
-	defer cmdServer.Stop()
+	defer ctlSocket.Stop()
 
 	log := &fakeEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(5 * time.Minute)},

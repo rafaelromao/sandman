@@ -33,12 +33,11 @@ func writeManifestFile(t *testing.T, runDir string, manifest BatchManifest) {
 }
 
 func TestRecoverStaleRuns_EmitsAbortedForUnterminatedRun(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
 
-	runDir := filepath.Join(baseDir, "runs", "dead-1")
+	runDir := filepath.Join(baseDir, "batches", "dead-1")
 	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
 
 	eventLog := &recordingEventLog{}
@@ -72,12 +71,11 @@ func TestRecoverStaleRuns_EmitsAbortedForUnterminatedRun(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_RecoversRunStartedBeforeCreatedAtAsOrphan(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(-1 * time.Hour)
 
-	runDir := filepath.Join(baseDir, "runs", "old-1")
+	runDir := filepath.Join(baseDir, "batches", "old-1")
 	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
 
 	eventLog := &recordingEventLog{}
@@ -115,7 +113,7 @@ func TestRecoverStaleRuns_SkipsTerminatedRun(t *testing.T) {
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
 
-	runDir := filepath.Join(baseDir, "runs", "done-1")
+	runDir := filepath.Join(baseDir, "batches", "done-1")
 	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
 
 	eventLog := &recordingEventLog{}
@@ -134,20 +132,19 @@ func TestRecoverStaleRuns_SkipsTerminatedRun(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_LiveRunExcluded(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
 
-	runDir := filepath.Join(baseDir, "runs", "live-1")
+	runDir := filepath.Join(baseDir, "batches", "live-1")
 	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
 
-	// Bind a live command server so IsRunActive returns true.
-	cmdServer := NewCommandServer(runDir, nil)
-	if err := cmdServer.Start(); err != nil {
-		t.Fatalf("start command server: %v", err)
+	// Bind a live control socket so IsRunActive returns true.
+	ctlSocket := NewControlSocket(runDir, NewBroadcaster())
+	if err := ctlSocket.Start(); err != nil {
+		t.Fatalf("start control socket: %v", err)
 	}
-	defer cmdServer.Stop()
+	defer ctlSocket.Stop()
 
 	eventLog := &recordingEventLog{}
 	existing := []events.Event{
@@ -175,7 +172,7 @@ func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
 	firstStart := createdAt.Add(-2 * time.Hour)
 	continuedAt := createdAt.Add(5 * time.Minute)
 
-	runDir := filepath.Join(baseDir, "runs", "cont-1")
+	runDir := filepath.Join(baseDir, "batches", "cont-1")
 	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
 
 	eventLog := &recordingEventLog{}
@@ -194,12 +191,11 @@ func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_RecoversQueuedFromDeadBatch(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	queuedAt := createdAt.Add(5 * time.Minute)
 
-	runDir := filepath.Join(baseDir, "runs", "queued-1")
+	runDir := filepath.Join(baseDir, "batches", "queued-1")
 	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
 
 	eventLog := &recordingEventLog{}
@@ -233,12 +229,11 @@ func TestRecoverStaleRuns_RecoversQueuedFromDeadBatch(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_RecoversBlockedFromDeadBatch(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	blockedAt := createdAt.Add(5 * time.Minute)
 
-	runDir := filepath.Join(baseDir, "runs", "blocked-1")
+	runDir := filepath.Join(baseDir, "batches", "blocked-1")
 	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
 
 	eventLog := &recordingEventLog{}
@@ -406,13 +401,12 @@ func TestRecoverStaleRuns_RecoversOrphanPromptOnlyRun(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_RecoversPromptOnlyRunWithDeadBatchDir(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 	startedAt := createdAt.Add(5 * time.Minute)
 
 	// Create a dead 0-issue batch dir (no sockets — IsRunActive returns false).
-	runDir := filepath.Join(baseDir, "runs", "prompt-dead")
+	runDir := filepath.Join(baseDir, "batches", "prompt-dead")
 	writeManifestFile(t, runDir, BatchManifest{Issues: nil, CreatedAt: createdAt})
 
 	eventLog := &recordingEventLog{}
@@ -443,11 +437,10 @@ func TestRecoverStaleRuns_RecoversPromptOnlyRunWithDeadBatchDir(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_ManifestIssueWithoutRunIsSkipped(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 
-	runDir := filepath.Join(baseDir, "runs", "no-run-1")
+	runDir := filepath.Join(baseDir, "batches", "no-run-1")
 	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
 
 	eventLog := &recordingEventLog{}
@@ -466,7 +459,6 @@ func TestRecoverStaleRuns_ManifestIssueWithoutRunIsSkipped(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_TwoQueuedRunsSameIssue_DeadBatch_RecoversBoth(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 	queuedA := createdAt.Add(1 * time.Minute)
@@ -476,7 +468,7 @@ func TestRecoverStaleRuns_TwoQueuedRunsSameIssue_DeadBatch_RecoversBoth(t *testi
 	// (from different batches/batch dead+re-queue). The dead batch loop
 	// should recover both — earlier queued runs are not superseded by
 	// later queued/blocked placeholders, only by actual run.started.
-	runDir := filepath.Join(baseDir, "runs", "batch-1")
+	runDir := filepath.Join(baseDir, "batches", "batch-1")
 	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
 
 	eventLog := &recordingEventLog{}
@@ -640,7 +632,7 @@ func TestRecoverStaleRuns_OrphanAfterFinishedBatch(t *testing.T) {
 	batchFinishedAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	candidateStartedAt := time.Date(2026, 6, 8, 16, 0, 0, 0, time.UTC)
 
-	runDir := filepath.Join(baseDir, "runs", "dead-batch")
+	runDir := filepath.Join(baseDir, "batches", "dead-batch")
 	writeManifestFile(t, runDir, BatchManifest{
 		Issues:    []int{960, 961, 962, 963, 964, 965, 966, 967, 968},
 		CreatedAt: createdAt,
@@ -679,13 +671,12 @@ func TestRecoverStaleRuns_OrphanAfterFinishedBatch(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_CoveredWithinBatchWindow(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 11, 38, 0, 0, time.UTC)
 	batchFinishedAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	candidateStartedAt := time.Date(2026, 6, 8, 11, 50, 0, 0, time.UTC)
 
-	runDir := filepath.Join(baseDir, "runs", "dead-batch")
+	runDir := filepath.Join(baseDir, "batches", "dead-batch")
 	writeManifestFile(t, runDir, BatchManifest{
 		Issues:    []int{960, 961, 962, 963, 964, 965, 966, 967, 968},
 		CreatedAt: createdAt,
@@ -711,13 +702,12 @@ func TestRecoverStaleRuns_CoveredWithinBatchWindow(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_RecoversAutoSelectFromDeadBatch(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
 
 	autoSelectRunID := "20260608-120000-abcd-auto-select-5c"
-	runDir := filepath.Join(baseDir, "runs", autoSelectRunID+"-candidates")
+	runDir := filepath.Join(baseDir, "batches", autoSelectRunID+"-candidates")
 	writeManifestFile(t, runDir, BatchManifest{
 		RunKind:    "auto-select",
 		BatchId:    autoSelectRunID,
@@ -767,14 +757,13 @@ func TestRecoverStaleRuns_RecoversAutoSelectFromDeadBatch(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_SkipsAutoSelectWithTerminalStatus(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
 	finished := started.Add(10 * time.Minute)
 
 	autoSelectRunID := "20260608-120000-abcd-auto-select-5c"
-	runDir := filepath.Join(baseDir, "runs", autoSelectRunID+"-candidates")
+	runDir := filepath.Join(baseDir, "batches", autoSelectRunID+"-candidates")
 	writeManifestFile(t, runDir, BatchManifest{
 		RunKind:    "auto-select",
 		BatchId:    autoSelectRunID,

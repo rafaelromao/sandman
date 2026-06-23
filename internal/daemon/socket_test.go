@@ -138,32 +138,24 @@ func TestControlSocket_RemovesStaleSocketOnStart(t *testing.T) {
 }
 
 func TestIsRunActive(t *testing.T) {
-	t.Skip("Skipping: IsRunActive now probes batch.sock only; cmd.sock/run.sock are per-run sockets, not batch-level")
 	dir := t.TempDir()
 	if IsRunActive(dir) {
 		t.Fatal("expected dir without sockets to be inactive")
 	}
 
-	cmdServer := NewCommandServer(dir, nil)
-	if err := cmdServer.Start(); err != nil {
-		t.Fatalf("Start() failed: %v", err)
-	}
-	defer cmdServer.Stop()
-
-	if !IsRunActive(dir) {
-		t.Fatal("expected dir with live cmd.sock to be active")
-	}
-
-	cmdServer.Stop()
-
 	sock := NewControlSocket(dir, NewBroadcaster())
 	if err := sock.Start(); err != nil {
 		t.Fatalf("Start() failed: %v", err)
 	}
-	defer sock.Stop()
 
 	if !IsRunActive(dir) {
-		t.Fatal("expected dir with live run.sock but no cmd.sock to be active (continue runs)")
+		t.Fatal("expected dir with live batch.sock to be active")
+	}
+
+	sock.Stop()
+
+	if IsRunActive(dir) {
+		t.Fatal("expected dir without sockets to be inactive after stop")
 	}
 }
 

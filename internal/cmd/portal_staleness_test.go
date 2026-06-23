@@ -76,15 +76,14 @@ func TestPortal_LastOutputAt(t *testing.T) {
 // completed rows so the /api/runs contract only carries staleness where
 // it is meaningful.
 func TestPortal_Compute_PopulatesLastOutputAtForActiveRuns(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	startedAt := time.Now().Add(-5 * time.Minute)
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}

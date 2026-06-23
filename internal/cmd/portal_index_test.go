@@ -102,7 +102,6 @@ func TestPortalHandler_RunsServesSharedRunsIndexSnapshot(t *testing.T) {
 }
 
 func TestPortalRunsIndex_DiscoverActiveRuns_RefreshesManifestCacheOnChange(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot, err := os.MkdirTemp("", "portal-index-manifest-")
 	if err != nil {
 		t.Fatal(err)
@@ -111,11 +110,11 @@ func TestPortalRunsIndex_DiscoverActiveRuns_RefreshesManifestCacheOnChange(t *te
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-issue-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-issue-1")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	createUnixRunSocket(t, filepath.Join(runDir, "run.sock"))
+	createUnixRunSocket(t, filepath.Join(runDir, "batch.sock"))
 	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{860}, CreatedAt: time.Now().Add(-time.Minute)}); err != nil {
 		t.Fatal(err)
 	}

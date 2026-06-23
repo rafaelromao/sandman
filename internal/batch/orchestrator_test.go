@@ -907,7 +907,6 @@ func TestCheckPRMergedAtHead(t *testing.T) {
 }
 
 func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -975,7 +974,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if resetCalls[0].worktreePath != rtSandbox.WorkDir() {
 		t.Fatalf("reset worktree path = %q, want %q", resetCalls[0].worktreePath, rtSandbox.WorkDir())
 	}
-	logPath := filepath.Join(workDir, ".sandman", "batches", "-42", "runs", "-42", "run.log")
+	logPath := filepath.Join(workDir, ".sandman", "batches", "-", "runs", "--42", "run.log")
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log: %v", err)

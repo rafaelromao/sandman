@@ -28,8 +28,8 @@ func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-1-1")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-1-1")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +169,7 @@ func TestPortal_RunFromActiveMatchSetsCompletedWhenSocketDead(t *testing.T) {
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +205,7 @@ func TestPortal_RunFromStateSetsCompletedWhenActiveButSocketDead(t *testing.T) {
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +243,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +287,7 @@ func TestPortal_RunFromActiveMatchKeepsActiveWhenSocketAlive(t *testing.T) {
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +323,7 @@ func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -353,7 +353,7 @@ func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
 
 func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *testing.T) {
 	sockDir := t.TempDir()
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -367,11 +367,11 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *tes
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	runsDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-gone-1")
+	runsDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-gone-1")
 	if err := os.MkdirAll(runsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(sockPath, filepath.Join(runsDir, "run.sock")); err != nil {
+	if err := os.Symlink(sockPath, filepath.Join(runsDir, "batch.sock")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -427,7 +427,7 @@ func TestPortal_RunFromState_MarksCompletedWhenRunDirExistsButSocketMissing(t *t
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	runsDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-missing-sock-1")
+	runsDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-missing-sock-1")
 	if err := os.MkdirAll(runsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +523,11 @@ func TestPortalStaleCleaner_MessageSuppressedWhenNoRecoveredRuns(t *testing.T) {
 }
 
 func TestPortal_RunFromActiveMatchReturnsReviewingForPRInstance(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -531,8 +535,8 @@ func TestPortal_RunFromActiveMatchReturnsReviewingForPRInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sockDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -745,7 +749,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -787,7 +791,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForQueued(t *testing.
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -833,7 +837,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -889,7 +893,7 @@ func TestPortal_RunFromActiveBatchIssue_MixedBatchCarriesBatchIssues(t *testing.
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -925,7 +929,7 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 	if err := os.MkdirAll(sockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sockDir, "run.sock")
+	sockPath := filepath.Join(sockDir, "batch.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -949,7 +953,6 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 }
 
 func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot, err := os.MkdirTemp("/tmp", "r")
 	if err != nil {
 		t.Fatal(err)
@@ -961,8 +964,8 @@ func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
 
 	// Dir name implies issue 999, but the manifest lists [42, 43] —
 	// the portal must take issue identity from the manifest.
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-999-1")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-999-1")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -992,7 +995,6 @@ func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
 }
 
 func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot, err := os.MkdirTemp("/tmp", "r")
 	if err != nil {
 		t.Fatal(err)
@@ -1005,8 +1007,8 @@ func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
 	// Run dir name implies issue 999, but no manifest exists.
 	// The portal must NOT infer issue 999 from the dir name; the
 	// instance is treated as manifest-less (prompt-only routing).
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-999-1")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-999-1")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1047,8 +1049,8 @@ func TestPortal_DiscoverActiveRuns_SkipsDeadSocketFromFinishedBatch(t *testing.T
 	// one issue. The listener exists only so the socket file persists
 	// on disk with the socket bit set; the liveness probe is stubbed
 	// to false so the listener's actual dialability is irrelevant.
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-42-1")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-42-1")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1190,7 +1192,6 @@ func TestPortal_SavedLogFile_StripsLabelsModuloANSI(t *testing.T) {
 }
 
 func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	repoRoot, err := os.MkdirTemp("/tmp", "r")
 	if err != nil {
 		t.Fatal(err)
@@ -1203,8 +1204,8 @@ func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
 
 	// Dir name suggests issue 999, but the manifest lists [860, 854] —
 	// the JSON payload for the portal must reflect the manifest.
-	runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-999-1")
-	sockPath := filepath.Join(runDir, "run.sock")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-999-1")
+	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1247,15 +1248,18 @@ func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
 // (portal.go:277-279), so they exercise discovery + event projection +
 // dedup + sort together — not just the lower-level runFrom* helpers.
 func TestPortal_ReviewRunLifecycle(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	t.Run("active socket shows reviewing", func(t *testing.T) {
-		repoRoot := t.TempDir()
+		repoRoot, err := os.MkdirTemp("/tmp", "p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 
-		runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
-		sockPath := filepath.Join(runDir, "run.sock")
+		runDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+		sockPath := filepath.Join(runDir, "batch.sock")
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -1309,8 +1313,8 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 
 		// Stale run dir: socket file present but no listener — simulates
 		// the portal rescanning the repo after a daemon restart.
-		runDir := filepath.Join(repoRoot, ".sandman", "runs", "PR42")
-		sockPath := filepath.Join(runDir, "run.sock")
+		runDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+		sockPath := filepath.Join(runDir, "batch.sock")
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -1416,8 +1420,8 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		// run-<ts> dir with live socket and no event log entries —
 		// the portal must keep treating it as an in-flight prompt-only
 		// run, not confuse it with a review run.
-		runDir := filepath.Join(repoRoot, ".sandman", "runs", "abcd-260618113825-999-1")
-		sockPath := filepath.Join(runDir, "run.sock")
+		runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-999-1")
+		sockPath := filepath.Join(runDir, "batch.sock")
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -1688,7 +1692,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 			},
 		}
 		root := repoRoot(t)
-		runDir := filepath.Join(root, ".sandman", "runs", "PR42")
+		runDir := filepath.Join(root, ".sandman", "batches", "PR42")
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -1703,7 +1707,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = ln.Close() })
-		if err := os.Symlink(extSock, filepath.Join(runDir, "run.sock")); err != nil {
+		if err := os.Symlink(extSock, filepath.Join(runDir, "batch.sock")); err != nil {
 			t.Fatal(err)
 		}
 		run := (&portalRunsView{}).runFromState(root, state, nil, nil)

@@ -107,7 +107,6 @@ func (b *blockedBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*
 }
 
 func TestRun_CreatesControlSocketInRunDir(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := chdirToShortSandmanDir(t)
 	deps := depsWithSocket(&blockedBatchRunner{
 		started: make(chan struct{}),
@@ -137,7 +136,7 @@ func TestRun_CreatesControlSocketInRunDir(t *testing.T) {
 		t.Fatalf("expected 1 batch dir, got %d", len(entries))
 	}
 
-	sockPath := filepath.Join(batchesDir, entries[0].Name(), "run.sock")
+	sockPath := filepath.Join(batchesDir, entries[0].Name(), "batch.sock")
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
 		t.Fatalf("socket should exist during run: %v", err)
@@ -208,7 +207,6 @@ func (c *commanderBatchRunner) AbortIssue(issueNumber int) error {
 }
 
 func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := chdirToShortSandmanDir(t)
 	deps := depsWithSocket(&commanderBatchRunner{
 		started:    make(chan struct{}),
@@ -239,7 +237,7 @@ func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
 		t.Fatalf("expected 1 batch dir, got %d", len(entries))
 	}
 
-	cmdSockPath := filepath.Join(batchesDir, entries[0].Name(), "cmd.sock")
+	cmdSockPath := filepath.Join(batchesDir, entries[0].Name(), "run.sock")
 	conn, err := net.Dial("unix", cmdSockPath)
 	if err != nil {
 		t.Fatalf("cmd.sock should exist during run: %v", err)
@@ -304,15 +302,15 @@ func TestRun_RemovesCommandSocketOnCompletion(t *testing.T) {
 	close(runner.release)
 	<-started
 
-	runsDir := filepath.Join(sandmanDir, "runs")
+	runsDir := filepath.Join(sandmanDir, "batches")
 	entries, err := os.ReadDir(runsDir)
 	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("read runs dir: %v", err)
+		t.Fatalf("read batches dir: %v", err)
 	}
 	for _, entry := range entries {
-		sockPath := filepath.Join(runsDir, entry.Name(), "cmd.sock")
+		sockPath := filepath.Join(runsDir, entry.Name(), "run.sock")
 		if _, err := os.Stat(sockPath); err == nil {
-			t.Fatalf("expected cmd.sock to be removed, still exists at %s", sockPath)
+			t.Fatalf("expected run.sock to be removed, still exists at %s", sockPath)
 		}
 	}
 }

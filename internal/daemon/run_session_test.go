@@ -32,12 +32,16 @@ func (s *stubCommander) AbortIssue(issueNumber int) error { return s.abortErr }
 // TestRunSession_Prepare_CreatesRunDirManifestAndSockets is the unit-level
 // companion to the integration test in internal/cmd. It exercises the
 // RunSession boot in isolation: Prepare must produce the run directory,
-// the batch manifest, run.sock, and (when a commander is provided)
-// cmd.sock — in that order — and Close must clean up afterwards.
+// the batch manifest, batch.sock (control), and (when a commander is
+// provided) run.sock (command) — in that order — and Close must clean
+// up afterwards.
 func TestRunSession_Prepare_CreatesRunDirManifestAndSockets(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
-	dir := t.TempDir()
-	rs := NewRunSession(dir, "test-run-1")
+	dir, err := os.MkdirTemp("/tmp", "smn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	rs := NewRunSession(dir, "tr1")
 
 	manifest := BatchManifest{Issues: []int{42}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
 
@@ -49,7 +53,7 @@ func TestRunSession_Prepare_CreatesRunDirManifestAndSockets(t *testing.T) {
 	if rs.RunDir() == "" {
 		t.Fatal("RunDir() must be non-empty after Prepare")
 	}
-	wantRunDir := filepath.Join(dir, "batches", "test-run-1")
+	wantRunDir := filepath.Join(dir, "batches", "tr1")
 	if rs.RunDir() != wantRunDir {
 		t.Errorf("RunDir = %q, want %q", rs.RunDir(), wantRunDir)
 	}
@@ -79,16 +83,17 @@ func TestRunSession_Prepare_CreatesRunDirManifestAndSockets(t *testing.T) {
 		t.Errorf("manifest payload missing issues: %s", manifestData)
 	}
 
-	// run.sock and cmd.sock exist and are live.
-	runSock := filepath.Join(rs.RunDir(), "run.sock")
-	if conn, err := net.Dial("unix", runSock); err != nil {
-		t.Fatalf("dial run.sock: %v", err)
+	// batch.sock (control socket) and run.sock (command server) exist
+	// and are live.
+	ctlSock := filepath.Join(rs.RunDir(), "batch.sock")
+	if conn, err := net.Dial("unix", ctlSock); err != nil {
+		t.Fatalf("dial batch.sock: %v", err)
 	} else {
 		conn.Close()
 	}
-	cmdSock := filepath.Join(rs.RunDir(), "cmd.sock")
-	if conn, err := net.Dial("unix", cmdSock); err != nil {
-		t.Fatalf("dial cmd.sock: %v", err)
+	runSock := filepath.Join(rs.RunDir(), "run.sock")
+	if conn, err := net.Dial("unix", runSock); err != nil {
+		t.Fatalf("dial run.sock: %v", err)
 	} else {
 		conn.Close()
 	}
@@ -96,12 +101,15 @@ func TestRunSession_Prepare_CreatesRunDirManifestAndSockets(t *testing.T) {
 
 // TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil covers the
 // review-daemon path: when the caller passes a nil commander, the boot
-// must skip the cmd.sock step cleanly. run.sock and batch.json must
+// must skip the run.sock step cleanly. batch.sock and batch.json must
 // still be present.
 func TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
-	dir := t.TempDir()
-	rs := NewRunSession(dir, "review-run-1")
+	dir, err := os.MkdirTemp("/tmp", "smn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	rs := NewRunSession(dir, "rev1")
 	t.Cleanup(func() { _ = rs.Close() })
 
 	manifest := BatchManifest{Issues: []int{}, CreatedAt: mustParseTime(t, "2024-01-01T00:00:00Z")}
@@ -109,11 +117,11 @@ func TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil(t *testing.T) {
 		t.Fatalf("Prepare: %v", err)
 	}
 
-	if _, err := net.Dial("unix", filepath.Join(rs.RunDir(), "run.sock")); err != nil {
-		t.Fatalf("run.sock must be live when commander is nil: %v", err)
+	if _, err := net.Dial("unix", filepath.Join(rs.RunDir(), "batch.sock")); err != nil {
+		t.Fatalf("batch.sock must be live when commander is nil: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(rs.RunDir(), "cmd.sock")); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("cmd.sock must NOT exist when commander is nil, stat err = %v", err)
+	if _, err := os.Stat(filepath.Join(rs.RunDir(), "run.sock")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("run.sock must NOT exist when commander is nil, stat err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(rs.RunDir(), "batch.json")); err != nil {
 		t.Errorf("batch.json must exist when commander is nil: %v", err)
@@ -127,21 +135,20 @@ func TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil(t *testing.T) {
 // then calls Chmod on the run dir, but a non-empty directory whose
 // only entry is the runDir itself is a pathological state we
 // simulate by creating a child directory that consumes the inode: the
-// run.sock path can then be created (it's a file, not a directory),
-// but net.Listen("unix", "<dir>/run.sock") refuses to bind because
-// the run.sock path is a non-empty directory.
+// batch.sock path can then be created (it's a file, not a directory),
+// but net.Listen("unix", "<dir>/batch.sock") refuses to bind because
+// the batch.sock path is a non-empty directory.
 //
-// The cleanest portable trick is to pre-create the run.sock path as
+// The cleanest portable trick is to pre-create the batch.sock path as
 // a non-empty directory. MkdirAll(<dir>) is happy, but
-// net.Listen("unix", <dir>/run.sock) where <dir>/run.sock is a
+// net.Listen("unix", <dir>/batch.sock) where <dir>/batch.sock is a
 // non-empty directory fails with EADDRINUSE / "address already in use".
 func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
-	t.Skip("TODO: fix path-layout test broken by per-run folder layout (issue #1259)")
 	dir := t.TempDir()
 	rs := NewRunSession(dir, "failing-run-1")
 	t.Cleanup(func() { _ = rs.Close() })
 
-	// Pre-create the run.sock path as a non-empty directory. MkdirAll
+	// Pre-create the batch.sock path as a non-empty directory. MkdirAll
 	// on the run dir is happy; the manifest write is happy; but
 	// net.Listen on a path that is an existing non-empty directory
 	// fails.
@@ -149,11 +156,11 @@ func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runSockPath := filepath.Join(runDir, "run.sock")
-	if err := os.MkdirAll(runSockPath, 0o700); err != nil {
+	batchSockPath := filepath.Join(runDir, "batch.sock")
+	if err := os.MkdirAll(batchSockPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(runSockPath, "blocker"), []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(batchSockPath, "blocker"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -279,7 +286,7 @@ func TestRunSession_Prepare_AppendsToBatchesIndex(t *testing.T) {
 // TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil guards the
 // reflect-based nil check in Prepare. A typed-nil IssueCommander
 // (e.g. `var c IssueCommander = (*nilCommander)(nil)`) must NOT
-// trigger the cmd.sock step, because calling its method would panic.
+// trigger the run.sock step, because calling its method would panic.
 func TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil(t *testing.T) {
 	dir := t.TempDir()
 	rs := NewRunSession(dir, "typed-nil-run-1")
@@ -290,7 +297,7 @@ func TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil(t *testing.T) {
 	if err := rs.Prepare(manifest, commander); err != nil {
 		t.Fatalf("Prepare must succeed for typed-nil commander: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(rs.RunDir(), "cmd.sock")); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("cmd.sock must NOT exist for typed-nil commander, stat err = %v", err)
+	if _, err := os.Stat(filepath.Join(rs.RunDir(), "run.sock")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("run.sock must NOT exist for typed-nil commander, stat err = %v", err)
 	}
 }

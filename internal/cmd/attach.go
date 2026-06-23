@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/rafaelromao/sandman/internal/config"
-	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -47,8 +45,7 @@ func findDaemonSocket(baseDir string) (string, error) {
 		candidates = append(candidates, reviewSock)
 	}
 
-	layout := paths.NewLayout(&config.Config{}, baseDir)
-	batchesDir := layout.BatchesDir
+	batchesDir := filepath.Join(baseDir, "batches")
 	entries, err := os.ReadDir(batchesDir)
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("read batches dir: %w", err)
