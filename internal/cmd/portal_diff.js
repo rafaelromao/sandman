@@ -199,6 +199,7 @@
   // new color is introduced.
   function stalenessOf(run) {
     if (!run || run.kind !== 'active' || !run.lastOutputAt) return null;
+    if (run.status === 'queued' || run.status === 'blocked') return null;
     const ts = Date.parse(run.lastOutputAt);
     if (!Number.isFinite(ts)) return null;
     const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
