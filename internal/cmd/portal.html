@@ -1757,11 +1757,16 @@
     function appendStreamLine(runKey, line) {
       const pre = streamPreFor(runKey);
       if (!pre) return;
+      const renderedLog = pre.getAttribute('data-rendered-log') || '';
+      const cachedLines = new Set(renderedLog.split('\n'));
+      if (cachedLines.has(line)) {
+        return;
+      }
       const html = SandmanPortalDiff.highlightTerminalLog(line + '\n');
       const scratch = document.createElement('div');
       scratch.innerHTML = html;
       while (scratch.firstChild) pre.appendChild(scratch.firstChild);
-      pre.setAttribute('data-rendered-log', (pre.getAttribute('data-rendered-log') || '') + line + '\n');
+      pre.setAttribute('data-rendered-log', renderedLog + line + '\n');
       if (portalScroll && portalScroll.isSticky(runKey)) {
         pre.scrollTop = pre.scrollHeight;
       }
@@ -1771,12 +1776,13 @@
       if (!run || run.kind !== 'active' || !run.socketPath) return;
       if (streamSources[run.key]) return;
       const backendKey = run.backendKey || run.key;
-      // Reset the <pre> so the broadcaster's connect-replay refills it
-      // authoritatively; the snapshot we had is a subset of the replay.
       const pre = streamPreFor(run.key);
       if (pre) {
-        while (pre.firstChild) pre.removeChild(pre.firstChild);
-        pre.setAttribute('data-rendered-log', '');
+        const cachedLog = pre.getAttribute('data-rendered-log') || '';
+        if (!cachedLog) {
+          while (pre.firstChild) pre.removeChild(pre.firstChild);
+          pre.setAttribute('data-rendered-log', '');
+        }
       }
       const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
       src.onmessage = function (ev) { appendStreamLine(run.key, ev.data); };
