@@ -222,6 +222,9 @@ func newRunDepsInDir(t testing.TB, runner batch.Runner) (string, Dependencies) {
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
 	if err != nil {
 		t.Fatal(err)
