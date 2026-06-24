@@ -544,6 +544,18 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		return runDir, fmt.Errorf("create review run folder: %w", err)
 	}
 
+	runManifest := batchindex.RunManifest{
+		RunID:     "review",
+		BatchID:   batchDirName,
+		PR:        prNumber,
+		Kind:      batchindex.KindReview,
+		CreatedAt: time.Now(),
+		Status:    batchindex.StatusActive,
+	}
+	if err := daemon.WriteRunManifest(runDir, "review", runManifest); err != nil {
+		return runDir, fmt.Errorf("write run manifest: %w", err)
+	}
+
 	req := batch.Request{
 		Agent:                agentName,
 		Model:                modelName,
