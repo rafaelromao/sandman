@@ -189,6 +189,9 @@ func TestReviewCmd_DaemonModeCreatesReviewSock(t *testing.T) {
 
 func TestReviewCmd_DaemonSocketAcceptsConnections(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(dir)
 
 	cfg := &config.Config{

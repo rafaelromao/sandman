@@ -13,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/review"
 	"github.com/spf13/cobra"
@@ -145,7 +146,16 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		sandboxMode = cfg.Sandbox
 	}
 
-	rs := daemon.NewRunSession(".sandman", fmt.Sprintf("PR%d", pr.Number))
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	repoRoot, err := findRepoRoot(cwd)
+	if err != nil {
+		return err
+	}
+	layout := paths.NewLayout(cfg, repoRoot)
+	rs := daemon.NewRunSession(layout.SandmanDir, fmt.Sprintf("PR%d", pr.Number))
 	manifest := daemon.BatchManifest{BatchId: fmt.Sprintf("PR%d", pr.Number), CreatedAt: time.Now(), RunKind: "review", PR: &pr.Number}
 	if err := rs.Prepare(manifest, nil); err != nil {
 		_ = rs.Close()
@@ -253,7 +263,16 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 		}
 	}()
 
-	socketDir := ".sandman"
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	repoRoot, err := findRepoRoot(cwd)
+	if err != nil {
+		return err
+	}
+	layout := paths.NewLayout(cfg, repoRoot)
+	socketDir := layout.SandmanDir
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
 	d := review.New(socketDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster)

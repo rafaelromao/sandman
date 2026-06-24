@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +16,16 @@ func NewAttachCmd() *cobra.Command {
 		Use:   "attach",
 		Short: "Attach to a running sandman daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sockPath, err := findDaemonSocket(".sandman")
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("get working directory: %w", err)
+			}
+			repoRoot, err := findRepoRoot(cwd)
+			if err != nil {
+				return err
+			}
+			layout := paths.NewLayout(nil, repoRoot)
+			sockPath, err := findDaemonSocket(layout.SandmanDir)
 			if err != nil {
 				return err
 			}
