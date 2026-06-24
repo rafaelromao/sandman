@@ -207,7 +207,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	// separate Stat per run. Active entries only matter here for the
 	// StatusUnavailable lookup; the existing discoverPortalInstances path
 	// still owns the live-socket probe and the lazy flip itself.
-	unavailableRunIDs := unavailableRunIDsByBatchIndex(repoRoot)
+	unavailableRunIDs := v.unavailableRunIDsByBatchIndex(repoRoot)
 	for _, active := range activeInstances {
 		if activeBatchStart.IsZero() && !active.StartedAt.IsZero() {
 			activeBatchStart = active.StartedAt
@@ -1262,7 +1262,7 @@ func (v *portalRunsView) sourceDirID(run portalRun) string {
 // The lookup is keyed by entry ID. batchindex.Entry.ID is the batch
 // RunID written by the orchestrator when the batch is created, and it
 // matches portalRun.RunID for completed historical rows.
-func unavailableRunIDsByBatchIndex(repoRoot string) map[string]struct{} {
+func (v *portalRunsView) unavailableRunIDsByBatchIndex(repoRoot string) map[string]struct{} {
 	out := map[string]struct{}{}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	idx, err := batchindex.Load(layout.BatchesIndexPath)
