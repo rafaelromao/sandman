@@ -7622,7 +7622,7 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, "")
 
 	// Worktree removed
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
@@ -7658,7 +7658,7 @@ func TestClearIssueArtifacts_Idempotent(t *testing.T) {
 	initGitRepo(t, dir)
 
 	el := &spyEventLog{}
-	ClearIssueArtifacts(42, "sandman/42-nonexistent", ".sandman/worktrees", ".sandman/logs", el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, "sandman/42-nonexistent", ".sandman/worktrees", el, io.Discard, "main", nil, "")
 }
 
 func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
@@ -7699,7 +7699,7 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 	}
 
 	el := &spyEventLog{}
-	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, "")
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected orphan worktree dir to be removed, got err=%v", err)
@@ -7733,7 +7733,7 @@ func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, "sandman/42-fix-bug", ".sandman/worktrees", ".sandman/logs", el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, "sandman/42-fix-bug", ".sandman/worktrees", el, io.Discard, "main", nil, "")
 
 	// Issue 99 branch should still exist
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/sandman/99-fix-bug")
@@ -7803,7 +7803,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		logBuf := &bytes.Buffer{}
 
 		trueVal := true
-		ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, logBuf, "main", &trueVal, "")
+		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
 
 		// The branch must be gone from the main repo.
 		revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -7845,7 +7845,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		logBuf := &bytes.Buffer{}
 
 		trueVal := true
-		ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, logBuf, "main", &trueVal, "")
+		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
 
 		// The branch must be gone.
 		revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -7884,7 +7884,7 @@ func TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders(t *testing.T) {
 	el := &spyEventLog{}
 	logBuf := &bytes.Buffer{}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, logBuf, "main", nil, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", nil, "")
 
 	// The branch should still exist (no recovery ran).
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -7914,7 +7914,7 @@ func TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders(t *tes
 	logBuf := &bytes.Buffer{}
 
 	falseVal := false
-	ClearIssueArtifacts(42, branch, worktreeDir, logDir, el, logBuf, "main", &falseVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &falseVal, "")
 
 	// The branch should still exist (no recovery ran).
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
