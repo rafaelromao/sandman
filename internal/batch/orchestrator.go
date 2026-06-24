@@ -50,18 +50,13 @@ func batchIDForIssue(ts, shortid string) string {
 // batchIDForPromptOnly returns the per-row batch directory name for a
 // prompt-only session. When the caller supplied a user-provided run id
 // (s.runID), that is preferred as the directory name to match the legacy
-// layout; otherwise the (ts, shortid) pair is used. When shortid is empty
-// but ts is not, ts is used directly as the batchID to avoid a malformed
-// "-<ts>" prefix.
+// layout; otherwise the (ts, shortid) pair is used.
 func batchIDForPromptOnly(ts, shortid, userRunID string) string {
 	if userRunID != "" {
 		return userRunID
 	}
-	if shortid == "" {
-		if ts == "" {
-			return ""
-		}
-		return ts
+	if shortid == "" && ts == "" {
+		return ""
 	}
 	return shortid + "-" + ts
 }
@@ -2234,7 +2229,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		runID = fmt.Sprintf("run-0-%d", time.Now().UnixNano())
 	}
 	if s.runID == "" && s.batchID == "" {
-		s.batchID = batchIDFromRunID(runID)
+		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 	}
 	if o.eventLog != nil {
 		promptSourceType := "current"
