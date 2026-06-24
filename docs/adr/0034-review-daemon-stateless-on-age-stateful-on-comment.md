@@ -36,16 +36,16 @@ The daemon scans **all open PRs** and acts on the latest unprocessed `/sandman` 
 
 This is the **no-orphan-PRs rule**: any open PR with an unprocessed `/sandman` comment is a valid review target, regardless of daemon state.
 
-### Flat `.sandman/reviews/` shape
+### Daemon state location
 
-Daemon-level state is reduced to two files in `.sandman/reviews/`:
+Daemon-level state lives in `.sandman/`:
 
 | File | Purpose |
 |------|---------|
-| `review.sock` | Daemon command socket |
-| `review-prompt.md` | Shared prompt template (no PR data) |
+| `review.sock` | Daemon command socket at `.sandman/review.sock` |
+| `review-prompt.md` | Shared prompt template (no PR data) at `.sandman/review-prompt.md` |
 
-Per-PR subdirectories (`.sandman/reviews/<PR>/`) are deleted. All per-PR and per-run state lives inside the batch/run folder hierarchy.
+Per-PR state directories (`.sandman/reviews/<PR>/`) exist for tracking per-PR review state. The daemon uses `PRDir(prNumber)` to construct the per-PR path.
 
 ### Per-run `review-state.json`
 
@@ -95,7 +95,6 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 
 ### Neutral
 
-- The flat `.sandman/reviews/` shape is shared between this ADR and ADR-0032 — both reference the same `review.sock` and `review-prompt.md`.
+- `review.sock` and `review-prompt.md` location is shared between this ADR and ADR-0032.
 - `review-state.json` schema is defined in ADR-0032 alongside other run-folder artifacts.
 - The `Reviewing` status entry in `CONTEXT.md` is unaffected by this ADR.
-- **Note:** The flat `.sandman/reviews/` structure with `review.sock` at the root (and per-PR subdirectories removed) reflects the design intent from #1218. Implementation slices for this layout change may not have fully landed in all code paths at time of writing.
