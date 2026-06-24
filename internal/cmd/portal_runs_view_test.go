@@ -241,7 +241,10 @@ func TestDiscoverPortalInstances_UnavailableStatusNotProbed(t *testing.T) {
 	}
 
 	originalProbe := portalRunLivenessProbe
-	portalRunLivenessProbe = func(string) bool { t.Fatal("liveness probe should not be called for unavailable entries"); return false }
+	portalRunLivenessProbe = func(string) bool {
+		t.Fatal("liveness probe should not be called for unavailable entries")
+		return false
+	}
 	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
 
 	instances, err := discoverPortalInstances(repoRoot)
