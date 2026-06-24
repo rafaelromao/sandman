@@ -183,10 +183,16 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	}
 
 	var deadBatchDirIDs map[string]string
+	var deadBatches []daemon.DeadBatch
+	var err error
 
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
+	deadBatches, deadBatchDirIDs, err = v.deadBatchDirIDsByRunID(repoRoot)
+	if err != nil {
+		return nil, err
+	}
 	for _, active := range activeInstances {
 		if activeBatchStart.IsZero() && !active.StartedAt.IsZero() {
 			activeBatchStart = active.StartedAt
@@ -195,7 +201,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 			promptActive = append(promptActive, active)
 			continue
 		}
-		batchRuns, usedRunIDs := v.runsFromActiveBatch(repoRoot, active, runStates, eventList, eventsByRun)
+		batchRuns, usedRunIDs := v.runsFromActiveBatch(repoRoot, active, runStates, eventList, eventsByRun, deadBatches)
 		runs = append(runs, batchRuns...)
 		for runID := range usedRunIDs {
 			consumedRunIDs[runID] = struct{}{}
@@ -227,7 +233,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		}
 	}
 	for _, match := range matchedActive {
-		run := v.runFromActiveMatch(repoRoot, match, eventsByRun)
+		run := v.runFromActiveMatch(repoRoot, match, eventsByRun, deadBatches)
 		runs = append(runs, run)
 		if run.RunID != "" {
 			consumedRunIDs[run.RunID] = struct{}{}
@@ -240,25 +246,11 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		if runState.Status() == "queued" && !activeBatchStart.IsZero() && v.eventBelongsToBatch(runState.Started.Timestamp, activeBatchStart) {
 			continue
 		}
-		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun))
+		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun, deadBatches))
 	}
 
 	runs = v.dedupRuns(runs)
 	runs = v.aggregateReviewChildren(runs)
-	needDeadBatchScan := false
-	for i := range runs {
-		if runs[i].Kind == "completed" && runs[i].BatchKey == "" && runs[i].RunID != "" {
-			needDeadBatchScan = true
-			break
-		}
-	}
-	if needDeadBatchScan {
-		var err error
-		deadBatchDirIDs, err = v.deadBatchDirIDsByRunID(repoRoot)
-		if err != nil {
-			return nil, err
-		}
-	}
 	for i := range runs {
 		// Active runs are never marked archived, even if a directory
 		// matching the run ID happens to exist under .sandman/archive.
@@ -576,7 +568,7 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 	return active, nil
 }
 
-func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiveRun, runStates []events.RunState, eventList []events.Event, eventsByRun map[string][]portalEvent) ([]portalRun, map[string]struct{}) {
+func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiveRun, runStates []events.RunState, eventList []events.Event, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) ([]portalRun, map[string]struct{}) {
 	batchStart := active.StartedAt
 	if batchStart.IsZero() {
 		batchStart = active.ModTime
@@ -590,7 +582,7 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 		}
 		blocked := v.latestBlockedEventForIssue(eventList, issueNumber, batchStart)
 		queued := v.latestQueuedEventForIssue(eventList, issueNumber, batchStart)
-		runs = append(runs, v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun))
+		runs = append(runs, v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun, deadBatches))
 		if state != nil && state.RunID != "" {
 			usedRunIDs[state.RunID] = struct{}{}
 		}
@@ -671,7 +663,7 @@ func (v *portalRunsView) stateStartsInBatch(timestamp, batchStart time.Time) boo
 	return !timestamp.Before(batchStart)
 }
 
-func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, queued *events.Event, liveOutput string, eventsByRun map[string][]portalEvent) portalRun {
+func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, queued *events.Event, liveOutput string, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
 	run := portalRun{
 		Key:         fmt.Sprintf("%s-issue-%d", active.Key, issueNumber),
@@ -694,7 +686,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	if state != nil {
 		activeWithOutput := active
 		activeWithOutput.LiveOutput = liveOutput
-		run = v.runFromState(repoRoot, *state, &activeWithOutput, eventsByRun)
+		run = v.runFromState(repoRoot, *state, &activeWithOutput, eventsByRun, deadBatches)
 		run.BatchKey = active.Key
 		if len(active.IssueNumbers) > 1 {
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
@@ -807,10 +799,10 @@ func (v *portalRunsView) matchRunState(instance portalActiveRun, states []events
 	return bestIdx
 }
 
-func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun map[string][]portalEvent) portalRun {
+func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	runID := match.instance.Key
 	if match.state != nil {
-		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun)
+		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun, deadBatches)
 		run.BatchKey = match.instance.Key
 		if match.state.Finished != nil {
 			if strings.TrimSpace(run.Log) == "" {
@@ -884,7 +876,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	return run
 }
 
-func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState, active *portalActiveRun, eventsByRun map[string][]portalEvent) portalRun {
+func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState, active *portalActiveRun, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	runID := runState.RunID
 	if runID == "" && active != nil {
 		runID = active.Key
@@ -962,7 +954,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		portalRun.SocketPath = active.SocketPath
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 	} else if portalRun.Kind == "active" {
-		batchDir, err := v.findBatchDirForRun(repoRoot, runState.RunID, nil)
+		batchDir, err := v.findBatchDirForRun(repoRoot, runState.RunID, deadBatches)
 		if err != nil {
 			logPortalViewDegrade("batch-dir-lookup:"+runState.RunID, "find batch dir for run %q: %v", runState.RunID, err)
 		}
@@ -1237,14 +1229,14 @@ func (v *portalRunsView) sourceDirID(run portalRun) string {
 	return run.RunID
 }
 
-func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) (map[string]string, error) {
+func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) ([]daemon.DeadBatch, map[string]string, error) {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	deadBatches, err := daemon.FindDeadRunBatches(layout.SandmanDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(deadBatches) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	dirIDs := make(map[string]string, len(deadBatches))
 	for _, batch := range deadBatches {
@@ -1257,9 +1249,9 @@ func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) (map[string]str
 		dirIDs[batch.Manifest.BatchId] = filepath.Base(batch.RunDir)
 	}
 	if len(dirIDs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return dirIDs, nil
+	return deadBatches, dirIDs, nil
 }
 
 func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string, deadBatches []daemon.DeadBatch) (string, error) {
@@ -1303,13 +1295,6 @@ func (v *portalRunsView) portalLogPathForRun(repoRoot string, issueNumber int, b
 		}
 		// No batch dir — fall through to legacy per-issue/per-branch log
 		// path so historical (pre-batch-folder) runs still resolve.
-	}
-
-	if len(batchDir) > 0 && batchDir[0] != "" {
-		if branch != "" {
-			return filepath.Join(batchDir[0], "runs", branch, "run.log")
-		}
-		return ""
 	}
 
 	if review && branch != "" {
