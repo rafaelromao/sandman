@@ -11,6 +11,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/runid"
 )
 
 // TestPortalRunsView_UnavailableFlagFromBatchIndex covers slice #1 of #1312:
@@ -24,29 +25,43 @@ func TestPortalRunsView_UnavailableFlagFromBatchIndex(t *testing.T) {
 
 	layout := paths.NewLayout(nil, repoRoot)
 
-	// Write a single completed run to the event log: run-9 finished
-	// successfully long ago, then its batch directory was deleted, which
-	// MarkUnavailable flips to StatusUnavailable in the index.
+	// Use realistic runid output: batch ID and per-row RunID differ,
+	// exercising the sourceDirID-based lookup.
+	ts := "20250101T100000Z"
+	shortid := "abcd"
+	batchID := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
+	rowRunID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
+
 	startedAt := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(5 * time.Minute)
 	writePortalLog(t, filepath.Join(layout.EventsLogPath), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-9", Issue: 9, Payload: map[string]any{"branch": "sandman/9-fix"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-9", Issue: 9, Payload: map[string]any{"status": "success", "branch": "sandman/9-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
 	})
 
-	// Seed the batch index directly with a StatusUnavailable entry for
-	// run-9. The directory intentionally does not exist on disk; this
-	// mirrors the post-MarkUnavailable state.
+	// Create a dead batch directory with a runs/ subdirectory so that
+	// BatchKey gets populated from the row-to-batch reverse lookup.
+	batchDir := filepath.Join(layout.BatchesDir, batchID)
+	if err := os.MkdirAll(filepath.Join(batchDir, "runs", rowRunID), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(batchDir, "manifest.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed the batch index with a StatusUnavailable entry keyed by the
+	// batch ID. The row's RunID differs (no +N suffix), so the lookup
+	// must go through BatchKey → sourceDirID to find the match.
 	batchIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
 		Entries: []batchindex.Entry{
 			{
-				ID:        "run-9",
-				Path:      filepath.Join(layout.BatchesDir, "run-9"),
+				ID:        batchID,
+				Path:      batchDir,
 				Kind:      batchindex.KindIssue,
 				Status:    batchindex.StatusUnavailable,
 				CreatedAt: startedAt,
-				Issues:    []int{9},
+				Issues:    []int{42},
 			},
 		},
 	}

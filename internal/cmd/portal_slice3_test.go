@@ -886,7 +886,7 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 
 	const runID = "abcd-260618113825-issue-42"
 	runDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-42")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(runDir, "runs", runID), 0755); err != nil {
 		t.Fatal(err)
 	}
 

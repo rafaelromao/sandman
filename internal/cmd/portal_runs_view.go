@@ -191,14 +191,14 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		}
 	}
 
-	var deadBatchDirIDs map[string]string
+	var rowToBatch map[string]string
 	var deadBatches []daemon.DeadBatch
 	var err error
 
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
-	deadBatches, deadBatchDirIDs, err = v.deadBatchDirIDsByRunID(repoRoot)
+	deadBatches, rowToBatch, err = v.deadBatchDirIDsByRunID(repoRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -275,20 +275,21 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 			runs[i].SourceExists = true
 			continue
 		}
-		if runs[i].BatchKey == "" && len(deadBatchDirIDs) > 0 {
-			if batchKey, ok := deadBatchDirIDs[runs[i].RunID]; ok {
+		if runs[i].BatchKey == "" && len(rowToBatch) > 0 {
+			if batchKey, ok := rowToBatch[runs[i].RunID]; ok {
 				runs[i].BatchKey = batchKey
 			}
 		}
 		dirID := v.sourceDirID(runs[i])
 		runs[i].Archived = v.isRunArchived(repoRoot, dirID)
 		runs[i].SourceExists = v.runDirExists(repoRoot, dirID)
-		// Unavailable is keyed by RunID rather than dirID because the
-		// batchindex entry is the source of truth for the unavailable
-		// flip (set by MarkUnavailable when the backing dir is missing).
-		// MarkUnavailable skips archived entries, so Archived and
-		// Unavailable stay mutually exclusive in normal operation.
-		if _, ok := unavailableRunIDs[runs[i].RunID]; ok {
+		// Unavailable is keyed by sourceDirID (BatchKey when present)
+		// because the batchindex entry is the source of truth for the
+		// unavailable flip (set by MarkUnavailable when the backing dir
+		// is missing). MarkUnavailable skips archived entries, so
+		// Archived and Unavailable stay mutually exclusive in normal
+		// operation.
+		if _, ok := unavailableRunIDs[dirID]; ok {
 			runs[i].Unavailable = true
 		}
 	}
@@ -1252,16 +1253,16 @@ func (v *portalRunsView) sourceDirID(run portalRun) string {
 	return run.RunID
 }
 
-// unavailableRunIDsByBatchIndex returns the set of RunIDs whose batch
-// index entry is currently StatusUnavailable. The portal needs this to
-// stamp Unavailable on completed historical rows that lost their
-// backing directory; without this stamp the row would still render with
-// a normal badge and an Archive button, inviting operator action on a
-// run that no longer exists on disk.
+// unavailableRunIDsByBatchIndex returns the set of source directory IDs
+// whose batch index entry is currently StatusUnavailable. The portal
+// needs this to stamp Unavailable on completed historical rows that lost
+// their backing directory; without this stamp the row would still render
+// with a normal badge and an Archive button, inviting operator action on
+// a run that no longer exists on disk.
 //
-// The lookup is keyed by entry ID. batchindex.Entry.ID is the batch
-// RunID written by the orchestrator when the batch is created, and it
-// matches portalRun.RunID for completed historical rows.
+// The lookup is keyed by sourceDirID (BatchKey when present, RunID
+// otherwise), which matches batchindex.Entry.ID for completed historical
+// rows.
 func (v *portalRunsView) unavailableRunIDsByBatchIndex(repoRoot string) map[string]struct{} {
 	out := map[string]struct{}{}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
@@ -1286,20 +1287,25 @@ func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) ([]daemon.DeadB
 	if len(deadBatches) == 0 {
 		return nil, nil, nil
 	}
-	dirIDs := make(map[string]string, len(deadBatches))
+	// Build a mapping from row RunID to batch dir basename so that
+	// BatchKey can be populated for completed historical rows. The
+	// batch directory contains a runs/ subdirectory with one entry
+	// per row; each entry name is the row RunID.
+	rowToBatch := map[string]string{}
 	for _, batch := range deadBatches {
-		if batch.Manifest.BatchId == "" {
+		batchDir := filepath.Base(batch.RunDir)
+		runsDir := filepath.Join(batch.RunDir, "runs")
+		entries, err := os.ReadDir(runsDir)
+		if err != nil {
 			continue
 		}
-		if _, ok := dirIDs[batch.Manifest.BatchId]; ok {
-			continue
+		for _, e := range entries {
+			if e.IsDir() {
+				rowToBatch[e.Name()] = batchDir
+			}
 		}
-		dirIDs[batch.Manifest.BatchId] = filepath.Base(batch.RunDir)
 	}
-	if len(dirIDs) == 0 {
-		return nil, nil, nil
-	}
-	return deadBatches, dirIDs, nil
+	return deadBatches, rowToBatch, nil
 }
 
 func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string, deadBatches []daemon.DeadBatch) (string, error) {
