@@ -140,6 +140,41 @@ func TestPortal_EventPayloadCSS_OnlyOneRuleAndNoPseudoElementDividers(t *testing
 	}
 }
 
+// TestPortal_TerminalLogCSS_HorizontalScrollbar asserts the `.terminal-log`
+// rule in portal.html declares `white-space: pre` (no line wrapping) and
+// `overflow-x: auto` (horizontal scrollbar when content overflows). This
+// applies to the log <pre> rendered by buildLogPre so long commands or
+// paths stay on one line instead of wrapping (issue #1284).
+func TestPortal_TerminalLogCSS_HorizontalScrollbar(t *testing.T) {
+	html := readPortalHTML(t)
+	body := extractCSSRuleBody(t, html, ".terminal-log")
+
+	for _, required := range []struct {
+		token string
+		why   string
+	}{
+		{"white-space: pre", "no line wrapping — long commands/paths stay on one line"},
+		{"overflow-x: auto", "horizontal scrollbar appears only when content overflows"},
+	} {
+		if !strings.Contains(body, required.token) {
+			t.Errorf(".terminal-log rule missing %q (%s)", required.token, required.why)
+		}
+	}
+}
+
+// TestPortal_TerminalLogCSS_OnlyOneRule asserts exactly one `.terminal-log`
+// rule lives in portal.html so the scrollbar fix is unambiguous.
+func TestPortal_TerminalLogCSS_OnlyOneRule(t *testing.T) {
+	html := readPortalHTML(t)
+	count := strings.Count(html, ".terminal-log")
+	if count < 1 {
+		t.Fatalf(".terminal-log selector not found in portal.html")
+	}
+	if count > 1 {
+		t.Errorf(".terminal-log selector appears %d times in portal.html; expected a single rule", count)
+	}
+}
+
 // TestPortal_DrawerShellCSS_IsFlatSurfaceAndKeepsBorderDivider asserts the
 // `.settings-panel` rule (the slide-out settings drawer) declares a flat
 // `--surface` background, no `linear-gradient`, no `box-shadow`, and keeps
