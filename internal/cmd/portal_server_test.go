@@ -1591,6 +1591,67 @@ func TestPortal_DownloadsLogFiles(t *testing.T) {
 	}
 }
 
+func TestPortal_LogsPathPermittedEnforcement(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "batches", "batch-1", "runs", "run-1"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches", "batch-1", "runs", "run-1", "run.log"), []byte("archived log content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "archive", "archived-batch-1", "runs", "archived-run-1"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "archive", "archived-batch-1", "runs", "archived-run-1", "run.log"), []byte("archived log content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "batches", "batch-1", "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches", "batch-1", "config", "hosts.yml"), []byte("secrets\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches.json"), []byte("[]\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "events.jsonl"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	cases := []struct {
+		path       string
+		wantStatus int
+	}{
+		{".sandman/batches/batch-1/runs/run-1/run.log", http.StatusOK},
+		{".sandman/archive/archived-batch-1/runs/archived-run-1/run.log", http.StatusOK},
+		{".sandman/batches.json", http.StatusBadRequest},
+		{".sandman/events.jsonl", http.StatusBadRequest},
+		{".sandman/batches/batch-1/config/hosts.yml", http.StatusBadRequest},
+	}
+
+	for _, tc := range cases {
+		href := "/api/logs?path=" + url.QueryEscape(tc.path)
+		resp, err := http.Get(server.URL + href)
+		if err != nil {
+			t.Fatalf("request for %q: %v", tc.path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != tc.wantStatus {
+			t.Errorf("path %q: got %d, want %d", tc.path, resp.StatusCode, tc.wantStatus)
+		}
+	}
+}
+
 func TestPortal_LogsRejectsPathTraversal(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
