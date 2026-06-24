@@ -350,6 +350,68 @@ func TestPortalLogPathForRun_ResolvesRunLogInRunFolder(t *testing.T) {
 	}
 }
 
+func TestDiscoverPortalInstances_PersistsUnavailableStatus(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	batchActiveDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-active")
+	if err := os.MkdirAll(batchActiveDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:     "batch-active",
+				Path:   batchActiveDir,
+				Kind:   batchindex.KindIssue,
+				Status: batchindex.StatusActive,
+			},
+			{
+				ID:     "batch-missing",
+				Path:   filepath.Join(repoRoot, ".sandman", "batches", "batch-nonexistent"),
+				Kind:   batchindex.KindIssue,
+				Status: batchindex.StatusActive,
+			},
+		},
+		StatFn: os.Stat,
+	}
+
+	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	if err := idx.Save(idxPath); err != nil {
+		t.Fatal(err)
+	}
+
+	instances, err := discoverPortalInstances(repoRoot)
+	if err != nil {
+		t.Fatalf("discoverPortalInstances: %v", err)
+	}
+
+	if len(instances) != 0 {
+		t.Fatalf("expected 0 instances (missing folder + no socket on active), got %d", len(instances))
+	}
+
+	savedIdx, err := batchindex.Load(idxPath)
+	if err != nil {
+		t.Fatalf("reload index: %v", err)
+	}
+
+	byID := make(map[string]batchindex.Status)
+	for _, e := range savedIdx.Entries {
+		byID[e.ID] = e.Status
+	}
+
+	if byID["batch-active"] != batchindex.StatusActive {
+		t.Fatalf("expected batch-active to stay StatusActive, got %v", byID["batch-active"])
+	}
+	if byID["batch-missing"] != batchindex.StatusUnavailable {
+		t.Fatalf("expected batch-missing to be persisted as StatusUnavailable, got %v", byID["batch-missing"])
+	}
+}
+
 func TestPortalLogDownload_PermittedLogPathFormat(t *testing.T) {
 	cases := []struct {
 		path     string
