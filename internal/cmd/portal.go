@@ -386,12 +386,15 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 		return discoverPortalInstancesFromFilesystem(repoRoot)
 	}
 
-	if err := idx.EnsureStatus(); err != nil {
+	changed, err := idx.EnsureStatus()
+	if err != nil {
 		return nil, fmt.Errorf("ensure status: %w", err)
 	}
 
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
-		return nil, fmt.Errorf("persist index after status check: %w", err)
+	if changed {
+		if err := idx.Save(layout.BatchesIndexPath); err != nil {
+			return nil, fmt.Errorf("persist index after status check: %w", err)
+		}
 	}
 
 	instances := make([]portalInstance, 0, len(idx.Entries))

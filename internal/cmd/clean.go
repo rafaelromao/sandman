@@ -152,7 +152,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("load batches index: %w", err)
 			}
 
-			if err := idx.EnsureStatus(); err != nil {
+			if _, err := idx.EnsureStatus(); err != nil {
 				return fmt.Errorf("ensure status: %w", err)
 			}
 

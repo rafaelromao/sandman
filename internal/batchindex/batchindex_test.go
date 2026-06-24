@@ -202,7 +202,7 @@ func TestProbeStatus_ENOENT_SetsUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if err := loaded.EnsureStatus(); err != nil {
+	if _, err := loaded.EnsureStatus(); err != nil {
 		t.Fatalf("EnsureStatus failed: %v", err)
 	}
 	if loaded.Entries[0].Status != StatusUnavailable {
@@ -239,7 +239,7 @@ func TestProbeStatus_NonENOENT_LeavesStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if err := loaded.EnsureStatus(); err != nil {
+	if _, err := loaded.EnsureStatus(); err != nil {
 		t.Fatalf("EnsureStatus failed: %v", err)
 	}
 

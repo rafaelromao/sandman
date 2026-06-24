@@ -88,7 +88,7 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 		return fmt.Errorf("load batches index: %w", err)
 	}
 
-	if err := idx.EnsureStatus(); err != nil {
+	if _, err := idx.EnsureStatus(); err != nil {
 		return fmt.Errorf("ensure status: %w", err)
 	}
 
@@ -246,7 +246,7 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 		return fmt.Errorf("load batches index: %w", err)
 	}
 
-	if err := idx.EnsureStatus(); err != nil {
+	if _, err := idx.EnsureStatus(); err != nil {
 		return fmt.Errorf("ensure status: %w", err)
 	}
 

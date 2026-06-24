@@ -131,7 +131,7 @@ func TestDiscoverPortalInstances_MissingFolderFlipsUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := loadedIdx.EnsureStatus(); err != nil {
+	if _, err := loadedIdx.EnsureStatus(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,7 +164,7 @@ func TestDiscoverPortalInstances_PermissionErrorDoesNotFlip(t *testing.T) {
 		},
 	}
 
-	if err := idx.EnsureStatus(); err != nil {
+	if _, err := idx.EnsureStatus(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,7 +264,7 @@ func TestBatchIndexEnsureStatus_AllScenarios(t *testing.T) {
 			Entries: []batchindex.Entry{{ID: "x", Path: "/nonexistent", Status: batchindex.StatusActive}},
 			StatFn:  os.Stat,
 		}
-		if err := idx.EnsureStatus(); err != nil {
+		if _, err := idx.EnsureStatus(); err != nil {
 			t.Fatal(err)
 		}
 		if idx.Entries[0].Status != batchindex.StatusUnavailable {
@@ -278,7 +278,7 @@ func TestBatchIndexEnsureStatus_AllScenarios(t *testing.T) {
 			Entries: []batchindex.Entry{{ID: "x", Path: "/nonexistent", Status: batchindex.StatusArchived}},
 			StatFn:  os.Stat,
 		}
-		if err := idx.EnsureStatus(); err != nil {
+		if _, err := idx.EnsureStatus(); err != nil {
 			t.Fatal(err)
 		}
 		if idx.Entries[0].Status != batchindex.StatusUnavailable {
@@ -292,7 +292,7 @@ func TestBatchIndexEnsureStatus_AllScenarios(t *testing.T) {
 			Entries: []batchindex.Entry{{ID: "x", Path: "/nonexistent", Status: batchindex.StatusUnavailable}},
 			StatFn:  os.Stat,
 		}
-		if err := idx.EnsureStatus(); err != nil {
+		if _, err := idx.EnsureStatus(); err != nil {
 			t.Fatal(err)
 		}
 		if idx.Entries[0].Status != batchindex.StatusUnavailable {
@@ -308,7 +308,7 @@ func TestBatchIndexEnsureStatus_AllScenarios(t *testing.T) {
 				return nil, os.ErrPermission
 			},
 		}
-		if err := idx.EnsureStatus(); err != nil {
+		if _, err := idx.EnsureStatus(); err != nil {
 			t.Fatal(err)
 		}
 		if idx.Entries[0].Status != batchindex.StatusActive {
