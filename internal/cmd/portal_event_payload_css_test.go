@@ -155,6 +155,7 @@ func TestPortal_TerminalLogCSS_HorizontalScrollbar(t *testing.T) {
 	}{
 		{"white-space: pre", "no line wrapping — long commands/paths stay on one line"},
 		{"overflow-x: auto", "horizontal scrollbar appears only when content overflows"},
+		{"font-family: ui-monospace", "preserves monospace terminal rendering"},
 	} {
 		if !strings.Contains(body, required.token) {
 			t.Errorf(".terminal-log rule missing %q (%s)", required.token, required.why)

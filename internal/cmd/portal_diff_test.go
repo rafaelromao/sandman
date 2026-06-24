@@ -2867,7 +2867,7 @@ vm.runInNewContext(scriptBody + '\n' + ` + "`" + js + "`" + `, Object.assign({},
 // preserve the source row's runId so renderRunMeta continues to surface
 // the real run identifier in the meta line, and so findRunByIdentity can
 // locate the row from its data-run-key.
-func TestPortalDiffBuildLogPre_HasTerminalLogClassAndNoWrap(t *testing.T) {
+func TestPortalDiffBuildLogPre_HasTerminalLogClass(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: 'some log output' };
 const stopGroups = new Set();
