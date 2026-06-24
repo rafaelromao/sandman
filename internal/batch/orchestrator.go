@@ -2228,6 +2228,9 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	} else if runID == "" {
 		runID = fmt.Sprintf("run-0-%d", time.Now().UnixNano())
 	}
+	if s.runID == "" && s.batchID == "" {
+		s.batchID = batchIDFromRunID(runID)
+	}
 	if o.eventLog != nil {
 		promptSourceType := "current"
 		payload := map[string]any{"branch": branch, "base_branch": s.baseBranch, "prompt_source_type": "prompt", "parallel": s.parallel, "start_delay": int(s.startDelay / time.Second), "retries": s.retries, "sandbox": s.sandboxMode, "container_capacity": s.containerCapacity, "container_capacity_set": s.containerCapacitySet, "max_containers": s.maxContainers, "max_containers_set": s.maxContainersSet}
