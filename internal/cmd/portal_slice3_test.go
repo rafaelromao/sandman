@@ -732,11 +732,6 @@ func TestPortal_Polling_ReviewLiveSocketStillShowsTerminalSuccess(t *testing.T) 
 // directory has been moved under .sandman/archive/<run-id> must surface
 // Archived=true on the corresponding row, and the JSON payload must
 // carry the "archived":true key (acceptance criterion #3).
-//
-// The portal reads the batches index first: the batch's entry must be
-// recorded with status=archived and entry.Path pointing to the archive
-// directory. This mirrors the runtime path that `sandman archive run`
-// takes via idx.SetArchived.
 func TestPortal_Compute_CompletedRunUnderArchiveDir_MarksArchived(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -883,7 +878,7 @@ func TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists(t *testing.
 // TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists is the
 // regression for historical completed rows: when the batch directory is still
 // on disk but the daemon is gone, the portal should recover the batch dir name
-// from the index so Archive stays available.
+// from the manifest so Archive stays available.
 func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -1039,12 +1034,6 @@ func TestPortal_Compute_ActiveRunNeverArchived(t *testing.T) {
 	}
 }
 
-// TestPortal_Compute_ActiveIndexEntryWithArchiveDir_NotArchived
-// verifies the inverse: when an active entry's directory has been moved
-// under .sandman/archive by an external process (or never moved back
-// after archive/clean), the portal must NOT mark it archived unless the
-// index says so. The OLD filesystem-stat approach would mark this row
-// archived spuriously.
 func TestPortal_Compute_ActiveIndexEntryWithArchiveDir_NotArchived(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -1066,7 +1055,6 @@ func TestPortal_Compute_ActiveIndexEntryWithArchiveDir_NotArchived(t *testing.T)
 	}
 	addBatchToIndex(t, repoRoot, runID, runDir, []int{42})
 
-	// Spurious archive directory on disk; the index still says active.
 	archiveDir := filepath.Join(repoRoot, ".sandman", "archive", runID)
 	if err := os.MkdirAll(archiveDir, 0755); err != nil {
 		t.Fatalf("mkdir spurious archive: %v", err)

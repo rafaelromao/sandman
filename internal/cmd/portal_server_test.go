@@ -1935,10 +1935,6 @@ func addBatchToIndex(t *testing.T, repoRoot, batchID, batchPath string, issues [
 	}
 }
 
-// addArchivedBatchToIndex records a batch entry with status=archived and
-// entry.Path set to archivePath, mirroring what `sandman archive run` does
-// at runtime via idx.SetArchived. Tests use this helper to exercise the
-// portal's index-first read path for the Archived field.
 func addArchivedBatchToIndex(t *testing.T, repoRoot, batchID, archivePath string, issues []int) {
 	t.Helper()
 	layout := paths.NewLayout(nil, repoRoot)
