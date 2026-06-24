@@ -21,6 +21,14 @@ This skill implements a GitHub issue by modifying the current repository's sourc
 
 You need to follow all steps in this workflow. Make sure you have gone through all items in the checklist in the end of this skill.
 
+## Hard rules
+
+1. **You must NOT exit while any test is failing.** If a test you wrote (or a test that started failing because of your changes) is red, you have two acceptable paths: (a) fix the code so the test goes green, or (b) revert the change that introduced the failure so the test goes green again. Describing the failure, hypothesizing about the cause, and exiting with the failure unresolved is NOT acceptable — a PR with failing tests will not be merged, and any retry will restart on the same broken state. If you truly cannot resolve the failure within the run's context window, commit a known-broken state to a separate diagnostic branch and revert the working branch to the last green commit.
+
+2. **You must commit at meaningful milestones, not only at the very end.** Within a single vertical slice, accumulate the slice's RED→GREEN cycles as uncommitted work — committing after every test produces noisy, undebuggable history. The slice ends with a single commit once the slice is fully green. Across slices, commit one commit per vertical slice. Commit before any step where you might be interrupted — before delegating review, before requesting review, before any action that hands control to another agent. Uncommitted work in the working tree is at risk: if the run is interrupted, retried, or reset, anything that has not been committed is lost. Commits are your durable checkpoint.
+
+3. **You must reach the PR-created state in every run, even with partial implementation.** Only a merged PR counts as success; an open PR is the durable artifact that lets the next run pick up where this one left off. If you cannot complete all vertical slices in the plan within the run's context window, that is not a reason to keep iterating on TDD — it is a reason to commit what you have, create the PR with `Fixes #<issue_number>`, and let the review loop surface the gaps. An open PR with partial implementation is recoverable: the next run continues from the same branch. No PR at all means the work lives only in the local working tree, and the next run starts over from a clean branch.
+
 ### 1. Setup branch
 
 ```bash
@@ -54,7 +62,8 @@ A merged PR that closes an issue will, by GitHub rules, automatically close the 
 
 - Follow `sandman-tdd` workflow: vertical slices, one test → one implementation, within the repository codebase
 - Run project tests and formatting after each cycle
-- Do NOT commit during TDD; keep working
+- **Do NOT commit individual RED→GREEN cycles within a single vertical slice.** Keep working within a slice until the slice is fully green, then commit one commit per vertical slice (see Hard Rule 2). This gives you atomic, reviewable history without the noise of micro-commits per test.
+- **Always end a run in a committable state.** If context is running low and you have a green slice but not a complete implementation, commit what you have (one commit per finished slice) before moving to Step 4. Do not let the run end with multiple slices of uncommitted work — if it does, the next retry restarts from a clean branch.
 
 ### 4. Commit implementation
 
@@ -75,6 +84,8 @@ git commit -m "feat: <issue title>"
 git add -A
 git commit -m "refactor: self-review fixes"
 ```
+
+- **If any test fails during self-review, you must NOT exit with the failure unresolved** (see Hard Rule 1). Diagnose the failure, fix the code, and re-run until the test is green. If the failing test is a pre-existing flake unrelated to your changes, isolate it with `git stash`, re-run to confirm green, and document the flake in the commit message. If you cannot resolve the failure within the run's context window, do not proceed to Steps 6-8 — stop and leave the failure documented in the commit message and task.md so the next attempt has a clear starting point.
 
 - Fix the code in case any of the tests fail. Commit again:
 
@@ -120,8 +131,10 @@ Capture the PR URL and number.
 - [ ] Branch created from latest main
 - [ ] Changes confined to the repository codebase (not meta-infrastructure)
 - [ ] User confirmed plan before TDD
+- [ ] Each vertical slice committed before moving to the next (Hard Rule 2)
+- [ ] All tests green at exit (Hard Rule 1) — no failing tests left unresolved
 - [ ] Implementation committed
 - [ ] Self-review performed and fixes committed
 - [ ] Base branch merged into current branch with `sandman-back-merge`
-- [ ] PR created with `Fixes #<issue_number>`
+- [ ] PR created with `Fixes #<issue_number>` (Hard Rule 3 — even with partial implementation)
 - [ ] Delegate review completed
