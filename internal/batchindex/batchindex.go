@@ -116,16 +116,6 @@ func (idx *Index) EnsureStatus() (bool, error) {
 	return changed, nil
 }
 
-func (idx *Index) MarkUnavailable(entryID string) error {
-	for i := range idx.Entries {
-		if idx.Entries[i].ID == entryID {
-			idx.Entries[i].Status = StatusUnavailable
-			return nil
-		}
-	}
-	return fmt.Errorf("entry %q not found", entryID)
-}
-
 func (idx *Index) Save(indexPath string) error {
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
