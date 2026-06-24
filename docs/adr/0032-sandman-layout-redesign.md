@@ -100,6 +100,8 @@ The legacy `BatchManifest.RunID` field is renamed to `BatchId`. The field semant
 | Archive | `os.Rename(<batch>/, archive/<id>/)` first, then update index entry to `status:"archived"` |
 | Clean (no flag) | Remove `active` and `unavailable` entries + their folders |
 | Clean `--archived` | Remove `archived` and `unavailable` entries + their folders |
+| Clean `--dry-run` | Preview deletions without removing; same targeting as `clean` or `clean --archived` |
+| Clean `--stale` | Recover stale runs as `aborted` via event log; no index change |
 | Lazy unavailable | Any code reading the index stats each entry path; only `ENOENT` flips status to `unavailable` |
 
 Folder rename always happens before the index update during archive. If the index write fails, the inconsistency is detectable on next read.
@@ -120,6 +122,11 @@ Bulk operations (`archive older-than`, `archive stale`, `clean`, `clean --archiv
 - `ClearIssueArtifacts` log-file deletion in the orchestrator
 - `--success` and `--failed` flags on `clean`
 - Backward-compatibility shims for old paths
+
+### What is added
+
+- `clean --dry-run` to preview deletions before destructive operations
+- `clean --stale` to recover stale runs as `aborted` without changing the index
 
 ### What is kept
 
