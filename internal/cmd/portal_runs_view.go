@@ -1215,10 +1215,10 @@ func (v *portalRunsView) loadBatchesIndex(repoRoot string) *batchindex.Index {
 }
 
 // isRunArchived reports whether runID's directory currently lives under
-// .sandman/archive instead of .sandman/runs. A non-empty RunID that
-// matches no directory on disk returns false; only a present directory
-// counts as archived, so transient or half-moved state never lights up
-// the flag.
+// .sandman/archive instead of .sandman/runs. A non-empty runID that does
+// not resolve to an index entry returns false; otherwise, archived-ness
+// is reported from the entry's Status field, so transient or half-moved
+// state never lights up the flag.
 func (v *portalRunsView) isRunArchived(idx *batchindex.Index, runID string) bool {
 	if runID == "" || idx == nil {
 		return false
