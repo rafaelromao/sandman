@@ -620,17 +620,35 @@ func TestDaemon_MixedSeenAndUnseenTriggers(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
-	// Pre-mark "already-seen" as seen.
-	prDir := d.PRDir(1)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
-		t.Fatalf("create PR dir: %v", err)
+	// Create a fake prior batch that already processed "already-seen"
+	// for PR 1. This simulates cross-run dedup: loadGlobalSeenForPR
+	// reads the batches index and finds this prior review-state.json.
+	priorBatchDir := filepath.Join(d.BaseDir, "batches", "old-batch-PR1")
+	priorRunDir := filepath.Join(priorBatchDir, "runs", "review")
+	if err := os.MkdirAll(priorRunDir, 0755); err != nil {
+		t.Fatalf("create prior run dir: %v", err)
 	}
-	store, err := NewSeenCommentsStore(prDir)
-	if err != nil {
-		t.Fatalf("open seen store: %v", err)
+	priorState := batchindex.ReviewState{
+		PR: 1,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: "already-seen", Timestamp: now},
+		},
 	}
-	if err := store.Mark("already-seen"); err != nil {
-		t.Fatalf("mark already-seen: %v", err)
+	if err := batchindex.WriteReviewState(priorRunDir, priorState); err != nil {
+		t.Fatalf("write prior review state: %v", err)
+	}
+	// Register the prior batch in the batches index so
+	// loadGlobalSeenForPR discovers it.
+	indexPath := filepath.Join(d.BaseDir, "batches", "batches.json")
+	idx, _ := batchindex.Load(indexPath)
+	idx.Add(batchindex.Entry{
+		ID:   "old-batch-PR1",
+		Path: priorBatchDir,
+		Kind: batchindex.KindReview,
+		PR:   1,
+	})
+	if err := idx.Save(indexPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
 	}
 
 	if err := d.tick(context.Background()); err != nil {
