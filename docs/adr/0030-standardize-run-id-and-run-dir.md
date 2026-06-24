@@ -9,7 +9,7 @@ accepted
 Sandman generates two related but distinct identifiers for every batch run:
 
 - **RunID**: a string that uniquely identifies one AgentRun within a batch. Persisted in the `RunID` field of every event in `events.jsonl` and used as the row key in the portal.
-- **RunDir**: a per-batch directory under `.sandman/runs/` that contains the control socket, command server, broadcaster, and `batch.json` manifest for the daemon process.
+- **RunDir**: a per-batch directory at `<batch>/` that contains the daemon's `batch.json` and `batch.sock`. Each AgentRun within the batch gets its own `<batch>/runs/<runID>/` subdirectory containing `run.json`, `run.log`, and `run.sock`.
 
 Historically, these identifiers were generated ad-hoc in multiple places with inconsistent naming schemes. The `--run-id` flag was used as the RunDir name for prompt-only runs, but not for issue-driven runs. This made it difficult to reason about run identity across the portal, the daemon, and the event log.
 

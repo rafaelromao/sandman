@@ -624,7 +624,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 				req.RunTS = ts
 				req.RunShortID = shortid
-				sessionRunID = runid.NewBatchID(runid.KindIssue, len(req.Issues), fmt.Sprintf("%d", req.Issues[0]), ts, shortid)
+				sessionRunID = batch.BatchIDForIssue(ts, shortid)
 			} else if overridePrompt {
 				ts, shortid, err := runid.NewBatch()
 				if err != nil {

@@ -37,11 +37,13 @@ func buildRunID(num int, ts, shortid string) string {
 	return runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", num), ts, shortid)
 }
 
-// batchIDForIssue returns the per-row batch directory name for an
-// issue-driven session, derived from the (ts, shortid) pair. The name
-// is unique per batch and forms the segment between <batchesDir>/ and
-// runs/<runID>/ in the new layout.
-func batchIDForIssue(ts, shortid string) string {
+// BatchIDForIssue returns the per-batch directory name for an issue-driven
+// session, derived from the (ts, shortid) pair. The name is unique per batch
+// and forms the segment between <batchesDir>/ and runs/<runID>/ in the new
+// layout. Exported so the run command can pass the same ID to
+// daemon.NewRunSession, ensuring the daemon and orchestrator use the same
+// batch directory.
+func BatchIDForIssue(ts, shortid string) string {
 	if shortid == "" && ts == "" {
 		return ""
 	}
@@ -1818,7 +1820,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context,
 		strandedReconcile:          strandedReconcile,
 		runTS:                      runTS,
 		runShortID:                 runShortID,
-		batchID:                    batchIDForIssue(runTS, runShortID),
+		batchID:                    BatchIDForIssue(runTS, runShortID),
 		parentCtx:                  parentCtx,
 		opts:                       o.runSessionOpts,
 	}
