@@ -149,7 +149,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil, nil)
 
 	if run.Kind != "completed" {
 		t.Fatalf("expected kind 'completed' for run with dead socket, got %q", run.Kind)
@@ -185,7 +185,7 @@ func TestPortal_RunFromActiveMatchSetsCompletedWhenSocketDead(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil)
+	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil, nil)
 
 	if run.Kind != "completed" {
 		t.Fatalf("expected kind 'completed' for match with dead socket, got %q", run.Kind)
@@ -226,7 +226,7 @@ func TestPortal_RunFromStateSetsCompletedWhenActiveButSocketDead(t *testing.T) {
 		SocketPath: sockPath,
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
 
 	if run.Kind != "completed" {
 		t.Fatalf("expected kind 'completed' for active run with dead socket, got %q", run.Kind)
@@ -267,7 +267,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil, nil)
 
 	if run.Kind != "active" {
 		t.Fatalf("expected kind 'active' for run with live socket, got %q", run.Kind)
@@ -303,7 +303,7 @@ func TestPortal_RunFromActiveMatchKeepsActiveWhenSocketAlive(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil)
+	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil, nil)
 
 	if run.Kind != "active" {
 		t.Fatalf("expected kind 'active' for match with live socket, got %q", run.Kind)
@@ -344,7 +344,7 @@ func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
 		SocketPath: sockPath,
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
 
 	if run.Kind != "active" {
 		t.Fatalf("expected kind 'active' for active run with live socket, got %q", run.Kind)
@@ -384,7 +384,7 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *tes
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
 	if run.Kind != "completed" {
 		t.Fatalf("expected kind 'completed' for unmatched active state with dead socket, got %q", run.Kind)
@@ -409,7 +409,7 @@ func TestPortal_RunFromState_MarksCompletedWhenRunDirMissing(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
 	if run.Kind != "completed" {
 		t.Fatalf("expected kind 'completed' for unmatched active state with missing run dir, got %q", run.Kind)
@@ -441,7 +441,7 @@ func TestPortal_RunFromState_MarksCompletedWhenRunDirExistsButSocketMissing(t *t
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
 	if run.Kind != "completed" {
 		t.Fatalf("expected kind 'completed' for unmatched active state with present run dir but missing socket, got %q", run.Kind)
@@ -555,7 +555,7 @@ func TestPortal_RunFromActiveMatchReturnsReviewingForPRInstance(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil)
+	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil, nil)
 
 	if run.Status != "reviewing" {
 		t.Fatalf("expected status 'reviewing' for PR instance, got %q", run.Status)
@@ -598,7 +598,7 @@ func TestPortal_RunFromState_PopulatesIssueTitle(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
 	if run.IssueTitle != "Add dark mode toggle" {
 		t.Fatalf("expected IssueTitle %q, got %q", "Add dark mode toggle", run.IssueTitle)
@@ -619,7 +619,7 @@ func TestPortal_RunFromState_EmptyIssueTitleWhenMissing(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
 	if run.IssueTitle != "" {
 		t.Fatalf("expected empty IssueTitle, got %q", run.IssueTitle)
@@ -705,7 +705,7 @@ func TestPortal_RunFromState_PopulatesRetriesFromFinishedPayload(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
 	if run.RetriesTotal != 3 {
 		t.Fatalf("expected RetriesTotal=3, got %d", run.RetriesTotal)
@@ -729,7 +729,7 @@ func TestPortal_RunFromState_LeavesRetriesZeroWhenActive(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
 	if run.RetriesTotal != 0 {
 		t.Fatalf("expected RetriesTotal=0 for active run, got %d", run.RetriesTotal)
@@ -774,7 +774,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil, nil)
 
 	if run.IssueTitle != "Fix login bug" {
 		t.Fatalf("expected IssueTitle %q, got %q", "Fix login bug", run.IssueTitle)
@@ -817,7 +817,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForQueued(t *testing.
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 962, nil, nil, queued, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 962, nil, nil, queued, "", nil, nil)
 
 	if run.Status != "queued" {
 		t.Fatalf("expected Status %q, got %q", "queued", run.Status)
@@ -873,7 +873,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 		},
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 962, nil, blocked, queued, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 962, nil, blocked, queued, "", nil, nil)
 
 	if run.Status != "blocked" {
 		t.Fatalf("expected Status %q, got %q", "blocked", run.Status)
@@ -909,7 +909,7 @@ func TestPortal_RunFromActiveBatchIssue_MixedBatchCarriesBatchIssues(t *testing.
 		StartedAt:    startedAt,
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 860, nil, nil, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 860, nil, nil, nil, "", nil, nil)
 
 	if got, want := run.BatchIssues, []int{860, 854}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected BatchIssues %v, got %v", want, got)
@@ -945,7 +945,7 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 		StartedAt:    startedAt,
 	}
 
-	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, nil, nil, nil, "", nil)
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, nil, nil, nil, "", nil, nil)
 
 	if run.BatchIssues != nil {
 		t.Fatalf("expected BatchIssues to be omitted for single-issue batch, got %v", run.BatchIssues)
@@ -1651,7 +1651,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"run_kind": "auto-select", "status": "success", "selected": []int{42, 43}},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
 		if run.Reason != "auto-select" {
 			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
 		}
@@ -1673,7 +1673,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"run_kind": "auto-select", "status": "failure", "reason": "no candidates"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
 		if run.Reason != "auto-select" {
 			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
 		}
@@ -1710,7 +1710,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		if err := os.Symlink(extSock, filepath.Join(runDir, "batch.sock")); err != nil {
 			t.Fatal(err)
 		}
-		run := (&portalRunsView{}).runFromState(root, state, nil, nil)
+		run := (&portalRunsView{}).runFromState(root, state, nil, nil, nil)
 		if run.Reason != "review" {
 			t.Fatalf("expected Reason 'review', got %q", run.Reason)
 		}
@@ -1735,7 +1735,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"review": true, "status": "success", "branch": "sandman/review-PR42"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
 		if run.Reason != "review" {
 			t.Fatalf("expected Reason 'review', got %q", run.Reason)
 		}
@@ -1760,7 +1760,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"review": true, "status": "failure", "branch": "sandman/review-PR42"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
 		if run.Reason != "review" {
 			t.Fatalf("expected Reason 'review', got %q", run.Reason)
 		}
@@ -1790,7 +1790,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		// run.cancelled event as terminal aborted.
 		aborted := events.Event{Type: "run.aborted", Timestamp: startedAt.Add(3 * time.Minute), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42}}
 		state.Finished = &aborted
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
 		if run.Reason != "review" {
 			t.Fatalf("expected Reason 'review' for aborted review run, got %q", run.Reason)
 		}
@@ -1817,7 +1817,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"branch": "sandman/issue-42", "status": "success"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
 		if run.Reason != "" {
 			t.Fatalf("expected empty Reason for issue-driven run, got %q", run.Reason)
 		}
@@ -1835,7 +1835,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"branch": "sandman/prompt"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
 		if run.Reason != "" {
 			t.Fatalf("expected empty Reason for prompt-only run, got %q", run.Reason)
 		}
@@ -1858,7 +1858,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"branch": "sandman/issue-42"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
 		if run.Reason != "" {
 			t.Fatalf("expected empty Reason for continuation run, got %q", run.Reason)
 		}
@@ -1900,7 +1900,7 @@ func TestPortal_ActiveMatch_ReasonDerivedFromSocket(t *testing.T) {
 			},
 		}
 
-		run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil)
+		run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil, nil)
 		if run.Reason != "review" {
 			t.Fatalf("expected Reason 'review' for unmatched PR socket, got %q", run.Reason)
 		}
@@ -1921,7 +1921,7 @@ func TestPortal_ActiveMatch_ReasonDerivedFromSocket(t *testing.T) {
 			},
 		}
 
-		run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil)
+		run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil, nil)
 		if run.Reason != "" {
 			t.Fatalf("expected empty Reason for prompt-only active socket, got %q", run.Reason)
 		}
@@ -1950,7 +1950,7 @@ func TestPortal_ActiveMatch_ReasonDerivedFromSocket(t *testing.T) {
 			}},
 		}
 
-		run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, eventsByRun)
+		run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, eventsByRun, nil)
 		if run.Reason != "auto-select" {
 			t.Fatalf("expected Reason 'auto-select' for unmatched active auto-select socket, got %q", run.Reason)
 		}
@@ -2003,7 +2003,7 @@ func TestPortal_ActiveBatchIssue_ReasonFromState(t *testing.T) {
 		// Active batch issue path requires an issue number; pass 0 to
 		// surface the auto-select run whose only event is the auto-select
 		// run itself. The row's Key/RunID are taken from the state.
-		run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 0, state, nil, nil, "", nil)
+		run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 0, state, nil, nil, "", nil, nil)
 		if run.Reason != "auto-select" {
 			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
 		}
