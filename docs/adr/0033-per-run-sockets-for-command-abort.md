@@ -81,5 +81,3 @@ The `Command Server` entry in `CONTEXT.md` is updated to reflect the per-run soc
 - The batch-level `batch.sock` remains for attach/streaming. No change to the attach workflow.
 - `IsRunActive` semantics are unchanged — it still probes `batch.sock` only.
 - The per-run socket decision is orthogonal to the batch/run folder layout (ADR-0032) but enabled by it.
-
-(End of file — total 103 lines)

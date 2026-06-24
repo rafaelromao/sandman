@@ -98,5 +98,4 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 - The flat `.sandman/reviews/` shape is shared between this ADR and ADR-0032 — both reference the same `review.sock` and `review-prompt.md`.
 - `review-state.json` schema is defined in ADR-0032 alongside other run-folder artifacts.
 - The `Reviewing` status entry in `CONTEXT.md` is unaffected by this ADR.
-
-(End of file — total 125 lines)
+- **Note:** The flat `.sandman/reviews/` structure with `review.sock` at the root (and per-PR subdirectories removed) reflects the design intent from #1218. Implementation slices for this layout change may not have fully landed in all code paths at time of writing.
