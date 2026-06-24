@@ -24,7 +24,7 @@ Every RunID and RunDir begins with a `<shortid>-<ts>` prefix:
 - `<shortid>` is 4 lowercase hex characters derived from `unixNano % 0xFFFF`.
 - `<ts>` is `time.Now().Format("060102150405")` (local time, 12 characters, 2-digit year).
 
-When `NewBatch()` finds that a directory already exists at `.sandman/runs/<shortid>-<ts>-...`, it generates a new shortid and retries up to 16 times before returning an error. The timestamp is not changed during retry; only the shortid advances.
+When `NewBatch()` finds that a directory already exists at `.sandman/batches/<shortid>-<ts>-...`, it generates a new shortid and retries up to 16 times before returning an error. The timestamp is not changed during retry; only the shortid advances.
 
 The shortid is placed first to maximise collision resistance within the same timestamp. The timestamp provides chronological ordering.
 

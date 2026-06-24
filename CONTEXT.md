@@ -167,7 +167,7 @@ _Avoid_: Orphaned worktree, lost worktree.
 _See_: Branch, Worktree.
 
 **Archive**:
-The on-disk resting place for completed run directories at `.sandman/archive/<run-id>`, populated by `sandman archive run <run-id>` (which also accepts `batch <id>` as an alias since the run directory is the batch's on-disk home) or by `sandman archive older-than <days>` for bulk archival of every dead run whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than the given cutoff. Archiving relocates the run directory tree from `.sandman/runs/<run-id>` (its live-and-during-run home) to `.sandman/archive/<run-id>` so the runs directory stays scoped to currently-relevant batches. The daemon is forbidden from writing to an archived run; the run is treated as read-only historical state once moved.
+The on-disk resting place for completed run directories at `.sandman/archive/<run-id>`, populated by `sandman archive run <run-id>` (which also accepts `batch <id>` as an alias since the run directory is the batch's on-disk home) or by `sandman archive older-than <days>` for bulk archival of every dead run whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than the given cutoff. Archiving relocates the run directory tree from `.sandman/batches/<batch-id>/` (its live-and-during-run home) to `.sandman/archive/<run-id>` so the batches directory stays scoped to currently-relevant batches. The daemon is forbidden from writing to an archived run; the run is treated as read-only historical state once moved.
 _Avoid_: trash, graveyard, old runs, retired runs.
 
 **RunDir**:
@@ -199,7 +199,7 @@ Connect a terminal to a running daemon via the control socket to stream its outp
 _Avoid_: Tail, follow.
 
 **Portal**:
-A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the current repository's `.sandman/runs/` tree on each poll and shows active and recent Sandman instances. It does not manage daemon lifecycle. (Note: the preset launcher was removed in #1204.)
+A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the current repository's `.sandman/batches/` tree on each poll and shows active and recent Sandman instances. It does not manage daemon lifecycle. (Note: the preset launcher was removed in #1204.)
 _Avoid_: dashboard, monitor, control panel.
 
 **Reviewing**:

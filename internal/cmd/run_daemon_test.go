@@ -193,12 +193,11 @@ func TestRun_RemovesRunDirOnCompletion(t *testing.T) {
 }
 
 // commanderBatchRunner is a batch.Runner that also satisfies the IssueCommander
-// interface for abort routing tests.
+// interface for abort routing tests. Per-row abort routing is verified by
+// TestRun_BootArtifactsBeforeRunStarted which uses a real orchestrator.
 type commanderBatchRunner struct {
-	started    chan struct{}
-	release    chan struct{}
-	abortCalls chan int
-	abortErr   error
+	started chan struct{}
+	release chan struct{}
 }
 
 func (c *commanderBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
@@ -208,16 +207,14 @@ func (c *commanderBatchRunner) RunBatch(ctx context.Context, req batch.Request) 
 }
 
 func (c *commanderBatchRunner) AbortIssue(issueNumber int) error {
-	c.abortCalls <- issueNumber
-	return c.abortErr
+	return nil
 }
 
 func TestRun_CreatesControlSocketInRunDirWithCommander(t *testing.T) {
 	dir := chdirToShortSandmanDir(t)
 	deps := depsWithSocket(&commanderBatchRunner{
-		started:    make(chan struct{}),
-		release:    make(chan struct{}),
-		abortCalls: make(chan int, 1),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
 	})
 	sandmanDir := filepath.Join(dir, ".sandman")
 	runner := deps.BatchRunner.(*commanderBatchRunner)
@@ -269,9 +266,8 @@ func TestRun_CreatesControlSocketInRunDirWithCommander(t *testing.T) {
 func TestRun_RemovesCommandSocketOnCompletion(t *testing.T) {
 	dir := chdirToSandmanDir(t)
 	deps := depsWithSocket(&commanderBatchRunner{
-		started:    make(chan struct{}),
-		release:    make(chan struct{}),
-		abortCalls: make(chan int, 1),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
 	})
 	sandmanDir := filepath.Join(dir, ".sandman")
 	runner := deps.BatchRunner.(*commanderBatchRunner)
