@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -7605,42 +7606,51 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 		t.Fatalf("worktree should exist: %v", err)
 	}
 
-	logDir := filepath.Join(".sandman", "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		t.Fatalf("mkdir logs: %v", err)
+	batchID := "test-batch-42"
+	batchPath := filepath.Join(".sandman", "batches", batchID)
+	runID := runIDFor(42)
+	logPath := filepath.Join(batchPath, "runs", runID, "run.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
 	}
-	logPath := filepath.Join(logDir, "42.log")
 	if err := os.WriteFile(logPath, []byte("test log"), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
 
-	// Create events
+	batchesIndexPath := filepath.Join(".sandman", "batches", "index.json")
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{{
+		ID:     batchID,
+		Path:   batchPath,
+		Kind:   batchindex.KindIssue,
+		Status: batchindex.StatusActive,
+		Issues: []int{42},
+	}}}
+	if err := idx.Save(batchesIndexPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
+	}
+
 	el := &spyEventLog{
 		events: []events.Event{
-			{Type: "run.started", RunID: runIDFor(42), Issue: 42, IssueRef: issueRef(42)},
-			{Type: "run.finished", RunID: runIDFor(42), Issue: 42, IssueRef: issueRef(42)},
+			{Type: "run.started", RunID: runID, Issue: 42, IssueRef: issueRef(42)},
+			{Type: "run.finished", RunID: runID, Issue: 42, IssueRef: issueRef(42)},
 		},
 	}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath)
 
-	// Worktree removed
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected worktree to be removed, got %v", err)
 	}
 
-	// Log removed
 	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
 		t.Errorf("expected log to be removed, got %v", err)
 	}
 
-	// Branch removed
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
 	if out, err := revCmd.CombinedOutput(); err == nil {
 		t.Errorf("expected branch to be removed, rev-parse succeeded: %s", out)
 	}
 
-	// Events removed
 	events, err := el.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
@@ -7690,21 +7700,40 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 		t.Fatalf("git should not know about the orphan dir, got:\n%s", out)
 	}
 
-	logDir := filepath.Join(".sandman", "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		t.Fatalf("mkdir logs: %v", err)
+	batchID := "test-batch-42"
+	batchPath := filepath.Join(".sandman", "batches", batchID)
+	runID := runIDFor(42)
+	logPath := filepath.Join(batchPath, "runs", runID, "run.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(logDir, "42.log"), []byte("stale log"), 0644); err != nil {
+	if err := os.WriteFile(logPath, []byte("stale log"), 0644); err != nil {
 		t.Fatalf("write stale log: %v", err)
 	}
 
-	el := &spyEventLog{}
-	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, "")
+	batchesIndexPath := filepath.Join(".sandman", "batches", "index.json")
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{{
+		ID:     batchID,
+		Path:   batchPath,
+		Kind:   batchindex.KindIssue,
+		Status: batchindex.StatusActive,
+		Issues: []int{42},
+	}}}
+	if err := idx.Save(batchesIndexPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
+	}
+
+	el := &spyEventLog{
+		events: []events.Event{
+			{Type: "run.started", RunID: runID, Issue: 42, IssueRef: issueRef(42)},
+		},
+	}
+	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath)
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected orphan worktree dir to be removed, got err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(logDir, "42.log")); !os.IsNotExist(err) {
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
 		t.Errorf("expected log to be removed, got err=%v", err)
 	}
 }
