@@ -157,4 +157,4 @@ Bulk operations (`archive older-than`, `archive stale`, `clean`, `clean --archiv
 
 - ADR-0030 (Standardize Run ID and Run Dir naming) is extended by this ADR's batch/run split.
 - The `RunDir` and `Archive` glossary entries in `CONTEXT.md` are updated to reflect the new layout.
-- The review daemon state shape is covered by ADR-0034; the flat `.sandman/reviews/` layout is shared between this ADR and ADR-0034.
+- The review daemon state shape is covered by ADR-0034; the `.sandman/reviews/` layout is shared between this ADR and ADR-0034.

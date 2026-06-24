@@ -53,7 +53,7 @@ The `run.sock` accepts JSON command requests. The first supported command is:
 {"action": "abort", "issue": <issue-number>}
 ```
 
-The daemon's per-run `CommandServer` dispatches this to the `IssueCommander` interface on the orchestrator, which cancels the context for that specific `AgentRun` without affecting siblings.
+The daemon's `CommandServer` (one per batch, bound at `<batch>/run.sock`) dispatches this to the `IssueCommander` interface on the orchestrator, which cancels the context for that specific `AgentRun` without affecting siblings.
 
 ### Schema changes
 
@@ -69,14 +69,14 @@ The `Command Server` entry in `CONTEXT.md` is updated to reflect the per-run soc
 ### Positive
 
 - External abort tools address each run by path — stable, discoverable, no encoding of identity into payload.
-- Each AgentRun has its own isolated command endpoint; aborting one run does not require touching sockets for sibling runs.
-- Path-based addressing aligns with the filesystem layout: the socket lives next to the run's `run.json` and `run.log`.
+- A single command server per batch dispatches aborts to the `IssueCommander` seam, cancelling a specific `AgentRun` without affecting siblings.
+- Path-based addressing aligns with the filesystem layout: the socket lives next to the batch's `batch.json` and `batch.sock`.
 - The `IssueCommander` seam is clean: one interface, one implementation per orchestrator, dispatch by issue number.
 
 ### Negative
 
-- The daemon now manages N socket listeners (one per active run) instead of 1. On a machine with thousands of concurrent runs this could increase file descriptor usage — acceptable given Sandman's single-repo, single-operator workload.
-- External tools must know the run's path to connect. This is straightforward: the path is derivable from the batch index and run identifiers.
+- The daemon manages one socket listener per batch (not one per active run). File descriptor usage is O(batches), not O(runs) — acceptable given Sandman's single-repo, single-operator workload.
+- External tools must know the batch path to connect. This is straightforward: the path is derivable from the batch index and batch identifier.
 
 ### Neutral
 
