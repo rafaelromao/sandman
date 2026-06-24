@@ -38,7 +38,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 #### Step 1: Get current PR state
 
 ```bash
-gh pr view <N> --repo <owner/repo> --json headsha,comments,reviewDecision,mergeStateStatus
+gh pr view <N> --repo <owner/repo> --json headRefOid,comments,reviewDecision,mergeStateStatus
 ```
 
 #### Step 2: Wait for CI to pass
@@ -180,6 +180,8 @@ An inline file comment OR top-level comment OR review body contains concrete cod
 → **Suggestions** — fix if straightforward; skip if redesign required. Only re-request after fix+push if previous request received a response.
 
 #### Step 7: Apply fixes
+
+**Hard rule — never exit after pushing a fix.** After `git push` in Step 7, the agent MUST continue to Step 5 to poll for the reviewer's next response.
 
 - Read `.sandman/.<N>.addressed_comments` — skip any inline comment IDs already present.
 - Read relevant source files, make minimal changes.
