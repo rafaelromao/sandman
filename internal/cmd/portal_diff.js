@@ -962,6 +962,9 @@
     if (oldSnap.archived !== newSnap.archived) {
       setClass(row, 'row-archived', newSnap.archived);
     }
+    if (oldSnap.unavailable !== newSnap.unavailable) {
+      setClass(row, 'row-unavailable', newSnap.unavailable);
+    }
     const currentAria = row.getAttribute('aria-expanded');
     const desiredAria = newSnap.ariaExpanded;
     if (currentAria !== desiredAria) {
