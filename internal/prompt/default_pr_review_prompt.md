@@ -14,10 +14,13 @@ Review pull request #{{PR_NUMBER}}: {{PR_TITLE}}
 
 Reviews are acceptance-criteria-first, then documented-standards-only, then correctness/safety.
 
+**Stay inside the issue's scope.** The issue the PR claims to close defines the contract. `Blocking` and `Important` findings must reference either (a) an acceptance criterion from the linked issue, (b) a documented standard from `CLAUDE.md` / `CONTEXT.md`, or (c) a correctness/safety defect in the diff. Do NOT request changes that go beyond what the issue asked for. If you believe the issue's own acceptance criteria are wrong or incomplete, raise that as a single `Nit` so the author can decide whether to amend the issue — do not gate `APPROVED` on a scope you would have preferred. A reviewer who keeps re-flagging the same out-of-scope finding across review rounds creates a deadlock that the implementor cannot break.
+
 Skip these by default:
 - Formatting, import order, comment phrasing.
 - Renaming suggestions without a behaviour impact.
 - Suggestions to split the PR. Prefer to review the whole diff as one unit. Only flag splitting if a subset is genuinely unreviewable as part of this PR; otherwise note unrelated parts as a single `Important` finding and move on.
+- Changes the issue did not ask for, even if they would be improvements.
 
 ## Runtime Context
 
@@ -58,7 +61,7 @@ Before performing the review, ensure the PR is in a healthy state:
    ```bash
    gh issue view <N> --json title,body
    ```
-   Verify that the implementation matches the issue's requirements and acceptance criteria. If the issue body references a spec or design doc, check those too. If no issue reference is found, skip this step gracefully.
+   The linked issue's acceptance criteria are the **primary contract** for this review. Verify that the implementation satisfies each acceptance criterion. If the issue body references a spec or design doc, check those too. If no issue reference is found, fall back to the PR body and `CLAUDE.md`/`CONTEXT.md` standards only — do not invent requirements out of whole cloth. Findings that go beyond the issue's stated criteria belong in `Nit` (or are omitted), not in `Blocking`/`Important`.
 
 6. **Cross-reference parent issue for context.** Look for a `## Parent` section in the PR body or the linked issue body that references another issue (e.g. `Parent: #N` or `## Parent\n#N`). If found, fetch that parent issue:
    ```bash
@@ -80,6 +83,8 @@ Before performing the review, ensure the PR is in a healthy state:
    - Are there unsafe, destructive, or surprising operations (force pushes, hard deletes, broad `chmod`, unanchored curls, etc.)?
    - Inconsistencies with the repo's language and naming (domain vocabulary, flag terms, file paths).
    - Inconsistencies with existing patterns in the surrounding code — if neighbouring functions use a certain style or abstraction, the new code should follow suit.
+
+   If a finding concerns a gap that the issue itself does not require (the PR does what the issue asked, but you would have asked for more), downgrade it to `Nit` or omit it — do not gate `APPROVED` on a broader interpretation of the issue.
 
 9. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.
 
