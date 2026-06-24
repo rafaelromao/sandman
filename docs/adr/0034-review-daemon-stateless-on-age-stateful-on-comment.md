@@ -78,6 +78,8 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 
 `review-prompt.md` is the same file for all PRs. It contains no PR-specific data — the daemon renders PR context at request time. One prompt template, shared across all review runs.
 
+**Note:** Implementation slices for the per-run `review-state.json` consolidation and the shared `review-prompt.md` location may not have fully landed in all code paths at time of writing. Production code currently uses `SeenCommentsStore` and `ClaimStore` against per-PR directories (`.sandman/reviews/<PR>/`) and writes `pr-review-prompt.md` inside each `prDir`. ADR-0032 and ADR-0033 carry comparable disclaimers for their respective unimplemented slices.
+
 ## Consequences
 
 ### Positive
