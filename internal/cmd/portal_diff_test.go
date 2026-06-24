@@ -1924,8 +1924,11 @@ const renderStatusBadge = (run) => {
 };
 const renderRunMeta = (run) => {
   const lines = [];
-  if (run.runId) lines.push(run.runId);
+  if (run.runId) lines.push('Run: ' + run.runId);
   const summary = [];
+  if (run.batchKey) {
+    summary.push('Batch: ' + run.batchKey);
+  }
   if (Number(run.retriesDone || 0) > 0) {
     const count = Number(run.retriesDone || 0);
     summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
@@ -1934,9 +1937,6 @@ const renderRunMeta = (run) => {
     const count = Number(run.reviewCount || 0);
     summary.push(count + ' review' + (count === 1 ? '' : 's'));
     if (run.reviewVerdict) summary.push(run.reviewVerdict);
-  }
-  if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
-    summary.push('Batch #' + run.batchIssues.join(', #'));
   }
   if (summary.length) lines.push(summary.join(' - '));
   return lines.length ? lines.join('\n') : 'Run';
