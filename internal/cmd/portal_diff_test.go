@@ -1957,6 +1957,7 @@ const isRunAbortable = (run, abortReservations) => {
 const isRunArchivable = (run) => {
   if (!run || run.kind !== 'completed') return false;
   if (run.archived) return false;
+  if (run.unavailable) return false;
   if (run.sourceExists === false) return false;
   if (!run.runId) return false;
   return true;
