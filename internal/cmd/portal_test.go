@@ -978,6 +978,7 @@ func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
 	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42, 43}, CreatedAt: time.Now().Add(-2 * time.Minute)}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
+	addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{42, 43})
 
 	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, nil)
 	if err != nil {
@@ -1017,6 +1018,7 @@ func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{})
 
 	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, nil)
 	if err != nil {
@@ -1217,6 +1219,7 @@ func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{860, 854})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
@@ -1271,6 +1274,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = ln.Close() })
+		addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
 
 		startedAt := time.Now().Add(-5 * time.Minute)
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -1326,6 +1330,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		ln.Close()
+		addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
 
 		startedAt := time.Now().Add(-5 * time.Minute)
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -1430,6 +1435,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = ln.Close() })
+		addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{})
 
 		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 		if err != nil {

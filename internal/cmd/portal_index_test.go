@@ -7,9 +7,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
+
+func TestPortalRunsIndex_InitializesWithLayoutEventsLogPath(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := paths.NewLayout(nil, repoRoot)
+	expectedPath := layout.EventsLogPath
+
+	idx := getPortalRunsIndex(repoRoot)
+
+	if idx.eventLogPath != expectedPath {
+		t.Fatalf("expected eventLogPath %q, got %q", expectedPath, idx.eventLogPath)
+	}
+
+	if idx.repoRoot != repoRoot {
+		t.Fatalf("expected repoRoot %q, got %q", repoRoot, idx.repoRoot)
+	}
+}
 
 func TestPortalRunsIndex_ReadEvents_AppendsJSONLTail(t *testing.T) {
 	repoRoot := t.TempDir()
@@ -116,6 +134,25 @@ func TestPortalRunsIndex_DiscoverActiveRuns_RefreshesManifestCacheOnChange(t *te
 	}
 	createUnixRunSocket(t, filepath.Join(runDir, "batch.sock"))
 	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{860}, CreatedAt: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create index for the batch
+	layout := paths.NewLayout(nil, repoRoot)
+	batchIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:        "abcd-260618113825-issue-1",
+				Path:      runDir,
+				Kind:      batchindex.KindIssue,
+				Status:    batchindex.StatusActive,
+				CreatedAt: time.Now().Add(-time.Minute),
+				Issues:    []int{860},
+			},
+		},
+	}
+	if err := batchIdx.Save(layout.BatchesIndexPath); err != nil {
 		t.Fatal(err)
 	}
 

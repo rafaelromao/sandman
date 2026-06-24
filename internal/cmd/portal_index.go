@@ -14,6 +14,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 const portalRunsSnapshotTTL = 250 * time.Millisecond
@@ -45,9 +46,10 @@ func getPortalRunsIndex(repoRoot string) *portalRunsIndex {
 	if idx, ok := portalRunsIndexes.Load(repoRoot); ok {
 		return idx.(*portalRunsIndex)
 	}
+	layout := paths.NewLayout(nil, repoRoot)
 	idx := &portalRunsIndex{
 		repoRoot:      repoRoot,
-		eventLogPath:  filepath.Join(repoRoot, ".sandman", "events.jsonl"),
+		eventLogPath:  layout.EventsLogPath,
 		view:          &portalRunsView{},
 		manifestCache: make(map[string]portalManifestCacheEntry),
 	}

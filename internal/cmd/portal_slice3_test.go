@@ -225,6 +225,7 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	if err := daemon.WriteManifest(reviewRunDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: startedAt, BatchId: "PR42-live"}); err != nil {
 		t.Fatal(err)
 	}
+	addBatchToIndex(t, repoRoot, "PR42-live", reviewRunDir, []int{1})
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
@@ -303,6 +304,7 @@ func TestPortal_TerminalReviewChild_ParentNotStuck(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
@@ -852,6 +854,7 @@ func TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists(t *testing.
 	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt, BatchId: runID}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
+	addBatchToIndex(t, repoRoot, runID, runDir, []int{42})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},

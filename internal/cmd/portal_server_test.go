@@ -21,8 +21,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 type portalTestOutput struct {
@@ -75,7 +77,9 @@ func TestPortal_APIRescansRunsOnEachRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	createUnixRunSocket(t, filepath.Join(repoRoot, ".sandman", "batches", "run-1", "batch.sock"))
+	batch1Path := filepath.Join(repoRoot, ".sandman", "batches", "run-1")
+	createUnixRunSocket(t, filepath.Join(batch1Path, "batch.sock"))
+	addBatchToIndex(t, repoRoot, "run-1", batch1Path, []int{1})
 
 	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
@@ -86,7 +90,9 @@ func TestPortal_APIRescansRunsOnEachRequest(t *testing.T) {
 		t.Fatalf("expected 1 run-1 instance, got %#v", first)
 	}
 
-	createUnixRunSocket(t, filepath.Join(repoRoot, ".sandman", "batches", "run-2", "batch.sock"))
+	batch2Path := filepath.Join(repoRoot, ".sandman", "batches", "run-2")
+	createUnixRunSocket(t, filepath.Join(batch2Path, "batch.sock"))
+	addBatchToIndex(t, repoRoot, "run-2", batch2Path, []int{2})
 
 	second := readPortalInstances(t, server.URL)
 	if len(second) != 2 {
@@ -211,11 +217,12 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 	}
 	batchStartedAt := time.Now().Add(-10 * time.Minute)
 
-	activeSock := filepath.Join(repoRoot, ".sandman", "batches", "run-1-100", "batch.sock")
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "run-1-100")
+	activeSock := filepath.Join(batchDir, "batch.sock")
 	if err := os.MkdirAll(filepath.Dir(activeSock), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := daemon.WriteManifest(filepath.Dir(activeSock), daemon.BatchManifest{Issues: []int{1, 2, 3, 4}, CreatedAt: batchStartedAt}); err != nil {
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{1, 2, 3, 4}, CreatedAt: batchStartedAt}); err != nil {
 		t.Fatal(err)
 	}
 	activeLn, err := net.Listen("unix", activeSock)
@@ -231,6 +238,7 @@ func TestPortal_LoadPortalRunsMergesActiveAndCompletedRuns(t *testing.T) {
 		_, _ = conn.Write([]byte("[issue-1] 12:00:00 live output\n[issue-2] 12:00:00 hidden output\n"))
 		_ = conn.Close()
 	}()
+	addBatchToIndex(t, repoRoot, "run-1-100", batchDir, []int{1, 2, 3, 4})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
@@ -394,6 +402,7 @@ func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
 		}
 		_ = conn.Close()
 	}()
+	addBatchToIndex(t, repoRoot, "PR43", sockDir, []int{})
 
 	started := time.Now().Add(-5 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -986,6 +995,7 @@ func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+	addBatchToIndex(t, repoRoot, "run-2", batchDir, []int{1})
 
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
@@ -1906,6 +1916,25 @@ func createUnixRunSocket(t *testing.T, sockPath string) {
 	t.Cleanup(func() { _ = ln.Close() })
 }
 
+func addBatchToIndex(t *testing.T, repoRoot, batchID, batchPath string, issues []int) {
+	t.Helper()
+	layout := paths.NewLayout(nil, repoRoot)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx.Add(batchindex.Entry{
+		ID:        batchID,
+		Path:      batchPath,
+		Kind:      batchindex.KindIssue,
+		Issues:    issues,
+		CreatedAt: time.Now(),
+	})
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writePortalLog(t *testing.T, path string, entries []events.Event) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -2061,6 +2090,7 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "active-1", runDir, []int{42})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.queued", Timestamp: batchStartedAt.Add(11 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{}},
@@ -2219,6 +2249,7 @@ func TestPortal_BatchWithMixedBlockedAndQueued_ShowsBlockedAndQueuedSeparately(t
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "active-1", runDir, []int{42, 43})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
@@ -2374,6 +2405,7 @@ func TestPortal_ActiveRowSurvivesOlderAbortedAtNearSameTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "run-42-new", runDir, []int{42})
 
 	// Older run whose Started.Timestamp is within the 1-second tolerance
 	// window before newBatchStart. Without a fix, latestPortalRunStateForIssue
@@ -2534,6 +2566,7 @@ func TestPortal_CurrentActiveSurvivesOlderAbortedFromAnotherBatch(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "run-42-current", runDir, []int{42})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: olderBatchStart, RunID: "older-run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-old"}},
