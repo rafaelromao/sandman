@@ -141,11 +141,11 @@ func TestReviewCmd_DaemonModeCreatesReviewSock(t *testing.T) {
 
 	prev := reviewDaemonRunner
 	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
-		if err := os.MkdirAll(".sandman", 0755); err != nil {
+		if err := os.MkdirAll(".sandman/reviews", 0755); err != nil {
 			return err
 		}
 		broadcaster := daemon.NewBroadcaster()
-		sock := daemon.NewControlSocketWithName(".sandman", "review.sock", broadcaster)
+		sock := daemon.NewControlSocketWithName(".sandman/reviews", "review.sock", broadcaster)
 		if err := sock.Start(); err != nil {
 			return err
 		}
@@ -166,13 +166,13 @@ func TestReviewCmd_DaemonModeCreatesReviewSock(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(filepath.Join(dir, ".sandman", "review.sock")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, ".sandman", "reviews", "review.sock")); err == nil {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, ".sandman", "review.sock")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "reviews", "review.sock")); err != nil {
 		t.Fatalf("review.sock not created: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestReviewCmd_DaemonSocketAcceptsConnections(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runReviewDaemon(ctx, deps, cfg, "", 0, false, 0, false) }()
 
-	sockPath := filepath.Join(dir, ".sandman", "review.sock")
+	sockPath := filepath.Join(dir, ".sandman", "reviews", "review.sock")
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(sockPath); err == nil {

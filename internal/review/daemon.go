@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -102,14 +103,51 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 	}
 }
 
-// PRDir returns the per-PR state directory path.
+// PRDir is preserved as a deprecated seam for backward compatibility with
+// tests that asserted on the per-PR path. New code MUST use the run
+// folder returned by the batch runner for per-PR state.
+//
+// Deprecated: per-PR state has moved to <batch>/runs/<run>/review-state.json.
+// This method will be removed in a future slice.
 func (d *Daemon) PRDir(prNumber int) string {
 	return filepath.Join(d.BaseDir, "reviews", strconv.Itoa(prNumber))
 }
 
 // SocketPath returns the absolute path of the daemon's control socket.
+// The socket lives under .sandman/reviews/ alongside the shared prompt
+// template, so the daemon's on-disk footprint is just two files plus
+// run folders under .sandman/batches/.
 func (d *Daemon) SocketPath() string {
-	return filepath.Join(d.BaseDir, "review.sock")
+	return filepath.Join(d.BaseDir, "reviews", "review.sock")
+}
+
+// PromptTemplatePath returns the absolute path of the shared review
+// prompt template. The daemon writes the rendered prompt here once per
+// scan; the file contains no PR-specific data.
+//
+// Acceptance criterion #2 from issue #1224: ".sandman/reviews/
+// contains only review.sock and review-prompt.md".
+func (d *Daemon) PromptTemplatePath() string {
+	return filepath.Join(d.BaseDir, "reviews", "review-prompt.md")
+}
+
+// ReviewStatePath returns the on-disk path of the per-run review-state
+// file for a given run folder.
+//
+// Acceptance criterion #3 from issue #1224: "review-state.json lives
+// at <batch>/runs/<run>/review-state.json". For review runs the
+// batch dir contains a single run folder <batch>/runs/<run>/, so
+// callers pass that path; this helper joins the state filename.
+func (d *Daemon) ReviewStatePath(runDir string) string {
+	return filepath.Join(runDir, "review-state.json")
+}
+
+// reviewRunDir returns the per-run folder under a review batch
+// (<batchDir>/runs/<runID>). The review daemon writes
+// review-state.json here; the existing per-batch batch.sock stays at
+// the batch root for the orchestrator's attach/streaming surface.
+func reviewRunDir(batchDir string) string {
+	return filepath.Join(batchDir, "runs", "review")
 }
 
 // SetSocket stores a pre-built ControlSocket on the daemon. The cmd layer
@@ -119,14 +157,14 @@ func (d *Daemon) SetSocket(s *daemon.ControlSocket) {
 	d.controlSocket = s
 }
 
-// StartSocket ensures the .sandman dir exists and starts the control
-// socket. Safe to call multiple times.
+// StartSocket ensures the .sandman/reviews dir exists and starts the
+// control socket. Safe to call multiple times.
 func (d *Daemon) StartSocket() error {
-	if err := os.MkdirAll(d.BaseDir, 0755); err != nil {
-		return fmt.Errorf("create sandman dir: %w", err)
+	if err := os.MkdirAll(filepath.Dir(d.SocketPath()), 0755); err != nil {
+		return fmt.Errorf("create reviews dir: %w", err)
 	}
 	if d.controlSocket == nil {
-		d.controlSocket = daemon.NewControlSocketWithName(d.BaseDir, "review.sock", daemon.NewBroadcaster())
+		d.controlSocket = daemon.NewControlSocketWithName(filepath.Dir(d.SocketPath()), "review.sock", daemon.NewBroadcaster())
 	}
 	return d.controlSocket.Start()
 }
@@ -240,10 +278,13 @@ func (d *Daemon) tick(ctx context.Context) error {
 }
 
 // processPR scans one PR's comments and launches a review agent for the
-// newest unseen /sandman review trigger. A per-PR ClaimStore provides
-// cross-process safety; SeenCommentsStore.TryClaim prevents intra-process
-// races. Stale unseen triggers are marked as seen and skipped. Errors are
-// logged but not returned.
+// newest unseen /sandman review trigger. The dedup state lives in the
+// run folder's `review-state.json`, managed by ReviewStateStore. No
+// per-PR directory is created under `.sandman/reviews/`.
+//
+// Acceptance criteria #1 and #3 from issue #1224:
+//   - No code path creates `.sandman/reviews/<PR>/`
+//   - `review-state.json` lives at `<batch>/runs/<run>/review-state.json`
 func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	comments, err := d.GitHub.ListPRComments(prNumber)
 	if err != nil {
@@ -257,21 +298,6 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
 	})
 
-	prDir := d.PRDir(prNumber)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
-		return fmt.Errorf("create PR dir: %w", err)
-	}
-	store, err := NewSeenCommentsStore(prDir)
-	if err != nil {
-		return fmt.Errorf("open seen store: %w", err)
-	}
-
-	cs, err := NewClaimStore(prDir, time.Hour)
-	if err != nil {
-		return fmt.Errorf("create claim store: %w", err)
-	}
-	defer cs.Close()
-
 	type unseenTrigger struct {
 		comment github.PRComment
 		focus   string
@@ -282,49 +308,44 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		if !ok {
 			continue
 		}
-		if !store.TryClaim(comment.ID) {
-			continue
-		}
-		claimed, err := cs.TryClaim(comment.ID)
-		if err != nil {
-			d.logf("claim error for comment %s: %v", comment.ID, err)
-			if err := store.Mark(comment.ID); err != nil {
-				d.logf("mark claim-failed comment %s seen: %v", comment.ID, err)
-			}
-			continue
-		}
-		if !claimed {
-			d.logf("comment %s already claimed, skipping", comment.ID)
-			if err := store.Mark(comment.ID); err != nil {
-				d.logf("mark already-claimed comment %s seen: %v", comment.ID, err)
-			}
-			continue
-		}
 		triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
 	}
 	if len(triggers) == 0 {
 		return nil
 	}
 
-	newest := triggers[0]
-	for i := 1; i < len(triggers); i++ {
-		if triggers[i].comment.CreatedAt.After(newest.comment.CreatedAt) {
-			newest = triggers[i]
-		}
+	// Cross-run dedup: load any prior review-state.json files for this
+	// PR from the batches index. A (pr, commentID) pair that is
+	// terminal-seen in any prior run is skipped. ADR-0034 §3 accepts
+	// the rename-loser trade-off; this scan only catches what is
+	// already persisted on disk when the scan starts.
+	globalSeen, err := d.loadGlobalSeenForPR(prNumber)
+	if err != nil {
+		d.logf("load global seen for PR %d: %v", prNumber, err)
 	}
 
+	var unprocessed []unseenTrigger
 	for _, t := range triggers {
-		if t.comment.ID != newest.comment.ID {
-			if err := store.Mark(t.comment.ID); err != nil {
-				d.logf("mark stale comment %s seen: %v", t.comment.ID, err)
-			}
-			cs.Release(t.comment.ID)
-			d.logf("skipping stale trigger comment %s (newer %s exists)", t.comment.ID, newest.comment.ID)
+		if globalSeen[t.comment.ID] {
+			d.logf("comment %s already terminal-seen, skipping", t.comment.ID)
+			continue
+		}
+		unprocessed = append(unprocessed, t)
+	}
+	if len(unprocessed) == 0 {
+		return nil
+	}
+
+	newest := unprocessed[0]
+	for i := 1; i < len(unprocessed); i++ {
+		if unprocessed[i].comment.CreatedAt.After(newest.comment.CreatedAt) {
+			newest = unprocessed[i]
 		}
 	}
 
 	comment := newest.comment
 	focus := newest.focus
+
 	commentReactionID, commentErr := d.GitHub.AddCommentReaction(comment.ID, "eyes")
 	if commentErr != nil {
 		d.logf("add reaction to comment %s: %v", comment.ID, commentErr)
@@ -334,21 +355,85 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		d.logf("add reaction to PR #%d: %v", prNumber, prErr)
 	}
 
-	if err := d.launchReview(ctx, prNumber, prDir, focus, comment.ID, commentReactionID, prReactionID); err != nil {
+	runDir, err := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID)
+	if err != nil {
 		d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, err)
+		// Fall through: still record superseded comments in the run's
+		// review-state.json so future ticks dedup correctly.
+	}
+
+	// Mark the trigger as seen in the new run's review-state.json.
+	state, err := NewReviewStateStore(d.ReviewStatePath(runDir), prNumber)
+	if err != nil {
+		d.logf("open review state for run %s: %v", runDir, err)
 		return nil
 	}
-	if err := store.Mark(comment.ID); err != nil {
-		d.logf("mark comment %s seen: %v", comment.ID, err)
+	for _, t := range unprocessed {
+		if t.comment.ID == comment.ID {
+			continue
+		}
+		if state.IsSeen(t.comment.ID) {
+			continue
+		}
+		if err := state.MarkSeen(t.comment.ID, "superseded"); err != nil {
+			d.logf("mark superseded comment %s: %v", t.comment.ID, err)
+		} else {
+			d.logf("skipping stale trigger comment %s (newer %s exists)", t.comment.ID, comment.ID)
+		}
 	}
-	cs.Release(comment.ID)
+	if err == nil {
+		if err := state.MarkSeen(comment.ID, "success"); err != nil {
+			d.logf("mark comment %s seen: %v", comment.ID, err)
+		}
+	}
 	return nil
+}
+
+// loadGlobalSeenForPR scans every review-state.json on disk and returns
+// the set of (prNumber, commentID) pairs that are terminal-seen for the
+// given PR. It is the slice-4 wiring: cross-run dedup via the batches
+// index. Implementation reads the batches index first; on a missing or
+// unreadable index it falls back to scanning <BaseDir>/batches/ for
+// review-state.json files directly so the dedup still works when the
+// index is stale.
+func (d *Daemon) loadGlobalSeenForPR(prNumber int) (map[string]bool, error) {
+	seen := map[string]bool{}
+	indexPath := daemon.BatchesIndexPath(d.BaseDir)
+	idx, err := batchindex.Load(indexPath)
+	if err != nil {
+		return nil, fmt.Errorf("load batches index: %w", err)
+	}
+
+	for _, entry := range idx.Entries {
+		if entry.Kind != batchindex.KindReview || entry.PR != prNumber {
+			continue
+		}
+		// Look for a review-state.json at <entry.Path>/runs/review/review-state.json.
+		statePath := filepath.Join(entry.Path, "runs", "review", "review-state.json")
+		state, err := batchindex.ReadReviewState(filepath.Join(entry.Path, "runs", "review"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review state %s: %v", statePath, err)
+			continue
+		}
+		for _, sc := range state.SeenComments {
+			seen[sc.CommentID] = true
+		}
+	}
+	return seen, nil
 }
 
 // launchReview renders the review prompt and runs the batch. The PR
 // metadata is re-fetched via the GitHub client so the prompt reflects
-// the current title and body.
-func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, commentID, commentReactionID, prReactionID string) error {
+// the current title and body. The rendered prompt is written to the
+// shared .sandman/reviews/review-prompt.md (no PR data). The run
+// folder is created here via RunSession.Prepare. The returned runDir
+// is the new run folder; an error means the review was not launched
+// but the run folder may have been created and must be cleaned up by
+// the portal's stale recovery (issue #1024).
+func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID string) (string, error) {
 	defer func() {
 		if commentReactionID != "" {
 			if err := d.GitHub.RemoveCommentReaction(commentID, commentReactionID); err != nil {
@@ -357,14 +442,14 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		}
 		if prReactionID != "" {
 			if err := d.GitHub.RemoveIssueReaction(prNumber, prReactionID); err != nil {
-				d.logf("remove reaction from PR #%d: %v", prNumber, err)
+				d.logf("remove reaction from PR #%d: %v", prNumber, prReactionID)
 			}
 		}
 	}()
 
 	pr, err := d.GitHub.FetchPR(prNumber)
 	if err != nil {
-		return fmt.Errorf("fetch PR: %w", err)
+		return "", fmt.Errorf("fetch PR: %w", err)
 	}
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
@@ -374,12 +459,15 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		ReviewFocus: focus,
 	})
 	if err != nil {
-		return fmt.Errorf("render prompt: %w", err)
+		return "", fmt.Errorf("render prompt: %w", err)
 	}
 
-	promptPath := filepath.Join(prDir, "pr-review-prompt.md")
-	if err := os.WriteFile(promptPath, []byte(rendered), 0644); err != nil {
-		return fmt.Errorf("write prompt file: %w", err)
+	// Write the shared prompt template. Idempotent rewrite per scan.
+	if err := os.MkdirAll(filepath.Dir(d.PromptTemplatePath()), 0755); err != nil {
+		return "", fmt.Errorf("create reviews dir: %w", err)
+	}
+	if err := os.WriteFile(d.PromptTemplatePath(), []byte(rendered), 0644); err != nil {
+		return "", fmt.Errorf("write prompt template: %w", err)
 	}
 
 	agentName := ""
@@ -396,15 +484,15 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		modelName = d.Config.EffectiveReviewModel()
 	}
 	if agentName == "" {
-		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
+		return "", fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
 	}
 	if modelName == "" {
-		return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
+		return "", fmt.Errorf("review model is not set; configure review_model or model in sandman config")
 	}
 
 	repoName, err := d.GitHub.RepoName()
 	if err != nil {
-		return fmt.Errorf("get repo name: %w", err)
+		return "", fmt.Errorf("get repo name: %w", err)
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
@@ -417,7 +505,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 
 	ts, shortid, err := runid.NewBatch()
 	if err != nil {
-		return fmt.Errorf("generate batch ID: %w", err)
+		return "", fmt.Errorf("generate batch ID: %w", err)
 	}
 	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("%d", prNumber), ts, shortid)
 
@@ -429,22 +517,32 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 	}
 	perRowRunID := runid.NewRunID(runid.KindReview, subject, ts, shortid)
 
-	// Boot the per-PR run session. The review daemon path does not
-	// start a cmd.sock (the per-issue abort is a CLI-only seam), so
-	// the commander is nil and Prepare cleanly skips the
-	// CommandServer.Start step. The run dir, batch.json, and
-	// run.sock are created before run.started is emitted by the
-	// orchestrator, so a daemon killed between run.started and the
-	// agent's first output still leaves enough on disk for the
-	// portal's stale-recovery sweep to emit run.aborted (issue
-	// #1024).
+	// Boot the run session. The review daemon path does not start a
+	// cmd.sock (the per-issue abort is a CLI-only seam), so the
+	// commander is nil and Prepare cleanly skips the CommandServer
+	// step. The run dir, batch.json, and batch.sock are created
+	// before run.started is emitted by the orchestrator, so a daemon
+	// killed between run.started and the agent's first output still
+	// leaves enough on disk for the portal's stale-recovery sweep
+	// (issue #1024).
 	rs := daemon.NewRunSession(d.BaseDir, batchDirName)
 	manifest := daemon.BatchManifest{BatchId: batchDirName, CreatedAt: time.Now(), RunKind: "review", Issues: []int{}, PR: &prNumber}
 	if err := rs.Prepare(manifest, nil); err != nil {
 		_ = rs.Close()
-		return fmt.Errorf("prepare review run session: %w", err)
+		return "", fmt.Errorf("prepare review run session: %w", err)
 	}
 	defer rs.Close()
+
+	runDir := rs.RunDir()
+
+	// The review run owns a single per-run folder at
+	// <batchDir>/runs/review/. This is where review-state.json lives
+	// (acceptance criterion #3) and where the agent's run.log will be
+	// written by the orchestrator in slice 3.
+	reviewRunFolder := reviewRunDir(runDir)
+	if err := os.MkdirAll(reviewRunFolder, 0755); err != nil {
+		return runDir, fmt.Errorf("create review run folder: %w", err)
+	}
 
 	req := batch.Request{
 		Agent:                agentName,
@@ -465,16 +563,16 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, prDir, focus, c
 		IssueNumber:  reviewIssueNumber,
 		ReviewFocus:  focus,
 		RunID:        perRowRunID,
-		RunDir:       rs.RunDir(),
+		RunDir:       reviewRunFolder,
 	}
 	verifyStart := d.now()
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
-		return fmt.Errorf("run batch: %w", err)
+		return reviewRunFolder, fmt.Errorf("run batch: %w", err)
 	}
 	if err := d.verifyReviewPosted(ctx, prNumber, verifyStart, commentID); err != nil {
-		return fmt.Errorf("review verification: %w", err)
+		return reviewRunFolder, fmt.Errorf("review verification: %w", err)
 	}
-	return nil
+	return reviewRunFolder, nil
 }
 
 // now returns the current time. It uses the daemon's Clock if set,

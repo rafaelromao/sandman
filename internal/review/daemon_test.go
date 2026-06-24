@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -222,6 +223,7 @@ func TestDaemon_OnlyNewestUnseenTriggerProcessed(t *testing.T) {
 				{ID: "102", Body: "/sandman review", CreatedAt: now.Add(2 * time.Hour)},
 				{ID: "101", Body: "/sandman review", CreatedAt: now.Add(1 * time.Hour)},
 				{ID: "103", Body: "/sandman review focus on x", CreatedAt: now.Add(3 * time.Hour)},
+				{ID: "review-reply", Body: "## Summary\nApproved", CreatedAt: now.Add(4 * time.Hour)},
 			},
 		},
 	}
@@ -247,7 +249,6 @@ func TestDaemon_OnlyNewestUnseenTriggerProcessed(t *testing.T) {
 
 	// Only the newest trigger (103) should get reactions; stale triggers (101, 102) get none.
 	gh.mu.Lock()
-	defer gh.mu.Unlock()
 	for _, c := range gh.reactionCalls {
 		if c.kind == "add_comment" || c.kind == "remove_comment" {
 			if c.commentID != "103" {
@@ -255,20 +256,38 @@ func TestDaemon_OnlyNewestUnseenTriggerProcessed(t *testing.T) {
 			}
 		}
 	}
+	gh.mu.Unlock()
 
-	// All three triggers should be marked as seen in the store.
-	store, err := NewSeenCommentsStore(d.PRDir(1))
+	// Per-run review state lives at <runDir>/review-state.json. After
+	// the tick, the launched run folder is captured by the runner. The
+	// superseded comments (101, 102) and the trigger (103) should all
+	// be terminal-seen in that file.
+	statePath := filepath.Join(runner.last.RunDir, "review-state.json")
+	state, err := batchindex.ReadReviewState(runner.last.RunDir)
 	if err != nil {
-		t.Fatalf("open seen store: %v", err)
+		t.Fatalf("read review state: %v", err)
 	}
-	if !store.Has("101") {
-		t.Error("stale trigger 101 should be marked as seen")
+	if state.PR != 1 {
+		t.Errorf("review-state PR = %d, want 1", state.PR)
 	}
-	if !store.Has("102") {
-		t.Error("stale trigger 102 should be marked as seen")
+	seenSet := map[string]bool{}
+	for _, sc := range state.SeenComments {
+		seenSet[sc.CommentID] = true
 	}
-	if !store.Has("103") {
-		t.Error("newest trigger 103 should be marked as seen after successful review")
+	for _, id := range []string{"101", "102", "103"} {
+		if !seenSet[id] {
+			t.Errorf("comment %s should be marked as seen, got %+v (file: %s)", id, state.SeenComments, statePath)
+		}
+	}
+	// Stale ones recorded as superseded, not success.
+	supersededCount := 0
+	for _, sc := range state.SeenComments {
+		if sc.CommentID == "101" || sc.CommentID == "102" {
+			supersededCount++
+		}
+	}
+	if supersededCount != 2 {
+		t.Errorf("expected 2 superseded comments (101, 102), got %d", supersededCount)
 	}
 }
 
@@ -279,7 +298,7 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 		comments: map[int][]github.PRComment{
 			42: {
 				{ID: "100", Body: "/sandman review focus on tests", CreatedAt: now},
-				{ID: "101", Body: "unrelated comment", CreatedAt: now},
+				{ID: "101", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)},
 			},
 		},
 		prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "Body of 42"}},
@@ -328,14 +347,22 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 		t.Errorf("expected RunDir to start with %q, got %q", wantRunDirPrefix, runner.last.RunDir)
 	}
 
-	dir := d.PRDir(42)
-	seenPath := filepath.Join(dir, "seen-comments.jsonl")
-	data, err := os.ReadFile(seenPath)
+	// Per-run review state lives at <runDir>/review-state.json and
+	// records the (pr, commentID) pair as terminal-seen after a
+	// successful launch.
+	state, err := batchindex.ReadReviewState(runner.last.RunDir)
 	if err != nil {
-		t.Fatalf("read seen file: %v", err)
+		t.Fatalf("read review state: %v", err)
 	}
-	if !strings.Contains(string(data), "100") {
-		t.Errorf("seen file should contain 100, got %q", string(data))
+	foundSeen := false
+	for _, sc := range state.SeenComments {
+		if sc.CommentID == "100" {
+			foundSeen = true
+			break
+		}
+	}
+	if !foundSeen {
+		t.Errorf("review-state should record comment 100 as seen, got %+v", state.SeenComments)
 	}
 }
 
@@ -544,6 +571,7 @@ func TestDaemon_StaleTriggersLogged(t *testing.T) {
 				{ID: "old1", Body: "/sandman review", CreatedAt: now},
 				{ID: "old2", Body: "/sandman review", CreatedAt: now.Add(1 * time.Minute)},
 				{ID: "latest", Body: "/sandman review", CreatedAt: now.Add(10 * time.Minute)},
+				{ID: "review-reply", Body: "## Summary\nLGTM", CreatedAt: now.Add(11 * time.Minute)},
 			},
 		},
 	}
@@ -1081,6 +1109,7 @@ func TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale(t *testing.T) {
 		comments: map[int][]github.PRComment{
 			1: {
 				{ID: "1", Body: "/sandman review", CreatedAt: time.Date(2026, 6, 10, 10, 0, 0, 0, time.UTC)},
+				{ID: "review-reply", Body: "## Summary\nLGTM", CreatedAt: time.Date(2026, 6, 10, 11, 0, 0, 0, time.UTC)},
 			},
 		},
 		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body"}},
@@ -1092,12 +1121,36 @@ func TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale(t *testing.T) {
 	}
 	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
 
-	// Pre-mark the only comment as seen.
-	prDir := d.PRDir(1)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
+	// Pre-mark the only comment as seen by writing a per-run
+	// review-state.json AND registering the batch in batches.json so
+	// the daemon's loadGlobalSeenForPR scan picks it up.
+	batchesDir := filepath.Join(d.BaseDir, "batches")
+	priorBatchID := "abcd-260610100000-PR1"
+	priorBatchPath := filepath.Join(batchesDir, priorBatchID)
+	priorRunDir := filepath.Join(priorBatchPath, "runs", "review")
+	if err := os.MkdirAll(priorRunDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(prDir, "seen-comments.jsonl"), []byte("1\n"), 0644); err != nil {
+	if err := batchindex.WriteReviewState(priorRunDir, batchindex.ReviewState{
+		PR: 1,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: "1", Timestamp: time.Date(2026, 6, 10, 10, 0, 0, 0, time.UTC)},
+		},
+		Claims: map[string]batchindex.Claim{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	idxPath := daemon.BatchesIndexPath(d.BaseDir)
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, StatFn: nil}
+	idx.Add(batchindex.Entry{
+		ID:        priorBatchID,
+		Path:      priorBatchPath,
+		Kind:      batchindex.KindReview,
+		Status:    batchindex.StatusActive,
+		CreatedAt: time.Date(2026, 6, 10, 10, 0, 0, 0, time.UTC),
+		PR:        1,
+	})
+	if err := idx.Save(idxPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1172,13 +1225,37 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 		DefaultReviewParallel: 2,
 	})
 
-	// Pre-create a claim file so the comment appears already claimed.
-	prDir := d.PRDir(1)
-	claimsDir := filepath.Join(prDir, "claims")
-	if err := os.MkdirAll(claimsDir, 0755); err != nil {
+	// Pre-mark the comment as already claimed by writing a per-run
+	// review-state.json (under a registered batch folder). The new
+	// design stores claim locks inline in review-state.json instead
+	// of as separate lock files under .sandman/reviews/<PR>/claims/.
+	batchesDir := filepath.Join(d.BaseDir, "batches")
+	priorBatchID := "abcd-260624100000-PR1"
+	priorBatchPath := filepath.Join(batchesDir, priorBatchID)
+	priorRunDir := filepath.Join(priorBatchPath, "runs", "review")
+	if err := os.MkdirAll(priorRunDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(claimsDir, "100"), []byte("x"), 0644); err != nil {
+	if err := batchindex.WriteReviewState(priorRunDir, batchindex.ReviewState{
+		PR: 1,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: "100", Timestamp: time.Now()},
+		},
+		Claims: map[string]batchindex.Claim{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	idxPath := daemon.BatchesIndexPath(d.BaseDir)
+	idx := &batchindex.Index{Version: batchindex.IndexVersion}
+	idx.Add(batchindex.Entry{
+		ID:        priorBatchID,
+		Path:      priorBatchPath,
+		Kind:      batchindex.KindReview,
+		Status:    batchindex.StatusActive,
+		CreatedAt: time.Now(),
+		PR:        1,
+	})
+	if err := idx.Save(idxPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1189,8 +1266,8 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 	if runner.calls != 0 {
 		t.Errorf("expected no batch runs when comment is already claimed, got %d", runner.calls)
 	}
-	if !strings.Contains(buf.String(), "already claimed") {
-		t.Errorf("expected 'already claimed' log, got %q", buf.String())
+	if !strings.Contains(buf.String(), "already claimed") && !strings.Contains(buf.String(), "already terminal-seen") {
+		t.Errorf("expected 'already claimed' or 'already terminal-seen' log, got %q", buf.String())
 	}
 }
 
@@ -1216,11 +1293,7 @@ func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
 	}
 	d.Config = cfg
 
-	prDir := d.PRDir(1)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", "")
+	_, err := d.launchReview(context.Background(), 1, "", "c1", "", "")
 	if err == nil {
 		t.Fatal("expected error from launchReview when model is empty")
 	}
@@ -1250,11 +1323,16 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		capturedRunDir = req.RunDir
 
-		if !strings.HasSuffix(req.RunDir, "-PR1") {
-			t.Errorf("expected RunDir to end with '-PR1', got %q", req.RunDir)
+		// Review runs live at <batchDir>/runs/review, so the RunDir's
+		// parent batch dir ends with "-PR1".
+		batchDir := filepath.Dir(filepath.Dir(req.RunDir))
+		if !strings.HasSuffix(batchDir, "-PR1") {
+			t.Errorf("expected RunDir's batch dir to end with '-PR1', got %q (RunDir=%q)", batchDir, req.RunDir)
 		}
 
-		manifestPath := filepath.Join(req.RunDir, "batch.json")
+		// The batch manifest lives at the batch dir level (not inside
+		// the per-run folder).
+		manifestPath := filepath.Join(batchDir, "batch.json")
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {
 			t.Errorf("batch.json should exist at %s: %v", manifestPath, err)
@@ -1278,11 +1356,7 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	prDir := d.PRDir(1)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", ""); err != nil {
+	if _, err := d.launchReview(context.Background(), 1, "", "c1", "", ""); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -1312,11 +1386,7 @@ func TestDaemon_LaunchReviewCleansUpRunDirOnError(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
 	d.Config = cfg
 
-	prDir := d.PRDir(1)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", "")
+	_, err := d.launchReview(context.Background(), 1, "", "c1", "", "")
 	if err == nil {
 		t.Fatal("expected error from launchReview")
 	}
@@ -1348,11 +1418,12 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		capturedRunDir = req.RunDir
 
-		if !strings.HasSuffix(req.RunDir, "-PR1") {
-			t.Errorf("expected RunDir to end with '-PR1', got %q", req.RunDir)
+		batchDir := filepath.Dir(filepath.Dir(req.RunDir))
+		if !strings.HasSuffix(batchDir, "-PR1") {
+			t.Errorf("expected RunDir's batch dir to end with '-PR1', got %q (RunDir=%q)", batchDir, req.RunDir)
 		}
 
-		manifestPath := filepath.Join(req.RunDir, "batch.json")
+		manifestPath := filepath.Join(batchDir, "batch.json")
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {
 			t.Errorf("batch.json should exist: %v", err)
@@ -1374,12 +1445,7 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	prDir := d.PRDir(1)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", ""); err != nil {
+	if _, err := d.launchReview(context.Background(), 1, "", "c1", "", ""); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -1418,8 +1484,9 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 		capturedWriter = req.OutputWriter
 		capturedRunDir = req.RunDir
 
-		if !strings.HasSuffix(req.RunDir, "-PR1") {
-			t.Errorf("expected RunDir to end with '-PR1', got %q", req.RunDir)
+		batchDir := filepath.Dir(filepath.Dir(req.RunDir))
+		if !strings.HasSuffix(batchDir, "-PR1") {
+			t.Errorf("expected RunDir's batch dir to end with '-PR1', got %q (RunDir=%q)", batchDir, req.RunDir)
 		}
 
 		return &batch.Result{}, nil
@@ -1429,11 +1496,7 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	prDir := d.PRDir(1)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.launchReview(context.Background(), 1, prDir, "", "c1", "", ""); err != nil {
+	if _, err := d.launchReview(context.Background(), 1, "", "c1", "", ""); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -1518,12 +1581,7 @@ func TestDaemon_LaunchReviewFailsWhenVerificationFails(t *testing.T) {
 	// Clock returns a time after all fake comments so verification finds none.
 	d.Clock = func() time.Time { return now.Add(1 * time.Hour) }
 
-	prDir := d.PRDir(5)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	err := d.launchReview(context.Background(), 5, prDir, "", "c1", "", "")
+	runDir, err := d.launchReview(context.Background(), 5, "", "c1", "", "")
 	if err == nil {
 		t.Fatal("expected error from launchReview when verification fails (no new comment)")
 	}
@@ -1531,11 +1589,17 @@ func TestDaemon_LaunchReviewFailsWhenVerificationFails(t *testing.T) {
 		t.Errorf("expected error about review verification, got: %v", err)
 	}
 
-	// Trigger should NOT be marked as seen (seen file should not contain c1).
-	seenPath := filepath.Join(prDir, "seen-comments.jsonl")
-	if data, err := os.ReadFile(seenPath); err == nil {
-		if strings.Contains(string(data), "c1") {
-			t.Error("trigger comment should NOT be marked seen when verification fails")
+	// Trigger should NOT be marked as seen (per-run review-state.json
+	// should not contain c1 as success/failure/aborted).
+	statePath := filepath.Join(runDir, "review-state.json")
+	if data, err := os.ReadFile(statePath); err == nil {
+		var state batchindex.ReviewState
+		if json.Unmarshal(data, &state) == nil {
+			for _, sc := range state.SeenComments {
+				if sc.CommentID == "c1" {
+					t.Error("trigger comment should NOT be marked seen when verification fails")
+				}
+			}
 		}
 	}
 }
@@ -1561,12 +1625,7 @@ func TestDaemon_LaunchReviewSucceedsWhenVerificationPasses(t *testing.T) {
 	// Clock returns a time before the fake comments so verification finds them.
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
-	prDir := d.PRDir(6)
-	if err := os.MkdirAll(prDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	err := d.launchReview(context.Background(), 6, prDir, "", "c2", "", "")
+	_, err := d.launchReview(context.Background(), 6, "", "c2", "", "")
 	if err != nil {
 		t.Fatalf("expected no error from launchReview when verification passes, got: %v", err)
 	}

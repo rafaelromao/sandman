@@ -6,56 +6,54 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/batchindex"
 )
 
-// reviewStateFile is the on-disk JSON shape persisted by ReviewStateStore.
-// It is file-local because the store's contract is per-run and multi-PR;
-// the exported batchindex.ReviewState struct in internal/batchindex
-// captures a different (per-PR) shape used by other tools.
-type reviewStateFile struct {
-	Claims map[string]reviewClaim `json:"claims"`
-}
-
-// reviewClaim is one entry in the claims map. Status is one of:
-//   - "claimed": the (pr, commentID) pair is currently held by a worker
-//   - "success" / "failure" / "aborted": terminal status from a previous tick
-//   - "superseded": a newer comment superseded this one on the same PR
-type reviewClaim struct {
-	Status    string    `json:"status"`
-	Since     time.Time `json:"since"`
-	UpdatedAt time.Time `json:"updatedAt"`
-}
-
-// ReviewStateStore tracks (prNumber, commentID) pairs against a single
-// review-state.json file. The store is the source of truth for two
-// invariants enforced by the review daemon:
+// ReviewStateStore manages the (prNumber, commentID) dedup state for a
+// single review run. The store is bound to one on-disk file — the
+// `review-state.json` inside a run folder — and one PR number. It
+// provides:
 //
-//  1. Dedup by (prNumber, commentID) — TryClaim returns false for a pair
-//     that is already claimed or already terminal-seen.
-//  2. Inline claim locks — claims are stored in the JSON file, not as
-//     separate lock files. There is no <storePath>/claims/ directory.
+//   - TryClaim / Release: reserve or drop a claim on a comment without
+//     committing to a terminal status. In-memory only until persisted.
+//   - MarkSeen: persist a terminal status (success / failure /
+//     superseded / aborted) for a comment via atomic-rename.
+//   - IsSeen / IsClaimed: in-memory queries for the dedup decision.
 //
 // The store is intra-process safe (sync.Mutex). It is NOT cross-process
-// safe: two daemons loading the same file would race the os.Rename
-// in Save; ADR-0034 §3 accepts this trade-off (the rename-loser
-// re-processes the same comment).
+// safe: two daemons loading the same file would race the os.Rename in
+// Save; ADR-0034 §3 accepts this trade-off (the rename-loser re-processes
+// the same comment). There is no separate claims/ directory on disk —
+// claims live inline in the JSON file's claims map.
+//
+// Slice 2 NOTE: The on-disk shape is batchindex.ReviewState, which is
+// per-PR (the documented schema in ADR-0034). The store wraps that
+// shape with the atomic-rename writer and the in-memory dedup set so
+// callers don't need to know the file format.
 type ReviewStateStore struct {
-	path string
-	mu   sync.Mutex
-	data reviewStateFile
+	prNumber int
+	path     string
+	mu       sync.Mutex
+	state    batchindex.ReviewState
 }
 
-// NewReviewStateStore loads the state from path. A missing file is not
-// an error: the store starts empty. Any I/O or parse error other than
-// ENOENT is returned to the caller.
-func NewReviewStateStore(path string) (*ReviewStateStore, error) {
+// NewReviewStateStore loads the state for the given PR number from
+// path. A missing file is not an error: the store starts empty with the
+// PR number pre-set. Any I/O or parse error other than ENOENT is
+// returned to the caller.
+func NewReviewStateStore(path string, prNumber int) (*ReviewStateStore, error) {
 	s := &ReviewStateStore{
-		path: path,
-		data: reviewStateFile{Claims: map[string]reviewClaim{}},
+		prNumber: prNumber,
+		path:     path,
+		state: batchindex.ReviewState{
+			PR:           prNumber,
+			SeenComments: nil,
+			Claims:       map[string]batchindex.Claim{},
+		},
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -65,80 +63,92 @@ func NewReviewStateStore(path string) (*ReviewStateStore, error) {
 		return nil, fmt.Errorf("open review state: %w", err)
 	}
 	defer f.Close()
-	if err := json.NewDecoder(f).Decode(&s.data); err != nil {
+	if err := json.NewDecoder(f).Decode(&s.state); err != nil {
 		return nil, fmt.Errorf("decode review state: %w", err)
 	}
-	if s.data.Claims == nil {
-		s.data.Claims = map[string]reviewClaim{}
+	if s.state.Claims == nil {
+		s.state.Claims = map[string]batchindex.Claim{}
+	}
+	if s.state.PR == 0 {
+		s.state.PR = prNumber
 	}
 	return s, nil
 }
 
-// keyFor builds the map key for a (prNumber, commentID) pair. The colon
-// separator is safe because GitHub comment IDs do not contain colons.
-func keyFor(prNumber int, commentID string) string {
-	return strconv.Itoa(prNumber) + ":" + commentID
+// PR returns the PR number this store is bound to.
+func (s *ReviewStateStore) PR() int {
+	return s.prNumber
 }
 
-// IsSeen reports whether the (prNumber, commentID) pair has a terminal
-// status recorded (success / failure / aborted / superseded). A pair that
-// is merely claimed (no terminal status yet) is not seen.
-func (s *ReviewStateStore) IsSeen(prNumber int, commentID string) bool {
+// IsSeen reports whether commentID has a terminal status recorded
+// (success / failure / superseded / aborted). A comment that is merely
+// claimed (no terminal status yet) is not seen.
+func (s *ReviewStateStore) IsSeen(commentID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.data.Claims[keyFor(prNumber, commentID)]
-	if !ok {
-		return false
+	return s.isSeenLocked(commentID)
+}
+
+func (s *ReviewStateStore) isSeenLocked(commentID string) bool {
+	for _, sc := range s.state.SeenComments {
+		if sc.CommentID == commentID {
+			return true
+		}
 	}
-	return c.Status != "claimed"
+	return false
 }
 
-// IsClaimed reports whether the (prNumber, commentID) pair is currently
-// held by a worker or has reached a terminal status.
-func (s *ReviewStateStore) IsClaimed(prNumber int, commentID string) bool {
+// IsClaimed reports whether commentID is currently held (claimed or
+// terminal).
+func (s *ReviewStateStore) IsClaimed(commentID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.data.Claims[keyFor(prNumber, commentID)]
+	_, ok := s.state.Claims[commentID]
 	return ok
 }
 
-// TryClaim atomically reserves a (prNumber, commentID) pair. Returns true
-// when the caller is the first to claim the pair; false if the pair is
-// already claimed or terminal-seen. The reservation is in-memory; it is
+// TryClaim atomically reserves commentID. Returns true when the caller
+// is the first to claim the comment; false if the comment is already
+// claimed or terminal-seen. The reservation is in-memory; it is
 // persisted by Save or by MarkSeen.
-func (s *ReviewStateStore) TryClaim(prNumber int, commentID string) bool {
+func (s *ReviewStateStore) TryClaim(commentID string) bool {
 	commentID = strings.TrimSpace(commentID)
 	if commentID == "" {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	k := keyFor(prNumber, commentID)
-	if _, ok := s.data.Claims[k]; ok {
+	if _, ok := s.state.Claims[commentID]; ok {
 		return false
 	}
-	s.data.Claims[k] = reviewClaim{Status: "claimed", Since: time.Now()}
+	if s.isSeenLocked(commentID) {
+		return false
+	}
+	s.state.Claims[commentID] = batchindex.Claim{Holder: "local", Since: time.Now()}
 	return true
 }
 
-// Release drops a (prNumber, commentID) claim without marking it seen.
-// Useful when a worker fails before reaching a terminal state and the
-// pair should be retried on the next tick.
-func (s *ReviewStateStore) Release(prNumber int, commentID string) {
+// Release drops a claim on commentID without marking it seen. Useful
+// when a worker fails before reaching a terminal state and the comment
+// should be retried on the next tick.
+func (s *ReviewStateStore) Release(commentID string) {
 	commentID = strings.TrimSpace(commentID)
 	if commentID == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.data.Claims, keyFor(prNumber, commentID))
+	delete(s.state.Claims, commentID)
 }
 
-// MarkSeen records a terminal status for the (prNumber, commentID) pair
-// and persists the store via atomic-rename. status must be non-empty;
-// the typical values are "success", "failure", "aborted", or
-// "superseded".
-func (s *ReviewStateStore) MarkSeen(prNumber int, commentID, status string) error {
+// MarkSeen records a terminal status for commentID and persists the
+// store via atomic-rename. status must be non-empty; the typical
+// values are "success", "failure", "superseded", or "aborted".
+//
+// The comment is recorded in SeenComments with the timestamp; the
+// Claims map is removed for that comment so a later worker does not
+// see it as merely claimed.
+func (s *ReviewStateStore) MarkSeen(commentID, status string) error {
 	commentID = strings.TrimSpace(commentID)
 	if commentID == "" {
 		return fmt.Errorf("empty comment id")
@@ -148,18 +158,13 @@ func (s *ReviewStateStore) MarkSeen(prNumber int, commentID, status string) erro
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	k := keyFor(prNumber, commentID)
-	now := time.Now()
-	prev, hadPrev := s.data.Claims[k]
-	entry := reviewClaim{Status: status, Since: now, UpdatedAt: now}
-	if hadPrev {
-		if prev.Since.IsZero() {
-			entry.Since = now
-		} else {
-			entry.Since = prev.Since
-		}
+	if !s.isSeenLocked(commentID) {
+		s.state.SeenComments = append(s.state.SeenComments, batchindex.SeenComment{
+			CommentID: commentID,
+			Timestamp: time.Now(),
+		})
 	}
-	s.data.Claims[k] = entry
+	delete(s.state.Claims, commentID)
 	return s.saveLocked()
 }
 
@@ -179,7 +184,7 @@ func (s *ReviewStateStore) saveLocked() error {
 		return fmt.Errorf("create state dir: %w", err)
 	}
 	tmpPath := s.path + ".tmp"
-	data, err := json.Marshal(s.data)
+	data, err := json.MarshalIndent(s.state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal review state: %w", err)
 	}

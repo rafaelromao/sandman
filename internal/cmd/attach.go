@@ -34,9 +34,9 @@ func NewAttachCmd() *cobra.Command {
 
 // findDaemonSocket returns the path of the only active sandman socket
 // under baseDir. It looks for batch sockets (.sandman/batches/<id>/batch.sock)
-// and the review daemon socket (.sandman/review.sock). If exactly one is
-// live, it is returned. Multiple live sockets is a hard error because it
-// is ambiguous which daemon the operator wants to attach to.
+// and the review daemon socket (.sandman/reviews/review.sock). If exactly
+// one is live, it is returned. Multiple live sockets is a hard error
+// because it is ambiguous which daemon the operator wants to attach to.
 func findDaemonSocket(baseDir string) (string, error) {
 	candidates := []string{}
 

@@ -27,7 +27,7 @@ func chdirToSandmanDir(t testing.TB) string {
 		t.Fatal(err)
 	}
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
@@ -66,7 +66,7 @@ func chdirToShortSandmanDir(t testing.TB) string {
 		t.Fatal(err)
 	}
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
@@ -325,7 +325,7 @@ func TestRun_AllowsConcurrentRuns(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))

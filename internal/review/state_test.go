@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/batchindex"
 )
 
 // TestReviewStateStore_StartsEmpty pins the contract that opening a
@@ -19,7 +21,7 @@ func TestReviewStateStore_StartsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
 
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -27,26 +29,32 @@ func TestReviewStateStore_StartsEmpty(t *testing.T) {
 		t.Fatal("store should not be nil")
 	}
 
-	if store.IsSeen(42, "comment-1") {
-		t.Error("fresh store should not report any pair as seen")
+	if store.PR() != 42 {
+		t.Errorf("PR = %d, want 42", store.PR())
 	}
-	if store.IsClaimed(42, "comment-1") {
-		t.Error("fresh store should not report any pair as claimed")
+	if store.IsSeen("comment-1") {
+		t.Error("fresh store should not report any comment as seen")
+	}
+	if store.IsClaimed("comment-1") {
+		t.Error("fresh store should not report any comment as claimed")
 	}
 }
 
 // TestReviewStateStore_LoadsExistingClaims asserts that a store opened
-// against a valid JSON file sees the previously-recorded terminal claims.
-// Mirrors TestSeenCommentsStore_LoadsExistingIDs (seen_test.go) but on
-// the (pr, commentID) key shape.
+// against a valid JSON file sees the previously-recorded terminal
+// claims. Mirrors TestSeenCommentsStore_LoadsExistingIDs.
 func TestReviewStateStore_LoadsExistingClaims(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
 
-	seed := reviewStateFile{Claims: map[string]reviewClaim{
-		keyFor(42, "100"): {Status: "success", Since: time.Now(), UpdatedAt: time.Now()},
-		keyFor(42, "101"): {Status: "superseded", Since: time.Now(), UpdatedAt: time.Now()},
-	}}
+	seed := batchindex.ReviewState{
+		PR: 42,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: "100", Timestamp: time.Now()},
+			{CommentID: "101", Timestamp: time.Now()},
+		},
+		Claims: map[string]batchindex.Claim{},
+	}
 	data, err := json.Marshal(seed)
 	if err != nil {
 		t.Fatal(err)
@@ -55,18 +63,18 @@ func TestReviewStateStore_LoadsExistingClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
-	if !store.IsSeen(42, "100") {
-		t.Error("expected loaded store to see (42, 100) as seen")
+	if !store.IsSeen("100") {
+		t.Error("expected loaded store to see 100")
 	}
-	if !store.IsSeen(42, "101") {
-		t.Error("expected loaded store to see (42, 101) as seen")
+	if !store.IsSeen("101") {
+		t.Error("expected loaded store to see 101")
 	}
-	if store.IsSeen(42, "missing") {
-		t.Error("store should not report unseen pairs")
+	if store.IsSeen("missing") {
+		t.Error("store should not report unseen comments")
 	}
 }
 
@@ -76,49 +84,52 @@ func TestReviewStateStore_LoadsExistingClaims(t *testing.T) {
 func TestReviewStateStore_MarkSeenPersists(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
 
-	if err := store.MarkSeen(42, "comment-1", "success"); err != nil {
+	if err := store.MarkSeen("comment-1", "success"); err != nil {
 		t.Fatalf("MarkSeen: %v", err)
 	}
-	if !store.IsSeen(42, "comment-1") {
+	if !store.IsSeen("comment-1") {
 		t.Error("MarkSeen should make IsSeen return true")
 	}
 
-	// File on disk should contain the claim.
+	// File on disk should contain the seen comment.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read state file: %v", err)
 	}
-	var got reviewStateFile
+	var got batchindex.ReviewState
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal state file: %v", err)
 	}
-	entry, ok := got.Claims[keyFor(42, "comment-1")]
-	if !ok {
-		t.Fatalf("file should contain (42, comment-1) claim, got %q", string(data))
+	found := false
+	for _, sc := range got.SeenComments {
+		if sc.CommentID == "comment-1" {
+			found = true
+			break
+		}
 	}
-	if entry.Status != "success" {
-		t.Errorf("file claim status = %q, want %q", entry.Status, "success")
+	if !found {
+		t.Errorf("file should contain comment-1 in seenComments, got %q", string(data))
 	}
 }
 
 // TestReviewStateStore_MarkSeenIdempotent asserts that calling MarkSeen
-// twice for the same (pr, commentID) does not duplicate the entry. Mirrors
+// twice for the same comment does not duplicate the entry. Mirrors
 // TestSeenCommentsStore_MarkIsIdempotent.
 func TestReviewStateStore_MarkSeenIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
 
 	for i := 0; i < 3; i++ {
-		if err := store.MarkSeen(42, "comment-1", "success"); err != nil {
+		if err := store.MarkSeen("comment-1", "success"); err != nil {
 			t.Fatalf("MarkSeen #%d: %v", i, err)
 		}
 	}
@@ -127,66 +138,66 @@ func TestReviewStateStore_MarkSeenIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read state file: %v", err)
 	}
-	var got reviewStateFile
+	var got batchindex.ReviewState
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal state file: %v", err)
 	}
-	if len(got.Claims) != 1 {
-		t.Errorf("expected 1 claim, got %d: %q", len(got.Claims), string(data))
+	if len(got.SeenComments) != 1 {
+		t.Errorf("expected 1 seen comment, got %d: %q", len(got.SeenComments), string(data))
 	}
 }
 
-// TestReviewStateStore_RejectsEmptyKey asserts MarkSeen rejects an empty
-// commentID (and TryClaim/Release no-op or return false). Mirrors
+// TestReviewStateStore_RejectsEmptyKey asserts MarkSeen rejects an
+// empty commentID and TryClaim returns false for one. Mirrors
 // TestSeenCommentsStore_RejectsEmptyID.
 func TestReviewStateStore_RejectsEmptyKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
 
-	if err := store.MarkSeen(42, "   ", "success"); err == nil {
+	if err := store.MarkSeen("   ", "success"); err == nil {
 		t.Error("expected error when marking empty commentID")
 	}
-	if store.TryClaim(42, "   ") {
+	if store.TryClaim("   ") {
 		t.Error("TryClaim should return false for empty commentID")
 	}
 }
 
 // TestReviewStateStore_TryClaimReturnsTrueForNewKey asserts the happy
-// path of TryClaim on a never-seen pair. Mirrors
+// path of TryClaim on a never-seen comment. Mirrors
 // TestSeenCommentsStore_TryClaimReturnsTrueForNewID.
 func TestReviewStateStore_TryClaimReturnsTrueForNewKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
 
-	if !store.TryClaim(42, "new-key") {
-		t.Error("TryClaim should return true for unseen pair")
+	if !store.TryClaim("new-key") {
+		t.Error("TryClaim should return true for unseen comment")
 	}
 }
 
 // TestReviewStateStore_TryClaimReturnsFalseForClaimedKey asserts that a
-// second TryClaim on the same pair returns false. Mirrors
+// second TryClaim on the same comment returns false. Mirrors
 // TestSeenCommentsStore_TryClaimReturnsFalseForSeenID.
 func TestReviewStateStore_TryClaimReturnsFalseForClaimedKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
 
-	if !store.TryClaim(42, "abc") {
+	if !store.TryClaim("abc") {
 		t.Fatal("first TryClaim should succeed")
 	}
-	if store.TryClaim(42, "abc") {
-		t.Error("second TryClaim for same pair should return false")
+	if store.TryClaim("abc") {
+		t.Error("second TryClaim for same comment should return false")
 	}
 }
 
@@ -196,82 +207,87 @@ func TestReviewStateStore_TryClaimReturnsFalseForClaimedKey(t *testing.T) {
 func TestReviewStateStore_TryClaimMakesIsClaimedReturnTrue(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
 
-	if !store.TryClaim(42, "seen-me") {
+	if !store.TryClaim("seen-me") {
 		t.Fatal("TryClaim should succeed")
 	}
-	if !store.IsClaimed(42, "seen-me") {
+	if !store.IsClaimed("seen-me") {
 		t.Error("IsClaimed should return true after TryClaim")
 	}
 }
 
 // TestReviewStateStore_TryClaimThenMarkSeenIsIdempotent asserts that
-// marking a pair that is merely claimed does not duplicate the entry.
+// marking a comment that is merely claimed does not duplicate the entry.
 // Mirrors TestSeenCommentsStore_TryClaimThenMarkIsIdempotent.
 func TestReviewStateStore_TryClaimThenMarkSeenIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
 
-	if !store.TryClaim(42, "mark-me") {
+	if !store.TryClaim("mark-me") {
 		t.Fatal("TryClaim should succeed")
 	}
-	if err := store.MarkSeen(42, "mark-me", "success"); err != nil {
+	if err := store.MarkSeen("mark-me", "success"); err != nil {
 		t.Fatalf("MarkSeen: %v", err)
 	}
 
-	// Re-marking should not duplicate the entry.
-	if err := store.MarkSeen(42, "mark-me", "success"); err != nil {
+	if err := store.MarkSeen("mark-me", "success"); err != nil {
 		t.Fatalf("second MarkSeen: %v", err)
 	}
 	data, _ := os.ReadFile(path)
-	var got reviewStateFile
+	var got batchindex.ReviewState
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(got.Claims) != 1 {
-		t.Errorf("expected 1 claim, got %d: %s", len(got.Claims), string(data))
+	count := 0
+	for _, sc := range got.SeenComments {
+		if sc.CommentID == "mark-me" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 entry for mark-me, got %d in: %s", count, string(data))
 	}
 }
 
 // TestReviewStateStore_ReleaseAllowsRetry asserts that after Release,
-// the pair is no longer claimed and TryClaim succeeds again. Mirrors
+// the comment is no longer claimed and TryClaim succeeds again. Mirrors
 // TestSeenCommentsStore_ReleaseClaimAllowsRetry.
 func TestReviewStateStore_ReleaseAllowsRetry(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
 
-	if !store.TryClaim(42, "retry-me") {
+	if !store.TryClaim("retry-me") {
 		t.Fatal("TryClaim should succeed before release")
 	}
-	store.Release(42, "retry-me")
-	if store.IsClaimed(42, "retry-me") {
+	store.Release("retry-me")
+	if store.IsClaimed("retry-me") {
 		t.Fatal("Release should clear claimed state")
 	}
-	if !store.TryClaim(42, "retry-me") {
+	if !store.TryClaim("retry-me") {
 		t.Fatal("TryClaim should succeed after release")
 	}
 }
 
-// TestReviewStateStore_TryClaimIsConcurrencySafe asserts that two
-// goroutines racing on TryClaim for the same pair produce exactly one
-// winner. Mirrors TestSeenCommentsStore_TryClaimIsConcurrencySafe and
-// TestClaimStore_TryClaimIsConcurrencySafe.
+// TestReviewStateStore_TryClaimIsConcurrencySafe asserts that multiple
+// goroutines racing on TryClaim for the same comment produce exactly
+// one winner. Mirrors TestSeenCommentsStore_TryClaimIsConcurrencySafe
+// and TestClaimStore_TryClaimIsConcurrencySafe.
 func TestReviewStateStore_TryClaimIsConcurrencySafe(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -282,7 +298,7 @@ func TestReviewStateStore_TryClaimIsConcurrencySafe(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if store.TryClaim(42, "concurrent") {
+			if store.TryClaim("concurrent") {
 				atomic.AddInt32(&winners, 1)
 			}
 		}()
@@ -290,21 +306,24 @@ func TestReviewStateStore_TryClaimIsConcurrencySafe(t *testing.T) {
 	wg.Wait()
 
 	if got := atomic.LoadInt32(&winners); got != 1 {
-		t.Errorf("exactly one goroutine should claim the pair, got %d", got)
+		t.Errorf("exactly one goroutine should claim, got %d", got)
 	}
 }
 
-// TestReviewStateStore_TryClaimPrScoped asserts the central new contract:
-// the same commentID under a different PR is a fresh key. Mirrors
-// TestSeenCommentsStore_TryClaimAgainstLoadedIDs but with the pr-scoped
-// contract.
-func TestReviewStateStore_TryClaimPrScoped(t *testing.T) {
+// TestReviewStateStore_TryClaimAgainstLoadedIDs asserts that a comment
+// recorded as terminal-seen in the loaded file rejects new TryClaim.
+// Mirrors TestSeenCommentsStore_TryClaimAgainstLoadedIDs.
+func TestReviewStateStore_TryClaimAgainstLoadedIDs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
 
-	seed := reviewStateFile{Claims: map[string]reviewClaim{
-		keyFor(42, "shared"): {Status: "success", Since: time.Now(), UpdatedAt: time.Now()},
-	}}
+	seed := batchindex.ReviewState{
+		PR: 42,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: "existing", Timestamp: time.Now()},
+		},
+		Claims: map[string]batchindex.Claim{},
+	}
 	data, err := json.Marshal(seed)
 	if err != nil {
 		t.Fatal(err)
@@ -313,39 +332,34 @@ func TestReviewStateStore_TryClaimPrScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
 
-	// Same commentID under the loaded PR is already seen.
-	if store.TryClaim(42, "shared") {
-		t.Error("TryClaim should return false for pre-loaded (pr=42, shared)")
+	if store.TryClaim("existing") {
+		t.Error("TryClaim should return false for pre-loaded comment")
 	}
-	// Same commentID under a different PR is a fresh key.
-	if !store.TryClaim(43, "shared") {
-		t.Error("TryClaim should return true for (pr=43, shared) — keys are scoped by pr")
+	if !store.TryClaim("new-one") {
+		t.Error("TryClaim should return true for genuinely new comment")
 	}
 }
 
 // TestReviewStateStore_AtomicRenameLeavesPreviousIntact asserts the
 // partial-write failure case: when a stale .tmp file exists on disk,
-// Save replaces the destination file with the in-memory state and the
-// previous content is no longer present. The atomic-rename invariant
-// is exercised indirectly by the .tmp cleanup: a successful Save never
-// leaves a .tmp file behind. Mirrors the partial-write failure case
-// captured by the batchindex atomic-rename test.
+// Save replaces the destination file with the in-memory state. The
+// atomic-rename invariant is exercised indirectly by the .tmp cleanup:
+// a successful Save never leaves a .tmp file behind.
 func TestReviewStateStore_AtomicRenameLeavesPreviousIntact(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
 
-	// Pre-create a stale .tmp file to simulate a crash mid-write.
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, []byte("stale garbage"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -353,11 +367,9 @@ func TestReviewStateStore_AtomicRenameLeavesPreviousIntact(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// The destination file should now exist with the in-memory state.
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("destination file should exist after Save: %v", err)
 	}
-	// The stale .tmp should have been replaced/renamed.
 	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
 		t.Errorf("stale .tmp should be gone after Save, got: %v", err)
 	}
@@ -365,20 +377,21 @@ func TestReviewStateStore_AtomicRenameLeavesPreviousIntact(t *testing.T) {
 
 // TestReviewStateStore_NoClaimsSubdirectoryOnDisk asserts that the
 // store creates no separate claims/ directory on disk — claims live
-// inline in the JSON file. This is acceptance criterion #4 from the
-// issue ("Inline claims map replaces per-comment lock files").
+// inline in the JSON file's claims map. This is acceptance criterion
+// #4 from the issue ("Inline claims map replaces per-comment lock
+// files").
 func TestReviewStateStore_NoClaimsSubdirectoryOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path)
+	store, err := NewReviewStateStore(path, 42)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
 
-	if !store.TryClaim(42, "c1") {
+	if !store.TryClaim("c1") {
 		t.Fatal("TryClaim should succeed")
 	}
-	if err := store.MarkSeen(42, "c1", "success"); err != nil {
+	if err := store.MarkSeen("c1", "success"); err != nil {
 		t.Fatalf("MarkSeen: %v", err)
 	}
 
@@ -390,5 +403,144 @@ func TestReviewStateStore_NoClaimsSubdirectoryOnDisk(t *testing.T) {
 		if e.IsDir() && e.Name() == "claims" {
 			t.Error("store must not create a claims/ directory; claims live inline in review-state.json")
 		}
+	}
+}
+
+// TestReviewStateStore_NoTimeBasedPurge asserts the new design does not
+// remove claims based on file mtime. Replaces
+// TestClaimStore_PurgesStaleFiles (no analogue in the inline design).
+// Per ADR-0034, claim state lives in the JSON file and is durable.
+func TestReviewStateStore_NoTimeBasedPurge(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+
+	if !time.Now().IsZero() {
+		// Pre-create a file with an ancient mtime to simulate a long-idle
+		// store; NewReviewStateStore must not auto-purge it.
+		staleTime := time.Now().Add(-24 * time.Hour)
+		seed := batchindex.ReviewState{
+			PR: 42,
+			SeenComments: []batchindex.SeenComment{
+				{CommentID: "very-old", Timestamp: staleTime},
+			},
+			Claims: map[string]batchindex.Claim{},
+		}
+		data, _ := json.Marshal(seed)
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, staleTime, staleTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store, err := NewReviewStateStore(path, 42)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+	if !store.IsSeen("very-old") {
+		t.Error("store should preserve terminal claims regardless of file age (no time-based purge per ADR-0034)")
+	}
+}
+
+// TestReviewStateStore_ReleaseClearsClaim mirrors
+// TestClaimStore_ReleaseRemovesClaim.
+func TestReviewStateStore_ReleaseClearsClaim(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	store, err := NewReviewStateStore(path, 42)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	if !store.TryClaim("abc123") {
+		t.Fatal("TryClaim should succeed")
+	}
+
+	store.Release("abc123")
+
+	if store.IsClaimed("abc123") {
+		t.Error("Release should clear the claim")
+	}
+	if !store.TryClaim("abc123") {
+		t.Error("TryClaim should succeed after Release")
+	}
+}
+
+// TestReviewStateStore_ReleaseIdempotent mirrors
+// TestClaimStore_ReleaseIdempotent.
+func TestReviewStateStore_ReleaseIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	store, err := NewReviewStateStore(path, 42)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	store.Release("nonexistent") // should not panic
+
+	if !store.TryClaim("foo") {
+		t.Fatal("TryClaim should succeed")
+	}
+	store.Release("foo")
+	store.Release("foo") // second release is a no-op
+}
+
+// TestReviewStateStore_CommentIDWithSpecialChars mirrors
+// TestClaimStore_CommentIDWithSpecialChars.
+func TestReviewStateStore_CommentIDWithSpecialChars(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	store, err := NewReviewStateStore(path, 42)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	ids := []string{"IC_kwDOBm1q", "123_456", "comment-with-dashes"}
+	for _, id := range ids {
+		if !store.TryClaim(id) {
+			t.Errorf("TryClaim(%s) should succeed", id)
+		}
+		store.Release(id)
+	}
+}
+
+// TestReviewStateStore_RestartReadsPersistedClaims mirrors
+// TestClaimStore_CrossInstanceSafety. A second store instance loading
+// the same file sees the claim and TryClaim returns false.
+func TestReviewStateStore_RestartReadsPersistedClaims(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+
+	cs1, err := NewReviewStateStore(path, 42)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore 1: %v", err)
+	}
+	if !cs1.TryClaim("cross") {
+		t.Fatal("cs1 should claim successfully")
+	}
+	if err := cs1.Save(); err != nil {
+		t.Fatalf("cs1.Save: %v", err)
+	}
+
+	cs2, err := NewReviewStateStore(path, 42)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore 2: %v", err)
+	}
+	if cs2.TryClaim("cross") {
+		t.Error("cs2 should not claim an ID already claimed by cs1")
+	}
+
+	cs1.Release("cross")
+	if err := cs1.Save(); err != nil {
+		t.Fatalf("cs1.Save: %v", err)
+	}
+
+	cs3, err := NewReviewStateStore(path, 42)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore 3: %v", err)
+	}
+	if !cs3.TryClaim("cross") {
+		t.Error("cs3 should claim after cs1 released")
 	}
 }

@@ -32,7 +32,7 @@ func TestRun_PrepareFailure_DoesNotEmitRunStarted(t *testing.T) {
 	initRunIntegrationRepoWithRemote(t, dir)
 
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	// The review daemon guard requires a live .sandman/review.sock.
@@ -151,7 +151,7 @@ func TestRun_ControlSocketBindFailure_LeavesNoArtifacts(t *testing.T) {
 	initRunIntegrationRepoWithRemote(t, dir)
 
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	reviewListener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))

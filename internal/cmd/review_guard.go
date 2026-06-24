@@ -17,17 +17,17 @@ const reviewGuardMessage = "sandman review daemon is not running.\n" +
 	"Override it with: sandman config set review_command /oc review"
 
 // ReviewSocketPath returns the absolute path of the review daemon's
-// control socket under sandmanDir (.sandman/review.sock). It is the
-// single source of truth for the socket location used by the guard,
+// control socket under sandmanDir (.sandman/reviews/review.sock). It is
+// the single source of truth for the socket location used by the guard,
 // the attach command, and the review daemon itself.
 func ReviewSocketPath(sandmanDir string) string {
-	return filepath.Join(sandmanDir, "review.sock")
+	return filepath.Join(sandmanDir, "reviews", "review.sock")
 }
 
 // requireReviewDaemon enforces the guard from issue #383. When the
 // configured review_command contains the substring "/sandman", the
 // review daemon must be running and accepting connections on the
-// .sandman/review.sock control socket. Other review commands
+// .sandman/reviews/review.sock control socket. Other review commands
 // (e.g. "/oc review", "/custom-review") are exempt.
 //
 // The check is liveness-aware: it dials the socket with a short

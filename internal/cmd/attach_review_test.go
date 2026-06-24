@@ -14,10 +14,11 @@ func TestAttach_FindsReviewSock(t *testing.T) {
 	t.Chdir(dir)
 
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+	reviewsDir := filepath.Join(sandmanDir, "reviews")
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sandmanDir, "review.sock")
+	sockPath := filepath.Join(reviewsDir, "review.sock")
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
