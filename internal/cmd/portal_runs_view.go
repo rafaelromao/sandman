@@ -191,14 +191,16 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		}
 	}
 
-	var rowToBatch map[string]string
+	var dirIDs map[string]string
 	var deadBatches []daemon.DeadBatch
 	var err error
+
+	idx := v.loadBatchesIndex(repoRoot)
 
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
-	deadBatches, rowToBatch, err = v.deadBatchDirIDsByRunID(repoRoot)
+	deadBatches, dirIDs, err = v.deadBatchDirIDsByRunID(idx)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +209,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	// separate Stat per run. Active entries only matter here for the
 	// StatusUnavailable lookup; the existing discoverPortalInstances path
 	// still owns the live-socket probe and the lazy flip itself.
-	unavailableRunIDs := v.unavailableRunIDsByBatchIndex(repoRoot)
+	unavailableRunIDs := v.unavailableRunIDsByBatchIndex(idx)
 	for _, active := range activeInstances {
 		if activeBatchStart.IsZero() && !active.StartedAt.IsZero() {
 			activeBatchStart = active.StartedAt
@@ -275,13 +277,13 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 			runs[i].SourceExists = true
 			continue
 		}
-		if runs[i].BatchKey == "" && len(rowToBatch) > 0 {
-			if batchKey, ok := rowToBatch[runs[i].RunID]; ok {
+		if runs[i].BatchKey == "" && len(dirIDs) > 0 {
+			if batchKey, ok := dirIDs[runs[i].RunID]; ok {
 				runs[i].BatchKey = batchKey
 			}
 		}
-		dirID := v.sourceDirID(runs[i])
-		runs[i].Archived = v.isRunArchived(repoRoot, dirID)
+		dirID := v.sourceDirID(idx, runs[i])
+		runs[i].Archived = v.isRunArchived(idx, dirID)
 		runs[i].SourceExists = v.runDirExists(repoRoot, dirID)
 		// Unavailable is keyed by sourceDirID (BatchKey when present)
 		// because the batchindex entry is the source of truth for the
@@ -1229,28 +1231,46 @@ func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath st
 	}
 }
 
-// isRunArchived reports whether runID's directory currently lives under
-// .sandman/archive instead of .sandman/runs. A non-empty RunID that
-// matches no directory on disk returns false; only a present directory
-// counts as archived, so transient or half-moved state never lights up
-// the flag.
-func (v *portalRunsView) isRunArchived(repoRoot, runID string) bool {
-	if runID == "" {
-		return false
-	}
+func (v *portalRunsView) loadBatchesIndex(repoRoot string) *batchindex.Index {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	info, err := os.Stat(filepath.Join(layout.ArchiveDir, runID))
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
-		return false
+		logPortalViewDegrade("batches-index-load", "load batches index: %v", err)
+		return nil
 	}
-	return info.IsDir()
+	return idx
 }
 
-func (v *portalRunsView) sourceDirID(run portalRun) string {
-	if run.BatchKey != "" {
-		return run.BatchKey
+// isRunArchived reports whether runID's directory currently lives under
+// .sandman/archive instead of .sandman/runs. A non-empty runID that does
+// not resolve to an index entry returns false; otherwise, archived-ness
+// is reported from the entry's Status field, so transient or half-moved
+// state never lights up the flag.
+func (v *portalRunsView) isRunArchived(idx *batchindex.Index, runID string) bool {
+	if runID == "" || idx == nil {
+		return false
 	}
-	return run.RunID
+	entry := idx.Resolve(runID)
+	if entry == nil {
+		return false
+	}
+	return entry.Status == batchindex.StatusArchived
+}
+
+func (v *portalRunsView) sourceDirID(idx *batchindex.Index, run portalRun) string {
+	id := run.BatchKey
+	if id == "" {
+		id = run.RunID
+	}
+	if id == "" {
+		return ""
+	}
+	if idx != nil {
+		if entry := idx.Resolve(id); entry != nil && entry.Path != "" {
+			return filepath.Base(entry.Path)
+		}
+	}
+	return id
 }
 
 // unavailableRunIDsByBatchIndex returns the set of source directory IDs
@@ -1263,11 +1283,9 @@ func (v *portalRunsView) sourceDirID(run portalRun) string {
 // The lookup is keyed by sourceDirID (BatchKey when present, RunID
 // otherwise), which matches batchindex.Entry.ID for completed historical
 // rows.
-func (v *portalRunsView) unavailableRunIDsByBatchIndex(repoRoot string) map[string]struct{} {
+func (v *portalRunsView) unavailableRunIDsByBatchIndex(idx *batchindex.Index) map[string]struct{} {
 	out := map[string]struct{}{}
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	idx, err := batchindex.Load(layout.BatchesIndexPath)
-	if err != nil {
+	if idx == nil {
 		return out
 	}
 	for i := range idx.Entries {
@@ -1278,34 +1296,35 @@ func (v *portalRunsView) unavailableRunIDsByBatchIndex(repoRoot string) map[stri
 	return out
 }
 
-func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) ([]daemon.DeadBatch, map[string]string, error) {
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	deadBatches, err := daemon.FindDeadRunBatches(layout.SandmanDir)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(deadBatches) == 0 {
+func (v *portalRunsView) deadBatchDirIDsByRunID(idx *batchindex.Index) ([]daemon.DeadBatch, map[string]string, error) {
+	if idx == nil || len(idx.Entries) == 0 {
 		return nil, nil, nil
 	}
-	// Build a mapping from row RunID to batch dir basename so that
-	// BatchKey can be populated for completed historical rows. The
-	// batch directory contains a runs/ subdirectory with one entry
-	// per row; each entry name is the row RunID.
-	rowToBatch := map[string]string{}
-	for _, batch := range deadBatches {
-		batchDir := filepath.Base(batch.RunDir)
-		runsDir := filepath.Join(batch.RunDir, "runs")
+	deadBatches := make([]daemon.DeadBatch, 0, len(idx.Entries))
+	// dirIDs maps row RunID → batch dir basename, so the caller can
+	// populate BatchKey for completed historical rows. We scan each
+	// batch's runs/ subdirectory; unavailable batches whose directory
+	// has been deleted will fail the ReadDir gracefully and contribute
+	// no entries.
+	dirIDs := make(map[string]string, len(idx.Entries))
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		if entry.Path == "" {
+			continue
+		}
+		deadBatches = append(deadBatches, daemon.DeadBatch{RunDir: entry.Path})
+		runsDir := filepath.Join(entry.Path, "runs")
 		entries, err := os.ReadDir(runsDir)
 		if err != nil {
 			continue
 		}
 		for _, e := range entries {
 			if e.IsDir() {
-				rowToBatch[e.Name()] = batchDir
+				dirIDs[e.Name()] = filepath.Base(entry.Path)
 			}
 		}
 	}
-	return deadBatches, rowToBatch, nil
+	return deadBatches, dirIDs, nil
 }
 
 func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string, deadBatches []daemon.DeadBatch) (string, error) {
