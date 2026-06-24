@@ -1935,6 +1935,32 @@ func addBatchToIndex(t *testing.T, repoRoot, batchID, batchPath string, issues [
 	}
 }
 
+// addArchivedBatchToIndex records a batch entry with status=archived and
+// entry.Path set to archivePath, mirroring what `sandman archive run` does
+// at runtime via idx.SetArchived. Tests use this helper to exercise the
+// portal's index-first read path for the Archived field.
+func addArchivedBatchToIndex(t *testing.T, repoRoot, batchID, archivePath string, issues []int) {
+	t.Helper()
+	layout := paths.NewLayout(nil, repoRoot)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx.Add(batchindex.Entry{
+		ID:        batchID,
+		Path:      archivePath,
+		Kind:      batchindex.KindIssue,
+		Issues:    issues,
+		CreatedAt: time.Now(),
+	})
+	if err := idx.SetArchived(batchID, archivePath, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writePortalLog(t *testing.T, path string, entries []events.Event) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

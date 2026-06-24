@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -1206,20 +1207,28 @@ func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath st
 }
 
 // isRunArchived reports whether runID's directory currently lives under
-// .sandman/archive instead of .sandman/runs. A non-empty RunID that
-// matches no directory on disk returns false; only a present directory
-// counts as archived, so transient or half-moved state never lights up
-// the flag.
+// .sandman/archive instead of .sandman/batches. The portal reads the
+// batches index first: an entry whose status is batchindex.StatusArchived
+// (recorded by `sandman archive` via idx.SetArchived) is archived
+// regardless of whether the archive directory is currently on disk, so
+// transient state during a move never flips the flag back to false. A
+// runID that matches no entry, or an entry with status=active or
+// status=unavailable, returns false.
 func (v *portalRunsView) isRunArchived(repoRoot, runID string) bool {
 	if runID == "" {
 		return false
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	info, err := os.Stat(filepath.Join(layout.ArchiveDir, runID))
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
+		logPortalViewDegrade("batches-index-load:"+runID, "load batches index for archive lookup %q: %v", runID, err)
 		return false
 	}
-	return info.IsDir()
+	entry := idx.Resolve(runID)
+	if entry == nil {
+		return false
+	}
+	return entry.Status == batchindex.StatusArchived
 }
 
 func (v *portalRunsView) sourceDirID(run portalRun) string {
