@@ -20,6 +20,12 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 6. **You must NOT request another review before the previous one has produced a response, UNLESS a new commit has landed.** Every iteration that would post a new `{{REVIEW_COMMAND}}` must first check whether the head SHA has changed since the last request. If SHA changed, treat the previous request as consumed and allow re-requesting. If SHA is unchanged, only re-request after a response has arrived.
 
+7. **You must NOT give up on a `CHANGES_REQUESTED` review when the reviewer's request maps to the issue description or acceptance criteria.** When the reviewer flags a requirement that comes from the issue body or its acceptance criteria (the same criteria the implementor agent was asked to satisfy), you have exactly two acceptable paths:
+   - **Implement the requested change.** Read the issue description and its acceptance criteria, confirm the reviewer's interpretation is consistent with them, then make the change, commit, push, and re-request review.
+   - **Convince the reviewer the requirement is out of scope.** Post a PR comment that quotes the issue's own acceptance criteria verbatim, explains why the requested change falls outside the issue's stated scope, and asks the reviewer to either accept the narrowed scope or correct the implementor's interpretation. Then **wait for the reviewer's explicit agreement** before considering the `CHANGES_REQUESTED` resolved. If the reviewer reaffirms the change is required, you must implement it on the next pass — you cannot keep asserting your own interpretation against theirs.
+   
+   It is NEVER acceptable to assert "this is out of scope" unilaterally, exit the loop with a `CHANGES_REQUESTED` still pending, and let the run terminate. The run will be marked as failure by the orchestrator (the PR is not merged), and the retry will burn compute on the same deadlock. If max passes are reached with the deadlock unresolved, surface it to the user — do not silently terminate.
+
 ## Workflow
 
 ### Prerequisites
@@ -150,7 +156,7 @@ If no reviewer response arrives within 30 minutes, stop and report to the user.
 
 **B. Formal changes requested?**
 - `reviewDecision: CHANGES_REQUESTED`, OR any entry with `state: "CHANGES_REQUESTED"`
-→ **Blockers** — must fix before continuing
+→ **Blockers** — must fix before continuing. Apply Hard Rule 7 (issue ACs): if the reviewer's request maps to a requirement from the issue body or acceptance criteria, you must either implement the change or get the reviewer's explicit agreement that the scope is narrower. Posting a "this is out of scope" comment and exiting the loop is NOT an acceptable resolution — it leaves the `CHANGES_REQUESTED` pending and the run will fail.
 
 **C. Informal approval (implicit approval without formal review)?**
 - No pending `CHANGES_REQUESTED` reviews, AND
@@ -182,6 +188,8 @@ An inline file comment OR top-level comment OR review body contains concrete cod
 #### Step 7: Apply fixes
 
 **Hard rule — never exit after pushing a fix.** After `git push` in Step 7, the agent MUST continue to Step 5 to poll for the reviewer's next response.
+
+**Hard rule — never exit with `CHANGES_REQUESTED` unresolved.** If a `CHANGES_REQUESTED` review exists after applying fixes, do not declare the run done. Re-request review (Step 4) and continue the loop. Only formal approval (case A or C), explicit user stop, or max passes reached may end the loop. Applying a fix that you believe addresses the reviewer's concern does NOT close the loop — the reviewer must explicitly approve.
 
 - Read `.sandman/.<N>.addressed_comments` — skip any inline comment IDs already present.
 - Read relevant source files, make minimal changes.
@@ -222,6 +230,7 @@ Continue polling when:
 - Only already-addressed inline comment IDs remain
 - Top-level PR conversation has new comments from non-agent author
 - **A new commit has landed (head SHA changed) — re-request always permitted regardless of prior response state**
+- **A `CHANGES_REQUESTED` review references the issue's acceptance criteria and you have not yet implemented the change OR obtained the reviewer's explicit agreement on the narrowed scope (Hard Rule 7)**
 
 ## Tips
 
