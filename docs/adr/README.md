@@ -70,3 +70,7 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0028 | PR review prompt — omit `## Previous review progress` when there are no prior reviews | accepted |
 | 0029 | Portal secondary-row chips for run context | accepted |
 | 0030 | Standardize Run ID and Run Dir naming | accepted |
+| 0031 | Portal read-only — commands panel removed | accepted |
+| 0032 | `.sandman/` layout redesign — batches, runs, and the master index | accepted |
+| 0033 | Per-run command sockets for command and abort | accepted |
+| 0034 | Review daemon — stateless on age, stateful on comment | accepted |

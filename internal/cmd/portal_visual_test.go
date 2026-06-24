@@ -30,7 +30,7 @@ var visualChromiumMu sync.Mutex
 //   - inlines the relevant CSS rules from portal.html (so the test is
 //     never stale relative to the file under test);
 //   - embeds a JS snippet that builds the same row shapes the
-//     portal_diff.js builder produces (issue label, meta-line, batch chip);
+//     portal_diff.js builder produces (issue label, meta-line);
 //   - writes a single JSON dump of layout measurements into a <pre> block
 //     so the test can read the results back without a CDP client.
 //
@@ -60,18 +60,6 @@ const visualFixtureRowsJS = `
     const it = td('issue-title'); it.classList.add('mono'); it.textContent = rowSpec.issueTitle;
     const ac = td('actions'); ac.classList.add('run-actions');
     const btn = document.createElement('button'); btn.classList.add('action-btn','danger'); btn.textContent = 'Abort'; ac.appendChild(btn);
-    if (rowSpec.batchIssues && rowSpec.batchIssues.length > 1) {
-      const batchTr = document.createElement('tr');
-      batchTr.classList.add('batch-row');
-      const batchTd = document.createElement('td');
-      batchTd.setAttribute('colspan', '6');
-      const chip = document.createElement('span'); chip.classList.add('batch-membership', 'mono');
-      chip.setAttribute('data-batch-membership', '1');
-      chip.textContent = 'Part of batch: ' + rowSpec.batchIssues.map(n => '#' + n).join(', ');
-      batchTd.appendChild(chip);
-      batchTr.appendChild(batchTd);
-      tr.parentNode.insertBefore(batchTr, tr.nextSibling);
-    }
     return tr;
   }
 
@@ -94,21 +82,14 @@ const visualFixtureRowsJS = `
     body.querySelectorAll('tr.run-row').forEach((tr, i) => {
       const t = tr.querySelector('[data-cell="title"]');
       const meta = tr.querySelector('.meta-line');
-      const chip = tr.querySelector('.batch-membership');
       const it = tr.querySelector('[data-cell="issue-title"]');
       const rect = (el) => el ? { w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) } : null;
-      const batchRow = tr.nextElementSibling && tr.nextElementSibling.classList.contains('batch-row') ? tr.nextElementSibling : null;
-      const batchChip = batchRow ? batchRow.querySelector('.batch-membership') : null;
-      const batchTd = batchRow ? batchRow.querySelector('td') : null;
       out.rows.push({
         idx: i,
         titleCell: rect(t),
         meta: rect(meta),
-        chip: rect(batchChip || chip),
         issueTitle: rect(it),
         innerWidthTitleCell: t ? t.clientWidth : null,
-        batchRow: rect(batchTd),
-        batchTdInnerWidth: batchTd ? batchTd.clientWidth : null,
       });
     });
     const pre = document.createElement('pre');
@@ -191,11 +172,8 @@ type visualRow struct {
 	Idx                 int         `json:"idx"`
 	TitleCell           *visualRect `json:"titleCell"`
 	Meta                *visualRect `json:"meta"`
-	Chip                *visualRect `json:"chip"`
 	IssueTitle          *visualRect `json:"issueTitle"`
 	InnerWidthTitleCell *int        `json:"innerWidthTitleCell"`
-	BatchRow            *visualRect `json:"batchRow"`
-	BatchTdInnerWidth   *int        `json:"batchTdInnerWidth"`
 }
 
 type visualDump struct {
@@ -294,56 +272,6 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// TestPortal_Visual_BatchMembershipFillsRunCellAndWraps asserts the chip
-// in a row with a long batch list sits on a small number of lines and
-// the Run column grows to a sane cap instead of being clamped to its
-// min-content width.
-func TestPortal_Visual_BatchMembershipFillsRunCellAndWraps(t *testing.T) {
-	if os.Getenv("CI") != "" {
-		t.Skip("skip visual in CI")
-	}
-	fixture := buildVisualFixture(t)
-	dump := renderVisual(t, fixture, 1280, 720)
-	if dump.Viewport != 1280 {
-		t.Fatalf("expected viewport 1280, got %d", dump.Viewport)
-	}
-	var row *visualRow
-	for i := range dump.Rows {
-		if dump.Rows[i].Idx == 0 {
-			row = &dump.Rows[i]
-			break
-		}
-	}
-	if row == nil {
-		t.Fatalf("row 0 missing from dump: %+v", dump.Rows)
-	}
-	if row.Chip == nil {
-		t.Fatalf("row 0 missing .batch-membership chip (test data has batchIssues > 1)")
-	}
-	// Chip fills the cell content area: with box-sizing: border-box and
-	// width: 100% the chip should equal the cell's content width (which is
-	// clientWidth minus the 14px left/right padding declared on tbody td).
-	if row.InnerWidthTitleCell == nil {
-		t.Fatalf("row 0 missing innerWidthTitleCell")
-	}
-	innerW := *row.InnerWidthTitleCell - 28
-	if row.Chip.W < innerW-2 || row.Chip.W > innerW+2 {
-		t.Errorf("chip width %d != cell content width %d (want within 2px)", row.Chip.W, innerW)
-	}
-	// Chip should be at most 2 lines for an 8-issue batch at 220px cap
-	// (1 line for <=7 issues, 2 lines for 8+). 3+ lines was the bug.
-	if row.Chip.H > 40 {
-		t.Errorf("chip height %d implies 3+ wrapped lines; expected <= 2 (height <= 40px)", row.Chip.H)
-	}
-	// Run column grew to its min, not clamped below it.
-	if row.TitleCell == nil || row.TitleCell.W < 168 {
-		t.Errorf("Run column width %v; expected >= 168 (the column min allows it to grow)", row.TitleCell)
-	}
-	if row.TitleCell != nil && row.TitleCell.W > 220 {
-		t.Errorf("Run column width %d > 220 cap; expected the cap to hold", row.TitleCell.W)
-	}
-}
-
 // TestPortal_Visual_MetaLineDoesNotForceColumnWidth asserts the long
 // unbreakable run-id token in the meta-line breaks inside the value cell
 // and does not force the Run column wider than its cap.
@@ -432,10 +360,6 @@ func TestPortal_Visual_RunRowStaysShortOnMobileViewport(t *testing.T) {
 	// Title cell should be at most 120px tall on a narrow viewport.
 	if row.TitleCell.H > 120 {
 		t.Errorf("title cell height %d on 500px viewport; expected <= 120", row.TitleCell.H)
-	}
-	// Batch-row td should be at most 40px tall (single-line chip).
-	if row.BatchRow != nil && row.BatchRow.H > 40 {
-		t.Errorf("batch-row td height %d on 500px viewport; expected <= 40", row.BatchRow.H)
 	}
 	// Issue-title cell should be on a single line (height ~17px).
 	if row.IssueTitle != nil && row.IssueTitle.H > 25 {

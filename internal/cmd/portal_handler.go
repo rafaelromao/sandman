@@ -9,8 +9,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+var permittedLogPath = regexp.MustCompile(`^batches/[^/]+/runs/[^/]+/run\.log$|^archive/[^/]+/runs/[^/]+/run\.log$`)
 
 type portalHandler struct {
 	repoRoot     string
@@ -181,6 +184,11 @@ func (h *portalHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	sandmanPrefix := filepath.Join(".sandman") + string(filepath.Separator)
 	if !strings.HasPrefix(relPath, sandmanPrefix) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	relPathInSandman := strings.TrimPrefix(relPath, sandmanPrefix)
+	if !permittedLogPath.MatchString(relPathInSandman) {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
