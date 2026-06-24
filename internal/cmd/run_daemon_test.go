@@ -329,6 +329,9 @@ func TestRun_RemovesCommandSocketOnCompletion(t *testing.T) {
 
 func TestRun_AllowsConcurrentRuns(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(dir)
 	sandmanDir := filepath.Join(dir, ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
