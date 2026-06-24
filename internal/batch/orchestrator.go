@@ -2500,6 +2500,8 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 						if err := os.Remove(logPath); err != nil && !os.IsNotExist(err) {
 							fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
 						}
+					} else {
+						fmt.Fprintf(logWriter, "warning: no batches index entry for run %s (issue %d); run.log left in place\n", runID, issueNumber)
 					}
 				}
 			}

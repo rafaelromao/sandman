@@ -7880,7 +7880,6 @@ func TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders(t *testing.T) {
 	runGit(t, dir, "checkout", "--quiet", branch)
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
-	logDir := filepath.Join(dir, ".sandman", "logs")
 	el := &spyEventLog{}
 	logBuf := &bytes.Buffer{}
 
@@ -7909,7 +7908,6 @@ func TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders(t *tes
 	runGit(t, dir, "checkout", "--quiet", branch)
 
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
-	logDir := filepath.Join(dir, ".sandman", "logs")
 	el := &spyEventLog{}
 	logBuf := &bytes.Buffer{}
 
