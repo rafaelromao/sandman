@@ -973,6 +973,8 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 				portalRun.Status = v.statusOrDefault(runState.Status(), false, runState.IsReview(), runState.IsAutoSelect())
 			}
 		} else {
+			// Legacy path: for pre-per-run-folder batches, the batch dir
+			// equals the run ID and the socket is at batch.sock.
 			sockPath := filepath.Join(paths.NewLayout(&config.Config{}, repoRoot).BatchesDir, runState.RunID, "batch.sock")
 			if _, err := os.Lstat(sockPath); err == nil {
 				portalRun.SocketPath = sockPath
