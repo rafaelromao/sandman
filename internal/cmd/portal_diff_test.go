@@ -727,6 +727,54 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffBuildDurationCell_NoStaleLineForQueuedStatus(t *testing.T) {
+	js := `const body = makeMockBody();
+const stale = new Date(Date.now() - 90*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'queued', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+const line = durationCell.querySelector('.stale-line');
+if (line) throw new Error('expected NO .stale-line for queued status even when lastOutputAt is stale');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildDurationCell_NoStaleLineForBlockedStatus(t *testing.T) {
+	js := `const body = makeMockBody();
+const stale = new Date(Date.now() - 90*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'blocked', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+const line = durationCell.querySelector('.stale-line');
+if (line) throw new Error('expected NO .stale-line for blocked status even when lastOutputAt is stale');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildDurationCell_StaleLineStillAppearsForAutoSelectingStatus(t *testing.T) {
+	js := `const body = makeMockBody();
+const stale = new Date(Date.now() - 90*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'auto-selecting', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+const line = durationCell.querySelector('.stale-line');
+if (!line) throw new Error('expected .stale-line for auto-selecting status when lastOutputAt is stale');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffBuildEventsContent_RunRetryRendersJSONDocument(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', events: [
