@@ -2229,7 +2229,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		runID = fmt.Sprintf("run-0-%d", time.Now().UnixNano())
 	}
 	if s.runID == "" && s.batchID == "" {
-		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
+		s.batchID = batchIDFromRunID(runID)
 	}
 	if o.eventLog != nil {
 		promptSourceType := "current"
