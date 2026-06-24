@@ -962,13 +962,25 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		portalRun.SocketPath = active.SocketPath
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 	} else if portalRun.Kind == "active" {
-		sockPath := filepath.Join(paths.NewLayout(&config.Config{}, repoRoot).BatchesDir, runState.RunID, "batch.sock")
-		if _, err := os.Lstat(sockPath); err == nil {
-			portalRun.SocketPath = sockPath
-			v.markCompletedIfSocketDead(&portalRun, sockPath)
+		batchDir, _ := v.findBatchDirForRun(repoRoot, runState.RunID)
+		if batchDir != "" {
+			sockPath := daemon.RunSocketPath(batchDir, runState.RunID)
+			if _, err := os.Lstat(sockPath); err == nil {
+				portalRun.SocketPath = sockPath
+				v.markCompletedIfSocketDead(&portalRun, sockPath)
+			} else {
+				portalRun.Kind = "completed"
+				portalRun.Status = v.statusOrDefault(runState.Status(), false, runState.IsReview(), runState.IsAutoSelect())
+			}
 		} else {
-			portalRun.Kind = "completed"
-			portalRun.Status = v.statusOrDefault(runState.Status(), false, runState.IsReview(), runState.IsAutoSelect())
+			sockPath := filepath.Join(paths.NewLayout(&config.Config{}, repoRoot).BatchesDir, runState.RunID, "batch.sock")
+			if _, err := os.Lstat(sockPath); err == nil {
+				portalRun.SocketPath = sockPath
+				v.markCompletedIfSocketDead(&portalRun, sockPath)
+			} else {
+				portalRun.Kind = "completed"
+				portalRun.Status = v.statusOrDefault(runState.Status(), false, runState.IsReview(), runState.IsAutoSelect())
+			}
 		}
 	}
 	return portalRun
@@ -1245,6 +1257,21 @@ func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) (map[string]str
 	return dirIDs, nil
 }
 
+func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string) (string, error) {
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	deadBatches, err := daemon.FindDeadRunBatches(layout.SandmanDir)
+	if err != nil {
+		return "", err
+	}
+	for _, batch := range deadBatches {
+		runManifestPath := filepath.Join(batch.RunDir, "runs", runID, "run.json")
+		if _, err := os.Stat(runManifestPath); err == nil {
+			return batch.RunDir, nil
+		}
+	}
+	return "", nil
+}
+
 func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
 	if runID == "" {
 		return false
@@ -1268,6 +1295,13 @@ func (v *portalRunsView) portalLogPathForRun(repoRoot string, issueNumber int, b
 		}
 		// No batch dir — fall through to legacy per-issue/per-branch log
 		// path so historical (pre-batch-folder) runs still resolve.
+	}
+
+	if len(batchDir) > 0 && batchDir[0] != "" {
+		if branch != "" {
+			return filepath.Join(batchDir[0], "runs", branch, "run.log")
+		}
+		return ""
 	}
 
 	if review && branch != "" {
