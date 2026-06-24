@@ -62,10 +62,12 @@ function appendStreamLine(runKey, line) {
 	const pre = streamPreFor(runKey);
 	if (!pre) return;
 	const renderedLog = pre.getAttribute('data-rendered-log') || '';
-	const cachedLines = new Set(renderedLog.split('\n'));
-	if (cachedLines.has(line)) {
+	const knownLines = pre._streamKnownLines || new Set(renderedLog.split('\n').filter(Boolean));
+	if (knownLines.has(line)) {
 		return;
 	}
+	knownLines.add(line);
+	pre._streamKnownLines = knownLines;
 	const tn = { nodeType: 3, _textContent: line + '\n', parentNode: null, _log: [] };
 	pre.appendChild(tn);
 	pre.setAttribute('data-rendered-log', renderedLog + line + '\n');
@@ -84,6 +86,7 @@ function startRunStream(run) {
 			while (pre.firstChild) pre.removeChild(pre.firstChild);
 			pre.setAttribute('data-rendered-log', '');
 		}
+		pre._streamKnownLines = new Set(cachedLog.split('\n').filter(Boolean));
 	}
 	const src = { onmessage: null, onerror: null, close: function() {} };
 	src.onmessage = function (ev) { appendStreamLine(run.key, ev.data); };
@@ -187,10 +190,12 @@ function appendStreamLine(runKey, line) {
 	const pre = streamPreFor(runKey);
 	if (!pre) return;
 	const renderedLog = pre.getAttribute('data-rendered-log') || '';
-	const cachedLines = new Set(renderedLog.split('\n'));
-	if (cachedLines.has(line)) {
+	const knownLines = pre._streamKnownLines || new Set(renderedLog.split('\n').filter(Boolean));
+	if (knownLines.has(line)) {
 		return;
 	}
+	knownLines.add(line);
+	pre._streamKnownLines = knownLines;
 	const tn = { nodeType: 3, _textContent: line + '\n', parentNode: null, _log: [] };
 	pre.appendChild(tn);
 	pre.setAttribute('data-rendered-log', renderedLog + line + '\n');
@@ -209,6 +214,7 @@ function startRunStream(run) {
 			while (pre.firstChild) pre.removeChild(pre.firstChild);
 			pre.setAttribute('data-rendered-log', '');
 		}
+		pre._streamKnownLines = new Set(cachedLog.split('\n').filter(Boolean));
 	}
 	const src = { onmessage: null, onerror: null, close: function() {} };
 	src.onmessage = function (ev) { appendStreamLine(run.key, ev.data); };
@@ -310,10 +316,12 @@ function appendStreamLine(runKey, line) {
 	const pre = streamPreFor(runKey);
 	if (!pre) return;
 	const renderedLog = pre.getAttribute('data-rendered-log') || '';
-	const cachedLines = new Set(renderedLog.split('\n'));
-	if (cachedLines.has(line)) {
+	const knownLines = pre._streamKnownLines || new Set(renderedLog.split('\n').filter(Boolean));
+	if (knownLines.has(line)) {
 		return;
 	}
+	knownLines.add(line);
+	pre._streamKnownLines = knownLines;
 	const tn = { nodeType: 3, _textContent: line + '\n', parentNode: null, _log: [] };
 	pre.appendChild(tn);
 	pre.setAttribute('data-rendered-log', renderedLog + line + '\n');
@@ -324,12 +332,13 @@ function appendStreamLine(runKey, line) {
 
 function stopRunStream(runKey) {}
 
-// Setup: pre with cached line "line1"
+// Setup: pre with cached line "line1", _streamKnownLines initialized
 const pre = makeMockPre([
 	{ nodeType: 3, _textContent: 'line1', parentNode: null, _log: [] },
 ]);
 pre.setAttribute('data-scroll-key', 'a');
 pre.setAttribute('data-rendered-log', 'line1\n');
+pre._streamKnownLines = new Set(['line1']);
 globalThis._mockPre = pre;
 
 const childCountBefore = pre.children.length;
@@ -408,10 +417,12 @@ function appendStreamLine(runKey, line) {
 	const pre = streamPreFor(runKey);
 	if (!pre) return;
 	const renderedLog = pre.getAttribute('data-rendered-log') || '';
-	const cachedLines = new Set(renderedLog.split('\n'));
-	if (cachedLines.has(line)) {
+	const knownLines = pre._streamKnownLines || new Set(renderedLog.split('\n').filter(Boolean));
+	if (knownLines.has(line)) {
 		return;
 	}
+	knownLines.add(line);
+	pre._streamKnownLines = knownLines;
 	const tn = { nodeType: 3, _textContent: line + '\n', parentNode: null, _log: [] };
 	pre.appendChild(tn);
 	pre.setAttribute('data-rendered-log', renderedLog + line + '\n');
@@ -420,12 +431,13 @@ function appendStreamLine(runKey, line) {
 	}
 }
 
-function stopRunRun(runKey) {}
+function stopRunStream(runKey) {}
 
 // Setup: pre with empty cache
 const pre = makeMockPre([]);
 pre.setAttribute('data-scroll-key', 'a');
 pre.setAttribute('data-rendered-log', '');
+pre._streamKnownLines = new Set();
 globalThis._mockPre = pre;
 
 const childCountBefore = pre.children.length;
@@ -504,10 +516,12 @@ function appendStreamLine(runKey, line) {
 	const pre = streamPreFor(runKey);
 	if (!pre) return;
 	const renderedLog = pre.getAttribute('data-rendered-log') || '';
-	const cachedLines = new Set(renderedLog.split('\n'));
-	if (cachedLines.has(line)) {
+	const knownLines = pre._streamKnownLines || new Set(renderedLog.split('\n').filter(Boolean));
+	if (knownLines.has(line)) {
 		return;
 	}
+	knownLines.add(line);
+	pre._streamKnownLines = knownLines;
 	const tn = { nodeType: 3, _textContent: line + '\n', parentNode: null, _log: [] };
 	pre.appendChild(tn);
 	pre.setAttribute('data-rendered-log', renderedLog + line + '\n');
@@ -518,13 +532,14 @@ function appendStreamLine(runKey, line) {
 
 function stopRunStream(runKey) {}
 
-// Setup: pre with cached lines "A\nB\n"
+// Setup: pre with cached lines "A\nB\n", _streamKnownLines pre-seeded
 const pre = makeMockPre([
 	{ nodeType: 3, _textContent: 'A', parentNode: null, _log: [] },
 	{ nodeType: 3, _textContent: 'B', parentNode: null, _log: [] },
 ]);
 pre.setAttribute('data-scroll-key', 'a');
 pre.setAttribute('data-rendered-log', 'A\nB\n');
+pre._streamKnownLines = new Set(['A', 'B']);
 globalThis._mockPre = pre;
 
 const childCountBefore = pre.children.length;

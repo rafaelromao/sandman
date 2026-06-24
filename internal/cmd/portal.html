@@ -1758,10 +1758,12 @@
       const pre = streamPreFor(runKey);
       if (!pre) return;
       const renderedLog = pre.getAttribute('data-rendered-log') || '';
-      const cachedLines = new Set(renderedLog.split('\n'));
-      if (cachedLines.has(line)) {
+      const knownLines = pre._streamKnownLines || new Set(renderedLog.split('\n').filter(Boolean));
+      if (knownLines.has(line)) {
         return;
       }
+      knownLines.add(line);
+      pre._streamKnownLines = knownLines;
       const html = SandmanPortalDiff.highlightTerminalLog(line + '\n');
       const scratch = document.createElement('div');
       scratch.innerHTML = html;
@@ -1783,6 +1785,7 @@
           while (pre.firstChild) pre.removeChild(pre.firstChild);
           pre.setAttribute('data-rendered-log', '');
         }
+        pre._streamKnownLines = new Set(cachedLog.split('\n').filter(Boolean));
       }
       const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
       src.onmessage = function (ev) { appendStreamLine(run.key, ev.data); };
