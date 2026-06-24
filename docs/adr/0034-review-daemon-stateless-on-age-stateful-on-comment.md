@@ -82,7 +82,7 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 
 ### Positive
 
-- Daemon state is minimal: `review.sock` + `review-prompt.md`. No PR-specific directories to clean up.
+- Daemon state is minimal: `review.sock` + `review-prompt.md` at `.sandman/` root. Per-PR state directories (`PRDir`) exist but are managed by the daemon, not a separate cleanup process.
 - Dedup key `(pr, commentID)` is stable and unambiguous — no timestamp drift or clock sync issues.
 - Per-run review state is co-located with the run that produced it — cleanup follows the batch/run lifecycle (ADR-0032).
 - No orphan PRs: all open PRs with unprocessed `/sandman` comments are scanned, regardless of daemon uptime.

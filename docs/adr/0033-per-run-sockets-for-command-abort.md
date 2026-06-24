@@ -31,7 +31,7 @@ The daemon opens **N command servers** — one `run.sock` per AgentRun — inste
 
 ### Why per-run sockets
 
-**External abort tools address runs by path.** An external tool (e.g., a human operator or automation script) that wants to abort a specific AgentRun without affecting siblings needs a stable, path-based handle. With a batch-level command socket, the tool would have to encode run identity inside the socket payload, which is fragile and non-standard. With per-run `run.sock`, the tool simply connects to `<batch>/runs/<run>/run.sock` — the path is the address.
+**External abort tools address runs by path.** An external tool (e.g., a human operator or automation script) that wants to abort a specific AgentRun without affecting siblings needs a stable, path-based handle. With a batch-level command socket, the tool would have to encode run identity inside the socket payload, which is fragile and non-standard. With `run.sock` at the batch root, the tool connects to `<batch>/run.sock` — the path is the address.
 
 **One command server per AgentRun, not one per batch.** This is the core decision: the daemon creates a dedicated command server for each run's `run.sock`. The command server dispatches to the orchestrator's per-issue cancel API (the `IssueCommander` seam), which maps an external cancel to a single `AgentRun`.
 
@@ -60,7 +60,7 @@ The daemon's per-run `CommandServer` dispatches this to the `IssueCommander` int
 `run.json` (ADR-0032) adds no socket-specific fields — socket paths are derived deterministically from the folder layout:
 
 - `batch.sock` is at `<batch>/batch.sock`
-- `run.sock` is at `<batch>/runs/<run>/run.sock`
+- `run.sock` is at `<batch>/run.sock` (batch root, not per-run folder)
 
 The `Command Server` entry in `CONTEXT.md` is updated to reflect the per-run socket decision.
 
