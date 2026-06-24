@@ -66,8 +66,9 @@ func NewRunSession(baseDir, batchID string) *RunSession {
 // goroutine.
 //
 // Deprecated: RunDir is an alias for BatchDir. New code should use
-// BatchDir. This alias is kept for backward compatibility and will
-// be removed when .sandman/runs/ is wiped in Slice 5.
+// BatchDir. This alias is kept for backward compatibility during the
+// transition to per-batch-per-run layout where run artifacts live
+// in <batchDir>/runs/<runID>/ rather than .sandman/runs/.
 func (s *RunSession) RunDir() string {
 	return s.runDir
 }

@@ -211,7 +211,7 @@ func (c *commanderBatchRunner) AbortIssue(issueNumber int) error {
 	return c.abortErr
 }
 
-func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
+func TestRun_CreatesControlSocketInRunDirWithCommander(t *testing.T) {
 	dir := chdirToShortSandmanDir(t)
 	deps := depsWithSocket(&commanderBatchRunner{
 		started:    make(chan struct{}),

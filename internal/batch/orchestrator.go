@@ -14,7 +14,9 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -1879,6 +1881,35 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	o.registerActiveRun(s.issueNumber, wt)
 	defer o.unregisterActiveRun(s.issueNumber)
 
+	batchDir := s.o.layout.BatchDir(s.batchID)
+	manifestBatchID := s.batchID
+	if s.batchID == "" {
+		batchDir = s.o.layout.BatchesDir
+		manifestBatchID = batchIDFromRunID(runID)
+	}
+	runManifest := batchindex.RunManifest{
+		RunID:        runID,
+		BatchID:      manifestBatchID,
+		Issue:        s.issueNumber,
+		Branch:       branch,
+		BaseBranch:   s.baseBranch,
+		WorktreePath: wt.WorkDir(),
+		Kind:         batchindex.KindIssue,
+		CreatedAt:    time.Now(),
+		Status:       batchindex.StatusActive,
+	}
+	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
+		fmt.Fprintf(o.errorLog, "error: write run manifest for issue %d: %v\n", s.issueNumber, err)
+		_ = wt.Stop()
+		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
+	}
+	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.o)
+	if err := cmdServer.Start(); err != nil {
+		fmt.Fprintf(o.errorLog, "error: start command server for issue %d: %v\n", s.issueNumber, err)
+	} else {
+		defer cmdServer.Stop()
+	}
+
 	// Pre-register the supervisor's done channel with the batch-wide
 	// fan-in BEFORE spawning the supervisor, so a session that
 	// started just before ctx fired cannot race the snapshot taken
@@ -2265,6 +2296,42 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 			eventType = "run.continued"
 		}
 		_ = o.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
+	}
+
+	batchDir := s.o.layout.BatchDir(s.batchID)
+	manifestBatchID := s.batchID
+	if s.batchID == "" {
+		batchDir = s.o.layout.BatchesDir
+		manifestBatchID = batchIDFromRunID(runID)
+	}
+	var runKind batchindex.Kind
+	if s.review {
+		runKind = batchindex.KindReview
+	} else {
+		runKind = batchindex.KindPromptOnly
+	}
+	runManifest := batchindex.RunManifest{
+		RunID:        runID,
+		BatchID:      manifestBatchID,
+		Issue:        s.issueNumber,
+		Branch:       branch,
+		BaseBranch:   s.baseBranch,
+		WorktreePath: wt.WorkDir(),
+		Kind:         runKind,
+		CreatedAt:    time.Now(),
+		PR:           s.prNumber,
+		Status:       batchindex.StatusActive,
+	}
+	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
+		fmt.Fprintf(o.errorLog, "error: write run manifest for prompt-only run: %v\n", err)
+		_ = wt.Stop()
+		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
+	}
+	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.o)
+	if err := cmdServer.Start(); err != nil {
+		fmt.Fprintf(o.errorLog, "error: start command server for prompt-only run: %v\n", err)
+	} else {
+		defer cmdServer.Stop()
 	}
 
 	runFolder := s.runFolderFor(runID)
