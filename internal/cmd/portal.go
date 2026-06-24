@@ -376,6 +376,44 @@ func hasGitMarker(dir string) bool {
 }
 
 func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return nil, fmt.Errorf("load batches index: %w", err)
+	}
+
+	if len(idx.Entries) == 0 {
+		return discoverPortalInstancesFromFilesystem(repoRoot)
+	}
+
+	if err := idx.EnsureStatus(); err != nil {
+		return nil, fmt.Errorf("ensure status: %w", err)
+	}
+
+	instances := make([]portalInstance, 0, len(idx.Entries))
+	for _, entry := range idx.Entries {
+		if entry.Status != batchindex.StatusActive {
+			continue
+		}
+		batchDir := entry.Path
+		sockPath := filepath.Join(batchDir, "batch.sock")
+		info, err := os.Lstat(sockPath)
+		if err != nil || info.IsDir() || info.Mode()&os.ModeSocket == 0 {
+			continue
+		}
+		if !portalRunLivenessProbe(batchDir) {
+			continue
+		}
+		instances = append(instances, portalInstance{Name: entry.ID, SocketPath: sockPath})
+	}
+
+	sort.Slice(instances, func(i, j int) bool {
+		return strings.Compare(instances[i].Name, instances[j].Name) < 0
+	})
+	return instances, nil
+}
+
+func discoverPortalInstancesFromFilesystem(repoRoot string) ([]portalInstance, error) {
 	batchesDir := filepath.Join(repoRoot, ".sandman", "batches")
 	entries, err := os.ReadDir(batchesDir)
 	if err != nil {
