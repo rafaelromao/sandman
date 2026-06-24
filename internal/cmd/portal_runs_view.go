@@ -1238,24 +1238,41 @@ func (v *portalRunsView) sourceDirID(run portalRun) string {
 	return run.RunID
 }
 
+// deadBatchDirIDsByRunID returns the per-batch directory-id map and the
+// matching daemon.DeadBatch slice, populated from the batches index
+// instead of a filesystem walk. Every entry in the index contributes a
+// DeadBatch whose RunDir is entry.Path; the dirIDs map pairs each
+// entry.ID with filepath.Base(entry.Path) so the portal can recover
+// the on-disk batch directory name for completed runs whose event
+// log carried only the run ID. Status is ignored here — the portal
+// downstream (findBatchDirForRun) only cares about the directory
+// being present on disk for stat() checks. Index load errors degrade
+// to (nil, nil) so the hot path keeps serving rows.
 func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) ([]daemon.DeadBatch, map[string]string, error) {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	deadBatches, err := daemon.FindDeadRunBatches(layout.SandmanDir)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
-		return nil, nil, err
-	}
-	if len(deadBatches) == 0 {
+		logPortalViewDegrade("batches-index-load:dead-batches", "load batches index for dead-batch lookup: %v", err)
 		return nil, nil, nil
 	}
-	dirIDs := make(map[string]string, len(deadBatches))
-	for _, batch := range deadBatches {
-		if batch.Manifest.BatchId == "" {
+	if len(idx.Entries) == 0 {
+		return nil, nil, nil
+	}
+	deadBatches := make([]daemon.DeadBatch, 0, len(idx.Entries))
+	dirIDs := make(map[string]string, len(idx.Entries))
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		if entry.Path == "" {
 			continue
 		}
-		if _, ok := dirIDs[batch.Manifest.BatchId]; ok {
+		deadBatches = append(deadBatches, daemon.DeadBatch{RunDir: entry.Path})
+		if entry.ID == "" {
 			continue
 		}
-		dirIDs[batch.Manifest.BatchId] = filepath.Base(batch.RunDir)
+		if _, ok := dirIDs[entry.ID]; ok {
+			continue
+		}
+		dirIDs[entry.ID] = filepath.Base(entry.Path)
 	}
 	if len(dirIDs) == 0 {
 		return nil, nil, nil

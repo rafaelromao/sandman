@@ -883,7 +883,7 @@ func TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists(t *testing.
 // TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists is the
 // regression for historical completed rows: when the batch directory is still
 // on disk but the daemon is gone, the portal should recover the batch dir name
-// from the manifest so Archive stays available.
+// from the index so Archive stays available.
 func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -901,6 +901,7 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt, BatchId: runID}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
+	addBatchToIndex(t, repoRoot, runID, runDir, []int{42})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
