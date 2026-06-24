@@ -24,6 +24,7 @@
     const snap = {
       kind: run.kind || '',
       archived: !!(run && run.archived),
+      unavailable: !!(run && run.unavailable),
       nameText: run.issueLabel || run.key,
       metaText: h.renderRunMeta(run),
       badgeClass: h.statusClass(run),
@@ -301,6 +302,7 @@
     tr.classList.add('run-row');
     if (run.kind) tr.classList.add(run.kind);
     if (run.archived) tr.classList.add('row-archived');
+    if (run.unavailable) tr.classList.add('row-unavailable');
     tr.setAttribute('data-action', 'toggle-run');
     tr.setAttribute('data-run-key', run.key);
     tr.setAttribute('id', rowIDForKey(run.key));

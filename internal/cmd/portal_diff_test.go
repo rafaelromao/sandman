@@ -1908,6 +1908,12 @@ const formatSource = (run) => {
   return '—';
 };
 const statusClass = (run) => {
+  // Read-only badges win over the status-derived class so an
+  // archived/unavailable row never gets a status colour that suggests
+  // operator action is available. Mirrors the real helper in
+  // portal.html so JS-layer tests can drive the same paths.
+  if (run && run.archived) return 'archived';
+  if (run && run.unavailable) return 'unavailable';
   const s = String(run.status || '').toLowerCase();
   if (s === 'running') return 'running';
   if (s === 'active') return 'active';
