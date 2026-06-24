@@ -24,7 +24,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
    - **Implement the requested change.** Read the issue description and its acceptance criteria, confirm the reviewer's interpretation is consistent with them, then make the change, commit, push, and re-request review.
    - **Convince the reviewer the requirement is out of scope.** Post a PR comment that quotes the issue's own acceptance criteria verbatim, explains why the requested change falls outside the issue's stated scope, and asks the reviewer to either accept the narrowed scope or correct the implementor's interpretation. Then **wait for the reviewer's explicit agreement** before considering the `CHANGES_REQUESTED` resolved. If the reviewer reaffirms the change is required, you must implement it on the next pass — you cannot keep asserting your own interpretation against theirs.
    
-   It is NEVER acceptable to assert "this is out of scope" unilaterally, exit the loop with a `CHANGES_REQUESTED` still pending, and let the run terminate. The run will be marked as failure by the orchestrator (the PR is not merged), and the retry will burn compute on the same deadlock. If max passes are reached with the deadlock unresolved, surface it to the user — do not silently terminate.
+   It is NEVER acceptable to assert "this is out of scope" unilaterally and exit the loop with a `CHANGES_REQUESTED` still pending. If max passes are reached with the deadlock unresolved, surface it to the user — do not silently terminate.
 
 ## Workflow
 
@@ -156,7 +156,7 @@ If no reviewer response arrives within 30 minutes, stop and report to the user.
 
 **B. Formal changes requested?**
 - `reviewDecision: CHANGES_REQUESTED`, OR any entry with `state: "CHANGES_REQUESTED"`
-→ **Blockers** — must fix before continuing. Apply Hard Rule 7 (issue ACs): if the reviewer's request maps to a requirement from the issue body or acceptance criteria, you must either implement the change or get the reviewer's explicit agreement that the scope is narrower. Posting a "this is out of scope" comment and exiting the loop is NOT an acceptable resolution — it leaves the `CHANGES_REQUESTED` pending and the run will fail.
+→ **Blockers** — must fix before continuing. Apply Hard Rule 7 (issue ACs): if the reviewer's request maps to a requirement from the issue body or acceptance criteria, you must either implement the change or get the reviewer's explicit agreement that the scope is narrower. Posting a "this is out of scope" comment and exiting the loop is NOT an acceptable resolution — it leaves the `CHANGES_REQUESTED` pending and the PR unmerged.
 
 **C. Informal approval (implicit approval without formal review)?**
 - No pending `CHANGES_REQUESTED` reviews, AND
