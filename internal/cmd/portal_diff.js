@@ -30,7 +30,6 @@
       badgeLabel: run.status || (run.kind === 'active' ? 'running' : 'completed'),
       reason: (run.reason === 'auto-select' || run.reason === 'review') ? run.reason : '',
       contextText: contextText(run),
-      batchText: batchText(run),
       startedText: h.formatTime(run.startedAt),
       durationText: h.formatDuration(run.duration),
       issueTitleText: h.formatIssueTitle(run),
@@ -156,93 +155,12 @@
     const fresh = buildContextRow(newRun, opts);
     if (!fresh) return;
     const nextRow = dataRow.nextElementSibling;
-    if (nextRow && (nextRow.classList.contains('detail-row') || nextRow.classList.contains('context-row') || nextRow.classList.contains('batch-row'))) {
+    if (nextRow && (nextRow.classList.contains('detail-row') || nextRow.classList.contains('context-row'))) {
       body.insertBefore(fresh, nextRow);
     } else {
       body.insertBefore(fresh, dataRow.nextSibling);
     }
     mutationCount += 1;
-  }
-
-  function reconcileBatchRow(body, dataRow, oldRun, newRun, opts) {
-    const oldBatchText = batchText(oldRun);
-    const newBatchText = batchText(newRun);
-    if (oldBatchText === newBatchText) return;
-    const existing = batchRowOf(body, newRun.key);
-    if (!newBatchText) {
-      if (existing) {
-        body.removeChild(existing);
-        mutationCount += 1;
-      }
-      return;
-    }
-    if (existing) {
-      const chip = existing.querySelector('.batch-membership');
-      if (chip) {
-        setText(chip, newBatchText);
-      }
-      setFirstCellColspan(existing, rowColspan(opts));
-      return;
-    }
-    const fresh = buildBatchRow(newRun, opts);
-    if (!fresh) return;
-    const anchor = nextSiblingAnchorRow(dataRow);
-    if (anchor) {
-      if (anchor.classList && anchor.classList.contains('context-row') && anchor.getAttribute('data-context-for') === newRun.key) {
-        const next = anchor.nextElementSibling;
-        if (next) {
-          body.insertBefore(fresh, next);
-        } else {
-          body.appendChild(fresh);
-        }
-      } else {
-        body.insertBefore(fresh, anchor);
-      }
-    } else {
-      body.appendChild(fresh);
-    }
-    mutationCount += 1;
-  }
-
-  function nextSiblingAnchorRow(row) {
-    let n = row.nextElementSibling;
-    while (n) {
-      if (n.classList && (n.classList.contains('detail-row') || n.classList.contains('run-row') || n.classList.contains('context-row'))) return n;
-      n = n.nextElementSibling;
-    }
-    return null;
-  }
-
-  function batchIssues(run) {
-    return Array.isArray(run && run.batchIssues) ? run.batchIssues : [];
-  }
-
-  function batchText(run) {
-    const issues = batchIssues(run);
-    if (issues.length <= 1) return '';
-    if (run.reason === 'review' || run.reason === 'auto-select') return '';
-    return 'Part of batch: ' + issues.map((n) => '#' + n).join(', ');
-  }
-
-  function buildBatchRow(run, opts) {
-    const text = batchText(run);
-    if (!text) return null;
-    const tr = global.document.createElement('tr');
-    tr.classList.add('batch-row');
-    tr.setAttribute('data-batch-for', run.key);
-    const td = global.document.createElement('td');
-    td.setAttribute('colspan', rowColspan(opts));
-    const chip = global.document.createElement('span');
-    chip.classList.add('batch-membership', 'mono');
-    chip.setAttribute('data-batch-membership', '1');
-    chip.textContent = text;
-    td.appendChild(chip);
-    tr.appendChild(td);
-    return tr;
-  }
-
-  function batchRowOf(body, runKey) {
-    return body.querySelector('tr.batch-row[data-batch-for="' + runKey + '"]');
   }
 
   function buildBadgeCell(td, run, helpers) {
@@ -411,10 +329,7 @@
     const contextTr = buildContextRow(run, opts);
     if (contextTr) body.appendChild(contextTr);
 
-    const batchTr = buildBatchRow(run, opts);
-    if (batchTr) body.appendChild(batchTr);
-
-    return { row: tr, contextRow: contextTr, batchRow: batchTr };
+    return { row: tr, contextRow: contextTr };
   }
 
   function buildTabsRow(panel, run, tabName) {
@@ -1071,7 +986,6 @@
     const body = row.parentNode;
     if (body) {
       reconcileContextRow(body, row, oldRun, newRun, opts);
-      reconcileBatchRow(body, row, oldRun, newRun, opts);
       const detail = detailRowOf(body, newRun.key);
       if (detail) {
         setFirstCellColspan(detail, rowColspan(opts));
@@ -1086,15 +1000,10 @@
     const dataRow = dataRowOf(body, key);
     const detail = detailRowOf(body, key);
     const ctx = contextRowOf(body, key);
-    const batch = batchRowOf(body, key);
     let removed = 0;
     if (dataRow) {
       body.removeChild(dataRow);
       clearRowData(dataRow);
-      removed += 1;
-    }
-    if (batch) {
-      body.removeChild(batch);
       removed += 1;
     }
     if (ctx) {
@@ -1135,7 +1044,6 @@
       if (child.getAttribute('data-run-key')) continue;
       if (child.getAttribute('data-detail-for')) continue;
       if (child.getAttribute('data-context-for')) continue;
-      if (child.getAttribute('data-batch-for')) continue;
       body.removeChild(child);
     }
 
@@ -1159,11 +1067,6 @@
         const ctx = contextRowOf(body, key);
         if (ctx) {
           body.removeChild(ctx);
-          removed += 1;
-        }
-        const batch = batchRowOf(body, key);
-        if (batch) {
-          body.removeChild(batch);
           removed += 1;
         }
         body.removeChild(dataRow);
@@ -1211,13 +1114,6 @@
       if (ctx) {
         if (body.children[pos] !== ctx) {
           body.insertBefore(ctx, body.children[pos] || null);
-        }
-        pos += 1;
-      }
-      const batch = batchRowOf(body, run.key);
-      if (batch) {
-        if (body.children[pos] !== batch) {
-          body.insertBefore(batch, body.children[pos] || null);
         }
         pos += 1;
       }

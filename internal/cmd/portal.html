@@ -317,30 +317,24 @@
        BELOW the chip (inherited border-bottom) so the run row + chip
        read as a single visual block; the next run row starts after the
        chip's own divider. */
-    tbody tr.batch-row td,
     tbody tr.context-row td {
       padding: 0 14px 6px;
       border-top: none;
       border-left: none;
       border-right: none;
     }
-    tbody tr.run-row:has(+ tr.context-row) td,
-    tbody tr.run-row:has(+ tr.batch-row) td {
+    tbody tr.run-row:has(+ tr.context-row) td {
       border-bottom: none;
     }
-    tbody tr.run-row + tr.batch-row td,
     tbody tr.run-row + tr.context-row td {
       padding-top: 0;
     }
-    tbody tr.run-row:hover + tr.batch-row td,
     tbody tr.run-row:hover + tr.context-row td {
       background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
     }
-    tbody tr.run-row.active + tr.batch-row td,
     tbody tr.run-row.active + tr.context-row td {
       background: color-mix(in oklch, var(--accent) 12%, var(--surface));
     }
-    .batch-membership,
     .context-chip {
       display: block;
       width: 100%;
@@ -353,7 +347,6 @@
       letter-spacing: 0.04em;
       overflow-wrap: anywhere;
     }
-    .batch-membership::before,
     .context-chip::before {
       content: "·";
       display: inline-block;
@@ -1345,8 +1338,7 @@
       tbody tr.run-row td[data-cell="archived"] {
         display: none;
       }
-      tbody tr.run-row:has(+ tr.context-row),
-      tbody tr.run-row:has(+ tr.batch-row) {
+      tbody tr.run-row:has(+ tr.context-row) {
         border-bottom: none;
       }
       tbody tr.run-row:hover,
@@ -1416,8 +1408,7 @@
         padding: 0;
         border: none;
       }
-      tbody tr.context-row,
-      tbody tr.batch-row {
+      tbody tr.context-row {
         display: block;
         background: transparent;
         margin-top: -16px;
@@ -1426,8 +1417,7 @@
       tbody tr.run-row.active + tr.context-row {
         background: color-mix(in oklch, var(--accent) 10%, var(--surface));
       }
-      tbody tr.context-row td,
-      tbody tr.batch-row td {
+      tbody tr.context-row td {
         display: block;
         padding: 0 12px 4px;
         border-bottom: none;
