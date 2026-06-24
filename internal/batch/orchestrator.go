@@ -2257,6 +2257,43 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	} else if runID == "" {
 		runID = fmt.Sprintf("run-0-%d", time.Now().UnixNano())
 	}
+
+	batchDir := s.o.layout.BatchDir(s.batchID)
+	manifestBatchID := s.batchID
+	if s.batchID == "" {
+		batchDir = s.o.layout.BatchesDir
+		manifestBatchID = batchIDFromRunID(runID)
+	}
+	var runKind batchindex.Kind
+	if s.review {
+		runKind = batchindex.KindReview
+	} else {
+		runKind = batchindex.KindPromptOnly
+	}
+	runManifest := batchindex.RunManifest{
+		RunID:        runID,
+		BatchID:      manifestBatchID,
+		Issue:        s.issueNumber,
+		Branch:       branch,
+		BaseBranch:   s.baseBranch,
+		WorktreePath: wt.WorkDir(),
+		Kind:         runKind,
+		CreatedAt:    time.Now(),
+		PR:           s.prNumber,
+		Status:       batchindex.StatusActive,
+	}
+	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
+		fmt.Fprintf(o.errorLog, "error: write run manifest for prompt-only run: %v\n", err)
+		_ = wt.Stop()
+		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
+	}
+	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.o)
+	if err := cmdServer.Start(); err != nil {
+		fmt.Fprintf(o.errorLog, "error: start command server for prompt-only run: %v\n", err)
+	} else {
+		defer cmdServer.Stop()
+	}
+
 	if o.eventLog != nil {
 		promptSourceType := "current"
 		payload := map[string]any{"branch": branch, "base_branch": s.baseBranch, "prompt_source_type": "prompt", "parallel": s.parallel, "start_delay": int(s.startDelay / time.Second), "retries": s.retries, "sandbox": s.sandboxMode, "container_capacity": s.containerCapacity, "container_capacity_set": s.containerCapacitySet, "max_containers": s.maxContainers, "max_containers_set": s.maxContainersSet}
@@ -2296,42 +2333,6 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 			eventType = "run.continued"
 		}
 		_ = o.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
-	}
-
-	batchDir := s.o.layout.BatchDir(s.batchID)
-	manifestBatchID := s.batchID
-	if s.batchID == "" {
-		batchDir = s.o.layout.BatchesDir
-		manifestBatchID = batchIDFromRunID(runID)
-	}
-	var runKind batchindex.Kind
-	if s.review {
-		runKind = batchindex.KindReview
-	} else {
-		runKind = batchindex.KindPromptOnly
-	}
-	runManifest := batchindex.RunManifest{
-		RunID:        runID,
-		BatchID:      manifestBatchID,
-		Issue:        s.issueNumber,
-		Branch:       branch,
-		BaseBranch:   s.baseBranch,
-		WorktreePath: wt.WorkDir(),
-		Kind:         runKind,
-		CreatedAt:    time.Now(),
-		PR:           s.prNumber,
-		Status:       batchindex.StatusActive,
-	}
-	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
-		fmt.Fprintf(o.errorLog, "error: write run manifest for prompt-only run: %v\n", err)
-		_ = wt.Stop()
-		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
-	}
-	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.o)
-	if err := cmdServer.Start(); err != nil {
-		fmt.Fprintf(o.errorLog, "error: start command server for prompt-only run: %v\n", err)
-	} else {
-		defer cmdServer.Stop()
 	}
 
 	runFolder := s.runFolderFor(runID)
