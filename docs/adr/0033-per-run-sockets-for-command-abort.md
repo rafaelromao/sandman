@@ -25,7 +25,7 @@ Each batch has two socket types:
 | `batch.sock` | Batch root `.sandman/batches/<batch-id>/batch.sock` | Batch-level attach/streaming; `IsRunActive` liveness probe |
 | `run.sock` | Batch root `.sandman/batches/<batch-id>/run.sock` | Per-run command/abort; addressed by path from external tools |
 
-The daemon opens **N command servers** — one `run.sock` per AgentRun — instead of multiplexing through a single `batch.sock`. The socket is created at the batch root, not inside the per-run folder.
+The daemon creates one command server (`run.sock`) at the batch root per batch. The command server dispatches to the orchestrator's per-issue cancel API, which maps an external abort request to a specific `AgentRun`.
 
 **Note:** The per-run `run.sock` inside `<batch>/runs/<run>/run.sock` path is defined in `RunSocketPath()` (`internal/daemon/runfs.go:229`) but is not currently used by the daemon; the daemon creates `run.sock` at the batch root. External abort tools should connect to `<batch>/run.sock`.
 
@@ -33,7 +33,7 @@ The daemon opens **N command servers** — one `run.sock` per AgentRun — inste
 
 **External abort tools address runs by path.** An external tool (e.g., a human operator or automation script) that wants to abort a specific AgentRun without affecting siblings needs a stable, path-based handle. With a batch-level command socket, the tool would have to encode run identity inside the socket payload, which is fragile and non-standard. With `run.sock` at the batch root, the tool connects to `<batch>/run.sock` — the path is the address.
 
-**One command server per AgentRun, not one per batch.** This is the core decision: the daemon creates a dedicated command server for each run's `run.sock`. The command server dispatches to the orchestrator's per-issue cancel API (the `IssueCommander` seam), which maps an external cancel to a single `AgentRun`.
+**One command server per batch, dispatching by issue.** The command server dispatches to the orchestrator's per-issue cancel API (the `IssueCommander` seam), which maps an external cancel to a single `AgentRun` without requiring separate sockets per run.
 
 **`batch.sock` remains for batch-level operations.** The control socket at the batch root is used for attach/streaming of the entire batch output and for batch-level liveness checks (`IsRunActive` probes `batch.sock` only).
 
