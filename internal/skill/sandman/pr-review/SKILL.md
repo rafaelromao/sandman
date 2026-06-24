@@ -24,7 +24,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
    - **Implement the requested change.** Read the issue description and its acceptance criteria, confirm the reviewer's interpretation is consistent with them, then make the change, commit, push, and re-request review.
    - **Convince the reviewer the requirement is out of scope.** Post a PR comment that quotes the issue's own acceptance criteria verbatim, explains why the requested change falls outside the issue's stated scope, and asks the reviewer to either accept the narrowed scope or correct the implementor's interpretation. Then **wait for the reviewer's explicit agreement** before considering the `CHANGES_REQUESTED` resolved. If the reviewer reaffirms the change is required, you must implement it on the next pass — you cannot keep asserting your own interpretation against theirs.
    
-   It is NEVER acceptable to assert "this is out of scope" unilaterally and exit the loop with a `CHANGES_REQUESTED` still pending. If max passes are reached with the deadlock unresolved, surface it to the user — do not silently terminate.
+   It is NEVER acceptable to assert "this is out of scope" unilaterally and exit the loop with a `CHANGES_REQUESTED` still pending. If max passes are reached with the deadlock unresolved, exit the loop with a clearly-documented `CHANGES_REQUESTED_UNRESOLVED` reason in the run log so the failure is visible in the run history — do not silently terminate as if the work were complete.
 
 ## Workflow
 
@@ -146,13 +146,13 @@ A reviewer response is **any** of:
 **Self-check (after every poll, before classifying):**
 If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COMMAND}}` is already pending without response, post a follow-up comment with `{{REVIEW_COMMAND}}` plus a freeform clarification request. If a request is already pending, skip — do not pile on.
 
-If no reviewer response arrives within 30 minutes, stop and report to the user.
+If no reviewer response arrives within 30 minutes, stop and exit the loop with a `REVIEW_TIMEOUT` reason documented in the run log so the failure is visible in the run history.
 
 #### Step 6: Read and classify feedback
 
 **A. Formal approval detected?**
 - `reviewDecision: APPROVED`, OR any entry in `gh api .../reviews` with `state: "APPROVED"`
-→ **Approve** — done, report to user
+→ **Approve** — done, exit the loop and document the approval in the run log.
 
 **B. Formal changes requested?**
 - `reviewDecision: CHANGES_REQUESTED`, OR any entry with `state: "CHANGES_REQUESTED"`
