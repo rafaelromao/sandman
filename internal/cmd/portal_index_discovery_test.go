@@ -10,7 +10,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
-func TestDiscoverPortalInstances_FromIndexFirst(t *testing.T) {
+func TestDiscoverPortalInstances_IndexFirstDiscovery(t *testing.T) {
 	repoRoot := t.TempDir()
 	layout := paths.NewLayout(nil, repoRoot)
 
@@ -113,15 +113,18 @@ func TestDiscoverPortalInstances_FromIndexFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discoverPortalInstances: %v", err)
 	}
-	_ = instances // We don't test the instances count because we're not creating sockets
 
-	// Note: Since activeBatchPath has no socket, it won't be returned
-	// The key behavior we're testing is that:
+	// No sockets were created, so no instances should be returned.
+	// The key behaviors under test:
 	// 1. Index is read (not file system walk)
-	// 2. unavailable entries are flipped on read
+	// 2. Unavailable entries are flipped on read via MarkUnavailable
 	// 3. No error is returned for missing entries
+	// 4. Instances are filtered by socket presence
+	if len(instances) != 0 {
+		t.Fatalf("expected 0 instances (no sockets created), got %d", len(instances))
+	}
 
-	// Verify the index was updated to mark unavailable entries
+	// Verify the index was saved with unavailable entries marked
 	loadedIdx, err := batchindex.Load(indexPath)
 	if err != nil {
 		t.Fatalf("load index: %v", err)
@@ -150,6 +153,141 @@ func TestDiscoverPortalInstances_FromIndexFirst(t *testing.T) {
 	}
 	if archivedEntry.Status != batchindex.StatusArchived {
 		t.Fatalf("expected archived status %q, got %q", batchindex.StatusArchived, archivedEntry.Status)
+	}
+}
+
+func TestDiscoverPortalInstances_NoSaveWhenClean(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := paths.NewLayout(nil, repoRoot)
+
+	batchesDir := layout.BatchesDir
+	if err := os.MkdirAll(batchesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	activeBatchID := "aaaa-260622105532-issue-1"
+	activeBatchPath := filepath.Join(batchesDir, activeBatchID)
+	if err := os.MkdirAll(activeBatchPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	indexPath := layout.BatchesIndexPath
+	idx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:        activeBatchID,
+				Path:      activeBatchPath,
+				Kind:      batchindex.KindIssue,
+				Status:    batchindex.StatusActive,
+				CreatedAt: time.Now().Add(-time.Hour),
+				Issues:    []int{1},
+			},
+		},
+	}
+	if err := idx.Save(indexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Record file info before discover
+	infoBefore, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modTimeBefore := infoBefore.ModTime()
+
+	// Call discoverPortalInstances — no entries need flipping, so no save
+	if _, err := discoverPortalInstances(repoRoot); err != nil {
+		t.Fatalf("discoverPortalInstances: %v", err)
+	}
+
+	// Verify file was NOT rewritten (no dirty entries → no save)
+	infoAfter, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infoAfter.ModTime().Equal(modTimeBefore) {
+		t.Fatalf("index file was rewritten even though no entries needed flipping")
+	}
+}
+
+func TestMarkUnavailable_OnlyFlipsENOENT(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := paths.NewLayout(nil, repoRoot)
+
+	batchesDir := layout.BatchesDir
+	if err := os.MkdirAll(batchesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	existingID := "bbbb-260622105532-issue-1"
+	missingID := "cccc-260622105532-issue-2"
+	existingPath := filepath.Join(batchesDir, existingID)
+	if err := os.MkdirAll(existingPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:     existingID,
+				Path:   existingPath,
+				Status: batchindex.StatusActive,
+			},
+			{
+				ID:     missingID,
+				Path:   filepath.Join(batchesDir, missingID),
+				Status: batchindex.StatusActive,
+			},
+		},
+	}
+
+	dirty := idx.MarkUnavailable()
+	if !dirty {
+		t.Fatal("expected dirty=true when an entry is flipped")
+	}
+
+	existing := idx.Resolve(existingID)
+	if existing.Status != batchindex.StatusActive {
+		t.Fatalf("existing entry should remain active, got %q", existing.Status)
+	}
+
+	missing := idx.Resolve(missingID)
+	if missing.Status != batchindex.StatusUnavailable {
+		t.Fatalf("missing entry should be unavailable, got %q", missing.Status)
+	}
+}
+
+func TestMarkUnavailable_NoSaveWhenNothingChanges(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := paths.NewLayout(nil, repoRoot)
+
+	batchesDir := layout.BatchesDir
+	if err := os.MkdirAll(batchesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	alreadyUnavailableID := "dddd-260622105532-issue-1"
+	alreadyUnavailablePath := filepath.Join(batchesDir, alreadyUnavailableID)
+	if err := os.MkdirAll(alreadyUnavailablePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:     alreadyUnavailableID,
+				Path:   alreadyUnavailablePath,
+				Status: batchindex.StatusUnavailable,
+			},
+		},
+	}
+
+	dirty := idx.MarkUnavailable()
+	if dirty {
+		t.Fatal("expected dirty=false when no entries need flipping")
 	}
 }
 

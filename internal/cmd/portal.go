@@ -383,12 +383,10 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 		return nil, fmt.Errorf("load batches index: %w", err)
 	}
 
-	if err := idx.EnsureStatus(); err != nil {
-		return nil, fmt.Errorf("ensure index status: %w", err)
-	}
-
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
-		return nil, fmt.Errorf("save batches index: %w", err)
+	if idx.MarkUnavailable() {
+		if err := idx.Save(layout.BatchesIndexPath); err != nil {
+			return nil, fmt.Errorf("save batches index: %w", err)
+		}
 	}
 
 	instances := make([]portalInstance, 0, len(idx.Entries))

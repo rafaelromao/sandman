@@ -100,17 +100,28 @@ func Load(path string) (*Index, error) {
 	return &idx, nil
 }
 
-func (idx *Index) EnsureStatus() error {
+func (idx *Index) MarkUnavailable() bool {
+	statFn := idx.StatFn
+	if statFn == nil {
+		statFn = os.Stat
+	}
+	dirty := false
 	for i := range idx.Entries {
 		e := &idx.Entries[i]
 		if e.Status == StatusActive || e.Status == StatusArchived {
-			if _, err := idx.StatFn(e.Path); err != nil {
+			if _, err := statFn(e.Path); err != nil {
 				if os.IsNotExist(err) {
 					e.Status = StatusUnavailable
+					dirty = true
 				}
 			}
 		}
 	}
+	return dirty
+}
+
+func (idx *Index) EnsureStatus() error {
+	idx.MarkUnavailable()
 	return nil
 }
 
