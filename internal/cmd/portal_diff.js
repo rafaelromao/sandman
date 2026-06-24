@@ -460,7 +460,7 @@
   function buildLogPre(run, helpers) {
     const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
     const pre = global.document.createElement('pre');
-    pre.classList.add('terminal-text');
+    pre.classList.add('terminal-log');
     pre.setAttribute('data-scroll-key', run.key);
     fillTerminalPre(pre, log, helpers);
     pre.setAttribute('data-rendered-log', log);

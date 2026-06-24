@@ -2867,6 +2867,23 @@ vm.runInNewContext(scriptBody + '\n' + ` + "`" + js + "`" + `, Object.assign({},
 // preserve the source row's runId so renderRunMeta continues to surface
 // the real run identifier in the meta line, and so findRunByIdentity can
 // locate the row from its data-run-key.
+func TestPortalDiffBuildLogPre_HasTerminalLogClass(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: 'some log output' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const content = detailRow.querySelector('.detail-content');
+const pre = content.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+const hasTerminalLog = pre.classList.contains('terminal-log');
+if (!hasTerminalLog) throw new Error('expected terminal-log class');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalRunsView_VisibleRunForIssueGroup_PreservesReviewRunID(t *testing.T) {
 	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);
