@@ -962,7 +962,10 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		portalRun.SocketPath = active.SocketPath
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 	} else if portalRun.Kind == "active" {
-		batchDir, _ := v.findBatchDirForRun(repoRoot, runState.RunID)
+		batchDir, err := v.findBatchDirForRun(repoRoot, runState.RunID, nil)
+		if err != nil {
+			logPortalViewDegrade("batch-dir-lookup:"+runState.RunID, "find batch dir for run %q: %v", runState.RunID, err)
+		}
 		if batchDir != "" {
 			sockPath := daemon.RunSocketPath(batchDir, runState.RunID)
 			if _, err := os.Lstat(sockPath); err == nil {
@@ -1259,11 +1262,14 @@ func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) (map[string]str
 	return dirIDs, nil
 }
 
-func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string) (string, error) {
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	deadBatches, err := daemon.FindDeadRunBatches(layout.SandmanDir)
-	if err != nil {
-		return "", err
+func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string, deadBatches []daemon.DeadBatch) (string, error) {
+	if len(deadBatches) == 0 {
+		layout := paths.NewLayout(&config.Config{}, repoRoot)
+		var err error
+		deadBatches, err = daemon.FindDeadRunBatches(layout.SandmanDir)
+		if err != nil {
+			return "", err
+		}
 	}
 	for _, batch := range deadBatches {
 		runManifestPath := filepath.Join(batch.RunDir, "runs", runID, "run.json")
