@@ -65,12 +65,11 @@ Turn issue context into a concise, behavior-first plan:
 - Write the final result into `.sandman/task.md`.
 - Preserve the task document scaffold; do not replace it.
 - Put the plan in a top-level `## Plan` section inside the body.
-- Keep the normal task headings intact around it, including `## Completed`, `## Pending`, `## Blockers`, `## Key Decisions`, and `## Next Step`.
-- Set `## Next Step` to the first `sandman-tdd` action so the execution phase can start immediately.
+- Below the plan, add a `## Next Step` section set to the first `sandman-tdd` action, so the execution phase can start immediately.
 
 ## Plan output shape
 
-Use this shape inside `.sandman/task.md`. The canonical template is at `internal/prompt/plan-template.md`:
+Use this shape inside `.sandman/task.md`:
 
 ```md
 ## Plan

@@ -22,9 +22,6 @@ var defaultPRReviewPrompt string
 //go:embed auto_selection_prompt.md
 var prioritySelectionPrompt string
 
-//go:embed plan-template.md
-var planTemplate string
-
 //go:embed badge_prompt.md
 var badgePrompt string
 
@@ -56,12 +53,6 @@ func DefaultPriorityPrompt() string { return prioritySelectionPrompt }
 // DefaultBadgePrompt returns the built-in prompt template used by the
 // post-batch badge-suggestion hook.
 func DefaultBadgePrompt() string { return badgePrompt }
-
-// defaultPlanTemplate returns the built-in plan template that defines the
-// output shape for the ## Plan section in task.md. This is currently unexported
-// because no production consumer exists yet; it will be exported when the
-// prompt-rendering path is wired to use it.
-func defaultPlanTemplate() string { return planTemplate }
 
 var keyPattern = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 

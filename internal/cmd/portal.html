@@ -784,6 +784,11 @@
     .badge.aborted .dot { background: color-mix(in oklch, var(--danger) 72%, var(--muted)); }
     tbody tr.run-row.row-archived td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
     tbody tr.run-row.row-archived .run-title .name { color: color-mix(in oklch, var(--muted) 60%, var(--text)); }
+    /* Unavailable rows keep the same dimmed text as archived rows but
+       apply a slightly different label colour so the two read-only
+       states stay visually distinct. */
+    tbody tr.run-row.row-unavailable td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
+    tbody tr.run-row.row-unavailable .run-title .name { color: color-mix(in oklch, var(--warning) 60%, var(--text)); }
     .cell-duration .cell-duration-stack {
       display: flex;
       flex-direction: column;
@@ -2381,6 +2386,7 @@
     function isRunArchivable(run) {
       if (!run || run.kind !== 'completed') return false;
       if (run.archived) return false;
+      if (run.unavailable) return false;
       if (run.sourceExists === false) return false;
       if (!run.runId) return false;
       return true;

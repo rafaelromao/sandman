@@ -751,6 +751,7 @@ func TestPortal_Compute_CompletedRunUnderArchiveDir_MarksArchived(t *testing.T) 
 	if err := os.MkdirAll(archiveDir, 0755); err != nil {
 		t.Fatalf("mkdir archive: %v", err)
 	}
+	addArchivedBatchToIndex(t, repoRoot, runID, archiveDir, []int{42})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
@@ -761,7 +762,7 @@ func TestPortal_Compute_CompletedRunUnderArchiveDir_MarksArchived(t *testing.T) 
 	}
 	got := runs[0]
 	if !got.Archived {
-		t.Fatalf("Archived = false, want true (run directory exists under .sandman/archive/%s)", runID)
+		t.Fatalf("Archived = false, want true (index entry status=archived, entry.Path=%s)", archiveDir)
 	}
 	if got.Kind != "completed" {
 		t.Fatalf("Kind = %q, want %q", got.Kind, "completed")
@@ -886,7 +887,7 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 
 	const runID = "abcd-260618113825-issue-42"
 	runDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-42")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(runDir, "runs", runID), 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -895,6 +896,7 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt, BatchId: runID}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
+	addBatchToIndex(t, repoRoot, runID, runDir, []int{42})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
@@ -1029,5 +1031,47 @@ func TestPortal_Compute_ActiveRunNeverArchived(t *testing.T) {
 	}
 	if !strings.Contains(string(payload), `"archived":false`) {
 		t.Fatalf("JSON payload missing %q: %s", `"archived":false`, payload)
+	}
+}
+
+func TestPortal_Compute_ActiveIndexEntryWithArchiveDir_NotArchived(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const runID = "abcd-260618113825-id-active-with-archive-dir"
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir batch dir: %v", err)
+	}
+	addBatchToIndex(t, repoRoot, runID, runDir, []int{42})
+
+	archiveDir := filepath.Join(repoRoot, ".sandman", "archive", runID)
+	if err := os.MkdirAll(archiveDir, 0755); err != nil {
+		t.Fatalf("mkdir spurious archive: %v", err)
+	}
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	got := runs[0]
+	if got.Archived {
+		t.Fatalf("Archived = true, want false (index entry status=active even though archive dir %s exists on disk)", archiveDir)
+	}
+	if got.Kind != "completed" {
+		t.Fatalf("Kind = %q, want %q", got.Kind, "completed")
 	}
 }
