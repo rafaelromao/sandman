@@ -14,7 +14,7 @@ Review pull request #{{PR_NUMBER}}: {{PR_TITLE}}
 
 Reviews are acceptance-criteria-first, then documented-standards-only, then correctness/safety.
 
-**Stay inside the issue's scope.** The issue the PR claims to close defines the contract. `Blocking` and `Important` findings must reference either (a) an acceptance criterion from the linked issue, (b) a documented standard from `CLAUDE.md` / `CONTEXT.md`, or (c) a correctness/safety defect in the diff. Do NOT request changes that go beyond what the issue asked for. If you believe the issue's own acceptance criteria are wrong or incomplete, raise that as a single `Nit` so the author can decide whether to amend the issue — do not gate `APPROVED` on a scope you would have preferred. A reviewer who keeps re-flagging the same out-of-scope finding across review rounds creates a deadlock that the implementor cannot break.
+**Stay inside the issue's scope.** The issue the PR claims to close defines the contract. `Blocking` and `Important` findings must reference either (a) an acceptance criterion from the linked issue, (b) a documented standard from the repo's own contributor docs (e.g. an `AGENTS.md` / `CLAUDE.md` style file, or the repo's `CONTEXT.md` / glossary / ADRs if those exist), or (c) a correctness/safety defect in the diff. Do NOT request changes that go beyond what the issue asked for. If you believe the issue's own acceptance criteria are wrong or incomplete, raise that as a single `Nit` so the author can decide whether to amend the issue — do not gate `APPROVED` on a scope you would have preferred. A reviewer who keeps re-flagging the same out-of-scope finding across review rounds creates a deadlock that the implementor cannot break.
 
 Skip these by default:
 - Formatting, import order, comment phrasing.
@@ -61,7 +61,7 @@ Before performing the review, ensure the PR is in a healthy state:
    ```bash
    gh issue view <N> --json title,body
    ```
-   The linked issue's acceptance criteria are the **primary contract** for this review. Verify that the implementation satisfies each acceptance criterion. If the issue body references a spec or design doc, check those too. If no issue reference is found, fall back to the PR body and `CLAUDE.md`/`CONTEXT.md` standards only — do not invent requirements out of whole cloth. Findings that go beyond the issue's stated criteria belong in `Nit` (or are omitted), not in `Blocking`/`Important`.
+   The linked issue's acceptance criteria are the **primary contract** for this review. Verify that the implementation satisfies each acceptance criterion. If the issue body references a spec or design doc, check those too. If no issue reference is found, fall back to the PR body and the repo's contributor docs only — do not invent requirements out of whole cloth. Findings that go beyond the issue's stated criteria belong in `Nit` (or are omitted), not in `Blocking`/`Important`.
 
 6. **Cross-reference parent issue for context.** Look for a `## Parent` section in the PR body or the linked issue body that references another issue (e.g. `Parent: #N` or `## Parent\n#N`). If found, fetch that parent issue:
    ```bash
@@ -69,14 +69,14 @@ Before performing the review, ensure the PR is in a healthy state:
    ```
    Use the parent issue as context for *why* the change is being made and what shape it is expected to take. Do **not** gate the review on the parent issue's own acceptance criteria — those belong to the PR that closes the parent. If no parent reference is found, skip this step gracefully.
 
-7. Read the repo's documented coding standards in `CLAUDE.md` (or `AGENTS.md` if present) and domain vocabulary in `CONTEXT.md`, plus the ADRs in `docs/adr/` that overlap with the changed code. Check for:
-   - Coding style and conventions documented in `CLAUDE.md`.
-   - Domain terminology defined in `CONTEXT.md` — flag names, file paths, function names, and error messages should match.
-   - ADR decisions that constrain the area being modified.
+7. Read the repo's contributor docs (commonly an `AGENTS.md`, `CLAUDE.md`, or equivalent top-level instructions file) and any domain vocabulary / glossary / ADR documents the repo uses to define its own conventions. Check for:
+   - Coding style and conventions documented in the repo's contributor docs.
+   - Domain terminology defined in the repo's glossary — flag names, file paths, function names, and error messages should match.
+   - ADR or design-doc decisions that constrain the area being modified.
 
 8. For every file in the diff, check:
    - Does it satisfy the acceptance criteria of the linked issue (the one the PR claims to close)?
-   - Does it break an ADR or an explicit invariant in `CONTEXT.md`?
+   - Does it break an ADR, design doc, or an explicit invariant defined in the repo's contributor docs?
    - Did it introduce bugs, race conditions, or unhandled error paths?
    - Are required tests present for new behaviour?
    - Are there security issues (unsanitised input, injection, auth/authz gaps, secret leakage, unsafe deserialisation, unsafe filesystem/network operations)?
