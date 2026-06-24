@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -867,7 +868,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		branches := collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog)
 		for _, branch := range branches {
-			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, o.layout.LogDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile)
+			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, o.layout.LogDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, o.layout.BatchesIndexPath)
 		}
 	}
 
@@ -2434,7 +2435,10 @@ func isMissingBranchError(err error, out []byte) bool {
 //
 // `baseBranch` is the branch the function falls back to when no stranded
 // worktree is found; when empty, the fallback path is skipped.
-func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool) {
+//
+// `batchesIndexPath` is the path to the batches index file used to resolve
+// the run.log location in the new per-run folder layout.
+func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, logDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool, batchesIndexPath string) {
 	wtPath := filepath.Join(worktreeDir, branch)
 
 	// Remove worktree (may fail if already removed — idempotent)
@@ -2474,8 +2478,27 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, log
 
 	// Remove log file. Skip in override mode — logs persist until sandman clean.
 	if strandedReconcile == nil || !*strandedReconcile {
-		if err := os.RemoveAll(filepath.Join(logDir, fmt.Sprintf("%d.log", issueNumber))); err != nil {
-			fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
+		runIDs := make(map[string]struct{})
+		if eventLog != nil {
+			if events, err := eventLog.Read(); err == nil {
+				for _, e := range events {
+					if e.Issue == issueNumber && (e.Type == "run.started" || e.Type == "run.continued") && e.RunID != "" {
+						runIDs[e.RunID] = struct{}{}
+					}
+				}
+			}
+		}
+		if len(runIDs) > 0 && batchesIndexPath != "" {
+			if idx, err := batchindex.Load(batchesIndexPath); err == nil {
+				for runID := range runIDs {
+					if entry := idx.Resolve(runID); entry != nil {
+						logPath := filepath.Join(entry.Path, "runs", runID, "run.log")
+						if err := os.Remove(logPath); err != nil && !os.IsNotExist(err) {
+							fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
+						}
+					}
+				}
+			}
 		}
 	}
 
