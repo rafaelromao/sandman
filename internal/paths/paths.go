@@ -51,13 +51,13 @@ func NewLayout(cfg *config.Config, repoRoot string) Layout {
 	}
 	return Layout{
 		RepoRoot:         repoRoot,
-		SandmanDir:       filepath.Join(repoRoot, ".sandman"),
+		SandmanDir:       ".sandman",
 		WorktreeDir:      worktreeDir,
-		BatchesDir:       filepath.Join(repoRoot, ".sandman", "batches"),
-		BatchesIndexPath: filepath.Join(repoRoot, ".sandman", "batches.json"),
-		EventsLogPath:    filepath.Join(repoRoot, ".sandman", "events.jsonl"),
-		ArchiveDir:       filepath.Join(repoRoot, ".sandman", "archive"),
-		LogDir:           filepath.Join(repoRoot, ".sandman", "logs"),
-		RunsDir:          filepath.Join(repoRoot, ".sandman", "runs"),
+		BatchesDir:       ".sandman/batches",
+		BatchesIndexPath: ".sandman/batches.json",
+		EventsLogPath:    ".sandman/events.jsonl",
+		ArchiveDir:       ".sandman/archive",
+		LogDir:           ".sandman/logs",
+		RunsDir:          ".sandman/runs",
 	}
 }

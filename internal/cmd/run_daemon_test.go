@@ -23,11 +23,11 @@ import (
 func chdirToSandmanDir(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	sandmanDir := filepath.Join(dir, ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
@@ -62,11 +62,11 @@ func chdirToShortSandmanDir(t testing.TB) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	sandmanDir := filepath.Join(dir, ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))
@@ -323,6 +323,9 @@ func TestRun_RemovesCommandSocketOnCompletion(t *testing.T) {
 
 func TestRun_AllowsConcurrentRuns(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(dir)
 	sandmanDir := filepath.Join(dir, ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
