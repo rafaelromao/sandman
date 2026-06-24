@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -2494,14 +2495,15 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 			if idx, err := batchindex.Load(batchesIndexPath); err != nil {
 				fmt.Fprintf(logWriter, "warning: load batches index for log cleanup (issue %d): %v\n", issueNumber, err)
 			} else {
-				for runID := range runIDs {
-					if entry := idx.Resolve(runID); entry != nil {
+				for _, entry := range idx.Entries {
+					if !slices.Contains(entry.Issues, issueNumber) {
+						continue
+					}
+					for runID := range runIDs {
 						logPath := filepath.Join(entry.Path, "runs", runID, "run.log")
 						if err := os.Remove(logPath); err != nil && !os.IsNotExist(err) {
 							fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
 						}
-					} else {
-						fmt.Fprintf(logWriter, "warning: no batches index entry for run %s (issue %d); run.log left in place\n", runID, issueNumber)
 					}
 				}
 			}
