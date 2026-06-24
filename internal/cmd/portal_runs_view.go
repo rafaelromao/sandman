@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -184,15 +185,13 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 
 	var deadBatchDirIDs map[string]string
 	var deadBatches []daemon.DeadBatch
-	var err error
+
+	idx := v.loadBatchesIndex(repoRoot)
 
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
-	deadBatches, deadBatchDirIDs, err = v.deadBatchDirIDsByRunID(repoRoot)
-	if err != nil {
-		return nil, err
-	}
+	deadBatches, deadBatchDirIDs, _ = v.deadBatchDirIDsByRunID(idx)
 	for _, active := range activeInstances {
 		if activeBatchStart.IsZero() && !active.StartedAt.IsZero() {
 			activeBatchStart = active.StartedAt
@@ -265,8 +264,8 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 				runs[i].BatchKey = batchKey
 			}
 		}
-		dirID := v.sourceDirID(runs[i])
-		runs[i].Archived = v.isRunArchived(repoRoot, dirID)
+		dirID := v.sourceDirID(idx, runs[i])
+		runs[i].Archived = v.isRunArchived(idx, dirID)
 		runs[i].SourceExists = v.runDirExists(repoRoot, dirID)
 	}
 	// Staleness signal for active rows: the saved-run-log mtime (with a
@@ -1205,48 +1204,67 @@ func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath st
 	}
 }
 
+func (v *portalRunsView) loadBatchesIndex(repoRoot string) *batchindex.Index {
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		logPortalViewDegrade("batches-index-load", "load batches index: %v", err)
+		return nil
+	}
+	return idx
+}
+
 // isRunArchived reports whether runID's directory currently lives under
-// .sandman/archive instead of .sandman/runs. A non-empty RunID that
-// matches no directory on disk returns false; only a present directory
-// counts as archived, so transient or half-moved state never lights up
-// the flag.
-func (v *portalRunsView) isRunArchived(repoRoot, runID string) bool {
-	if runID == "" {
+// .sandman/archive instead of .sandman/runs. A non-empty runID that does
+// not resolve to an index entry returns false; otherwise, archived-ness
+// is reported from the entry's Status field, so transient or half-moved
+// state never lights up the flag.
+func (v *portalRunsView) isRunArchived(idx *batchindex.Index, runID string) bool {
+	if runID == "" || idx == nil {
 		return false
 	}
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	info, err := os.Stat(filepath.Join(layout.ArchiveDir, runID))
-	if err != nil {
+	entry := idx.Resolve(runID)
+	if entry == nil {
 		return false
 	}
-	return info.IsDir()
+	return entry.Status == batchindex.StatusArchived
 }
 
-func (v *portalRunsView) sourceDirID(run portalRun) string {
-	if run.BatchKey != "" {
-		return run.BatchKey
+func (v *portalRunsView) sourceDirID(idx *batchindex.Index, run portalRun) string {
+	id := run.BatchKey
+	if id == "" {
+		id = run.RunID
 	}
-	return run.RunID
+	if id == "" {
+		return ""
+	}
+	if idx != nil {
+		if entry := idx.Resolve(id); entry != nil && entry.Path != "" {
+			return filepath.Base(entry.Path)
+		}
+	}
+	return id
 }
 
-func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) ([]daemon.DeadBatch, map[string]string, error) {
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	deadBatches, err := daemon.FindDeadRunBatches(layout.SandmanDir)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(deadBatches) == 0 {
+func (v *portalRunsView) deadBatchDirIDsByRunID(idx *batchindex.Index) ([]daemon.DeadBatch, map[string]string, error) {
+	if idx == nil || len(idx.Entries) == 0 {
 		return nil, nil, nil
 	}
-	dirIDs := make(map[string]string, len(deadBatches))
-	for _, batch := range deadBatches {
-		if batch.Manifest.BatchId == "" {
+	deadBatches := make([]daemon.DeadBatch, 0, len(idx.Entries))
+	dirIDs := make(map[string]string, len(idx.Entries))
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		if entry.Path == "" {
 			continue
 		}
-		if _, ok := dirIDs[batch.Manifest.BatchId]; ok {
+		deadBatches = append(deadBatches, daemon.DeadBatch{RunDir: entry.Path})
+		if entry.ID == "" {
 			continue
 		}
-		dirIDs[batch.Manifest.BatchId] = filepath.Base(batch.RunDir)
+		if _, ok := dirIDs[entry.ID]; ok {
+			continue
+		}
+		dirIDs[entry.ID] = filepath.Base(entry.Path)
 	}
 	if len(dirIDs) == 0 {
 		return nil, nil, nil
