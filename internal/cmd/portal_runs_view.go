@@ -266,7 +266,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 				runs[i].BatchKey = batchKey
 			}
 		}
-		dirID := v.sourceDirID(runs[i])
+		dirID := v.sourceDirID(repoRoot, runs[i])
 		runs[i].Archived = v.isRunArchived(repoRoot, dirID)
 		runs[i].SourceExists = v.runDirExists(repoRoot, dirID)
 	}
@@ -1231,11 +1231,31 @@ func (v *portalRunsView) isRunArchived(repoRoot, runID string) bool {
 	return entry.Status == batchindex.StatusArchived
 }
 
-func (v *portalRunsView) sourceDirID(run portalRun) string {
-	if run.BatchKey != "" {
-		return run.BatchKey
+// sourceDirID returns the directory identifier used to look up the
+// run's batch folder on disk: the basename of entry.Path from the
+// batches index when an entry matches the run's BatchKey (or RunID
+// when no BatchKey has been resolved). The function falls back to
+// the previous BatchKey-then-RunID heuristic when the index is empty
+// or no entry matches, so legacy tests that pre-date the index can
+// still resolve source paths via runDirExists.
+func (v *portalRunsView) sourceDirID(repoRoot string, run portalRun) string {
+	id := run.BatchKey
+	if id == "" {
+		id = run.RunID
 	}
-	return run.RunID
+	if id == "" {
+		return ""
+	}
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		logPortalViewDegrade("batches-index-load:source-dir-id:"+id, "load batches index for source dir id %q: %v", id, err)
+		return id
+	}
+	if entry := idx.Resolve(id); entry != nil && entry.Path != "" {
+		return filepath.Base(entry.Path)
+	}
+	return id
 }
 
 // deadBatchDirIDsByRunID returns the per-batch directory-id map and the
