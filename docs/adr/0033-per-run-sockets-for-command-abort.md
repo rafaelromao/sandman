@@ -23,9 +23,11 @@ Each batch has two socket types:
 | Socket | Location | Purpose |
 |--------|----------|---------|
 | `batch.sock` | Batch root `.sandman/batches/<batch-id>/batch.sock` | Batch-level attach/streaming; `IsRunActive` liveness probe |
-| `run.sock` | Inside each run folder `.sandman/batches/<batch-id>/runs/<run-id>/run.sock` | Per-run command/abort; addressed by path from external tools |
+| `run.sock` | Batch root `.sandman/batches/<batch-id>/run.sock` | Per-run command/abort; addressed by path from external tools |
 
-The daemon opens **N command servers** — one `run.sock` per AgentRun — instead of multiplexing through a single `batch.sock`.
+The daemon opens **N command servers** — one `run.sock` per AgentRun — instead of multiplexing through a single `batch.sock`. The socket is created at the batch root, not inside the per-run folder.
+
+**Note:** The per-run `run.sock` inside `<batch>/runs/<run>/run.sock` path is defined in `RunSocketPath()` (`internal/daemon/runfs.go:229`) but is not currently used by the daemon; the daemon creates `run.sock` at the batch root. External abort tools should connect to `<batch>/run.sock`.
 
 ### Why per-run sockets
 

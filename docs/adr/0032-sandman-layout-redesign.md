@@ -95,7 +95,7 @@ The legacy `BatchManifest.RunID` field is renamed to `BatchId`. The field semant
 | Transition | Action |
 |------------|--------|
 | Batch creation | Write `batch.json` at batch root, write index entry, create `runs/` directory, start daemon |
-| Run start | Create `<batch>/runs/<run>/`, write `run.json`, open `run.sock`, open `run.log` with `O_APPEND` |
+| Run start | Create `<batch>/runs/<run>/`, open `run.sock` at batch root, open `run.log` with `O_APPEND` |
 | Run end | Close sockets, close log file. **No deletion.** Folder persists |
 | Archive | `os.Rename(<batch>/, archive/<id>/)` first, then update index entry to `status:"archived"` |
 | Clean (no flag) | Remove `active` and `unavailable` entries + their folders |
@@ -105,6 +105,8 @@ The legacy `BatchManifest.RunID` field is renamed to `BatchId`. The field semant
 | Lazy unavailable | Any code reading the index stats each entry path; only `ENOENT` flips status to `unavailable` |
 
 Folder rename always happens before the index update during archive. If the index write fails, the inconsistency is detectable on next read.
+
+**Note:** The per-run `run.json` schema is documented in `RunManifest` (`internal/batchindex/batchindex.go:48-59`) and `WriteRunManifest` exists (`internal/daemon/runfs.go:235`), but `WriteRunManifest` is not called in the production boot path. The run folder is created at run start but `run.json` is not persisted until a later slice wires `WriteRunManifest` into the boot path.
 
 ### Index writer
 
