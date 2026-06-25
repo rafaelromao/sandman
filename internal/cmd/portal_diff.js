@@ -436,7 +436,7 @@
     return related.map(subjectRunValue).join('|');
   }
 
-  function buildSubjectSelector(panel, rowRun, subjectRun, opts) {
+  function createSubjectSelector(rowRun, subjectRun, opts) {
     const related = subjectRunsFor(rowRun, opts);
     if (!related.length) return;
     const row = global.document.createElement('div');
@@ -456,7 +456,13 @@
     }
     select.value = currentValue;
     row.appendChild(select);
-    panel.appendChild(row);
+    return row;
+  }
+
+  function buildSubjectSelector(panel, rowRun, subjectRun, opts) {
+    const row = createSubjectSelector(rowRun, subjectRun, opts);
+    if (row) panel.appendChild(row);
+    return row;
   }
 
   function buildLogPre(run, helpers) {
@@ -716,7 +722,8 @@
 
   function buildDetailContent(panel, rowRun, subjectRun, tabName, helpers, opts) {
     const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
-    buildSubjectSelector(panel, rowRun, subjectRun, opts);
+    const subjectPicker = buildSubjectSelector(panel, rowRun, subjectRun, opts);
+    if (subjectPicker) panel.appendChild(subjectPicker);
     buildTabsRow(panel, rowRun, tabName);
     const content = global.document.createElement('div');
     content.classList.add('detail-content');
@@ -767,6 +774,22 @@
   function updateDetailContent(detailRow, oldRun, run, opts) {
     const subjectRun = findRunByIdentity(opts.expandedKey, opts) || run;
     const tabName = tabNameFor(subjectRun, opts);
+    const subjectValue = subjectRunValue(subjectRun);
+    const subjectPicker = detailRow.querySelector('.detail-subject-picker');
+    if (subjectPicker) {
+      const panel = detailRow.querySelector('.detail-panel');
+      const currentValues = Array.from(subjectPicker.querySelectorAll('option')).map((option) => String(option.getAttribute('value') || ''));
+      const desiredValues = subjectRunsFor(run, opts).map((candidate) => subjectRunValue(candidate));
+      const selectorChanged = currentValues.length !== desiredValues.length || currentValues.some((value, index) => value !== desiredValues[index]);
+      if (selectorChanged && panel) {
+        const nextPicker = createSubjectSelector(run, subjectRun, opts);
+        if (nextPicker) {
+          panel.insertBefore(nextPicker, subjectPicker);
+          panel.removeChild(subjectPicker);
+          mutationCount += 1;
+        }
+      }
+    }
     const tabButtons = detailRow.querySelectorAll('button[data-tab]');
     for (const btn of tabButtons) {
       const want = String(btn.getAttribute('data-tab') === tabName);
@@ -775,16 +798,12 @@
       }
     }
     const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
+    const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+    if (subjectSelect && subjectSelect.value !== subjectValue) {
+      subjectSelect.value = subjectValue;
+    }
     const content = detailRow.querySelector('.detail-content');
     if (!content) return;
-    if (content.getAttribute('data-rendered-subject-fingerprint') !== subjectFp) {
-      const panel = detailRow.querySelector('.detail-panel');
-      if (!panel) return;
-      while (panel.firstChild) panel.removeChild(panel.firstChild);
-      buildDetailContent(panel, run, subjectRun, tabName, opts.helpers, opts);
-      mutationCount += 1;
-      return;
-    }
     if (tabName === 'log') {
       // While the Log tab is being fed by a live SSE stream
       // (opts.streamingKeys), the stream owns this <pre>; the poll path
@@ -811,12 +830,14 @@
           fillTerminalPre(pre, newLog, opts.helpers);
         }
         pre.setAttribute('data-rendered-log', newLog);
+        content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
         mutationCount += 1;
         return;
       }
       while (content.firstChild) content.removeChild(content.firstChild);
       content.removeAttribute('data-rendered-fingerprint');
       buildLogContent(content, subjectRun, opts.helpers);
+      content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
       mutationCount += 1;
       return;
     }

@@ -386,12 +386,12 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *tes
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
-	if run.Kind != "completed" {
-		t.Fatalf("expected kind 'completed' for unmatched active state with dead socket, got %q", run.Kind)
+	if run.Kind != "active" {
+		t.Fatalf("expected kind 'active' for unmatched active state with dead socket and no batch dir, got %q", run.Kind)
 	}
 }
 
-func TestPortal_RunFromState_MarksCompletedWhenRunDirMissing(t *testing.T) {
+func TestPortal_RunFromState_StaysActiveWhenBatchDirMissing(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -411,15 +411,12 @@ func TestPortal_RunFromState_MarksCompletedWhenRunDirMissing(t *testing.T) {
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
-	if run.Kind != "completed" {
-		t.Fatalf("expected kind 'completed' for unmatched active state with missing run dir, got %q", run.Kind)
-	}
-	if run.Status != "completed" {
-		t.Fatalf("expected status 'completed' for unmatched active state with missing run dir, got %q", run.Status)
+	if run.Kind != "active" {
+		t.Fatalf("expected kind 'active' for unmatched active state with missing run dir, got %q", run.Kind)
 	}
 }
 
-func TestPortal_RunFromState_MarksCompletedWhenRunDirExistsButSocketMissing(t *testing.T) {
+func TestPortal_RunFromState_StaysActiveWhenSocketMissing(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -443,11 +440,8 @@ func TestPortal_RunFromState_MarksCompletedWhenRunDirExistsButSocketMissing(t *t
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
-	if run.Kind != "completed" {
-		t.Fatalf("expected kind 'completed' for unmatched active state with present run dir but missing socket, got %q", run.Kind)
-	}
-	if run.Status != "completed" {
-		t.Fatalf("expected status 'completed' for unmatched active state with present run dir but missing socket, got %q", run.Status)
+	if run.Kind != "active" {
+		t.Fatalf("expected kind 'active' for unmatched active state with present run dir but missing socket, got %q", run.Kind)
 	}
 }
 
@@ -1322,6 +1316,10 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
 		}
+		runFolder := filepath.Join(runDir, "runs", "PR42")
+		if err := os.MkdirAll(runFolder, 0755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -1331,6 +1329,12 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		}
 		ln.Close()
 		addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
+		if err := os.WriteFile(filepath.Join(runFolder, "run.json"), []byte(`{"runID":"PR42","batchId":"PR42","kind":"review"}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runFolder, "run.log"), []byte("[PR42] 12:00:00 saved review log\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		startedAt := time.Now().Add(-5 * time.Minute)
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -1363,6 +1367,12 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		}
 		if got.Reason != "review" {
 			t.Fatalf("expected Reason 'review' on completed review run, got %q", got.Reason)
+		}
+		if !strings.Contains(got.Log, "saved review log") {
+			t.Fatalf("expected saved review log to load, got %q", got.Log)
+		}
+		if got.LogPath != filepath.Join(runFolder, "run.log") {
+			t.Fatalf("expected log path for completed review run, got %q", got.LogPath)
 		}
 	})
 

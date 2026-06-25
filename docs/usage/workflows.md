@@ -82,7 +82,7 @@ When `sandman run` uses `--prompt` or `--template` without any issue selectors a
 sandman portal
 ```
 
-`sandman portal` gives you a repo-scoped view of current and recent runs. It rescans `.sandman/runs/` on each poll, so multiple Sandman instances in the same repository show up as they start. This is useful when you want to watch live output, review logs, and compare runs without jumping between terminals.
+`sandman portal` gives you a repo-scoped view of current and recent runs. It rescans `.sandman/batches/` on each poll, so multiple Sandman instances in the same repository show up as they start. This is useful when you want to watch live output, review logs, and compare runs without jumping between terminals.
 
 ## Continuing a previous run
 
@@ -95,9 +95,9 @@ Reuses the previously created branch for issue #42 and feeds the agent the store
 ## Cleaning up
 
 ```bash
-sandman clean --success     # Remove worktrees and logs for successful runs
-sandman clean --failed      # Remove worktrees and logs for failed runs
-sandman clean --all         # Remove all worktrees and logs
+sandman clean --archived    # Remove archived batches
+sandman clean --stale       # Recover stale runs and archive dead batches
+sandman clean --dry-run     # Preview what would be removed
 ```
 
 Containers are stopped automatically when a batch completes. No dedicated container cleanup command is needed.

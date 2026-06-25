@@ -140,16 +140,15 @@ sandman clean [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--all` | Remove all worktrees and logs |
-| `--success` | Remove worktrees and logs for successful runs only |
-| `--failed` | Remove worktrees and logs for failed and cancelled runs (runs with `status: failure`) |
+| `--archived` | Remove archived batches |
+| `--dry-run` | Print intended deletions without performing I/O |
 | `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events |
 
 Exactly one flag is required.
 
 ## `sandman archive`
 
-Move a completed run directory from `.sandman/runs/<id>` to `.sandman/archive/<id>`.
+Move a completed batch directory from `.sandman/batches/<batch-id>` to `.sandman/archive/<batch-id>`.
 
 ```bash
 sandman archive run <id>
@@ -160,13 +159,13 @@ sandman archive older-than <days>
 
 | Subcommand | Description |
 |------------|-------------|
-| `run <id>` | Move `.sandman/runs/<id>` to `.sandman/archive/<id>` |
-| `older-than <days>` | Move every dead run whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than `<days>` days to `.sandman/archive/<id>` |
-| `stale` | Recover unterminated runs in dead batches by emitting `run.aborted` events, then archive every dead-and-terminal run directory |
+| `run <id>` | Move `.sandman/batches/<id>` to `.sandman/archive/<id>` |
+| `older-than <days>` | Move every dead batch whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than `<days>` days to `.sandman/archive/<id>` |
+| `stale` | Recover unterminated runs in dead batches by emitting `run.aborted` events, then archive every dead-and-terminal batch directory |
 
-The run's daemon must not be live. `sandman archive run` calls `daemon.IsRunActive` on the run directory and returns an error if either `cmd.sock` or `run.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
+The batch's daemon must not be live. `sandman archive run` calls `daemon.IsRunActive` on the batch directory and returns an error if the `batch.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
 
-`sandman archive older-than <days>` scans every run directory under `.sandman/runs/`, archives those whose daemon is dead and whose timestamp is at or before the `<days>`-day cutoff, and skips the rest. A run whose daemon is still live is never archived regardless of its age. If the destination `.sandman/archive/<id>` already exists, the run is skipped (with a `skip` message on stderr) and the existing archive entry is left untouched. `<days>` must be a non-negative integer; `0` archives every dead run.
+`sandman archive older-than <days>` scans every batch directory under `.sandman/batches/`, archives those whose daemon is dead and whose timestamp is at or before the `<days>`-day cutoff, and skips the rest. A batch whose daemon is still live is never archived regardless of its age. If the destination `.sandman/archive/<id>` already exists, the batch is skipped (with a `skip` message on stderr) and the existing archive entry is left untouched. `<days>` must be a non-negative integer; `0` archives every dead batch.
 
 ## `sandman attach`
 
@@ -176,7 +175,7 @@ Attach to a running sandman daemon and stream its output.
 sandman attach
 ```
 
-If no daemon is running (no socket under `.sandman/runs/` exists), prints a clear error. Otherwise connects to the daemon's control socket and reads raw bytes to stdout until the socket closes (EOF).
+If no daemon is running (no socket under `.sandman/batches/` exists), prints a clear error. Otherwise connects to the daemon's control socket and reads raw bytes to stdout until the socket closes (EOF).
 
 Useful for monitoring a long-running batch from a separate terminal.
 
@@ -193,7 +192,7 @@ sandman portal [flags]
 | `--port` | `5000` | Port to bind on the chosen host |
 | `--host` | `127.0.0.1` (or `SANDMAN_PORTAL_HOST` if set) | Host/interface to bind on. Use `0.0.0.0` to expose on all interfaces. |
 
-The portal is repo-scoped: it scans the current repository's `.sandman/runs/` tree on each poll and shows every live Sandman instance it finds there, plus run status and logs from the event and log files.
+The portal is repo-scoped: it scans the current repository's `.sandman/batches/` tree on each poll and shows every live Sandman instance it finds there, plus run status and logs from the event and log files.
 
 By default the server binds to `127.0.0.1` so it is not reachable from other machines. Pass `--host` (or set `SANDMAN_PORTAL_HOST`) to bind on a different interface, for example `0.0.0.0` to expose the portal on all interfaces.
 

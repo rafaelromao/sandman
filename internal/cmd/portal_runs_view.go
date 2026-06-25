@@ -985,13 +985,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			if _, err := os.Lstat(sockPath); err == nil {
 				portalRun.SocketPath = sockPath
 				v.markCompletedIfSocketDead(&portalRun, sockPath)
-			} else {
-				portalRun.Kind = "completed"
-				portalRun.Status = v.statusOrDefault(runState.Status(), false, runState.IsReview(), runState.IsAutoSelect())
 			}
-		} else {
-			portalRun.Kind = "completed"
-			portalRun.Status = v.statusOrDefault(runState.Status(), false, runState.IsReview(), runState.IsAutoSelect())
 		}
 	}
 	return portalRun

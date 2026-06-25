@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -101,16 +100,6 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		PollInterval: PollingInterval,
 		busy:         make(chan struct{}, cfg.EffectiveReviewParallel()),
 	}
-}
-
-// PRDir is preserved as a deprecated seam for backward compatibility with
-// tests that asserted on the per-PR path. New code MUST use the run
-// folder returned by the batch runner for per-PR state.
-//
-// Deprecated: per-PR state has moved to <batch>/runs/<run>/review-state.json.
-// This method will be removed in a future slice.
-func (d *Daemon) PRDir(prNumber int) string {
-	return filepath.Join(d.BaseDir, "reviews", strconv.Itoa(prNumber))
 }
 
 // SocketPath returns the absolute path of the daemon's control socket.
@@ -355,9 +344,9 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		d.logf("add reaction to PR #%d: %v", prNumber, prErr)
 	}
 
-	runDir, err := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID)
-	if err != nil {
-		d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, err)
+	runDir, launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID)
+	if launchErr != nil {
+		d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
 		// If launchReview failed before creating a run folder, there
 		// is nowhere to record review-state.json. The trigger will be
 		// retried on the next tick.
@@ -367,9 +356,9 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	}
 
 	// Mark the trigger as seen in the new run's review-state.json.
-	state, err := NewReviewStateStore(d.ReviewStatePath(runDir), prNumber)
-	if err != nil {
-		d.logf("open review state for run %s: %v", runDir, err)
+	state, stateErr := NewReviewStateStore(d.ReviewStatePath(runDir), prNumber)
+	if stateErr != nil {
+		d.logf("open review state for run %s: %v", runDir, stateErr)
 		return nil
 	}
 	for _, t := range unprocessed {
@@ -385,9 +374,18 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			d.logf("skipping stale trigger comment %s (newer %s exists)", t.comment.ID, comment.ID)
 		}
 	}
-	if err == nil {
+	// Gate on the launch error, not the state-store error. The shadowing
+	// of the launch error by NewReviewStateStore is what caused the
+	// regression: a failed launch was recorded as "success" because the
+	// state-store nil-error satisfied the guard. Per PRD 1218 only
+	// success/failure/aborted are terminal; superseded is intentional.
+	if launchErr == nil {
 		if err := state.MarkSeen(comment.ID, "success"); err != nil {
 			d.logf("mark comment %s seen: %v", comment.ID, err)
+		}
+	} else {
+		if err := state.MarkSeen(comment.ID, "failure"); err != nil {
+			d.logf("mark comment %s failure: %v", comment.ID, err)
 		}
 	}
 	return nil
@@ -401,6 +399,13 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 // unreadable index, the error is logged and the caller continues with an
 // empty set — this is acceptable per ADR-0034 §3 (rename-loser
 // re-processes).
+//
+// Terminal-status deviation from PRD 1218: PRD 1218 lists only
+// success/failure/aborted as terminal statuses. The global-dedup skip
+// rule only treats "success" as terminal (failed triggers are retried on
+// the next tick). "superseded" is also treated as terminal since an
+// obsolete trigger should not be re-processed even though its run did not
+// succeed. This deviation is intentional.
 func (d *Daemon) loadGlobalSeenForPR(prNumber int) (map[string]bool, error) {
 	seen := map[string]bool{}
 	indexPath := daemon.BatchesIndexPath(d.BaseDir)
@@ -424,7 +429,17 @@ func (d *Daemon) loadGlobalSeenForPR(prNumber int) (map[string]bool, error) {
 			continue
 		}
 		for _, sc := range state.SeenComments {
-			seen[sc.CommentID] = true
+			// Only "success" and "superseded" are terminal for the
+			// skip rule. "failure" and "aborted" mean the trigger
+			// should be retried on the next tick (PRD 1218 only lists
+			// success/failure/aborted as terminal run statuses; the
+			// skip rule is a separate dedup concern). "superseded" is
+			// intentionally treated as terminal — an obsolete trigger
+			// should not be re-processed even though its run did not
+			// succeed.
+			if sc.Status == "success" || sc.Status == "superseded" {
+				seen[sc.CommentID] = true
+			}
 		}
 	}
 	return seen, nil
