@@ -2896,6 +2896,18 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+func TestPortalRunsView_VisibleRunForIssueGroup_TerminalReviewWinsOverActiveKind(t *testing.T) {
+	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'success', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
+const stub = visibleRunForIssueGroup(1223, [review]);
+if (!stub) throw new Error('expected stub row for terminal review group');
+if (stub.kind !== 'completed') throw new Error('expected completed kind once terminal status is present, got ' + JSON.stringify(stub.kind));
+if (stub.status !== 'success') throw new Error('expected terminal status to win over live kind, got ' + JSON.stringify(stub.status));
+if (stub.reviewVerdict !== 'Approved') throw new Error('expected Approved verdict, got ' + JSON.stringify(stub.reviewVerdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 // TestPortalRunsView_VisibleRunsForTable_ReviewMetaLineShowsRealRunID
 // covers the user-visible symptom: the meta-line under the title cell is
 // fed by renderRunMeta(run), which reads run.runId. When
