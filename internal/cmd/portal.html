@@ -2194,7 +2194,8 @@
       });
       summary.source = ordered[0] || null;
       for (const review of ordered) {
-        if (review && review.kind === 'active') {
+        const status = String(review && review.status ? review.status : '').trim();
+        if (status === 'reviewing') {
           summary.live = true;
           summary.kind = 'active';
           summary.status = 'reviewing';
@@ -2281,7 +2282,8 @@
       });
       summary.source = ordered[0] || null;
       for (const review of ordered) {
-        if (review && review.kind === 'active') {
+        const status = String(review && review.status ? review.status : '').trim();
+        if (status === 'reviewing') {
           summary.live = true;
           summary.kind = 'active';
           summary.status = 'reviewing';
