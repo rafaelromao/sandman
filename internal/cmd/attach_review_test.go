@@ -11,13 +11,17 @@ import (
 
 func TestAttach_FindsReviewSock(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(dir)
 
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+	reviewsDir := filepath.Join(sandmanDir, "reviews")
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sockPath := filepath.Join(sandmanDir, "review.sock")
+	sockPath := filepath.Join(reviewsDir, "review.sock")
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -47,11 +51,59 @@ func TestAttach_FindsReviewSock(t *testing.T) {
 }
 
 func TestAttach_MultipleSocketsReturnsError(t *testing.T) {
-	t.Skip("Skipping: socket cleanup between tests causes interference")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	sockDir1 := filepath.Join(dir, ".sandman", "batches", "test-batch-1")
+	sockDir2 := filepath.Join(dir, ".sandman", "batches", "test-batch-2")
+	if err := os.MkdirAll(sockDir1, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sockDir2, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath1 := filepath.Join(sockDir1, "batch.sock")
+	sockPath2 := filepath.Join(sockDir2, "batch.sock")
+	listener1, err := net.Listen("unix", sockPath1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener1.Close()
+	listener2, err := net.Listen("unix", sockPath2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener2.Close()
+
+	go func() {
+		listener1.Accept()
+	}()
+	go func() {
+		listener2.Accept()
+	}()
+
+	var buf bytes.Buffer
+	cmd := NewAttachCmd()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err = cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when multiple daemons are running")
+	}
+	if !strings.Contains(err.Error(), "multiple sandman daemons") {
+		t.Fatalf("expected 'multiple sandman daemons' error, got: %v", err)
+	}
 }
 
 func TestAttach_NoSocketsReturnsError(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(dir)
 
 	var buf bytes.Buffer

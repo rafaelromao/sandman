@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -145,13 +146,28 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		sandboxMode = cfg.Sandbox
 	}
 
-	rs := daemon.NewRunSession(".sandman", fmt.Sprintf("PR%d", pr.Number))
+	repoRoot := deps.RepoRoot
+	if repoRoot == "" {
+		var err error
+		repoRoot, err = resolveRepoRoot()
+		if err != nil {
+			return fmt.Errorf("resolve repo root: %w", err)
+		}
+	}
+	sandmanDir := filepath.Join(repoRoot, ".sandman")
+
+	rs := daemon.NewRunSession(sandmanDir, fmt.Sprintf("PR%d", pr.Number))
 	manifest := daemon.BatchManifest{BatchId: fmt.Sprintf("PR%d", pr.Number), CreatedAt: time.Now(), RunKind: "review", PR: &pr.Number}
 	if err := rs.Prepare(manifest); err != nil {
 		_ = rs.Close()
 		return fmt.Errorf("bootstrap review session: %w", err)
 	}
 	defer rs.Close()
+
+	relRunDir, err := filepath.Rel(repoRoot, rs.RunDir())
+	if err != nil {
+		return fmt.Errorf("rel run dir: %w", err)
+	}
 
 	if _, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 		Agent:                reviewAgentName,
@@ -171,7 +187,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		PRNumber:     pr.Number,
 		RunID:        fmt.Sprintf("PR%d", pr.Number),
 		OutputWriter: rs.Broadcaster(),
-		RunDir:       rs.RunDir(),
+		RunDir:       relRunDir,
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
 	}
@@ -253,10 +269,19 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 		}
 	}()
 
-	socketDir := ".sandman"
+	// The daemon's socket and prompt template live under
+	// .sandman/reviews/ so the daemon's on-disk footprint is just two
+	// files at that location plus run folders under .sandman/batches/.
+	// Issue #1224 acceptance criteria.
+	repoRoot, err := resolveRepoRoot()
+	if err != nil {
+		return fmt.Errorf("resolve repo root: %w", err)
+	}
+	sandmanDir := filepath.Join(repoRoot, ".sandman")
+	socketDir := filepath.Join(sandmanDir, "reviews")
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
-	d := review.New(socketDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster)
+	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster)
 	d.Sandbox = sandbox
 	d.ContainerCapacity = cc
 	d.ContainerCapacitySet = ccSet

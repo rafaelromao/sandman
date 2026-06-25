@@ -40,10 +40,11 @@ func TestRequireReviewDaemon_FailsWhenSandmanSubstringAndSocketMissing(t *testin
 func TestRequireReviewDaemon_FailsWhenSocketIsStaleFile(t *testing.T) {
 	dir := t.TempDir()
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+	reviewsDir := filepath.Join(sandmanDir, "reviews")
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	stalePath := filepath.Join(sandmanDir, "review.sock")
+	stalePath := filepath.Join(reviewsDir, "review.sock")
 	if err := os.WriteFile(stalePath, []byte("not a socket"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -59,10 +60,11 @@ func TestRequireReviewDaemon_FailsWhenSocketIsStaleFile(t *testing.T) {
 func TestRequireReviewDaemon_PassesWhenLiveSocketExists(t *testing.T) {
 	dir := t.TempDir()
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+	reviewsDir := filepath.Join(sandmanDir, "reviews")
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	listener, err := net.Listen("unix", filepath.Join(reviewsDir, "review.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}

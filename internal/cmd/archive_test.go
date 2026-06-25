@@ -18,17 +18,18 @@ import (
 func writeBatchIndexForArchive(t *testing.T, baseDir string, entries []batchindex.Entry) {
 	t.Helper()
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: entries}
-	data, err := json.MarshalIndent(idx, "", "  ")
+	if err := idx.Save(filepath.Join(baseDir, ".sandman", "batches.json")); err != nil {
+		t.Fatalf("save batches.json: %v", err)
+	}
+}
+
+func loadBatchIndexForArchive(t *testing.T, baseDir string) *batchindex.Index {
+	t.Helper()
+	idx, err := batchindex.Load(filepath.Join(baseDir, ".sandman", "batches.json"))
 	if err != nil {
-		t.Fatalf("marshal index: %v", err)
+		t.Fatalf("load batches index: %v", err)
 	}
-	batchesDir := filepath.Join(baseDir, ".sandman", "batches")
-	if err := os.MkdirAll(batchesDir, 0755); err != nil {
-		t.Fatalf("mkdir batches dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(baseDir, ".sandman", "batches.json"), data, 0644); err != nil {
-		t.Fatalf("write batches.json: %v", err)
-	}
+	return idx
 }
 
 func writeBatchDirForArchive(t *testing.T, batchDir string, runManifest batchindex.RunManifest) {
@@ -63,6 +64,9 @@ func TestArchiveRun_NoArgsReturnsUsageError(t *testing.T) {
 }
 
 func TestArchiveStale_NoArgsAcceptsNone(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
 	var buf bytes.Buffer
 	deps := newTestDeps()
 	deps.EventLog = &fakeEventLog{}
@@ -214,6 +218,25 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive")); err != nil {
 		t.Errorf("expected .sandman/archive/ to exist after archive: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "batches.json.bak")); err != nil {
+		t.Errorf("expected batches.json.bak after archive save, got: %v", err)
+	}
+
+	idx := loadBatchIndexForArchive(t, dir)
+	entry := idx.Resolve("dead-1")
+	if entry == nil {
+		t.Fatal("expected archived entry in batches index")
+	}
+	if entry.Status != batchindex.StatusArchived {
+		t.Fatalf("archived entry status = %s, want %s", entry.Status, batchindex.StatusArchived)
+	}
+	wantPath := filepath.Join(".sandman", "archive", "dead-1")
+	if entry.Path != wantPath {
+		t.Fatalf("archived entry path = %q, want %q", entry.Path, wantPath)
+	}
+	if entry.ArchivedAt == nil {
+		t.Fatal("expected archived entry archivedAt to be set")
+	}
 }
 
 func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
@@ -303,6 +326,22 @@ func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive")); err != nil {
 		t.Errorf("expected .sandman/archive/ to exist after archive: %v", err)
+	}
+
+	idx := loadBatchIndexForArchive(t, dir)
+	entry := idx.Resolve("dead-1")
+	if entry == nil {
+		t.Fatal("expected archived entry in batches index")
+	}
+	if entry.Status != batchindex.StatusArchived {
+		t.Fatalf("archived entry status = %s, want %s", entry.Status, batchindex.StatusArchived)
+	}
+	wantPath := filepath.Join(".sandman", "archive", "dead-1")
+	if entry.Path != wantPath {
+		t.Fatalf("archived entry path = %q, want %q", entry.Path, wantPath)
+	}
+	if entry.ArchivedAt == nil {
+		t.Fatal("expected archived entry archivedAt to be set")
 	}
 }
 
@@ -995,5 +1034,40 @@ func TestArchiveOlderThan_YoungMtimeKeepsUnmanifestedBatch(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "no-manifest-young")); !os.IsNotExist(err) {
 		t.Errorf("expected no archive entry for young batch, got: %v", err)
+	}
+}
+
+func TestArchiveOlderThan_ArchivesUnmanifestedBatchByDirMtime(t *testing.T) {
+	dir := newSandmanDir(t)
+	t.Chdir(dir)
+
+	old := time.Now().Add(-40 * 24 * time.Hour).UTC().Round(time.Second)
+	batchDir := filepath.Join(dir, ".sandman", "batches", "no-manifest-old")
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("mkdir batch dir: %v", err)
+	}
+	if err := os.Chtimes(batchDir, old, old); err != nil {
+		t.Fatalf("chtimes batch dir: %v", err)
+	}
+
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "no-manifest-old", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{8}},
+	})
+
+	var buf bytes.Buffer
+	cmd := NewArchiveCmd(newTestDeps())
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"older-than", "30"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "no-manifest-old")); err != nil {
+		t.Fatalf("expected old unmanifested batch to be archived by dir mtime: %v", err)
+	}
+	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
+		t.Errorf("expected source batch dir to be gone after archive, got: %v", err)
 	}
 }

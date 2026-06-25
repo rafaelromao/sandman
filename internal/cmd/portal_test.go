@@ -978,6 +978,7 @@ func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
 	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42, 43}, CreatedAt: time.Now().Add(-2 * time.Minute)}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
+	addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{42, 43})
 
 	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, nil)
 	if err != nil {
@@ -1017,6 +1018,7 @@ func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{})
 
 	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, nil)
 	if err != nil {
@@ -1217,6 +1219,7 @@ func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{860, 854})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
@@ -1271,6 +1274,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = ln.Close() })
+		addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
 
 		startedAt := time.Now().Add(-5 * time.Minute)
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -1326,6 +1330,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		ln.Close()
+		addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
 
 		startedAt := time.Now().Add(-5 * time.Minute)
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -1430,6 +1435,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = ln.Close() })
+		addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{})
 
 		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 		if err != nil {
@@ -1452,100 +1458,6 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 			t.Fatalf("expected IssueLabel 'prompt-only', got %q", got.IssueLabel)
 		}
 	})
-}
-
-func TestPortal_BatchMembershipCSS_GeometryIsFullWidthAndWraps(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate test file")
-	}
-	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
-	data, err := os.ReadFile(htmlPath)
-	if err != nil {
-		t.Fatalf("read %s: %v", htmlPath, err)
-	}
-	html := string(data)
-	idx := strings.Index(html, ".batch-membership")
-	if idx < 0 {
-		t.Fatalf("could not find .batch-membership selector in %s", htmlPath)
-	}
-	open := strings.Index(html[idx:], "{")
-	if open < 0 {
-		t.Fatalf("could not find rule body for .batch-membership in %s", htmlPath)
-	}
-	bodyStart := idx + open + 1
-	close := strings.Index(html[bodyStart:], "}")
-	if close < 0 {
-		t.Fatalf("could not find closing brace for .batch-membership rule in %s", htmlPath)
-	}
-	body := html[bodyStart : bodyStart+close]
-
-	required := []struct {
-		token string
-		desc  string
-	}{
-		{"display: block", "block-level element (not inline-block)"},
-		{"width: 100%", "fills the title cell"},
-		{"box-sizing: border-box", "padding stays inside the cell width"},
-		{"background: transparent", "no surface fill so the chip reads as part of the run row"},
-		{"color: var(--muted)", "muted chip text color preserved"},
-		{"font-size: 11px", "chip font size preserved"},
-		{"letter-spacing: 0.04em", "chip letter-spacing preserved"},
-		{"overflow-wrap: anywhere", "long issue lists break inside the chip when the cap kicks in"},
-	}
-	for _, r := range required {
-		if !strings.Contains(body, r.token) {
-			t.Errorf(".batch-membership rule missing %q (%s)", r.token, r.desc)
-		}
-	}
-	if strings.Contains(body, "border-radius: 999px") {
-		t.Errorf(".batch-membership rule still has 999px pill radius; expected no pill so the chip reads as a footnote")
-	}
-}
-
-func TestPortal_BatchRowCSS_RendersAsSecondaryRowUnderRunRow(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate test file")
-	}
-	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
-	data, err := os.ReadFile(htmlPath)
-	if err != nil {
-		t.Fatalf("read %s: %v", htmlPath, err)
-	}
-	html := string(data)
-	for _, tc := range []struct {
-		sel   string
-		props []string
-	}{
-		{"tbody tr.batch-row td", []string{"border-top: none", "border-left: none", "border-right: none"}},
-		{"tbody tr.run-row + tr.batch-row td", []string{"padding-top: 0"}},
-		{"tbody tr.run-row:hover + tr.batch-row td", []string{"background:"}},
-		{"tbody tr.run-row.active + tr.batch-row td", []string{"background:"}},
-	} {
-		idx := strings.Index(html, tc.sel)
-		if idx < 0 {
-			t.Errorf("expected %s rule in %s", tc.sel, htmlPath)
-			continue
-		}
-		open := strings.Index(html[idx:], "{")
-		if open < 0 {
-			t.Errorf("expected rule body for %s", tc.sel)
-			continue
-		}
-		bodyStart := idx + open + 1
-		close := strings.Index(html[bodyStart:], "}")
-		if close < 0 {
-			t.Errorf("expected closing brace for %s rule", tc.sel)
-			continue
-		}
-		body := html[bodyStart : bodyStart+close]
-		for _, prop := range tc.props {
-			if !strings.Contains(body, prop) {
-				t.Errorf("%s rule missing %q", tc.sel, prop)
-			}
-		}
-	}
 }
 
 func TestPortal_MetaLineCSS_AllowsLongTokenToBreak(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -102,6 +103,14 @@ type portalRun struct {
 	// Active runs are never marked archived, even when an archive
 	// directory with the matching RunID happens to exist on disk.
 	Archived bool `json:"archived"`
+	// Unavailable is true when the batchindex entry backing this row has
+	// been flipped to StatusUnavailable (lazy flip on read in
+	// discoverPortalInstances, when the on-disk batch directory is gone).
+	// Surfaced alongside Archived so the portal can mark the row as
+	// read-only and badge it as unavailable. Active runs are never
+	// marked unavailable; only completed historical rows that lost their
+	// backing directory reach this state.
+	Unavailable bool `json:"unavailable"`
 	// SourceExists reports whether the run still has a backing directory
 	// under .sandman/runs/<run-id>. The portal uses this to avoid showing
 	// Archive actions for stale historical rows whose source directory is
@@ -182,17 +191,25 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		}
 	}
 
-	var deadBatchDirIDs map[string]string
+	var dirIDs map[string]string
 	var deadBatches []daemon.DeadBatch
 	var err error
+
+	idx := v.loadBatchesIndex(repoRoot)
 
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
-	deadBatches, deadBatchDirIDs, err = v.deadBatchDirIDsByRunID(repoRoot)
+	deadBatches, dirIDs, err = v.deadBatchDirIDsByRunID(idx)
 	if err != nil {
 		return nil, err
 	}
+	// Load the batch index once so the post-loop can stamp rows whose
+	// backing directory was deleted (StatusUnavailable) without doing a
+	// separate Stat per run. Active entries only matter here for the
+	// StatusUnavailable lookup; the existing discoverPortalInstances path
+	// still owns the live-socket probe and the lazy flip itself.
+	unavailableRunIDs := v.unavailableRunIDsByBatchIndex(idx)
 	for _, active := range activeInstances {
 		if activeBatchStart.IsZero() && !active.StartedAt.IsZero() {
 			activeBatchStart = active.StartedAt
@@ -260,14 +277,23 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 			runs[i].SourceExists = true
 			continue
 		}
-		if runs[i].BatchKey == "" && len(deadBatchDirIDs) > 0 {
-			if batchKey, ok := deadBatchDirIDs[runs[i].RunID]; ok {
+		if runs[i].BatchKey == "" && len(dirIDs) > 0 {
+			if batchKey, ok := dirIDs[runs[i].RunID]; ok {
 				runs[i].BatchKey = batchKey
 			}
 		}
-		dirID := v.sourceDirID(runs[i])
-		runs[i].Archived = v.isRunArchived(repoRoot, dirID)
+		dirID := v.sourceDirID(idx, runs[i])
+		runs[i].Archived = v.isRunArchived(idx, dirID)
 		runs[i].SourceExists = v.runDirExists(repoRoot, dirID)
+		// Unavailable is keyed by sourceDirID (BatchKey when present)
+		// because the batchindex entry is the source of truth for the
+		// unavailable flip (set by MarkUnavailable when the backing dir
+		// is missing). MarkUnavailable skips archived entries, so
+		// Archived and Unavailable stay mutually exclusive in normal
+		// operation.
+		if _, ok := unavailableRunIDs[dirID]; ok {
+			runs[i].Unavailable = true
+		}
 	}
 	// Staleness signal for active rows: the saved-run-log mtime (with a
 	// StartedAt fallback). Computed here so every runFrom* constructor and
@@ -1205,51 +1231,98 @@ func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath st
 	}
 }
 
+func (v *portalRunsView) loadBatchesIndex(repoRoot string) *batchindex.Index {
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		logPortalViewDegrade("batches-index-load", "load batches index: %v", err)
+		return nil
+	}
+	return idx
+}
+
 // isRunArchived reports whether runID's directory currently lives under
-// .sandman/archive instead of .sandman/runs. A non-empty RunID that
-// matches no directory on disk returns false; only a present directory
-// counts as archived, so transient or half-moved state never lights up
-// the flag.
-func (v *portalRunsView) isRunArchived(repoRoot, runID string) bool {
-	if runID == "" {
+// .sandman/archive instead of .sandman/runs. A non-empty runID that does
+// not resolve to an index entry returns false; otherwise, archived-ness
+// is reported from the entry's Status field, so transient or half-moved
+// state never lights up the flag.
+func (v *portalRunsView) isRunArchived(idx *batchindex.Index, runID string) bool {
+	if runID == "" || idx == nil {
 		return false
 	}
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	info, err := os.Stat(filepath.Join(layout.ArchiveDir, runID))
-	if err != nil {
+	entry := idx.Resolve(runID)
+	if entry == nil {
 		return false
 	}
-	return info.IsDir()
+	return entry.Status == batchindex.StatusArchived
 }
 
-func (v *portalRunsView) sourceDirID(run portalRun) string {
-	if run.BatchKey != "" {
-		return run.BatchKey
+func (v *portalRunsView) sourceDirID(idx *batchindex.Index, run portalRun) string {
+	id := run.BatchKey
+	if id == "" {
+		id = run.RunID
 	}
-	return run.RunID
+	if id == "" {
+		return ""
+	}
+	if idx != nil {
+		if entry := idx.Resolve(id); entry != nil && entry.Path != "" {
+			return filepath.Base(entry.Path)
+		}
+	}
+	return id
 }
 
-func (v *portalRunsView) deadBatchDirIDsByRunID(repoRoot string) ([]daemon.DeadBatch, map[string]string, error) {
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	deadBatches, err := daemon.FindDeadRunBatches(layout.SandmanDir)
-	if err != nil {
-		return nil, nil, err
+// unavailableRunIDsByBatchIndex returns the set of source directory IDs
+// whose batch index entry is currently StatusUnavailable. The portal
+// needs this to stamp Unavailable on completed historical rows that lost
+// their backing directory; without this stamp the row would still render
+// with a normal badge and an Archive button, inviting operator action on
+// a run that no longer exists on disk.
+//
+// The lookup is keyed by sourceDirID (BatchKey when present, RunID
+// otherwise), which matches batchindex.Entry.ID for completed historical
+// rows.
+func (v *portalRunsView) unavailableRunIDsByBatchIndex(idx *batchindex.Index) map[string]struct{} {
+	out := map[string]struct{}{}
+	if idx == nil {
+		return out
 	}
-	if len(deadBatches) == 0 {
+	for i := range idx.Entries {
+		if idx.Entries[i].Status == batchindex.StatusUnavailable {
+			out[idx.Entries[i].ID] = struct{}{}
+		}
+	}
+	return out
+}
+
+func (v *portalRunsView) deadBatchDirIDsByRunID(idx *batchindex.Index) ([]daemon.DeadBatch, map[string]string, error) {
+	if idx == nil || len(idx.Entries) == 0 {
 		return nil, nil, nil
 	}
-	dirIDs := make(map[string]string, len(deadBatches))
-	for _, batch := range deadBatches {
-		if batch.Manifest.BatchId == "" {
+	deadBatches := make([]daemon.DeadBatch, 0, len(idx.Entries))
+	// dirIDs maps row RunID → batch dir basename, so the caller can
+	// populate BatchKey for completed historical rows. We scan each
+	// batch's runs/ subdirectory; unavailable batches whose directory
+	// has been deleted will fail the ReadDir gracefully and contribute
+	// no entries.
+	dirIDs := make(map[string]string, len(idx.Entries))
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		if entry.Path == "" {
 			continue
 		}
-		if _, ok := dirIDs[batch.Manifest.BatchId]; ok {
+		deadBatches = append(deadBatches, daemon.DeadBatch{RunDir: entry.Path})
+		runsDir := filepath.Join(entry.Path, "runs")
+		entries, err := os.ReadDir(runsDir)
+		if err != nil {
 			continue
 		}
-		dirIDs[batch.Manifest.BatchId] = filepath.Base(batch.RunDir)
-	}
-	if len(dirIDs) == 0 {
-		return nil, nil, nil
+		for _, e := range entries {
+			if e.IsDir() {
+				dirIDs[e.Name()] = filepath.Base(entry.Path)
+			}
+		}
 	}
 	return deadBatches, dirIDs, nil
 }

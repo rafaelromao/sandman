@@ -759,7 +759,10 @@ exit 0
 	}
 	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	reviewListener, err := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0o755); err != nil {
+		t.Fatalf("create reviews dir: %v", err)
+	}
+	reviewListener, err := net.Listen("unix", filepath.Join(sandmanDir, "reviews", "review.sock"))
 	if err != nil {
 		t.Fatalf("listen review.sock: %v", err)
 	}
@@ -861,7 +864,10 @@ exit 0
 	}
 	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	reviewListener, err := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0o755); err != nil {
+		t.Fatalf("create reviews dir: %v", err)
+	}
+	reviewListener, err := net.Listen("unix", filepath.Join(sandmanDir, "reviews", "review.sock"))
 	if err != nil {
 		t.Fatalf("listen review.sock: %v", err)
 	}
@@ -961,7 +967,10 @@ exit 0
 	}
 	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	reviewListener, err := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0o755); err != nil {
+		t.Fatalf("create reviews dir: %v", err)
+	}
+	reviewListener, err := net.Listen("unix", filepath.Join(sandmanDir, "reviews", "review.sock"))
 	if err != nil {
 		t.Fatalf("listen review.sock: %v", err)
 	}
@@ -1089,7 +1098,10 @@ exit 0
 	}
 	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0o755); err != nil {
+		t.Fatalf("create reviews dir: %v", err)
+	}
+	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "reviews", "review.sock"))
 	if listenErr != nil {
 		t.Fatalf("listen review.sock: %v", listenErr)
 	}
@@ -1166,7 +1178,10 @@ exit 0
 	}
 	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0o755); err != nil {
+		t.Fatalf("create reviews dir: %v", err)
+	}
+	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "reviews", "review.sock"))
 	if listenErr != nil {
 		t.Fatalf("listen review.sock: %v", listenErr)
 	}
@@ -1257,7 +1272,10 @@ exit 0
 	}
 	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0o755); err != nil {
+		t.Fatalf("create reviews dir: %v", err)
+	}
+	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "reviews", "review.sock"))
 	if listenErr != nil {
 		t.Fatalf("listen review.sock: %v", listenErr)
 	}
@@ -1415,7 +1433,10 @@ exit 0
 	}
 	t.Setenv("PATH", agentDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "review.sock"))
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0o755); err != nil {
+		t.Fatalf("create reviews dir: %v", err)
+	}
+	reviewListener, listenErr := net.Listen("unix", filepath.Join(sandmanDir, "reviews", "review.sock"))
 	if listenErr != nil {
 		t.Fatalf("listen review.sock: %v", listenErr)
 	}

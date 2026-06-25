@@ -38,24 +38,24 @@ This is the **no-orphan-PRs rule**: any open PR with an unprocessed `/sandman` c
 
 ### Daemon state location
 
-Daemon-level state lives in `.sandman/`:
+Daemon-level state lives in `.sandman/reviews/`:
 
 | File | Purpose |
 |------|---------|
-| `review.sock` | Daemon command socket at `.sandman/review.sock` |
-| `review-prompt.md` | Shared prompt template (no PR data) at `.sandman/review-prompt.md` |
+| `review.sock` | Daemon command socket at `.sandman/reviews/review.sock` |
+| `review-prompt.md` | Shared prompt template (no PR data) at `.sandman/reviews/review-prompt.md` |
 
-Per-PR state directories (`.sandman/reviews/<PR>/`) exist for tracking per-PR review state. The daemon uses `PRDir(prNumber)` to construct the per-PR path.
+No per-PR subdirectories are created under `.sandman/reviews/`. Per-run state lives inside the batch run folder.
 
 ### Per-run `review-state.json`
 
-For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) contains `review-state.json`:
+For review runs, the run folder (`.sandman/batches/<batch-id>/runs/review/`) contains `review-state.json`:
 
 ```jsonc
 {
   "pr": 1217,
   "seenComments": [
-    { "commentID": 12345, "timestamp": "<RFC3339>" }
+    { "commentID": 12345, "status": "success", "timestamp": "<RFC3339>" }
   ],
   "claims": {
     "<commentID>": { "holder": "<pid>", "since": "<RFC3339>" }
@@ -63,7 +63,7 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 }
 ```
 
-`seenComments` records which comments have been processed. `claims` tracks which comment is currently being worked on by which process. Claims are stored inline — **no separate `claims/` directory** — so claim state is atomic with the rest of the review state.
+`seenComments` records which comments have been processed along with their terminal status (`success`/`failure`/`superseded`/`aborted`). `claims` tracks which comment is currently being worked on by which process. Claims are stored inline — **no separate `claims/` directory** — so claim state is atomic with the rest of the review state.
 
 ### Review daemon workflow
 
@@ -78,13 +78,11 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 
 `review-prompt.md` is the same file for all PRs. It contains no PR-specific data — the daemon renders PR context at request time. One prompt template, shared across all review runs.
 
-**Note:** Implementation slices for the per-run `review-state.json` consolidation and the shared `review-prompt.md` location may not have fully landed in all code paths at time of writing. Production code currently uses `SeenCommentsStore` and `ClaimStore` against per-PR directories (`.sandman/reviews/<PR>/`) and writes `pr-review-prompt.md` inside each `prDir`. ADR-0032 and ADR-0033 carry comparable disclaimers for their respective unimplemented slices.
-
 ## Consequences
 
 ### Positive
 
-- Daemon state is minimal: `review.sock` + `review-prompt.md` at `.sandman/` root. Per-PR state directories (`PRDir`) exist but are managed by the daemon, not a separate cleanup process.
+- Daemon state is minimal: `review.sock` + `review-prompt.md` at `.sandman/reviews/`. No per-PR directories.
 - Dedup key `(pr, commentID)` is stable and unambiguous — no timestamp drift or clock sync issues.
 - Per-run review state is co-located with the run that produced it — cleanup follows the batch/run lifecycle (ADR-0032).
 - No orphan PRs: all open PRs with unprocessed `/sandman` comments are scanned, regardless of daemon uptime.

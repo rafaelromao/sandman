@@ -93,10 +93,6 @@ if (!parentMeta.textContent.includes('2 reviews')) throw new Error('expected rev
 if (!parentMeta.textContent.includes('Approved')) throw new Error('expected latest verdict in meta, got ' + parentMeta.textContent);
 if (parentMeta.textContent.includes('RunID')) throw new Error('expected RunID label removed from meta, got ' + parentMeta.textContent);
 if (!parentMeta.textContent.includes('\n3 retries - 2 reviews - Approved')) throw new Error('expected retry summary before reviews on new line, got ' + JSON.stringify(parentMeta.textContent));
-const parentBatchRow = body.querySelector('tr.batch-row[data-batch-for="issue-1"]');
-if (!parentBatchRow) throw new Error('expected parent batch chip to remain for canonical issue row');
-const parentBatchChip = parentBatchRow.querySelector('.batch-membership');
-if (!parentBatchChip || !parentBatchChip.textContent.includes('Part of batch:')) throw new Error('expected batch membership chip in parent batch row');
 const createdGrouped = SandmanPortalDiff.insertRunRow(body, groupedReview, opts);
 if (body.querySelector('tr.context-row[data-context-for="PR42"]')) throw new Error('expected grouped review chip removed');
 const groupedTitle = createdGrouped.row.querySelector('[data-cell="title"]').children[0];
@@ -726,6 +722,54 @@ if (!line || !line.classList.contains('warn')) throw new Error('fresh->stale tra
 SandmanPortalDiff.updateRunRowCells(created.row, runStale, runFresh, opts);
 line = durationCell.querySelector('.stale-line');
 if (line) throw new Error('stale->fresh transition must remove the stale line');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildDurationCell_NoStaleLineForQueuedStatus(t *testing.T) {
+	js := `const body = makeMockBody();
+const stale = new Date(Date.now() - 90*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'queued', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+const line = durationCell.querySelector('.stale-line');
+if (line) throw new Error('expected NO .stale-line for queued status even when lastOutputAt is stale');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildDurationCell_NoStaleLineForBlockedStatus(t *testing.T) {
+	js := `const body = makeMockBody();
+const stale = new Date(Date.now() - 90*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'blocked', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+const line = durationCell.querySelector('.stale-line');
+if (line) throw new Error('expected NO .stale-line for blocked status even when lastOutputAt is stale');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffBuildDurationCell_StaleLineStillAppearsForAutoSelectingStatus(t *testing.T) {
+	js := `const body = makeMockBody();
+const stale = new Date(Date.now() - 90*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'auto-selecting', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+const line = durationCell.querySelector('.stale-line');
+if (!line) throw new Error('expected .stale-line for auto-selecting status when lastOutputAt is stale');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1811,53 +1855,6 @@ for (const name of required) {
 	}
 }
 
-func TestPortalDiffUpdateCells_AddsBatchMembershipChipWhenBatchIssuesAppear(t *testing.T) {
-	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: '#860', issueNumber: 860, runId: 'r1' };
-const runNew = Object.assign({}, runOld, { batchIssues: [860, 854] });
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: null };
-const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch-row on initial run with no batchIssues');
-clearLog(body);
-SandmanPortalDiff.resetCounters();
-const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
-if (!result.mutated) throw new Error('expected mutated=true after batchIssues transition');
-const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
-if (!batchRow) throw new Error('expected batch-row to be added by updateRunRowCells');
-const chip = batchRow.querySelector('.batch-membership');
-if (!chip) throw new Error('expected batch-membership chip in new batch-row');
-const text = chip.textContent || '';
-if (!text.includes('860') || !text.includes('854')) {
-  throw new Error('expected chip text to list both issues 860 and 854, got ' + JSON.stringify(text));
-}
-const dataRowIdx = Array.prototype.indexOf.call(body.children, created.row);
-const batchRowIdx = Array.prototype.indexOf.call(body.children, batchRow);
-if (batchRowIdx !== dataRowIdx + 1) {
-  throw new Error('expected new batch-row immediately after data row');
-}
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateCells_RemovesBatchMembershipChipWhenBatchIssuesShrinkToSingle(t *testing.T) {
-	js := `const body = makeMockBody();
-const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: '#42', issueNumber: 42, runId: 'r1', batchIssues: [42, 43] };
-const runNew = Object.assign({}, runOld, { batchIssues: [42] });
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: null };
-const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
-if (!body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected initial batch-row from batchIssues');
-SandmanPortalDiff.resetCounters();
-const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
-if (!result.mutated) throw new Error('expected mutated=true after batchIssues shrink to single');
-if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected batch-row removed when batchIssues shrunk to single issue');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
 func TestPortalDiffUpdateCells_ZeroMutationsWhenBatchIssuesUnchanged(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'auto-select', runId: 'r1', reason: 'auto-select', batchIssues: [42, 43], candidates: [42, 43] };
@@ -1897,27 +1894,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffDiffRuns_RendersBatchMembershipFromServerJSON(t *testing.T) {
-	serverJSON := []byte(`[{"key":"a","runId":"r1","kind":"active","status":"running","issueLabel":"#42","issueNumber":42,"batchKey":"run-42-1","batchIssues":[42,43],"startedAt":"2025-01-01T12:00:00Z"}]`)
-	js := `const body = makeMockBody();
-const runs = ` + string(serverJSON) + `;
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: null };
-SandmanPortalDiff.diffRuns(body, runs, opts);
-const row = body.children[0];
-const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
-if (!batchRow) throw new Error('expected batch-row from server JSON with batchIssues=[42,43]');
-const marker = batchRow.querySelector('.batch-membership');
-if (!marker) throw new Error('expected batch-membership element in batch-row, got ' + (batchRow ? batchRow.outerHTML : 'no batchRow'));
-const text = marker.textContent || '';
-if (!text.includes('42') || !text.includes('43')) {
-  throw new Error('expected chip text to list both issues 42 and 43, got ' + JSON.stringify(text));
-}
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
 func sharedMockHelpers() string {
 	return `const escapeHTML = (v) => String(v == null ? '' : v)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1948,8 +1924,11 @@ const renderStatusBadge = (run) => {
 };
 const renderRunMeta = (run) => {
   const lines = [];
-  if (run.runId) lines.push(run.runId);
+  if (run.runId) lines.push('Run: ' + run.runId);
   const summary = [];
+  if (run.batchKey) {
+    summary.push('Batch: ' + run.batchKey);
+  }
   if (Number(run.retriesDone || 0) > 0) {
     const count = Number(run.retriesDone || 0);
     summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
@@ -1958,9 +1937,6 @@ const renderRunMeta = (run) => {
     const count = Number(run.reviewCount || 0);
     summary.push(count + ' review' + (count === 1 ? '' : 's'));
     if (run.reviewVerdict) summary.push(run.reviewVerdict);
-  }
-  if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
-    summary.push('Batch #' + run.batchIssues.join(', #'));
   }
   if (summary.length) lines.push(summary.join(' - '));
   return lines.length ? lines.join('\n') : 'Run';
@@ -1981,6 +1957,7 @@ const isRunAbortable = (run, abortReservations) => {
 const isRunArchivable = (run) => {
   if (!run || run.kind !== 'completed') return false;
   if (run.archived) return false;
+  if (run.unavailable) return false;
   if (run.sourceExists === false) return false;
   if (!run.runId) return false;
   return true;
@@ -2339,39 +2316,6 @@ if (!SandmanPortalDiff) throw new Error('SandmanPortalDiff missing');
 	if !strings.Contains(string(out), "PASS") {
 		t.Logf("script output: %s", out)
 	}
-}
-
-func TestPortalDiffCreateRunRow_MixedBatchSurfacesBatchMembership(t *testing.T) {
-	js := `const body = makeMockBody();
-const run = {
-  key: 'a',
-  kind: 'active',
-  status: 'running',
-  issueLabel: '#860',
-  issueNumber: 860,
-  batchKey: 'run-999-1',
-  batchIssues: [860, 854],
-  runId: 'r1',
-};
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: null };
-const created = SandmanPortalDiff.insertRunRow(body, run, opts);
-const titleCell = created.row.querySelector('[data-cell="title"]');
-if (!titleCell) throw new Error('expected title cell');
-if (titleCell.querySelector('.batch-membership')) {
-  throw new Error('batch-membership must not live inside the title cell');
-}
-const batchRow = body.querySelector('tr.batch-row[data-batch-for="a"]');
-if (!batchRow) throw new Error('expected sibling tr.batch-row[data-batch-for="a"]');
-const marker = batchRow.querySelector('.batch-membership');
-if (!marker) throw new Error('expected batch-membership element in batch-row, got ' + batchRow.outerHTML);
-const text = marker.textContent || '';
-if (!text.includes('860') || !text.includes('854')) {
-  throw new Error('expected marker to list both issues 860 and 854, got ' + JSON.stringify(text));
-}
-console.log('PASS');
-`
-	runNodeScript(t, js)
 }
 
 func TestPortalDiffCreateRunRow_SingleIssueOmitsBatchMembership(t *testing.T) {
@@ -2924,6 +2868,23 @@ vm.runInNewContext(scriptBody + '\n' + ` + "`" + js + "`" + `, Object.assign({},
 // preserve the source row's runId so renderRunMeta continues to surface
 // the real run identifier in the meta line, and so findRunByIdentity can
 // locate the row from its data-run-key.
+func TestPortalDiffBuildLogPre_HasTerminalLogClass(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: 'some log output' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const content = detailRow.querySelector('.detail-content');
+const pre = content.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+const hasTerminalLog = pre.classList.contains('terminal-log');
+if (!hasTerminalLog) throw new Error('expected terminal-log class');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalRunsView_VisibleRunForIssueGroup_PreservesReviewRunID(t *testing.T) {
 	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);

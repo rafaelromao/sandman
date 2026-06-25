@@ -296,7 +296,7 @@ func TestReviewState_JSONSchema(t *testing.T) {
 	state := ReviewState{
 		PR: 1217,
 		SeenComments: []SeenComment{
-			{CommentID: "12345", Timestamp: now},
+			{CommentID: "12345", Status: "success", Timestamp: now},
 		},
 		Claims: map[string]Claim{
 			"12345": {Holder: "pid123", Since: now},
@@ -434,7 +434,7 @@ func TestWriteReadReviewState(t *testing.T) {
 	state := ReviewState{
 		PR: 1217,
 		SeenComments: []SeenComment{
-			{CommentID: "12345", Timestamp: now},
+			{CommentID: "12345", Status: "success", Timestamp: now},
 		},
 		Claims: map[string]Claim{
 			"12345": {Holder: "pid123", Since: now},

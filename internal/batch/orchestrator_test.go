@@ -7953,6 +7953,54 @@ func TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders(t *tes
 	}
 }
 
+func TestClearIssueArtifacts_RemovesPrunableWorktree(t *testing.T) {
+	branch := "sandman/42-fix-bug"
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	worktreeDir := filepath.Join(".sandman", "worktrees")
+	wtPath := filepath.Join(worktreeDir, branch)
+
+	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+		t.Fatalf("mkdir worktree base: %v", err)
+	}
+
+	runGit(t, dir, "worktree", "add", "-b", branch, wtPath, "main")
+
+	if err := os.WriteFile(filepath.Join(wtPath, ".git"), []byte("gitdir: /nonexistent/path\n"), 0644); err != nil {
+		t.Fatalf("corrupt .git file: %v", err)
+	}
+
+	listCmd := exec.Command("git", "worktree", "list")
+	listCmd.Dir = dir
+	listOut, err := listCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git worktree list: %v: %s", err, listOut)
+	}
+	if !strings.Contains(string(listOut), wtPath) {
+		t.Fatalf("worktree should be registered, got:\n%s", listOut)
+	}
+
+	el := &spyEventLog{}
+	logBuf := &bytes.Buffer{}
+	trueVal := true
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("expected prunable worktree dir to be removed, got err=%v", err)
+	}
+
+	if strings.Contains(logBuf.String(), "error:") {
+		t.Errorf("expected no error log on prunable worktree recovery, got:\n%s", logBuf.String())
+	}
+
+	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
+	if out, err := revCmd.CombinedOutput(); err == nil {
+		t.Errorf("expected branch %q to be deleted, rev-parse succeeded: %s", branch, out)
+	}
+}
+
 func TestOrchestrator_EmitsRunQueuedEventWhenBlocked(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

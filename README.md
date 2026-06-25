@@ -46,7 +46,7 @@ Sandman manages the lifecycle of automated coding workflows:
 | [Commands Reference](docs/usage/commands.md) | All CLI commands, flags, and issue selection modes |
 | [Configuration](docs/usage/configuration.md) | Full config schema, default agent, and CLI config |
 | [Portal](docs/usage/portal.md) | Local browser dashboard for repo-scoped Sandman runs |
-| [Default Task Prompt](docs/usage/default-prompt.md) | Bootstrap task prompt, lifecycle, and task file |
+| [Default Task Prompt](docs/usage/default-task-prompt.md) | Bootstrap task prompt, lifecycle, and task file |
 | [Skills](docs/usage/skills.md) | Shared Sandman skill installation and workflow |
 | [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
 | [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, continue and cleanup |

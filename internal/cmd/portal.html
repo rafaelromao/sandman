@@ -317,30 +317,24 @@
        BELOW the chip (inherited border-bottom) so the run row + chip
        read as a single visual block; the next run row starts after the
        chip's own divider. */
-    tbody tr.batch-row td,
     tbody tr.context-row td {
       padding: 0 14px 6px;
       border-top: none;
       border-left: none;
       border-right: none;
     }
-    tbody tr.run-row:has(+ tr.context-row) td,
-    tbody tr.run-row:has(+ tr.batch-row) td {
+    tbody tr.run-row:has(+ tr.context-row) td {
       border-bottom: none;
     }
-    tbody tr.run-row + tr.batch-row td,
     tbody tr.run-row + tr.context-row td {
       padding-top: 0;
     }
-    tbody tr.run-row:hover + tr.batch-row td,
     tbody tr.run-row:hover + tr.context-row td {
       background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
     }
-    tbody tr.run-row.active + tr.batch-row td,
     tbody tr.run-row.active + tr.context-row td {
       background: color-mix(in oklch, var(--accent) 12%, var(--surface));
     }
-    .batch-membership,
     .context-chip {
       display: block;
       width: 100%;
@@ -353,7 +347,6 @@
       letter-spacing: 0.04em;
       overflow-wrap: anywhere;
     }
-    .batch-membership::before,
     .context-chip::before {
       content: "·";
       display: inline-block;
@@ -791,6 +784,11 @@
     .badge.aborted .dot { background: color-mix(in oklch, var(--danger) 72%, var(--muted)); }
     tbody tr.run-row.row-archived td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
     tbody tr.run-row.row-archived .run-title .name { color: color-mix(in oklch, var(--muted) 60%, var(--text)); }
+    /* Unavailable rows keep the same dimmed text as archived rows but
+       apply a slightly different label colour so the two read-only
+       states stay visually distinct. */
+    tbody tr.run-row.row-unavailable td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
+    tbody tr.run-row.row-unavailable .run-title .name { color: color-mix(in oklch, var(--warning) 60%, var(--text)); }
     .cell-duration .cell-duration-stack {
       display: flex;
       flex-direction: column;
@@ -975,6 +973,11 @@
       font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
       white-space: pre-wrap;
       word-break: break-word;
+    }
+    .terminal-log {
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+      white-space: pre;
+      overflow-x: auto;
     }
     .json-key { color: var(--accent); }
     .json-string { color: color-mix(in oklch, var(--warning) 65%, var(--text)); }
@@ -1345,8 +1348,7 @@
       tbody tr.run-row td[data-cell="archived"] {
         display: none;
       }
-      tbody tr.run-row:has(+ tr.context-row),
-      tbody tr.run-row:has(+ tr.batch-row) {
+      tbody tr.run-row:has(+ tr.context-row) {
         border-bottom: none;
       }
       tbody tr.run-row:hover,
@@ -1416,8 +1418,7 @@
         padding: 0;
         border: none;
       }
-      tbody tr.context-row,
-      tbody tr.batch-row {
+      tbody tr.context-row {
         display: block;
         background: transparent;
         margin-top: -16px;
@@ -1426,8 +1427,7 @@
       tbody tr.run-row.active + tr.context-row {
         background: color-mix(in oklch, var(--accent) 10%, var(--surface));
       }
-      tbody tr.context-row td,
-      tbody tr.batch-row td {
+      tbody tr.context-row td {
         display: block;
         padding: 0 12px 4px;
         border-bottom: none;
@@ -1762,11 +1762,18 @@
     function appendStreamLine(runKey, line) {
       const pre = streamPreFor(runKey);
       if (!pre) return;
+      const renderedLog = pre.getAttribute('data-rendered-log') || '';
+      const knownLines = pre._streamKnownLines || new Set(renderedLog.split('\n').filter(Boolean));
+      if (knownLines.has(line)) {
+        return;
+      }
+      knownLines.add(line);
+      pre._streamKnownLines = knownLines;
       const html = SandmanPortalDiff.highlightTerminalLog(line + '\n');
       const scratch = document.createElement('div');
       scratch.innerHTML = html;
       while (scratch.firstChild) pre.appendChild(scratch.firstChild);
-      pre.setAttribute('data-rendered-log', (pre.getAttribute('data-rendered-log') || '') + line + '\n');
+      pre.setAttribute('data-rendered-log', renderedLog + line + '\n');
       if (portalScroll && portalScroll.isSticky(runKey)) {
         pre.scrollTop = pre.scrollHeight;
       }
@@ -1776,12 +1783,14 @@
       if (!run || run.kind !== 'active' || !run.socketPath) return;
       if (streamSources[run.key]) return;
       const backendKey = run.backendKey || run.key;
-      // Reset the <pre> so the broadcaster's connect-replay refills it
-      // authoritatively; the snapshot we had is a subset of the replay.
       const pre = streamPreFor(run.key);
       if (pre) {
-        while (pre.firstChild) pre.removeChild(pre.firstChild);
-        pre.setAttribute('data-rendered-log', '');
+        const cachedLog = pre.getAttribute('data-rendered-log') || '';
+        if (!cachedLog) {
+          while (pre.firstChild) pre.removeChild(pre.firstChild);
+          pre.setAttribute('data-rendered-log', '');
+        }
+        pre._streamKnownLines = new Set(cachedLog.split('\n').filter(Boolean));
       }
       const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
       src.onmessage = function (ev) { appendStreamLine(run.key, ev.data); };
@@ -2341,8 +2350,11 @@
     }
     function renderRunMeta(run) {
       const lines = [];
-      if (run.runId) lines.push(run.runId);
+      if (run.runId) lines.push('Run: ' + run.runId);
       const summary = [];
+      if (run.batchKey) {
+        summary.push('Batch: ' + run.batchKey);
+      }
       if (Number(run.retriesDone || 0) > 0) {
         const count = Number(run.retriesDone || 0);
         summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
@@ -2351,9 +2363,6 @@
         const count = Number(run.reviewCount || 0);
         summary.push(count + ' review' + (count === 1 ? '' : 's'));
         if (run.reviewVerdict) summary.push(run.reviewVerdict);
-      }
-      if (Array.isArray(run.batchIssues) && run.batchIssues.length > 1) {
-        summary.push('Batch #' + run.batchIssues.join(', #'));
       }
       if (summary.length) lines.push(summary.join(' - '));
       return lines.length ? lines.join('\n') : 'Run';
@@ -2377,6 +2386,7 @@
     function isRunArchivable(run) {
       if (!run || run.kind !== 'completed') return false;
       if (run.archived) return false;
+      if (run.unavailable) return false;
       if (run.sourceExists === false) return false;
       if (!run.runId) return false;
       return true;
