@@ -2032,11 +2032,10 @@ const renderStatusBadge = (run) => {
 };
 const renderRunMeta = (run) => {
   const lines = [];
-  if (run.runId) lines.push('Run: ' + run.runId);
-  if (run.batchKey) {
-    lines.push('Batch: ' + run.batchKey);
-  }
   const summary = [];
+  if (run.batchKey) {
+    summary.push('Batch: ' + run.batchKey);
+  }
   if (Number(run.retriesDone || 0) > 0) {
     const count = Number(run.retriesDone || 0);
     summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
@@ -2046,7 +2045,13 @@ const renderRunMeta = (run) => {
     summary.push(count + ' review' + (count === 1 ? '' : 's'));
     if (run.reviewVerdict) summary.push(run.reviewVerdict);
   }
-  if (summary.length) lines.push(summary.join(' - '));
+  if (run.batchKey) {
+    if (summary.length) lines.push(summary.join(' - '));
+    if (run.runId) lines.push('Run: ' + run.runId);
+  } else {
+    if (run.runId) lines.push('Run: ' + run.runId);
+    if (summary.length) lines.push(summary.join(' - '));
+  }
   return lines.length ? lines.join('\n') : 'Run';
 };
 const renderTerminalContent = (text) => {
@@ -3031,6 +3036,25 @@ if (rendered.runId !== 'a0c19-260622193226-1227') throw new Error('expected visi
 const meta = helpers.renderRunMeta(rendered);
 if (!meta.includes('a0c19-260622193226-1227')) throw new Error('expected renderRunMeta to surface real run identifier, got ' + JSON.stringify(meta));
 if (meta.startsWith('issue-')) throw new Error('expected renderRunMeta not to start with synthetic "issue-" stub, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestRenderRunMeta_BatchAboveRunID(t *testing.T) {
+	js := `const runWithBatch = { key: 'a', runId: 'r1', batchKey: 'batch-42', kind: 'active', status: 'running' };
+const metaWithBatch = helpers.renderRunMeta(runWithBatch);
+if (metaWithBatch.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for run with batch, got ' + JSON.stringify(metaWithBatch));
+if (metaWithBatch.indexOf('Run:') < 0) throw new Error('expected Run: in meta for run with batch, got ' + JSON.stringify(metaWithBatch));
+const batchPos = metaWithBatch.indexOf('Batch:');
+const runPos = metaWithBatch.indexOf('Run:');
+if (batchPos > runPos) throw new Error('expected Batch: to appear before Run:, got Batch: at ' + batchPos + ', Run: at ' + runPos + ' in ' + JSON.stringify(metaWithBatch));
+
+const runWithoutBatch = { key: 'b', runId: 'r2', kind: 'active', status: 'running' };
+const metaWithoutBatch = helpers.renderRunMeta(runWithoutBatch);
+if (metaWithoutBatch.indexOf('Run:') < 0) throw new Error('expected Run: in meta for run without batch, got ' + JSON.stringify(metaWithoutBatch));
+if (metaWithoutBatch.indexOf('Batch:') >= 0) throw new Error('expected no Batch: in meta for run without batch, got ' + JSON.stringify(metaWithoutBatch));
+
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
