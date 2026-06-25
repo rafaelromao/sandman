@@ -95,6 +95,7 @@ func depsWithSocket(runner batch.Runner) Dependencies {
 		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: &fakeGitHubClient{},
+		RepoRoot:     ".",
 	}
 }
 

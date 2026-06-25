@@ -109,6 +109,7 @@ func TestRun_PrepareFailure_DoesNotEmitRunStarted(t *testing.T) {
 		GitHubClient: gh,
 		Renderer:     &prompt.Engine{},
 		IsTTY:        func() bool { return false },
+		RepoRoot:     ".",
 	}
 
 	var buf bytes.Buffer
@@ -205,6 +206,7 @@ func TestRun_ControlSocketBindFailure_LeavesNoArtifacts(t *testing.T) {
 		GitHubClient: gh,
 		Renderer:     &prompt.Engine{},
 		IsTTY:        func() bool { return false },
+		RepoRoot:     ".",
 	}
 
 	var buf bytes.Buffer
