@@ -18,7 +18,10 @@ type runActivityProbe func(runPath string) bool
 
 func stripSockets(batchDir string) error {
 	return filepath.Walk(batchDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
 			return nil
 		}
 		matched, _ := filepath.Match("*sock*", filepath.Base(path))
