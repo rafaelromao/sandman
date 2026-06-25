@@ -292,6 +292,7 @@ func newRunIntegrationDepsWithSandboxAndGit(agent config.Agent, sandboxMode stri
 		GitHubClient: gh,
 		Renderer:     &prompt.Engine{},
 		IsTTY:        func() bool { return false },
+		RepoRoot:     ".",
 	}
 }
 

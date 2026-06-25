@@ -175,6 +175,7 @@ func TestRun_BootArtifactsBeforeRunStarted(t *testing.T) {
 		GitHubClient: gh,
 		Renderer:     &prompt.Engine{},
 		IsTTY:        func() bool { return false },
+		RepoRoot:     ".",
 	}
 
 	runDone := make(chan error, 1)
@@ -339,6 +340,7 @@ func TestRun_ContainerSandboxMode_RunDirAndSocketsBeforeAgentStart(t *testing.T)
 		GitHubClient: gh,
 		Renderer:     &prompt.Engine{},
 		IsTTY:        func() bool { return false },
+		RepoRoot:     ".",
 	}
 
 	runDone := make(chan error, 1)
@@ -516,6 +518,7 @@ func TestRun_ContinueMode_RunDirAndSocketsBeforeContinuedEvent(t *testing.T) {
 		GitHubClient: gh,
 		Renderer:     &prompt.Engine{},
 		IsTTY:        func() bool { return false },
+		RepoRoot:     ".",
 	}
 
 	runDone := make(chan error, 1)
