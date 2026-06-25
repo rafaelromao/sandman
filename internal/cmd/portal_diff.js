@@ -436,7 +436,7 @@
     return related.map(subjectRunValue).join('|');
   }
 
-  function buildSubjectSelector(panel, rowRun, subjectRun, opts) {
+  function createSubjectSelector(rowRun, subjectRun, opts) {
     const related = subjectRunsFor(rowRun, opts);
     if (!related.length) return;
     const row = global.document.createElement('div');
@@ -456,7 +456,13 @@
     }
     select.value = currentValue;
     row.appendChild(select);
-    panel.appendChild(row);
+    return row;
+  }
+
+  function buildSubjectSelector(panel, rowRun, subjectRun, opts) {
+    const row = createSubjectSelector(rowRun, subjectRun, opts);
+    if (row) panel.appendChild(row);
+    return row;
   }
 
   function buildLogPre(run, helpers) {
@@ -716,7 +722,8 @@
 
   function buildDetailContent(panel, rowRun, subjectRun, tabName, helpers, opts) {
     const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
-    buildSubjectSelector(panel, rowRun, subjectRun, opts);
+    const subjectPicker = buildSubjectSelector(panel, rowRun, subjectRun, opts);
+    if (subjectPicker) panel.appendChild(subjectPicker);
     buildTabsRow(panel, rowRun, tabName);
     const content = global.document.createElement('div');
     content.classList.add('detail-content');
@@ -768,6 +775,21 @@
     const subjectRun = findRunByIdentity(opts.expandedKey, opts) || run;
     const tabName = tabNameFor(subjectRun, opts);
     const subjectValue = subjectRunValue(subjectRun);
+    const subjectPicker = detailRow.querySelector('.detail-subject-picker');
+    if (subjectPicker) {
+      const panel = detailRow.querySelector('.detail-panel');
+      const currentValues = Array.from(subjectPicker.querySelectorAll('option')).map((option) => String(option.getAttribute('value') || ''));
+      const desiredValues = subjectRunsFor(run, opts).map((candidate) => subjectRunValue(candidate));
+      const selectorChanged = currentValues.length !== desiredValues.length || currentValues.some((value, index) => value !== desiredValues[index]);
+      if (selectorChanged && panel) {
+        const nextPicker = createSubjectSelector(run, subjectRun, opts);
+        if (nextPicker) {
+          panel.insertBefore(nextPicker, subjectPicker);
+          panel.removeChild(subjectPicker);
+          mutationCount += 1;
+        }
+      }
+    }
     const tabButtons = detailRow.querySelectorAll('button[data-tab]');
     for (const btn of tabButtons) {
       const want = String(btn.getAttribute('data-tab') === tabName);
