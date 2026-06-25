@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"reflect"
 	"sync"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
