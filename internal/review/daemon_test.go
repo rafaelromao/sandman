@@ -537,20 +537,47 @@ func TestDaemon_ReactionRemovedOnRunBatchError(t *testing.T) {
 }
 
 func TestDaemon_TickSkipsSeenComment(t *testing.T) {
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
 		comments: map[int][]github.PRComment{
-			42: {{ID: "100", Body: "/sandman review again"}},
+			42: {{ID: "100", Body: "/sandman review again", CreatedAt: now}},
 		},
 	}
 	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{})
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now }
 
-	dir := d.PRDir(42)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	batchesDir := filepath.Join(d.BaseDir, "batches")
+	priorBatchID := "abcd-260625120000-PR42"
+	priorBatchPath := filepath.Join(batchesDir, priorBatchID)
+	priorRunDir := filepath.Join(priorBatchPath, "runs", "review")
+	if err := os.MkdirAll(priorRunDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "seen-comments.jsonl"), []byte("100\n"), 0644); err != nil {
+	if err := batchindex.WriteReviewState(priorRunDir, batchindex.ReviewState{
+		PR: 42,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: "100", Status: "success", Timestamp: now},
+		},
+		Claims: map[string]batchindex.Claim{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	idxPath := daemon.BatchesIndexPath(d.BaseDir)
+	idx := &batchindex.Index{Version: batchindex.IndexVersion}
+	idx.Add(batchindex.Entry{
+		ID:        priorBatchID,
+		Path:      priorBatchPath,
+		Kind:      batchindex.KindReview,
+		Status:    batchindex.StatusActive,
+		CreatedAt: now,
+		PR:        42,
+	})
+	if err := idx.Save(idxPath); err != nil {
 		t.Fatal(err)
 	}
 

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -101,16 +100,6 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		PollInterval: PollingInterval,
 		busy:         make(chan struct{}, cfg.EffectiveReviewParallel()),
 	}
-}
-
-// PRDir is preserved as a deprecated seam for backward compatibility with
-// tests that asserted on the per-PR path. New code MUST use the run
-// folder returned by the batch runner for per-PR state.
-//
-// Deprecated: per-PR state has moved to <batch>/runs/<run>/review-state.json.
-// This method will be removed in a future slice.
-func (d *Daemon) PRDir(prNumber int) string {
-	return filepath.Join(d.BaseDir, "reviews", strconv.Itoa(prNumber))
 }
 
 // SocketPath returns the absolute path of the daemon's control socket.
