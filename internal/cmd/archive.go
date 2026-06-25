@@ -16,14 +16,16 @@ import (
 
 type runActivityProbe func(runPath string) bool
 
-func stripSockets(batchDir string) {
-	_ = filepath.Walk(batchDir, func(path string, info os.FileInfo, err error) error {
+func stripSockets(batchDir string) error {
+	return filepath.Walk(batchDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
 		matched, _ := filepath.Match("*sock*", filepath.Base(path))
 		if matched {
-			_ = os.Remove(path)
+			if rmErr := os.Remove(path); rmErr != nil {
+				return rmErr
+			}
 		}
 		return nil
 	})
@@ -127,7 +129,9 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 		if err := os.Rename(entry.Path, archivePath); err != nil {
 			return fmt.Errorf("move batch %q: %w", entry.ID, err)
 		}
-		stripSockets(archivePath)
+		if err := stripSockets(archivePath); err != nil {
+			return fmt.Errorf("strip sockets from archived batch %q: %w", entry.ID, err)
+		}
 		if err := idx.SetArchived(entry.ID, archivePath, now); err != nil {
 			return fmt.Errorf("set archived in index: %w", err)
 		}
@@ -180,7 +184,9 @@ func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe, repoRo
 	if err := os.Rename(entry.Path, archivePath); err != nil {
 		return fmt.Errorf("move batch dir: %w", err)
 	}
-	stripSockets(archivePath)
+	if err := stripSockets(archivePath); err != nil {
+		return fmt.Errorf("strip sockets from archived batch %q: %w", id, err)
+	}
 
 	now := time.Now().UTC()
 	if err := idx.SetArchived(id, archivePath, now); err != nil {
@@ -226,7 +232,9 @@ func archivePortalRun(repoRoot, runID string) error {
 	if err := os.Rename(entry.Path, archivePath); err != nil {
 		return fmt.Errorf("move batch dir: %w", err)
 	}
-	stripSockets(archivePath)
+	if err := stripSockets(archivePath); err != nil {
+		return fmt.Errorf("strip sockets from archived batch %q: %w", runID, err)
+	}
 
 	now := time.Now().UTC()
 	if err := idx.SetArchived(runID, archivePath, now); err != nil {
@@ -296,7 +304,9 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 		if err := os.Rename(entry.Path, archivePath); err != nil {
 			return fmt.Errorf("move batch %q: %w", entry.ID, err)
 		}
-		stripSockets(archivePath)
+		if err := stripSockets(archivePath); err != nil {
+			return fmt.Errorf("strip sockets from archived batch %q: %w", entry.ID, err)
+		}
 		if err := idx.SetArchived(entry.ID, archivePath, now); err != nil {
 			return fmt.Errorf("set archived in index: %w", err)
 		}
