@@ -393,7 +393,7 @@ func writeBlockingOpencodeShim(t *testing.T, dir string) {
 	script := `#!/bin/sh
 set -eu
 
-repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")
+repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")")
 
 case "$*" in
   *"Implement GitHub issue #1"*)
@@ -433,63 +433,6 @@ case "$*" in
   *"Implement GitHub issue #1"*)
     child=0
     trap 'if [ "$child" -ne 0 ]; then kill "$child" >/dev/null 2>&1 || true; fi; exit 130' INT
-    sleep 600 &
-    child=$!
-    wait "$child"
-    ;;
-  *"Implement GitHub issue #2"*)
-    exec sleep 600
-    ;;
-  *)
-    exec sleep 600
-    ;;
-esac
-`
-	if err := os.WriteFile(filepath.Join(binDir, "opencode"), []byte(script), 0755); err != nil {
-		t.Fatalf("write container blocking opencode shim: %v", err)
-	}
-
-	script := `#!/bin/sh
-set -eu
-
-repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")
-
-case "$*" in
-  *"Implement GitHub issue #1"*)
-    child=0
-    trap 'if [ "$child" -ne 0 ]; then kill "$child" >/dev/null 2>&1 || true; fi; exit 130' INT
-    sleep 600 &
-    child=$!
-    wait "$child"
-    ;;
-  *"Implement GitHub issue #2"*)
-    exec sleep 600
-    ;;
-  *)
-    exec sleep 600
-    ;;
-esac
-`
-
-	if err := os.WriteFile(filepath.Join(binDir, "opencode"), []byte(script), 0755); err != nil {
-		t.Fatalf("write container blocking opencode shim: %v", err)
-	}
-
-	script := `#!/bin/sh
-set -eu
-
-repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")")
-
-case "$*" in
-  *"Implement GitHub issue #1"*)
-    child=0
-    trap 'if [ "$child" -ne 0 ]; then kill "$child" >/dev/null 2>&1 || true; fi; exit 130' INT
-    mkdir -p "$repo_root/.sandman/logs"
-    cat > "$repo_root/.sandman/logs/1.log" <<'EOF'
---- run 0 ---
-# Todos
-- [ ] fake opencode issue 1 still running
-EOF
     sleep 600 &
     child=$!
     wait "$child"
