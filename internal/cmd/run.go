@@ -97,9 +97,13 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			repoRoot, err := resolveRepoRoot()
-			if err != nil {
-				return fmt.Errorf("resolve repo root: %w", err)
+			repoRoot := deps.RepoRoot
+			if repoRoot == "" {
+				var err error
+				repoRoot, err = resolveRepoRoot()
+				if err != nil {
+					return fmt.Errorf("resolve repo root: %w", err)
+				}
 			}
 			sandmanDir := filepath.Join(repoRoot, ".sandman")
 
@@ -682,8 +686,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			defer rs.Close()
 
+			relRunDir, err := filepath.Rel(repoRoot, rs.RunDir())
+			if err != nil {
+				return fmt.Errorf("rel run dir: %w", err)
+			}
 			req.OutputWriter = rs.Broadcaster()
-			req.RunDir = rs.RunDir()
+			req.RunDir = relRunDir
 
 			result, err := deps.BatchRunner.RunBatch(ctx, req)
 			if result != nil {

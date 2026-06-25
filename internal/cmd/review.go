@@ -146,9 +146,13 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		sandboxMode = cfg.Sandbox
 	}
 
-	repoRoot, err := resolveRepoRoot()
-	if err != nil {
-		return fmt.Errorf("resolve repo root: %w", err)
+	repoRoot := deps.RepoRoot
+	if repoRoot == "" {
+		var err error
+		repoRoot, err = resolveRepoRoot()
+		if err != nil {
+			return fmt.Errorf("resolve repo root: %w", err)
+		}
 	}
 	sandmanDir := filepath.Join(repoRoot, ".sandman")
 
@@ -159,6 +163,11 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		return fmt.Errorf("bootstrap review session: %w", err)
 	}
 	defer rs.Close()
+
+	relRunDir, err := filepath.Rel(repoRoot, rs.RunDir())
+	if err != nil {
+		return fmt.Errorf("rel run dir: %w", err)
+	}
 
 	if _, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
 		Agent:                reviewAgentName,
@@ -178,7 +187,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		PRNumber:     pr.Number,
 		RunID:        fmt.Sprintf("PR%d", pr.Number),
 		OutputWriter: rs.Broadcaster(),
-		RunDir:       rs.RunDir(),
+		RunDir:       relRunDir,
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
 	}

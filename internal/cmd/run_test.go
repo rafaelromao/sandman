@@ -203,6 +203,7 @@ func newRunDeps(runner batch.Runner) Dependencies {
 		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: &fakeGitHubClient{},
+		RepoRoot:     ".",
 	}
 }
 
@@ -242,6 +243,7 @@ func newRunDepsInDir(t testing.TB, runner batch.Runner) (string, Dependencies) {
 		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: &fakeGitHubClient{},
+		RepoRoot:     ".",
 	}
 }
 
@@ -1022,6 +1024,7 @@ func TestRun_FreshRunErrorsWhenBranchAlreadyExists(t *testing.T) {
 		ConfigStore:  store,
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
+		RepoRoot:     ".",
 	}
 
 	var buf bytes.Buffer
