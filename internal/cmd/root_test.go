@@ -48,7 +48,7 @@ func newSandmanDir(t testing.TB) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("unix", ReviewSocketPath(sandmanDir))

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -253,10 +254,14 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 		}
 	}()
 
-	socketDir := ".sandman"
+	// The daemon's socket and prompt template live under
+	// .sandman/reviews/ so the daemon's on-disk footprint is just two
+	// files at that location plus run folders under .sandman/batches/.
+	// Issue #1224 acceptance criteria.
+	socketDir := filepath.Join(".sandman", "reviews")
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
-	d := review.New(socketDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster)
+	d := review.New(".sandman", deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster)
 	d.Sandbox = sandbox
 	d.ContainerCapacity = cc
 	d.ContainerCapacitySet = ccSet
