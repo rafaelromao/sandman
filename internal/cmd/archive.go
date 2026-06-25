@@ -21,15 +21,10 @@ func stripSockets(batchDir string) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+		if info.IsDir() || info.Mode()&os.ModeSocket == 0 {
 			return nil
 		}
-		matched, _ := filepath.Match("*sock*", filepath.Base(path))
-		if matched {
-			if rmErr := os.Remove(path); rmErr != nil {
-				return rmErr
-			}
-		}
+		_ = os.Remove(path)
 		return nil
 	})
 }

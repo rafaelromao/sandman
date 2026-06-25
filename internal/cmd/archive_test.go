@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -258,10 +260,10 @@ func TestArchiveRun_NoSocketsInArchive(t *testing.T) {
 
 	batchSockPath := filepath.Join(batchDir, "batch.sock")
 	runSockPath := filepath.Join(batchDir, "run.sock")
-	if err := os.WriteFile(batchSockPath, []byte(""), 0644); err != nil {
+	if err := createUnixSocket(batchSockPath); err != nil {
 		t.Fatalf("create batch.sock: %v", err)
 	}
-	if err := os.WriteFile(runSockPath, []byte(""), 0644); err != nil {
+	if err := createUnixSocket(runSockPath); err != nil {
 		t.Fatalf("create run.sock: %v", err)
 	}
 
@@ -269,7 +271,7 @@ func TestArchiveRun_NoSocketsInArchive(t *testing.T) {
 	if err := os.MkdirAll(runSockNestedDir, 0755); err != nil {
 		t.Fatalf("create runs/run-42 dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(runSockNestedDir, "run.sock"), []byte(""), 0644); err != nil {
+	if err := createUnixSocket(filepath.Join(runSockNestedDir, "run.sock")); err != nil {
 		t.Fatalf("create runs/run-42/run.sock: %v", err)
 	}
 
@@ -302,6 +304,9 @@ func filepathGlobRecursive(root, pattern string) ([]string, error) {
 		if info.IsDir() {
 			return nil
 		}
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil
+		}
 		matched, err := filepath.Match(pattern, filepath.Base(path))
 		if err != nil {
 			return err
@@ -312,6 +317,16 @@ func filepathGlobRecursive(root, pattern string) ([]string, error) {
 		return nil
 	})
 	return matches, err
+}
+
+func createUnixSocket(path string) error {
+	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	unix.Bind(fd, &unix.SockaddrUnix{Name: path})
+	return nil
 }
 
 func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
