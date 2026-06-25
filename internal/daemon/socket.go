@@ -116,7 +116,9 @@ func (s *ControlSocket) Stop() error {
 	}
 	s.broadcaster.Close()
 	if !s.isAbstract {
-		_ = os.Remove(s.Path())
+		if rmErr := os.Remove(s.Path()); rmErr != nil && !os.IsNotExist(rmErr) {
+			return rmErr
+		}
 	}
 	return closeErr
 }

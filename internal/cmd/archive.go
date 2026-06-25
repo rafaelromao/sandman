@@ -17,16 +17,20 @@ import (
 type runActivityProbe func(runPath string) bool
 
 func stripSockets(batchDir string) error {
-	return filepath.Walk(batchDir, func(path string, info os.FileInfo, err error) error {
+	var lastErr error
+	_ = filepath.Walk(batchDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.IsDir() || info.Mode()&os.ModeSocket == 0 {
 			return nil
 		}
-		_ = os.Remove(path)
+		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+			lastErr = rmErr
+		}
 		return nil
 	})
+	return lastErr
 }
 
 func NewArchiveCmd(deps Dependencies) *cobra.Command {
