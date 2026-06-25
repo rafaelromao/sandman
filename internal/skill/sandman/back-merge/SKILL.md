@@ -25,6 +25,7 @@ If `git merge-base --is-ancestor` succeeds, the current branch already contains 
 - Never merge with uncommitted or unstaged changes. Stop and ask for direction instead.
 - Never use `git merge -X ours`, `git merge -X theirs`, or file-wide `--ours` / `--theirs` unless the user explicitly asks for that tradeoff.
 - Never resolve conflicts from markers alone when the behavior is non-trivial.
+- **Never run `git stash` or `git checkout` while in a merge state.** If `git status` shows "All conflicts fixed but you are still merging", running `git stash` drops `MERGE_HEAD` and aborts the merge — the subsequent `stash pop` will restore your changes as ordinary edits, producing a single-parent commit that does NOT contain the base branch. Either commit the merge or resolve it properly before switching context.
 
 ## Workflow
 
@@ -36,7 +37,17 @@ If `git merge-base --is-ancestor` succeeds, the current branch already contains 
 5. If not already merged, run:
    `git merge "origin/<base-branch>"`
 6. If the merge succeeds cleanly, run relevant tests and formatters, then push with a normal `git push`.
-7. If conflicts occur, follow the conflict workflow below before committing the merge.
+7. **Verify the merge actually took — REQUIRED even on a clean-looking merge:**
+   ```bash
+   git merge-base --is-ancestor "origin/<base-branch>" HEAD && echo "MERGE_OK" || {
+     echo "ERROR: base branch is NOT an ancestor of HEAD — merge did not take."
+     echo "This can happen if 'git stash' was run during a merge state."
+     echo "Do NOT proceed. Abort and retry the merge from scratch."
+     exit 1
+   }
+   ```
+   If this check fails, the commit is a single-parent phantom merge. Run `git reset --hard <previous-commit>` and retry from step 3.
+8. If conflicts occur, follow the conflict workflow below before committing the merge.
 
 ## Conflict workflow
 
