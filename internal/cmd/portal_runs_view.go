@@ -918,6 +918,18 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		issueLabel = runID
 	}
 
+	var batchDir string
+	if active != nil {
+		batchDir = active.Dir
+	} else if runID != "" {
+		resolvedBatchDir, err := v.findBatchDirForRun(repoRoot, runID, deadBatches)
+		if err != nil {
+			logPortalViewDegrade("batch-dir-lookup:"+runID, "find batch dir for run %q: %v", runID, err)
+		} else {
+			batchDir = resolvedBatchDir
+		}
+	}
+
 	status := runState.Status()
 	if runState.IsActive() {
 		status = "running"
@@ -929,10 +941,6 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	review, prNumber := v.reviewContext(runState)
 
-	var batchDir string
-	if active != nil {
-		batchDir = active.Dir
-	}
 	logPath := v.portalLogPathForRun(repoRoot, issueNumber, branch, runID, review, prNumber, batchDir)
 	logContent := v.readPortalTextFile(logPath)
 	if active != nil {
