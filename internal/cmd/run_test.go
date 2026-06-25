@@ -4436,7 +4436,7 @@ func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 }
 
 // TestRun_IssueDrivenBatchUsesNewIDScheme verifies that `sandman run 42`
-// builds a directory id matching the new <shortid>-<ts>-<N>+<N>
+// builds a directory id matching the ADR-0030 <shortid>-<ts>-<first>+<N>
 // shape (acceptance criterion #1) and that the (ts, shortid) pair is
 // propagated into batch.Request.RunTS / RunShortID so the orchestrator
 // can build per-row RunIDs from it.
@@ -4467,9 +4467,9 @@ func TestRun_IssueDrivenBatchUsesNewIDScheme(t *testing.T) {
 		t.Errorf("expected req.RunShortID to be populated for issue-driven batch")
 	}
 	// RunDir is captured on the session; verify the dir id matches the
-	// new <shortid>-<ts> format used by both daemon and orchestrator.
+	// ADR-0030 issue-batch format used by both daemon and orchestrator.
 	dir := spy.req.RunDir
-	want := filepath.Join(".sandman", "batches", spy.req.RunShortID+"-"+spy.req.RunTS)
+	want := filepath.Join(".sandman", "batches", spy.req.RunShortID+"-"+spy.req.RunTS+"-42+1")
 	if dir != want {
 		t.Fatalf("expected run dir %q, got %q", want, dir)
 	}
