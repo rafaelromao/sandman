@@ -2,8 +2,10 @@ package batchindex
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -425,6 +427,218 @@ func TestWriteReadManifest(t *testing.T) {
 	}
 	if read.BatchID != manifest.BatchID {
 		t.Errorf("BatchID = %q, want %q", read.BatchID, manifest.BatchID)
+	}
+}
+
+func TestSave_ConcurrentWriters(t *testing.T) {
+	repoRoot := t.TempDir()
+	batchesDir := filepath.Join(repoRoot, ".sandman", "batches")
+	if err := os.MkdirAll(batchesDir, 0755); err != nil {
+		t.Fatalf("create batches dir: %v", err)
+	}
+
+	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	initialIdx := &Index{Version: IndexVersion, Entries: nil}
+	initialData, _ := json.Marshal(initialIdx)
+	if err := os.WriteFile(indexPath, initialData, 0644); err != nil {
+		t.Fatalf("write initial index: %v", err)
+	}
+
+	const numWriters = 20
+	var wg sync.WaitGroup
+	wg.Add(numWriters)
+
+	for i := 0; i < numWriters; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			idx, err := Load(indexPath)
+			if err != nil {
+				t.Errorf("goroutine %d: Load failed: %v", i, err)
+				return
+			}
+			idx.Add(Entry{
+				ID:        fmt.Sprintf("entry-%d", i),
+				Path:      filepath.Join(batchesDir, fmt.Sprintf("entry-%d", i)),
+				Kind:      KindIssue,
+				Status:    StatusActive,
+				CreatedAt: time.Now(),
+			})
+			if err := idx.Save(indexPath); err != nil {
+				t.Errorf("goroutine %d: Save failed: %v", i, err)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	loaded, err := Load(indexPath)
+	if err != nil {
+		t.Fatalf("final Load failed: %v", err)
+	}
+
+	if len(loaded.Entries) == 0 {
+		t.Fatalf("final index has 0 entries, want at least 1 (last-writer-wins is acceptable)")
+	}
+
+	for _, e := range loaded.Entries {
+		if e.ID == "" {
+			t.Errorf("entry has empty ID")
+		}
+	}
+
+	tmpFiles, err := filepath.Glob(indexPath + ".tmp*")
+	if err != nil {
+		t.Fatalf("glob tmp files: %v", err)
+	}
+	if len(tmpFiles) != 0 {
+		t.Errorf("temp files still exist after all writers done: %v", tmpFiles)
+	}
+}
+
+func TestProbeStatus_StatFnPermissionError_LeavesStatus(t *testing.T) {
+	repoRoot := t.TempDir()
+	batchesDir := filepath.Join(repoRoot, ".sandman", "batches")
+	if err := os.MkdirAll(batchesDir, 0755); err != nil {
+		t.Fatalf("create batches dir: %v", err)
+	}
+
+	realBatchDir := filepath.Join(batchesDir, "realbatch")
+	if err := os.MkdirAll(realBatchDir, 0755); err != nil {
+		t.Fatalf("create real batch dir: %v", err)
+	}
+
+	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	idx := &Index{
+		Version: IndexVersion,
+		Entries: []Entry{
+			{ID: "realbatch", Path: realBatchDir, Kind: KindIssue, Status: StatusActive},
+		},
+		StatFn: func(path string) (os.FileInfo, error) {
+			return nil, os.ErrPermission
+		},
+	}
+	data, _ := json.Marshal(idx)
+	if err := os.WriteFile(indexPath, data, 0644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+
+	loaded, err := Load(indexPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if err := loaded.EnsureStatus(); err != nil {
+		t.Fatalf("EnsureStatus failed: %v", err)
+	}
+
+	for _, e := range loaded.Entries {
+		if e.ID == "realbatch" && e.Status != StatusActive {
+			t.Errorf("realbatch Status = %q, want %q (non-ENOENT error should not flip status)", e.Status, StatusActive)
+		}
+	}
+}
+
+func TestLoad_BakFallback_CorruptMain(t *testing.T) {
+	repoRoot := t.TempDir()
+	batchesDir := filepath.Join(repoRoot, ".sandman", "batches")
+	if err := os.MkdirAll(batchesDir, 0755); err != nil {
+		t.Fatalf("create batches dir: %v", err)
+	}
+
+	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	bakPath := indexPath + ".bak"
+
+	goodIdx := &Index{
+		Version: IndexVersion,
+		Entries: []Entry{
+			{ID: "recovered-entry", Path: "/recovered", Kind: KindIssue, Status: StatusActive},
+		},
+	}
+	goodData, _ := json.Marshal(goodIdx)
+	if err := os.WriteFile(bakPath, goodData, 0644); err != nil {
+		t.Fatalf("write bak: %v", err)
+	}
+
+	if err := os.WriteFile(indexPath, []byte("not valid json{{{"), 0644); err != nil {
+		t.Fatalf("write corrupt main: %v", err)
+	}
+
+	loaded, err := Load(indexPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if len(loaded.Entries) != 1 {
+		t.Errorf("Entries len = %d, want 1 (recovered from .bak)", len(loaded.Entries))
+	}
+	if loaded.Entries[0].ID != "recovered-entry" {
+		t.Errorf("Entry ID = %q, want %q", loaded.Entries[0].ID, "recovered-entry")
+	}
+}
+
+func TestLoad_BakFallback_MissingMain_ValidBak(t *testing.T) {
+	repoRoot := t.TempDir()
+	batchesDir := filepath.Join(repoRoot, ".sandman", "batches")
+	if err := os.MkdirAll(batchesDir, 0755); err != nil {
+		t.Fatalf("create batches dir: %v", err)
+	}
+
+	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	bakPath := indexPath + ".bak"
+
+	goodIdx := &Index{
+		Version: IndexVersion,
+		Entries: []Entry{
+			{ID: "bak-only-entry", Path: "/bakonly", Kind: KindIssue, Status: StatusActive},
+		},
+	}
+	goodData, _ := json.Marshal(goodIdx)
+	if err := os.WriteFile(bakPath, goodData, 0644); err != nil {
+		t.Fatalf("write bak: %v", err)
+	}
+
+	loaded, err := Load(indexPath)
+	if err != nil {
+		t.Fatalf("Load with missing main but valid bak failed: %v", err)
+	}
+	if len(loaded.Entries) != 1 {
+		t.Errorf("Entries len = %d, want 1 (recovered from .bak)", len(loaded.Entries))
+	}
+}
+
+func TestLoad_CrashRecovery(t *testing.T) {
+	repoRoot := t.TempDir()
+	batchesDir := filepath.Join(repoRoot, ".sandman", "batches")
+	if err := os.MkdirAll(batchesDir, 0755); err != nil {
+		t.Fatalf("create batches dir: %v", err)
+	}
+
+	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	bakPath := indexPath + ".bak"
+
+	preCrashIdx := &Index{
+		Version: IndexVersion,
+		Entries: []Entry{
+			{ID: "pre-crash", Path: "/precrash", Kind: KindIssue, Status: StatusActive},
+		},
+	}
+	preCrashData, _ := json.Marshal(preCrashIdx)
+	if err := os.WriteFile(bakPath, preCrashData, 0644); err != nil {
+		t.Fatalf("write bak: %v", err)
+	}
+
+	if err := os.WriteFile(indexPath, []byte("garbage"), 0644); err != nil {
+		t.Fatalf("write corrupt main: %v", err)
+	}
+
+	loaded, err := Load(indexPath)
+	if err != nil {
+		t.Fatalf("Load recovered from bak failed: %v", err)
+	}
+	if len(loaded.Entries) != 1 {
+		t.Errorf("Entries len = %d, want 1 (recovered from .bak after crash)", len(loaded.Entries))
+	}
+	if loaded.Entries[0].ID != "pre-crash" {
+		t.Errorf("Entry ID = %q, want %q", loaded.Entries[0].ID, "pre-crash")
 	}
 }
 
