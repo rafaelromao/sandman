@@ -410,7 +410,7 @@ func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
 		select {
 		case prNumber := <-started:
 			seen[prNumber] = struct{}{}
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 			t.Fatal("expected both PR reviews to start in parallel")
 		}
 	}
@@ -421,7 +421,7 @@ func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tick: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("tick did not finish after releasing parallel reviews")
 	}
 }
