@@ -1322,6 +1322,10 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
 		}
+		runFolder := filepath.Join(runDir, "runs", "PR42")
+		if err := os.MkdirAll(runFolder, 0755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -1331,6 +1335,12 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		}
 		ln.Close()
 		addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
+		if err := os.WriteFile(filepath.Join(runFolder, "run.json"), []byte(`{"runID":"PR42","batchId":"PR42","kind":"review"}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runFolder, "run.log"), []byte("[PR42] 12:00:00 saved review log\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		startedAt := time.Now().Add(-5 * time.Minute)
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -1363,6 +1373,12 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		}
 		if got.Reason != "review" {
 			t.Fatalf("expected Reason 'review' on completed review run, got %q", got.Reason)
+		}
+		if !strings.Contains(got.Log, "saved review log") {
+			t.Fatalf("expected saved review log to load, got %q", got.Log)
+		}
+		if got.LogPath != filepath.Join(runFolder, "run.log") {
+			t.Fatalf("expected log path for completed review run, got %q", got.LogPath)
 		}
 	})
 
