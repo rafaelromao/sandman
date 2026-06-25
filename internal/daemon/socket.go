@@ -13,6 +13,7 @@ type ControlSocket struct {
 	name        string
 	listener    net.Listener
 	broadcaster *Broadcaster
+	isAbstract  bool
 }
 
 func NewControlSocket(dir string, broadcaster *Broadcaster) *ControlSocket {
@@ -84,6 +85,7 @@ func (s *ControlSocket) startWithShortSockName() error {
 		return fmt.Errorf("create abstract control socket: %w", err)
 	}
 	s.listener = listener
+	s.isAbstract = true
 
 	go func() {
 		for {
@@ -107,12 +109,16 @@ func hashString(s string) uint64 {
 }
 
 func (s *ControlSocket) Stop() error {
+	var closeErr error
 	if s.listener != nil {
-		if err := s.listener.Close(); err != nil {
-			s.broadcaster.Close()
-			return err
-		}
+		closeErr = s.listener.Close()
+		s.listener = nil
 	}
 	s.broadcaster.Close()
-	return nil
+	if !s.isAbstract {
+		if rmErr := os.Remove(s.Path()); rmErr != nil && !os.IsNotExist(rmErr) {
+			return rmErr
+		}
+	}
+	return closeErr
 }
