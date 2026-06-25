@@ -23,17 +23,17 @@ Each batch has two socket types:
 | Socket | Location | Purpose |
 |--------|----------|---------|
 | `batch.sock` | Batch root `.sandman/batches/<batch-id>/batch.sock` | Batch-level attach/streaming; `IsRunActive` liveness probe |
-| `run.sock` | Batch root `.sandman/batches/<batch-id>/run.sock` | Per-run command/abort; addressed by path from external tools |
+| `run.sock` | Run folder `.sandman/batches/<batch-id>/runs/<run-id>/run.sock` | Per-run command/abort; addressed by path from external tools |
 
-The daemon creates one command server (`run.sock`) at the batch root per batch. The command server dispatches to the orchestrator's per-issue cancel API, which maps an external abort request to a specific `AgentRun`.
+The daemon creates one command server (`run.sock`) **per AgentRun** inside each run folder. The command server dispatches to the orchestrator's per-issue cancel API, which maps an external abort request to a specific `AgentRun`.
 
-**Note:** The per-run `run.sock` inside `<batch>/runs/<run>/run.sock` path is defined in `RunSocketPath()` (`internal/daemon/runfs.go:229`) but is not currently used by the daemon; the daemon creates `run.sock` at the batch root. External abort tools should connect to `<batch>/run.sock`.
+`RunSocketPath()` (`internal/daemon/runfs.go:229`) returns the per-run socket path and is used by the portal to probe run liveness.
 
 ### Why per-run sockets
 
-**External abort tools address runs by path.** An external tool (e.g., a human operator or automation script) that wants to abort a specific AgentRun without affecting siblings needs a stable, path-based handle. With a batch-level command socket, the tool would have to encode run identity inside the socket payload, which is fragile and non-standard. With `run.sock` at the batch root, the tool connects to `<batch>/run.sock` — the path is the address.
+**External abort tools address runs by path.** An external tool (e.g., a human operator or automation script) that wants to abort a specific AgentRun without affecting siblings needs a stable, path-based handle. With `run.sock` inside each run folder, the tool connects to `<batch>/runs/<runID>/run.sock` — the path is the address and encodes the run identity directly.
 
-**One command server per batch, dispatching by issue.** The command server dispatches to the orchestrator's per-issue cancel API (the `IssueCommander` seam), which maps an external cancel to a single `AgentRun` without requiring separate sockets per run.
+**One command server per AgentRun.** The command server is created per-AgentRun inside its run folder and dispatches to the orchestrator's per-issue cancel API (the `IssueCommander` seam), which maps an external cancel to a single `AgentRun`.
 
 **`batch.sock` remains for batch-level operations.** The control socket at the batch root is used for attach/streaming of the entire batch output and for batch-level liveness checks (`IsRunActive` probes `batch.sock` only).
 
@@ -53,14 +53,14 @@ The `run.sock` accepts JSON command requests. The first supported command is:
 {"action": "abort", "issue": <issue-number>}
 ```
 
-The daemon's `CommandServer` (one per batch, bound at `<batch>/run.sock`) dispatches this to the `IssueCommander` interface on the orchestrator, which cancels the context for that specific `AgentRun` without affecting siblings.
+Each `CommandServer` (one per AgentRun, bound at `<batch>/runs/<runID>/run.sock`) dispatches this to the `IssueCommander` interface on the orchestrator, which cancels the context for that specific `AgentRun` without affecting siblings.
 
 ### Schema changes
 
 `run.json` (ADR-0032) adds no socket-specific fields — socket paths are derived deterministically from the folder layout:
 
 - `batch.sock` is at `<batch>/batch.sock`
-- `run.sock` is at `<batch>/run.sock` (batch root, not per-run folder)
+- `run.sock` is at `<batch>/runs/<runID>/run.sock` (per-run folder)
 
 The `Command Server` entry in `CONTEXT.md` is updated to reflect the per-run socket decision.
 
@@ -69,14 +69,14 @@ The `Command Server` entry in `CONTEXT.md` is updated to reflect the per-run soc
 ### Positive
 
 - External abort tools address each run by path — stable, discoverable, no encoding of identity into payload.
-- A single command server per batch dispatches aborts to the `IssueCommander` seam, cancelling a specific `AgentRun` without affecting siblings.
-- Path-based addressing aligns with the filesystem layout: the socket lives next to the batch's `batch.json` and `batch.sock`.
+- One command server per AgentRun dispatches aborts to the `IssueCommander` seam, cancelling a specific `AgentRun` without affecting siblings.
+- Path-based addressing aligns with the filesystem layout: the socket lives inside the run folder alongside `run.json` and `run.log`.
 - The `IssueCommander` seam is clean: one interface, one implementation per orchestrator, dispatch by issue number.
 
 ### Negative
 
-- The daemon manages one socket listener per batch (not one per active run). File descriptor usage is O(batches), not O(runs) — acceptable given Sandman's single-repo, single-operator workload.
-- External tools must know the batch path to connect. This is straightforward: the path is derivable from the batch index and batch identifier.
+- The daemon manages one socket listener per active run. File descriptor usage is O(active runs), not O(batches) — acceptable given Sandman's single-repo, single-operator workload.
+- External tools must know both the batch path and run ID to connect. The run ID is derivable from the batch index and batch identifier; the full socket path is computed by `RunSocketPath()`.
 
 ### Neutral
 
