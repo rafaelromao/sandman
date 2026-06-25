@@ -115,7 +115,7 @@ Displays each completed run with status, duration, and branch name.
 
 ## `sandman run --continue`
 
-Continue the last agent run for one or more issues. Reads the task file (`.sandman/task.md`) from each issue's worktree and passes it verbatim as the agent's resume prompt. The task file now includes `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` as structured fields per [ADR-0023](../adr/0023-handoff-points-to-rendered-prompt-and-captures-last-skill.md).
+Continue the last agent run for one or more issues. Reads the task file (`.sandman/task.md`) from each issue's worktree and passes it verbatim as the agent's resume prompt.
 
 ```bash
 sandman run --continue <issue-number>...

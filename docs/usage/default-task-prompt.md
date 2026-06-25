@@ -6,7 +6,7 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 
 ## Canonical prompt
 
-<!-- default-prompt:start -->
+<!-- default-task-prompt:start -->
     # Task
 
     Implement GitHub issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
@@ -90,7 +90,7 @@ The long workflow now lives in the shared Sandman skill. This page describes the
     - Test/format commands run and outcomes.
     - PR URL and review status, if a PR was created.
     - Whether PR merge was performed or skipped, with reason.
-<!-- default-prompt:end -->
+<!-- default-task-prompt:end -->
 
 ## What each part does
 
@@ -110,4 +110,4 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 - **Project Prompt Template**: `.sandman/prompt.md`, created from the Default Task Prompt during `sandman init` and materialized on run when missing.
 - **Sandman Skill**: the shared skill folder installed into `~/.agents/skills/sandman/` by `sandman init`.
 - **Prompt**: `.sandman/task.md`, the rendered instruction file handed to the agent.
-- **Continue replay**: `sandman run --continue` reuses the stored branch, base branch, agent, and review command from the prior run. It reads the task file (`.sandman/task.md`) from the worktree and passes its contents verbatim as the agent's resume prompt. The task file now carries `## Source Prompt`, `## Last Skill`, and `## Last Skill Status` as structured fields. When no task file exists, an empty task template is used with a warning on stderr.
+- **Continue replay**: `sandman run --continue` reuses the stored branch, base branch, agent, and review command from the prior run. It reads the task file (`.sandman/task.md`) from the worktree and passes its contents verbatim as the agent's resume prompt. When no task file exists, an empty task template is used with a warning on stderr.

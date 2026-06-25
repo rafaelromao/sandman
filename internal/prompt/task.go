@@ -11,7 +11,7 @@ import (
 // ## Blockers / ## Key Decisions / ## Next Step) and silently destroyed the
 // original default-task-prompt.md layout (# Task, ## Issue Context, ##
 // Runtime Context, ## Execution Checklist). The continuation contract from
-// docs/usage/default-prompt.md is "pass the contents of the task file
+// docs/usage/default-task-prompt.md is "pass the contents of the task file
 // verbatim" — this function is the single seam that enforces it.
 //
 // When content is empty (e.g. the file existed but was blank), this falls
