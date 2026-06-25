@@ -88,7 +88,12 @@ func (f *heartbeatDualRunnableFactory) NewRunnable(issue *github.Issue, branch s
 
 func heartbeatTestSetup(t *testing.T) (client *fakeGitHubClient, proc *fakeProcess, sb *fakeSandbox, factory *fakeSandboxFactory, workDir string) {
 	t.Helper()
-	workDir = t.TempDir()
+	var err error
+	workDir, err = os.MkdirTemp("/tmp", "hb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(workDir) })
 	t.Chdir(workDir)
 	initGitRepo(t, workDir)
 	client = &fakeGitHubClient{
