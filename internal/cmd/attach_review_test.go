@@ -11,6 +11,9 @@ import (
 
 func TestAttach_FindsReviewSock(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(dir)
 
 	sandmanDir := filepath.Join(dir, ".sandman")
@@ -53,6 +56,9 @@ func TestAttach_MultipleSocketsReturnsError(t *testing.T) {
 
 func TestAttach_NoSocketsReturnsError(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(dir)
 
 	var buf bytes.Buffer
