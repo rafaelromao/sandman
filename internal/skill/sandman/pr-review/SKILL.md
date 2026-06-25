@@ -20,7 +20,9 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 6. **You must NOT request another review before the previous one has produced a response, UNLESS a new commit has landed.** Every iteration that would post a new `{{REVIEW_COMMAND}}` must first check whether the head SHA has changed since the last request. If SHA changed, treat the previous request as consumed and allow re-requesting. If SHA is unchanged, only re-request after a response has arrived.
 
-7. **You must NOT give up on a `CHANGES_REQUESTED` review when the reviewer's request maps to the issue description or acceptance criteria.** When the reviewer flags a requirement that comes from the issue body or its acceptance criteria (the same criteria the implementor agent was asked to satisfy), you have exactly two acceptable paths:
+7. **You must NOT request review until CI is green.** If CI is still pending or failing, keep polling Step 2 and do not post `{{REVIEW_COMMAND}}` yet.
+
+8. **You must NOT give up on a `CHANGES_REQUESTED` review when the reviewer's request maps to the issue description or acceptance criteria.** When the reviewer flags a requirement that comes from the issue body or its acceptance criteria (the same criteria the implementor agent was asked to satisfy), you have exactly two acceptable paths:
    - **Implement the requested change.** Read the issue description and its acceptance criteria, confirm the reviewer's interpretation is consistent with them, then make the change, commit, push, and re-request review.
    - **Convince the reviewer the requirement is out of scope.** Post a PR comment that quotes the issue's own acceptance criteria verbatim, explains why the requested change falls outside the issue's stated scope, and asks the reviewer to either accept the narrowed scope or correct the implementor's interpretation. Then **wait for the reviewer's explicit agreement** before considering the `CHANGES_REQUESTED` resolved. If the reviewer reaffirms the change is required, you must implement it on the next pass — you cannot keep asserting your own interpretation against theirs.
    
@@ -71,6 +73,8 @@ while true; do
       gh api repos/<owner>/<repo>/actions/jobs/<job_id>/logs \
         --jq '.text' 2>/dev/null | tail -50
     fi
+    # If the failure looks like base-branch drift, use sandman-back-merge to pull in fixes before retrying.
+    # This can recover fixes that landed after the task started.
     # Fix it. Read relevant source files, make minimal changes.
     git add -A && git commit -m "fix: resolve CI failure on <N>" && git push
     # After pushing, the old CI run is irrelevant.
@@ -98,6 +102,8 @@ Read `.sandman/.<N>.head_sha` if it exists and compare against the current head 
 #### Step 4: Delegate review to the PR Review Agent
 
 If SHA changed since the last request, always allow re-requesting. If SHA is unchanged, skip this step if no review response has arrived yet.
+
+Only post `{{REVIEW_COMMAND}}` after CI has reached a green terminal state in Step 2.
 
 ```bash
 gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
@@ -240,4 +246,5 @@ Continue polling when:
 - Keep commits focused: one commit per review round.
 - When feedback is ambiguous, ask for clarification with `{{REVIEW_COMMAND}}` in the same comment.
 - Review agents may post feedback as: top-level comments, inline diff comments, or formal `COMMENT` reviews. Always check all three sources.
+- When CI is broken and the failure may be base-branch drift, load `sandman-back-merge` first so any fix that landed on the base branch can be merged before retrying.
 - When CI is failing, fix it first — CI must be green before any review feedback can be meaningfully addressed.
