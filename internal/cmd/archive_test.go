@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -237,6 +239,94 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 	if entry.ArchivedAt == nil {
 		t.Fatal("expected archived entry archivedAt to be set")
 	}
+}
+
+func TestArchiveRun_NoSocketsInArchive(t *testing.T) {
+	dir := newSandmanDir(t)
+	t.Chdir(dir)
+
+	batchDir := filepath.Join(dir, ".sandman", "batches", "socket-test")
+	now := time.Now()
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "socket-test",
+		Issue:     99,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: now,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "socket-test", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{99}},
+	})
+
+	batchSockPath := filepath.Join(batchDir, "batch.sock")
+	runSockPath := filepath.Join(batchDir, "run.sock")
+	if err := createUnixSocket(batchSockPath); err != nil {
+		t.Fatalf("create batch.sock: %v", err)
+	}
+	if err := createUnixSocket(runSockPath); err != nil {
+		t.Fatalf("create run.sock: %v", err)
+	}
+
+	runSockNestedDir := filepath.Join(batchDir, "runs", "run-42")
+	if err := os.MkdirAll(runSockNestedDir, 0755); err != nil {
+		t.Fatalf("create runs/run-42 dir: %v", err)
+	}
+	if err := createUnixSocket(filepath.Join(runSockNestedDir, "run.sock")); err != nil {
+		t.Fatalf("create runs/run-42/run.sock: %v", err)
+	}
+
+	var buf bytes.Buffer
+	cmd := NewArchiveCmd(newTestDeps())
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"run", "socket-test"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("archive command failed: %v", err)
+	}
+
+	archiveBatchDir := filepath.Join(dir, ".sandman", "archive", "socket-test")
+	sockets, err := filepathGlobRecursive(archiveBatchDir, "*sock*")
+	if err != nil {
+		t.Fatalf("globbing archive for socket files: %v", err)
+	}
+	if len(sockets) > 0 {
+		t.Errorf("archive contains socket files: %v", sockets)
+	}
+}
+
+func filepathGlobRecursive(root, pattern string) ([]string, error) {
+	var matches []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil
+		}
+		matched, err := filepath.Match(pattern, filepath.Base(path))
+		if err != nil {
+			return err
+		}
+		if matched {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+	return matches, err
+}
+
+func createUnixSocket(path string) error {
+	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	unix.Bind(fd, &unix.SockaddrUnix{Name: path})
+	return nil
 }
 
 func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {

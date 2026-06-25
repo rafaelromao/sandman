@@ -115,6 +115,28 @@ func TestControlSocket_StopsAcceptingAfterClose(t *testing.T) {
 	}
 }
 
+func TestControlSocket_Stop_RemovesSocketFile(t *testing.T) {
+	dir := t.TempDir()
+	sock := NewControlSocket(dir, NewBroadcaster())
+
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	sockPath := filepath.Join(dir, "batch.sock")
+	if _, err := os.Stat(sockPath); err != nil {
+		t.Fatalf("socket file should exist after Start(): %v", err)
+	}
+
+	if err := sock.Stop(); err != nil {
+		t.Fatalf("Stop() failed: %v", err)
+	}
+
+	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
+		t.Fatalf("socket file should not exist after Stop(), got err: %v", err)
+	}
+}
+
 func TestControlSocket_RemovesStaleSocketOnStart(t *testing.T) {
 	dir := t.TempDir()
 	oldSock := NewControlSocket(dir, NewBroadcaster())
