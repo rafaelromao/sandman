@@ -1461,7 +1461,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffUpdateDetail_SwitchingSubjectRebuildsContent(t *testing.T) {
+func TestPortalDiffUpdateDetail_SwitchingSubjectPreservesContent(t *testing.T) {
 	js := `const body = makeMockBody();
 const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, log: 'parent log' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
@@ -1471,11 +1471,14 @@ SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const pre1 = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre1 || pre1.textContent.indexOf('parent log') === -1) throw new Error('expected parent log initially');
+const content1 = detailRow.querySelector('.detail-content');
 const opts2 = { helpers, stopGroups, expandedKey: 'PR42', tabs: { 'PR42': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('switching subject should mutate the detail row, got 0');
+const content2 = detailRow.querySelector('.detail-content');
+if (content2 !== content1) throw new Error('expected detail content to be preserved across subject switch');
 const subjectPicker = detailRow.querySelector('.detail-subject-picker');
 if (!subjectPicker) throw new Error('expected subject picker');
 if (subjectPicker.querySelector('label')) throw new Error('subject label should not be visible');
@@ -1483,6 +1486,7 @@ const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]
 if (subjectSelect.getAttribute('aria-label') !== 'Subject') throw new Error('subject select should keep aria-label');
 if (!subjectSelect || subjectSelect.value !== 'PR42') throw new Error('expected selected review subject after switch, got ' + (subjectSelect && subjectSelect.value));
 const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (pre2 !== pre1) throw new Error('expected log pre to be preserved across subject switch');
 if (!pre2 || pre2.textContent.indexOf('review log') === -1) throw new Error('expected review log after subject switch, got ' + (pre2 && pre2.textContent));
 console.log('PASS');
 `
@@ -1499,14 +1503,18 @@ SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const pre1 = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre1 || pre1.textContent.indexOf('parent log') === -1) throw new Error('expected parent log initially');
+const content1 = detailRow.querySelector('.detail-content');
 const opts2 = { helpers, stopGroups, expandedKey: 'PR42', tabs: { 'PR42': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('switching subject should mutate the detail row, got 0');
+const content2 = detailRow.querySelector('.detail-content');
+if (content2 !== content1) throw new Error('expected detail content to be preserved across subject switch');
 const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
 if (!subjectSelect || subjectSelect.value !== 'PR42') throw new Error('expected selected review subject after switch, got ' + (subjectSelect && subjectSelect.value));
 const pre2 = detailRow.querySelector('pre[data-scroll-key]');
+if (pre2 !== pre1) throw new Error('expected log pre to be preserved across subject switch');
 if (!pre2 || pre2.textContent.indexOf('review log') === -1) throw new Error('expected review log after subject switch, got ' + (pre2 && pre2.textContent));
 console.log('PASS');
 `

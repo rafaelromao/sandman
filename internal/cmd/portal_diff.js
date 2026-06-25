@@ -767,6 +767,7 @@
   function updateDetailContent(detailRow, oldRun, run, opts) {
     const subjectRun = findRunByIdentity(opts.expandedKey, opts) || run;
     const tabName = tabNameFor(subjectRun, opts);
+    const subjectValue = subjectRunValue(subjectRun);
     const tabButtons = detailRow.querySelectorAll('button[data-tab]');
     for (const btn of tabButtons) {
       const want = String(btn.getAttribute('data-tab') === tabName);
@@ -775,16 +776,12 @@
       }
     }
     const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
+    const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+    if (subjectSelect && subjectSelect.value !== subjectValue) {
+      subjectSelect.value = subjectValue;
+    }
     const content = detailRow.querySelector('.detail-content');
     if (!content) return;
-    if (content.getAttribute('data-rendered-subject-fingerprint') !== subjectFp) {
-      const panel = detailRow.querySelector('.detail-panel');
-      if (!panel) return;
-      while (panel.firstChild) panel.removeChild(panel.firstChild);
-      buildDetailContent(panel, run, subjectRun, tabName, opts.helpers, opts);
-      mutationCount += 1;
-      return;
-    }
     if (tabName === 'log') {
       // While the Log tab is being fed by a live SSE stream
       // (opts.streamingKeys), the stream owns this <pre>; the poll path
@@ -811,12 +808,14 @@
           fillTerminalPre(pre, newLog, opts.helpers);
         }
         pre.setAttribute('data-rendered-log', newLog);
+        content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
         mutationCount += 1;
         return;
       }
       while (content.firstChild) content.removeChild(content.firstChild);
       content.removeAttribute('data-rendered-fingerprint');
       buildLogContent(content, subjectRun, opts.helpers);
+      content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
       mutationCount += 1;
       return;
     }
