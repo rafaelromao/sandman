@@ -265,6 +265,14 @@ func TestArchiveRun_NoSocketsInArchive(t *testing.T) {
 		t.Fatalf("create run.sock: %v", err)
 	}
 
+	runSockNestedDir := filepath.Join(batchDir, "runs", "run-42")
+	if err := os.MkdirAll(runSockNestedDir, 0755); err != nil {
+		t.Fatalf("create runs/run-42 dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runSockNestedDir, "run.sock"), []byte(""), 0644); err != nil {
+		t.Fatalf("create runs/run-42/run.sock: %v", err)
+	}
+
 	var buf bytes.Buffer
 	cmd := NewArchiveCmd(newTestDeps())
 	cmd.SetOut(&buf)

@@ -17,9 +17,16 @@ import (
 type runActivityProbe func(runPath string) bool
 
 func stripSockets(batchDir string) {
-	for _, name := range []string{"batch.sock", "run.sock"} {
-		_ = os.Remove(filepath.Join(batchDir, name))
-	}
+	_ = filepath.Walk(batchDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		matched, _ := filepath.Match("*sock*", filepath.Base(path))
+		if matched {
+			_ = os.Remove(path)
+		}
+		return nil
+	})
 }
 
 func NewArchiveCmd(deps Dependencies) *cobra.Command {
