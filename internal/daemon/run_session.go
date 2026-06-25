@@ -5,9 +5,16 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
 )
+
+// batchesIndexMu serialises read-modify-write cycles on the shared
+// batches index (batches.json). Without this, concurrent Prepare calls
+// (e.g. from the review daemon processing multiple PRs in parallel)
+// race on Load → Add → Save, causing lost entries.
+var batchesIndexMu sync.Mutex
 
 // RunSession owns the on-disk artifacts and the per-run sockets that must
 // exist *before* the daemon emits a run.started event and before any
@@ -105,8 +112,10 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 		return fmt.Errorf("%w: %v", ErrStepManifest, err)
 	}
 
+	batchesIndexMu.Lock()
 	idx, err := batchindex.Load(BatchesIndexPath(s.baseDir))
 	if err != nil {
+		batchesIndexMu.Unlock()
 		return fmt.Errorf("%w: %v", ErrStepBatchesIndex, err)
 	}
 
@@ -124,8 +133,10 @@ func (s *RunSession) Prepare(manifest BatchManifest, commander IssueCommander) e
 		PR:        pr,
 	})
 	if err := idx.Save(BatchesIndexPath(s.baseDir)); err != nil {
+		batchesIndexMu.Unlock()
 		return fmt.Errorf("%w: %v", ErrStepBatchesIndex, err)
 	}
+	batchesIndexMu.Unlock()
 
 	s.ctlSocket = NewControlSocket(s.runDir, s.broadcaster)
 	if err := s.ctlSocket.Start(); err != nil {
