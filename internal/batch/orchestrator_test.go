@@ -7616,8 +7616,8 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 		t.Errorf("expected worktree to be removed, got %v", err)
 	}
 
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Errorf("expected log to be removed, got %v", err)
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		t.Errorf("expected log to be preserved, got %v", err)
 	}
 
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -7707,8 +7707,8 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected orphan worktree dir to be removed, got err=%v", err)
 	}
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Errorf("expected log to be removed, got err=%v", err)
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		t.Errorf("expected log to be preserved, got err=%v", err)
 	}
 }
 
