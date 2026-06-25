@@ -1,6 +1,6 @@
 # Portal
 
-`sandman portal` starts a local browser view for the current repository's Sandman instances. It is repo-scoped, so it only shows runs discovered under the checked-out project's `.sandman/runs/` tree.
+`sandman portal` starts a local browser view for the current repository's Sandman instances. It is repo-scoped, so it only shows runs discovered under the checked-out project's `.sandman/batches/` tree.
 
 ## Start it
 
@@ -37,7 +37,6 @@ When the server starts, it prints the URL to open in your browser.
 
 - Live Sandman instances in the current repository
 - Active and completed runs from `.sandman/events.jsonl`
-- Run output and log links from `.sandman/logs/`
 
 The runs table displays these columns: **Run**, **Status**, **Started**, **Duration**, **Issue Title**, **Branch**, and **Actions**. The Issue Title column shows the GitHub issue title for runs with that data available, or an em-dash for historical or prompt-only runs. Source information (socket and log file paths) remains visible in the Details tab when expanding a run.
 
@@ -74,16 +73,6 @@ Special states return fixed messages:
 |--------|---------|
 | `blocked` | `Blocked. Waiting on unresolved blockers.` (or listed blocker issue numbers) |
 | `queued` | `Queued. Waiting to start.` |
-
-## Log download
-
-```
-GET /api/logs?path=<relative-path>
-```
-
-Serves log files from `.sandman/logs/`. The path must be relative and cannot escape the logs directory — absolute paths, `..` segments, or any path outside `.sandman/logs/` is rejected with `400 Bad Request`.
-
-Returns the file as an attachment with the log filename in `Content-Disposition`.
 
 ## Notes
 

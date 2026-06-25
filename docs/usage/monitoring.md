@@ -122,7 +122,7 @@ Legacy `run.cancelled` events in older `events.jsonl` files project to the same 
 
 ## Run logs
 
-Each agent run writes its output to `.sandman/logs/<issue>.log` for issue-driven runs, or a branch-derived filename for prompt-only runs. The file captures both stdout and stderr from the agent process, prefixed with run-specific timestamps.
+Each agent run writes its output to the run's log file inside the batch directory. The file captures both stdout and stderr from the agent process, prefixed with run-specific timestamps.
 
 ## Worktree hints
 
@@ -141,7 +141,7 @@ When Sandman receives SIGINT or SIGTERM (e.g., Ctrl+C):
 1. Running agents are notified (SIGTERM forwarded to agent process)
 2. Sandman waits up to 10 seconds for agents to finish gracefully
 3. If agents are still running after the timeout, Sandman sends SIGKILL
-4. The control socket (`.sandman/runs/<run-id>/run.sock`) is closed — any connected `sandman attach` clients see EOF and exit
+4. The control socket is closed — any connected `sandman attach` clients see EOF and exit
 5. Partial results and events are preserved in the event log
 6. `sandman run` (or `sandman run --continue`) prints `batch aborted by operator` to stderr, prints the final summary (with the aborted bucket), and exits with code 130 (the standard Unix code for SIGINT). A real run failure still prints the existing `run batch: ...` message and exits non-zero.
 
