@@ -5,7 +5,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -15,7 +17,12 @@ func NewAttachCmd() *cobra.Command {
 		Use:   "attach",
 		Short: "Attach to a running sandman daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sockPath, err := findDaemonSocket(".sandman")
+			repoRoot, err := resolveRepoRoot()
+			if err != nil {
+				return fmt.Errorf("resolve repo root: %w", err)
+			}
+
+			sockPath, err := findDaemonSocket(repoRoot)
 			if err != nil {
 				return err
 			}
@@ -32,20 +39,31 @@ func NewAttachCmd() *cobra.Command {
 	}
 }
 
+func resolveRepoRoot() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+	return os.Getwd()
+}
+
 // findDaemonSocket returns the path of the only active sandman socket
-// under baseDir. It looks for batch sockets (.sandman/batches/<id>/batch.sock)
-// and the review daemon socket (.sandman/reviews/review.sock). If exactly
-// one is live, it is returned. Multiple live sockets is a hard error
-// because it is ambiguous which daemon the operator wants to attach to.
+// under baseDir (repo root). It looks for batch sockets
+// (<baseDir>/.sandman/batches/<id>/batch.sock) and the review daemon
+// socket (<baseDir>/.sandman/reviews/review.sock). If exactly one is
+// live, it is returned. Multiple live sockets is a hard error because
+// it is ambiguous which daemon the operator wants to attach to.
 func findDaemonSocket(baseDir string) (string, error) {
 	candidates := []string{}
 
-	reviewSock := ReviewSocketPath(baseDir)
+	sandmanDir := filepath.Join(baseDir, ".sandman")
+	reviewSock := filepath.Join(sandmanDir, "reviews", "review.sock")
 	if _, err := os.Stat(reviewSock); err == nil {
 		candidates = append(candidates, reviewSock)
 	}
 
-	batchesDir := filepath.Join(baseDir, "batches")
+	batchesDir := filepath.Join(sandmanDir, "batches")
 	entries, err := os.ReadDir(batchesDir)
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("read batches dir: %w", err)

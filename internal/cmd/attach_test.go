@@ -10,6 +10,12 @@ import (
 )
 
 func TestAttach_NoDaemonReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
 	var buf bytes.Buffer
 	cmd := NewAttachCmd()
 	cmd.SetOut(&buf)
@@ -26,6 +32,9 @@ func TestAttach_NoDaemonReturnsError(t *testing.T) {
 
 func TestAttach_ReadsFromSocket(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(dir)
 
 	sockDir := filepath.Join(dir, ".sandman", "batches", "test-batch-1")
@@ -64,6 +73,9 @@ func TestAttach_ReadsFromSocket(t *testing.T) {
 
 func TestAttach_ExitsOnEOF(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(dir)
 
 	sockDir := filepath.Join(dir, ".sandman", "batches", "test-batch-2")
