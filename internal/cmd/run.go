@@ -96,12 +96,19 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
+
+			repoRoot, err := resolveRepoRoot()
+			if err != nil {
+				return fmt.Errorf("resolve repo root: %w", err)
+			}
+			sandmanDir := filepath.Join(repoRoot, ".sandman")
+
 			overrideFlag, _ := cmd.Flags().GetBool("override")
 			continueFlag, _ := cmd.Flags().GetBool("continue")
 			if overrideFlag && continueFlag {
 				return MarkUsage(fmt.Errorf("--override cannot be combined with --continue"))
 			}
-			if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), ".sandman"); err != nil {
+			if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
 				return err
 			}
 			githubClient := newCachedGitHubClient(deps.GitHubClient)
@@ -203,7 +210,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					}
 					resolvedQuery := resolveAutoQuery(label, query)
 					autoTS, autoShortID := "", ""
-					issues, autoTS, autoShortID, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, ".sandman", agentName, modelFlag, cfg, resolvedQuery, deps.EventLog)
+					issues, autoTS, autoShortID, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, sandmanDir, agentName, modelFlag, cfg, resolvedQuery, deps.EventLog)
 					if err != nil {
 						return err
 					}
@@ -213,7 +220,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 							firstSubject = fmt.Sprintf("%d", issues[0])
 						}
 						batchID := runid.NewBatchID(runid.KindIssue, len(issues), firstSubject, autoTS, autoShortID)
-						issueRunDir := daemon.RunDir(".sandman", batchID)
+						issueRunDir := daemon.RunDir(sandmanDir, batchID)
 						if err := os.MkdirAll(issueRunDir, 0o700); err != nil {
 							return fmt.Errorf("create issue batch dir: %w", err)
 						}
@@ -610,7 +617,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}()
 
-			if staleRemoved, err := daemon.CleanupStaleRunSnapshots(".sandman"); err != nil {
+			if staleRemoved, err := daemon.CleanupStaleRunSnapshots(sandmanDir); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", err)
 			} else if staleRemoved > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d stale run-owned config snapshots from previous runs\n", staleRemoved)
@@ -645,7 +652,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			// Prepare returns nil, so the orchestrator can never see a
 			// half-bootstrapped run. Close is deferred first so it runs
 			// last: the listener stops before the run dir is removed.
-			rs := daemon.NewRunSession(".sandman", sessionRunID)
+			rs := daemon.NewRunSession(sandmanDir, sessionRunID)
 			// The comma-ok form matters: a typed-nil interface
 			// (`var c IssueCommander = (*concrete)(nil)`) is
 			// non-nil but unusable, and `Prepare` would then
