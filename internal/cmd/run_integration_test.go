@@ -19,6 +19,10 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
+func init() {
+	_ = os.Setenv("TMPDIR", "/tmp")
+}
+
 func initRunIntegrationRepo(t *testing.T, dir string) {
 	t.Helper()
 
