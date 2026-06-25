@@ -263,7 +263,11 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 		if daemon.IsRunActive(entry.Path) {
 			continue
 		}
-		if !entry.CreatedAt.Before(cutoff) {
+		createdAt, err := archiveBatchCreatedAt(entry)
+		if err != nil {
+			return err
+		}
+		if !createdAt.Before(cutoff) {
 			continue
 		}
 		archivePath := filepath.Join(layout.ArchiveDir, entry.ID)
@@ -288,4 +292,20 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Archived %d batch(es) older than %d day(s)\n", archived, days)
 	return nil
+}
+
+func archiveBatchCreatedAt(entry batchindex.Entry) (time.Time, error) {
+	manifest, err := batchindex.ReadManifest(entry.Path)
+	if err == nil && !manifest.CreatedAt.IsZero() {
+		return manifest.CreatedAt.UTC(), nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return time.Time{}, fmt.Errorf("read batch manifest for %q: %w", entry.ID, err)
+	}
+
+	info, err := os.Stat(entry.Path)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("stat batch dir for %q: %w", entry.ID, err)
+	}
+	return info.ModTime().UTC(), nil
 }

@@ -1036,3 +1036,38 @@ func TestArchiveOlderThan_YoungMtimeKeepsUnmanifestedBatch(t *testing.T) {
 		t.Errorf("expected no archive entry for young batch, got: %v", err)
 	}
 }
+
+func TestArchiveOlderThan_ArchivesUnmanifestedBatchByDirMtime(t *testing.T) {
+	dir := newSandmanDir(t)
+	t.Chdir(dir)
+
+	old := time.Now().Add(-40 * 24 * time.Hour).UTC().Round(time.Second)
+	batchDir := filepath.Join(dir, ".sandman", "batches", "no-manifest-old")
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("mkdir batch dir: %v", err)
+	}
+	if err := os.Chtimes(batchDir, old, old); err != nil {
+		t.Fatalf("chtimes batch dir: %v", err)
+	}
+
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "no-manifest-old", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{8}},
+	})
+
+	var buf bytes.Buffer
+	cmd := NewArchiveCmd(newTestDeps())
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"older-than", "30"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "archive", "no-manifest-old")); err != nil {
+		t.Fatalf("expected old unmanifested batch to be archived by dir mtime: %v", err)
+	}
+	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
+		t.Errorf("expected source batch dir to be gone after archive, got: %v", err)
+	}
+}
