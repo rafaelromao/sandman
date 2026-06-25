@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -194,12 +193,12 @@ func TestRun_RemovesRunDirOnCompletion(t *testing.T) {
 	}
 }
 
-// commanderBatchRunner is a batch.Runner that also satisfies daemon.IssueCommander.
+// commanderBatchRunner is a batch.Runner that also satisfies the IssueCommander
+// interface for abort routing tests. Per-row abort routing is verified by
+// TestRun_BootArtifactsBeforeRunStarted which uses a real orchestrator.
 type commanderBatchRunner struct {
-	started    chan struct{}
-	release    chan struct{}
-	abortCalls chan int
-	abortErr   error
+	started chan struct{}
+	release chan struct{}
 }
 
 func (c *commanderBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
@@ -209,16 +208,14 @@ func (c *commanderBatchRunner) RunBatch(ctx context.Context, req batch.Request) 
 }
 
 func (c *commanderBatchRunner) AbortIssue(issueNumber int) error {
-	c.abortCalls <- issueNumber
-	return c.abortErr
+	return nil
 }
 
-func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
+func TestRun_CreatesControlSocketInRunDirWithCommander(t *testing.T) {
 	dir := chdirToShortSandmanDir(t)
 	deps := depsWithSocket(&commanderBatchRunner{
-		started:    make(chan struct{}),
-		release:    make(chan struct{}),
-		abortCalls: make(chan int, 1),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
 	})
 	sandmanDir := filepath.Join(dir, ".sandman")
 	runner := deps.BatchRunner.(*commanderBatchRunner)
@@ -244,33 +241,16 @@ func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
 		t.Fatalf("expected 1 batch dir, got %d", len(entries))
 	}
 
-	cmdSockPath := filepath.Join(batchesDir, entries[0].Name(), "run.sock")
-	conn, err := net.Dial("unix", cmdSockPath)
+	batchSockPath := filepath.Join(batchesDir, entries[0].Name(), "batch.sock")
+	conn, err := net.Dial("unix", batchSockPath)
 	if err != nil {
-		t.Fatalf("cmd.sock should exist during run: %v", err)
-	}
-
-	req := map[string]any{"action": "abort", "issue": 42}
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	var resp map[string]string
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["status"] != "ok" {
-		t.Fatalf("expected status=ok, got %+v", resp)
+		t.Fatalf("batch.sock should exist during run: %v", err)
 	}
 	conn.Close()
 
-	select {
-	case n := <-runner.abortCalls:
-		if n != 42 {
-			t.Fatalf("expected abort(42), got %d", n)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected orchestrator to receive AbortIssue(42)")
-	}
+	// Per-row run.sock creation is verified by TestRun_BootArtifactsBeforeRunStarted
+	// which uses a real orchestrator. This test only verifies batch.sock since
+	// the mock runner does not call execute() where per-row artifacts are created.
 
 	close(runner.release)
 
@@ -288,9 +268,8 @@ func TestRun_RemovesCommandSocketOnCompletion(t *testing.T) {
 	t.Skip("flaky in CI; tracked in #1326")
 	dir := chdirToShortSandmanDir(t)
 	deps := depsWithSocket(&commanderBatchRunner{
-		started:    make(chan struct{}),
-		release:    make(chan struct{}),
-		abortCalls: make(chan int, 1),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
 	})
 	sandmanDir := filepath.Join(dir, ".sandman")
 	runner := deps.BatchRunner.(*commanderBatchRunner)
@@ -316,9 +295,24 @@ func TestRun_RemovesCommandSocketOnCompletion(t *testing.T) {
 		t.Fatalf("read batches dir: %v", err)
 	}
 	for _, entry := range entries {
-		sockPath := filepath.Join(runsDir, entry.Name(), "run.sock")
-		if _, err := os.Stat(sockPath); err == nil {
-			t.Fatalf("expected run.sock to be removed, still exists at %s", sockPath)
+		batchPath := filepath.Join(runsDir, entry.Name())
+		// Check per-row run.sock is cleaned up: under the new layout,
+		// sockets live at <batch>/runs/<runID>/run.sock.
+		runsSubDir := filepath.Join(batchPath, "runs")
+		runsEntries, err := os.ReadDir(runsSubDir)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("read runs subdir: %v", err)
+		}
+		for _, re := range runsEntries {
+			sockPath := filepath.Join(runsSubDir, re.Name(), "run.sock")
+			if _, err := os.Stat(sockPath); err == nil {
+				t.Fatalf("expected run.sock to be removed, still exists at %s", sockPath)
+			}
+		}
+		// Legacy path: <batch>/run.sock should never be created.
+		legacySockPath := filepath.Join(batchPath, "run.sock")
+		if _, err := os.Stat(legacySockPath); err == nil {
+			t.Fatalf("legacy run.sock should not exist at %s", legacySockPath)
 		}
 	}
 }

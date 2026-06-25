@@ -635,7 +635,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 				req.RunTS = ts
 				req.RunShortID = shortid
-				sessionRunID = runid.NewBatchID(runid.KindIssue, len(req.Issues), fmt.Sprintf("%d", req.Issues[0]), ts, shortid)
+				firstIssueNum := 0
+				if len(issues) > 0 {
+					firstIssueNum = issues[0]
+				}
+				sessionRunID = batch.BatchIDForIssue(firstIssueNum, len(issues), ts, shortid)
 			} else if overridePrompt {
 				ts, shortid, err := runid.NewBatch()
 				if err != nil {
@@ -659,20 +663,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			rs := daemon.NewRunSession(sandmanDir, sessionRunID)
 			// The comma-ok form matters: a typed-nil interface
 			// (`var c IssueCommander = (*concrete)(nil)`) is
-			// non-nil but unusable, and `Prepare` would then
-			// call `cmdServer.Start` with a nil commander. By
-			// keeping the `ok` signal we can pass a real `nil`
-			// when the BatchRunner does not satisfy
-			// IssueCommander, and `--continue` already
-			// suppresses the cmd.sock server.
-			var commander daemon.IssueCommander
-			if !continueFlag {
-				if c, ok := deps.BatchRunner.(daemon.IssueCommander); ok {
-					commander = c
-				}
-			}
+			// non-nil but unusable. The `--continue` flag
+			// already suppresses the cmd.sock server; per-run
+			// CommandServer creation is handled by the orchestrator.
 			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), BatchId: autoIssueRunID, RunKind: "issue"}
-			if err := rs.Prepare(manifest, commander); err != nil {
+			if err := rs.Prepare(manifest); err != nil {
 				_ = rs.Close()
 				// A daemon without a control socket is invisible
 				// to the portal and cannot be aborted by the user,

@@ -95,7 +95,7 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 	}
 
 	rs := daemon.NewRunSession(sandmanDir, batchID)
-	if err := rs.Prepare(manifest, nil); err != nil {
+	if err := rs.Prepare(manifest); err != nil {
 		_ = rs.Close()
 		return nil, "", "", fmt.Errorf("prepare run session: %w", err)
 	}

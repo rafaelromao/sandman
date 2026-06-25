@@ -9,7 +9,7 @@ accepted
 Sandman generates two related but distinct identifiers for every batch run:
 
 - **RunID**: a string that uniquely identifies one AgentRun within a batch. Persisted in the `RunID` field of every event in `events.jsonl` and used as the row key in the portal.
-- **RunDir**: a per-batch directory under `.sandman/runs/` that contains the control socket, command server, broadcaster, and `batch.json` manifest for the daemon process.
+- **RunDir**: a per-batch directory at `<batch>/` that contains the daemon's `batch.json` and `batch.sock`. Each AgentRun within the batch gets its own `<batch>/runs/<runID>/` subdirectory containing `run.json`, `run.log`, and `run.sock`.
 
 Historically, these identifiers were generated ad-hoc in multiple places with inconsistent naming schemes. The `--run-id` flag was used as the RunDir name for prompt-only runs, but not for issue-driven runs. This made it difficult to reason about run identity across the portal, the daemon, and the event log.
 
@@ -24,7 +24,7 @@ Every RunID and RunDir begins with a `<shortid>-<ts>` prefix:
 - `<shortid>` is 4 lowercase hex characters derived from `unixNano % 0xFFFF`.
 - `<ts>` is `time.Now().Format("060102150405")` (local time, 12 characters, 2-digit year).
 
-When `NewBatch()` finds that a directory already exists at `.sandman/runs/<shortid>-<ts>-...`, it generates a new shortid and retries up to 16 times before returning an error. The timestamp is not changed during retry; only the shortid advances.
+When `NewBatch()` finds that a directory already exists at `.sandman/batches/<shortid>-<ts>-...`, it generates a new shortid and retries up to 16 times before returning an error. The timestamp is not changed during retry; only the shortid advances.
 
 The shortid is placed first to maximise collision resistance within the same timestamp. The timestamp provides chronological ordering.
 

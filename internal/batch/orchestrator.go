@@ -17,6 +17,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -36,15 +37,27 @@ func buildRunID(num int, ts, shortid string) string {
 	return runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", num), ts, shortid)
 }
 
-// batchIDForIssue returns the per-row batch directory name for an
-// issue-driven session, derived from the (ts, shortid) pair. The name
-// is unique per batch and forms the segment between <batchesDir>/ and
-// runs/<runID>/ in the new layout.
-func batchIDForIssue(ts, shortid string) string {
+// BatchIDForIssue returns the per-batch directory name for an issue-driven
+// session, derived from the batch's first issue number, issue count, and the
+// (ts, shortid) pair.
+func BatchIDForIssue(firstIssueNum, n int, ts, shortid string) string {
 	if shortid == "" && ts == "" {
 		return ""
 	}
-	return shortid + "-" + ts
+	return runid.NewBatchID(runid.KindIssue, n, fmt.Sprintf("%d", firstIssueNum), ts, shortid)
+}
+
+func issueBatchIDForRequest(req Request) string {
+	if runDir := strings.TrimSpace(req.RunDir); runDir != "" {
+		return filepath.Base(runDir)
+	}
+	if len(req.Issues) > 0 {
+		return BatchIDForIssue(req.Issues[0], len(req.Issues), req.RunTS, req.RunShortID)
+	}
+	if req.RunShortID == "" && req.RunTS == "" {
+		return ""
+	}
+	return req.RunShortID + "-" + req.RunTS
 }
 
 // batchIDForPromptOnly returns the per-row batch directory name for a
@@ -904,6 +917,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	batchIdentityResolver := newBatchIdentityResolver(o, ".")
+	issueBatchID := issueBatchIDForRequest(req)
 
 	// Reset the per-batch supervisor set so leftover entries from a
 	// previous RunBatch call on the same orchestrator do not stall
@@ -1107,7 +1121,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 
-			res, started := o.runSingle(issueCtx, parentCtx, issueNum, cfg, agentName, agentCfg, mode == ModeContinue, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, policy.sandboxFactory, policy.containerAlloc, mode == ModeOverride, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile, req.RunTS, req.RunShortID)
+			res, started := o.runSingle(issueCtx, parentCtx, issueNum, cfg, agentName, agentCfg, mode == ModeContinue, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, policy.sandboxFactory, policy.containerAlloc, mode == ModeOverride, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile, req.RunTS, req.RunShortID, issueBatchID)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -1466,11 +1480,11 @@ type runSession struct {
 	// RunID in run.started events instead of an auto-generated fallback.
 	runID string
 
-	// batchID is the per-row batch identifier used to scope the run folder
-	// under <batchesDir>/<batchID>/runs/<runID>. For issue-driven runs it
-	// is derived from (runTS, runShortID); for prompt-only runs from
-	// (batchTS, batchShortID). Empty is treated as a guard failure by the
-	// execute path (returns AgentRunResult{Status: "failure", ...}).
+	// batchID is the per-batch directory name used to scope the run folder
+	// under <batchesDir>/<batchID>/runs/<runID>. For issue-driven runs it is
+	// supplied by RunBatch from the selected issue set; for prompt-only runs it
+	// comes from (batchTS, batchShortID). Empty is treated as a guard failure by
+	// the execute path (returns AgentRunResult{Status: "failure", ...}).
 	batchID string
 
 	// batchTS and batchShortID are the timestamp and short-id components
@@ -1779,7 +1793,14 @@ func (s *runSession) runOnce(
 // delegates to (*runSession).execute. parentCtx is the RunBatch ctx
 // (the ctx that owns this whole batch); the supervisor uses it to
 // distinguish external aborts from normal session end.
-func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, runTS string, runShortID string) (AgentRunResult, bool) {
+func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, runTS string, runShortID string, batchID ...string) (AgentRunResult, bool) {
+	issueBatchID := ""
+	if len(batchID) > 0 {
+		issueBatchID = strings.TrimSpace(batchID[0])
+	}
+	if issueBatchID == "" && (runTS != "" || runShortID != "") {
+		issueBatchID = batchIDFromRunID(buildRunID(num, runTS, runShortID))
+	}
 	s := &runSession{
 		o:           o,
 		issueNumber: num,
@@ -1817,7 +1838,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context,
 		strandedReconcile:          strandedReconcile,
 		runTS:                      runTS,
 		runShortID:                 runShortID,
-		batchID:                    batchIDForIssue(runTS, runShortID),
+		batchID:                    issueBatchID,
 		parentCtx:                  parentCtx,
 		opts:                       o.runSessionOpts,
 	}
@@ -1880,6 +1901,35 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 
 	o.registerActiveRun(s.issueNumber, wt)
 	defer o.unregisterActiveRun(s.issueNumber)
+
+	batchDir := s.o.layout.BatchDir(s.batchID)
+	manifestBatchID := s.batchID
+	if s.batchID == "" {
+		batchDir = s.o.layout.BatchesDir
+		manifestBatchID = batchIDFromRunID(runID)
+	}
+	runManifest := batchindex.RunManifest{
+		RunID:        runID,
+		BatchID:      manifestBatchID,
+		Issue:        s.issueNumber,
+		Branch:       branch,
+		BaseBranch:   s.baseBranch,
+		WorktreePath: wt.WorkDir(),
+		Kind:         batchindex.KindIssue,
+		CreatedAt:    time.Now(),
+		Status:       batchindex.StatusActive,
+	}
+	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
+		fmt.Fprintf(o.errorLog, "error: write run manifest for issue %d: %v\n", s.issueNumber, err)
+		_ = wt.Stop()
+		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
+	}
+	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.o)
+	if err := cmdServer.Start(); err != nil {
+		fmt.Fprintf(o.errorLog, "error: start command server for issue %d: %v\n", s.issueNumber, err)
+	} else {
+		defer cmdServer.Stop()
+	}
 
 	// Pre-register the supervisor's done channel with the batch-wide
 	// fan-in BEFORE spawning the supervisor, so a session that
@@ -2231,6 +2281,43 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	if s.runID == "" && s.batchID == "" {
 		s.batchID = batchIDFromRunID(runID)
 	}
+
+	batchDir := s.o.layout.BatchDir(s.batchID)
+	manifestBatchID := s.batchID
+	if s.batchID == "" {
+		batchDir = s.o.layout.BatchesDir
+		manifestBatchID = batchIDFromRunID(runID)
+	}
+	var runKind batchindex.Kind
+	if s.review {
+		runKind = batchindex.KindReview
+	} else {
+		runKind = batchindex.KindPromptOnly
+	}
+	runManifest := batchindex.RunManifest{
+		RunID:        runID,
+		BatchID:      manifestBatchID,
+		Issue:        s.issueNumber,
+		Branch:       branch,
+		BaseBranch:   s.baseBranch,
+		WorktreePath: wt.WorkDir(),
+		Kind:         runKind,
+		CreatedAt:    time.Now(),
+		PR:           s.prNumber,
+		Status:       batchindex.StatusActive,
+	}
+	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
+		fmt.Fprintf(o.errorLog, "error: write run manifest for prompt-only run: %v\n", err)
+		_ = wt.Stop()
+		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
+	}
+	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.o)
+	if err := cmdServer.Start(); err != nil {
+		fmt.Fprintf(o.errorLog, "error: start command server for prompt-only run: %v\n", err)
+	} else {
+		defer cmdServer.Stop()
+	}
+
 	if o.eventLog != nil {
 		promptSourceType := "current"
 		payload := map[string]any{"branch": branch, "base_branch": s.baseBranch, "prompt_source_type": "prompt", "parallel": s.parallel, "start_delay": int(s.startDelay / time.Second), "retries": s.retries, "sandbox": s.sandboxMode, "container_capacity": s.containerCapacity, "container_capacity_set": s.containerCapacitySet, "max_containers": s.maxContainers, "max_containers_set": s.maxContainersSet}
