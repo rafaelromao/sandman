@@ -163,7 +163,7 @@ sandman archive older-than <days>
 | `older-than <days>` | Move every dead batch whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than `<days>` days to `.sandman/archive/<id>` |
 | `stale` | Recover unterminated runs in dead batches by emitting `run.aborted` events, then archive every dead-and-terminal batch directory |
 
-The batch's daemon must not be live. `sandman archive run` calls `daemon.IsRunActive` on the batch directory and returns an error if the `run.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
+The batch's daemon must not be live. `sandman archive run` calls `daemon.IsRunActive` on the batch directory and returns an error if the `batch.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
 
 `sandman archive older-than <days>` scans every batch directory under `.sandman/batches/`, archives those whose daemon is dead and whose timestamp is at or before the `<days>`-day cutoff, and skips the rest. A batch whose daemon is still live is never archived regardless of its age. If the destination `.sandman/archive/<id>` already exists, the batch is skipped (with a `skip` message on stderr) and the existing archive entry is left untouched. `<days>` must be a non-negative integer; `0` archives every dead batch.
 
