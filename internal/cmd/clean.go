@@ -177,8 +177,6 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Removed %d batch entries.\n", removed)
 
-			wipeLegacyDirs(layout)
-
 			return nil
 		},
 	}
@@ -265,15 +263,6 @@ func executeClean(actions []cleanAction, gr gitRunner, idx *batchindex.Index, la
 	}
 
 	return removed, nil
-}
-
-func wipeLegacyDirs(layout paths.Layout) {
-	if _, err := os.Stat(layout.RunsDir); err == nil {
-		_ = os.RemoveAll(layout.RunsDir)
-	}
-	if _, err := os.Stat(layout.LogDir); err == nil {
-		_ = os.RemoveAll(layout.LogDir)
-	}
 }
 
 func runCleanStale(layout paths.Layout, eventsList []events.Event, log events.EventLog) (recovered, deadDirs int, err error) {

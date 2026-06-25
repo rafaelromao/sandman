@@ -365,63 +365,6 @@ func TestClean_Unavailable_ReapedByBothCleanAndArchived(t *testing.T) {
 	}
 }
 
-func TestClean_WipesLegacyRunsAndLogsDirs(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
-
-	batchDir := filepath.Join(dir, ".sandman", "batches", "batch-1")
-	runsDir := filepath.Join(dir, ".sandman", "runs")
-	logsDir := filepath.Join(dir, ".sandman", "logs")
-	if err := os.MkdirAll(filepath.Join(runsDir, "some-run"), 0755); err != nil {
-		t.Fatalf("create runs dir: %v", err)
-	}
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		t.Fatalf("create logs dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runsDir, "some-run", "batch.json"), []byte("{}"), 0644); err != nil {
-		t.Fatalf("create run file: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(logsDir, "42.log"), []byte("log"), 0644); err != nil {
-		t.Fatalf("create log file: %v", err)
-	}
-
-	writeRunManifest(t, batchDir, batchindex.RunManifest{
-		RunID:   "batch-1",
-		BatchID: "batch-1",
-		Kind:    batchindex.KindIssue,
-		Status:  batchindex.StatusActive,
-	})
-	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Entry{
-		{ID: "batch-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
-	})
-
-	deps := Dependencies{
-		RepoRoot:    dir,
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    &fakeEventLog{},
-		GitRunner:   &fakeGitRunner{},
-	}
-
-	var buf bytes.Buffer
-	cmd := NewCleanCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{})
-
-	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if _, err := os.Stat(runsDir); !os.IsNotExist(err) {
-		t.Errorf("expected legacy runs dir to be wiped")
-	}
-	if _, err := os.Stat(logsDir); !os.IsNotExist(err) {
-		t.Errorf("expected legacy logs dir to be wiped")
-	}
-}
-
 func TestClean_Stale_NoIndexChange(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)

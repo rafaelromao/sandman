@@ -10,8 +10,6 @@ import (
 // Layout groups the canonical on-disk locations for a Sandman repo. Every
 // field is resolved against RepoRoot so the orchestrator, agent run, portal,
 // and clean command stop hand-rolling filepath.Join(".sandman", ...).
-// BatchesDir and BatchesIndexPath are added in Phase 1; LogDir and RunsDir
-// are deprecated but retained for backward compatibility with slices 2+.
 type Layout struct {
 	RepoRoot         string
 	SandmanDir       string
@@ -20,8 +18,6 @@ type Layout struct {
 	BatchesIndexPath string
 	EventsLogPath    string
 	ArchiveDir       string
-	LogDir           string
-	RunsDir          string
 }
 
 // BatchDir returns the root directory for a batch: .sandman/batches/<batchID>
@@ -57,7 +53,5 @@ func NewLayout(cfg *config.Config, repoRoot string) Layout {
 		BatchesIndexPath: filepath.Join(repoRoot, ".sandman", "batches.json"),
 		EventsLogPath:    filepath.Join(repoRoot, ".sandman", "events.jsonl"),
 		ArchiveDir:       filepath.Join(repoRoot, ".sandman", "archive"),
-		LogDir:           filepath.Join(repoRoot, ".sandman", "logs"),
-		RunsDir:          filepath.Join(repoRoot, ".sandman", "runs"),
 	}
 }
