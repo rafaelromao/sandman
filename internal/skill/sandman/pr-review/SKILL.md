@@ -73,6 +73,8 @@ while true; do
       gh api repos/<owner>/<repo>/actions/jobs/<job_id>/logs \
         --jq '.text' 2>/dev/null | tail -50
     fi
+    # If the failure looks like base-branch drift, use sandman-back-merge to pull in fixes before retrying.
+    # This can recover fixes that landed after the task started.
     # Fix it. Read relevant source files, make minimal changes.
     git add -A && git commit -m "fix: resolve CI failure on <N>" && git push
     # After pushing, the old CI run is irrelevant.
@@ -244,4 +246,5 @@ Continue polling when:
 - Keep commits focused: one commit per review round.
 - When feedback is ambiguous, ask for clarification with `{{REVIEW_COMMAND}}` in the same comment.
 - Review agents may post feedback as: top-level comments, inline diff comments, or formal `COMMENT` reviews. Always check all three sources.
+- When CI is broken and the failure may be base-branch drift, load `sandman-back-merge` first so any fix that landed on the base branch can be merged before retrying.
 - When CI is failing, fix it first — CI must be green before any review feedback can be meaningfully addressed.
