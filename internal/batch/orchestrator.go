@@ -2415,8 +2415,21 @@ func collectIssueBranches(issueNumber int, title string, recordedBranch string, 
 // isMissingWorktreeError returns true when the git worktree remove error is
 // caused by the worktree not existing — not a real failure.
 func isMissingWorktreeError(err error, out []byte) bool {
-	return err != nil && (bytes.Contains(out, []byte("is not a working tree")) ||
-		bytes.Contains(out, []byte("could not open worktree")))
+	if err == nil {
+		return false
+	}
+	return bytes.Contains(out, []byte("is not a working tree")) ||
+		bytes.Contains(out, []byte("could not open worktree"))
+}
+
+// isPrunableWorktreeError returns true when the git worktree remove error is
+// caused by a prunable worktree — a worktree whose .git gitlink points to a
+// non-existent directory.
+func isPrunableWorktreeError(err error, out []byte) bool {
+	if err == nil {
+		return false
+	}
+	return bytes.Contains(out, []byte("is not a .git file"))
 }
 
 // isMissingBranchError returns true when the git branch -D error is caused
@@ -2447,7 +2460,13 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 
 	// Remove worktree (may fail if already removed — idempotent)
 	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil && !isMissingWorktreeError(err, out) {
-		fmt.Fprintf(logWriter, "error: remove worktree %s for issue %d: %v: %s\n", wtPath, issueNumber, err, out)
+		if isPrunableWorktreeError(err, out) && strandedReconcile != nil && *strandedReconcile {
+			if rmErr := os.RemoveAll(wtPath); rmErr != nil {
+				fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, rmErr)
+			}
+		} else {
+			fmt.Fprintf(logWriter, "error: remove worktree %s for issue %d: %v: %s\n", wtPath, issueNumber, err, out)
+		}
 	}
 	if out, err := exec.Command("git", "worktree", "prune").CombinedOutput(); err != nil {
 		fmt.Fprintf(logWriter, "error: prune worktrees for issue %d: %v: %s\n", issueNumber, err, out)
