@@ -109,15 +109,14 @@ func hashString(s string) uint64 {
 }
 
 func (s *ControlSocket) Stop() error {
+	var closeErr error
 	if s.listener != nil {
-		if err := s.listener.Close(); err != nil {
-			s.broadcaster.Close()
-			return err
-		}
+		closeErr = s.listener.Close()
+		s.listener = nil
 	}
 	s.broadcaster.Close()
 	if !s.isAbstract {
 		_ = os.Remove(s.Path())
 	}
-	return nil
+	return closeErr
 }
