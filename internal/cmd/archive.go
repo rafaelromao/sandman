@@ -16,6 +16,12 @@ import (
 
 type runActivityProbe func(runPath string) bool
 
+func stripSockets(batchDir string) {
+	for _, name := range []string{"batch.sock", "run.sock"} {
+		_ = os.Remove(filepath.Join(batchDir, name))
+	}
+}
+
 func NewArchiveCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "archive",
@@ -114,6 +120,7 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 		if err := os.Rename(entry.Path, archivePath); err != nil {
 			return fmt.Errorf("move batch %q: %w", entry.ID, err)
 		}
+		stripSockets(archivePath)
 		if err := idx.SetArchived(entry.ID, archivePath, now); err != nil {
 			return fmt.Errorf("set archived in index: %w", err)
 		}
@@ -166,6 +173,7 @@ func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe, repoRo
 	if err := os.Rename(entry.Path, archivePath); err != nil {
 		return fmt.Errorf("move batch dir: %w", err)
 	}
+	stripSockets(archivePath)
 
 	now := time.Now().UTC()
 	if err := idx.SetArchived(id, archivePath, now); err != nil {
@@ -211,6 +219,7 @@ func archivePortalRun(repoRoot, runID string) error {
 	if err := os.Rename(entry.Path, archivePath); err != nil {
 		return fmt.Errorf("move batch dir: %w", err)
 	}
+	stripSockets(archivePath)
 
 	now := time.Now().UTC()
 	if err := idx.SetArchived(runID, archivePath, now); err != nil {
@@ -280,6 +289,7 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 		if err := os.Rename(entry.Path, archivePath); err != nil {
 			return fmt.Errorf("move batch %q: %w", entry.ID, err)
 		}
+		stripSockets(archivePath)
 		if err := idx.SetArchived(entry.ID, archivePath, now); err != nil {
 			return fmt.Errorf("set archived in index: %w", err)
 		}

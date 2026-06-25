@@ -13,6 +13,7 @@ type ControlSocket struct {
 	name        string
 	listener    net.Listener
 	broadcaster *Broadcaster
+	isAbstract  bool
 }
 
 func NewControlSocket(dir string, broadcaster *Broadcaster) *ControlSocket {
@@ -84,6 +85,7 @@ func (s *ControlSocket) startWithShortSockName() error {
 		return fmt.Errorf("create abstract control socket: %w", err)
 	}
 	s.listener = listener
+	s.isAbstract = true
 
 	go func() {
 		for {
@@ -114,5 +116,8 @@ func (s *ControlSocket) Stop() error {
 		}
 	}
 	s.broadcaster.Close()
+	if !s.isAbstract {
+		_ = os.Remove(s.Path())
+	}
 	return nil
 }

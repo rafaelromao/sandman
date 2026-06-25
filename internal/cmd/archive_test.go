@@ -239,6 +239,73 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 	}
 }
 
+func TestArchiveRun_NoSocketsInArchive(t *testing.T) {
+	dir := newSandmanDir(t)
+	t.Chdir(dir)
+
+	batchDir := filepath.Join(dir, ".sandman", "batches", "socket-test")
+	now := time.Now()
+	writeBatchDirForArchive(t, batchDir, batchindex.RunManifest{
+		BatchID:   "socket-test",
+		Issue:     99,
+		Kind:      batchindex.KindIssue,
+		CreatedAt: now,
+		Status:    batchindex.StatusActive,
+	})
+	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+		{ID: "socket-test", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{99}},
+	})
+
+	batchSockPath := filepath.Join(batchDir, "batch.sock")
+	runSockPath := filepath.Join(batchDir, "run.sock")
+	if err := os.WriteFile(batchSockPath, []byte(""), 0644); err != nil {
+		t.Fatalf("create batch.sock: %v", err)
+	}
+	if err := os.WriteFile(runSockPath, []byte(""), 0644); err != nil {
+		t.Fatalf("create run.sock: %v", err)
+	}
+
+	var buf bytes.Buffer
+	cmd := NewArchiveCmd(newTestDeps())
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"run", "socket-test"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("archive command failed: %v", err)
+	}
+
+	archiveBatchDir := filepath.Join(dir, ".sandman", "archive", "socket-test")
+	sockets, err := filepathGlobRecursive(archiveBatchDir, "*sock*")
+	if err != nil {
+		t.Fatalf("globbing archive for socket files: %v", err)
+	}
+	if len(sockets) > 0 {
+		t.Errorf("archive contains socket files: %v", sockets)
+	}
+}
+
+func filepathGlobRecursive(root, pattern string) ([]string, error) {
+	var matches []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		matched, err := filepath.Match(pattern, filepath.Base(path))
+		if err != nil {
+			return err
+		}
+		if matched {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+	return matches, err
+}
+
 func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
