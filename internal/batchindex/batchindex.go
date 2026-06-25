@@ -77,28 +77,61 @@ type ReviewState struct {
 
 func Load(path string) (*Index, error) {
 	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &Index{Version: IndexVersion, Entries: nil, StatFn: os.Stat, indexPath: path}, nil
+	if err == nil {
+		var idx Index
+		if err := json.Unmarshal(data, &idx); err != nil {
+			if bakIdx := loadBak(path); bakIdx != nil {
+				return bakIdx, nil
+			}
+			return nil, fmt.Errorf("decode batches index: %w", err)
 		}
-		return nil, fmt.Errorf("read batches index: %w", err)
+
+		if idx.Version != IndexVersion {
+			if bakIdx := loadBak(path); bakIdx != nil {
+				return bakIdx, nil
+			}
+			return nil, fmt.Errorf("unsupported batches index version %d", idx.Version)
+		}
+
+		if idx.StatFn == nil {
+			idx.StatFn = os.Stat
+		}
+		idx.indexPath = path
+		return &idx, nil
+	}
+
+	if bakIdx := loadBak(path); bakIdx != nil {
+		return bakIdx, nil
+	}
+
+	if os.IsNotExist(err) {
+		return &Index{Version: IndexVersion, Entries: nil, StatFn: os.Stat, indexPath: path}, nil
+	}
+
+	return nil, fmt.Errorf("read batches index: %w", err)
+}
+
+func loadBak(path string) *Index {
+	bakPath := path + ".bak"
+	data, err := os.ReadFile(bakPath)
+	if err != nil {
+		return nil
 	}
 
 	var idx Index
 	if err := json.Unmarshal(data, &idx); err != nil {
-		return nil, fmt.Errorf("decode batches index: %w", err)
+		return nil
 	}
 
 	if idx.Version != IndexVersion {
-		return nil, fmt.Errorf("unsupported batches index version %d", idx.Version)
+		return nil
 	}
 
 	if idx.StatFn == nil {
 		idx.StatFn = os.Stat
 	}
 	idx.indexPath = path
-
-	return &idx, nil
+	return &idx
 }
 
 func (idx *Index) MarkUnavailable() bool {
@@ -142,12 +175,23 @@ func (idx *Index) Save(indexPath string) error {
 		return err
 	}
 
-	tmpPath := indexPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(indexPath)+".tmp.")
+	if err != nil {
+		return fmt.Errorf("create index tmp: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
 		return fmt.Errorf("write index tmp: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close index tmp: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, indexPath); err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("rename index tmp: %w", err)
 	}
 
