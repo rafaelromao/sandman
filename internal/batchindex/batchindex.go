@@ -60,6 +60,7 @@ type RunManifest struct {
 
 type SeenComment struct {
 	CommentID string    `json:"commentID"`
+	Status    string    `json:"status"`
 	Timestamp time.Time `json:"timestamp"`
 }
 

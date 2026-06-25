@@ -50,8 +50,8 @@ func TestReviewStateStore_LoadsExistingClaims(t *testing.T) {
 	seed := batchindex.ReviewState{
 		PR: 42,
 		SeenComments: []batchindex.SeenComment{
-			{CommentID: "100", Timestamp: time.Now()},
-			{CommentID: "101", Timestamp: time.Now()},
+			{CommentID: "100", Status: "success", Timestamp: time.Now()},
+			{CommentID: "101", Status: "success", Timestamp: time.Now()},
 		},
 		Claims: map[string]batchindex.Claim{},
 	}
@@ -320,7 +320,7 @@ func TestReviewStateStore_TryClaimAgainstLoadedIDs(t *testing.T) {
 	seed := batchindex.ReviewState{
 		PR: 42,
 		SeenComments: []batchindex.SeenComment{
-			{CommentID: "existing", Timestamp: time.Now()},
+			{CommentID: "existing", Status: "success", Timestamp: time.Now()},
 		},
 		Claims: map[string]batchindex.Claim{},
 	}
@@ -421,7 +421,7 @@ func TestReviewStateStore_NoTimeBasedPurge(t *testing.T) {
 		seed := batchindex.ReviewState{
 			PR: 42,
 			SeenComments: []batchindex.SeenComment{
-				{CommentID: "very-old", Timestamp: staleTime},
+				{CommentID: "very-old", Status: "success", Timestamp: staleTime},
 			},
 			Claims: map[string]batchindex.Claim{},
 		}

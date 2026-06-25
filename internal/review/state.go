@@ -161,8 +161,17 @@ func (s *ReviewStateStore) MarkSeen(commentID, status string) error {
 	if !s.isSeenLocked(commentID) {
 		s.state.SeenComments = append(s.state.SeenComments, batchindex.SeenComment{
 			CommentID: commentID,
+			Status:    status,
 			Timestamp: time.Now(),
 		})
+	} else {
+		for i, sc := range s.state.SeenComments {
+			if sc.CommentID == commentID {
+				s.state.SeenComments[i].Status = status
+				s.state.SeenComments[i].Timestamp = time.Now()
+				break
+			}
+		}
 	}
 	delete(s.state.Claims, commentID)
 	return s.saveLocked()

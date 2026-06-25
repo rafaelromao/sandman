@@ -631,7 +631,7 @@ func TestDaemon_MixedSeenAndUnseenTriggers(t *testing.T) {
 	priorState := batchindex.ReviewState{
 		PR: 1,
 		SeenComments: []batchindex.SeenComment{
-			{CommentID: "already-seen", Timestamp: now},
+			{CommentID: "already-seen", Status: "success", Timestamp: now},
 		},
 	}
 	if err := batchindex.WriteReviewState(priorRunDir, priorState); err != nil {
@@ -1152,7 +1152,7 @@ func TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale(t *testing.T) {
 	if err := batchindex.WriteReviewState(priorRunDir, batchindex.ReviewState{
 		PR: 1,
 		SeenComments: []batchindex.SeenComment{
-			{CommentID: "1", Timestamp: time.Date(2026, 6, 10, 10, 0, 0, 0, time.UTC)},
+			{CommentID: "1", Status: "success", Timestamp: time.Date(2026, 6, 10, 10, 0, 0, 0, time.UTC)},
 		},
 		Claims: map[string]batchindex.Claim{},
 	}); err != nil {
@@ -1257,7 +1257,7 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 	if err := batchindex.WriteReviewState(priorRunDir, batchindex.ReviewState{
 		PR: 1,
 		SeenComments: []batchindex.SeenComment{
-			{CommentID: "100", Timestamp: time.Now()},
+			{CommentID: "100", Status: "success", Timestamp: time.Now()},
 		},
 		Claims: map[string]batchindex.Claim{},
 	}); err != nil {

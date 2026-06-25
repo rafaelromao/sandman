@@ -358,8 +358,12 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	runDir, err := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID)
 	if err != nil {
 		d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, err)
-		// Fall through: still record superseded comments in the run's
-		// review-state.json so future ticks dedup correctly.
+		// If launchReview failed before creating a run folder, there
+		// is nowhere to record review-state.json. The trigger will be
+		// retried on the next tick.
+		if runDir == "" {
+			return nil
+		}
 	}
 
 	// Mark the trigger as seen in the new run's review-state.json.
@@ -392,10 +396,11 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 // loadGlobalSeenForPR scans every review-state.json on disk and returns
 // the set of (prNumber, commentID) pairs that are terminal-seen for the
 // given PR. It is the slice-4 wiring: cross-run dedup via the batches
-// index. Implementation reads the batches index first; on a missing or
-// unreadable index it falls back to scanning <BaseDir>/batches/ for
-// review-state.json files directly so the dedup still works when the
-// index is stale.
+// index. On a missing index (ENOENT), batchindex.Load returns an empty
+// index and dedup gracefully degrades to "nothing seen." On a corrupt or
+// unreadable index, the error is logged and the caller continues with an
+// empty set — this is acceptable per ADR-0034 §3 (rename-loser
+// re-processes).
 func (d *Daemon) loadGlobalSeenForPR(prNumber int) (map[string]bool, error) {
 	seen := map[string]bool{}
 	indexPath := daemon.BatchesIndexPath(d.BaseDir)
