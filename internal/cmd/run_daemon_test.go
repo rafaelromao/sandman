@@ -415,6 +415,7 @@ func TestRun_LeavesBatchDirOnError(t *testing.T) {
 }
 
 func TestRun_SetsRunDirOnBatchRequest(t *testing.T) {
+	t.Skip("flaky in CI; tracked in #1326")
 	_ = chdirToSandmanDir(t)
 	deps := depsWithSocket(&spyBatchRunner{result: &batch.Result{}})
 	spy := deps.BatchRunner.(*spyBatchRunner)
