@@ -1358,26 +1358,11 @@ func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
 }
 
 func (v *portalRunsView) portalLogPathForRun(repoRoot string, issueNumber int, branch string, runID string, review bool, prNumber int, batchDir ...string) string {
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	branch = strings.TrimSpace(branch)
 	runID = strings.TrimSpace(runID)
 
-	if runID != "" {
-		if len(batchDir) > 0 && batchDir[0] != "" {
-			return filepath.Join(batchDir[0], "runs", runID, "run.log")
-		}
-		// No batch dir — fall through to legacy per-issue/per-branch log
-		// path so historical (pre-batch-folder) runs still resolve.
-	}
-
-	if review && branch != "" {
-		return filepath.Join(layout.LogDir, fmt.Sprintf("%s.log", branch))
-	}
-	if issueNumber > 0 {
-		return filepath.Join(layout.LogDir, fmt.Sprintf("%d.log", issueNumber))
-	}
-	if branch != "" {
-		return filepath.Join(layout.LogDir, fmt.Sprintf("%s.log", branch))
+	if runID != "" && len(batchDir) > 0 && batchDir[0] != "" {
+		return filepath.Join(batchDir[0], "runs", runID, "run.log")
 	}
 	return ""
 }

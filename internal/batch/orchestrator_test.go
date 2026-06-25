@@ -774,32 +774,6 @@ func TestReadTailLines_TrailingNewline(t *testing.T) {
 	}
 }
 
-func TestAgentLogPath(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	o := &Orchestrator{layout: paths.NewLayout(&config.Config{}, dir)}
-	tests := []struct {
-		name     string
-		filename string
-	}{
-		{"numeric log", "42.log"},
-		{"prompt-only log", "prompt-run-123.log"},
-		{"bare filename", "foo"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			path := o.agentLogPath(tt.filename)
-			if !filepath.IsAbs(path) {
-				t.Fatal("expected absolute path")
-			}
-			wantSuffix := filepath.Join(".sandman", "logs", tt.filename)
-			if !strings.HasSuffix(path, wantSuffix) {
-				t.Fatalf("unexpected path: %s (want suffix: %s)", path, wantSuffix)
-			}
-		})
-	}
-}
-
 func TestResolveRetries(t *testing.T) {
 	cfg := &config.Config{Retries: 3}
 

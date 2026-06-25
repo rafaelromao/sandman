@@ -123,11 +123,6 @@ func readTailLines(path string, n int) []string {
 	return parts[len(parts)-n:]
 }
 
-// agentLogPath returns the canonical absolute log path for the given filename
-// under the orchestrator's layout LogDir.
-func (o *Orchestrator) agentLogPath(filename string) string {
-	return filepath.Join(o.layout.LogDir, filename)
-}
 func gitTopLevel(repoPath string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = repoPath
