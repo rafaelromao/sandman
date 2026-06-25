@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `sandman run --continue` and the orchestrator's retry path now read `.sandman/task.md` verbatim instead of routing the file through a prompt parser/rewriter. The previous pipeline rewrote the file into a different scaffold and carried forward stale blocker state; the continuation seam now returns the file content as-is and falls back to `prompt.DefaultPrompt()` when the file is blank.
 - `sandman tdd` skill now reuses an existing `## Plan` section in `.sandman/task.md` instead of drafting a new plan. The plan section stays in the task file for continuation runs, and the `## Next Step` heading remains part of the handoff/resume flow. Verification: Go unit tests cover the plan-reuse branches and prompt handoff behavior. (#912)
+- **Sandman layout redesign**: The on-disk layout has been redesigned. The `batches.json` file now serves as the canonical index of all batches (replacing the former `.sandman/runs/` directory-based scanning). Archive directories live under `.sandman/archive/<batch-id>` instead of `.sandman/archive/<id>`. The `clean` command flags have changed: `--success` and `--failed` are removed; use `--archived` (remove archived batches) and `--stale` (recover stale runs in dead batches) instead. The old `.sandman/runs/` and `.sandman/logs/` directories are no longer used; all run artifacts now live under `.sandman/batches/<batch-id>/runs/<run-id>/`. See ADR-0032 for the full design rationale.
 
 ### Fixed
 
