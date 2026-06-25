@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -2520,7 +2519,7 @@ func isMissingBranchError(err error, out []byte) bool {
 	return err != nil && bytes.Contains(out, []byte("not found"))
 }
 
-// ClearIssueArtifacts removes worktree, branch, logs, and event log entries
+// ClearIssueArtifacts removes worktree, branch, and event log entries
 // for a given issue. It is idempotent — missing artifacts do not cause errors.
 //
 // When `git branch -D <branch>` from the main-repo cwd fails because the
@@ -2534,9 +2533,6 @@ func isMissingBranchError(err error, out []byte) bool {
 //
 // `baseBranch` is the branch the function falls back to when no stranded
 // worktree is found; when empty, the fallback path is skipped.
-//
-// `batchesIndexPath` is the path to the batches index file used to resolve
-// the run.log location in the new per-run folder layout.
 func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool, batchesIndexPath string) {
 	wtPath := filepath.Join(worktreeDir, branch)
 
@@ -2578,39 +2574,6 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 	if strandedReconcile == nil || !*strandedReconcile {
 		if err := os.RemoveAll(wtPath); err != nil {
 			fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, err)
-		}
-	}
-
-	// Remove log file. Skip in override mode — logs persist until sandman clean.
-	if strandedReconcile == nil || !*strandedReconcile {
-		runIDs := make(map[string]struct{})
-		if eventLog != nil {
-			if events, err := eventLog.Read(); err != nil {
-				fmt.Fprintf(logWriter, "warning: read event log for log cleanup (issue %d): %v\n", issueNumber, err)
-			} else {
-				for _, e := range events {
-					if e.Issue == issueNumber && (e.Type == "run.started" || e.Type == "run.continued") && e.RunID != "" {
-						runIDs[e.RunID] = struct{}{}
-					}
-				}
-			}
-		}
-		if len(runIDs) > 0 && batchesIndexPath != "" {
-			if idx, err := batchindex.Load(batchesIndexPath); err != nil {
-				fmt.Fprintf(logWriter, "warning: load batches index for log cleanup (issue %d): %v\n", issueNumber, err)
-			} else {
-				for _, entry := range idx.Entries {
-					if !slices.Contains(entry.Issues, issueNumber) {
-						continue
-					}
-					for runID := range runIDs {
-						logPath := filepath.Join(entry.Path, "runs", runID, "run.log")
-						if err := os.Remove(logPath); err != nil && !os.IsNotExist(err) {
-							fmt.Fprintf(logWriter, "error: remove log for issue %d: %v\n", issueNumber, err)
-						}
-					}
-				}
-			}
 		}
 	}
 
