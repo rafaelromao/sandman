@@ -64,6 +64,9 @@ func TestArchiveRun_NoArgsReturnsUsageError(t *testing.T) {
 }
 
 func TestArchiveStale_NoArgsAcceptsNone(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
 	var buf bytes.Buffer
 	deps := newTestDeps()
 	deps.EventLog = &fakeEventLog{}

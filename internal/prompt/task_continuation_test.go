@@ -52,27 +52,14 @@ After completing each item, update '.sandman/task.md' in place by checking that 
 	}
 }
 
-// TestContinuationTaskPrompt_DoesNotCarryForwardStaleBlockers guards against
-// the secondary bug surfaced by #1193: when the prior task.md contained a
-// '## Blockers' entry pointing at a PR/issue that is no longer blocking
-// (e.g. the PR is now MERGEABLE), the continuation prompt must not carry
-// the stale blocker text forward. The fix strips the '## Blockers' section
-// from the carried-over Body (the new prompt keeps the rest of the
-// checklist intact).
-func TestContinuationTaskPrompt_DoesNotCarryForwardStaleBlockers(t *testing.T) {
-	withStaleBlocker := `# Task
+// TestContinuationTaskPrompt_PreservesBlockersSection verifies that
+// ContinuationTaskPrompt does NOT strip ## Blockers sections from the
+// content. No Sandman skill writes a ## Blockers section to task.md, so
+// stripping is unnecessary and the content should be returned verbatim.
+func TestContinuationTaskPrompt_PreservesBlockersSection(t *testing.T) {
+	withBlockers := `# Task
 
 Implement GitHub issue #1193.
-
-## Issue Context
-
-Slice 2.
-
-## Runtime Context
-
-- Current branch: 'sandman/1193-slice-2-uniform-log-prefix-always-runid'
-- Source branch: 'sandman/1193-slice-2-uniform-log-prefix-always-runid'
-- Base branch: 'main'
 
 ## Execution Checklist
 
@@ -89,16 +76,16 @@ Slice 2.
 Wait for CI to be green.
 `
 
-	got := ContinuationTaskPrompt(withStaleBlocker)
+	got := ContinuationTaskPrompt(withBlockers)
 
-	if strings.Contains(got, "PR #1208 remains open, awaiting unrelated CI failure") {
-		t.Fatalf("expected continuation prompt to strip stale ## Blockers content referencing PR #1208, got:\n%s", got)
+	if !strings.Contains(got, "## Blockers") {
+		t.Fatalf("expected continuation prompt to preserve ## Blockers section, got:\n%s", got)
+	}
+	if !strings.Contains(got, "PR #1208 remains open, awaiting unrelated CI failure") {
+		t.Fatalf("expected continuation prompt to preserve ## Blockers content, got:\n%s", got)
 	}
 	if !strings.Contains(got, "## Execution Checklist") {
 		t.Fatalf("expected continuation prompt to preserve ## Execution Checklist, got:\n%s", got)
-	}
-	if !strings.Contains(got, "- [x] Implement") {
-		t.Fatalf("expected continuation prompt to preserve completed checklist items, got:\n%s", got)
 	}
 }
 

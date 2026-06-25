@@ -8,7 +8,7 @@ import (
 )
 
 func TestDefaultPromptDocMatchesCanonicalPrompt(t *testing.T) {
-	path := filepath.Join("..", "..", "docs", "usage", "default-prompt.md")
+	path := filepath.Join("..", "..", "docs", "usage", "default-task-prompt.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read default prompt doc: %v", err)
@@ -37,10 +37,10 @@ func extractPromptBlock(doc string) (string, error) {
 	end := -1
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "<!-- default-prompt:start -->" {
+		if trimmed == "<!-- default-task-prompt:start -->" {
 			start = i + 1
 		}
-		if trimmed == "<!-- default-prompt:end -->" {
+		if trimmed == "<!-- default-task-prompt:end -->" {
 			end = i
 			break
 		}

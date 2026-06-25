@@ -285,7 +285,7 @@ func TestRun_CreatesCommandSocketInRunDir(t *testing.T) {
 
 func TestRun_RemovesCommandSocketOnCompletion(t *testing.T) {
 	t.Skip("flaky in CI; tracked in #1326")
-	dir := chdirToSandmanDir(t)
+	dir := chdirToShortSandmanDir(t)
 	deps := depsWithSocket(&commanderBatchRunner{
 		started:    make(chan struct{}),
 		release:    make(chan struct{}),
