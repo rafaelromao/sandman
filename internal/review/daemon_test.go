@@ -1648,3 +1648,126 @@ func TestDaemon_LaunchReviewSucceedsWhenVerificationPasses(t *testing.T) {
 		t.Fatalf("expected no error from launchReview when verification passes, got: %v", err)
 	}
 }
+
+// TestDaemon_TickFailingReviewRecordsFailure verifies that when a review
+// launch fails (RunBatch returns an error), the trigger comment is
+// recorded as "failure" in review-state.json, not "success". This is the
+// missing seam that let the regression ship: the launch error was shadowed
+// by a later NewReviewStateStore assignment, so MarkSeen always passed.
+func TestDaemon_TickFailingReviewRecordsFailure(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "x", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "Body"}},
+	}
+
+	runner := &capturedRequest{}
+	errRunner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		runner.mu.Lock()
+		runner.calls++
+		runner.last = req
+		runner.mu.Unlock()
+		return nil, errors.New("batch exploded")
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, errRunner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+
+	statePath := filepath.Join(runner.last.RunDir, "review-state.json")
+	state, err := batchindex.ReadReviewState(runner.last.RunDir)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+
+	foundFailure := false
+	foundSuccess := false
+	for _, sc := range state.SeenComments {
+		if sc.CommentID == "x" {
+			if sc.Status == "failure" {
+				foundFailure = true
+			}
+			if sc.Status == "success" {
+				foundSuccess = true
+			}
+		}
+	}
+	if !foundFailure {
+		t.Errorf("comment x should be marked as failure in review-state.json, got: %+v (path: %s)", state.SeenComments, statePath)
+	}
+	if foundSuccess {
+		t.Errorf("comment x should NOT be marked as success, got: %+v (path: %s)", state.SeenComments, statePath)
+	}
+}
+
+// TestDaemon_TickFailingReviewRetriesOnNextTick verifies that a failed
+// review trigger (recorded as "failure" in review-state.json) is
+// re-processed on the next daemon tick. This confirms the global dedup
+// skip rule only treats "success" as terminal, not "failure", so failed
+// triggers can be retried.
+func TestDaemon_TickFailingReviewRetriesOnNextTick(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "x", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "Body"}},
+	}
+
+	runner := &capturedRequest{}
+	errRunner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		runner.mu.Lock()
+		runner.calls++
+		runner.last = req
+		runner.mu.Unlock()
+		return nil, errors.New("batch exploded")
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, errRunner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run on first tick, got %d", runner.calls)
+	}
+
+	state, err := batchindex.ReadReviewState(runner.last.RunDir)
+	if err != nil {
+		t.Fatalf("read review state after first tick: %v", err)
+	}
+
+	foundFailure := false
+	for _, sc := range state.SeenComments {
+		if sc.CommentID == "x" && sc.Status == "failure" {
+			foundFailure = true
+			break
+		}
+	}
+	if !foundFailure {
+		t.Fatalf("first tick should have recorded failure, got: %+v", state.SeenComments)
+	}
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+
+	if runner.calls != 2 {
+		t.Errorf("expected 2 batch runs (retry on second tick), got %d", runner.calls)
+	}
+}
