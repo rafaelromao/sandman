@@ -39,6 +39,9 @@ node_modules/
 package.json
 package-lock.json
 
+# Worktrees
+.worktrees/
+
 # Token optimizer sessions
 token-optimizer/
 
