@@ -108,6 +108,36 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffCreateRunRow_BatchAndRetryOnSeparateLines(t *testing.T) {
+	js := `const body = makeMockBody();
+const batchOnlyRun = { key: 'run-1', kind: 'active', status: 'running', issueLabel: '#42', runId: 'a0c19', issueNumber: 42, batchKey: 'batch-abc' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, batchOnlyRun, opts);
+const meta = created.row.querySelector('[data-cell="title"]').children[0].children[1];
+// Batch should be on its own line, separate from Run identifier
+if (!meta.textContent.includes('Run: a0c19')) throw new Error('expected Run: line, got ' + JSON.stringify(meta.textContent));
+if (!meta.textContent.includes('Batch: batch-abc')) throw new Error('expected Batch: line, got ' + JSON.stringify(meta.textContent));
+// Verify they are on separate lines (Batch not joined with Run)
+if (meta.textContent.includes('Run: a0c19\nBatch: batch-abc')) {
+  // This is the new expected format - PASS
+} else {
+  throw new Error('expected Batch on separate line from Run, got ' + JSON.stringify(meta.textContent));
+}
+
+// Now test with batch + retry/review
+const batchWithRetry = { key: 'run-2', kind: 'active', status: 'reviewing', issueLabel: '#43', runId: 'b1c2d', issueNumber: 43, batchKey: 'batch-xyz', retriesDone: 2, retriesTotal: 2, reviewCount: 1, reviewVerdict: 'Approved' };
+SandmanPortalDiff.insertRunRow(body, batchWithRetry, opts);
+const metaWithRetry = body.querySelector('tr[data-run-key="run-2"]').querySelector('[data-cell="title"]').children[0].children[1];
+// Should have Run on line 1, Batch on line 2, summary on line 3
+if (!metaWithRetry.textContent.includes('Run: b1c2d')) throw new Error('expected Run: line, got ' + JSON.stringify(metaWithRetry.textContent));
+if (!metaWithRetry.textContent.includes('Batch: batch-xyz')) throw new Error('expected Batch: line, got ' + JSON.stringify(metaWithRetry.textContent));
+if (!metaWithRetry.textContent.includes('\n2 retries - 1 review - Approved')) throw new Error('expected retry/review summary on own line, got ' + JSON.stringify(metaWithRetry.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffCreateRunRow_NoArchivedColumnOrBadge(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'archived-1', kind: 'completed', status: 'success', archived: true, issueLabel: '#1', runId: 'archived-1', issueNumber: 1 };
@@ -2003,10 +2033,10 @@ const renderStatusBadge = (run) => {
 const renderRunMeta = (run) => {
   const lines = [];
   if (run.runId) lines.push('Run: ' + run.runId);
-  const summary = [];
   if (run.batchKey) {
-    summary.push('Batch: ' + run.batchKey);
+    lines.push('Batch: ' + run.batchKey);
   }
+  const summary = [];
   if (Number(run.retriesDone || 0) > 0) {
     const count = Number(run.retriesDone || 0);
     summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));

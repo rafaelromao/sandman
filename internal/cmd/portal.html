@@ -2359,10 +2359,10 @@
     function renderRunMeta(run) {
       const lines = [];
       if (run.runId) lines.push('Run: ' + run.runId);
-      const summary = [];
       if (run.batchKey) {
-        summary.push('Batch: ' + run.batchKey);
+        lines.push('Batch: ' + run.batchKey);
       }
+      const summary = [];
       if (Number(run.retriesDone || 0) > 0) {
         const count = Number(run.retriesDone || 0);
         summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
