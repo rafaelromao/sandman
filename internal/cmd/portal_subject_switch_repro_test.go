@@ -59,13 +59,12 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
     window.__portalChangeCalls = 0;
     window.__portalFetchCalls = 0;
     window.__portalRefreshCalls = 0;
-    window.__portalRefresh = null;
     window.setInterval = function (cb) {
       if (cb && cb.name === 'refresh') {
-        window.__portalRefresh = function () {
+        setTimeout(function () {
           window.__portalRefreshCalls += 1;
           return cb();
-        };
+        }, 100);
       }
       return 1;
     };
@@ -180,11 +179,6 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
       select.value = 'PR42';
       select.dispatchEvent(new Event('change', { bubbles: true }));
     }, 50);
-    setTimeout(function () {
-      if (typeof window.__portalRefresh === 'function') {
-        window.__portalRefresh();
-      }
-    }, 100);
     setTimeout(function () {
       var row = document.querySelector('tr[data-run-key="issue-1"]');
       var detail = document.querySelector('tr.detail-row[data-detail-for="issue-1"]');
