@@ -39,7 +39,7 @@ func NewRootCmd(deps Dependencies) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "sandman",
 		Short: "Sandman orchestrates AFK coding agents in isolated sandboxes",
-		Long: `Sandman is a terminal-native CLI tool for orchestrating AFK coding agents
+		Long: `Sandman is a CLI tool for orchestrating AFK coding agents
 in isolated sandboxes. It manages issue tracking, worktrees, containerized
 execution, and event logging for automated coding workflows.`,
 		SilenceUsage:  true,
