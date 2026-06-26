@@ -188,16 +188,17 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
       var select = document.querySelector('select[data-action="set-subject"]');
       var title = row && row.querySelector('[data-cell="title"] .name');
       var meta = row && row.querySelector('[data-cell="title"] .meta-line');
-      var content = detail && detail.querySelector('.detail-content');
+      var selectedLabel = select && select.selectedIndex >= 0 && select.options[select.selectedIndex] ? select.options[select.selectedIndex].textContent : null;
       var pre = document.createElement('pre');
       pre.id = 'portal-repro';
       pre.textContent = JSON.stringify({
         selected: select && select.value,
+        selectedLabel: selectedLabel,
         rowKey: row && row.getAttribute('data-run-key'),
         detailFor: detail && detail.getAttribute('data-detail-for'),
         rowName: title && title.textContent,
         metaText: meta && meta.textContent,
-        subjectFingerprint: content && content.getAttribute('data-rendered-subject-fingerprint'),
+        detailText: detail && detail.innerText,
         fetchCalls: window.__portalFetchCalls || 0,
         refreshCalls: window.__portalRefreshCalls || 0,
         changeCalls: window.__portalChangeCalls || 0
@@ -208,15 +209,16 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 	dom := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-repro")
 	var result struct {
-		Selected           string `json:"selected"`
-		RowKey             string `json:"rowKey"`
-		DetailFor          string `json:"detailFor"`
-		RowName            string `json:"rowName"`
-		MetaText           string `json:"metaText"`
-		SubjectFingerprint string `json:"subjectFingerprint"`
-		FetchCalls         int    `json:"fetchCalls"`
-		RefreshCalls       int    `json:"refreshCalls"`
-		ChangeCalls        int    `json:"changeCalls"`
+		Selected      string `json:"selected"`
+		SelectedLabel string `json:"selectedLabel"`
+		RowKey        string `json:"rowKey"`
+		DetailFor     string `json:"detailFor"`
+		RowName       string `json:"rowName"`
+		MetaText      string `json:"metaText"`
+		DetailText    string `json:"detailText"`
+		FetchCalls    int    `json:"fetchCalls"`
+		RefreshCalls  int    `json:"refreshCalls"`
+		ChangeCalls   int    `json:"changeCalls"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse repro payload: %v\nraw=%s", err, payload)
@@ -224,11 +226,14 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 	if result.Selected != "PR42" {
 		t.Fatalf("expected selected subject PR42 after refresh, got %#v", result)
 	}
+	if result.SelectedLabel != "PR42" {
+		t.Fatalf("expected visible subject label PR42 after refresh, got %#v", result)
+	}
 	if result.RowKey != "issue-1" || result.DetailFor != "issue-1" {
 		t.Fatalf("expected the visible parent row to stay locked to issue-1, got %#v", result)
 	}
-	if !strings.Contains(result.SubjectFingerprint, "PR42") {
-		t.Fatalf("expected detail fingerprint to keep the selected subject, got %#v", result)
+	if !strings.Contains(result.DetailText, "PR42") {
+		t.Fatalf("expected visible detail panel to keep the selected subject, got %#v", result)
 	}
 	if result.FetchCalls < 2 || result.RefreshCalls < 1 || result.ChangeCalls < 1 {
 		t.Fatalf("expected change + refresh path to run, got %#v", result)
@@ -261,8 +266,8 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
       pre.id = 'portal-meta-order';
       pre.textContent = JSON.stringify({
         rowKey: row && row.getAttribute('data-run-key'),
-        metaText: meta && meta.textContent,
-        lineCount: meta ? meta.textContent.split('\n').length : 0
+        metaText: meta && meta.innerText,
+        lineCount: meta ? meta.innerText.split('\n').length : 0
       });
       document.body.appendChild(pre);
     }, 250);
