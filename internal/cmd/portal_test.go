@@ -733,6 +733,39 @@ func TestPortal_RunFromState_LeavesRetriesZeroWhenActive(t *testing.T) {
 	}
 }
 
+func TestPortal_RunFromState_EmptyRunIDWithIssueNumberUsesCompoundKey(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	runState := events.RunState{
+		RunID: "",
+		Started: events.Event{
+			Timestamp: time.Now().Add(-1 * time.Minute),
+			Payload:   map[string]any{},
+		},
+	}
+
+	active := &portalActiveRun{
+		Key:         "abcd-260618113825",
+		IssueNumber: 42,
+		SocketPath:  "",
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
+
+	if run.Key != "abcd-260618113825-issue-42" {
+		t.Fatalf("expected Key %q for batch issue with empty state.RunID, got %q", "abcd-260618113825-issue-42", run.Key)
+	}
+	if run.RunID != "abcd-260618113825-issue-42" {
+		t.Fatalf("expected RunID %q for batch issue with empty state.RunID, got %q", "abcd-260618113825-issue-42", run.RunID)
+	}
+}
+
 func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
