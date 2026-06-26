@@ -38,17 +38,50 @@ This task must be executed through the Sandman skill workflow, not by ad-hoc imp
 6. If a skill says to load another skill, load it and follow it end to end.
 7. If a step cannot be completed, stop only when the relevant skill says to stop, report the blocker, then still run the continuation step below.
 
-## AFK Rule
+## AFK Rule — Absolute
 
-This is an Away From Keyboard workflow. Do not ask the user for approval, confirmation, or decisions during execution unless a skill stop condition makes progress impossible.
+This is a fully automated Away From Keyboard workflow. **The user will never be available to answer questions, give approval, or make decisions during execution.**
 
-When any Sandman skill refers to user approval, user confirmation, or user satisfaction, satisfy that gate by:
+### Hard Ban
 
-- Asking a subagent to review the plan or result.
+You MUST NEVER:
+- Ask the user for approval, confirmation, permission, or decisions.
+- Ask the user "should I proceed?", "ready for next step?", "want me to continue?", or any variant.
+- Ask the user for clarification, feedback, or review.
+- Pause, prompt, or block waiting for user input — **including yes/no questions, confirmations, and rhetorical check-ins**.
+- Stop mid-workflow to report status to the user unless the workflow has reached a terminal stop condition defined by a loaded skill.
+
+### Subagent Escape Hatch
+
+If you genuinely cannot decide what to do next (ambiguous result, conflicting skill instructions, unclear failure mode), do not ask the user. Instead:
+1. **Spawn a subagent** with full context of the decision point.
+2. Ask the subagent to analyze and recommend.
+3. Reach consensus with the subagent.
+4. Proceed automatically.
+
+This is your only allowed second-opinion mechanism. Never fall back to asking the user.
+
+### Satisfying "User Approval" Gates in Skills
+
+When any loaded skill refers to user approval, user confirmation, or user satisfaction, satisfy that gate by:
+- Asking a subagent to review the plan, code, or result.
 - Reaching consensus with the subagent.
 - Proceeding automatically once tests, formatting, CI, and review gates pass.
 
-For TDD planning, load `sandman-tdd`, draft the plan, ask a subagent to review it, revise until consensus, then proceed automatically. Do not wait for human approval.
+Do not wait for human approval under any circumstances.
+
+### Examples of Banned Questions
+
+These are all forbidden (non-exhaustive):
+
+> "Ready for PR review step. Want me to proceed?"
+> "Should I create the PR now?"
+> "Does this look good to you?"
+> "Can I merge?"
+> "What should I do about this test failure?"
+> "The review returned feedback. Should I apply it?"
+
+All of these MUST be handled autonomously or delegated to a subagent.
 
 ## Search Scope Restriction
 
