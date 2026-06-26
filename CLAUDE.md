@@ -17,7 +17,7 @@ gofmt -w . && go vet ./...
 ## Symbol lookup
 
 Use `codeindex` CLI before grepping: `codeindex lookup <symbol>`, `codeindex impact <file>`, `codeindex dependencies <file>`.
-Regenerate: `codeindex analyze . && codeindex symbols . --inline`
+Regenerate: `codeindex analyze . && codeindex symbols .`
 
 ## Agent skills
 
