@@ -2132,10 +2132,12 @@ func TestPortal_Compute_LiveBatchTerminalRowsAreCompleted(t *testing.T) {
 				{Type: tc.eventType, Timestamp: terminalAt, RunID: "live-1-issue-42", Issue: 42, Payload: map[string]any{"status": tc.status, "branch": "sandman/42-fix"}},
 			})
 
-			runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
-			if err != nil {
-				t.Fatalf("compute: %v", err)
-			}
+			prev := portalStaleCleaner
+			portalStaleCleaner = func(string) error { return nil }
+			t.Cleanup(func() { portalStaleCleaner = prev })
+
+			server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+			runs := readPortalRuns(t, server.URL)
 			if len(runs) != 1 {
 				t.Fatalf("expected 1 run, got %d: %#v", len(runs), runs)
 			}
