@@ -3068,6 +3068,32 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+func TestPortalRunsView_VisibleRunForIssueGroup_PrefersLiveActiveOverCompletedParent(t *testing.T) {
+	js := `const parent = { key: 'issue-1-parent', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: 'issue-1-parent', issueNumber: 1, batchKey: 'batch-1' };
+const active = { key: 'issue-1-active', kind: 'active', status: 'running', review: false, issueLabel: '#1', runId: 'issue-1-active', issueNumber: 1, batchKey: 'batch-1' };
+const result = visibleRunForIssueGroup(1, [parent, active]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-1-active') throw new Error('expected live active child as visible row, got ' + JSON.stringify(result.key));
+if (result.kind !== 'active') throw new Error('expected active kind for visible row, got ' + JSON.stringify(result.kind));
+if (!helpers.isRunAbortable(result, new Set())) throw new Error('expected live active visible row to keep Abort control');
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestPortalRunsView_VisibleRunForIssueGroup_CompletedOnlyStillUsesCompletedRow(t *testing.T) {
+	js := `const parent = { key: 'issue-2-parent', kind: 'completed', status: 'success', review: false, issueLabel: '#2', runId: 'issue-2-parent', issueNumber: 2, reviewCount: 3, reviewVerdict: 'Approved' };
+const result = visibleRunForIssueGroup(2, [parent]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-2-parent') throw new Error('expected completed row to stay visible, got ' + JSON.stringify(result.key));
+if (result.kind !== 'completed') throw new Error('expected completed kind to stay visible, got ' + JSON.stringify(result.kind));
+if (result.status !== 'success') throw new Error('expected completed status to stay visible, got ' + JSON.stringify(result.status));
+if (result.reviewVerdict !== 'Approved') throw new Error('expected existing completed summary verdict to stay visible, got ' + JSON.stringify(result.reviewVerdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 // TestPortalRunsView_VisibleRunForIssueGroup_TerminalParentWinsOverLiveChild
 // is the regression test for issue #1362: when an issue has both a terminal
 // parent run (status=success) and a live review child (status=reviewing,
