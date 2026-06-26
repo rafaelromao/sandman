@@ -407,7 +407,7 @@ func TestAgentRun_Execute_WritesLogFile(t *testing.T) {
 	}
 }
 
-func TestAgentRun_Execute_UsesLayoutLogDir_IgnoresCWD(t *testing.T) {
+func TestAgentRun_Execute_UsesRunFolderLog_IgnoresCWD(t *testing.T) {
 	repo := t.TempDir()
 	workDir := t.TempDir()
 	other := t.TempDir()
@@ -425,9 +425,9 @@ func TestAgentRun_Execute_UsesLayoutLogDir_IgnoresCWD(t *testing.T) {
 	if _, err := os.Stat(wantPath); err != nil {
 		t.Fatalf("expected log file at %s: %v", wantPath, err)
 	}
-	otherLogPath := filepath.Join(other, ".sandman", "logs", "42.log")
-	if _, err := os.Stat(otherLogPath); !os.IsNotExist(err) {
-		t.Errorf("did not expect log file under CWD %s", otherLogPath)
+	oldLogPath := filepath.Join(other, ".sandman", "logs", "42.log")
+	if _, err := os.Stat(oldLogPath); !os.IsNotExist(err) {
+		t.Errorf("did not expect log file at old path %s", oldLogPath)
 	}
 }
 

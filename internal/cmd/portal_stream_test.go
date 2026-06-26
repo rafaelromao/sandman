@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -72,8 +74,28 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 	}
 
 	startedAt := time.Now().Add(-5 * time.Minute)
-	runDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
-	sockPath := filepath.Join(runDir, "batch.sock")
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+	runID := "PR42"
+	runFolder := filepath.Join(batchDir, "runs", runID)
+	sockPath := filepath.Join(runFolder, "run.sock")
+	if err := os.MkdirAll(runFolder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runManifest := batchindex.RunManifest{Issue: 42}
+	runManifestData, _ := json.Marshal(runManifest)
+	if err := os.WriteFile(filepath.Join(runFolder, "run.json"), runManifestData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		{ID: runID, Path: batchDir, Kind: "batch", Status: "active", Issues: []int{42}},
+	}}
+	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(idxPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Save(idxPath); err != nil {
+		t.Fatal(err)
+	}
 	startFakeRunDaemon(t, sockPath, []string{
 		"\x1b[32m[issue-42]\x1b[0m 12:00:01 starting work\r\n",
 		"[issue-42] 12:00:02 \x1b[1;33mwarning\x1b[0m: low disk\n",
@@ -81,7 +103,7 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 	}, true)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
 	})
 
 	handler := newPortalHandler(repoRoot)
