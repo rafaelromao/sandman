@@ -1,6 +1,6 @@
 # Sandman
 
-A terminal-native CLI tool for orchestrating AFK coding agents in isolated sandboxes.
+CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 
 ## Quick Start
 

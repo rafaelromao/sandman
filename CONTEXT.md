@@ -1,6 +1,6 @@
 # Sandman
 
-Domain vocabulary for Sandman, a terminal-native CLI tool that orchestrates AFK coding agents in isolated sandboxes.
+Domain vocabulary for Sandman, a CLI tool that orchestrates AFK coding agents in isolated sandboxes.
 
 ## Language
 
