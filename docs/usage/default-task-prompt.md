@@ -79,8 +79,8 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 
     1. Complete checklist items in order: Create branch, Plan, Implement, PR-Review, PR-Merge.
     2. For any plan-approval, confirmation, or satisfaction step, use subagent review and proceed after consensus. Do not ask the user.
-    3. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.
-    4. If any merge gate is false or ambiguous, do not merge. Leave the PR open and report blockers.
+    3. **PR creation is not PR review.** A PR existing does not mean it has been reviewed or is ready to merge. Before loading `sandman-pr-merge`, the agent MUST confirm that `sandman-pr-review` was actually executed and produced a reviewed/approved state. If the last completed step is "PR Created" and the PR is not approved or not mergeable, the agent MUST call `sandman-pr-review` before `sandman-pr-merge` — do not skip the review step. If any merge gate is false or ambiguous, call `sandman-pr-review` and continue the review loop instead of reporting blockers to the user.
+    4. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.
 
     ## Completion Requirements
 
