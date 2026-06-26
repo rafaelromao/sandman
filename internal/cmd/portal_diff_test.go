@@ -115,24 +115,31 @@ const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, batchOnlyRun, opts);
 const meta = created.row.querySelector('[data-cell="title"]').children[0].children[1];
-// Batch should be on its own line, separate from Run identifier
+// Batch should appear before Run identifier (issue #1348)
 if (!meta.textContent.includes('Run: a0c19')) throw new Error('expected Run: line, got ' + JSON.stringify(meta.textContent));
 if (!meta.textContent.includes('Batch: batch-abc')) throw new Error('expected Batch: line, got ' + JSON.stringify(meta.textContent));
-// Verify they are on separate lines (Batch not joined with Run)
-if (meta.textContent.includes('Run: a0c19\nBatch: batch-abc')) {
-  // This is the new expected format - PASS
+// Verify Batch comes BEFORE Run on separate lines (Batch first, Run second)
+if (meta.textContent.includes('Batch: batch-abc\nRun: a0c19')) {
+  // This is the correct format per issue #1348 - Batch above Run
 } else {
-  throw new Error('expected Batch on separate line from Run, got ' + JSON.stringify(meta.textContent));
+  throw new Error('expected Batch: before Run: on separate lines, got ' + JSON.stringify(meta.textContent));
 }
 
 // Now test with batch + retry/review
 const batchWithRetry = { key: 'run-2', kind: 'active', status: 'reviewing', issueLabel: '#43', runId: 'b1c2d', issueNumber: 43, batchKey: 'batch-xyz', retriesDone: 2, retriesTotal: 2, reviewCount: 1, reviewVerdict: 'Approved' };
 SandmanPortalDiff.insertRunRow(body, batchWithRetry, opts);
 const metaWithRetry = body.querySelector('tr[data-run-key="run-2"]').querySelector('[data-cell="title"]').children[0].children[1];
-// Should have Run on line 1, Batch on line 2, summary on line 3
+// Should have Batch+summary on line 1, Run on line 2 (Batch above Run per issue #1348)
 if (!metaWithRetry.textContent.includes('Run: b1c2d')) throw new Error('expected Run: line, got ' + JSON.stringify(metaWithRetry.textContent));
 if (!metaWithRetry.textContent.includes('Batch: batch-xyz')) throw new Error('expected Batch: line, got ' + JSON.stringify(metaWithRetry.textContent));
-if (!metaWithRetry.textContent.includes('\n2 retries - 1 review - Approved')) throw new Error('expected retry/review summary on own line, got ' + JSON.stringify(metaWithRetry.textContent));
+// Batch+summary should come before Run
+const batchSummaryLine = 'Batch: batch-xyz - 2 retries - 1 review - Approved';
+if (!metaWithRetry.textContent.startsWith(batchSummaryLine)) {
+  throw new Error('expected Batch+summary on first line, got ' + JSON.stringify(metaWithRetry.textContent));
+}
+if (!metaWithRetry.textContent.includes(batchSummaryLine + '\nRun: b1c2d')) {
+  throw new Error('expected Batch+summary line followed by Run line, got ' + JSON.stringify(metaWithRetry.textContent));
+}
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -2070,11 +2077,10 @@ const renderStatusBadge = (run) => {
 };
 const renderRunMeta = (run) => {
   const lines = [];
-  if (run.runId) lines.push('Run: ' + run.runId);
-  if (run.batchKey) {
-    lines.push('Batch: ' + run.batchKey);
-  }
   const summary = [];
+  if (run.batchKey) {
+    summary.push('Batch: ' + run.batchKey);
+  }
   if (Number(run.retriesDone || 0) > 0) {
     const count = Number(run.retriesDone || 0);
     summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
@@ -2084,7 +2090,13 @@ const renderRunMeta = (run) => {
     summary.push(count + ' review' + (count === 1 ? '' : 's'));
     if (run.reviewVerdict) summary.push(run.reviewVerdict);
   }
-  if (summary.length) lines.push(summary.join(' - '));
+  if (run.batchKey) {
+    if (summary.length) lines.push(summary.join(' - '));
+    if (run.runId) lines.push('Run: ' + run.runId);
+  } else {
+    if (run.runId) lines.push('Run: ' + run.runId);
+    if (summary.length) lines.push(summary.join(' - '));
+  }
   return lines.length ? lines.join('\n') : 'Run';
 };
 const renderTerminalContent = (text) => {
@@ -3088,6 +3100,25 @@ if (rendered.runId !== 'a0c19-260622193226-1227') throw new Error('expected visi
 const meta = helpers.renderRunMeta(rendered);
 if (!meta.includes('a0c19-260622193226-1227')) throw new Error('expected renderRunMeta to surface real run identifier, got ' + JSON.stringify(meta));
 if (meta.startsWith('issue-')) throw new Error('expected renderRunMeta not to start with synthetic "issue-" stub, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestRenderRunMeta_BatchAboveRunID(t *testing.T) {
+	js := `const runWithBatch = { key: 'a', runId: 'r1', batchKey: 'batch-42', kind: 'active', status: 'running' };
+const metaWithBatch = helpers.renderRunMeta(runWithBatch);
+if (metaWithBatch.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for run with batch, got ' + JSON.stringify(metaWithBatch));
+if (metaWithBatch.indexOf('Run:') < 0) throw new Error('expected Run: in meta for run with batch, got ' + JSON.stringify(metaWithBatch));
+const batchPos = metaWithBatch.indexOf('Batch:');
+const runPos = metaWithBatch.indexOf('Run:');
+if (batchPos > runPos) throw new Error('expected Batch: to appear before Run:, got Batch: at ' + batchPos + ', Run: at ' + runPos + ' in ' + JSON.stringify(metaWithBatch));
+
+const runWithoutBatch = { key: 'b', runId: 'r2', kind: 'active', status: 'running' };
+const metaWithoutBatch = helpers.renderRunMeta(runWithoutBatch);
+if (metaWithoutBatch.indexOf('Run:') < 0) throw new Error('expected Run: in meta for run without batch, got ' + JSON.stringify(metaWithoutBatch));
+if (metaWithoutBatch.indexOf('Batch:') >= 0) throw new Error('expected no Batch: in meta for run without batch, got ' + JSON.stringify(metaWithoutBatch));
+
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
