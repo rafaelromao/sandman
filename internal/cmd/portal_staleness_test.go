@@ -11,7 +11,7 @@ import (
 
 // TestPortal_LastOutputAt pins the staleness data source. The portal's
 // core unmet job is distinguishing an active run that is producing output
-// from one that has gone quiet. The saved run log (.sandman/logs/<N>.log)
+// from one that has gone quiet. The run-folder log (<batchDir>/runs/<runID>/run.log)
 // is opened with O_APPEND during AgentRun.Execute, so its mtime is the
 // cheapest accurate "last output" signal — and, unlike event timestamps,
 // it does not flag a healthy but quiet agent as stale.

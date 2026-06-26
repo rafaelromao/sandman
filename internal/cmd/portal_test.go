@@ -386,12 +386,12 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *tes
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
-	if run.Kind != "completed" {
-		t.Fatalf("expected kind 'completed' for unmatched active state with dead socket, got %q", run.Kind)
+	if run.Kind != "active" {
+		t.Fatalf("expected kind 'active' for unmatched active state with dead socket and no batch dir, got %q", run.Kind)
 	}
 }
 
-func TestPortal_RunFromState_MarksCompletedWhenRunDirMissing(t *testing.T) {
+func TestPortal_RunFromState_StaysActiveWhenBatchDirMissing(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -411,15 +411,12 @@ func TestPortal_RunFromState_MarksCompletedWhenRunDirMissing(t *testing.T) {
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
-	if run.Kind != "completed" {
-		t.Fatalf("expected kind 'completed' for unmatched active state with missing run dir, got %q", run.Kind)
-	}
-	if run.Status != "completed" {
-		t.Fatalf("expected status 'completed' for unmatched active state with missing run dir, got %q", run.Status)
+	if run.Kind != "active" {
+		t.Fatalf("expected kind 'active' for unmatched active state with missing run dir, got %q", run.Kind)
 	}
 }
 
-func TestPortal_RunFromState_MarksCompletedWhenRunDirExistsButSocketMissing(t *testing.T) {
+func TestPortal_RunFromState_StaysActiveWhenSocketMissing(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -443,11 +440,8 @@ func TestPortal_RunFromState_MarksCompletedWhenRunDirExistsButSocketMissing(t *t
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
-	if run.Kind != "completed" {
-		t.Fatalf("expected kind 'completed' for unmatched active state with present run dir but missing socket, got %q", run.Kind)
-	}
-	if run.Status != "completed" {
-		t.Fatalf("expected status 'completed' for unmatched active state with present run dir but missing socket, got %q", run.Status)
+	if run.Kind != "active" {
+		t.Fatalf("expected kind 'active' for unmatched active state with present run dir but missing socket, got %q", run.Kind)
 	}
 }
 

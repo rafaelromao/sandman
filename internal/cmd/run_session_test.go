@@ -142,8 +142,9 @@ func readJSONLEvents(t *testing.T, path string) []events.Event {
 // Per-run artifacts (run.json, run.log, run.sock) are created by the
 // orchestrator in the per-row execution path, not by RunSession.Prepare.
 //
-// The issue's failure mode is: events.jsonl has run.started and the log
-// file under .sandman/logs/ is written, but the batch directory is missing.
+// The issue's failure mode is: events.jsonl has run.started and the
+// per-run-folder log (<batchDir>/runs/<runID>/run.log) is written, but
+// the batch directory is missing.
 // This test fails in that scenario.
 func TestRun_BootArtifactsBeforeRunStarted(t *testing.T) {
 	env := newRunSessionTestEnv(t)
