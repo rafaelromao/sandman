@@ -298,7 +298,16 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 	if _, err := os.Stat(cmdSock); err != nil {
 		// If the command socket isn't at the batch level, check the per-run folder.
 		if run.RunID != "" && run.BatchKey != "" {
-			perRunDir := filepath.Join(runDir, "runs", run.RunID)
+			perRunID := run.RunID
+			// When runID equals batchKey, runID might actually be the batchID
+			// (set when manifest.BatchId is configured). The actual run folder
+			// name is filepath.Base(runDir) in this case.
+			if run.RunID == run.BatchKey {
+				if manifest, err := daemon.ReadManifest(runDir); err == nil && manifest.BatchId != "" && manifest.BatchId == run.BatchKey {
+					perRunID = filepath.Base(runDir)
+				}
+			}
+			perRunDir := filepath.Join(runDir, "runs", perRunID)
 			perRunSock := daemon.CommandSocketPath(perRunDir)
 			if _, statErr := os.Stat(perRunSock); statErr == nil {
 				runDir = perRunDir
