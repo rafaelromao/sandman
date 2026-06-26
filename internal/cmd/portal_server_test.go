@@ -2088,6 +2088,69 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 	}
 }
 
+func TestPortal_Compute_LiveBatchTerminalRowsAreCompleted(t *testing.T) {
+	cases := []struct {
+		name      string
+		eventType string
+		status    string
+	}{
+		{name: "success", eventType: "run.finished", status: "success"},
+		{name: "failure", eventType: "run.finished", status: "failure"},
+		{name: "aborted", eventType: "run.aborted", status: "aborted"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot, err := os.MkdirTemp("/tmp", "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+			if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+			terminalAt := startedAt.Add(2 * time.Minute)
+			runDir := filepath.Join(repoRoot, ".sandman", "batches", "live-1")
+			activeSock := filepath.Join(runDir, "batch.sock")
+			if err := os.MkdirAll(runDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+				t.Fatal(err)
+			}
+			ln, err := net.Listen("unix", activeSock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = ln.Close() })
+			addBatchToIndex(t, repoRoot, "live-1", runDir, []int{42})
+
+			writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+				{Type: "run.started", Timestamp: startedAt, RunID: "live-1-issue-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+				{Type: tc.eventType, Timestamp: terminalAt, RunID: "live-1-issue-42", Issue: 42, Payload: map[string]any{"status": tc.status, "branch": "sandman/42-fix"}},
+			})
+
+			prev := portalStaleCleaner
+			portalStaleCleaner = func(string) error { return nil }
+			t.Cleanup(func() { portalStaleCleaner = prev })
+
+			server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+			runs := readPortalRuns(t, server.URL)
+			if len(runs) != 1 {
+				t.Fatalf("expected 1 run, got %d: %#v", len(runs), runs)
+			}
+			if runs[0].Kind != "completed" {
+				t.Fatalf("expected completed kind for live batch %s row, got %q", tc.name, runs[0].Kind)
+			}
+			if runs[0].Status != tc.status {
+				t.Fatalf("expected %s status for live batch %s row, got %q", tc.status, tc.name, runs[0].Status)
+			}
+		})
+	}
+}
+
 func TestPortal_KeepsCompletedRunsThatStartAfterAnOlderActiveBatch(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
 	if err != nil {
