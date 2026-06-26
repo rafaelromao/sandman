@@ -923,6 +923,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
 	}
+	out.WriteString(renderCodeindexInstallCommand())
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
 	out.WriteString(renderRTKInstallCommand())
 	return out.String()
@@ -1115,6 +1116,10 @@ func renderPythonInstallCommand(version string) string {
 	out.WriteString(fmt.Sprintf("RUN mise use -g --pin python@%s\n", version))
 	out.WriteString("RUN pip3 install uv\n")
 	return out.String()
+}
+
+func renderCodeindexInstallCommand() string {
+	return "RUN pip3 install codeindex\n"
 }
 
 func renderAgentInstallCommand(agent, version string) string {

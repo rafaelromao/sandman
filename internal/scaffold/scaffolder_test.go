@@ -236,6 +236,9 @@ func TestScaffold_NodePresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
+	if !strings.Contains(content, "RUN pip3 install codeindex") {
+		t.Fatalf("Dockerfile missing codeindex install, got:\n%s", content)
+	}
 	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
@@ -1541,6 +1544,9 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	}
 	if !strings.Contains(content, "RUN pip3 install uv") {
 		t.Fatalf("Dockerfile missing uv install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN pip3 install codeindex") {
+		t.Fatalf("Dockerfile missing codeindex install, got:\n%s", content)
 	}
 	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
