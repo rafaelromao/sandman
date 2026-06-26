@@ -152,7 +152,6 @@ type portalRect struct {
 }
 
 func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *testing.T) {
-	t.Skip("SKIPPED: see follow-up issue #1394 - batch metadata not rendering on parent row after subject switch")
 	const logLineCount = 6000
 	parentLogLines := make([]string, logLineCount)
 	childLogLines := make([]string, logLineCount)
@@ -170,6 +169,7 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 		"status":      "reviewing",
 		"issueLabel":  "#1",
 		"issueNumber": 1,
+		"batchKey":    "issue-1",
 		"reviewCount": 1,
 		"log":         parentLog,
 	}
