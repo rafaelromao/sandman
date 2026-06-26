@@ -15,11 +15,28 @@ import (
 
 // IsRunActive reports whether a batch directory is currently owned by a live
 // daemon process. A batch is considered active when its `batch.sock` is
-// connectable. Batch dirs that survived a crash (no live socket) are stale
-// and safe to clean up.
+// connectable, or when any per-run `run.sock` inside `runs/` is connectable.
+// Batch dirs that survived a crash (no live socket) are stale and safe to
+// clean up.
 func IsRunActive(batchPath string) bool {
 	batchSock := filepath.Join(batchPath, "batch.sock")
-	conn, err := net.DialTimeout("unix", batchSock, 100*time.Millisecond)
+	if isConnectableSocket(batchSock) {
+		return true
+	}
+	runSockets, err := filepath.Glob(filepath.Join(batchPath, "runs", "*", "run.sock"))
+	if err != nil {
+		return false
+	}
+	for _, runSock := range runSockets {
+		if isConnectableSocket(runSock) {
+			return true
+		}
+	}
+	return false
+}
+
+func isConnectableSocket(sockPath string) bool {
+	conn, err := net.DialTimeout("unix", sockPath, 100*time.Millisecond)
 	if err != nil {
 		return false
 	}

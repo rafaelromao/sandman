@@ -2228,6 +2228,10 @@
       if (!group.length) return null;
       const parents = group.filter((run) => !run.review);
       if (parents.length) {
+        const liveActive = parents.filter((candidate) => candidate.kind === 'active');
+        if (liveActive.length) {
+          return liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
+        }
         return parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || parents[0];
       }
       const summary = summarizeReviewGroup(group.filter((run) => run.review));
