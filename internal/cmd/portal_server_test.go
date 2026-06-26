@@ -34,6 +34,26 @@ type portalTestOutput struct {
 	once  sync.Once
 }
 
+type abortIssueCommander struct {
+	t            *testing.T
+	eventLogPath string
+	runID        string
+}
+
+func (c *abortIssueCommander) AbortIssue(issueNumber int) error {
+	if issueNumber != 42 {
+		c.t.Fatalf("expected issue 42, got %d", issueNumber)
+	}
+	writePortalLog(c.t, c.eventLogPath, []events.Event{{
+		Type:      "run.aborted",
+		Timestamp: time.Now(),
+		RunID:     c.runID,
+		Issue:     issueNumber,
+		Payload:   map[string]any{"status": "aborted", "branch": "sandman/42-fix"},
+	}})
+	return nil
+}
+
 func newPortalTestOutput() *portalTestOutput {
 	return &portalTestOutput{ready: make(chan struct{})}
 }
@@ -623,6 +643,119 @@ func TestPortal_AbortRunEndpointAbortsActiveRunAndRefreshesStatus(t *testing.T) 
 	run := runs[0]
 	if run.Kind != "completed" || run.Status != "aborted" || run.IssueNumber != 42 {
 		t.Fatalf("expected aborted run to project as completed aborted, got %#v", run)
+	}
+}
+
+func TestPortal_AbortRunEndpointAbortsQueuedAndBlockedRunsAndRefreshesStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		eventType  string
+		eventLog   string
+		wantStatus string
+	}{
+		{name: "queued", eventType: "run.queued", wantStatus: "queued"},
+		{name: "blocked", eventType: "run.blocked", wantStatus: "blocked"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+			if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			startedAt := time.Now().Add(-10 * time.Minute)
+			batchDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
+			runFolder := filepath.Join(batchDir, "runs", "run-42-1")
+			activeSock := filepath.Join(batchDir, "batch.sock")
+			abortSock := filepath.Join(runFolder, "run.sock")
+			if err := os.MkdirAll(runFolder, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+				t.Fatal(err)
+			}
+			ln, err := net.Listen("unix", activeSock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = ln.Close() })
+			if err := daemon.WriteRunManifest(batchDir, "run-42-1", batchindex.RunManifest{Issue: 42}); err != nil {
+				t.Fatal(err)
+			}
+			idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{{ID: "run-42-1", Path: batchDir, Kind: "batch", Status: "active", CreatedAt: startedAt, Issues: []int{42}}}}
+			idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+			if err := idx.Save(idxPath); err != nil {
+				t.Fatal(err)
+			}
+
+			writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{{
+				Type:      tc.eventType,
+				Timestamp: startedAt.Add(1 * time.Minute),
+				RunID:     "run-42-1",
+				Issue:     42,
+				Payload:   map[string]any{"blocked_by": []int{99}},
+			}})
+
+			prevPeerPID := portalPeerPID
+			t.Cleanup(func() { portalPeerPID = prevPeerPID })
+			portalPeerPID = func(sockPath string) (int, error) {
+				if sockPath != abortSock {
+					t.Fatalf("expected socket %q, got %q", abortSock, sockPath)
+				}
+				return 12345, nil
+			}
+
+			cmd := daemon.NewCommandServer(runFolder, &abortIssueCommander{t: t, eventLogPath: filepath.Join(repoRoot, ".sandman", "events.jsonl"), runID: "run-42-1"})
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = cmd.Stop() })
+
+			prev := portalStaleCleaner
+			portalStaleCleaner = func(string) error { return nil }
+			t.Cleanup(func() { portalStaleCleaner = prev })
+
+			server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+			defer server.Close()
+
+			runs := readPortalRuns(t, server.URL)
+			if len(runs) != 1 {
+				t.Fatalf("expected 1 run before abort, got %#v", runs)
+			}
+			if runs[0].Status != tc.wantStatus || runs[0].Kind != "active" {
+				t.Fatalf("expected active %s row before abort, got %#v", tc.wantStatus, runs[0])
+			}
+
+			req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/abort", strings.NewReader(`{"runKey":"`+runs[0].Key+`","issue":42}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+			}
+
+			runs = readPortalRuns(t, server.URL)
+			if len(runs) != 1 {
+				t.Fatalf("expected 1 projected run after abort, got %#v", runs)
+			}
+			run := runs[0]
+			if run.Kind != "completed" || run.Status != "aborted" || run.IssueNumber != 42 {
+				t.Fatalf("expected aborted run to project as completed aborted, got %#v", run)
+			}
+			if strings.Contains(run.Log, "Queued") || strings.Contains(run.Log, "Blocked") {
+				t.Fatalf("expected aborted row log to replace wait-state text, got %q", run.Log)
+			}
+		})
 	}
 }
 

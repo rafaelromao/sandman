@@ -696,6 +696,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
 	run := portalRun{
 		Key:         fmt.Sprintf("%s-issue-%d", active.Key, issueNumber),
+		RunID:       active.RunID,
 		Kind:        "active",
 		Status:      "queued",
 		IssueLabel:  issueLabel,

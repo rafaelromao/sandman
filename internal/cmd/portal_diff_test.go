@@ -596,6 +596,34 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateRunRowCells_AbortButtonRemovedWhenQueuedOrBlockedRowBecomesAborted(t *testing.T) {
+	js := `const cases = [
+  { status: 'queued' },
+  { status: 'blocked' },
+];
+for (const tc of cases) {
+  const body = makeMockBody();
+  const runOld = { key: 'run-42-1-issue-42', kind: 'active', status: tc.status, issueLabel: '#42', runId: 'run-42-1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: 'run-42-1' };
+  const runNew = Object.assign({}, runOld, { kind: 'completed', status: 'aborted' });
+  const stopGroups = new Set();
+  const abortReservations = new Set();
+  const opts = { helpers, stopGroups, abortReservations, expandedKey: null };
+  SandmanPortalDiff.insertRunRow(body, runOld, opts);
+  const rowBefore = body.children[0];
+  const beforeBtn = rowBefore.querySelector('button[data-action="abort-run"]');
+  if (!beforeBtn) throw new Error('expected ' + tc.status + ' row to render Abort before refresh');
+  SandmanPortalDiff.updateRunRowCells(rowBefore, runOld, runNew, opts);
+  const afterBtn = rowBefore.querySelector('button[data-action="abort-run"]');
+  if (afterBtn) throw new Error('expected ' + tc.status + ' row to drop Abort after refresh');
+  const badgeCell = rowBefore.querySelector('[data-cell="badge"]');
+  const badge = badgeCell && badgeCell.children[0];
+  if (!badge || !badge.classList.contains('aborted')) throw new Error('expected aborted badge after refresh for ' + tc.status + ' row');
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffStatusClass_AbortedReturnsAborted(t *testing.T) {
 	js := `const result = helpers.statusClass({ status: 'aborted' });
 if (result !== 'aborted') throw new Error('expected statusClass to return aborted, got ' + result);
