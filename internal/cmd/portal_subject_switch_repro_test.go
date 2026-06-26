@@ -3,6 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,7 +97,7 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
 	return page
 }
 
-func runPortalChromium(t *testing.T, page string) string {
+func runPortalChromium(t *testing.T, page string) (string, string) {
 	t.Helper()
 	if _, err := exec.LookPath("chromium"); err != nil {
 		t.Skip("chromium not on PATH; skipping portal repro")
@@ -125,7 +128,7 @@ func runPortalChromium(t *testing.T, page string) string {
 	} else if info.Size() == 0 {
 		t.Fatal("chromium screenshot was empty")
 	}
-	return string(out)
+	return string(out), screenshotPath
 }
 
 func extractPortalMarker(t *testing.T, dom, id string) string {
@@ -139,6 +142,13 @@ func extractPortalMarker(t *testing.T, dom, id string) string {
 		t.Fatalf("could not parse repro marker %s from DOM dump:\n%s", id, dom)
 	}
 	return m[1]
+}
+
+type portalRect struct {
+	Left   float64 `json:"left"`
+	Top    float64 `json:"top"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
 }
 
 func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *testing.T) {
@@ -210,7 +220,7 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
       document.body.appendChild(pre);
     }, 2000);
   `)
-	dom := runPortalChromium(t, page)
+	dom, _ := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-repro")
 	var result struct {
 		Selected      string `json:"selected"`
@@ -274,6 +284,8 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
       var meta = row && row.querySelector('[data-cell="title"] .meta-line');
       var firstTop = null;
       var secondTop = null;
+      var firstRect = null;
+      var secondRect = null;
       var firstText = null;
       var secondText = null;
       if (meta && meta.firstChild && meta.firstChild.nodeType === Node.TEXT_NODE) {
@@ -284,12 +296,18 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
           range.setStart(meta.firstChild, 0);
           range.setEnd(meta.firstChild, split);
           var rects = range.getClientRects();
-          firstTop = rects.length ? rects[0].top : null;
+          if (rects.length) {
+            firstTop = rects[0].top;
+            firstRect = { left: rects[0].left, top: rects[0].top, width: rects[0].width, height: rects[0].height };
+          }
           firstText = text.slice(0, split);
           range.setStart(meta.firstChild, split + 1);
           range.setEnd(meta.firstChild, meta.firstChild.textContent.length);
           rects = range.getClientRects();
-          secondTop = rects.length ? rects[0].top : null;
+          if (rects.length) {
+            secondTop = rects[0].top;
+            secondRect = { left: rects[0].left, top: rects[0].top, width: rects[0].width, height: rects[0].height };
+          }
           secondText = text.slice(split + 1);
         }
       }
@@ -301,22 +319,26 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
         lineCount: meta ? meta.innerText.split('\n').length : 0,
         firstTop: firstTop,
         secondTop: secondTop,
+        firstRect: firstRect,
+        secondRect: secondRect,
         firstText: firstText,
         secondText: secondText
       });
       document.body.appendChild(pre);
     }, 250);
   `)
-	dom := runPortalChromium(t, page)
+	dom, screenshotPath := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-meta-order")
 	var result struct {
-		RowKey     string   `json:"rowKey"`
-		MetaText   string   `json:"metaText"`
-		LineCount  int      `json:"lineCount"`
-		FirstTop   *float64 `json:"firstTop"`
-		SecondTop  *float64 `json:"secondTop"`
-		FirstText  string   `json:"firstText"`
-		SecondText string   `json:"secondText"`
+		RowKey     string      `json:"rowKey"`
+		MetaText   string      `json:"metaText"`
+		LineCount  int         `json:"lineCount"`
+		FirstTop   *float64    `json:"firstTop"`
+		SecondTop  *float64    `json:"secondTop"`
+		FirstRect  *portalRect `json:"firstRect"`
+		SecondRect *portalRect `json:"secondRect"`
+		FirstText  string      `json:"firstText"`
+		SecondText string      `json:"secondText"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse meta payload: %v\nraw=%s", err, payload)
@@ -337,4 +359,79 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	if result.FirstTop == nil || result.SecondTop == nil || !(*result.FirstTop < *result.SecondTop) {
 		t.Fatalf("expected batch line to render above run line, got %#v", result)
 	}
+	if result.FirstRect == nil || result.SecondRect == nil {
+		t.Fatalf("expected screenshot rects for both lines, got %#v", result)
+	}
+	img, err := loadPortalScreenshot(screenshotPath)
+	if err != nil {
+		t.Fatalf("decode portal screenshot: %v", err)
+	}
+	bg := img.At(1, 1)
+	if !rectContainsInk(img, *result.FirstRect, bg) {
+		t.Fatalf("expected screenshot ink for batch line, got %#v", result)
+	}
+	if !rectContainsInk(img, *result.SecondRect, bg) {
+		t.Fatalf("expected screenshot ink for run line, got %#v", result)
+	}
+}
+
+func loadPortalScreenshot(path string) (image.Image, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return png.Decode(f)
+}
+
+func rectContainsInk(img image.Image, rect portalRect, background color.Color) bool {
+	if rect.Width <= 0 || rect.Height <= 0 {
+		return false
+	}
+	minX := clampInt(int(rect.Left), 0, img.Bounds().Dx()-1)
+	maxX := clampInt(int(rect.Left+rect.Width), 0, img.Bounds().Dx()-1)
+	minY := clampInt(int(rect.Top), 0, img.Bounds().Dy()-1)
+	maxY := clampInt(int(rect.Top+rect.Height), 0, img.Bounds().Dy()-1)
+	if minX > maxX || minY > maxY {
+		return false
+	}
+	for y := minY; y <= maxY; y += max(1, (maxY-minY)/3) {
+		for x := minX; x <= maxX; x += max(1, (maxX-minX)/5) {
+			if !sameColor(img.At(x, y), background) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sameColor(a, b color.Color) bool {
+	const tolerance = 0x2020
+	ar, ag, ab, aa := a.RGBA()
+	br, bg, bb, ba := b.RGBA()
+	return absDiff(ar, br) <= tolerance && absDiff(ag, bg) <= tolerance && absDiff(ab, bb) <= tolerance && absDiff(aa, ba) <= tolerance
+}
+
+func absDiff(a, b uint32) uint32 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
