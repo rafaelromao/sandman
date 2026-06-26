@@ -3229,3 +3229,14 @@ console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
 }
+
+func TestRenderRunMeta_QueuedRow_SuppressesRunLabel(t *testing.T) {
+	js := `const run = { key: 'abcd-260618113825-issue-42', runId: '', batchKey: 'abcd-260618113825', kind: 'active', status: 'queued' };
+const meta = helpers.renderRunMeta(run);
+if (meta.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for queued row, got ' + JSON.stringify(meta));
+if (meta.indexOf('abcd-260618113825') < 0) throw new Error('expected batchKey value in Batch: label, got ' + JSON.stringify(meta));
+if (meta.indexOf('Run:') >= 0) throw new Error('expected no Run: in meta for queued row, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
