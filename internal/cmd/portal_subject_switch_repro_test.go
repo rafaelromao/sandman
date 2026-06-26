@@ -137,11 +137,14 @@ func extractPortalMarker(t *testing.T, dom, id string) string {
 
 func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *testing.T) {
 	const logLineCount = 6000
-	logLines := make([]string, logLineCount)
-	for i := range logLines {
-		logLines[i] = "review log line " + strconv.Itoa(i+1) + " xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	parentLogLines := make([]string, logLineCount)
+	childLogLines := make([]string, logLineCount)
+	for i := range parentLogLines {
+		parentLogLines[i] = "parent log line " + strconv.Itoa(i+1) + " xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+		childLogLines[i] = "child log line " + strconv.Itoa(i+1) + " yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
 	}
-	bigLog := strings.Join(logLines, "\n")
+	parentLog := strings.Join(parentLogLines, "\n")
+	childLog := strings.Join(childLogLines, "\n")
 
 	parent := map[string]any{
 		"key":         "issue-1",
@@ -151,7 +154,7 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 		"issueLabel":  "#1",
 		"issueNumber": 1,
 		"reviewCount": 1,
-		"log":         bigLog,
+		"log":         parentLog,
 	}
 	child := map[string]any{
 		"key":         "PR42",
@@ -162,7 +165,7 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 		"issueNumber": 1,
 		"prNumber":    42,
 		"review":      true,
-		"log":         bigLog,
+		"log":         childLog,
 	}
 	runsJSON, err := json.Marshal([]map[string]any{parent, child})
 	if err != nil {
@@ -197,7 +200,7 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
         rowKey: row && row.getAttribute('data-run-key'),
         detailFor: detail && detail.getAttribute('data-detail-for'),
         rowName: title && title.textContent,
-        metaText: meta && meta.textContent,
+        metaText: meta && meta.innerText,
         detailText: detail && detail.innerText,
         fetchCalls: window.__portalFetchCalls || 0,
         refreshCalls: window.__portalRefreshCalls || 0,
@@ -232,8 +235,14 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 	if result.RowKey != "issue-1" || result.DetailFor != "issue-1" {
 		t.Fatalf("expected the visible parent row to stay locked to issue-1, got %#v", result)
 	}
-	if !strings.Contains(result.DetailText, "PR42") {
-		t.Fatalf("expected visible detail panel to keep the selected subject, got %#v", result)
+	if result.RowName != "#1" {
+		t.Fatalf("expected visible row title to stay on the parent issue, got %#v", result)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(result.MetaText), "Batch: issue-1") {
+		t.Fatalf("expected visible batch metadata on the parent row, got %#v", result)
+	}
+	if !strings.Contains(result.DetailText, "child log line 1") || strings.Contains(result.DetailText, "parent log line 1") {
+		t.Fatalf("expected visible detail panel to stay on the child log after refresh, got %#v", result)
 	}
 	if result.FetchCalls < 2 || result.RefreshCalls < 1 || result.ChangeCalls < 1 {
 		t.Fatalf("expected change + refresh path to run, got %#v", result)
@@ -262,12 +271,37 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
     setTimeout(function () {
       var row = document.querySelector('tr[data-run-key="`+runID+`"]');
       var meta = row && row.querySelector('[data-cell="title"] .meta-line');
+      var firstTop = null;
+      var secondTop = null;
+      var firstText = null;
+      var secondText = null;
+      if (meta && meta.firstChild && meta.firstChild.nodeType === Node.TEXT_NODE) {
+        var text = meta.innerText || meta.textContent || '';
+        var split = text.indexOf('\n');
+        if (split >= 0) {
+          var range = document.createRange();
+          range.setStart(meta.firstChild, 0);
+          range.setEnd(meta.firstChild, split);
+          var rects = range.getClientRects();
+          firstTop = rects.length ? rects[0].top : null;
+          firstText = text.slice(0, split);
+          range.setStart(meta.firstChild, split + 1);
+          range.setEnd(meta.firstChild, meta.firstChild.textContent.length);
+          rects = range.getClientRects();
+          secondTop = rects.length ? rects[0].top : null;
+          secondText = text.slice(split + 1);
+        }
+      }
       var pre = document.createElement('pre');
       pre.id = 'portal-meta-order';
       pre.textContent = JSON.stringify({
         rowKey: row && row.getAttribute('data-run-key'),
         metaText: meta && meta.innerText,
-        lineCount: meta ? meta.innerText.split('\n').length : 0
+        lineCount: meta ? meta.innerText.split('\n').length : 0,
+        firstTop: firstTop,
+        secondTop: secondTop,
+        firstText: firstText,
+        secondText: secondText
       });
       document.body.appendChild(pre);
     }, 250);
@@ -275,9 +309,13 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	dom := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-meta-order")
 	var result struct {
-		RowKey    string `json:"rowKey"`
-		MetaText  string `json:"metaText"`
-		LineCount int    `json:"lineCount"`
+		RowKey     string   `json:"rowKey"`
+		MetaText   string   `json:"metaText"`
+		LineCount  int      `json:"lineCount"`
+		FirstTop   *float64 `json:"firstTop"`
+		SecondTop  *float64 `json:"secondTop"`
+		FirstText  string   `json:"firstText"`
+		SecondText string   `json:"secondText"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse meta payload: %v\nraw=%s", err, payload)
@@ -294,5 +332,8 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	}
 	if !strings.HasPrefix(strings.TrimSpace(lines[1]), "Run: "+runID) {
 		t.Fatalf("expected run identifier on second line, got %#v", result)
+	}
+	if result.FirstTop == nil || result.SecondTop == nil || !(*result.FirstTop < *result.SecondTop) {
+		t.Fatalf("expected batch line to render above run line, got %#v", result)
 	}
 }
