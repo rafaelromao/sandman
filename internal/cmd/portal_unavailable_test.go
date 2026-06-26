@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -217,5 +218,107 @@ func TestPortalRunsView_IssueRunLogFromCorrectRunFolder(t *testing.T) {
 
 	if got.Archived {
 		t.Fatalf("expected Archived=false for active batch, got %+v", got)
+	}
+}
+
+// TestPortalRunsView_IssueRunLogDownload returns 200 — this is the regression test
+// for #1417: the /api/logs download URL for a completed issue run must
+// return 200 and the raw file, not 404. The bug was that runFromState
+// derived batchID from runID via batchIDFromRunID, which produced the wrong
+// path for issue runs where batchID ≠ runID.
+func TestPortalRunsView_IssueRunLogDownload(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	layout := paths.NewLayout(nil, repoRoot)
+
+	ts := "20250101T100000Z"
+	shortid := "abcd"
+	batchID := shortid + "-" + ts
+	rowRunID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
+
+	rawLogContent := "[issue-42] 10:01:00 Test output line 1\n[issue-42] 10:01:05 Test output line 2\n"
+
+	startedAt := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(5 * time.Minute)
+	writePortalLog(t, filepath.Join(layout.EventsLogPath), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	batchDir := filepath.Join(layout.BatchesDir, batchID)
+	runDir := filepath.Join(batchDir, "runs", rowRunID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(batchDir, "manifest.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte(rawLogContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	batchIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:        batchID,
+				Path:      batchDir,
+				Kind:      batchindex.KindIssue,
+				Status:    batchindex.StatusActive,
+				CreatedAt: startedAt,
+				Issues:    []int{42},
+			},
+		},
+	}
+	if err := batchIdx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from /api/runs, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(payload.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(payload.Runs))
+	}
+	gotRun := payload.Runs[0]
+
+	if gotRun.LogURL == "" {
+		t.Fatal("expected non-empty LogURL for completed issue run with log file")
+	}
+
+	logResp, err := http.Get(server.URL + gotRun.LogURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logResp.Body.Close()
+	if logResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from log download URL %q, got %d", gotRun.LogURL, logResp.StatusCode)
+	}
+
+	body, err := io.ReadAll(logResp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != rawLogContent {
+		t.Fatalf("log download body = %q, want %q (raw unstripped content)", string(body), rawLogContent)
 	}
 }
