@@ -520,12 +520,53 @@
     return String(value == null ? '' : value).replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
   }
 
-  const Prism = global.Prism || (global.Prism = { languages: {}, util: {} });
-  Prism.util.encode = escapeHTML;
-  Prism.highlight = function(text, grammar) {
-    return renderWithGrammar(text, grammar);
-  };
-  Prism.languages['sandman-log'] = terminalGrammar;
+  const Prism = global.Prism || (global.Prism = { languages: {}, util: {}, Token: { stringify: function(t) { var cls = ['token', t.type]; var s = '<span class="' + cls.join(' ') + '">' + t.content + '</span>'; return s; } } });
+
+  if (Prism && Prism.languages && Prism.tokenize && Prism.util.encode) {
+    const escapeHTMLPrism = function(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    };
+
+    const baseEncode = Prism.util.encode;
+    Prism.util.encode = function(t) {
+      if (typeof t === 'string') return escapeHTMLPrism(t);
+      return baseEncode.call(Prism.util.encode, t);
+    };
+
+    const originalStringify = Prism.Token.stringify;
+    Prism.Token.stringify = function(token) {
+      const html = originalStringify.call(Prism.Token.stringify, token);
+      return html.replace(/class="token /g, 'class="');
+    };
+
+    Prism.languages['sandman-log'] = Prism.languages.extend('clike', {
+      'term-time': { pattern: /\b\d{2}:\d{2}:\d{2}\b/, greedy: true },
+      'term-prompt': { pattern: /^\$ /, greedy: true },
+      'term-tool': { pattern: /^(\s*)([→←✱])\s/, lookbehind: true, greedy: true },
+      'term-heading': { pattern: /^(?:```[A-Za-z0-9_+-]*|lang=[A-Za-z0-9_+-]+|> build.*|#{1,6} .*|@@.*@@)$/, greedy: true },
+      'term-pass': { pattern: /^\*\*APPROVED(?:\s+with\s+comments)?\*\*|^--- PASS:|^--- FAIL:|^FAIL\s+\S|^ok\s+\S|^PASSED$|^FAILED$|^Passed!|^Failed!|^Tests run:.*Failures: 0|^\d+ tests?, 0 failures|^\d+ examples?, 0 failures|^test result: ok|^test result: FAILED|^✓|^✕/, greedy: true },
+      'term-fail': { pattern: /^\*\*CHANGES_REQUESTED\*\*|^--- FAIL:|^FAIL\s+\S|^FAILED$|^Failed!|^Tests run:.*Failures: [1-9]|^\d+ tests?, \d+ failures|^\d+ examples?, [1-9]\d* failures?|^test result: FAILED/, greedy: true },
+      'term-url': { pattern: /^https?:\/\/[^\s<&]+/, greedy: true },
+      'term-path': { pattern: /^[\/\w.\-]+\.(?:go|js|ts|jsx|tsx|py|rs|rb|java|cs|ex|exs|c|cpp|h|hpp|zig|mod|sum):\d+|^\+\+\+ .*|^\-\-\- .*/, greedy: true },
+      'term-todo-done': { pattern: /^\[✓\]|^\[✔\]/, greedy: true },
+      'term-todo-active': { pattern: /^\[•\]/, greedy: true },
+      'term-todo-pending': { pattern: /^(\s*)\[ \]/, lookbehind: true, greedy: true },
+      'term-string': { pattern: /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/, greedy: true },
+      'term-comment': { pattern: /\/\/.*$|#.*$/gm, greedy: true },
+      'term-keyword': { pattern: /\b(?:if|else|for|while|return|function|const|let|var|def|import|export|try|catch|switch|case|break|continue|new|this|self|class|async|await|yield|module|end|true|false|nil|null)\b/, greedy: true },
+      'term-number': { pattern: /\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/, greedy: true },
+      'term-operator': { pattern: /&&|\|\||==|!=|<=|>=|->|=>|<<|>>|[=+\-*/<>!&|^~%]/, greedy: true },
+      'term-func': { pattern: /([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\(/, lookbehind: true, greedy: true },
+    });
+  } else {
+    Prism.util.encode = escapeHTML;
+    Prism.highlight = function(text, grammar) {
+      return renderWithGrammar(text, grammar);
+    };
+    Prism.languages['sandman-log'] = terminalGrammar;
+  }
 
   function terminalGrammar(mode) {
     const codeMode = mode && mode !== 'terminal';
@@ -645,7 +686,42 @@
   }
 
   function highlightTerminalLog(text) {
+    if (Prism && Prism.languages && Prism.languages['sandman-log'] && Prism.tokenize) {
+      return renderWithGrammarPrism(text);
+    }
     return Prism.highlight(text, terminalGrammar);
+  }
+
+  function renderWithGrammarPrism(text) {
+    const value = String(text || '');
+    if (!value) return '';
+    const lines = value.split('\n');
+    let inCodeBlock = false;
+    return lines.map((line) => {
+      const raw = stripAnsi(line);
+      const fenceMatch = raw.match(/^```([A-Za-z0-9_+-]*)$/);
+      if (fenceMatch) {
+        inCodeBlock = !inCodeBlock;
+        return '<span class="term-heading">' + escapeHTML(raw) + '</span>';
+      }
+      const labelMatch = raw.match(/^lang=([A-Za-z0-9_+-]+)$/);
+      if (labelMatch) {
+        return '<span class="term-heading">' + escapeHTML(raw) + '</span>';
+      }
+      const grammar = Prism.languages['sandman-log'];
+      const tokens = Prism.tokenize(raw, grammar);
+      return tokens.map(token => {
+        if (typeof token === 'string') return escapeHTML(token);
+        const type = token.type.replace(/^term-/, 'term-');
+        return '<span class="' + type + '">' + escapeHTMLPrism(token.content) + '</span>';
+      }).join('');
+    }).join('\n');
+  }
+
+  function escapeHTMLPrism(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   function appendTerminalPre(pre, oldLog, newSuffix, helpers) {
