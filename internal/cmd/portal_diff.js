@@ -506,84 +506,101 @@
     );
   }
 
-  function highlightTerminalLog(text) {
-    var value = String(text || '');
+  function escapeHTML(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function wrapToken(className, value) {
+    return '<span class="' + className + '">' + escapeHTML(value) + '</span>';
+  }
+
+  function stripAnsi(value) {
+    return String(value == null ? '' : value).replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+  }
+
+  function terminalGrammar() {
+    return [
+      { regex: /^(?:\*\*CHANGES_REQUESTED\*\*)/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: /^(?:\*\*APPROVED with comments\*\*)/, render: (m) => wrapToken('term-pass', m[0]) },
+      { regex: /^(?:\*\*APPROVED\*\*)/, render: (m) => wrapToken('term-pass', m[0]) },
+      { regex: /^```[A-Za-z0-9_+-]*$/, render: (m) => wrapToken('term-heading', m[0]) },
+      { regex: /^lang=[A-Za-z0-9_+-]+$/, render: (m) => wrapToken('term-heading', m[0]) },
+      { regex: /^(?:--- PASS:.*)$/, render: (m) => wrapToken('term-pass', m[0]) },
+      { regex: /^(?:--- FAIL:.*)$/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: /^(?:FAIL\s+\S+)/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: /^(?:ok\s+\S+)/, render: (m) => wrapToken('term-pass', m[0]) },
+      { regex: /^(?:PASSED)\b/, render: (m) => wrapToken('term-pass', m[0]) },
+      { regex: /^(?:FAILED)\b/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: /^(?:✓[^\n]*)/, render: (m) => wrapToken('term-pass', m[0]) },
+      { regex: /^(?:✕[^\n]*)/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: /^(?:Passed!.*$)/, render: (m) => wrapToken('term-pass', m[0]) },
+      { regex: /^(?:Failed!.*$)/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: /^(?:Tests run:.*Failures: [1-9])/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: /^(?:Tests run:.*Failures: 0)/, render: (m) => wrapToken('term-pass', m[0]) },
+      { regex: /^(?:\d+ tests?, \d+ failures?)/, render: (m) => /0 failures/.test(m[0]) ? wrapToken('term-pass', m[0]) : wrapToken('term-fail', m[0]) },
+      { regex: /^(?:\d+ examples?, 0 failures)/, render: (m) => wrapToken('term-pass', m[0]) },
+      { regex: /^(?:\d+ examples?, [1-9]\d* failures?)/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: /^(?:\$ )/, render: (m) => wrapToken('term-prompt', m[0]) },
+      { regex: /^(\s*)([→←✱])\s/, render: (m) => escapeHTML(m[1]) + wrapToken('term-tool', m[2]) + ' ' },
+      { regex: /^(&gt; build.*)$/, render: (m) => wrapToken('term-heading', m[1]) },
+      { regex: /^(#{1,6} .*?)$/, render: (m) => wrapToken('term-heading', m[1]) },
+      { regex: /^(?:\[✓\]|\[✔\])/, render: (m) => wrapToken('term-todo-done', m[0]) },
+      { regex: /^(?:\[•\])/, render: (m) => wrapToken('term-todo-active', m[0]) },
+      { regex: /^(\s*)\[ \]/, render: (m) => escapeHTML(m[1]) + wrapToken('term-todo-pending', '[ ]') },
+      { regex: /^(https?:\/\/[^\s<&]+)/, render: (m) => wrapToken('term-url', m[0]) },
+      { regex: /^([\/\w.\-]+\.(?:go|js|ts|jsx|tsx|py|rs|rb|java|cs|ex|exs|c|cpp|h|hpp|zig|mod|sum):\d+)/, render: (m) => wrapToken('term-path', m[1]) },
+      { regex: /^(?:\+\+\+ .*?)$/, render: (m) => wrapToken('term-path', m[0]) },
+      { regex: /^(?:--- .*?)$/, render: (m) => wrapToken('term-path', m[0]) },
+      { regex: /^(?:@@.*@@)$/, render: (m) => wrapToken('term-heading', m[0]) },
+      { regex: /^(\d{2}:\d{2}:\d{2})\b/, render: (m) => wrapToken('term-time', m[1]) },
+      { regex: /^(?:"(?:[^"\\]|\\.)*")/, render: (m) => wrapToken('term-string', m[0]) },
+      { regex: /^(?:'(?:[^'\\]|\\.)*')/, render: (m) => wrapToken('term-string', m[0]) },
+      { regex: /^(?:\/\/.*)$/, render: (m) => wrapToken('term-comment', m[0]) },
+      { regex: /^(?:#(?!\s*\w+\s*$).*)$/, render: (m) => wrapToken('term-comment', m[0]) },
+      { regex: /^(?:\b(?:if|else|for|while|return|function|const|let|var|def|import|export|try|catch|switch|case|break|continue|new|this|self|class|async|await|yield|module|end|true|false|nil|null)\b)/, render: (m) => wrapToken('term-keyword', m[0]) },
+      { regex: /^([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*(\()/, render: (m) => wrapToken('term-func', m[1]) + escapeHTML(m[0].slice(m[1].length, m[0].length - 1)) + '(' },
+      { regex: /^(?:\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/, render: (m) => wrapToken('term-number', m[0]) },
+      { regex: /^(?:&&|\|\||==|!=|<=|>=|->|=>|<<|>>|[=+\-*/<>!&|^~%])/, render: (m) => wrapToken('term-operator', m[0]) },
+    ];
+  }
+
+  function renderWithGrammar(text, grammar) {
+    const value = String(text || '');
     if (!value) return '';
-    var _e = function(v) {
-      return String(v == null ? '' : v)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    };
-    var escaped = _e(value);
-    return escaped.split('\n').map(function(line) {
-      // Strip ANSI escape codes
-      line = line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-      // Shell command prefix
-      if (/^\$ /.test(line)) {
-        return '<span class="term-prompt">$ </span>' + line.slice(2);
+    const lines = value.split('\n');
+    return lines.map((line) => renderGrammarLine(stripAnsi(line), grammar)).join('\n');
+  }
+
+  function renderGrammarLine(line, grammar) {
+    if (!line) return '';
+    const rules = Array.isArray(grammar) && grammar.length ? grammar : terminalGrammar();
+    let out = '';
+    let index = 0;
+    while (index < line.length) {
+      let matched = null;
+      for (const rule of rules) {
+        const slice = line.slice(index);
+        const match = rule.regex.exec(slice);
+        if (match && match.index === 0) {
+          matched = { rule, match };
+          break;
+        }
       }
-      // Tool indicators
-      line = line.replace(/^(\s*)([→←✱]) /, '$1<span class="term-tool">$2</span> ');
-      // Markdown/terminal headers: ## Heading or > build · ...
-      line = line.replace(/^(&gt; build.*)$/, '<span class="term-heading">$1</span>');
-      line = line.replace(/^(#{1,6} .*)$/, '<span class="term-heading">$1</span>');
-      // Todo checklists
-      line = line.replace(/\[(✓|✔)\]/g, '<span class="term-todo-done">[✓]</span>');
-      line = line.replace(/\[•\]/g, '<span class="term-todo-active">[•]</span>');
-      line = line.replace(/^(\s*)\[ \]/g, '$1<span class="term-todo-pending">[ ]</span>');
-      // Go test results
-      line = line.replace(/(--- PASS:.*$)/gm, '<span class="term-pass">$1</span>');
-      line = line.replace(/(--- FAIL:.*$)/gm, '<span class="term-fail">$1</span>');
-      line = line.replace(/(FAIL\s+\S+)/g, '<span class="term-fail">$1</span>');
-      line = line.replace(/(ok\s+\S+)/g, '<span class="term-pass">$1</span>');
-      // Python test results
-      line = line.replace(/\b(PASSED)\b/g, '<span class="term-pass">$1</span>');
-      line = line.replace(/\b(FAILED)\b/g, '<span class="term-fail">$1</span>');
-      // Node test results
-      line = line.replace(/(✓[^\n]*)/g, '<span class="term-pass">$1</span>');
-      line = line.replace(/(✕[^\n]*)/g, '<span class="term-fail">$1</span>');
-      // .NET test results
-      line = line.replace(/(Passed!.*$)/g, '<span class="term-pass">$1</span>');
-      line = line.replace(/(Failed!.*$)/g, '<span class="term-fail">$1</span>');
-      // Java test results
-      line = line.replace(/(Tests run:.*Failures: [1-9])/g, '<span class="term-fail">$1</span>');
-      line = line.replace(/(Tests run:.*Failures: 0)/g, '<span class="term-pass">$1</span>');
-      // Elixir test results
-      line = line.replace(/(\d+ tests?, \d+ failures?)/g, function(m) {
-        return /0 failures/.test(m) ? '<span class="term-pass">' + m + '</span>' : '<span class="term-fail">' + m + '</span>';
-      });
-      // Rust test results
-      line = line.replace(/(test result: ok.*)/g, '<span class="term-pass">$1</span>');
-      line = line.replace(/(test result: FAILED.*)/g, '<span class="term-fail">$1</span>');
-      // Ruby test results
-      line = line.replace(/(\d+ examples?, 0 failures)/g, '<span class="term-pass">$1</span>');
-      line = line.replace(/(\d+ examples?, [1-9]\d* failures?)/g, '<span class="term-fail">$1</span>');
-      // Verdict keywords (bold markdown)
-      line = line.replace(/(\*\*CHANGES_REQUESTED\*\*)/g, '<span class="term-fail">$1</span>');
-      line = line.replace(/(\*\*APPROVED\*\*)/g, '<span class="term-pass">$1</span>');
-      line = line.replace(/(\*\*APPROVED with comments\*\*)/g, '<span class="term-pass">$1</span>');
-      // URLs
-      line = line.replace(/(https?:\/\/[^\s<&]+)/g, '<span class="term-url">$1</span>');
-      // File paths with line numbers
-      line = line.replace(/([\/\w.\-]+\.(?:go|js|ts|jsx|tsx|py|rs|rb|java|cs|ex|exs|c|cpp|h|hpp|zig|mod|sum):\d+)/g, '<span class="term-path">$1</span>');
-      // Diff markers
-      line = line.replace(/^(\+\+\+ .*)$/gm, '<span class="term-path">$1</span>');
-      line = line.replace(/^(\-\-\- .*)$/gm, '<span class="term-path">$1</span>');
-      line = line.replace(/^(@@.*@@)/gm, '<span class="term-heading">$1</span>');
-      // Timestamps: HH:MM:SS (applied first, wraps entire timestamp)
-      line = line.replace(/\b(\d{2}:\d{2}:\d{2})\b/g, '<span class="term-time">$1</span>');
-      // Numbers: not preceded by : (timestamp separator) or . (path context), and not followed by :
-      line = line.replace(/(?<!:|\.)(\b\d+(\.\d+)?\b)(?!:)/g, '<span class="term-number">$1</span>');
-      // Operators (only when clearly operators: preceded by word or ) and followed by space or end)
-      line = line.replace(/(?<=\w\))([=+\-*/<>!&|^~%]+)(?=\s|$)/g, '<span class="term-operator">$1</span>');
-      line = line.replace(/(?<=\s)(&&|\|\||==|!=|<=|>=|->|=>|<<|>>)(?=\s|$)/g, '<span class="term-operator">$1</span>');
-      // Keywords (only when clear code context: at start or after {;( or whitespace, but not in HTML attrs)
-      // Match keyword only when followed by code-context chars (not = or > which indicate HTML)
-      line = line.replace(/(?:^|(?<=[\s{;(]))(if|else|for|while|return|function|const|let|var|def|import|export|try|catch|switch|case|break|continue|new|this|self|true|false|nil|null)\b(?=\s|[{;(,]|$)/g, '<span class="term-keyword">$1</span>');
-      // Function calls (with optional chain like foo.bar()): identifier(.identifier)* followed by (
-      line = line.replace(/(?:^|(?<=[\s{;(]))([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*\(/g, '<span class="term-func">$1</span>(');
-      return line;
-    }).join('\n');
+      if (matched) {
+        out += matched.rule.render(matched.match);
+        index += matched.match[0].length;
+        continue;
+      }
+      out += escapeHTML(line.charAt(index));
+      index += 1;
+    }
+    return out;
+  }
+
+  function highlightTerminalLog(text) {
+    return renderWithGrammar(text, terminalGrammar());
   }
 
   function appendTerminalPre(pre, oldLog, newSuffix, helpers) {

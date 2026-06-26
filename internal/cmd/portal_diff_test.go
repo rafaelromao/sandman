@@ -1917,6 +1917,55 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffHighlightTerminalLog_MixedCodeLineHighlightsStringsAndComments(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('const msg = "hello world"; // note');
+if (result.indexOf('term-keyword') === -1) throw new Error('expected keyword span');
+if (result.indexOf('term-string') === -1) throw new Error('expected string span');
+if (result.indexOf('term-comment') === -1) throw new Error('expected comment span');
+if (result.indexOf('hello world') === -1) throw new Error('expected string text preserved');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_FencedLanguageLabelHighlightsFence(t *testing.T) {
+	js := "const result = SandmanPortalDiff.highlightTerminalLog('```go\\nconst msg = \"hello\" // note\\n```');\nif (result.indexOf('term-heading') === -1) throw new Error('expected fenced language label span');\nif (result.indexOf('term-string') === -1) throw new Error('expected fenced code string span');\nif (result.indexOf('term-comment') === -1) throw new Error('expected fenced code comment span');\nconsole.log('PASS');\n"
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_LangLabelHighlightsHintLine(t *testing.T) {
+	js := "const result = SandmanPortalDiff.highlightTerminalLog('lang=ruby');\nif (result.indexOf('term-heading') === -1) throw new Error('expected explicit lang label span');\nif (result.indexOf('ruby') === -1) throw new Error('expected lang label text preserved');\nconsole.log('PASS');\n"
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_StripsANSISequences(t *testing.T) {
+	js := "const result = SandmanPortalDiff.highlightTerminalLog('\\u001b[31m--- FAIL: TestFoo\\u001b[0m');\nif (result.indexOf('\\u001b[') !== -1) throw new Error('expected ANSI escape codes removed');\nif (result.indexOf('term-fail') === -1) throw new Error('expected fail token preserved after ANSI stripping');\nconsole.log('PASS');\n"
+	runNodeScript(t, js)
+}
+
+func TestPortalHTMLAppendStreamLine_RendersHighlightedHTML(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	data, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", htmlPath, err)
+	}
+	content := string(data)
+	for _, want := range []string{"function appendStreamLine(runKey, line)", "SandmanPortalDiff.highlightTerminalLog(line + '\\n')"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing SSE highlight marker %q\n%s", want, content[:min(1200, len(content))])
+		}
+	}
+	for _, forbidden := range []string{"highlightTerminalText(", "term-protected"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("page must no longer contain %q after the Prism-backed SSE change\n%s", forbidden, content[:min(1200, len(content))])
+		}
+	}
+}
+
 func TestPortalDiffHighlightTerminalLog_FuncCallHighlighted(t *testing.T) {
 	js := `const result = SandmanPortalDiff.highlightTerminalLog('foo.bar()');
 if (result.indexOf('term-func') === -1) throw new Error('expected term-func span');
@@ -2965,7 +3014,7 @@ const fs = require('fs');
 const vm = require('vm');
 const htmlPath = ` + "`" + htmlPath + "`" + `;
 const scriptBody = ` + "`" + escapedBody + "`" + `;
-const sandbox = { window: {}, globalThis: {}, Set, Map, WeakMap, JSON, Date, Math, console, localStorage: { getItem() { return null; } }, helpers };
+const sandbox = { window: {}, globalThis: {}, Set, Map, WeakMap, JSON, Date, Math, console, fs, vm, localStorage: { getItem() { return null; } }, helpers };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
 sandbox.localStorage = { getItem() { return null; } };
