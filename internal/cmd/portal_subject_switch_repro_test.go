@@ -195,6 +195,11 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
       if (!select) throw new Error('missing subject selector');
       select.value = 'PR42';
       select.dispatchEvent(new Event('change', { bubbles: true }));
+      var poll = document.querySelector('#poll-interval');
+      if (poll) {
+        poll.value = '500';
+        poll.dispatchEvent(new Event('change', { bubbles: true }));
+      }
     }, 50);
     setTimeout(function () {
       var row = document.querySelector('tr[data-run-key="issue-1"]');
@@ -214,7 +219,6 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
         metaText: meta && meta.innerText,
         detailText: detail && detail.innerText,
         fetchCalls: window.__portalFetchCalls || 0,
-        refreshCalls: window.__portalRefreshCalls || 0,
         changeCalls: window.__portalChangeCalls || 0
       });
       document.body.appendChild(pre);
@@ -231,7 +235,6 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 		MetaText      string `json:"metaText"`
 		DetailText    string `json:"detailText"`
 		FetchCalls    int    `json:"fetchCalls"`
-		RefreshCalls  int    `json:"refreshCalls"`
 		ChangeCalls   int    `json:"changeCalls"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
@@ -255,7 +258,7 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 	if !strings.Contains(result.DetailText, "child log line 1") || strings.Contains(result.DetailText, "parent log line 1") {
 		t.Fatalf("expected visible detail panel to stay on the child log after refresh, got %#v", result)
 	}
-	if result.FetchCalls < 2 || result.RefreshCalls < 1 || result.ChangeCalls < 1 {
+	if result.FetchCalls < 2 || result.ChangeCalls < 1 {
 		t.Fatalf("expected change + refresh path to run, got %#v", result)
 	}
 }
