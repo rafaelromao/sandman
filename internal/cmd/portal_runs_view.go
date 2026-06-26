@@ -750,6 +750,11 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.Log = v.portalBlockedMessage(blocked.Payload)
 		run.IssueTitle = v.issueTitleFromPayload(blocked.Payload)
 	}
+	// For queued rows (state == nil), preserve the queued event's RunID so
+	// abort can emit run.aborted with the correct identifier.
+	if state == nil && queued != nil {
+		run.RunID = queued.RunID
+	}
 	// Fallback precedence: the state branch returns early above, the
 	// blocked branch may set a title from run.blocked's payload, and only
 	// when both leave IssueTitle empty do we backfill from the most recent

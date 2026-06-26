@@ -275,10 +275,13 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 		return err
 	}
 	if run.SocketPath == "" {
-		if run.BatchKey == "" {
-			return &portalAbortError{status: http.StatusConflict, message: fmt.Sprintf("daemon for run %q is no longer live", runKey)}
+		if run.Status == "queued" || run.Status == "blocked" {
+			if err := emitRunAbortedForQueuedRun(repoRoot, run, issueNumber); err != nil {
+				return err
+			}
+			return nil
 		}
-		return &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
+		return &portalAbortError{status: http.StatusConflict, message: fmt.Sprintf("daemon for run %q is no longer live", runKey)}
 	}
 
 	if _, err := os.Stat(run.SocketPath); os.IsNotExist(err) {
@@ -357,6 +360,26 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 
 func portalRunForKey(repoRoot, runKey string) (portalRun, error) {
 	return getPortalRunsIndex(repoRoot).FindByKey(context.Background(), runKey)
+}
+
+func emitRunAbortedForQueuedRun(repoRoot string, run portalRun, issueNumber int) error {
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	logger := &events.JSONLLogger{Path: layout.EventsLogPath}
+	runID := run.RunID
+	if runID == "" {
+		runID = run.BatchKey
+	}
+	ev := events.Event{
+		Type:      "run.aborted",
+		Timestamp: time.Now(),
+		RunID:     runID,
+		Issue:     issueNumber,
+		Payload:   map[string]any{"status": "aborted"},
+	}
+	if err := logger.Log(ev); err != nil {
+		return &portalAbortError{status: http.StatusInternalServerError, message: fmt.Sprintf("failed to emit run.aborted event: %v", err)}
+	}
+	return nil
 }
 
 func signalPortalProcess(pid int, sig syscall.Signal) error {
