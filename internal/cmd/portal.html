@@ -2271,11 +2271,10 @@
 
     function renderRunMeta(run) {
       const lines = [];
-      if (run.runId) lines.push('Run: ' + run.runId);
-      if (run.batchKey) {
-        lines.push('Batch: ' + run.batchKey);
-      }
       const summary = [];
+      if (run.batchKey) {
+        summary.push('Batch: ' + run.batchKey);
+      }
       if (Number(run.retriesDone || 0) > 0) {
         const count = Number(run.retriesDone || 0);
         summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
@@ -2285,7 +2284,13 @@
         summary.push(count + ' review' + (count === 1 ? '' : 's'));
         if (run.reviewVerdict) summary.push(run.reviewVerdict);
       }
-      if (summary.length) lines.push(summary.join(' - '));
+      if (run.batchKey) {
+        if (summary.length) lines.push(summary.join(' - '));
+        if (run.runId) lines.push('Run: ' + run.runId);
+      } else {
+        if (run.runId) lines.push('Run: ' + run.runId);
+        if (summary.length) lines.push(summary.join(' - '));
+      }
       return lines.length ? lines.join('\n') : 'Run';
     }
 
