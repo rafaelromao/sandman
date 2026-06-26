@@ -308,10 +308,13 @@ func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 	rows := readPortalRuns(t, server.URL)
 
 	var parentRow *portalRun
+	var reviewChild *portalRun
 	for i := range rows {
 		if rows[i].IssueNumber == 1 && !rows[i].Review {
 			parentRow = &rows[i]
-			break
+		}
+		if rows[i].IssueNumber == 1 && rows[i].Review {
+			reviewChild = &rows[i]
 		}
 	}
 	if parentRow == nil {
@@ -319,5 +322,20 @@ func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 	}
 	if parentRow.Status != "success" {
 		t.Fatalf("expected parent Status='success', got %q", parentRow.Status)
+	}
+	if parentRow.ReviewCount == 0 {
+		t.Fatalf("expected parent ReviewCount > 0 (review child exists), got %d", parentRow.ReviewCount)
+	}
+	if reviewChild == nil {
+		t.Fatalf("expected review child row for issue #1, got %#v", rows)
+	}
+	if !reviewChild.Review {
+		t.Fatalf("expected review child Review=true, got %v", reviewChild.Review)
+	}
+	if !reviewChild.GroupedReview {
+		t.Fatalf("expected review child GroupedReview=true (behind expanded selector), got %v", reviewChild.GroupedReview)
+	}
+	if reviewChild.PRNumber != 42 {
+		t.Fatalf("expected review child PRNumber=42, got %d", reviewChild.PRNumber)
 	}
 }
