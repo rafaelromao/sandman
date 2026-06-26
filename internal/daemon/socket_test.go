@@ -181,6 +181,23 @@ func TestIsRunActive(t *testing.T) {
 	}
 }
 
+func TestIsRunActive_ProbesPerRunSocket(t *testing.T) {
+	dir := t.TempDir()
+	runSockDir := filepath.Join(dir, "runs", "run-1")
+	if err := os.MkdirAll(runSockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", filepath.Join(runSockDir, "run.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	if !IsRunActive(dir) {
+		t.Fatal("expected dir with live per-run socket to be active")
+	}
+}
+
 func TestCleanupStaleRunSnapshots_RemovesOnlyInactive(t *testing.T) {
 	baseDir := t.TempDir()
 	batchesDir := filepath.Join(baseDir, "batches")
