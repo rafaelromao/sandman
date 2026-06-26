@@ -16,6 +16,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/review"
+	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/spf13/cobra"
 )
 
@@ -156,8 +157,22 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 	sandmanDir := filepath.Join(repoRoot, ".sandman")
 
-	rs := daemon.NewRunSession(sandmanDir, fmt.Sprintf("PR%d", pr.Number))
-	manifest := daemon.BatchManifest{BatchId: fmt.Sprintf("PR%d", pr.Number), CreatedAt: time.Now(), RunKind: "review", PR: &pr.Number}
+	ts, shortid, err := runid.NewBatch()
+	if err != nil {
+		return fmt.Errorf("generate batch ID: %w", err)
+	}
+	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("%d", pr.Number), ts, shortid)
+
+	var subject string
+	if pr.LinkedIssueNumber() > 0 {
+		subject = fmt.Sprintf("%d-PR%d", pr.LinkedIssueNumber(), pr.Number)
+	} else {
+		subject = fmt.Sprintf("PR%d", pr.Number)
+	}
+	perRowRunID := runid.NewRunID(runid.KindReview, subject, ts, shortid)
+
+	rs := daemon.NewRunSession(sandmanDir, batchDirName)
+	manifest := daemon.BatchManifest{BatchId: batchDirName, CreatedAt: time.Now(), RunKind: "review", PR: &pr.Number}
 	if err := rs.Prepare(manifest); err != nil {
 		_ = rs.Close()
 		return fmt.Errorf("bootstrap review session: %w", err)
@@ -185,7 +200,8 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		},
 		Review:       true,
 		PRNumber:     pr.Number,
-		RunID:        fmt.Sprintf("PR%d", pr.Number),
+		IssueNumber:  pr.LinkedIssueNumber(),
+		RunID:        perRowRunID,
 		OutputWriter: rs.Broadcaster(),
 		RunDir:       relRunDir,
 	}); err != nil {

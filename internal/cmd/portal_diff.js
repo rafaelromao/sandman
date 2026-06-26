@@ -570,6 +570,18 @@
       line = line.replace(/^(\+\+\+ .*)$/gm, '<span class="term-path">$1</span>');
       line = line.replace(/^(\-\-\- .*)$/gm, '<span class="term-path">$1</span>');
       line = line.replace(/^(@@.*@@)/gm, '<span class="term-heading">$1</span>');
+      // Timestamps: HH:MM:SS (applied first, wraps entire timestamp)
+      line = line.replace(/\b(\d{2}:\d{2}:\d{2})\b/g, '<span class="term-time">$1</span>');
+      // Numbers: not preceded by : (timestamp separator) or . (path context), and not followed by :
+      line = line.replace(/(?<!:|\.)(\b\d+(\.\d+)?\b)(?!:)/g, '<span class="term-number">$1</span>');
+      // Operators (only when clearly operators: preceded by word or ) and followed by space or end)
+      line = line.replace(/(?<=\w\))([=+\-*/<>!&|^~%]+)(?=\s|$)/g, '<span class="term-operator">$1</span>');
+      line = line.replace(/(?<=\s)(&&|\|\||==|!=|<=|>=|->|=>|<<|>>)(?=\s|$)/g, '<span class="term-operator">$1</span>');
+      // Keywords (only when clear code context: at start or after {;( or whitespace, but not in HTML attrs)
+      // Match keyword only when followed by code-context chars (not = or > which indicate HTML)
+      line = line.replace(/(?:^|(?<=[\s{;(]))(if|else|for|while|return|function|const|let|var|def|import|export|try|catch|switch|case|break|continue|new|this|self|true|false|nil|null)\b(?=\s|[{;(,]|$)/g, '<span class="term-keyword">$1</span>');
+      // Function calls (with optional chain like foo.bar()): identifier(.identifier)* followed by (
+      line = line.replace(/(?:^|(?<=[\s{;(]))([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*\(/g, '<span class="term-func">$1</span>(');
       return line;
     }).join('\n');
   }

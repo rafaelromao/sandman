@@ -995,6 +995,12 @@
     .term-todo-done { color: var(--success); }
     .term-todo-active { color: var(--warning); }
     .term-todo-pending { color: var(--muted); }
+    .term-time { color: var(--warning); font-weight: 500; }
+    .term-keyword { color: var(--accent); font-weight: 600; }
+    .term-operator { color: var(--muted); }
+    .term-number { color: color-mix(in oklch, var(--success) 60%, var(--text)); }
+    .term-string { color: color-mix(in oklch, var(--warning) 65%, var(--text)); }
+    .term-func { color: color-mix(in oklch, var(--accent) 80%, var(--text)); }
     .event-head {
       margin-bottom: 8px;
     }
@@ -2353,10 +2359,10 @@
     function renderRunMeta(run) {
       const lines = [];
       if (run.runId) lines.push('Run: ' + run.runId);
-      const summary = [];
       if (run.batchKey) {
-        summary.push('Batch: ' + run.batchKey);
+        lines.push('Batch: ' + run.batchKey);
       }
+      const summary = [];
       if (Number(run.retriesDone || 0) > 0) {
         const count = Number(run.retriesDone || 0);
         summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
