@@ -908,7 +908,11 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState, active *portalActiveRun, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	runID := runState.RunID
 	if runID == "" && active != nil {
-		runID = active.Key
+		if active.IssueNumber > 0 {
+			runID = fmt.Sprintf("%s-issue-%d", active.Key, active.IssueNumber)
+		} else {
+			runID = active.Key
+		}
 	}
 
 	issueNumber := runState.IssueNumber()
