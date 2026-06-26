@@ -3016,6 +3016,25 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// TestPortalRunsView_VisibleRunForIssueGroup_TerminalParentWinsOverLiveChild
+// is the regression test for issue #1362: when an issue has both a terminal
+// parent run (status=success) and a live review child (status=reviewing,
+// kind=active), the visible row must be the terminal parent, not the live
+// child. The review child must remain accessible in the expanded selector.
+func TestPortalRunsView_VisibleRunForIssueGroup_TerminalParentWinsOverLiveChild(t *testing.T) {
+	js := `const parent = { key: 'issue-1', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
+const liveChild = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const result = visibleRunForIssueGroup(1, [parent, liveChild]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-1') throw new Error('expected parent as visible row, got ' + JSON.stringify(result.key));
+if (result.status !== 'success') throw new Error('expected terminal status preserved, got ' + JSON.stringify(result.status));
+if (result.kind !== 'completed') throw new Error('expected completed kind, got ' + JSON.stringify(result.kind));
+if (result.review) throw new Error('expected review flag false for parent row, got ' + JSON.stringify(result.review));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 // TestPortalRunsView_VisibleRunsForTable_ReviewMetaLineShowsRealRunID
 // covers the user-visible symptom: the meta-line under the title cell is
 // fed by renderRunMeta(run), which reads run.runId. When
