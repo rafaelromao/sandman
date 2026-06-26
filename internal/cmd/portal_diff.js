@@ -520,6 +520,13 @@
     return String(value == null ? '' : value).replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
   }
 
+  const Prism = global.Prism || (global.Prism = { languages: {}, util: {} });
+  Prism.util.encode = escapeHTML;
+  Prism.highlight = function(text, grammar) {
+    return renderWithGrammar(text, grammar);
+  };
+  Prism.languages['sandman-log'] = terminalGrammar;
+
   function terminalGrammar(mode) {
     const codeMode = mode && mode !== 'terminal';
     return [
@@ -618,7 +625,7 @@
   }
 
   function highlightTerminalLog(text) {
-    return renderWithGrammar(text, terminalGrammar);
+    return Prism.highlight(text, terminalGrammar);
   }
 
   function appendTerminalPre(pre, oldLog, newSuffix, helpers) {
