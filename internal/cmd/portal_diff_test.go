@@ -3214,3 +3214,18 @@ console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
 }
+
+func TestRenderRunMeta_ActiveFreshBatchRow_RendersBothBatchAndRunLabels(t *testing.T) {
+	js := `const run = { key: 'abcd-260618113825-issue-42', runId: 'abcd-260618113825-issue-42', batchKey: 'abcd-260618113825', kind: 'active', status: 'running' };
+const meta = helpers.renderRunMeta(run);
+if (meta.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for active fresh batch row, got ' + JSON.stringify(meta));
+if (meta.indexOf('Run:') < 0) throw new Error('expected Run: in meta for active fresh batch row, got ' + JSON.stringify(meta));
+if (meta.indexOf('abcd-260618113825') < 0) throw new Error('expected batchKey value in Batch: label, got ' + JSON.stringify(meta));
+if (meta.indexOf('abcd-260618113825-issue-42') < 0) throw new Error('expected runId value in Run: label, got ' + JSON.stringify(meta));
+const batchPos = meta.indexOf('Batch:');
+const runPos = meta.indexOf('Run:');
+if (batchPos > runPos) throw new Error('expected Batch: to appear before Run:, got Batch: at ' + batchPos + ', Run: at ' + runPos + ' in ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}

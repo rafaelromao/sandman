@@ -970,6 +970,10 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		logContent = stripLogLabels(active.LiveOutput)
 	}
 
+	batchKey := ""
+	if active != nil {
+		batchKey = active.Key
+	}
 	portalRun := portalRun{
 		Key:          runID,
 		RunID:        runID,
@@ -990,6 +994,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Reason:       reasonForRun(runState),
 		RetriesTotal: runState.RetriesTotal(),
 		RetriesDone:  runState.RetriesDone(),
+		BatchKey:     batchKey,
 	}
 	if review {
 		portalRun.PRNumber = prNumber

@@ -979,6 +979,55 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 	}
 }
 
+func TestPortal_RunFromState_ActiveFreshBatchCarriesBatchKey(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	startedAt := time.Now().Add(-1 * time.Minute)
+	active := portalActiveRun{
+		Key:          "abcd-260618113825",
+		BatchID:      "abcd-260618113825",
+		SocketPath:   sockPath,
+		IssueNumber:  42,
+		IssueNumbers: []int{42},
+		StartedAt:    startedAt,
+	}
+
+	state := events.RunState{
+		RunID: "",
+		Started: events.Event{
+			Type:      "run.started",
+			Timestamp: startedAt,
+			RunID:     "abcd-260618113825-issue-42",
+			Payload: map[string]any{
+				"issue": float64(42),
+			},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, state, &active, nil, nil)
+
+	if run.BatchKey != active.Key {
+		t.Fatalf("expected BatchKey %q, got %q", active.Key, run.BatchKey)
+	}
+	if run.RunID == "" {
+		t.Fatalf("expected RunID to be synthesized, got empty")
+	}
+}
+
 func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "r")
 	if err != nil {
