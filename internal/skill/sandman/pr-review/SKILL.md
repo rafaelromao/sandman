@@ -46,7 +46,11 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 #### Step 1: Get current PR state
 
 ```bash
-gh pr view <N> --repo <owner/repo> --json headRefOid,comments,reviewDecision,mergeStateStatus
+pr_data=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments,reviewDecision,mergeStateStatus)
+mergeStateStatus=$(echo "$pr_data" | jq -r '.mergeStateStatus')
+headRefOid=$(echo "$pr_data" | jq -r '.headRefOid')
+reviewDecision=$(echo "$pr_data" | jq -r '.reviewDecision')
+comments=$(echo "$pr_data" | jq -r '.comments')
 ```
 
 #### Step 2: Wait for CI to pass
@@ -54,6 +58,24 @@ gh pr view <N> --repo <owner/repo> --json headRefOid,comments,reviewDecision,mer
 > **Prerequisite**: `gh` ≥ 2.0 (released 2021) for `gh pr checks --json ... --jq`. Verify with `gh --version | awk '{print $1, $3}'` before relying on the loop. On older `gh` the `--json` flag is unknown; fall back to plain `gh pr checks <N> --repo <owner/repo>` and parse the first column instead.
 
 ```bash
+# Step 2 must wait for CI, but CI cannot run on a DIRTY (conflicting) PR.
+# Step 1 already fetched mergeStateStatus — use it directly. If DIRTY, trigger back-merge first.
+if [ "$mergeStateStatus" = "DIRTY" ]; then
+  echo "PR is in 'DIRTY' state (merge conflicts). CI cannot run. Running sandman-back-merge to resolve."
+  # Load and run back-merge: merges origin/main into the current branch, resolves conflicts, pushes.
+  # This can recover fixes that landed on main after the branch was created.
+  # If back-merge fails, the PR remains unmergeable — keep polling so we re-enter this block.
+  if sandman-back-merge; then
+    echo "Back-merge succeeded, pushing and re-checking CI."
+    git push
+    continue  # restart CI wait loop after push triggers new CI run
+  else
+    echo "Back-merge failed or unresolved conflicts — CI still blocked. Continuing to poll."
+    sleep 20
+    continue
+  fi
+fi
+
 # gh pr checks --json returns state values in uppercase:
 #   SUCCESS, FAILURE, PENDING, IN_PROGRESS, QUEUED, NEUTRAL,
 #   CANCELLED, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE, STALE, SKIPPED.
@@ -90,7 +112,7 @@ while true; do
 done
 ```
 
-**Key change vs before**: On CI failure we `continue` the outer loop to wait for the newly-triggered CI run after pushing the fix — NOT `exit 1` which would fall through to posting a review on a broken PR.
+**Key change vs before**: On CI failure we `continue` the outer loop to wait for the newly-triggered CI run after pushing the fix — NOT `exit 1` which would fall through to posting a review on a broken PR. Also: if `mergeStateStatus` is `DIRTY`/`CONFLICTING` (PR has merge conflicts), CI cannot run at all — we now detect this upfront and call `sandman-back-merge` to resolve the conflict before waiting for CI. This prevents the agent from spinning forever on empty check results or declaring the PR "requires manual resolution."
 
 #### Step 3: Check if SHA changed (stale request check)
 
@@ -232,6 +254,7 @@ Continue polling when:
 - Only boilerplate comments exist
 - Only nits/suggestions remain
 - CI is still running
+- **CI is blocked by merge conflicts (PR in DIRTY state) — this is handled by Step 2's back-merge loop; keep polling until conflicts are resolved**
 - Any `CHANGES_REQUESTED` review exists but is addressable
 - Only already-addressed inline comment IDs remain
 - Top-level PR conversation has new comments from non-agent author
@@ -248,3 +271,4 @@ Continue polling when:
 - Review agents may post feedback as: top-level comments, inline diff comments, or formal `COMMENT` reviews. Always check all three sources.
 - When CI is broken and the failure may be base-branch drift, load `sandman-back-merge` first so any fix that landed on the base branch can be merged before retrying.
 - When CI is failing, fix it first — CI must be green before any review feedback can be meaningfully addressed.
+- **DIRTY PR handling is now a hard Step 2 pre-check, not just a tip.** If `mergeable == CONFLICTING`, Step 2 will call `sandman-back-merge` automatically. Do not treat a DIRTY PR as a manual-resolution situation.

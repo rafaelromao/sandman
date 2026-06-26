@@ -194,13 +194,13 @@
 
   // stalenessOf derives the per-row staleness signal from the server-provided
   // lastOutputAt (saved-run-log mtime with a startedAt fallback, set by
-  // compute()). Returns null for non-active rows or rows younger than the
-  // line threshold, so healthy quiet agents are not flagged. The warn tier
-  // escalates the line to the --warning token past the second threshold; no
-  // new color is introduced.
+  // compute()). Returns null for non-active rows, terminal statuses, or rows
+  // younger than the line threshold, so healthy quiet agents are not flagged.
+  // The warn tier escalates the line to the --warning token past the second
+  // threshold; no new color is introduced.
   function stalenessOf(run) {
     if (!run || run.kind !== 'active' || !run.lastOutputAt) return null;
-    if (run.status === 'queued' || run.status === 'blocked') return null;
+    if (run.status !== 'running' && run.status !== 'reviewing' && run.status !== 'auto-selecting') return null;
     const ts = Date.parse(run.lastOutputAt);
     if (!Number.isFinite(ts)) return null;
     const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
