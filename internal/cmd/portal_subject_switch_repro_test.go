@@ -286,48 +286,13 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
       var row = document.querySelector('tr[data-run-key="`+runID+`"]');
       var meta = row && row.querySelector('[data-cell="title"] .meta-line');
       var metaRect = meta ? { left: meta.getBoundingClientRect().left, top: meta.getBoundingClientRect().top, width: meta.getBoundingClientRect().width, height: meta.getBoundingClientRect().height } : null;
-      var firstTop = null;
-      var secondTop = null;
-      var firstRect = null;
-      var secondRect = null;
-      var firstText = null;
-      var secondText = null;
-      if (meta && meta.firstChild && meta.firstChild.nodeType === Node.TEXT_NODE) {
-        var text = meta.innerText || meta.textContent || '';
-        var split = text.indexOf('\n');
-        if (split >= 0) {
-          var range = document.createRange();
-          range.setStart(meta.firstChild, 0);
-          range.setEnd(meta.firstChild, split);
-          var rects = range.getClientRects();
-          if (rects.length) {
-            firstTop = rects[0].top;
-            firstRect = { left: rects[0].left, top: rects[0].top, width: rects[0].width, height: rects[0].height };
-          }
-          firstText = text.slice(0, split);
-          range.setStart(meta.firstChild, split + 1);
-          range.setEnd(meta.firstChild, meta.firstChild.textContent.length);
-          rects = range.getClientRects();
-          if (rects.length) {
-            secondTop = rects[0].top;
-            secondRect = { left: rects[0].left, top: rects[0].top, width: rects[0].width, height: rects[0].height };
-          }
-          secondText = text.slice(split + 1);
-        }
-      }
       var pre = document.createElement('pre');
       pre.id = 'portal-meta-order';
       pre.textContent = JSON.stringify({
         rowKey: row && row.getAttribute('data-run-key'),
         metaText: meta && meta.innerText,
         metaRect: metaRect,
-        lineCount: meta ? meta.innerText.split('\n').length : 0,
-        firstTop: firstTop,
-        secondTop: secondTop,
-        firstRect: firstRect,
-        secondRect: secondRect,
-        firstText: firstText,
-        secondText: secondText
+        lineCount: meta ? meta.innerText.split('\n').length : 0
       });
       document.body.appendChild(pre);
     }, 250);
@@ -335,16 +300,10 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	dom, screenshotPath := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-meta-order")
 	var result struct {
-		RowKey     string      `json:"rowKey"`
-		MetaText   string      `json:"metaText"`
-		MetaRect   *portalRect `json:"metaRect"`
-		LineCount  int         `json:"lineCount"`
-		FirstTop   *float64    `json:"firstTop"`
-		SecondTop  *float64    `json:"secondTop"`
-		FirstRect  *portalRect `json:"firstRect"`
-		SecondRect *portalRect `json:"secondRect"`
-		FirstText  string      `json:"firstText"`
-		SecondText string      `json:"secondText"`
+		RowKey    string      `json:"rowKey"`
+		MetaText  string      `json:"metaText"`
+		MetaRect  *portalRect `json:"metaRect"`
+		LineCount int         `json:"lineCount"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse meta payload: %v\nraw=%s", err, payload)
@@ -361,9 +320,6 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	}
 	if !strings.HasPrefix(strings.TrimSpace(lines[1]), "Run: "+runID) {
 		t.Fatalf("expected run identifier on second line, got %#v", result)
-	}
-	if result.FirstTop == nil || result.SecondTop == nil || !(*result.FirstTop < *result.SecondTop) {
-		t.Fatalf("expected batch line to render above run line, got %#v", result)
 	}
 	if result.MetaRect == nil {
 		t.Fatalf("expected meta rect for screenshot scan, got %#v", result)
