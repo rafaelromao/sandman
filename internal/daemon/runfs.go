@@ -55,11 +55,12 @@ func (d DeadBatch) RunTimestamp() time.Time {
 
 // FindDeadRunBatches scans <baseDir>/batches/ for batch directories that are
 // not currently owned by a live daemon and returns their parsed
-// manifests. Results are sorted lexicographically by RunDir for stable
-// iteration. A batch dir with no `batch.json` is still returned with the
-// zero-value BatchManifest. Returns (nil, nil) if <baseDir>/batches/ is
-// missing so callers can treat a fresh repository the same as a clean
-// one.
+// manifests. Archived batches (<baseDir>/archive/) are not scanned because
+// they live in a separate directory. Results are sorted lexicographically
+// by RunDir for stable iteration. A batch dir with no `batch.json` is
+// still returned with the zero-value BatchManifest. Returns (nil, nil) if
+// <baseDir>/batches/ is missing so callers can treat a fresh repository
+// the same as a clean one.
 func FindDeadRunBatches(baseDir string) ([]DeadBatch, error) {
 	batchesDir := filepath.Join(baseDir, "batches")
 	entries, err := os.ReadDir(batchesDir)

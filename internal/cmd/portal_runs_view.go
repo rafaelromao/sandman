@@ -38,9 +38,9 @@ type portalRun struct {
 	FinishedAt  *time.Time `json:"finishedAt,omitempty"`
 	Duration    string     `json:"duration,omitempty"`
 	// LastOutputAt is the staleness signal for active runs: the mtime of
-	// the saved run log (.sandman/logs/<N>.log, opened with O_APPEND
-	// during AgentRun.Execute), falling back to StartedAt when no log
-	// file exists yet. It is populated only for active rows and omitted
+	// the run-folder log (<batchDir>/runs/<runID>/run.log, opened with
+	// O_APPEND during AgentRun.Execute), falling back to StartedAt when no
+	// log file exists yet. It is populated only for active rows and omitted
 	// from JSON for terminal rows, so the /api/runs contract carries
 	// staleness only where it is meaningful. The portal renders this as
 	// a "stale · Ns" chip past an idle threshold.
@@ -702,8 +702,8 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		IssueNumber: issueNumber,
 		StartedAt:   active.StartedAt,
 		SocketPath:  active.SocketPath,
-		LogPath:     v.portalLogPathForRun(repoRoot, issueNumber, "", active.RunID, false, 0, active.Dir),
-		LogURL:      v.portalLogDownloadURLForRun(repoRoot, issueNumber, "", active.RunID, false, 0, active.Dir),
+		LogPath:     v.portalLogPathForRun(repoRoot, active.RunID),
+		LogURL:      v.portalLogDownloadURLForRun(repoRoot, active.RunID),
 		Log:         "Queued. Waiting to start.",
 		BatchKey:    active.Key,
 	}
@@ -863,7 +863,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		status = "reviewing"
 		review = true
 	}
-	logPath := v.portalLogPathForRun(repoRoot, issueNumber, "", match.instance.RunID, review, prNumber, match.instance.Dir)
+	logPath := v.portalLogPathForRun(repoRoot, match.instance.RunID)
 	eventKey := match.instance.Key
 	if match.instance.RunID != "" {
 		eventKey = match.instance.RunID
@@ -890,7 +890,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
-		LogURL:      v.portalLogDownloadURLForRun(repoRoot, issueNumber, "", match.instance.RunID, review, prNumber),
+		LogURL:      v.portalLogDownloadURLForRun(repoRoot, match.instance.RunID),
 		Log:         stripLogLabels(match.instance.LiveOutput),
 		Events:      eventsByRun[eventKey],
 		BatchKey:    match.instance.Key,
@@ -925,18 +925,6 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		issueLabel = runID
 	}
 
-	var batchDir string
-	if active != nil {
-		batchDir = active.Dir
-	} else if runID != "" {
-		resolvedBatchDir, err := v.findBatchDirForRun(repoRoot, runID, deadBatches)
-		if err != nil {
-			logPortalViewDegrade("batch-dir-lookup:"+runID, "find batch dir for run %q: %v", runID, err)
-		} else {
-			batchDir = resolvedBatchDir
-		}
-	}
-
 	status := runState.Status()
 	if runState.IsActive() {
 		status = "running"
@@ -948,7 +936,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	review, prNumber := v.reviewContext(runState)
 
-	logPath := v.portalLogPathForRun(repoRoot, issueNumber, branch, runID, review, prNumber, batchDir)
+	logPath := v.portalLogPathForRun(repoRoot, runID)
 	logContent := v.readPortalTextFile(logPath)
 	if active != nil {
 		logContent = stripLogLabels(active.LiveOutput)
@@ -967,7 +955,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		FinishedAt:   finishedAt,
 		Duration:     v.durationForRun(runState),
 		LogPath:      logPath,
-		LogURL:       v.portalLogDownloadURLForRun(repoRoot, issueNumber, branch, runID, review, prNumber),
+		LogURL:       v.portalLogDownloadURLForRun(repoRoot, runID),
 		Log:          logContent,
 		Events:       eventsByRun[runID],
 		Review:       runState.IsReview(),
@@ -1004,20 +992,6 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			if _, err := os.Lstat(sockPath); err == nil {
 				portalRun.SocketPath = sockPath
 				v.markCompletedIfSocketDead(&portalRun, sockPath)
-			} else {
-				portalRun.Kind = "completed"
-				portalRun.Status = v.statusOrDefault(runState.Status(), false, runState.IsReview(), runState.IsAutoSelect())
-			}
-		} else {
-			// Legacy path: for pre-per-run-folder batches, the batch dir
-			// equals the run ID and the socket is at batch.sock.
-			sockPath := filepath.Join(paths.NewLayout(&config.Config{}, repoRoot).BatchesDir, runState.RunID, "batch.sock")
-			if _, err := os.Lstat(sockPath); err == nil {
-				portalRun.SocketPath = sockPath
-				v.markCompletedIfSocketDead(&portalRun, sockPath)
-			} else {
-				portalRun.Kind = "completed"
-				portalRun.Status = v.statusOrDefault(runState.Status(), false, runState.IsReview(), runState.IsAutoSelect())
 			}
 		}
 	}
@@ -1372,22 +1346,17 @@ func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
 	return info.IsDir()
 }
 
-func (v *portalRunsView) portalLogPathForRun(repoRoot string, issueNumber int, branch string, runID string, review bool, prNumber int, batchDir ...string) string {
-	branch = strings.TrimSpace(branch)
+func (v *portalRunsView) portalLogPathForRun(repoRoot string, runID string) string {
 	runID = strings.TrimSpace(runID)
-
-	if runID != "" && len(batchDir) > 0 && batchDir[0] != "" {
-		return filepath.Join(batchDir[0], "runs", runID, "run.log")
+	if runID == "" {
+		return ""
 	}
-	return ""
+	layout := paths.NewLayout(nil, repoRoot)
+	return filepath.Join(layout.BatchesDir, runID, "runs", runID, "run.log")
 }
 
-func (v *portalRunsView) portalLogPath(repoRoot string, issueNumber int, branch string) string {
-	return v.portalLogPathForRun(repoRoot, issueNumber, branch, "", false, 0)
-}
-
-func (v *portalRunsView) portalLogDownloadURLForRun(repoRoot string, issueNumber int, branch string, runID string, review bool, prNumber int, batchDir ...string) string {
-	logPath := v.portalLogPathForRun(repoRoot, issueNumber, branch, runID, review, prNumber, batchDir...)
+func (v *portalRunsView) portalLogDownloadURLForRun(repoRoot string, runID string) string {
+	logPath := v.portalLogPathForRun(repoRoot, runID)
 	if logPath == "" {
 		return ""
 	}
@@ -1397,10 +1366,6 @@ func (v *portalRunsView) portalLogDownloadURLForRun(repoRoot string, issueNumber
 		return ""
 	}
 	return "/api/logs?path=" + url.QueryEscape(relPath)
-}
-
-func (v *portalRunsView) portalLogDownloadURL(repoRoot string, issueNumber int, branch string) string {
-	return v.portalLogDownloadURLForRun(repoRoot, issueNumber, branch, "", false, 0)
 }
 
 // readPortalTextFile returns the contents of a saved portal log file.
