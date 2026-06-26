@@ -100,6 +100,7 @@ func runPortalChromium(t *testing.T, page string) string {
 		t.Skip("chromium not on PATH; skipping portal repro")
 	}
 	outPath := filepath.Join(t.TempDir(), "portal-repro.html")
+	screenshotPath := filepath.Join(t.TempDir(), "portal-repro.png")
 	if err := os.WriteFile(outPath, []byte(page), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
@@ -112,11 +113,17 @@ func runPortalChromium(t *testing.T, page string) string {
 		"--window-size=1360,900",
 		"--virtual-time-budget=10000",
 		"--dump-dom",
+		"--screenshot="+screenshotPath,
 		"file://"+outPath,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("chromium repro failed: %v\n%s", err, out)
+	}
+	if info, err := os.Stat(screenshotPath); err != nil {
+		t.Fatalf("chromium screenshot missing: %v", err)
+	} else if info.Size() == 0 {
+		t.Fatal("chromium screenshot was empty")
 	}
 	return string(out)
 }
