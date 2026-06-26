@@ -290,6 +290,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 
 	runs = v.dedupRuns(runs)
 	runs = v.aggregateReviewChildren(runs)
+	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
 	for i := range runs {
 		// Active runs are never marked archived, even if a directory
 		// matching the run ID happens to exist under .sandman/archive.
@@ -473,6 +474,45 @@ func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
 		if runs[i].Review {
 			runs[i].GroupedReview = true
 		}
+	}
+	return runs
+}
+
+func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string, runs []portalRun) []portalRun {
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	allDead, err := daemon.FindDeadRunBatches(layout.SandmanDir)
+	if err != nil {
+		logPortalViewDegrade("orphan-demotion", "FindDeadRunBatches: %v", err)
+		return runs
+	}
+	if len(allDead) == 0 {
+		return runs
+	}
+	for i := range runs {
+		if runs[i].Kind != "active" || runs[i].SocketPath != "" || runs[i].BatchKey == "" {
+			continue
+		}
+		var db *daemon.DeadBatch
+		for j := range allDead {
+			if filepath.Base(allDead[j].RunDir) == runs[i].BatchKey {
+				db = &allDead[j]
+				break
+			}
+		}
+		if db == nil {
+			continue
+		}
+		if runs[i].RunID == "" {
+			continue
+		}
+		runSockPath := daemon.RunSocketPath(db.RunDir, runs[i].RunID)
+		if _, err := os.Lstat(runSockPath); err == nil {
+			continue
+		}
+		runs[i].Kind = "completed"
+		runs[i].Status = "aborted"
+		ts := runs[i].StartedAt
+		runs[i].FinishedAt = &ts
 	}
 	return runs
 }
@@ -1021,6 +1061,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			logPortalViewDegrade("batch-dir-lookup:"+runState.RunID, "find batch dir for run %q: %v", runState.RunID, err)
 		}
 		if batchDir != "" {
+			portalRun.BatchKey = filepath.Base(batchDir)
 			sockPath := daemon.RunSocketPath(batchDir, runState.RunID)
 			if _, err := os.Lstat(sockPath); err == nil {
 				portalRun.SocketPath = sockPath
