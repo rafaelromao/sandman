@@ -20,11 +20,10 @@ import (
 
 // startFakeRunDaemon listens on sockPath as a stand-in for a live daemon's
 // Control Socket. On each accepted connection it writes the given lines
-// (raw, including any ANSI/control bytes), then either closes the
-// connection (final=false → keep open until the test ends) or closes it
-// immediately so the SSE bridge sees EOF. Returns the accept count so the
-// test can assert the bridge actually connected.
-func startFakeRunDaemon(t *testing.T, sockPath string, lines []string, closeOnEOF bool) *int32 {
+// (raw, including any ANSI/control bytes), then closes the connection after
+// the supplied delay. Returns the accept count so the test can assert the
+// bridge actually connected.
+func startFakeRunDaemon(t *testing.T, sockPath string, lines []string, closeDelay time.Duration) *int32 {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(sockPath), 0755); err != nil {
 		t.Fatal(err)
@@ -44,18 +43,15 @@ func startFakeRunDaemon(t *testing.T, sockPath string, lines []string, closeOnEO
 			atomic.AddInt32(&accepts, 1)
 			go func(c net.Conn) {
 				defer func() {
-					if closeOnEOF {
-						_ = c.Close()
+					if closeDelay > 0 {
+						// Keep the socket alive briefly so the portal's snapshot
+						// liveness probe sees the row as active.
+						time.Sleep(closeDelay)
 					}
+					_ = c.Close()
 				}()
 				for _, line := range lines {
 					_, _ = c.Write([]byte(line))
-				}
-				if !closeOnEOF {
-					// Hold the socket open so the stream stays live; the
-					// test reads what it needs then closes the client.
-					<-time.After(30 * time.Second)
-					_ = c.Close()
 				}
 			}(conn)
 		}
@@ -100,7 +96,7 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 		"\x1b[32m[issue-42]\x1b[0m 12:00:01 starting work\r\n",
 		"[issue-42] 12:00:02 \x1b[1;33mwarning\x1b[0m: low disk\n",
 		"[issue-42] 12:00:03 done\n",
-	}, true)
+	}, 200*time.Millisecond)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: runID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
@@ -111,6 +107,7 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 	defer server.Close()
 
 	runKey := readPortalRuns(t, server.URL)[0].Key
+	getPortalRunsIndex(repoRoot).Invalidate()
 
 	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/runs/stream?runKey="+url.QueryEscape(runKey), nil)
 	client := &http.Client{Timeout: 10 * time.Second}
