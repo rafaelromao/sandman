@@ -1878,7 +1878,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffHighlightTerminalLog_StringHighlighted(t *testing.T) {
+func TestPortalDiffHighlightTerminalLog_StringPreserved(t *testing.T) {
 	js := `const result = SandmanPortalDiff.highlightTerminalLog('msg = "hello world"');
 // Strings are NOT highlighted to avoid over-coloring prose and HTML breakage
 // The output should be valid HTML without broken spans
