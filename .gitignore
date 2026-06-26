@@ -31,7 +31,6 @@ go.work
 *~
 
 # Codeindex generated files
-.codeindex/
 codeindex.json
 symbolindex.json
 
