@@ -262,8 +262,8 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	if issueRow.RunID != "issue-1" {
 		t.Fatalf("expected canonical issue row runID issue-1, got %q", issueRow.RunID)
 	}
-	if issueRow.Status != "reviewing" {
-		t.Fatalf("expected parent status reviewing while child review is live, got %q", issueRow.Status)
+	if issueRow.Status != "success" {
+		t.Fatalf("expected parent status success (terminal) while child review is live, got %q", issueRow.Status)
 	}
 	if issueRow.ReviewCount != 2 {
 		t.Fatalf("expected review count 2, got %d", issueRow.ReviewCount)
@@ -338,6 +338,101 @@ func TestPortal_TerminalReviewChild_ParentNotStuck(t *testing.T) {
 	}
 	if issueRow.Status != "running" {
 		t.Fatalf("Status = %q, want %q (parent must return to running when all review children have terminal event-log entries, even with live socket)", issueRow.Status, "running")
+	}
+}
+
+// TestPortal_TerminalReviewLiveSocket_PreservesStatus is the regression
+// test for the bug where a review child with a terminal run.finished event
+// but a live socket had its Status overwritten to "reviewing". The fix:
+// pass active=false to statusOrDefault when runState.Status() is non-empty.
+func TestPortal_TerminalReviewLiveSocket_PreservesStatus(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	reviewFinishedAt := startedAt.Add(2 * time.Minute)
+
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+	sockPath := filepath.Join(runDir, "batch.sock")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42", "status": "success"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d: %#v", len(runs), runs)
+	}
+	run := &runs[0]
+	if run.Status != "success" {
+		t.Fatalf("Status = %q, want %q (terminal event-log status must be preserved even with live socket)", run.Status, "success")
+	}
+}
+
+// TestPortal_ParentSuccWithLiveChild_NotOverwritten is the
+// regression test for the bug where a parent impl run with terminal
+// run.finished status was overwritten to "reviewing" because a live
+// review child existed. The fix: runFromState returns terminal status
+// for review children so aggregateReviewChildren does not set live=true.
+func TestPortal_ParentSuccWithLiveChild_NotOverwritten(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+	sockPath := filepath.Join(runDir, "batch.sock")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "PR42", runDir, []int{1})
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var issueRow *portalRun
+	for i := range runs {
+		if runs[i].IssueNumber == 1 && !runs[i].Review {
+			issueRow = &runs[i]
+			break
+		}
+	}
+	if issueRow == nil {
+		t.Fatalf("expected issue row for #1, got %#v", runs)
+	}
+	if issueRow.Status != "success" {
+		t.Fatalf("Status = %q, want %q (parent terminal status must not be overwritten by live child review)", issueRow.Status, "success")
 	}
 }
 
