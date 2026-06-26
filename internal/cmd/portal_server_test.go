@@ -637,13 +637,30 @@ func TestAbortPortalRunSendsAbortRequestAndReturnsSuccess(t *testing.T) {
 	}
 
 	startedAt := time.Now().Add(-10 * time.Minute)
-	runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
-	activeSock := filepath.Join(runDir, "batch.sock")
-	abortSock := filepath.Join(runDir, "run.sock")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
+	runID := "run-42-1"
+	runFolder := filepath.Join(batchDir, "runs", runID)
+	activeSock := filepath.Join(batchDir, "batch.sock")
+	abortSock := filepath.Join(runFolder, "run.sock")
+	if err := os.MkdirAll(runFolder, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+	runManifest := batchindex.RunManifest{Issue: 42}
+	runManifestData, _ := json.Marshal(runManifest)
+	if err := os.WriteFile(filepath.Join(runFolder, "run.json"), runManifestData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		{ID: "run-42-1", Path: batchDir, Kind: "batch", Status: "active", CreatedAt: startedAt, Issues: []int{42}},
+	}}
+	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(idxPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Save(idxPath); err != nil {
 		t.Fatal(err)
 	}
 	ln, err := net.Listen("unix", activeSock)
@@ -666,8 +683,8 @@ func TestAbortPortalRunSendsAbortRequestAndReturnsSuccess(t *testing.T) {
 		portalPeerPID = prevPeerPID
 	})
 	portalPeerPID = func(sockPath string) (int, error) {
-		if sockPath != activeSock {
-			t.Fatalf("expected socket %q, got %q", activeSock, sockPath)
+		if sockPath != abortSock {
+			t.Fatalf("expected socket %q, got %q", abortSock, sockPath)
 		}
 		return 12345, nil
 	}
@@ -740,12 +757,14 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		runDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
-		if err := os.MkdirAll(runDir, 0755); err != nil {
+		batchDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
+		runID := "run-42-1"
+		runFolder := filepath.Join(batchDir, "runs", runID)
+		if err := os.MkdirAll(runFolder, 0755); err != nil {
 			t.Fatal(err)
 		}
-		activeSock := filepath.Join(runDir, "batch.sock")
-		cmdSock := filepath.Join(runDir, "run.sock")
+		activeSock := filepath.Join(batchDir, "batch.sock")
+		cmdSock := filepath.Join(runFolder, "run.sock")
 		if err := os.WriteFile(cmdSock, []byte("offline"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -755,11 +774,25 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = ln.Close() })
 
+		runManifest := batchindex.RunManifest{Issue: 42}
+		runManifestData, _ := json.Marshal(runManifest)
+		if err := os.WriteFile(filepath.Join(runFolder, "run.json"), runManifestData, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+			{ID: runID, Path: batchDir, Kind: "batch", Status: "active", Issues: []int{42}},
+		}}
+		idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+		if err := idx.Save(idxPath); err != nil {
+			t.Fatal(err)
+		}
+
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-			{Type: "run.started", Timestamp: time.Now(), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+			{Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
 		})
 
-		err = abortPortalRun(context.Background(), repoRoot, "run-42-1", 42)
+		err = abortPortalRun(context.Background(), repoRoot, runID, 42)
 		var abortErr *portalAbortError
 		if !errors.As(err, &abortErr) {
 			t.Fatalf("expected portalAbortError, got %v", err)

@@ -287,19 +287,31 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 
 	runDir := filepath.Dir(run.SocketPath)
 
-	if !daemon.IsRunActive(runDir) {
-		return &portalAbortError{status: http.StatusConflict, message: fmt.Sprintf("daemon for run %q is no longer live", runKey)}
-	}
-
+	// For batch-level sockets (batch.sock), resolve to the per-run folder.
 	cmdSock := daemon.CommandSocketPath(runDir)
 	if _, err := os.Stat(cmdSock); err != nil {
+		// If the command socket isn't at the batch level, check the per-run folder.
+		if run.RunID != "" && run.BatchKey != "" {
+			perRunDir := filepath.Join(runDir, "runs", run.RunID)
+			perRunSock := daemon.CommandSocketPath(perRunDir)
+			if _, statErr := os.Stat(perRunSock); statErr == nil {
+				runDir = perRunDir
+				cmdSock = perRunSock
+			}
+		}
+	}
+	cmdInfo, err := os.Stat(cmdSock)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return &portalAbortError{status: http.StatusNotFound, message: fmt.Sprintf("active run %q not found", runKey)}
 		}
 		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not inspect abort command socket for run %q", runKey)}
 	}
+	if cmdInfo.Mode().Type()&os.ModeSocket == 0 {
+		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not connect to the agent daemon for run %q", runKey)}
+	}
 
-	pid, err := portalPeerPID(run.SocketPath)
+	pid, err := portalPeerPID(cmdSock)
 	if err != nil {
 		return &portalAbortError{status: http.StatusBadGateway, message: fmt.Sprintf("could not resolve the active run process for run %q", runKey)}
 	}
