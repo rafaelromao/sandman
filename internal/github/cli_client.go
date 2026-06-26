@@ -63,13 +63,16 @@ type issueDependenciesPayload struct {
 }
 
 type prPayload struct {
-	Number      int    `json:"number"`
-	State       string `json:"state"`
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	MergedAt    string `json:"mergedAt"`
-	HeadRefName string `json:"headRefName"`
-	HeadRefOid  string `json:"headRefOid"`
+	Number                  int    `json:"number"`
+	State                   string `json:"state"`
+	Title                   string `json:"title"`
+	Body                    string `json:"body"`
+	MergedAt                string `json:"mergedAt"`
+	HeadRefName             string `json:"headRefName"`
+	HeadRefOid              string `json:"headRefOid"`
+	ClosingIssuesReferences []struct {
+		Number int `json:"number"`
+	} `json:"closingIssuesReferences"`
 }
 
 type dependencySummary struct {
@@ -177,7 +180,7 @@ func (c *CLIClient) FetchPR(number int) (*PR, error) {
 		return nil, err
 	}
 
-	cmd := c.command("gh", "pr", "view", fmt.Sprintf("%d", number), "--json", "number,title,body,state,mergedAt,headRefName,headRefOid")
+	cmd := c.command("gh", "pr", "view", fmt.Sprintf("%d", number), "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,closingIssuesReferences")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("gh pr view: %w\n%s", err, out)
@@ -188,14 +191,20 @@ func (c *CLIClient) FetchPR(number int) (*PR, error) {
 		return nil, fmt.Errorf("parse pr: %w", err)
 	}
 
+	var linkedIssueNumber int
+	if len(payload.ClosingIssuesReferences) > 0 && payload.ClosingIssuesReferences[0].Number > 0 {
+		linkedIssueNumber = payload.ClosingIssuesReferences[0].Number
+	}
+
 	return &PR{
-		Number:      payload.Number,
-		State:       payload.State,
-		Title:       payload.Title,
-		Body:        payload.Body,
-		Merged:      strings.TrimSpace(payload.MergedAt) != "",
-		HeadRefName: payload.HeadRefName,
-		HeadRefOid:  payload.HeadRefOid,
+		Number:            payload.Number,
+		State:             payload.State,
+		Title:             payload.Title,
+		Body:              payload.Body,
+		Merged:            strings.TrimSpace(payload.MergedAt) != "",
+		HeadRefName:       payload.HeadRefName,
+		HeadRefOid:        payload.HeadRefOid,
+		linkedIssueNumber: linkedIssueNumber,
 	}, nil
 }
 

@@ -5,6 +5,7 @@ package cmd
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -269,4 +270,72 @@ func readPortalRunsRawBody(t *testing.T, baseURL string) []byte {
 		t.Fatalf("read response: %v", err)
 	}
 	return body
+}
+
+// TestPortal_E2E_ParentSuccWithLiveChild is the end-to-end regression test
+// for the bug where a parent impl run with terminal run.finished status was
+// overwritten to "reviewing" because a live review child existed. The portal's
+// Active filter then showed the row as "reviewing" instead of "success".
+func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42-live")
+	sockPath := filepath.Join(batchDir, "batch.sock")
+	if err := os.MkdirAll(batchDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "PR42-live", batchDir, []int{1})
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+	})
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+
+	rows := readPortalRuns(t, server.URL)
+
+	var parentRow *portalRun
+	var reviewChild *portalRun
+	for i := range rows {
+		if rows[i].IssueNumber == 1 && !rows[i].Review {
+			parentRow = &rows[i]
+		}
+		if rows[i].IssueNumber == 1 && rows[i].Review {
+			reviewChild = &rows[i]
+		}
+	}
+	if parentRow == nil {
+		t.Fatalf("expected parent row for issue #1, got %#v", rows)
+	}
+	if parentRow.Status != "success" {
+		t.Fatalf("expected parent Status='success', got %q", parentRow.Status)
+	}
+	if parentRow.ReviewCount == 0 {
+		t.Fatalf("expected parent ReviewCount > 0 (review child exists), got %d", parentRow.ReviewCount)
+	}
+	if reviewChild == nil {
+		t.Fatalf("expected review child row for issue #1, got %#v", rows)
+	}
+	if !reviewChild.Review {
+		t.Fatalf("expected review child Review=true, got %v", reviewChild.Review)
+	}
+	if !reviewChild.GroupedReview {
+		t.Fatalf("expected review child GroupedReview=true (behind expanded selector), got %v", reviewChild.GroupedReview)
+	}
+	if reviewChild.PRNumber != 42 {
+		t.Fatalf("expected review child PRNumber=42, got %d", reviewChild.PRNumber)
+	}
 }

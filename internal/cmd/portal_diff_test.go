@@ -108,6 +108,81 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffCreateRunRow_BatchAndRetryOnSeparateLines(t *testing.T) {
+	js := `const body = makeMockBody();
+const batchOnlyRun = { key: 'run-1', kind: 'active', status: 'running', issueLabel: '#42', runId: 'a0c19', issueNumber: 42, batchKey: 'batch-abc' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, batchOnlyRun, opts);
+const meta = created.row.querySelector('[data-cell="title"]').children[0].children[1];
+// Batch should appear before Run identifier (issue #1348)
+if (!meta.textContent.includes('Run: a0c19')) throw new Error('expected Run: line, got ' + JSON.stringify(meta.textContent));
+if (!meta.textContent.includes('Batch: batch-abc')) throw new Error('expected Batch: line, got ' + JSON.stringify(meta.textContent));
+// Verify Batch comes BEFORE Run on separate lines (Batch first, Run second)
+if (meta.textContent.includes('Batch: batch-abc\nRun: a0c19')) {
+  // This is the correct format per issue #1348 - Batch above Run
+} else {
+  throw new Error('expected Batch: before Run: on separate lines, got ' + JSON.stringify(meta.textContent));
+}
+
+// Now test with batch + retry/review
+const batchWithRetry = { key: 'run-2', kind: 'active', status: 'reviewing', issueLabel: '#43', runId: 'b1c2d', issueNumber: 43, batchKey: 'batch-xyz', retriesDone: 2, retriesTotal: 2, reviewCount: 1, reviewVerdict: 'Approved' };
+SandmanPortalDiff.insertRunRow(body, batchWithRetry, opts);
+const metaWithRetry = body.querySelector('tr[data-run-key="run-2"]').querySelector('[data-cell="title"]').children[0].children[1];
+// Should have Batch+summary on line 1, Run on line 2 (Batch above Run per issue #1348)
+if (!metaWithRetry.textContent.includes('Run: b1c2d')) throw new Error('expected Run: line, got ' + JSON.stringify(metaWithRetry.textContent));
+if (!metaWithRetry.textContent.includes('Batch: batch-xyz')) throw new Error('expected Batch: line, got ' + JSON.stringify(metaWithRetry.textContent));
+// Batch+summary should come before Run
+const batchSummaryLine = 'Batch: batch-xyz - 2 retries - 1 review - Approved';
+if (!metaWithRetry.textContent.startsWith(batchSummaryLine)) {
+  throw new Error('expected Batch+summary on first line, got ' + JSON.stringify(metaWithRetry.textContent));
+}
+if (!metaWithRetry.textContent.includes(batchSummaryLine + '\nRun: b1c2d')) {
+  throw new Error('expected Batch+summary line followed by Run line, got ' + JSON.stringify(metaWithRetry.textContent));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestRenderRunMeta_StackedBatchWithRetrySummary(t *testing.T) {
+	js := `const run = { key: 'run-2', kind: 'active', status: 'reviewing', issueLabel: '#43', runId: 'b1c2d', issueNumber: 43, batchKey: 'batch-xyz', retriesDone: 2, retriesTotal: 2, reviewCount: 1, reviewVerdict: 'Approved' };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split('\n');
+let batchLineIdx = -1;
+let summaryLineIdx = -1;
+for (let i = 0; i < lines.length; i++) {
+  if (lines[i].includes('Batch: batch-xyz')) batchLineIdx = i;
+  if (lines[i].includes('2 retries')) summaryLineIdx = i;
+}
+if (batchLineIdx < 0) throw new Error('expected Batch line, got: ' + JSON.stringify(lines));
+if (summaryLineIdx < 0) throw new Error('expected retry summary line, got: ' + JSON.stringify(lines));
+if (batchLineIdx >= summaryLineIdx) throw new Error('Batch line must come before summary line, got: ' + JSON.stringify(lines));
+if (lines.length < 3) throw new Error('expected at least 3 lines (Run, Batch, Summary), got: ' + lines.length);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestRenderRunMeta_StackedBatchOnly(t *testing.T) {
+	js := `const run = { key: 'run-1', kind: 'active', status: 'running', issueLabel: '#42', runId: 'a0c19', issueNumber: 42, batchKey: 'batch-abc' };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split('\n');
+let runLineIdx = -1;
+let batchLineIdx = -1;
+for (let i = 0; i < lines.length; i++) {
+  if (lines[i].includes('Run: a0c19')) runLineIdx = i;
+  if (lines[i].includes('Batch: batch-abc')) batchLineIdx = i;
+}
+if (runLineIdx < 0) throw new Error('expected Run line, got: ' + JSON.stringify(lines));
+if (batchLineIdx < 0) throw new Error('expected Batch line, got: ' + JSON.stringify(lines));
+if (runLineIdx >= batchLineIdx) throw new Error('Run line must come before Batch line, got: ' + JSON.stringify(lines));
+if (lines.length !== 2) throw new Error('expected exactly 2 lines (Run, Batch) for batch-only, got: ' + lines.length);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffCreateRunRow_NoArchivedColumnOrBadge(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'archived-1', kind: 'completed', status: 'success', archived: true, issueLabel: '#1', runId: 'archived-1', issueNumber: 1 };
@@ -1847,6 +1922,76 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffHighlightTerminalLog_TimestampHighlighted(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('14:32:15 running agent task');
+if (result.indexOf('term-time') === -1) throw new Error('expected term-time span');
+if (result.indexOf('>14:32:15<') === -1) throw new Error('expected timestamp wrapped');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_FuncCallHighlighted(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('foo.bar()');
+if (result.indexOf('term-func') === -1) throw new Error('expected term-func span');
+if (result.indexOf('>foo.bar<') === -1) throw new Error('expected function name wrapped');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_KeywordHighlighted(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('if (x == 5) { return; }');
+if (result.indexOf('term-keyword') === -1) throw new Error('expected term-keyword span');
+if (result.indexOf('>if<') === -1) throw new Error('expected if keyword wrapped');
+if (result.indexOf('>return<') === -1) throw new Error('expected return keyword wrapped');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_OperatorHighlighted(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('x == 5 && y != 0');
+if (result.indexOf('term-operator') === -1) throw new Error('expected term-operator span');
+if (result.indexOf('>==<') === -1) throw new Error('expected == operator wrapped');
+if (result.indexOf('>!=<') === -1) throw new Error('expected != operator wrapped');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_NumberHighlighted(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('count = 42');
+if (result.indexOf('term-number') === -1) throw new Error('expected term-number span');
+if (result.indexOf('>42<') === -1) throw new Error('expected number wrapped');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_StringPreserved(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('msg = "hello world"');
+// Strings are NOT highlighted to avoid over-coloring prose and HTML breakage
+// The output should be valid HTML without broken spans
+const stripped = result.replace(/<[^>]+>/g, '');
+if (stripped.indexOf('hello world') === -1) throw new Error('expected hello world preserved in output');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_ExistingPatternsPreserved(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('$ git branch --show-current');
+if (result.indexOf('term-prompt') === -1) throw new Error('expected shell prompt still highlighted');
+const result2 = SandmanPortalDiff.highlightTerminalLog('https://github.com/user/repo');
+if (result2.indexOf('term-url') === -1) throw new Error('expected URL still highlighted');
+const result3 = SandmanPortalDiff.highlightTerminalLog('--- PASS: TestFoo');
+if (result3.indexOf('term-pass') === -1) throw new Error('expected test pass still highlighted');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffHelperExists(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required for portal diff helper test")
@@ -1948,7 +2093,6 @@ const renderStatusBadge = (run) => {
 };
 const renderRunMeta = (run) => {
   const lines = [];
-  if (run.runId) lines.push('Run: ' + run.runId);
   const summary = [];
   if (run.batchKey) {
     summary.push('Batch: ' + run.batchKey);
@@ -1962,7 +2106,13 @@ const renderRunMeta = (run) => {
     summary.push(count + ' review' + (count === 1 ? '' : 's'));
     if (run.reviewVerdict) summary.push(run.reviewVerdict);
   }
-  if (summary.length) lines.push(summary.join(' - '));
+  if (run.batchKey) {
+    if (summary.length) lines.push(summary.join(' - '));
+    if (run.runId) lines.push('Run: ' + run.runId);
+  } else {
+    if (run.runId) lines.push('Run: ' + run.runId);
+    if (summary.length) lines.push(summary.join(' - '));
+  }
   return lines.length ? lines.join('\n') : 'Run';
 };
 const renderTerminalContent = (text) => {
@@ -2932,21 +3082,24 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-func TestPortalRunsView_VisibleRunForIssueGroup_ActiveChildWinsOverCompletedParent(t *testing.T) {
-	js := `const parent = { key: 'issue-1', kind: 'completed', status: 'success', issueLabel: '#1', runId: 'issue-1', issueNumber: 1 };
-const child = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, batchKey: 'batch-1', startedAt: '2025-06-26T11:00:00Z' };
-const stub = visibleRunForIssueGroup(1, [parent, child]);
-if (!stub) throw new Error('expected visible row for mixed issue group');
-if (stub.key !== 'PR42') throw new Error('expected active child to win over completed parent, got ' + JSON.stringify(stub.key));
-if (stub.kind !== 'active') throw new Error('expected active kind for visible child, got ' + JSON.stringify(stub.kind));
-if (stub.status !== 'reviewing') throw new Error('expected reviewing status for visible child, got ' + JSON.stringify(stub.status));
-if (typeof isRunAbortable !== 'function') throw new Error('expected runtime isRunAbortable helper');
-if (!isRunAbortable(stub, new Set())) throw new Error('expected active child row to be abortable');
+// TestPortalRunsView_VisibleRunForIssueGroup_TerminalParentWinsOverLiveChild
+// is the regression test for issue #1362: when an issue has both a terminal
+// parent run (status=success) and a live review child (status=reviewing,
+// kind=active), the visible row must be the terminal parent, not the live
+// child. The review child must remain accessible in the expanded selector.
+func TestPortalRunsView_VisibleRunForIssueGroup_TerminalParentWinsOverLiveChild(t *testing.T) {
+	js := `const parent = { key: 'issue-1', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
+const liveChild = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const result = visibleRunForIssueGroup(1, [parent, liveChild]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-1') throw new Error('expected parent as visible row, got ' + JSON.stringify(result.key));
+if (result.status !== 'success') throw new Error('expected terminal status preserved, got ' + JSON.stringify(result.status));
+if (result.kind !== 'completed') throw new Error('expected completed kind, got ' + JSON.stringify(result.kind));
+if (result.review) throw new Error('expected review flag false for parent row, got ' + JSON.stringify(result.review));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
 }
-
 // TestPortalRunsView_VisibleRunsForTable_ReviewMetaLineShowsRealRunID
 // covers the user-visible symptom: the meta-line under the title cell is
 // fed by renderRunMeta(run), which reads run.runId. When
@@ -2962,6 +3115,25 @@ if (rendered.runId !== 'a0c19-260622193226-1227') throw new Error('expected visi
 const meta = helpers.renderRunMeta(rendered);
 if (!meta.includes('a0c19-260622193226-1227')) throw new Error('expected renderRunMeta to surface real run identifier, got ' + JSON.stringify(meta));
 if (meta.startsWith('issue-')) throw new Error('expected renderRunMeta not to start with synthetic "issue-" stub, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestRenderRunMeta_BatchAboveRunID(t *testing.T) {
+	js := `const runWithBatch = { key: 'a', runId: 'r1', batchKey: 'batch-42', kind: 'active', status: 'running' };
+const metaWithBatch = helpers.renderRunMeta(runWithBatch);
+if (metaWithBatch.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for run with batch, got ' + JSON.stringify(metaWithBatch));
+if (metaWithBatch.indexOf('Run:') < 0) throw new Error('expected Run: in meta for run with batch, got ' + JSON.stringify(metaWithBatch));
+const batchPos = metaWithBatch.indexOf('Batch:');
+const runPos = metaWithBatch.indexOf('Run:');
+if (batchPos > runPos) throw new Error('expected Batch: to appear before Run:, got Batch: at ' + batchPos + ', Run: at ' + runPos + ' in ' + JSON.stringify(metaWithBatch));
+
+const runWithoutBatch = { key: 'b', runId: 'r2', kind: 'active', status: 'running' };
+const metaWithoutBatch = helpers.renderRunMeta(runWithoutBatch);
+if (metaWithoutBatch.indexOf('Run:') < 0) throw new Error('expected Run: in meta for run without batch, got ' + JSON.stringify(metaWithoutBatch));
+if (metaWithoutBatch.indexOf('Batch:') >= 0) throw new Error('expected no Batch: in meta for run without batch, got ' + JSON.stringify(metaWithoutBatch));
+
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)

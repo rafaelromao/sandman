@@ -598,7 +598,7 @@ func TestCLIClient_FetchPR_Success(t *testing.T) {
 	if runner.calls[1].name != "gh" {
 		t.Errorf("expected command gh, got %q", runner.calls[1].name)
 	}
-	expectedArgs := []string{"pr", "view", "42", "--json", "number,title,body,state,mergedAt,headRefName,headRefOid"}
+	expectedArgs := []string{"pr", "view", "42", "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,closingIssuesReferences"}
 	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
 		t.Errorf("unexpected fetch args: %v", runner.calls[1].args)
 	}
@@ -630,6 +630,47 @@ func TestCLIClient_FetchPR_Error(t *testing.T) {
 	_, err := client.FetchPR(99)
 	if err == nil {
 		t.Fatal("expected error when gh pr view fails")
+	}
+}
+
+func TestCLIClient_FetchPR_ClosingIssuesReferences(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":55,"state":"open","title":"Fix bug","body":"","mergedAt":null,"headRefName":"fix/bug","headRefOid":"abc","closingIssuesReferences":[{"number":42}]}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FetchPR(55)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr.Number != 55 {
+		t.Errorf("expected number 55, got %d", pr.Number)
+	}
+	if pr.linkedIssueNumber != 42 {
+		t.Errorf("expected linkedIssueNumber 42, got %d", pr.linkedIssueNumber)
+	}
+	if pr.LinkedIssueNumber() != 42 {
+		t.Errorf("LinkedIssueNumber() = %d, want 42", pr.LinkedIssueNumber())
+	}
+}
+
+func TestCLIClient_FetchPR_LinkedIssueFallsBackToBody(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":77,"state":"open","title":"Fix bug","body":"Fixes #99","mergedAt":null,"headRefName":"fix/bug","headRefOid":"abc"}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FetchPR(77)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr.linkedIssueNumber != 0 {
+		t.Errorf("expected linkedIssueNumber 0 when closingIssuesReferences absent, got %d", pr.linkedIssueNumber)
+	}
+	if pr.LinkedIssueNumber() != 99 {
+		t.Errorf("LinkedIssueNumber() = %d, want 99 (fallback to body)", pr.LinkedIssueNumber())
 	}
 }
 

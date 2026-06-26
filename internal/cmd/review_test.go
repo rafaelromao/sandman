@@ -309,11 +309,14 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if runner.captured.PRNumber != 17 {
 		t.Errorf("expected PRNumber=17 on one-shot review batch request, got %d", runner.captured.PRNumber)
 	}
+	if runner.captured.IssueNumber != 0 {
+		t.Errorf("expected IssueNumber=0 (no linked issue) on one-shot review batch request, got %d", runner.captured.IssueNumber)
+	}
 	if runner.captured.ReviewFocus != "" {
 		t.Errorf("expected empty ReviewFocus on one-shot review batch request, got %q", runner.captured.ReviewFocus)
 	}
-	if runner.captured.RunID != "PR17" {
-		t.Errorf("expected RunID='PR17' on one-shot review batch request, got %q", runner.captured.RunID)
+	if !strings.HasSuffix(runner.captured.RunID, "-PR17") {
+		t.Errorf("expected RunID to end with '-PR17' on one-shot review batch request, got %q", runner.captured.RunID)
 	}
 	if !strings.Contains(runner.captured.RunDir, "PR17") {
 		t.Errorf("expected RunDir to contain PR17, got %q", runner.captured.RunDir)

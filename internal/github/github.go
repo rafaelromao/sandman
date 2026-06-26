@@ -20,20 +20,25 @@ type Issue struct {
 
 // PR holds pull request metadata fetched from GitHub.
 type PR struct {
-	Number      int
-	State       string
-	Title       string
-	Body        string
-	Merged      bool
-	HeadRefName string
-	HeadRefOid  string
+	Number            int
+	State             string
+	Title             string
+	Body              string
+	Merged            bool
+	HeadRefName       string
+	HeadRefOid        string
+	linkedIssueNumber int
 }
 
-var prIssueLinkRe = regexp.MustCompile(`\b(?i)(?:fixes|closes|resolves)\s+#(\d+)`)
+var prIssueLinkRe = regexp.MustCompile(`\b(?i)(?:fixes|closes|resolves|implements)\s+#(\d+)`)
 
-// LinkedIssueNumber returns the first issue number referenced by a
-// Fixes/Closes/Resolves keyword in the PR body, or 0 if none is found.
+// LinkedIssueNumber returns the linked issue number for the PR.
+// It first checks the native closingIssuesReferences metadata from GitHub,
+// then falls back to searching the PR body for Fixes/Closes/Resolves keywords.
 func (pr *PR) LinkedIssueNumber() int {
+	if pr.linkedIssueNumber > 0 {
+		return pr.linkedIssueNumber
+	}
 	if pr.Body == "" {
 		return 0
 	}
