@@ -16,8 +16,17 @@ gofmt -w . && go vet ./...
 
 ## Symbol lookup
 
-Use `codeindex` CLI before grepping: `codeindex lookup <symbol>`, `codeindex impact <file>`, `codeindex dependencies <file>`.
-Regenerate: `codeindex analyze . && codeindex symbols .`
+Use `codeindex` CLI before grepping for symbols or assessing blast radius.
+
+### Core commands
+
+| Command | Purpose |
+|---------|---------|
+| `codeindex lookup <symbol>` | Find where a function/class is defined (file + line) |
+| `codeindex impact <file>` | Blast-radius report: how many files break if this changes |
+| `codeindex dependencies <file>` | Imports and imported-by for a file |
+| `codeindex high-blast --threshold N` | List riskiest files (blast score ≥ N) |
+| `codeindex search "natural language"` | Hybrid semantic + keyword + graph symbol search |
 
 ## Agent skills
 
