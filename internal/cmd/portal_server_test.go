@@ -1039,6 +1039,37 @@ func TestPortal_PageUsesPlainEscapedTerminalRendering(t *testing.T) {
 	}
 }
 
+func TestPortal_PageEmbedsTerminalGrammarInline(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	for _, want := range []string{"Prism.highlight", "Prism.languages['sandman-log']", "term-comment", "term-string"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("page missing inline terminal grammar marker %q\n%s", want, content[:min(1200, len(content))])
+		}
+	}
+	for _, forbidden := range []string{"cdn.jsdelivr", "prismjs", "unpkg.com"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("page must not reference external Prism assets: %q\n%s", forbidden, content[:min(1200, len(content))])
+		}
+	}
+}
+
 func TestPortal_PageIncludesAllClearEmptyStateMessage(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
