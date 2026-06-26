@@ -194,7 +194,7 @@ func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) 
 	}
 }
 
-func TestSyncBaseBranchFailsWhenDiverged(t *testing.T) {
+func TestSyncBaseBranchResetsWhenDiverged(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
 	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
@@ -210,16 +210,20 @@ func TestSyncBaseBranchFailsWhenDiverged(t *testing.T) {
 	commitGitFile(t, seedDir, "remote-only.txt", "remote\n", "remote divergence")
 	runGit(t, seedDir, "push", "origin", "main")
 
-	if err := SyncBaseBranch(localDir, "main"); err == nil {
-		t.Fatal("expected sync failure when local and remote have diverged")
-	} else if !strings.Contains(err.Error(), "diverged") {
-		t.Fatalf("expected diverged error, got %v", err)
+	if err := SyncBaseBranch(localDir, "main"); err != nil {
+		t.Fatalf("expected sync to succeed by resetting to remote, got %v", err)
 	}
 
-	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
-
-	if _, err := os.Stat(s.WorkDir()); !os.IsNotExist(err) {
-		t.Fatalf("expected no worktree to be created, got %v", err)
+	mainHead, err := gitRevParse(localDir, "refs/heads/main")
+	if err != nil {
+		t.Fatalf("failed to get main ref: %v", err)
+	}
+	remoteMain, err := gitRevParse(remoteDir, "refs/heads/main")
+	if err != nil {
+		t.Fatalf("failed to get remote main: %v", err)
+	}
+	if mainHead != remoteMain {
+		t.Fatalf("expected local main to be reset to remote main (%s), got %s", remoteMain[:7], mainHead[:7])
 	}
 }
 
