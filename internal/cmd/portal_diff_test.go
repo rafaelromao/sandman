@@ -149,16 +149,9 @@ func TestRenderRunMeta_StackedBatchWithRetrySummary(t *testing.T) {
 	js := `const run = { key: 'run-2', kind: 'active', status: 'reviewing', issueLabel: '#43', runId: 'b1c2d', issueNumber: 43, batchKey: 'batch-xyz', retriesDone: 2, retriesTotal: 2, reviewCount: 1, reviewVerdict: 'Approved' };
 const meta = helpers.renderRunMeta(run);
 const lines = meta.split('\n');
-let batchLineIdx = -1;
-let summaryLineIdx = -1;
-for (let i = 0; i < lines.length; i++) {
-  if (lines[i].includes('Batch: batch-xyz')) batchLineIdx = i;
-  if (lines[i].includes('2 retries')) summaryLineIdx = i;
-}
-if (batchLineIdx < 0) throw new Error('expected Batch line, got: ' + JSON.stringify(lines));
-if (summaryLineIdx < 0) throw new Error('expected retry summary line, got: ' + JSON.stringify(lines));
-if (batchLineIdx >= summaryLineIdx) throw new Error('Batch line must come before summary line, got: ' + JSON.stringify(lines));
-if (lines.length < 3) throw new Error('expected at least 3 lines (Run, Batch, Summary), got: ' + lines.length);
+if (lines.length !== 2) throw new Error('expected exactly 2 lines (Batch summary, Run), got: ' + JSON.stringify(lines));
+if (!lines[0].startsWith('Batch: batch-xyz - 2 retries - 1 review - Approved')) throw new Error('expected batch summary first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: b1c2d') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -168,16 +161,9 @@ func TestRenderRunMeta_StackedBatchOnly(t *testing.T) {
 	js := `const run = { key: 'run-1', kind: 'active', status: 'running', issueLabel: '#42', runId: 'a0c19', issueNumber: 42, batchKey: 'batch-abc' };
 const meta = helpers.renderRunMeta(run);
 const lines = meta.split('\n');
-let runLineIdx = -1;
-let batchLineIdx = -1;
-for (let i = 0; i < lines.length; i++) {
-  if (lines[i].includes('Run: a0c19')) runLineIdx = i;
-  if (lines[i].includes('Batch: batch-abc')) batchLineIdx = i;
-}
-if (runLineIdx < 0) throw new Error('expected Run line, got: ' + JSON.stringify(lines));
-if (batchLineIdx < 0) throw new Error('expected Batch line, got: ' + JSON.stringify(lines));
-if (runLineIdx >= batchLineIdx) throw new Error('Run line must come before Batch line, got: ' + JSON.stringify(lines));
-if (lines.length !== 2) throw new Error('expected exactly 2 lines (Run, Batch) for batch-only, got: ' + lines.length);
+if (lines.length !== 2) throw new Error('expected exactly 2 lines (Batch, Run), got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: batch-abc') throw new Error('expected Batch line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: a0c19') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
 console.log('PASS');
 `
 	runNodeScript(t, js)
