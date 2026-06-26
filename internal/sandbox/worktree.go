@@ -335,7 +335,10 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 		return nil
 	}
 
-	return fmt.Errorf("sync base branch %q: local branch %s has diverged from %s", sourceBranch, localHash[:7], remoteHash[:7])
+	if out, err := runGitCommand(repoPath, "update-ref", localRef, remoteHash); err != nil {
+		return fmt.Errorf("sync base branch %q: diverged, reset to remote: %w\n%s", sourceBranch, err, out)
+	}
+	return nil
 }
 
 func gitMergeBaseIsAncestor(dir, a, b string) (bool, error) {
