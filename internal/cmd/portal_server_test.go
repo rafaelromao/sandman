@@ -912,6 +912,190 @@ func TestAbortPortalRun_RejectsRunFromFinishedBatch(t *testing.T) {
 	}
 }
 
+func TestAbortPortalRun_QueuedRunEmitsRunAborted(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-abort-queued-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
+	batchKey := "run-42-1"
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+
+	eventsPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, eventsPath, []events.Event{
+		{Type: "run.queued", Timestamp: startedAt, RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "blocked_by": []any{41}}},
+	})
+
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		{ID: batchKey, Path: batchDir, Kind: "batch", Status: "active", CreatedAt: startedAt, Issues: []int{42}},
+	}}
+	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(idxPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Save(idxPath); err != nil {
+		t.Fatal(err)
+	}
+
+	err = abortPortalRun(context.Background(), repoRoot, batchKey, 42)
+	if err != nil {
+		t.Fatalf("abort queued run: %v", err)
+	}
+
+	logged, err := (&events.JSONLLogger{Path: eventsPath}).Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var aborted events.Event
+	for _, e := range logged {
+		if e.Type == "run.aborted" && e.Issue == 42 {
+			aborted = e
+			break
+		}
+	}
+	if aborted.Type == "" {
+		t.Fatalf("expected run.aborted event for issue 42, got events: %+v", logged)
+	}
+	if aborted.RunID != "run-42-1" {
+		t.Fatalf("expected RunID=run-42-1, got %q", aborted.RunID)
+	}
+	status, ok := aborted.Payload["status"]
+	if !ok {
+		t.Fatal("expected status field in run.aborted payload")
+	}
+	if status != "aborted" {
+		t.Fatalf("expected status=aborted, got %v", status)
+	}
+}
+
+func TestAbortPortalRun_BlockedRunEmitsRunAborted(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "sm-abort-blocked-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "run-42-1")
+	batchKey := "run-42-1"
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+
+	eventsPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, eventsPath, []events.Event{
+		{Type: "run.blocked", Timestamp: startedAt, RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "blocked_by": []any{41}}},
+	})
+
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		{ID: batchKey, Path: batchDir, Kind: "batch", Status: "active", CreatedAt: startedAt, Issues: []int{42}},
+	}}
+	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(idxPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Save(idxPath); err != nil {
+		t.Fatal(err)
+	}
+
+	err = abortPortalRun(context.Background(), repoRoot, batchKey, 42)
+	if err != nil {
+		t.Fatalf("abort blocked run: %v", err)
+	}
+
+	logged, err := (&events.JSONLLogger{Path: eventsPath}).Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var aborted events.Event
+	for _, e := range logged {
+		if e.Type == "run.aborted" && e.Issue == 42 {
+			aborted = e
+			break
+		}
+	}
+	if aborted.Type == "" {
+		t.Fatalf("expected run.aborted event for issue 42, got events: %+v", logged)
+	}
+	if aborted.RunID != "run-42-1" {
+		t.Fatalf("expected RunID=run-42-1, got %q", aborted.RunID)
+	}
+	status, ok := aborted.Payload["status"]
+	if !ok {
+		t.Fatal("expected status field in run.aborted payload")
+	}
+	if status != "aborted" {
+		t.Fatalf("expected status=aborted, got %v", status)
+	}
+}
+
+func TestPortal_QueuedOnlyRowHasActiveKindSoAbortRenders(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchStartedAt := time.Now().Add(-10 * time.Minute)
+
+	batchKey := "b1"
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", batchKey)
+	activeSock := filepath.Join(runDir, "batch.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: batchStartedAt}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, batchKey, runDir, []int{42})
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "blocked_by": []int{99}}},
+	})
+
+	prev := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = prev })
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+	var queuedRow *portalRun
+	for i := range runs {
+		if runs[i].IssueNumber == 42 && runs[i].Status == "queued" {
+			run := runs[i]
+			queuedRow = &run
+			break
+		}
+	}
+	if queuedRow == nil {
+		t.Fatalf("expected a queued row for issue 42, got runs: %#v", runs)
+	}
+	if queuedRow.Kind != "active" {
+		t.Fatalf("expected queued row to have Kind='active' so Abort button renders, got Kind=%q", queuedRow.Kind)
+	}
+}
+
 func TestPortal_RunsEndpointIncludesContinuedRun(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
