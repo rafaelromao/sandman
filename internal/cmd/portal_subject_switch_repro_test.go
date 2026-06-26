@@ -282,6 +282,7 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
     setTimeout(function () {
       var row = document.querySelector('tr[data-run-key="`+runID+`"]');
       var meta = row && row.querySelector('[data-cell="title"] .meta-line');
+      var metaRect = meta ? { left: meta.getBoundingClientRect().left, top: meta.getBoundingClientRect().top, width: meta.getBoundingClientRect().width, height: meta.getBoundingClientRect().height } : null;
       var firstTop = null;
       var secondTop = null;
       var firstRect = null;
@@ -316,6 +317,7 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
       pre.textContent = JSON.stringify({
         rowKey: row && row.getAttribute('data-run-key'),
         metaText: meta && meta.innerText,
+        metaRect: metaRect,
         lineCount: meta ? meta.innerText.split('\n').length : 0,
         firstTop: firstTop,
         secondTop: secondTop,
@@ -332,6 +334,7 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	var result struct {
 		RowKey     string      `json:"rowKey"`
 		MetaText   string      `json:"metaText"`
+		MetaRect   *portalRect `json:"metaRect"`
 		LineCount  int         `json:"lineCount"`
 		FirstTop   *float64    `json:"firstTop"`
 		SecondTop  *float64    `json:"secondTop"`
@@ -359,19 +362,17 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	if result.FirstTop == nil || result.SecondTop == nil || !(*result.FirstTop < *result.SecondTop) {
 		t.Fatalf("expected batch line to render above run line, got %#v", result)
 	}
-	if result.FirstRect == nil || result.SecondRect == nil {
-		t.Fatalf("expected screenshot rects for both lines, got %#v", result)
+	if result.MetaRect == nil {
+		t.Fatalf("expected meta rect for screenshot scan, got %#v", result)
 	}
 	img, err := loadPortalScreenshot(screenshotPath)
 	if err != nil {
 		t.Fatalf("decode portal screenshot: %v", err)
 	}
 	bg := img.At(1, 1)
-	if !rectContainsInk(img, *result.FirstRect, bg) {
-		t.Fatalf("expected screenshot ink for batch line, got %#v", result)
-	}
-	if !rectContainsInk(img, *result.SecondRect, bg) {
-		t.Fatalf("expected screenshot ink for run line, got %#v", result)
+	bands := inkBands(img, *result.MetaRect, bg)
+	if len(bands) < 2 || bands[0] >= bands[1] {
+		t.Fatalf("expected screenshot bands for batch and run lines in order, got %#v bands=%v", result, bands)
 	}
 }
 
@@ -403,6 +404,39 @@ func rectContainsInk(img image.Image, rect portalRect, background color.Color) b
 		}
 	}
 	return false
+}
+
+func inkBands(img image.Image, rect portalRect, background color.Color) []int {
+	if rect.Width <= 0 || rect.Height <= 0 {
+		return nil
+	}
+	minX := clampInt(int(rect.Left), 0, img.Bounds().Dx()-1)
+	maxX := clampInt(int(rect.Left+rect.Width), 0, img.Bounds().Dx()-1)
+	minY := clampInt(int(rect.Top), 0, img.Bounds().Dy()-1)
+	maxY := clampInt(int(rect.Top+rect.Height), 0, img.Bounds().Dy()-1)
+	if minX > maxX || minY > maxY {
+		return nil
+	}
+	var bands []int
+	inBand := false
+	for y := minY; y <= maxY; y++ {
+		hasInk := false
+		for x := minX; x <= maxX; x += max(1, (maxX-minX)/12) {
+			if !sameColor(img.At(x, y), background) {
+				hasInk = true
+				break
+			}
+		}
+		if hasInk {
+			if !inBand {
+				bands = append(bands, y)
+				inBand = true
+			}
+		} else {
+			inBand = false
+		}
+	}
+	return bands
 }
 
 func sameColor(a, b color.Color) bool {
