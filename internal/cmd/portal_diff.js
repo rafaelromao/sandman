@@ -529,6 +529,24 @@
 
   function terminalGrammar(mode) {
     const codeMode = mode && mode !== 'terminal';
+    if (codeMode) {
+      const lang = String(mode || '').toLowerCase();
+      const codeGrammar = [];
+      if (/^(ruby|python|elixir|bash|yaml)$/.test(lang)) {
+        codeGrammar.push({ regex: /^#.*$/, render: (m) => wrapToken('term-comment', m[0]) });
+      }
+      codeGrammar.push(
+        { regex: /^(?:"(?:[^"\\]|\\.)*")/, render: (m) => wrapToken('term-string', m[0]) },
+        { regex: /^(?:'(?:[^'\\]|\\.)*')/, render: (m) => wrapToken('term-string', m[0]) },
+        { regex: /^(?:\/\/.*)$/, render: (m) => wrapToken('term-comment', m[0]) },
+        { regex: /^(?:#(?!\s*\w+\s*$).*)$/, render: (m) => wrapToken('term-comment', m[0]) },
+        { regex: /^(?:\b(?:if|else|for|while|return|function|const|let|var|def|import|export|try|catch|switch|case|break|continue|new|this|self|class|async|await|yield|module|end|true|false|nil|null)\b)/, render: (m) => wrapToken('term-keyword', m[0]) },
+        { regex: /^([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*(\()/, render: (m) => wrapToken('term-func', m[1]) + escapeHTML(m[0].slice(m[1].length, m[0].length - 1)) + '(' },
+        { regex: /^(?:\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/, render: (m) => wrapToken('term-number', m[0]) },
+        { regex: /^(?:&&|\|\||==|!=|<=|>=|->|=>|<<|>>|[=+\-*/<>!&|^~%])/, render: (m) => wrapToken('term-operator', m[0]) }
+      );
+      return codeGrammar;
+    }
     return [
       { regex: /^(?:\*\*CHANGES_REQUESTED\*\*)/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: /^(?:\*\*APPROVED with comments\*\*)/, render: (m) => wrapToken('term-pass', m[0]) },
@@ -551,6 +569,8 @@
       { regex: /^(?:\d+ tests?, \d+ failures?)/, render: (m) => /0 failures/.test(m[0]) ? wrapToken('term-pass', m[0]) : wrapToken('term-fail', m[0]) },
       { regex: /^(?:\d+ examples?, 0 failures)/, render: (m) => wrapToken('term-pass', m[0]) },
       { regex: /^(?:\d+ examples?, [1-9]\d* failures?)/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: /^(?:test result: ok.*)/, render: (m) => wrapToken('term-pass', m[0]) },
+      { regex: /^(?:test result: FAILED.*)/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: /^(?:\$ )/, render: (m) => wrapToken('term-prompt', m[0]) },
       { regex: /^(\s*)([→←✱])\s/, render: (m) => escapeHTML(m[1]) + wrapToken('term-tool', m[2]) + ' ' },
       { regex: codeMode ? /^(?!)$/ : /^(> build.*)$/, render: (m) => wrapToken('term-heading', m[1] || m[0]) },

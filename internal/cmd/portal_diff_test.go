@@ -2032,6 +2032,10 @@ const result2 = SandmanPortalDiff.highlightTerminalLog('https://github.com/user/
 if (result2.indexOf('term-url') === -1) throw new Error('expected URL still highlighted');
 const result3 = SandmanPortalDiff.highlightTerminalLog('--- PASS: TestFoo');
 if (result3.indexOf('term-pass') === -1) throw new Error('expected test pass still highlighted');
+const result4 = SandmanPortalDiff.highlightTerminalLog('test result: ok 3.2.1');
+if (result4.indexOf('term-pass') === -1) throw new Error('expected Rust ok result still highlighted');
+const result5 = SandmanPortalDiff.highlightTerminalLog('test result: FAILED. 0.1.0');
+if (result5.indexOf('term-fail') === -1) throw new Error('expected Rust FAILED result still highlighted');
 console.log('PASS');
 `
 	runNodeScript(t, js)
