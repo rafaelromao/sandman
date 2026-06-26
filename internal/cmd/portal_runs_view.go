@@ -605,12 +605,12 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 	runs := make([]portalRun, 0, len(active.IssueNumbers))
 	usedRunIDs := make(map[string]struct{})
 	for _, issueNumber := range active.IssueNumbers {
-		state := v.latestRunStateForIssue(runStates, issueNumber, batchStart)
-		if state != nil && state.Status() == "queued" && !state.IsActive() {
-			state = nil
-		}
 		blocked := v.latestBlockedEventForIssue(eventList, issueNumber, batchStart)
 		queued := v.latestQueuedEventForIssue(eventList, issueNumber, batchStart)
+		state := v.latestRunStateForIssue(runStates, issueNumber, batchStart)
+		if state != nil && !state.IsActive() && (state.Status() == "queued" || (state.Status() == "blocked" && blocked == nil)) {
+			state = nil
+		}
 		runs = append(runs, v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun, deadBatches))
 		if state != nil && state.RunID != "" {
 			usedRunIDs[state.RunID] = struct{}{}
