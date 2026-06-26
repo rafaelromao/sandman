@@ -19,6 +19,9 @@ func TestPR_LinkedIssueNumber(t *testing.T) {
 		{name: "no_number", pr: PR{Body: "Fixes #"}, want: 0},
 		{name: "mid_word_no_match", pr: PR{Body: "prefixes #42"}, want: 0},
 		{name: "with_space", pr: PR{Body: "Fixes  #42"}, want: 42},
+		{name: "implements_keyword", pr: PR{Body: "Implements #42"}, want: 42},
+		{name: "implements_lowercase", pr: PR{Body: "implements #99"}, want: 99},
+		{name: "implements_with_closing", pr: PR{Body: "Implements #10 and closes #20"}, want: 10},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

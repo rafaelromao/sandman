@@ -30,7 +30,7 @@ type PR struct {
 	linkedIssueNumber int
 }
 
-var prIssueLinkRe = regexp.MustCompile(`\b(?i)(?:fixes|closes|resolves)\s+#(\d+)`)
+var prIssueLinkRe = regexp.MustCompile(`\b(?i)(?:fixes|closes|resolves|implements)\s+#(\d+)`)
 
 // LinkedIssueNumber returns the linked issue number for the PR.
 // It first checks the native closingIssuesReferences metadata from GitHub,
