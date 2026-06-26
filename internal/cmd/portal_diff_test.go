@@ -759,6 +759,22 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffBuildDurationCell_NoStaleLineForFailedStatus(t *testing.T) {
+	js := `const body = makeMockBody();
+const stale = new Date(Date.now() - 90*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'failure', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+const line = durationCell.querySelector('.stale-line');
+if (line) throw new Error('expected NO .stale-line for failed status even when lastOutputAt is stale');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffBuildDurationCell_StaleLineStillAppearsForAutoSelectingStatus(t *testing.T) {
 	js := `const body = makeMockBody();
 const stale = new Date(Date.now() - 90*1000).toISOString();
@@ -2911,6 +2927,21 @@ if (!stub) throw new Error('expected stub row for terminal review group');
 if (stub.kind !== 'completed') throw new Error('expected completed kind once terminal status is present, got ' + JSON.stringify(stub.kind));
 if (stub.status !== 'success') throw new Error('expected terminal status to win over live kind, got ' + JSON.stringify(stub.status));
 if (stub.reviewVerdict !== 'Approved') throw new Error('expected Approved verdict, got ' + JSON.stringify(stub.reviewVerdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestPortalRunsView_VisibleRunForIssueGroup_ActiveChildWinsOverCompletedParent(t *testing.T) {
+	js := `const parent = { key: 'issue-1', kind: 'completed', status: 'success', issueLabel: '#1', runId: 'issue-1', issueNumber: 1 };
+const child = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, batchKey: 'batch-1', startedAt: '2025-06-26T11:00:00Z' };
+const stub = visibleRunForIssueGroup(1, [parent, child]);
+if (!stub) throw new Error('expected visible row for mixed issue group');
+if (stub.key !== 'PR42') throw new Error('expected active child to win over completed parent, got ' + JSON.stringify(stub.key));
+if (stub.kind !== 'active') throw new Error('expected active kind for visible child, got ' + JSON.stringify(stub.kind));
+if (stub.status !== 'reviewing') throw new Error('expected reviewing status for visible child, got ' + JSON.stringify(stub.status));
+if (typeof isRunAbortable !== 'function') throw new Error('expected runtime isRunAbortable helper');
+if (!isRunAbortable(stub, new Set())) throw new Error('expected active child row to be abortable');
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
