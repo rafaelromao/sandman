@@ -727,9 +727,6 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 				run.Log = "No live output captured yet."
 			}
 		} else {
-			if state.Status() != "aborted" {
-				run.Kind = "active"
-			}
 			switch state.Status() {
 			case "blocked":
 				run.Log = v.portalBlockedMessage(state.Finished.Payload)
