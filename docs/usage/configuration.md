@@ -68,12 +68,14 @@ sandbox: podman
 git:
   base_branch: main
 
-# Sandman installs the built-in agent in scaffolded Dockerfiles and mounts the shared skills directory.
+# Sandman installs the built-in agent in scaffolded Dockerfiles, installs [`codeindex`](https://github.com/scheidydude/codeindex) for fast symbol lookup, and mounts the shared skills directory.
 ```
 
 ## Built-in preset
 
 Sandman has one built-in preset: `opencode`. It is installed into scaffolded Dockerfiles and is the default `agent`.
+
+Sandman also installs [`codeindex`](https://github.com/scheidydude/codeindex) in scaffolded container images. Sandman runs agents against real repositories, and `codeindex` gives the agent a fast way to find symbols, trace dependencies, and inspect impact without reading large source trees line by line.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 

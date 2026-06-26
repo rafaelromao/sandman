@@ -12,6 +12,8 @@ Sandman includes one built-in preset: `opencode`.
 
 Sandman uses OpenCode in a headless environment, so `opencode` must have the `opencode-shell-strategy` plugin installed before it is used with Sandman. The plugin teaches OpenCode to avoid interactive shell commands that would hang without a TTY/PTY. OpenCode subagents inherit the same instructions.
 
+Sandman container images also include [`codeindex`](https://github.com/scheidydude/codeindex). Agents use it to answer repo-structure questions quickly, especially when a task needs symbol lookup or impact analysis across a large codebase. That keeps large source trees navigable without forcing the model to read or summarize every file first.
+
 ### Install
 
 ```bash
