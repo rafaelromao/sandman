@@ -1938,6 +1938,16 @@ func TestPortalDiffHighlightTerminalLog_LangLabelHighlightsHintLine(t *testing.T
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffHighlightTerminalLog_FenceHintSharpening(t *testing.T) {
+	js := "const result = SandmanPortalDiff.highlightTerminalLog('```ruby\\n# note\\n```');\nif (result.indexOf('term-comment') === -1) throw new Error('expected fenced code comment span');\nif (result.indexOf('# note') === -1) throw new Error('expected fenced code text preserved');\nconsole.log('PASS');\n"
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_LangHintSharpening(t *testing.T) {
+	js := "const result = SandmanPortalDiff.highlightTerminalLog('lang=ruby\\n# note');\nif (result.indexOf('term-comment') === -1) throw new Error('expected hint to sharpen following code line');\nif (result.indexOf('# note') === -1) throw new Error('expected hint-mode code text preserved');\nconsole.log('PASS');\n"
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffHighlightTerminalLog_StripsANSISequences(t *testing.T) {
 	js := "const result = SandmanPortalDiff.highlightTerminalLog('\\u001b[31m--- FAIL: TestFoo\\u001b[0m');\nif (result.indexOf('\\u001b[') !== -1) throw new Error('expected ANSI escape codes removed');\nif (result.indexOf('term-fail') === -1) throw new Error('expected fail token preserved after ANSI stripping');\nconsole.log('PASS');\n"
 	runNodeScript(t, js)

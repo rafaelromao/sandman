@@ -520,13 +520,15 @@
     return String(value == null ? '' : value).replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
   }
 
-  function terminalGrammar() {
+  function terminalGrammar(mode) {
+    const codeMode = mode && mode !== 'terminal';
     return [
       { regex: /^(?:\*\*CHANGES_REQUESTED\*\*)/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: /^(?:\*\*APPROVED with comments\*\*)/, render: (m) => wrapToken('term-pass', m[0]) },
       { regex: /^(?:\*\*APPROVED\*\*)/, render: (m) => wrapToken('term-pass', m[0]) },
       { regex: /^```[A-Za-z0-9_+-]*$/, render: (m) => wrapToken('term-heading', m[0]) },
       { regex: /^lang=[A-Za-z0-9_+-]+$/, render: (m) => wrapToken('term-heading', m[0]) },
+      ...(codeMode ? [{ regex: /^#.*$/, render: (m) => wrapToken('term-comment', m[0]) }] : []),
       { regex: /^(?:--- PASS:.*)$/, render: (m) => wrapToken('term-pass', m[0]) },
       { regex: /^(?:--- FAIL:.*)$/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: /^(?:FAIL\s+\S+)/, render: (m) => wrapToken('term-fail', m[0]) },
@@ -544,8 +546,8 @@
       { regex: /^(?:\d+ examples?, [1-9]\d* failures?)/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: /^(?:\$ )/, render: (m) => wrapToken('term-prompt', m[0]) },
       { regex: /^(\s*)([→←✱])\s/, render: (m) => escapeHTML(m[1]) + wrapToken('term-tool', m[2]) + ' ' },
-      { regex: /^(&gt; build.*)$/, render: (m) => wrapToken('term-heading', m[1]) },
-      { regex: /^(#{1,6} .*?)$/, render: (m) => wrapToken('term-heading', m[1]) },
+      { regex: codeMode ? /^(?!)$/ : /^(> build.*)$/, render: (m) => wrapToken('term-heading', m[1] || m[0]) },
+      { regex: codeMode ? /^(?!)$/ : /^(#{1,6} .*?)$/, render: (m) => wrapToken('term-heading', m[1] || m[0]) },
       { regex: /^(?:\[✓\]|\[✔\])/, render: (m) => wrapToken('term-todo-done', m[0]) },
       { regex: /^(?:\[•\])/, render: (m) => wrapToken('term-todo-active', m[0]) },
       { regex: /^(\s*)\[ \]/, render: (m) => escapeHTML(m[1]) + wrapToken('term-todo-pending', '[ ]') },
@@ -570,7 +572,23 @@
     const value = String(text || '');
     if (!value) return '';
     const lines = value.split('\n');
-    return lines.map((line) => renderGrammarLine(stripAnsi(line), grammar)).join('\n');
+    let mode = 'terminal';
+    return lines.map((line) => {
+      const raw = stripAnsi(line);
+      const fence = raw.match(/^```([A-Za-z0-9_+-]*)$/);
+      if (fence) {
+        const renderedFence = renderGrammarLine(raw, grammar(mode));
+        mode = mode === 'terminal' ? (fence[1] || 'code') : 'terminal';
+        return renderedFence;
+      }
+      const label = raw.match(/^lang=([A-Za-z0-9_+-]+)$/);
+      if (label) {
+        const renderedLabel = renderGrammarLine(raw, grammar(mode));
+        mode = label[1] || 'code';
+        return renderedLabel;
+      }
+      return renderGrammarLine(raw, grammar(mode));
+    }).join('\n');
   }
 
   function renderGrammarLine(line, grammar) {
@@ -600,7 +618,7 @@
   }
 
   function highlightTerminalLog(text) {
-    return renderWithGrammar(text, terminalGrammar());
+    return renderWithGrammar(text, terminalGrammar);
   }
 
   function appendTerminalPre(pre, oldLog, newSuffix, helpers) {

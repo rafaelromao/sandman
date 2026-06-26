@@ -1058,7 +1058,7 @@ func TestPortal_PageEmbedsTerminalGrammarInline(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"function terminalGrammar()", "term-comment", "term-string"} {
+	for _, want := range []string{"function terminalGrammar(mode)", "term-comment", "term-string"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing inline terminal grammar marker %q\n%s", want, content[:min(1200, len(content))])
 		}
