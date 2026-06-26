@@ -126,6 +126,7 @@ type portalActiveRun struct {
 	IssueNumber  int
 	IssueNumbers []int
 	PRNumber     int
+	BatchID      string
 	RunID        string
 	StartedAt    time.Time
 	ModTime      time.Time
@@ -137,6 +138,27 @@ type portalRunMatch struct {
 }
 
 type portalRunsView struct{}
+
+type runLocator struct {
+	batchID string
+	runID   string
+}
+
+func batchIDFromRunID(runID string) string {
+	if runID == "" {
+		return ""
+	}
+	dashCount := 0
+	for i := 0; i < len(runID); i++ {
+		if runID[i] == '-' {
+			dashCount++
+			if dashCount == 2 {
+				return runID[:i]
+			}
+		}
+	}
+	return runID
+}
 
 const portalViewDegradeLogInterval = 30 * time.Second
 
@@ -282,16 +304,16 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 				runs[i].BatchKey = batchKey
 			}
 		}
-		dirID := v.sourceDirID(idx, runs[i])
-		runs[i].Archived = v.isRunArchived(idx, dirID)
-		runs[i].SourceExists = v.runDirExists(repoRoot, dirID)
-		// Unavailable is keyed by sourceDirID (BatchKey when present)
+		locator := v.sourceDirID(idx, runs[i])
+		runs[i].Archived = v.isRunArchived(idx, locator)
+		runs[i].SourceExists = v.runDirExists(repoRoot, locator)
+		// Unavailable is keyed by batchID (the index Entry.ID)
 		// because the batchindex entry is the source of truth for the
 		// unavailable flip (set by MarkUnavailable when the backing dir
 		// is missing). MarkUnavailable skips archived entries, so
 		// Archived and Unavailable stay mutually exclusive in normal
 		// operation.
-		if _, ok := unavailableRunIDs[dirID]; ok {
+		if _, ok := unavailableRunIDs[locator.batchID]; ok {
 			runs[i].Unavailable = true
 		}
 	}
@@ -561,9 +583,10 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		runDir := filepath.Dir(instance.SocketPath)
 		manifest, manifestErr := daemon.ReadManifest(runDir)
 		prNumber := 0
-		runID := instance.Name
+		batchID := instance.Name
+		runID := filepath.Base(runDir)
 		if manifestErr == nil && manifest.BatchId != "" {
-			runID = manifest.BatchId
+			batchID = manifest.BatchId
 			prNumber = v.prNumberFromEvent(eventsByRun[runID])
 		}
 		issueNumbers := []int(nil)
@@ -589,6 +612,7 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			IssueNumber:  issueNumber,
 			IssueNumbers: issueNumbers,
 			PRNumber:     prNumber,
+			BatchID:      batchID,
 			RunID:        runID,
 			StartedAt:    startedAt,
 			ModTime:      info.ModTime(),
@@ -702,8 +726,8 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		IssueNumber: issueNumber,
 		StartedAt:   active.StartedAt,
 		SocketPath:  active.SocketPath,
-		LogPath:     v.portalLogPathForRun(repoRoot, active.RunID),
-		LogURL:      v.portalLogDownloadURLForRun(repoRoot, active.RunID),
+		LogPath:     v.portalLogPathForRun(repoRoot, runLocator{batchID: active.BatchID, runID: active.RunID}),
+		LogURL:      v.portalLogDownloadURLForRun(repoRoot, runLocator{batchID: active.BatchID, runID: active.RunID}),
 		Log:         "Queued. Waiting to start.",
 		BatchKey:    active.Key,
 	}
@@ -860,7 +884,8 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		status = "reviewing"
 		review = true
 	}
-	logPath := v.portalLogPathForRun(repoRoot, match.instance.RunID)
+	locator := runLocator{batchID: match.instance.BatchID, runID: match.instance.RunID}
+	logPath := v.portalLogPathForRun(repoRoot, locator)
 	eventKey := match.instance.Key
 	if match.instance.RunID != "" {
 		eventKey = match.instance.RunID
@@ -887,7 +912,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
-		LogURL:      v.portalLogDownloadURLForRun(repoRoot, match.instance.RunID),
+		LogURL:      v.portalLogDownloadURLForRun(repoRoot, locator),
 		Log:         stripLogLabels(match.instance.LiveOutput),
 		Events:      eventsByRun[eventKey],
 		BatchKey:    match.instance.Key,
@@ -912,6 +937,12 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		}
 	}
 
+	batchID := batchIDFromRunID(runID)
+	if active != nil && active.BatchID != "" {
+		batchID = active.BatchID
+	}
+	locator := runLocator{batchID: batchID, runID: runID}
+
 	issueNumber := runState.IssueNumber()
 	branch := runState.Branch()
 	issueLabel := runState.IssueLabel()
@@ -933,7 +964,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	review, prNumber := v.reviewContext(runState)
 
-	logPath := v.portalLogPathForRun(repoRoot, runID)
+	logPath := v.portalLogPathForRun(repoRoot, locator)
 	logContent := v.readPortalTextFile(logPath)
 	if active != nil {
 		logContent = stripLogLabels(active.LiveOutput)
@@ -952,7 +983,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		FinishedAt:   finishedAt,
 		Duration:     v.durationForRun(runState),
 		LogPath:      logPath,
-		LogURL:       v.portalLogDownloadURLForRun(repoRoot, runID),
+		LogURL:       v.portalLogDownloadURLForRun(repoRoot, locator),
 		Log:          logContent,
 		Events:       eventsByRun[runID],
 		Review:       runState.IsReview(),
@@ -1227,36 +1258,37 @@ func (v *portalRunsView) loadBatchesIndex(repoRoot string) *batchindex.Index {
 	return idx
 }
 
-// isRunArchived reports whether runID's directory currently lives under
-// .sandman/archive instead of .sandman/runs. A non-empty runID that does
+// isRunArchived reports whether the batch's directory currently lives under
+// .sandman/archive instead of .sandman/runs. A non-empty batchID that does
 // not resolve to an index entry returns false; otherwise, archived-ness
 // is reported from the entry's Status field, so transient or half-moved
 // state never lights up the flag.
-func (v *portalRunsView) isRunArchived(idx *batchindex.Index, runID string) bool {
-	if runID == "" || idx == nil {
+func (v *portalRunsView) isRunArchived(idx *batchindex.Index, locator runLocator) bool {
+	if locator.batchID == "" || idx == nil {
 		return false
 	}
-	entry := idx.Resolve(runID)
+	entry := idx.Resolve(locator.batchID)
 	if entry == nil {
 		return false
 	}
 	return entry.Status == batchindex.StatusArchived
 }
 
-func (v *portalRunsView) sourceDirID(idx *batchindex.Index, run portalRun) string {
-	id := run.BatchKey
-	if id == "" {
-		id = run.RunID
+func (v *portalRunsView) sourceDirID(idx *batchindex.Index, run portalRun) runLocator {
+	batchID := run.BatchKey
+	runID := run.RunID
+	if batchID == "" && runID != "" {
+		batchID = runID
 	}
-	if id == "" {
-		return ""
+	if batchID == "" && runID == "" {
+		return runLocator{}
 	}
 	if idx != nil {
-		if entry := idx.Resolve(id); entry != nil && entry.Path != "" {
-			return filepath.Base(entry.Path)
+		if entry := idx.Resolve(batchID); entry != nil && entry.Path != "" {
+			batchID = filepath.Base(entry.Path)
 		}
 	}
-	return id
+	return runLocator{batchID: batchID, runID: runID}
 }
 
 // unavailableRunIDsByBatchIndex returns the set of source directory IDs
@@ -1331,29 +1363,33 @@ func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string, deadBatches 
 	return "", nil
 }
 
-func (v *portalRunsView) runDirExists(repoRoot, runID string) bool {
-	if runID == "" {
+func (v *portalRunsView) runDirExists(repoRoot string, locator runLocator) bool {
+	if locator.runID == "" {
 		return false
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	info, err := os.Stat(filepath.Join(layout.BatchesDir, runID))
-	if err != nil {
-		return false
+	info, err := os.Stat(layout.RunFolder(locator.batchID, locator.runID))
+	if err == nil && info.IsDir() {
+		return true
 	}
-	return info.IsDir()
+	info, err = os.Stat(layout.BatchDir(locator.batchID))
+	if err == nil && info.IsDir() {
+		return true
+	}
+	return false
 }
 
-func (v *portalRunsView) portalLogPathForRun(repoRoot string, runID string) string {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
+func (v *portalRunsView) portalLogPathForRun(repoRoot string, locator runLocator) string {
+	locator.runID = strings.TrimSpace(locator.runID)
+	if locator.runID == "" {
 		return ""
 	}
 	layout := paths.NewLayout(nil, repoRoot)
-	return filepath.Join(layout.BatchesDir, runID, "runs", runID, "run.log")
+	return filepath.Join(layout.RunFolder(locator.batchID, locator.runID), "run.log")
 }
 
-func (v *portalRunsView) portalLogDownloadURLForRun(repoRoot string, runID string) string {
-	logPath := v.portalLogPathForRun(repoRoot, runID)
+func (v *portalRunsView) portalLogDownloadURLForRun(repoRoot string, locator runLocator) string {
+	logPath := v.portalLogPathForRun(repoRoot, locator)
 	if logPath == "" {
 		return ""
 	}
