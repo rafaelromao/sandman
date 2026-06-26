@@ -63,12 +63,17 @@ This is your only allowed second-opinion mechanism. Never fall back to asking th
 
 ### Satisfying "User Approval" Gates in Skills
 
-When any loaded skill refers to user approval, user confirmation, or user satisfaction, satisfy that gate by:
-- Asking a subagent to review the plan, code, or result.
-- Reaching consensus with the subagent.
-- Proceeding automatically once tests, formatting, CI, and review gates pass.
+When any loaded skill refers to user approval, user confirmation, or user satisfaction, satisfy that gate by proceeding automatically once tests, formatting, CI, and review gates pass.
 
-Do not wait for human approval under any circumstances.
+The Required Skill Chain defines specific tools for each review type:
+
+| Step | Designated Mechanism | Notes |
+|------|-------------------|-------|
+| Plan approval (TDD) | Subagent review + consensus | Only step that explicitly requires subagent review |
+| Self-review | `sandman-self-review` skill |
+| PR review | `sandman-pr-review` skill | **Must NOT use subagent**
+
+**PR review is the only step where subagent review is banned.** Use the `sandman-pr-review` skill instead. Subagent review is recommended for plan approval.
 
 ### Examples of Banned Questions
 
@@ -81,7 +86,7 @@ These are all forbidden (non-exhaustive):
 > "What should I do about this test failure?"
 > "The review returned feedback. Should I apply it?"
 
-All of these MUST be handled autonomously or delegated to a subagent.
+All of these MUST be handled autonomously. Use the Subagent Escape Hatch for genuine decision ambiguity or as delegated in the table above.
 
 ## Search Scope Restriction
 
@@ -96,13 +101,13 @@ During `sandman implement`, follow all delegated subskills it calls:
 - `sandman-tdd` for planning, subagent-reviewed plan consensus, vertical red-green TDD, and refactor-after-green.
 - `sandman-self-review` for self-review.
 - `sandman-back-merge` before PR creation, with no rebase and no force-push.
-- `sandman-pr-review` for delegated PR review. Do not review the PR yourself. Use the configured review command and collect all top-level, review-summary, and inline feedback.
+- `sandman-pr-review` for delegated PR review. Do not review the PR yourself.
 - `sandman-pr-merge` only if the PR is fully approved, required checks are green, and GitHub reports it mergeable.
 
 ## Required Order
 
 1. Complete checklist items in order: Create branch, Plan, Implement, PR-Review, PR-Merge.
-2. For any plan-approval, confirmation, or satisfaction step, use subagent review and proceed after consensus. Do not ask the user.
+2. For plan-approval, use subagent review. For self-review, use `sandman-self-review` skill. For PR-review, use `sandman-pr-review` skill — subagent review is banned there. Proceed after consensus/completion. Do not ask the user.
 3. **PR creation is not PR review.** A PR existing does not mean it has been reviewed or is ready to merge. Before loading `sandman-pr-merge`, the agent MUST confirm that `sandman-pr-review` was actually executed and produced a reviewed/approved state. If the last completed step is "PR Created" and the PR is not approved or not mergeable, the agent MUST call `sandman-pr-review` before `sandman-pr-merge` — do not skip the review step. If any merge gate is false or ambiguous, call `sandman-pr-review` and continue the review loop instead of reporting blockers to the user.
 4. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.
 5. If a `sandman-pr-review` pass times out or returns without approval, do not mark `PR-Review` complete and do not advance to `PR-Merge` on the next retry. Re-enter `sandman-pr-review` and keep the review loop open until approval is observed or a stop condition is reached.
