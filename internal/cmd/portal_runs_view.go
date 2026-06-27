@@ -506,7 +506,7 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 			continue
 		}
 		runSockPath := daemon.RunSocketPath(db.RunDir, runs[i].RunID)
-		if _, err := os.Lstat(runSockPath); err == nil {
+		if v.isSocketAlive(runSockPath) {
 			continue
 		}
 		runs[i].Kind = "completed"
