@@ -355,14 +355,16 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	return runs, nil
 }
 
-func seenIssuesForBatch(eventList []events.Event, batch daemon.DeadBatch) map[int]struct{} {
+func seenIssuesForBatch(eventList []events.Event, batchStart, nextBatchStart time.Time) map[int]struct{} {
 	seen := make(map[int]struct{})
-	startedAt := batch.RunTimestamp()
 	for _, event := range eventList {
 		if event.Issue <= 0 {
 			continue
 		}
-		if !startedAt.IsZero() && !(&portalRunsView{}).eventBelongsToBatch(event.Timestamp, startedAt) {
+		if !batchStart.IsZero() && !(&portalRunsView{}).eventBelongsToBatch(event.Timestamp, batchStart) {
+			continue
+		}
+		if !nextBatchStart.IsZero() && !event.Timestamp.Before(nextBatchStart) {
 			continue
 		}
 		seen[event.Issue] = struct{}{}
@@ -427,9 +429,26 @@ func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{})
 }
 
 func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch, eventList []events.Event) []portalRun {
+	if len(deadBatches) == 0 {
+		return nil
+	}
+	sortedBatches := append([]daemon.DeadBatch(nil), deadBatches...)
+	sort.SliceStable(sortedBatches, func(i, j int) bool {
+		ii := sortedBatches[i].RunTimestamp()
+		jj := sortedBatches[j].RunTimestamp()
+		if !ii.Equal(jj) {
+			return ii.Before(jj)
+		}
+		return sortedBatches[i].RunDir < sortedBatches[j].RunDir
+	})
 	rows := make([]portalRun, 0)
-	for _, batch := range deadBatches {
-		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(eventList, batch))
+	for i, batch := range sortedBatches {
+		batchStart := batch.RunTimestamp()
+		nextBatchStart := time.Time{}
+		if i+1 < len(sortedBatches) {
+			nextBatchStart = sortedBatches[i+1].RunTimestamp()
+		}
+		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(eventList, batchStart, nextBatchStart))
 		if len(missing) == 0 {
 			continue
 		}
