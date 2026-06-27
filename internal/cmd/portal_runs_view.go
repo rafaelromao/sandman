@@ -112,9 +112,9 @@ type portalRun struct {
 	// backing directory reach this state.
 	Unavailable bool `json:"unavailable"`
 	// SourceExists reports whether the run still has a backing directory
-	// under .sandman/runs/<run-id>. The portal uses this to avoid showing
-	// Archive actions for stale historical rows whose source directory is
-	// already gone.
+	// under .sandman/batches/<batch-id>/runs/<run-id>. The portal uses this
+	// to avoid showing Archive actions for stale historical rows whose
+	// source directory is already gone.
 	SourceExists bool `json:"sourceExists"`
 }
 

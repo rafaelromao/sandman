@@ -974,7 +974,7 @@ func TestPortal_Compute_CompletedRunWithBatchDir_DoesNotCountAsSourceExists(t *t
 // TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists is the
 // regression for historical completed rows: when the batch directory is still
 // on disk but the daemon is gone, the portal should recover the batch dir name
-// from the manifest so Archive stays available.
+// from the manifest so SourceExists stays true for the per-run source folder.
 func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -1011,7 +1011,7 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 		t.Fatalf("BatchKey = %q, want %q", got.BatchKey, filepath.Base(runDir))
 	}
 	if !got.SourceExists {
-		t.Fatalf("SourceExists = false, want true (dead batch dir exists under .sandman/runs/%s)", filepath.Base(runDir))
+		t.Fatalf("SourceExists = false, want true (per-run source directory exists under %s)", filepath.Base(runDir))
 	}
 }
 
