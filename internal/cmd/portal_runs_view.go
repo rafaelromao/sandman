@@ -362,7 +362,7 @@ func seenIssuesForBatch(eventList []events.Event, batch daemon.DeadBatch) map[in
 		if event.Issue <= 0 {
 			continue
 		}
-		if !startedAt.IsZero() && event.Timestamp.Before(startedAt) {
+		if !startedAt.IsZero() && !(&portalRunsView{}).eventBelongsToBatch(event.Timestamp, startedAt) {
 			continue
 		}
 		seen[event.Issue] = struct{}{}
