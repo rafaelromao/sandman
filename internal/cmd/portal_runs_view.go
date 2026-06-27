@@ -1418,10 +1418,6 @@ func (v *portalRunsView) runDirExists(repoRoot string, locator runLocator) bool 
 	if err == nil && info.IsDir() {
 		return true
 	}
-	info, err = os.Stat(layout.BatchDir(locator.batchID))
-	if err == nil && info.IsDir() {
-		return true
-	}
 	return false
 }
 
