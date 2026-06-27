@@ -40,50 +40,9 @@ type Entry struct {
 	Kind       Kind       `json:"kind"`
 	Status     Status     `json:"status"`
 	CreatedAt  time.Time  `json:"createdAt"`
-	Issues     []int      `json:"issues,omitempty"`
+	Issues     []int      `json:"issues,omitempty"` // Omit for prompt-only runs; kept lean since they have no issue scope.
 	PR         int        `json:"pr,omitempty"`
 	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
-}
-
-// MarshalJSON writes the batches index with prompt-only entries carrying an
-// explicit empty issues array, matching ADR-0032's index schema.
-func (i Index) MarshalJSON() ([]byte, error) {
-	type entryJSON struct {
-		ID         string     `json:"id"`
-		Path       string     `json:"path"`
-		Kind       Kind       `json:"kind"`
-		Status     Status     `json:"status"`
-		CreatedAt  time.Time  `json:"createdAt"`
-		Issues     []int      `json:"issues"`
-		PR         int        `json:"pr,omitempty"`
-		ArchivedAt *time.Time `json:"archivedAt,omitempty"`
-	}
-
-	entries := make([]any, 0, len(i.Entries))
-	for _, e := range i.Entries {
-		issues := e.Issues
-		if e.Kind == KindPromptOnly || issues == nil {
-			issues = []int{}
-		}
-		entries = append(entries, entryJSON{
-			ID:         e.ID,
-			Path:       e.Path,
-			Kind:       e.Kind,
-			Status:     e.Status,
-			CreatedAt:  e.CreatedAt,
-			Issues:     issues,
-			PR:         e.PR,
-			ArchivedAt: e.ArchivedAt,
-		})
-	}
-
-	return json.Marshal(struct {
-		Version int   `json:"version"`
-		Entries []any `json:"entries"`
-	}{
-		Version: i.Version,
-		Entries: entries,
-	})
 }
 
 type RunManifest struct {

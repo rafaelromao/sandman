@@ -180,10 +180,10 @@ func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
 	}
 }
 
-// TestRunSession_Close_StopsControlSocketButKeepsDirectory asserts idempotent
-// teardown: calling Close stops the control socket, preserves the directory,
+// TestRunSession_Close_StopsListenersButKeepsDirectory asserts idempotent
+// teardown: calling Close stops the sockets, preserves the directory,
 // and is safe to call a second time.
-func TestRunSession_Close_StopsControlSocketButKeepsDirectory(t *testing.T) {
+func TestRunSession_Close_StopsListenersButKeepsDirectory(t *testing.T) {
 	dir := t.TempDir()
 	rs := NewRunSession(dir, "closing-run-1")
 
@@ -199,8 +199,8 @@ func TestRunSession_Close_StopsControlSocketButKeepsDirectory(t *testing.T) {
 	if _, err := os.Stat(runDir); err != nil {
 		t.Errorf("batch dir must still exist after Close, stat err = %v", err)
 	}
-	if _, err := net.Dial("unix", filepath.Join(runDir, "batch.sock")); err == nil {
-		t.Errorf("batch.sock must be gone after Close")
+	if _, err := net.Dial("unix", filepath.Join(runDir, "run.sock")); err == nil {
+		t.Errorf("run.sock must be gone after Close")
 	}
 
 	// Idempotent: a second Close is a no-op and does not error.

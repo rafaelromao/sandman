@@ -13,7 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
-func TestPortalRunsIndex_InitializesWithEventsLogPath(t *testing.T) {
+func TestPortalRunsIndex_InitializesWithLayoutEventsLogPath(t *testing.T) {
 	repoRoot := t.TempDir()
 	layout := paths.NewLayout(nil, repoRoot)
 	expectedPath := layout.EventsLogPath

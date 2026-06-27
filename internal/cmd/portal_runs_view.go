@@ -112,9 +112,9 @@ type portalRun struct {
 	// backing directory reach this state.
 	Unavailable bool `json:"unavailable"`
 	// SourceExists reports whether the run still has a backing directory
-	// under .sandman/batches/<batch-id>/runs/<run-id>. The portal uses this
-	// to avoid showing Archive actions for stale historical rows whose
-	// source directory is already gone.
+	// under .sandman/runs/<run-id>. The portal uses this to avoid showing
+	// Archive actions for stale historical rows whose source directory is
+	// already gone.
 	SourceExists bool `json:"sourceExists"`
 }
 
@@ -1415,6 +1415,10 @@ func (v *portalRunsView) runDirExists(repoRoot string, locator runLocator) bool 
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	info, err := os.Stat(layout.RunFolder(locator.batchID, locator.runID))
+	if err == nil && info.IsDir() {
+		return true
+	}
+	info, err = os.Stat(layout.BatchDir(locator.batchID))
 	if err == nil && info.IsDir() {
 		return true
 	}
