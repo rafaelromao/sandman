@@ -355,13 +355,33 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	return runs, nil
 }
 
-func seenIssuesForBatch(runStates []events.RunState, batchStart, nextBatchStart time.Time) map[int]struct{} {
+func seenIssuesForBatch(runStates []events.RunState, batch daemon.DeadBatch, dirIDs map[string]string, nextBatchStart time.Time) map[int]struct{} {
 	seen := make(map[int]struct{})
+	batchName := filepath.Base(batch.RunDir)
+	batchStart := batch.RunTimestamp()
+	if batchStart.IsZero() {
+		batchStart = batch.Manifest.CreatedAt
+	}
 	for _, runState := range runStates {
 		issue := runState.IssueNumber()
 		if issue <= 0 || runState.RunID == "" {
 			continue
 		}
+		// When dirIDs has this RunID, we know exactly which batch it
+		// belongs to — use batch identity for an exact match instead of
+		// a timestamp estimate. This prevents overlapping dead batches
+		// or reused issue numbers from suppressing synthesis.
+		if batchID, ok := dirIDs[runState.RunID]; ok {
+			if batchID == batchName {
+				seen[issue] = struct{}{}
+			}
+			continue
+		}
+		// Fall back to time-window filtering for RunIDs that dirIDs
+		// doesn't know about (e.g. when a dead batch's runs/ directory
+		// was deleted). This is inherently less precise but prevents
+		// duplicate synthesis for members whose run state exists in the
+		// event log even though the backing directory is gone.
 		if !batchStart.IsZero() && !(&portalRunsView{}).eventBelongsToBatch(runState.Started.Timestamp, batchStart) {
 			continue
 		}
@@ -451,7 +471,7 @@ func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch
 				nextBatchStart = sortedBatches[i+1].Manifest.CreatedAt
 			}
 		}
-		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(runStates, batch.RunTimestamp(), nextBatchStart))
+		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(runStates, batch, dirIDs, nextBatchStart))
 		if len(missing) == 0 {
 			continue
 		}
