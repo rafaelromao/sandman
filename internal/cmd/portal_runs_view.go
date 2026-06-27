@@ -288,7 +288,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		}
 		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun, deadBatches))
 	}
-	runs = append(runs, v.synthesizedDeadBatchRows(repoRoot, deadBatches, runStates)...)
+	runs = append(runs, v.synthesizedDeadBatchRows(deadBatches, runStates, dirIDs)...)
 
 	runs = v.dedupRuns(runs)
 	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
@@ -355,19 +355,14 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	return runs, nil
 }
 
-func seenIssuesForBatch(repoRoot string, runStates []events.RunState, batch daemon.DeadBatch, deadBatches []daemon.DeadBatch) map[int]struct{} {
+func seenIssuesForBatch(runStates []events.RunState, batch daemon.DeadBatch, dirIDs map[string]string) map[int]struct{} {
 	seen := make(map[int]struct{})
 	for _, runState := range runStates {
 		issue := runState.IssueNumber()
 		if issue <= 0 || runState.RunID == "" {
 			continue
 		}
-		batchDir, err := (&portalRunsView{}).findBatchDirForRun(repoRoot, runState.RunID, deadBatches)
-		if err != nil {
-			logPortalViewDegrade("dead-batch-seen:"+runState.RunID, "find batch dir for run %q: %v", runState.RunID, err)
-			continue
-		}
-		if batchDir == batch.RunDir {
+		if dirIDs[runState.RunID] == filepath.Base(batch.RunDir) {
 			seen[issue] = struct{}{}
 		}
 	}
@@ -430,7 +425,7 @@ func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{})
 	return missing
 }
 
-func (v *portalRunsView) synthesizedDeadBatchRows(repoRoot string, deadBatches []daemon.DeadBatch, runStates []events.RunState) []portalRun {
+func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch, runStates []events.RunState, dirIDs map[string]string) []portalRun {
 	if len(deadBatches) == 0 {
 		return nil
 	}
@@ -445,7 +440,7 @@ func (v *portalRunsView) synthesizedDeadBatchRows(repoRoot string, deadBatches [
 	})
 	rows := make([]portalRun, 0)
 	for _, batch := range sortedBatches {
-		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(repoRoot, runStates, batch, deadBatches))
+		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(runStates, batch, dirIDs))
 		if len(missing) == 0 {
 			continue
 		}
