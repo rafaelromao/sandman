@@ -81,13 +81,9 @@ Sandman also installs [`codeindex`](https://github.com/scheidydude/codeindex) in
 
 `codeindex install-hook` registers a pre-commit hook that warns when staged files exceed a [`--threshold` blast score](https://github.com/scheidydude/codeindex?tab=readme-ov-file#codeindex-install-hook). Sandman commits from git worktrees (`.sandman/worktrees/`), where `git rev-parse --show-toplevel` returns the worktree root — not the main repo root where `codeindex.json` lives. The default hook misses the index and silently bails.
 
-Replace the `INDEX` resolution in `.git/hooks/pre-commit`:
+Use this `INDEX` resolution in `.git/hooks/pre-commit`:
 
 ```bash
-# Before (broken in worktrees):
-INDEX=$(git rev-parse --show-toplevel)/codeindex.json
-
-# After (works in both):
 INDEX="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)/codeindex.json"
 ```
 
