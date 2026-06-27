@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -1168,5 +1169,304 @@ func TestPortal_Compute_ActiveIndexEntryWithArchiveDir_NotArchived(t *testing.T)
 	}
 	if got.Kind != "completed" {
 		t.Fatalf("Kind = %q, want %q", got.Kind, "completed")
+	}
+}
+
+func TestPortal_Compute_OrphanedActiveRunFromDeadBatch_Demoted(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runID := "abcd-260618113825-issue-42"
+	batchID := "abcd-260618113825-999-1"
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	runDir := filepath.Join(batchDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+
+	manifest := daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(batchDir, "batch.json"), manifestData, 0644); err != nil {
+		t.Fatalf("write batch.json: %v", err)
+	}
+
+	runManifest := map[string]any{"run_id": runID, "issue": 42, "branch": "sandman/42-fix"}
+	runManifestData, err := json.Marshal(runManifest)
+	if err != nil {
+		t.Fatalf("marshal run manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.json"), runManifestData, 0644); err != nil {
+		t.Fatalf("write run.json: %v", err)
+	}
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{42})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	got := runs[0]
+	if got.Kind != "completed" {
+		t.Fatalf("Kind = %q, want %q (orphaned active row from dead batch must be demoted)", got.Kind, "completed")
+	}
+	if got.Status != "aborted" {
+		t.Fatalf("Status = %q, want %q", got.Status, "aborted")
+	}
+	if got.IssueNumber != 42 {
+		t.Fatalf("IssueNumber = %d, want 42", got.IssueNumber)
+	}
+}
+
+func TestPortal_Compute_DeadBatchWithStaleRunSock_StillDemoted(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runID := "abcd-260618113825-issue-42"
+	batchID := "abcd-260618113825-999-1"
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	runDir := filepath.Join(batchDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+
+	manifest := daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(batchDir, "batch.json"), manifestData, 0644); err != nil {
+		t.Fatalf("write batch.json: %v", err)
+	}
+
+	runManifest := map[string]any{"run_id": runID, "issue": 42, "branch": "sandman/42-fix"}
+	runManifestData, err := json.Marshal(runManifest)
+	if err != nil {
+		t.Fatalf("marshal run manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.json"), runManifestData, 0644); err != nil {
+		t.Fatalf("write run.json: %v", err)
+	}
+
+	runSockPath := filepath.Join(runDir, "run.sock")
+	ln, err := net.Listen("unix", runSockPath)
+	if err != nil {
+		t.Fatalf("create stale run.sock: %v", err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close stale run.sock listener: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(runSockPath) })
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{42})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	got := runs[0]
+	if got.Kind != "completed" {
+		t.Fatalf("Kind = %q, want %q (stale run.sock must not block demotion)", got.Kind, "completed")
+	}
+	if got.Status != "aborted" {
+		t.Fatalf("Status = %q, want %q", got.Status, "aborted")
+	}
+	if got.IssueNumber != 42 {
+		t.Fatalf("IssueNumber = %d, want 42", got.IssueNumber)
+	}
+}
+
+func TestPortal_Compute_LiveParentAndDeadReviewChild_DoesNotAggregateReviewing(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	liveParentAt := startedAt.Add(5 * time.Minute)
+	deadReviewAt := startedAt
+
+	liveBatchID := "batch-live"
+	liveRunID := "run-live-issue-1"
+	liveBatchDir := filepath.Join(repoRoot, ".sandman", "batches", liveBatchID)
+	liveRunDir := filepath.Join(liveBatchDir, "runs", liveRunID)
+	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
+		t.Fatalf("mkdir live run dir: %v", err)
+	}
+	createUnixRunSocket(t, filepath.Join(liveBatchDir, "batch.sock"))
+	if err := daemon.WriteManifest(liveBatchDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: liveParentAt, BatchId: liveBatchID}); err != nil {
+		t.Fatalf("write live manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(liveRunDir, "run.json"), []byte(`{"run_id":"`+liveRunID+`","issue":1,"branch":"sandman/1-fix"}`), 0644); err != nil {
+		t.Fatalf("write live run.json: %v", err)
+	}
+	addBatchToIndex(t, repoRoot, liveBatchID, liveBatchDir, []int{1})
+
+	deadBatchID := "batch-dead"
+	deadReviewID := "review-1"
+	deadBatchDir := filepath.Join(repoRoot, ".sandman", "batches", deadBatchID)
+	deadRunDir := filepath.Join(deadBatchDir, "runs", deadReviewID)
+	if err := os.MkdirAll(deadRunDir, 0755); err != nil {
+		t.Fatalf("mkdir dead run dir: %v", err)
+	}
+	if err := daemon.WriteManifest(deadBatchDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: deadReviewAt, BatchId: deadBatchID}); err != nil {
+		t.Fatalf("write dead manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(deadRunDir, "run.json"), []byte(`{"run_id":"`+deadReviewID+`","issue":1,"branch":"sandman/review-42"}`), 0644); err != nil {
+		t.Fatalf("write dead run.json: %v", err)
+	}
+	addBatchToIndex(t, repoRoot, deadBatchID, deadBatchDir, []int{1})
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: liveParentAt, RunID: liveRunID, Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: deadReviewAt, RunID: deadReviewID, Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-42"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	var parent *portalRun
+	var review *portalRun
+	for i := range runs {
+		r := &runs[i]
+		if r.IssueNumber != 1 {
+			continue
+		}
+		if r.Review {
+			review = r
+			continue
+		}
+		if r.RunID == liveRunID {
+			parent = r
+		}
+	}
+	if parent == nil {
+		t.Fatalf("expected live parent row, got %#v", runs)
+	}
+	if parent.Status != "running" {
+		t.Fatalf("parent Status = %q, want %q", parent.Status, "running")
+	}
+	if review == nil {
+		t.Fatalf("expected review child row, got %#v", runs)
+	}
+	if review.Kind != "completed" || review.Status != "aborted" {
+		t.Fatalf("review child = %#v, want completed/aborted after demotion", review)
+	}
+	for _, run := range runs {
+		if run.IssueNumber == 1 && run.Status == "reviewing" {
+			t.Fatalf("unexpected reviewing row after demotion: %#v", run)
+		}
+	}
+}
+
+func TestPortal_Compute_MultipleDeadBatches_IndependentIssueSets(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	type batch struct {
+		batchID  string
+		runID    string
+		issueNum int
+	}
+	batches := []batch{
+		{batchID: "batch-001", runID: "run-001-issue-1", issueNum: 1},
+		{batchID: "batch-002", runID: "run-002-issue-2", issueNum: 2},
+		{batchID: "batch-003", runID: "run-003-issue-3", issueNum: 3},
+	}
+
+	var evts []events.Event
+	for _, b := range batches {
+		evts = append(evts, events.Event{
+			Type: "run.started", Timestamp: startedAt, RunID: b.runID, Issue: b.issueNum,
+			Payload: map[string]any{"branch": fmt.Sprintf("sandman/%d-fix", b.issueNum)},
+		})
+	}
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), evts)
+
+	for _, b := range batches {
+		batchDir := filepath.Join(repoRoot, ".sandman", "batches", b.batchID)
+		runDir := filepath.Join(batchDir, "runs", b.runID)
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			t.Fatalf("mkdir run dir for %s: %v", b.batchID, err)
+		}
+		manifest := daemon.BatchManifest{Issues: []int{b.issueNum}, CreatedAt: startedAt}
+		manifestData, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatalf("marshal manifest for %s: %v", b.batchID, err)
+		}
+		if err := os.WriteFile(filepath.Join(batchDir, "batch.json"), manifestData, 0644); err != nil {
+			t.Fatalf("write batch.json for %s: %v", b.batchID, err)
+		}
+		runManifest := map[string]any{"run_id": b.runID, "issue": b.issueNum}
+		runManifestData, err := json.Marshal(runManifest)
+		if err != nil {
+			t.Fatalf("marshal run manifest for %s: %v", b.batchID, err)
+		}
+		if err := os.WriteFile(filepath.Join(runDir, "run.json"), runManifestData, 0644); err != nil {
+			t.Fatalf("write run.json for %s: %v", b.batchID, err)
+		}
+		addBatchToIndex(t, repoRoot, b.batchID, batchDir, []int{b.issueNum})
+	}
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 rows, got %d: %#v", len(runs), runs)
+	}
+	for _, b := range batches {
+		found := false
+		for i := range runs {
+			if runs[i].IssueNumber == b.issueNum {
+				found = true
+				if runs[i].Kind != "completed" {
+					t.Fatalf("issue %d: Kind = %q, want %q (orphaned row from dead batch must be demoted)", b.issueNum, runs[i].Kind, "completed")
+				}
+				if runs[i].Status != "aborted" {
+					t.Fatalf("issue %d: Status = %q, want %q", b.issueNum, runs[i].Status, "aborted")
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("expected row for issue %d, not found", b.issueNum)
+		}
 	}
 }
