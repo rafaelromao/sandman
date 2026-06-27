@@ -79,17 +79,16 @@ Sandman also installs [`codeindex`](https://github.com/scheidydude/codeindex) in
 
 ### Pre-commit hook
 
-`codeindex install-hook` installs this pre-commit hook:
+`codeindex install-hook` installs a pre-commit check that warns when staged files exceed the blast-score threshold.
+
+Sandman patches that hook in two ways:
+
+- It resolves the main repo root through `git rev-parse --git-common-dir`, so commits from `.sandman/worktrees/` still find the shared indexes.
+- It bootstraps missing `codeindex.json`, `symbolindex.json`, and `.codeindex/index.db` before the first warning check.
+
+The Sandman-specific additions are:
 
 ```bash
-#!/usr/bin/env bash
-# codeindex-hook
-# Installed by codeindex. Remove this file or run `codeindex install-hook --remove` to disable.
-
-THRESHOLD=10
-STRICT=0
-
-# Find codeindex artifacts at the main repo root (works in worktrees too)
 REPO_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
 INDEX="$REPO_ROOT/codeindex.json"
 DB="$REPO_ROOT/.codeindex/index.db"
@@ -98,45 +97,9 @@ if [ ! -f "$INDEX" ] || [ ! -f "$DB" ]; then
   codeindex analyze "$REPO_ROOT" >/dev/null 2>&1
   codeindex symbols "$REPO_ROOT" >/dev/null 2>&1
 fi
-
-if [ ! -f "$INDEX" ]; then
-  echo "[codeindex] No codeindex.json found — skipping impact check. Run: codeindex analyze ."
-  exit 0
-fi
-
-# Get staged files (added or modified)
-STAGED=$(git diff --cached --name-only --diff-filter=AM)
-
-if [ -z "$STAGED" ]; then
-  exit 0
-fi
-
-WARNED=0
-while IFS= read -r FILE; do
-  if [ -z "$FILE" ]; then continue; fi
-  OUTPUT=$(codeindex impact "$FILE" --index "$INDEX" 2>/dev/null)
-  if [ $? -ne 0 ]; then continue; fi
-  SCORE=$(echo "$OUTPUT" | grep -oP 'Blast Score: \K[0-9.]+')
-  if [ -z "$SCORE" ]; then continue; fi
-  SCORE_INT=$(echo "$SCORE" | cut -d. -f1)
-  if [ "$SCORE_INT" -ge "$THRESHOLD" ] 2>/dev/null; then
-    echo ""
-    echo "[codeindex] HIGH BLAST RADIUS: $FILE (score: $SCORE)"
-    echo "$OUTPUT"
-    echo ""
-    WARNED=1
-  fi
-done <<< "$STAGED"
-
-if [ "$WARNED" -eq 1 ] && [ "$STRICT" = "1" ]; then
-  echo "[codeindex] Commit blocked (--strict mode). Review impact above."
-  exit 1
-fi
-
-exit 0
 ```
 
-This hook bootstraps missing `codeindex.json` and `.codeindex/index.db` from the repo root on demand, and refreshes `symbolindex.json` on that same path before warning on staged files whose blast score exceeds the threshold.
+That patch is required because Sandman commits from git worktrees, and a fresh checkout may not yet have generated the codeindex artifacts the hook depends on.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
