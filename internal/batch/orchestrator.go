@@ -1766,6 +1766,11 @@ func (s *runSession) runOnce(
 					break
 				}
 				result.Status = "success"
+				if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
+					if err := o.githubClient.CloseIssue(issue.Number, "Closed by sandman — issue already completed."); err != nil {
+						fmt.Fprintf(o.errorLog, "error: close issue %d: %v\n", issue.Number, err)
+					}
+				}
 				break
 			}
 			if github.IsIssueClosed(issue) {
@@ -1775,10 +1780,18 @@ func (s *runSession) runOnce(
 			}
 			result.Status = "failure"
 		} else {
-			if events.RunStatusFromPayload(result.Status).IsSuccess() {
+			if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
+				if err := o.githubClient.CloseIssue(issue.Number, "Closed by sandman — issue already completed."); err != nil {
+					fmt.Fprintf(o.errorLog, "error: close issue %d: %v\n", issue.Number, err)
+				}
+			}
+			if events.RunStatusFromPayload(result.Status).IsSuccess() || alreadyResolved {
 				if issue != nil && o.githubClient != nil {
 					prMerged := checkPRMerged(o.githubClient, branch)
 					if prMerged || alreadyResolved {
+						if alreadyResolved {
+							result.Status = "success"
+						}
 						break
 					}
 					result.Status = "failure"

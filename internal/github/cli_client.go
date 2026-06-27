@@ -742,5 +742,23 @@ func (c *CLIClient) RemoveIssueReaction(issueNumber int, reactionID string) erro
 	return nil
 }
 
+// CloseIssue closes a GitHub issue with an optional comment.
+func (c *CLIClient) CloseIssue(issueNumber int, comment string) error {
+	owner, repo, err := c.resolveRepo()
+	if err != nil {
+		return err
+	}
+	args := []string{"issue", "close", fmt.Sprintf("%d", issueNumber), "--repo", fmt.Sprintf("%s/%s", owner, repo)}
+	if comment != "" {
+		args = append(args, "--comment", comment)
+	}
+	cmd := c.command("gh", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh issue close: %w\n%s", err, out)
+	}
+	return nil
+}
+
 // Ensure CLIClient implements Client.
 var _ Client = (*CLIClient)(nil)
