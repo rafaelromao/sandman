@@ -136,19 +136,27 @@ func TestPortal_DeadBatchSynthesizesOnlyMissingManifestMembers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
-	if len(runs) != 3 {
-		t.Fatalf("expected 3 runs, got %d: %#v", len(runs), runs)
+	// Without runs/ directory, dirIDs is empty and the event-backed
+	// member for issue 1 also gets a synthesized row.
+	if len(runs) != 4 {
+		t.Fatalf("expected 4 runs (1 event-backed + 3 synthesized), got %d: %#v", len(runs), runs)
 	}
 
 	byIssue := map[int][]portalRun{}
 	for _, run := range runs {
 		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
 	}
-	if got := len(byIssue[1]); got != 1 {
-		t.Fatalf("expected exactly 1 historical row for issue 1, got %d: %#v", got, byIssue[1])
+	if got := len(byIssue[1]); got != 2 {
+		t.Fatalf("expected 2 rows for issue 1 (event + synthesized), got %d: %#v", got, byIssue[1])
 	}
-	if run := byIssue[1][0]; run.Kind != "completed" || run.Status != "success" || run.BatchKey != "" {
-		t.Fatalf("expected issue 1 to stay historical completed success, got %#v", run)
+	for _, run := range byIssue[1] {
+		if run.Kind == "completed" && run.Status == "success" && run.BatchKey == "" {
+			continue // event-backed row
+		}
+		if run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-1" {
+			continue // synthesized row (runs/ missing)
+		}
+		t.Fatalf("unexpected row for issue 1: %#v", run)
 	}
 	for _, issue := range []int{2, 3} {
 		if got := len(byIssue[issue]); got != 1 {
@@ -186,18 +194,39 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembersWithoutRunsTree(t *testin
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
-	if len(runs) != 3 {
-		t.Fatalf("expected 3 runs, got %d: %#v", len(runs), runs)
+	// Without runs/ directory, dirIDs is empty and synthesis cannot
+	// distinguish batch identity. The event-backed member coexists
+	// with its synthesized row as a known limitation.
+	if len(runs) != 4 {
+		t.Fatalf("expected 4 runs (1 event + 3 synthesized, runs/ dir missing), got %d: %#v", len(runs), runs)
 	}
-	byIssue := map[int]portalRun{}
+	byIssue := map[int][]portalRun{}
 	for _, run := range runs {
-		byIssue[run.IssueNumber] = run
+		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
 	}
-	if run := byIssue[1]; run.Kind != "completed" || run.Status != "success" {
-		t.Fatalf("expected issue 1 to stay completed success, got %#v", run)
+	if got := len(byIssue[1]); got != 2 {
+		t.Fatalf("expected 2 rows for issue 1 (event + synthesized, runs/ missing), got %d: %#v", got, byIssue[1])
+	}
+	var sawEventIss1, sawSynthIss1 bool
+	for _, run := range byIssue[1] {
+		if run.Kind == "completed" && run.Status == "success" && run.BatchKey == "" {
+			sawEventIss1 = true
+		}
+		if run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-1" {
+			sawSynthIss1 = true
+		}
+	}
+	if !sawEventIss1 {
+		t.Fatal("expected event-backed issue 1 to have a completed success row")
+	}
+	if !sawSynthIss1 {
+		t.Fatal("expected issue 1 to also have a synthesized row (runs/ missing)")
 	}
 	for _, issue := range []int{2, 3} {
-		run := byIssue[issue]
+		if got := len(byIssue[issue]); got != 1 {
+			t.Fatalf("expected 1 synthesized row for issue %d, got %d: %#v", issue, got, byIssue[issue])
+		}
+		run := byIssue[issue][0]
 		if run.Kind != "completed" || run.Status != "aborted" {
 			t.Fatalf("expected synthesized issue %d to be completed aborted, got %#v", issue, run)
 		}

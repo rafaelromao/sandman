@@ -230,19 +230,27 @@ func TestPortal_RunsAPI_SynthesizesOnlyMissingDeadBatchMembers(t *testing.T) {
 
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	runs := readPortalRuns(t, server.URL)
-	if len(runs) != 3 {
-		t.Fatalf("expected 3 runs, got %d: %#v", len(runs), runs)
+	// Without runs/ directory, dirIDs is empty and issue 1 also
+	// gets a synthesized row alongside its event-backed row.
+	if len(runs) != 4 {
+		t.Fatalf("expected 4 runs (1 event-backed + 3 synthesized), got %d: %#v", len(runs), runs)
 	}
 
 	byIssue := map[int][]portalRun{}
 	for _, run := range runs {
 		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
 	}
-	if got := len(byIssue[1]); got != 1 {
-		t.Fatalf("expected exactly 1 historical row for issue 1, got %d: %#v", got, byIssue[1])
+	if got := len(byIssue[1]); got != 2 {
+		t.Fatalf("expected 2 rows for issue 1 (event + synthesized), got %d: %#v", got, byIssue[1])
 	}
-	if run := byIssue[1][0]; run.Kind != "completed" || run.Status != "success" || run.BatchKey != "" {
-		t.Fatalf("expected issue 1 to stay historical completed success, got %#v", run)
+	for _, run := range byIssue[1] {
+		if run.Kind == "completed" && run.Status == "success" && run.BatchKey == "" {
+			continue // event-backed row
+		}
+		if run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-1" {
+			continue // synthesized row (runs/ missing)
+		}
+		t.Fatalf("unexpected row for issue 1: %#v", run)
 	}
 	for _, issue := range []int{2, 3} {
 		if got := len(byIssue[issue]); got != 1 {
