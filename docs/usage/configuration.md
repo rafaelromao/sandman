@@ -79,15 +79,15 @@ Sandman also installs [`codeindex`](https://github.com/scheidydude/codeindex) in
 
 ### Pre-commit hook
 
-`codeindex install-hook` registers a pre-commit hook that warns when staged files exceed a [`--threshold` blast score](https://github.com/scheidydude/codeindex?tab=readme-ov-file#codeindex-install-hook). Sandman commits from git worktrees (`.sandman/worktrees/`), where `git rev-parse --show-toplevel` returns the worktree root — not the main repo root where `codeindex.json` lives. The default hook misses the index and silently bails.
+The hook installed by `codeindex install-hook` fails inside git worktrees (`.sandman/worktrees/`) because it uses `git rev-parse --show-toplevel` to locate `codeindex.json`. Inside a worktree this returns the worktree root, not the main repo root, so the hook skips impact checks.
 
-Use this `INDEX` resolution in `.git/hooks/pre-commit`:
+Edit `.git/hooks/pre-commit` to use a path that resolves in both contexts:
 
 ```bash
 INDEX="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)/codeindex.json"
 ```
 
-`--git-common-dir` always resolves to the main `.git/` directory, even inside a worktree. Walking up one level from there lands on the main repo root, where `codeindex.json` resides.
+`git rev-parse --git-common-dir` always points to the main `.git/` directory, even inside a worktree. Walking up to its parent yields the main repo root, where `codeindex.json` lives.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
