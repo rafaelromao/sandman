@@ -222,10 +222,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
-	deadBatches, err = v.deadBatchesFromIndex(idx, activeInstances)
-	if err != nil {
-		return nil, err
-	}
+	deadBatches = v.deadBatchesFromIndex(idx, activeInstances)
 	_, dirIDs, err = v.deadBatchDirIDsByRunID(idx)
 	if err != nil {
 		return nil, err
@@ -369,9 +366,9 @@ func seenIssuesFromEvents(eventList []events.Event) map[int]struct{} {
 	return seen
 }
 
-func (v *portalRunsView) deadBatchesFromIndex(idx *batchindex.Index, activeInstances []portalActiveRun) ([]daemon.DeadBatch, error) {
+func (v *portalRunsView) deadBatchesFromIndex(idx *batchindex.Index, activeInstances []portalActiveRun) []daemon.DeadBatch {
 	if idx == nil || len(idx.Entries) == 0 {
-		return nil, nil
+		return nil
 	}
 	activeBatchIDs := make(map[string]struct{}, len(activeInstances))
 	for _, active := range activeInstances {
@@ -393,15 +390,17 @@ func (v *portalRunsView) deadBatchesFromIndex(idx *batchindex.Index, activeInsta
 		}
 		manifest, err := daemon.ReadManifest(entry.Path)
 		if err != nil {
-			if os.IsNotExist(err) {
-				manifest = daemon.BatchManifest{}
-			} else {
-				return nil, fmt.Errorf("read manifest for dead batch %s: %w", entry.Path, err)
+			if !os.IsNotExist(err) {
+				logPortalViewDegrade("dead-batch-manifest:"+entry.ID, "read manifest for dead batch %q: %v", entry.Path, err)
 			}
+			manifest = daemon.BatchManifest{}
+		}
+		if manifest.RunKind == "" {
+			manifest.RunKind = string(entry.Kind)
 		}
 		deadBatches = append(deadBatches, daemon.DeadBatch{RunDir: entry.Path, Manifest: manifest})
 	}
-	return deadBatches, nil
+	return deadBatches
 }
 
 func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{}) []int {
