@@ -54,34 +54,16 @@ func (i Index) MarshalJSON() ([]byte, error) {
 		Kind       Kind       `json:"kind"`
 		Status     Status     `json:"status"`
 		CreatedAt  time.Time  `json:"createdAt"`
-		Issues     []int      `json:"issues,omitempty"`
+		Issues     []int      `json:"issues"`
 		PR         int        `json:"pr,omitempty"`
 		ArchivedAt *time.Time `json:"archivedAt,omitempty"`
 	}
 
 	entries := make([]any, 0, len(i.Entries))
 	for _, e := range i.Entries {
-		if e.Kind == KindPromptOnly {
-			entries = append(entries, struct {
-				ID         string     `json:"id"`
-				Path       string     `json:"path"`
-				Kind       Kind       `json:"kind"`
-				Status     Status     `json:"status"`
-				CreatedAt  time.Time  `json:"createdAt"`
-				Issues     []int      `json:"issues"`
-				PR         int        `json:"pr,omitempty"`
-				ArchivedAt *time.Time `json:"archivedAt,omitempty"`
-			}{
-				ID:         e.ID,
-				Path:       e.Path,
-				Kind:       e.Kind,
-				Status:     e.Status,
-				CreatedAt:  e.CreatedAt,
-				Issues:     []int{},
-				PR:         e.PR,
-				ArchivedAt: e.ArchivedAt,
-			})
-			continue
+		issues := e.Issues
+		if e.Kind == KindPromptOnly || issues == nil {
+			issues = []int{}
 		}
 		entries = append(entries, entryJSON{
 			ID:         e.ID,
@@ -89,7 +71,7 @@ func (i Index) MarshalJSON() ([]byte, error) {
 			Kind:       e.Kind,
 			Status:     e.Status,
 			CreatedAt:  e.CreatedAt,
-			Issues:     e.Issues,
+			Issues:     issues,
 			PR:         e.PR,
 			ArchivedAt: e.ArchivedAt,
 		})
