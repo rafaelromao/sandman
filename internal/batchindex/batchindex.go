@@ -40,13 +40,15 @@ type Entry struct {
 	Kind       Kind       `json:"kind"`
 	Status     Status     `json:"status"`
 	CreatedAt  time.Time  `json:"createdAt"`
-	Issues     []int      `json:"issues,omitempty"` // Prompt-only runs serialize this as an explicit empty array.
+	Issues     []int      `json:"issues,omitempty"`
 	PR         int        `json:"pr,omitempty"`
 	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
 }
 
-func (e Entry) MarshalJSON() ([]byte, error) {
-	type alias struct {
+// MarshalJSON writes the batches index with prompt-only entries carrying an
+// explicit empty issues array, matching ADR-0032's index schema.
+func (i Index) MarshalJSON() ([]byte, error) {
+	type entryJSON struct {
 		ID         string     `json:"id"`
 		Path       string     `json:"path"`
 		Kind       Kind       `json:"kind"`
@@ -57,37 +59,48 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		ArchivedAt *time.Time `json:"archivedAt,omitempty"`
 	}
 
-	if e.Kind == KindPromptOnly {
-		return json.Marshal(struct {
-			ID         string     `json:"id"`
-			Path       string     `json:"path"`
-			Kind       Kind       `json:"kind"`
-			Status     Status     `json:"status"`
-			CreatedAt  time.Time  `json:"createdAt"`
-			Issues     []int      `json:"issues"`
-			PR         int        `json:"pr,omitempty"`
-			ArchivedAt *time.Time `json:"archivedAt,omitempty"`
-		}{
+	entries := make([]any, 0, len(i.Entries))
+	for _, e := range i.Entries {
+		if e.Kind == KindPromptOnly {
+			entries = append(entries, struct {
+				ID         string     `json:"id"`
+				Path       string     `json:"path"`
+				Kind       Kind       `json:"kind"`
+				Status     Status     `json:"status"`
+				CreatedAt  time.Time  `json:"createdAt"`
+				Issues     []int      `json:"issues"`
+				PR         int        `json:"pr,omitempty"`
+				ArchivedAt *time.Time `json:"archivedAt,omitempty"`
+			}{
+				ID:         e.ID,
+				Path:       e.Path,
+				Kind:       e.Kind,
+				Status:     e.Status,
+				CreatedAt:  e.CreatedAt,
+				Issues:     []int{},
+				PR:         e.PR,
+				ArchivedAt: e.ArchivedAt,
+			})
+			continue
+		}
+		entries = append(entries, entryJSON{
 			ID:         e.ID,
 			Path:       e.Path,
 			Kind:       e.Kind,
 			Status:     e.Status,
 			CreatedAt:  e.CreatedAt,
-			Issues:     []int{},
+			Issues:     e.Issues,
 			PR:         e.PR,
 			ArchivedAt: e.ArchivedAt,
 		})
 	}
 
-	return json.Marshal(alias{
-		ID:         e.ID,
-		Path:       e.Path,
-		Kind:       e.Kind,
-		Status:     e.Status,
-		CreatedAt:  e.CreatedAt,
-		Issues:     e.Issues,
-		PR:         e.PR,
-		ArchivedAt: e.ArchivedAt,
+	return json.Marshal(struct {
+		Version int   `json:"version"`
+		Entries []any `json:"entries"`
+	}{
+		Version: i.Version,
+		Entries: entries,
 	})
 }
 

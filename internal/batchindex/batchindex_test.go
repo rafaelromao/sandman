@@ -365,16 +365,19 @@ func TestEntry_JSONSchema(t *testing.T) {
 	}
 }
 
-func TestEntry_JSONSchema_PromptOnlyIssuesAreExplicitEmptyArray(t *testing.T) {
-	entry := Entry{
-		ID:        "prompt-only-abc123",
-		Path:      ".sandman/batches/prompt-only-abc123",
-		Kind:      KindPromptOnly,
-		Status:    StatusActive,
-		CreatedAt: time.Now().Truncate(time.Second),
+func TestIndex_JSONSchema_PromptOnlyIssuesAreExplicitEmptyArray(t *testing.T) {
+	idx := Index{
+		Version: IndexVersion,
+		Entries: []Entry{{
+			ID:        "prompt-only-abc123",
+			Path:      ".sandman/batches/prompt-only-abc123",
+			Kind:      KindPromptOnly,
+			Status:    StatusActive,
+			CreatedAt: time.Now().Truncate(time.Second),
+		}},
 	}
 
-	data, err := json.Marshal(entry)
+	data, err := json.Marshal(idx)
 	if err != nil {
 		t.Fatalf("Marshal failed: %v", err)
 	}
@@ -384,7 +387,15 @@ func TestEntry_JSONSchema_PromptOnlyIssuesAreExplicitEmptyArray(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	rawIssues, ok := decoded["issues"]
+	entries, ok := decoded["entries"].([]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %T (%v)", decoded["entries"], decoded["entries"])
+	}
+	entryMap, ok := entries[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected entry to decode as object, got %T (%v)", entries[0], entries[0])
+	}
+	rawIssues, ok := entryMap["issues"]
 	if !ok {
 		t.Fatalf("expected issues field to be present in %s", string(data))
 	}
@@ -397,17 +408,20 @@ func TestEntry_JSONSchema_PromptOnlyIssuesAreExplicitEmptyArray(t *testing.T) {
 	}
 }
 
-func TestEntry_JSONSchema_PromptOnlyIssuesIgnoreStaleValues(t *testing.T) {
-	entry := Entry{
-		ID:        "prompt-only-abc123",
-		Path:      ".sandman/batches/prompt-only-abc123",
-		Kind:      KindPromptOnly,
-		Status:    StatusActive,
-		CreatedAt: time.Now().Truncate(time.Second),
-		Issues:    []int{1, 2, 3},
+func TestIndex_JSONSchema_PromptOnlyIssuesIgnoreStaleValues(t *testing.T) {
+	idx := Index{
+		Version: IndexVersion,
+		Entries: []Entry{{
+			ID:        "prompt-only-abc123",
+			Path:      ".sandman/batches/prompt-only-abc123",
+			Kind:      KindPromptOnly,
+			Status:    StatusActive,
+			CreatedAt: time.Now().Truncate(time.Second),
+			Issues:    []int{1, 2, 3},
+		}},
 	}
 
-	data, err := json.Marshal(entry)
+	data, err := json.Marshal(idx)
 	if err != nil {
 		t.Fatalf("Marshal failed: %v", err)
 	}
@@ -417,7 +431,15 @@ func TestEntry_JSONSchema_PromptOnlyIssuesIgnoreStaleValues(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	rawIssues, ok := decoded["issues"]
+	entries, ok := decoded["entries"].([]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %T (%v)", decoded["entries"], decoded["entries"])
+	}
+	entryMap, ok := entries[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected entry to decode as object, got %T (%v)", entries[0], entries[0])
+	}
+	rawIssues, ok := entryMap["issues"]
 	if !ok {
 		t.Fatalf("expected issues field to be present in %s", string(data))
 	}
