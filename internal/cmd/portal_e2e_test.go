@@ -606,9 +606,9 @@ func createPromptOnlyRunSocket(t *testing.T, repoDir, runName string, issueNumbe
 // createMixedBatchRunSocket reproduces the exact mixed-batch shape from
 // issues 854/860: a single run directory whose batch.json lists both
 // issues and whose run.sock streams prefixed lines for each. It writes
-// to the socket only — no .sandman/logs/<issue>.log is created — so
-// the assertion exercises the live-socket filter path, not the
-// saved-file reader.
+// to the socket only — no saved run.log file is created — so the
+// assertion exercises the live-socket filter path, not the saved-file
+// reader.
 func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 	t.Helper()
 
