@@ -199,6 +199,9 @@ func TestRunSession_Close_StopsControlSocketButKeepsDirectory(t *testing.T) {
 	if _, err := os.Stat(runDir); err != nil {
 		t.Errorf("batch dir must still exist after Close, stat err = %v", err)
 	}
+	if _, err := net.Dial("unix", filepath.Join(runDir, "batch.sock")); err == nil {
+		t.Errorf("batch.sock must be gone after Close")
+	}
 
 	// Idempotent: a second Close is a no-op and does not error.
 	if err := rs.Close(); err != nil {
