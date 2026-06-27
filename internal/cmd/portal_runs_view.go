@@ -364,7 +364,7 @@ func seenIssuesForBatch(runStates []events.RunState, batch daemon.DeadBatch, dir
 	}
 	for _, runState := range runStates {
 		issue := runState.IssueNumber()
-		if issue <= 0 || runState.RunID == "" {
+		if issue <= 0 || runState.RunID == "" || runState.IsReview() {
 			continue
 		}
 		// When dirIDs has this RunID, we know exactly which batch it

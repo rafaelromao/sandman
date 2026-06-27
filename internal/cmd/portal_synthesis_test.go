@@ -393,3 +393,55 @@ func TestPortal_MixedLiveDeadAndOrphanRowsStayDistinct(t *testing.T) {
 		t.Fatalf("expected orphan issue 99 to remain completed aborted, got %#v", run)
 	}
 }
+
+func TestPortal_DeadBatchSynthesisIgnoresReviewRuns(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "dead-1")
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42, 43}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "dead-1", batchDir, []int{42, 43})
+
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "review-42", Issue: 42, Payload: map[string]any{"review": true, "branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "review-42", Issue: 42, Payload: map[string]any{"review": true, "status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 rows (1 review + 2 synthesized), got %d: %#v", len(runs), runs)
+	}
+	var sawReview, sawDead42, sawDead43 bool
+	for _, run := range runs {
+		if run.IssueNumber == 42 && run.Review {
+			sawReview = true
+		}
+		if run.IssueNumber == 42 && !run.Review && run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-1" {
+			sawDead42 = true
+		}
+		if run.IssueNumber == 43 && run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-1" {
+			sawDead43 = true
+		}
+	}
+	if !sawReview {
+		t.Fatal("expected review row for issue 42")
+	}
+	if !sawDead42 {
+		t.Fatal("expected synthesized aborted row for dead batch issue 42 (review run must not suppress synthesis)")
+	}
+	if !sawDead43 {
+		t.Fatal("expected synthesized aborted row for dead batch issue 43")
+	}
+}
