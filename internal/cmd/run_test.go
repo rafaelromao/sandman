@@ -192,6 +192,10 @@ func (f *fakeGitHubClient) RemoveIssueReaction(issueNumber int, reactionID strin
 	return nil
 }
 
+func (f *fakeGitHubClient) CloseIssue(issueNumber int, comment string) error {
+	return nil
+}
+
 // newRunDeps returns Dependencies for a run command test. The
 // default review command is overridden to "/oc review" so the
 // review daemon guard (issue #383) is bypassed by default. Tests

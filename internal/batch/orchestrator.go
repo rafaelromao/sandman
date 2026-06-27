@@ -1766,6 +1766,9 @@ func (s *runSession) runOnce(
 					break
 				}
 				result.Status = "success"
+				if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
+					_ = o.githubClient.CloseIssue(issue.Number, "Closed by sandman — issue already completed.")
+				}
 				break
 			}
 			if github.IsIssueClosed(issue) {
@@ -1779,6 +1782,9 @@ func (s *runSession) runOnce(
 				if issue != nil && o.githubClient != nil {
 					prMerged := checkPRMerged(o.githubClient, branch)
 					if prMerged || alreadyResolved {
+						if alreadyResolved && !github.IsIssueClosed(issue) {
+							_ = o.githubClient.CloseIssue(issue.Number, "Closed by sandman — issue already completed.")
+						}
 						break
 					}
 					result.Status = "failure"

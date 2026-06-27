@@ -268,6 +268,10 @@ func (f *fakeGitHubClient) RemoveIssueReaction(issueNumber int, reactionID strin
 	return nil
 }
 
+func (f *fakeGitHubClient) CloseIssue(issueNumber int, comment string) error {
+	return nil
+}
+
 func mergedPR(branch, sha string) *github.PR {
 	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}
 }
