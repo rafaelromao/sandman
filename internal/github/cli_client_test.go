@@ -1050,3 +1050,66 @@ func TestCLIClient_RemoveIssueReaction_Error(t *testing.T) {
 		t.Fatal("expected error when gh api fails")
 	}
 }
+
+func TestCLIClient_CloseIssue_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: ""},
+	}}
+	client := &CLIClient{runner: runner}
+
+	err := client.CloseIssue(42, "Closed by sandman — test.")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
+	}
+	if runner.calls[0].name != "gh" {
+		t.Errorf("expected command gh, got %q", runner.calls[0].name)
+	}
+	expectedArgs := []string{"issue", "close", "42", "--repo", "rafaelromao/sandman", "--comment", "Closed by sandman — test."}
+	if len(runner.calls[1].args) != len(expectedArgs) {
+		t.Fatalf("expected args %v, got %v", expectedArgs, runner.calls[1].args)
+	}
+	for i, arg := range expectedArgs {
+		if runner.calls[1].args[i] != arg {
+			t.Errorf("expected arg[%d] = %q, got %q", i, arg, runner.calls[1].args[i])
+		}
+	}
+}
+
+func TestCLIClient_CloseIssue_WithoutComment(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: ""},
+	}}
+	client := &CLIClient{runner: runner}
+
+	err := client.CloseIssue(42, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expectedArgs := []string{"issue", "close", "42", "--repo", "rafaelromao/sandman"}
+	if len(runner.calls[1].args) != len(expectedArgs) {
+		t.Fatalf("expected args %v, got %v", expectedArgs, runner.calls[1].args)
+	}
+	for i, arg := range expectedArgs {
+		if runner.calls[1].args[i] != arg {
+			t.Errorf("expected arg[%d] = %q, got %q", i, arg, runner.calls[1].args[i])
+		}
+	}
+}
+
+func TestCLIClient_CloseIssue_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	err := client.CloseIssue(42, "comment")
+	if err == nil {
+		t.Fatal("expected error when gh issue close fails")
+	}
+}

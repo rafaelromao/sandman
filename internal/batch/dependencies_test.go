@@ -284,6 +284,10 @@ func (c *fetchIssueErrorClient) RemoveIssueReaction(issueNumber int, reactionID 
 	return nil
 }
 
+func (c *fetchIssueErrorClient) CloseIssue(issueNumber int, comment string) error {
+	return nil
+}
+
 func TestDependencyResolverResolve_IgnoresClosedBlockers(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

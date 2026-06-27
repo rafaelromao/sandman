@@ -84,4 +84,5 @@ type Client interface {
 	AddIssueReaction(issueNumber int, content string) (string, error)
 	RemoveCommentReaction(commentID, reactionID string) error
 	RemoveIssueReaction(issueNumber int, reactionID string) error
+	CloseIssue(issueNumber int, comment string) error
 }
