@@ -1014,6 +1014,29 @@
       const newLog = subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : 'No log file yet.';
       let pre = content.querySelector('pre[data-scroll-key]');
       const renderedSubjectFp = content.getAttribute('data-rendered-subject-fingerprint') || '';
+      const renderedSubjectValue = renderedSubjectFp ? renderedSubjectFp.split('|')[0] : '';
+      if (pre && renderedSubjectValue && renderedSubjectValue !== subjectValue) {
+        // Subject switch while staying on the Log tab: preserve the outgoing
+        // pane under the old subject, then mount the incoming subject's cached
+        // pane (or build a fresh one). Updating the outgoing <pre> in place
+        // would destroy the cached pane and keep subject switches on the full
+        // rebuild path.
+        const outgoingPane = (pre.parentNode && pre.parentNode !== content) ? pre.parentNode : pre;
+        storeCachedLogPane(renderedSubjectValue, outgoingPane);
+        while (content.firstChild) content.removeChild(content.firstChild);
+        content.removeAttribute('data-rendered-fingerprint');
+        const cached = takeCachedLogPane(subjectValue);
+        if (cached) {
+          content.appendChild(cached);
+          pre = cached.querySelector('pre[data-scroll-key]');
+          mutationCount += 1;
+        } else {
+          buildLogContent(content, subjectRun, opts.helpers);
+          content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
+          mutationCount += 1;
+          return;
+        }
+      }
       if (!pre) {
         // No log pane is mounted (e.g. returning from Events/Details). Reuse
         // the per-subject cached pane instead of re-tokenizing + re-parsing
