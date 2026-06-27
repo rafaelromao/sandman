@@ -77,6 +77,30 @@ Sandman has one built-in preset: `opencode`. It is installed into scaffolded Doc
 
 Sandman also installs [`codeindex`](https://github.com/scheidydude/codeindex) in scaffolded container images. Sandman runs agents against real repositories, and `codeindex` gives the agent a fast way to find symbols, trace dependencies, and inspect impact without reading large source trees line by line.
 
+### Pre-commit hook
+
+`codeindex install-hook` installs a pre-commit check that warns when staged files exceed the blast-score threshold.
+
+Sandman patches that hook in two ways:
+
+- It resolves the main repo root through `git rev-parse --git-common-dir`, so commits from `.sandman/worktrees/` still find the shared indexes.
+- It bootstraps missing `codeindex.json`, `symbolindex.json`, and `.codeindex/index.db` before the first warning check.
+
+The Sandman-specific additions are:
+
+```bash
+REPO_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+INDEX="$REPO_ROOT/codeindex.json"
+DB="$REPO_ROOT/.codeindex/index.db"
+
+if [ ! -f "$INDEX" ] || [ ! -f "$DB" ]; then
+  codeindex analyze "$REPO_ROOT" >/dev/null 2>&1
+  codeindex symbols "$REPO_ROOT" >/dev/null 2>&1
+fi
+```
+
+That patch is required because Sandman commits from git worktrees, and a fresh checkout may not yet have generated the codeindex artifacts the hook depends on.
+
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
 The built-in preset also sees `~/.agents`, which is where Sandman installs the shared skill folder.
