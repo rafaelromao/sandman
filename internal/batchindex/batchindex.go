@@ -58,10 +58,6 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 	}
 
 	if e.Kind == KindPromptOnly {
-		issues := e.Issues
-		if issues == nil {
-			issues = []int{}
-		}
 		return json.Marshal(struct {
 			ID         string     `json:"id"`
 			Path       string     `json:"path"`
@@ -77,7 +73,7 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 			Kind:       e.Kind,
 			Status:     e.Status,
 			CreatedAt:  e.CreatedAt,
-			Issues:     issues,
+			Issues:     []int{},
 			PR:         e.PR,
 			ArchivedAt: e.ArchivedAt,
 		})
