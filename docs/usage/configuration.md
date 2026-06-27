@@ -89,7 +89,7 @@ INDEX="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)/codeindex.json"
 
 `git rev-parse --git-common-dir` always points to the main `.git/` directory, even inside a worktree. Walking up to its parent yields the main repo root, where `codeindex.json` lives.
 
-`codeindex install-hook` only installs the check. It does not create `.codeindex/index.db` or refresh the generated indexes. After installing it, run `codeindex analyze .` and `codeindex symbols .` once from the repo root so the index files exist before the hook runs.
+The hook can bootstrap missing `codeindex.json`, `symbolindex.json`, and `.codeindex/index.db` on demand, so a fresh checkout does not need a separate indexing step before the first commit.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
