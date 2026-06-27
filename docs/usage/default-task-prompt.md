@@ -34,6 +34,12 @@ The long workflow now lives in the shared Sandman skill. This page describes the
     - [ ] PR-Merge (sandman-pr-merge)
     
     After completing each item, update `.sandman/task.md` in place by checking that item off.
+
+    ## Already Resolved
+
+    If the issue is already implemented on `{{BASE_BRANCH}}`, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
+
+    Do not paraphrase this line. Do not use `already implemented`, `no action required`, or any other wording for this marker.
     
     ## Mandatory Execution Contract
     

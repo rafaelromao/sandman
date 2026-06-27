@@ -185,6 +185,88 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	}
 }
 
+func TestRunSingle_AlreadyResolvedTaskMarkerShortCircuitsToSuccess(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	rtSandbox := &retrySandbox{
+		workDir: filepath.Join(workDir, "worktree"),
+	}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	eventLog := &events.JSONLLogger{Path: eventsPath}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: pr},
+		},
+		renderer: &retryRenderer{result: "rendered prompt"},
+		errorLog: io.Discard,
+		layout:   paths.NewLayout(&config.Config{}, workDir),
+		eventLog: eventLog,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+		runnableFactory: &taskWritingRunnableFactory{
+			taskPath:    filepath.Join(workDir, "worktree", ".sandman", "task.md"),
+			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
+			taskContent: "## Status: already resolved",
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
+	}
+	if got := o.runnableFactory.(*taskWritingRunnableFactory).created; got != 1 {
+		t.Fatalf("runnable launches = %d, want 1", got)
+	}
+}
+
+type taskWritingRunnableFactory struct {
+	created     int
+	taskPath    string
+	taskContent string
+	result      AgentRunResult
+}
+
+func (f *taskWritingRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	f.created++
+	return &taskWritingRunnable{taskPath: f.taskPath, taskContent: f.taskContent, result: f.result}
+}
+
+type taskWritingRunnable struct {
+	taskPath    string
+	taskContent string
+	result      AgentRunResult
+}
+
+func (r *taskWritingRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	if err := os.MkdirAll(filepath.Dir(r.taskPath), 0755); err == nil {
+		_ = os.WriteFile(r.taskPath, []byte(r.taskContent), 0644)
+	}
+	return r.result
+}
+
 // TestRunSingle_EmitsRunRetryWithAbortedStatusAfterHeartbeatKill asserts that
 // when the heartbeat kills the first attempt (flipping its status to
 // "aborted"), the run.retry event captures previous_status: "aborted" — the

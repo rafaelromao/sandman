@@ -1558,6 +1558,15 @@ func batchIDFromRunID(runID string) string {
 	return runID
 }
 
+func hasExactTaskStatus(taskContent, status string) bool {
+	for _, line := range strings.Split(taskContent, "\n") {
+		if strings.TrimSpace(line) == status {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *runSession) applyOverrideAndIdentity(wt sandbox.Sandbox, branch string) (AgentRunResult, bool) {
 	o := s.o
 	wt.SetOverride(s.mode == ModeOverride)
@@ -1746,7 +1755,7 @@ func (s *runSession) runOnce(
 
 		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 		taskContent, _, _ := ReadTaskContent(taskPath)
-		alreadyResolved := strings.Contains(taskContent, "## Status: already resolved")
+		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
 		if mergeRequired {
 			prMerged := checkPRMerged(o.githubClient, branch)
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
