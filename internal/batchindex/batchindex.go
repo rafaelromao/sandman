@@ -40,7 +40,7 @@ type Entry struct {
 	Kind       Kind       `json:"kind"`
 	Status     Status     `json:"status"`
 	CreatedAt  time.Time  `json:"createdAt"`
-	Issues     []int      `json:"issues,omitempty"` // Omit for prompt-only runs; kept lean since they have no issue scope.
+	Issues     []int      `json:"issues,omitempty"` // Prompt-only runs serialize this as an explicit empty array.
 	PR         int        `json:"pr,omitempty"`
 	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
 }
