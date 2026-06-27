@@ -264,6 +264,106 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 	}
 }
 
+func TestPortalLogPane_SubjectSwitchReusesCachedPane(t *testing.T) {
+	const parentLog = "parent log line 1\nparent log line 2\nparent log line 3"
+	const childLog = "child log line 1\nchild log line 2\nchild log line 3"
+
+	parent := map[string]any{
+		"key":         "issue-1",
+		"runId":       "issue-1",
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+		"log":         parentLog,
+	}
+	child := map[string]any{
+		"key":         "PR42",
+		"runId":       "PR42",
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "PR42",
+		"issueNumber": 1,
+		"prNumber":    42,
+		"review":      true,
+		"log":         childLog,
+	}
+	runsJSON, err := json.Marshal([]map[string]any{parent, child})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"issue-1","tabs":{"issue-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    setTimeout(function () {
+      var select = document.querySelector('select[data-action="set-subject"]');
+      if (!select) throw new Error('missing subject selector');
+      var detail = document.querySelector('tr.detail-row[data-detail-for="issue-1"] .detail-content');
+      var parentPre1 = detail && detail.querySelector('pre[data-scroll-key]');
+      if (!parentPre1) throw new Error('expected parent log pane initially');
+      var parentFirstChild = parentPre1.firstChild;
+
+      select.value = 'PR42';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+
+      setTimeout(function () {
+        var childPre = detail && detail.querySelector('pre[data-scroll-key]');
+        if (!childPre || childPre === parentPre1) throw new Error('expected fresh child pane on first subject switch');
+        if (childPre.textContent.indexOf('child log line 1') === -1) throw new Error('expected child log after subject switch, got ' + (childPre && childPre.textContent));
+
+        select.value = 'issue-1';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+
+        setTimeout(function () {
+          var parentPre2 = detail && detail.querySelector('pre[data-scroll-key]');
+          if (!parentPre2 || parentPre2 !== parentPre1) throw new Error('expected parent pane node to be reused on subject round-trip');
+          if (parentPre2.firstChild !== parentFirstChild) throw new Error('expected parent pane children to be reused on subject round-trip');
+          if (parentPre2.textContent.indexOf('parent log line 1') === -1) throw new Error('expected parent log after returning to parent subject');
+
+          var pre = document.createElement('pre');
+          pre.id = 'portal-log-cache';
+          pre.textContent = JSON.stringify({
+            parentNodeReused: parentPre2 === parentPre1,
+            parentChildrenReused: parentPre2.firstChild === parentFirstChild,
+            childNodeDistinct: childPre !== parentPre1,
+            childText: childPre && childPre.textContent,
+            parentText: parentPre2 && parentPre2.textContent,
+          });
+          document.body.appendChild(pre);
+        }, 250);
+      }, 250);
+    }, 50);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-log-cache")
+	var result struct {
+		ParentNodeReused     bool   `json:"parentNodeReused"`
+		ParentChildrenReused bool   `json:"parentChildrenReused"`
+		ChildNodeDistinct    bool   `json:"childNodeDistinct"`
+		ChildText            string `json:"childText"`
+		ParentText           string `json:"parentText"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse log-cache payload: %v\nraw=%s", err, payload)
+	}
+	if !result.ParentNodeReused {
+		t.Fatalf("expected parent pane to be reused on subject round-trip, got %#v", result)
+	}
+	if !result.ParentChildrenReused {
+		t.Fatalf("expected parent pane children to be reused on subject round-trip, got %#v", result)
+	}
+	if !result.ChildNodeDistinct {
+		t.Fatalf("expected child pane to be distinct from parent pane on first subject switch, got %#v", result)
+	}
+	if !strings.Contains(result.ChildText, "child log line 1") {
+		t.Fatalf("expected child log text, got %#v", result)
+	}
+	if !strings.Contains(result.ParentText, "parent log line 1") {
+		t.Fatalf("expected parent log text, got %#v", result)
+	}
+}
+
 func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	batchID := "abcd-260618113825"
 	runID := batchID + "-issue-42"
@@ -333,6 +433,108 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	bands := inkBands(img, *result.MetaRect, bg)
 	if len(bands) < 2 || bands[0] >= bands[1] {
 		t.Fatalf("expected screenshot bands for batch and run lines in order, got %#v bands=%v", result, bands)
+	}
+}
+
+func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *testing.T) {
+	parent := map[string]any{
+		"key":         "issue-1",
+		"runId":       "issue-1",
+		"kind":        "active",
+		"status":      "reviewing",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+		"reviewCount": 1,
+		"log":         "parent log line 1\nparent log line 2\nparent log line 3",
+	}
+	child := map[string]any{
+		"key":         "PR42",
+		"runId":       "PR42",
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "PR42",
+		"issueNumber": 1,
+		"prNumber":    42,
+		"review":      true,
+		"log":         "review log line 1\nreview log line 2",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{parent, child})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"issue-1","tabs":{"issue-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__hlCalls = 0;
+    var __origHL = SandmanPortalDiff.highlightTerminalLog;
+    SandmanPortalDiff.highlightTerminalLog = function () {
+      window.__hlCalls += 1;
+      return __origHL.apply(this, arguments);
+    };
+    setTimeout(function () {
+      var pre = document.querySelector('pre[data-scroll-key]');
+      if (!pre) throw new Error('missing initial parent log pre');
+      window.__initialPre = pre;
+      window.__initialFirstChild = pre.firstChild;
+      window.__beforeChildCalls = window.__hlCalls;
+      var select = document.querySelector('select[data-action="set-subject"]');
+      if (!select) throw new Error('missing subject selector');
+      select.value = 'PR42';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }, 50);
+    setTimeout(function () {
+      var pre = document.querySelector('pre[data-scroll-key]');
+      if (!pre) throw new Error('missing child log pre after first switch');
+      window.__childSamePane = pre === window.__initialPre;
+      window.__childCalls = window.__hlCalls - window.__beforeChildCalls;
+      window.__beforeReturnCalls = window.__hlCalls;
+      var select = document.querySelector('select[data-action="set-subject"]');
+      if (!select) throw new Error('missing subject selector before return');
+      select.value = 'issue-1';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }, 180);
+    setTimeout(function () {
+      var pre = document.querySelector('pre[data-scroll-key]');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-subject-cache';
+      marker.textContent = JSON.stringify({
+        childSamePane: window.__childSamePane,
+        childHighlightCalls: window.__childCalls,
+        returnSamePane: pre === window.__initialPre,
+        returnSameFirstChild: pre && window.__initialFirstChild ? pre.firstChild === window.__initialFirstChild : false,
+        returnHighlightCalls: window.__hlCalls - window.__beforeReturnCalls,
+        text: pre && pre.textContent
+      });
+      document.body.appendChild(marker);
+    }, 360);
+  `)
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-subject-cache")
+	var result struct {
+		ChildSamePane       bool   `json:"childSamePane"`
+		ChildHighlightCalls int    `json:"childHighlightCalls"`
+		ReturnSamePane      bool   `json:"returnSamePane"`
+		ReturnSameFirst     bool   `json:"returnSameFirstChild"`
+		ReturnHighlight     int    `json:"returnHighlightCalls"`
+		Text                string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse subject cache payload: %v\nraw=%s", err, payload)
+	}
+	if !strings.Contains(result.Text, "parent log line 1") {
+		t.Fatalf("expected parent log after round-trip, got %#v", result)
+	}
+	if result.ChildSamePane {
+		t.Fatalf("expected first subject switch to mount a fresh child pane, got %#v", result)
+	}
+	if result.ChildHighlightCalls < 1 {
+		t.Fatalf("expected first subject switch to highlight the child pane, got %#v", result)
+	}
+	if !result.ReturnSamePane || !result.ReturnSameFirst {
+		t.Fatalf("expected cached parent pane to be reused on return, got %#v", result)
+	}
+	if result.ReturnHighlight != 0 {
+		t.Fatalf("expected return-to-parent to avoid re-highlighting, got %#v", result)
 	}
 }
 
