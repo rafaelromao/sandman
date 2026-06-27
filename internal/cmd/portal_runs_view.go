@@ -355,10 +355,14 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	return runs, nil
 }
 
-func seenIssuesFromEvents(eventList []events.Event) map[int]struct{} {
+func seenIssuesForBatch(eventList []events.Event, batch daemon.DeadBatch) map[int]struct{} {
 	seen := make(map[int]struct{})
+	startedAt := batch.RunTimestamp()
 	for _, event := range eventList {
 		if event.Issue <= 0 {
+			continue
+		}
+		if !startedAt.IsZero() && event.Timestamp.Before(startedAt) {
 			continue
 		}
 		seen[event.Issue] = struct{}{}
@@ -423,10 +427,9 @@ func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{})
 }
 
 func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch, eventList []events.Event) []portalRun {
-	seen := seenIssuesFromEvents(eventList)
 	rows := make([]portalRun, 0)
 	for _, batch := range deadBatches {
-		missing := missingManifestIssues(batch.Manifest, seen)
+		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(eventList, batch))
 		if len(missing) == 0 {
 			continue
 		}

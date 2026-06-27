@@ -76,6 +76,64 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembers(t *testing.T) {
 	}
 }
 
+func TestPortal_DeadBatchesReuseIssueNumberWithoutSuppressingLaterSynthesis(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	firstStart := time.Now().Add(-30 * time.Minute)
+	firstDir := filepath.Join(repoRoot, ".sandman", "batches", "dead-1")
+	if err := os.MkdirAll(firstDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(firstDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: firstStart}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "dead-1", firstDir, []int{42})
+
+	secondStart := time.Now().Add(-10 * time.Minute)
+	secondDir := filepath.Join(repoRoot, ".sandman", "batches", "dead-2")
+	if err := os.MkdirAll(secondDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(secondDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: secondStart}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "dead-2", secondDir, []int{42})
+
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.started", Timestamp: firstStart.Add(1 * time.Minute), RunID: "run-42-old", Issue: 42, Payload: map[string]any{"branch": "sandman/42-old"}},
+		{Type: "run.finished", Timestamp: firstStart.Add(2 * time.Minute), RunID: "run-42-old", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-old"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 rows for issue 42 across two dead batches, got %d: %#v", len(runs), runs)
+	}
+	var sawSuccess, sawAborted bool
+	for _, run := range runs {
+		if run.IssueNumber != 42 {
+			t.Fatalf("expected issue 42 in both rows, got %#v", run)
+		}
+		switch run.Status {
+		case "success":
+			sawSuccess = true
+		case "aborted":
+			sawAborted = true
+		default:
+			t.Fatalf("unexpected status for reused issue 42: %#v", run)
+		}
+	}
+	if !sawSuccess || !sawAborted {
+		t.Fatalf("expected both success and synthesized aborted rows, got %#v", runs)
+	}
+}
+
 func TestPortal_LiveBatchKeepsNeverStartedMemberQueued(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
