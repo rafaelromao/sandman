@@ -1013,6 +1013,7 @@
       }
       const newLog = subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : 'No log file yet.';
       let pre = content.querySelector('pre[data-scroll-key]');
+      const renderedSubjectFp = content.getAttribute('data-rendered-subject-fingerprint') || '';
       if (!pre) {
         // No log pane is mounted (e.g. returning from Events/Details). Reuse
         // the per-subject cached pane instead of re-tokenizing + re-parsing
@@ -1033,7 +1034,7 @@
           content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
           return;
         }
-        if (oldLog && oldLog !== 'No log file yet.' && newLog === 'No log file yet.') {
+        if (renderedSubjectFp === subjectFp && oldLog && oldLog !== 'No log file yet.' && newLog === 'No log file yet.') {
           return;
         }
         if (oldRun && oldRun.kind === 'active' && run.kind !== 'active' && oldLog && oldLog !== 'No log file yet.' && newLog && newLog !== oldLog && !String(newLog).startsWith(oldLog)) {

@@ -1332,6 +1332,29 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetail_SwitchingSubjectRestoresPlaceholder(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, log: '' };
+const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
+const stopGroups = new Set();
+const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-scroll-key]');
+if (!pre1) throw new Error('expected parent log pre initially');
+if (pre1.textContent !== 'No log file yet.') throw new Error('expected placeholder initially, got ' + JSON.stringify(pre1.textContent));
+const opts2 = { helpers, stopGroups, expandedKey: 'PR42', tabs: { 'PR42': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
+if (pre1.textContent !== 'review log') throw new Error('expected review log after subject switch, got ' + JSON.stringify(pre1.textContent));
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
+if (pre1.textContent !== 'No log file yet.') throw new Error('expected placeholder restored after switching back, got ' + JSON.stringify(pre1.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffDiffRuns_RemovesPlaceholderAfterRealLog(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: '' };
