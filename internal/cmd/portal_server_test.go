@@ -206,6 +206,58 @@ func TestPortal_RunsAPI_OmitsRowsForFinishedBatchWithDeadSocket(t *testing.T) {
 	}
 }
 
+func TestPortal_RunsAPI_SynthesizesOnlyMissingDeadBatchMembers(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "dead-1")
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{1, 2, 3}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "dead-1", batchDir, []int{1, 2, 3})
+
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "batch_id": "dead-1"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+	})
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	runs := readPortalRuns(t, server.URL)
+	// Event-backed issue 1 gets BatchKey from batch_id and dedup strips
+	// the synthetic row, leaving exactly one row per issue.
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 runs (1 event-backed + 2 synthesized), got %d: %#v", len(runs), runs)
+	}
+
+	byIssue := map[int][]portalRun{}
+	for _, run := range runs {
+		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
+	}
+	if got := len(byIssue[1]); got != 1 {
+		t.Fatalf("expected 1 row for issue 1 (event-backed), got %d: %#v", got, byIssue[1])
+	}
+	run := byIssue[1][0]
+	if run.Kind != "completed" || run.Status != "success" || run.BatchKey != "dead-1" {
+		t.Fatalf("expected issue 1 to stay completed success with batch key dead-1, got %#v", run)
+	}
+	for _, issue := range []int{2, 3} {
+		if got := len(byIssue[issue]); got != 1 {
+			t.Fatalf("expected exactly 1 synthesized row for issue %d, got %d: %#v", issue, got, byIssue[issue])
+		}
+		run := byIssue[issue][0]
+		if run.Kind != "completed" || run.Status != "aborted" || run.BatchKey != "dead-1" {
+			t.Fatalf("expected issue %d to synthesize as dead-batch completed aborted row, got %#v", issue, run)
+		}
+	}
+}
+
 func TestPortal_ReviewRunShowsReviewingStatus(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

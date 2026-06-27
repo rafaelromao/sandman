@@ -961,6 +961,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if issue, err := o.githubClient.FetchIssue(num); err == nil && issue != nil {
 				queuedPayload["issue_title"] = issue.Title
 			}
+			if issueBatchID != "" {
+				queuedPayload["batch_id"] = issueBatchID
+			}
 			_ = o.eventLog.Log(events.Event{
 				Type:      "run.queued",
 				Timestamp: time.Now(),
@@ -1050,7 +1053,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			if len(stillBlockedBy) > 0 {
 				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "blocked", Branch: req.Branches[issueNum]}
-				o.logBlocked(issueNum, stillBlockedBy, runID)
+				o.logBlocked(issueNum, stillBlockedBy, runID, issueBatchID)
 
 				mu.Lock()
 				results[idx] = res
@@ -1256,9 +1259,13 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(cfg *config.Config, agentCf
 	}, nil
 }
 
-func (o *Orchestrator) logBlocked(issueNum int, blockers []int, runID string) {
+func (o *Orchestrator) logBlocked(issueNum int, blockers []int, runID string, batchID string) {
 	if o.eventLog == nil {
 		return
+	}
+	payload := map[string]any{"blocked_by": blockers}
+	if batchID != "" {
+		payload["batch_id"] = batchID
 	}
 	_ = o.eventLog.Log(events.Event{
 		Type:      "run.blocked",
@@ -1266,7 +1273,7 @@ func (o *Orchestrator) logBlocked(issueNum int, blockers []int, runID string) {
 		RunID:     runID,
 		Issue:     issueNum,
 		IssueRef:  issueRef(issueNum),
-		Payload:   map[string]any{"blocked_by": blockers},
+		Payload:   payload,
 	})
 }
 
@@ -1910,7 +1917,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
 	if len(blockedBy) > 0 {
 		res := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "blocked", Branch: branch}
-		o.logBlocked(s.issueNumber, blockedBy, runID)
+		o.logBlocked(s.issueNumber, blockedBy, runID, s.batchID)
 		_ = wt.Stop()
 		return res, false
 	}
@@ -2012,6 +2019,9 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		}
 		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
 			payload["model"] = model
+		}
+		if s.batchID != "" {
+			payload["batch_id"] = s.batchID
 		}
 		eventType := "run.started"
 		if s.mode == ModeContinue {
@@ -2359,6 +2369,9 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		}
 		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
 			payload["model"] = model
+		}
+		if s.batchID != "" {
+			payload["batch_id"] = s.batchID
 		}
 		if s.review {
 			payload["review"] = true

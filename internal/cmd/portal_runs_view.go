@@ -222,7 +222,8 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
-	deadBatches, dirIDs, err = v.deadBatchDirIDsByRunID(idx)
+	deadBatches = v.deadBatchesFromIndex(idx, activeInstances)
+	_, dirIDs, err = v.deadBatchDirIDsByRunID(idx)
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +288,60 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		}
 		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun, deadBatches))
 	}
+	runs = append(runs, v.synthesizedDeadBatchRows(deadBatches, runStates)...)
+
+	// Assign BatchKey to event-backed dead-batch rows so dedup can
+	// collapse them with synthetic rows for the same issue/batch.
+	// Without this, event rows keep empty BatchKey and survive dedup
+	// alongside synthetic rows that carry the batch basename.
+	runStatesByID := make(map[string]events.RunState, len(runStates))
+	for _, rs := range runStates {
+		if rs.RunID != "" {
+			runStatesByID[rs.RunID] = rs
+		}
+	}
+	deadBatchNames := make(map[string]struct{}, len(deadBatches))
+	for _, db := range deadBatches {
+		deadBatchNames[filepath.Base(db.RunDir)] = struct{}{}
+	}
+	for i := range runs {
+		if runs[i].BatchKey != "" {
+			continue
+		}
+		rs, ok := runStatesByID[runs[i].RunID]
+		if !ok {
+			continue
+		}
+		if bid := rs.BatchID(); bid != "" {
+			if _, isDead := deadBatchNames[bid]; isDead {
+				runs[i].BatchKey = bid
+			}
+		} else if batchKey, ok := dirIDs[runs[i].RunID]; ok {
+			runs[i].BatchKey = batchKey
+		}
+	}
+
+	// Strip synthetic rows that shadow event-backed rows with the same
+	// (issue, batch) pair after BatchKey enrichment. A row is synthetic
+	// when it has no events. Without this, the higher priority "aborted"
+	// status on synthetic rows would suppress the real event row in
+	// dedupRunGroup.
+	eventsBacked := make(map[string]struct{}, len(runs))
+	for _, run := range runs {
+		if run.IssueNumber > 0 && run.BatchKey != "" && len(run.Events) > 0 {
+			eventsBacked[issueBatchKey(run.IssueNumber, run.BatchKey)] = struct{}{}
+		}
+	}
+	filtered := make([]portalRun, 0, len(runs))
+	for _, run := range runs {
+		if run.IssueNumber > 0 && run.BatchKey != "" && len(run.Events) == 0 {
+			if _, hasEvent := eventsBacked[issueBatchKey(run.IssueNumber, run.BatchKey)]; hasEvent {
+				continue
+			}
+		}
+		filtered = append(filtered, run)
+	}
+	runs = filtered
 
 	runs = v.dedupRuns(runs)
 	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
@@ -351,6 +406,135 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	})
 
 	return runs, nil
+}
+
+func seenIssuesForBatch(runStates []events.RunState, batch daemon.DeadBatch) map[int]struct{} {
+	seen := make(map[int]struct{})
+	batchName := filepath.Base(batch.RunDir)
+	for _, runState := range runStates {
+		issue := runState.IssueNumber()
+		if issue <= 0 || runState.RunID == "" || runState.IsReview() {
+			continue
+		}
+		// Use exact batch identity from the event payload's batch_id
+		// field (written at event-emission time by the orchestrator).
+		// When batch_id matches this batch, the issue started here and
+		// must not be synthesized. Events without batch_id (legacy)
+		// are not counted as seen — the event-log row survives via the
+		// normal portal path and may coexist with a synthesized row.
+		if runState.BatchID() == batchName {
+			seen[issue] = struct{}{}
+		}
+	}
+	return seen
+}
+
+func (v *portalRunsView) deadBatchesFromIndex(idx *batchindex.Index, activeInstances []portalActiveRun) []daemon.DeadBatch {
+	if idx == nil || len(idx.Entries) == 0 {
+		return nil
+	}
+	activeBatchIDs := make(map[string]struct{}, len(activeInstances))
+	for _, active := range activeInstances {
+		if active.Key != "" {
+			activeBatchIDs[active.Key] = struct{}{}
+		}
+		if active.BatchID != "" {
+			activeBatchIDs[active.BatchID] = struct{}{}
+		}
+	}
+	deadBatches := make([]daemon.DeadBatch, 0, len(idx.Entries))
+	for i := range idx.Entries {
+		entry := idx.Entries[i]
+		if entry.Path == "" {
+			continue
+		}
+		if _, ok := activeBatchIDs[entry.ID]; ok {
+			continue
+		}
+		manifest, err := daemon.ReadManifest(entry.Path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				logPortalViewDegrade("dead-batch-manifest:"+entry.ID, "read manifest for dead batch %q: %v", entry.Path, err)
+			}
+			manifest = daemon.BatchManifest{}
+		}
+		if manifest.RunKind == "" {
+			manifest.RunKind = string(entry.Kind)
+		}
+		deadBatches = append(deadBatches, daemon.DeadBatch{RunDir: entry.Path, Manifest: manifest})
+	}
+	return deadBatches
+}
+
+func issueBatchKey(issue int, batch string) string {
+	return fmt.Sprintf("%d/%s", issue, batch)
+}
+
+func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{}) []int {
+	if manifest.RunKind == "auto-select" || manifest.RunKind == "review" {
+		return nil
+	}
+	missing := make([]int, 0, len(manifest.Issues))
+	seenManifest := make(map[int]struct{}, len(manifest.Issues))
+	for _, issue := range manifest.Issues {
+		if _, ok := seenManifest[issue]; ok {
+			continue
+		}
+		seenManifest[issue] = struct{}{}
+		if _, ok := seen[issue]; ok {
+			continue
+		}
+		missing = append(missing, issue)
+	}
+	return missing
+}
+
+func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch, runStates []events.RunState) []portalRun {
+	if len(deadBatches) == 0 {
+		return nil
+	}
+	sortedBatches := append([]daemon.DeadBatch(nil), deadBatches...)
+	sort.SliceStable(sortedBatches, func(i, j int) bool {
+		ii := sortedBatches[i].RunTimestamp()
+		jj := sortedBatches[j].RunTimestamp()
+		if !ii.Equal(jj) {
+			return ii.Before(jj)
+		}
+		return sortedBatches[i].RunDir < sortedBatches[j].RunDir
+	})
+	rows := make([]portalRun, 0)
+	for _, batch := range sortedBatches {
+		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(runStates, batch))
+		if len(missing) == 0 {
+			continue
+		}
+		batchKey := filepath.Base(batch.RunDir)
+		startedAt := batch.RunTimestamp()
+		if startedAt.IsZero() {
+			startedAt = batch.Manifest.CreatedAt
+		}
+		for _, issueNumber := range missing {
+			runID := fmt.Sprintf("%s-issue-%d", batchKey, issueNumber)
+			finishedAt := startedAt
+			run := portalRun{
+				Key:         runID,
+				RunID:       runID,
+				Kind:        "completed",
+				Status:      "aborted",
+				IssueLabel:  fmt.Sprintf("#%d", issueNumber),
+				IssueNumber: issueNumber,
+				StartedAt:   startedAt,
+				FinishedAt:  &finishedAt,
+				Duration:    "0s",
+				BatchKey:    batchKey,
+			}
+			if len(batch.Manifest.Issues) > 1 {
+				run.BatchIssues = append([]int(nil), batch.Manifest.Issues...)
+			}
+			rows = append(rows, run)
+		}
+	}
+	return rows
 }
 
 // dedupRuns collapses duplicate rows per issue per batch. Two rows for
