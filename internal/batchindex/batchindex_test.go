@@ -365,6 +365,38 @@ func TestEntry_JSONSchema(t *testing.T) {
 	}
 }
 
+func TestEntry_JSONSchema_PromptOnlyIssuesAreExplicitEmptyArray(t *testing.T) {
+	entry := Entry{
+		ID:        "prompt-only-abc123",
+		Path:      ".sandman/batches/prompt-only-abc123",
+		Kind:      KindPromptOnly,
+		Status:    StatusActive,
+		CreatedAt: time.Now().Truncate(time.Second),
+	}
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	rawIssues, ok := decoded["issues"]
+	if !ok {
+		t.Fatalf("expected issues field to be present in %s", string(data))
+	}
+	issues, ok := rawIssues.([]any)
+	if !ok {
+		t.Fatalf("expected issues to decode as array, got %T (%v)", rawIssues, rawIssues)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("expected prompt-only issues to be empty, got %v", issues)
+	}
+}
+
 func TestAddEntry_New(t *testing.T) {
 	idx := &Index{Version: IndexVersion}
 	entry := Entry{ID: "abc123", Kind: KindIssue}

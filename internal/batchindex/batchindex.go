@@ -45,6 +45,56 @@ type Entry struct {
 	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
 }
 
+func (e Entry) MarshalJSON() ([]byte, error) {
+	type alias struct {
+		ID         string     `json:"id"`
+		Path       string     `json:"path"`
+		Kind       Kind       `json:"kind"`
+		Status     Status     `json:"status"`
+		CreatedAt  time.Time  `json:"createdAt"`
+		Issues     []int      `json:"issues,omitempty"`
+		PR         int        `json:"pr,omitempty"`
+		ArchivedAt *time.Time `json:"archivedAt,omitempty"`
+	}
+
+	if e.Kind == KindPromptOnly {
+		issues := e.Issues
+		if issues == nil {
+			issues = []int{}
+		}
+		return json.Marshal(struct {
+			ID         string     `json:"id"`
+			Path       string     `json:"path"`
+			Kind       Kind       `json:"kind"`
+			Status     Status     `json:"status"`
+			CreatedAt  time.Time  `json:"createdAt"`
+			Issues     []int      `json:"issues"`
+			PR         int        `json:"pr,omitempty"`
+			ArchivedAt *time.Time `json:"archivedAt,omitempty"`
+		}{
+			ID:         e.ID,
+			Path:       e.Path,
+			Kind:       e.Kind,
+			Status:     e.Status,
+			CreatedAt:  e.CreatedAt,
+			Issues:     issues,
+			PR:         e.PR,
+			ArchivedAt: e.ArchivedAt,
+		})
+	}
+
+	return json.Marshal(alias{
+		ID:         e.ID,
+		Path:       e.Path,
+		Kind:       e.Kind,
+		Status:     e.Status,
+		CreatedAt:  e.CreatedAt,
+		Issues:     e.Issues,
+		PR:         e.PR,
+		ArchivedAt: e.ArchivedAt,
+	})
+}
+
 type RunManifest struct {
 	RunID        string    `json:"runID"`
 	BatchID      string    `json:"batchId"`
