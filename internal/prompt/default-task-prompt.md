@@ -26,6 +26,12 @@ The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not s
 
 After completing each item, update `.sandman/task.md` in place by checking that item off.
 
+## Already Resolved
+
+If the issue is already implemented on `{{BASE_BRANCH}}`, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
+
+Do not paraphrase this line. Do not use `already implemented`, `no action required`, or any other wording for this marker.
+
 ## Mandatory Execution Contract
 
 This task must be executed through the Sandman skill workflow, not by ad-hoc implementation.

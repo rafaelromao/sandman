@@ -4,6 +4,26 @@
   let mutationCount = 0;
   let innerHTMLAssignmentCount = 0;
 
+  // Per-subject cache of the rendered log pane (the <section>/<pre> built by
+  // buildLogContent). Building a log pane tokenizes + parses the whole log
+  // into thousands of nodes on the main thread; doing that on every tab
+  // round-trip (Log -> Events -> Log) froze the UI. Instead of discarding
+  // the pane when leaving the Log tab, updateDetailContent detaches it here
+  // and re-attaches the same nodes on return, so the round-trip is O(1).
+  // Keyed by subject run-id; bounded by clearing on overflow.
+  const logPaneCache = new Map();
+  const LOG_PANE_CACHE_LIMIT = 8;
+  function takeCachedLogPane(subjectValue) {
+    const pane = logPaneCache.get(subjectValue);
+    if (pane) logPaneCache.delete(subjectValue);
+    return pane || null;
+  }
+  function storeCachedLogPane(subjectValue, pane) {
+    if (!subjectValue || !pane) return;
+    if (logPaneCache.size >= LOG_PANE_CACHE_LIMIT) logPaneCache.clear();
+    logPaneCache.set(subjectValue, pane);
+  }
+
   function resetCounters() {
     mutationCount = 0;
     innerHTMLAssignmentCount = 0;
@@ -685,11 +705,41 @@
     return out;
   }
 
-  function highlightTerminalLog(text) {
-    if (Prism && Prism.languages && Prism.languages['sandman-log'] && Prism.tokenize) {
-      return renderWithGrammarPrism(text);
+  // Memoize the expensive full-log tokenization. highlightTerminalLog is
+  // called with the entire (up to 64KB) log every time a log pane is built
+  // (row open / subject switch / tab return). The same log text yields the
+  // same HTML, so cache the result keyed by length + djb2 hash with a full
+  // value guard against collisions. Only large inputs are cached so the
+  // per-line SSE path (small strings) cannot evict the costly entries.
+  const highlightCache = new Map();
+  const HIGHLIGHT_CACHE_LIMIT = 8;
+  const HIGHLIGHT_CACHE_MIN_LEN = 4096;
+  function djb2(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i += 1) {
+      h = ((h << 5) + h + s.charCodeAt(i)) | 0;
     }
-    return Prism.highlight(text, terminalGrammar);
+    return (h >>> 0).toString(36);
+  }
+  function computeTerminalHighlight(value) {
+    if (Prism && Prism.languages && Prism.languages['sandman-log'] && Prism.tokenize) {
+      return renderWithGrammarPrism(value);
+    }
+    return Prism.highlight(value, terminalGrammar);
+  }
+  function highlightTerminalLog(text) {
+    const value = String(text == null ? '' : text);
+    if (!value) return '';
+    if (value.length >= HIGHLIGHT_CACHE_MIN_LEN) {
+      const key = value.length + ':' + djb2(value);
+      const hit = highlightCache.get(key);
+      if (hit !== undefined && hit.value === value) return hit.html;
+      const html = computeTerminalHighlight(value);
+      if (highlightCache.size >= HIGHLIGHT_CACHE_LIMIT) highlightCache.clear();
+      highlightCache.set(key, { value: value, html: html });
+      return html;
+    }
+    return computeTerminalHighlight(value);
   }
 
   function renderWithGrammarPrism(text) {
@@ -961,14 +1011,53 @@
       if (opts.streamingKeys && opts.streamingKeys.has(run.key) && content.querySelector('pre[data-scroll-key]')) {
         return;
       }
-      const pre = content.querySelector('pre[data-scroll-key]');
       const newLog = subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : 'No log file yet.';
+      let pre = content.querySelector('pre[data-scroll-key]');
+      const renderedSubjectFp = content.getAttribute('data-rendered-subject-fingerprint') || '';
+      const renderedSubjectValue = renderedSubjectFp ? renderedSubjectFp.split('|')[0] : '';
+      if (pre && renderedSubjectValue && renderedSubjectValue !== subjectValue) {
+        // Subject switch while staying on the Log tab: preserve the outgoing
+        // pane under the old subject, then mount the incoming subject's cached
+        // pane (or build a fresh one). Updating the outgoing <pre> in place
+        // would destroy the cached pane and keep subject switches on the full
+        // rebuild path.
+        const outgoingPane = (pre.parentNode && pre.parentNode !== content) ? pre.parentNode : pre;
+        storeCachedLogPane(renderedSubjectValue, outgoingPane);
+        while (content.firstChild) content.removeChild(content.firstChild);
+        content.removeAttribute('data-rendered-fingerprint');
+        const cached = takeCachedLogPane(subjectValue);
+        if (cached) {
+          content.appendChild(cached);
+          pre = cached.querySelector('pre[data-scroll-key]');
+          mutationCount += 1;
+        } else {
+          buildLogContent(content, subjectRun, opts.helpers);
+          content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
+          mutationCount += 1;
+          return;
+        }
+      }
+      if (!pre) {
+        // No log pane is mounted (e.g. returning from Events/Details). Reuse
+        // the per-subject cached pane instead of re-tokenizing + re-parsing
+        // the whole log. Clear any stale pane first so content holds exactly
+        // one pane.
+        while (content.firstChild) content.removeChild(content.firstChild);
+        content.removeAttribute('data-rendered-fingerprint');
+        const cached = takeCachedLogPane(subjectValue);
+        if (cached) {
+          content.appendChild(cached);
+          pre = cached.querySelector('pre[data-scroll-key]');
+          mutationCount += 1;
+        }
+      }
       if (pre) {
         const oldLog = pre.getAttribute('data-rendered-log') || '';
         if (oldLog === newLog) {
+          content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
           return;
         }
-        if (oldLog && oldLog !== 'No log file yet.' && newLog === 'No log file yet.') {
+        if (renderedSubjectFp === subjectFp && oldLog && oldLog !== 'No log file yet.' && newLog === 'No log file yet.') {
           return;
         }
         if (oldRun && oldRun.kind === 'active' && run.kind !== 'active' && oldLog && oldLog !== 'No log file yet.' && newLog && newLog !== oldLog && !String(newLog).startsWith(oldLog)) {
@@ -998,8 +1087,16 @@
       fingerprint = 'details|' + detailsFingerprint(subjectRun, opts.helpers);
     }
     fingerprint += '|subjects:' + subjectFp;
-    if (content.getAttribute('data-rendered-fingerprint') === fingerprint) {
+    if (content.getAttribute('data-rendered-fingerprint') === fingerprint && content.firstChild) {
       return;
+    }
+    // Leaving the Log tab: preserve the rendered log pane in the per-subject
+    // cache instead of discarding it, so returning to Log is O(1).
+    const mountedLogPre = content.querySelector('pre[data-scroll-key]');
+    if (mountedLogPre) {
+      const pane = (mountedLogPre.parentNode && mountedLogPre.parentNode !== content) ? mountedLogPre.parentNode : mountedLogPre;
+      storeCachedLogPane(subjectValue, pane);
+      content.removeAttribute('data-rendered-subject-fingerprint');
     }
     while (content.firstChild) content.removeChild(content.firstChild);
     if (tabName === 'events') {

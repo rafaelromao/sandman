@@ -1631,6 +1631,28 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	}
 }
 
+func TestHasExactTaskStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		taskContent string
+		status      string
+		want        bool
+	}{
+		{name: "exact line", taskContent: "preamble\n## Status: already resolved\npostamble", status: "## Status: already resolved", want: true},
+		{name: "different wording", taskContent: "## Status: already implemented", status: "## Status: already resolved", want: false},
+		{name: "extra text", taskContent: "## Status: already resolved and done", status: "## Status: already resolved", want: false},
+		{name: "missing hashes", taskContent: "Status: already resolved", status: "## Status: already resolved", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasExactTaskStatus(tc.taskContent, tc.status); got != tc.want {
+				t.Fatalf("hasExactTaskStatus() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
