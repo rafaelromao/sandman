@@ -288,7 +288,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		}
 		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun, deadBatches))
 	}
-	runs = append(runs, v.synthesizedDeadBatchRows(deadBatches, runStates, dirIDs)...)
+	runs = append(runs, v.synthesizedDeadBatchRows(deadBatches, runStates)...)
 
 	runs = v.dedupRuns(runs)
 	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
@@ -355,7 +355,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	return runs, nil
 }
 
-func seenIssuesForBatch(runStates []events.RunState, batch daemon.DeadBatch, dirIDs map[string]string) map[int]struct{} {
+func seenIssuesForBatch(runStates []events.RunState, batch daemon.DeadBatch) map[int]struct{} {
 	seen := make(map[int]struct{})
 	batchName := filepath.Base(batch.RunDir)
 	for _, runState := range runStates {
@@ -363,14 +363,13 @@ func seenIssuesForBatch(runStates []events.RunState, batch daemon.DeadBatch, dir
 		if issue <= 0 || runState.RunID == "" || runState.IsReview() {
 			continue
 		}
-		// Use exact batch identity matching via dirIDs (the runs/
-		// directory enumeration). When dirIDs maps this RunID to this
-		// batch, we know the issue started in this batch and must not
-		// be synthesized. RunIDs not present in dirIDs are not counted
-		// as seen — the event-log row survives via the normal portal
-		// path and may coexist with a synthesized row when the backing
-		// runs/ directory has been deleted.
-		if batchID, ok := dirIDs[runState.RunID]; ok && batchID == batchName {
+		// Use exact batch identity from the event payload's batch_id
+		// field (written at event-emission time by the orchestrator).
+		// When batch_id matches this batch, the issue started here and
+		// must not be synthesized. Events without batch_id (legacy)
+		// are not counted as seen — the event-log row survives via the
+		// normal portal path and may coexist with a synthesized row.
+		if runState.BatchID() == batchName {
 			seen[issue] = struct{}{}
 		}
 	}
@@ -433,7 +432,7 @@ func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{})
 	return missing
 }
 
-func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch, runStates []events.RunState, dirIDs map[string]string) []portalRun {
+func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch, runStates []events.RunState) []portalRun {
 	if len(deadBatches) == 0 {
 		return nil
 	}
@@ -448,7 +447,7 @@ func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch
 	})
 	rows := make([]portalRun, 0)
 	for _, batch := range sortedBatches {
-		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(runStates, batch, dirIDs))
+		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(runStates, batch))
 		if len(missing) == 0 {
 			continue
 		}

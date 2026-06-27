@@ -838,16 +838,16 @@ func TestPortal_Compute_CompletedRunUnderArchiveDir_MarksArchived(t *testing.T) 
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
-	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
-	})
-
 	archiveDir := filepath.Join(repoRoot, ".sandman", "archive", runID)
 	if err := os.MkdirAll(archiveDir, 0755); err != nil {
 		t.Fatalf("mkdir archive: %v", err)
 	}
 	addArchivedBatchToIndex(t, repoRoot, runID, archiveDir, []int{42})
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
@@ -994,8 +994,9 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 	}
 	addBatchToIndex(t, repoRoot, runID, runDir, []int{42})
 
+	batchName := filepath.Base(runDir)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": batchName}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
 	})
 
@@ -1030,9 +1031,9 @@ func TestPortal_Compute_CompletedRunWithSourceDirOnly_DoesNotCountAsSourceExists
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
+
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},

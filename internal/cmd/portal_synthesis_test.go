@@ -54,7 +54,7 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembers(t *testing.T) {
 	}
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "batch_id": "dead-1"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
 	})
 
@@ -264,7 +264,7 @@ func TestPortal_DeadBatchesReuseIssueNumberWithoutSuppressingLaterSynthesis(t *t
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: firstStart.Add(1 * time.Minute), RunID: "run-42-old", Issue: 42, Payload: map[string]any{"branch": "sandman/42-old"}},
+		{Type: "run.started", Timestamp: firstStart.Add(1 * time.Minute), RunID: "run-42-old", Issue: 42, Payload: map[string]any{"branch": "sandman/42-old", "batch_id": "dead-1"}},
 		{Type: "run.finished", Timestamp: firstStart.Add(2 * time.Minute), RunID: "run-42-old", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-old"}},
 	})
 
@@ -315,7 +315,7 @@ func TestPortal_DeadBatchUsesBatchSkewWindowForSeenIssues(t *testing.T) {
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt.Add(-500 * time.Millisecond), RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(-500 * time.Millisecond), RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": "dead-1"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(500 * time.Millisecond), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
 	})
 
@@ -392,7 +392,7 @@ func TestPortal_MixedLiveDeadAndOrphanRowsStayDistinct(t *testing.T) {
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "batch_id": "dead-1"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
 		{Type: "run.started", Timestamp: startedAt.Add(3 * time.Minute), RunID: "orphan-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix"}},
 		{Type: "run.aborted", Timestamp: startedAt.Add(4 * time.Minute), RunID: "orphan-99", Issue: 99, Payload: map[string]any{"status": "aborted", "branch": "sandman/99-fix"}},

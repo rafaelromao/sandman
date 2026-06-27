@@ -195,6 +195,19 @@ func (r RunState) Branch() string {
 	return ""
 }
 
+// BatchID returns the batch identifier from the started event payload.
+func (r RunState) BatchID() string {
+	if id, ok := payloadString(r.Started.Payload, "batch_id"); ok && id != "" {
+		return id
+	}
+	if r.Finished != nil {
+		if id, ok := payloadString(r.Finished.Payload, "batch_id"); ok && id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
 // Duration returns the elapsed time between start and finish.
 func (r RunState) Duration() time.Duration {
 	if r.Finished == nil || r.Started.Timestamp.IsZero() || r.Finished.Timestamp.IsZero() {

@@ -2000,6 +2000,9 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
 			payload["model"] = model
 		}
+		if s.batchID != "" {
+			payload["batch_id"] = s.batchID
+		}
 		eventType := "run.started"
 		if s.mode == ModeContinue {
 			eventType = "run.continued"
@@ -2346,6 +2349,9 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		}
 		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
 			payload["model"] = model
+		}
+		if s.batchID != "" {
+			payload["batch_id"] = s.batchID
 		}
 		if s.review {
 			payload["review"] = true
