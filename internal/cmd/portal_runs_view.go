@@ -290,6 +290,59 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	}
 	runs = append(runs, v.synthesizedDeadBatchRows(deadBatches, runStates)...)
 
+	// Assign BatchKey to event-backed dead-batch rows so dedup can
+	// collapse them with synthetic rows for the same issue/batch.
+	// Without this, event rows keep empty BatchKey and survive dedup
+	// alongside synthetic rows that carry the batch basename.
+	runStatesByID := make(map[string]events.RunState, len(runStates))
+	for _, rs := range runStates {
+		if rs.RunID != "" {
+			runStatesByID[rs.RunID] = rs
+		}
+	}
+	deadBatchNames := make(map[string]struct{}, len(deadBatches))
+	for _, db := range deadBatches {
+		deadBatchNames[filepath.Base(db.RunDir)] = struct{}{}
+	}
+	for i := range runs {
+		if runs[i].BatchKey != "" {
+			continue
+		}
+		rs, ok := runStatesByID[runs[i].RunID]
+		if !ok {
+			continue
+		}
+		if bid := rs.BatchID(); bid != "" {
+			if _, isDead := deadBatchNames[bid]; isDead {
+				runs[i].BatchKey = bid
+			}
+		} else if batchKey, ok := dirIDs[runs[i].RunID]; ok {
+			runs[i].BatchKey = batchKey
+		}
+	}
+
+	// Strip synthetic rows that shadow event-backed rows with the same
+	// (issue, batch) pair after BatchKey enrichment. A row is synthetic
+	// when it has no events. Without this, the higher priority "aborted"
+	// status on synthetic rows would suppress the real event row in
+	// dedupRunGroup.
+	eventsBacked := make(map[string]struct{}, len(runs))
+	for _, run := range runs {
+		if run.IssueNumber > 0 && run.BatchKey != "" && len(run.Events) > 0 {
+			eventsBacked[issueBatchKey(run.IssueNumber, run.BatchKey)] = struct{}{}
+		}
+	}
+	filtered := make([]portalRun, 0, len(runs))
+	for _, run := range runs {
+		if run.IssueNumber > 0 && run.BatchKey != "" && len(run.Events) == 0 {
+			if _, hasEvent := eventsBacked[issueBatchKey(run.IssueNumber, run.BatchKey)]; hasEvent {
+				continue
+			}
+		}
+		filtered = append(filtered, run)
+	}
+	runs = filtered
+
 	runs = v.dedupRuns(runs)
 	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
 	runs = v.aggregateReviewChildren(runs)
@@ -411,6 +464,10 @@ func (v *portalRunsView) deadBatchesFromIndex(idx *batchindex.Index, activeInsta
 		deadBatches = append(deadBatches, daemon.DeadBatch{RunDir: entry.Path, Manifest: manifest})
 	}
 	return deadBatches
+}
+
+func issueBatchKey(issue int, batch string) string {
+	return fmt.Sprintf("%d/%s", issue, batch)
 }
 
 func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{}) []int {

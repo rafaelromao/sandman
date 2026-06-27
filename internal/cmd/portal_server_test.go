@@ -224,33 +224,28 @@ func TestPortal_RunsAPI_SynthesizesOnlyMissingDeadBatchMembers(t *testing.T) {
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "batch_id": "dead-1"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
 	})
 
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	runs := readPortalRuns(t, server.URL)
-	// Without runs/ directory, dirIDs is empty and issue 1 also
-	// gets a synthesized row alongside its event-backed row.
-	if len(runs) != 4 {
-		t.Fatalf("expected 4 runs (1 event-backed + 3 synthesized), got %d: %#v", len(runs), runs)
+	// Event-backed issue 1 gets BatchKey from batch_id and dedup strips
+	// the synthetic row, leaving exactly one row per issue.
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 runs (1 event-backed + 2 synthesized), got %d: %#v", len(runs), runs)
 	}
 
 	byIssue := map[int][]portalRun{}
 	for _, run := range runs {
 		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
 	}
-	if got := len(byIssue[1]); got != 2 {
-		t.Fatalf("expected 2 rows for issue 1 (event + synthesized), got %d: %#v", got, byIssue[1])
+	if got := len(byIssue[1]); got != 1 {
+		t.Fatalf("expected 1 row for issue 1 (event-backed), got %d: %#v", got, byIssue[1])
 	}
-	for _, run := range byIssue[1] {
-		if run.Kind == "completed" && run.Status == "success" && run.BatchKey == "" {
-			continue // event-backed row
-		}
-		if run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-1" {
-			continue // synthesized row (runs/ missing)
-		}
-		t.Fatalf("unexpected row for issue 1: %#v", run)
+	run := byIssue[1][0]
+	if run.Kind != "completed" || run.Status != "success" || run.BatchKey != "dead-1" {
+		t.Fatalf("expected issue 1 to stay completed success with batch key dead-1, got %#v", run)
 	}
 	for _, issue := range []int{2, 3} {
 		if got := len(byIssue[issue]); got != 1 {
