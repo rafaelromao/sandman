@@ -436,6 +436,128 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	}
 }
 
+func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
+	batchID := "abcd-260618113825"
+	runID := batchID + "-issue-42"
+	initialRun := map[string]any{
+		"key":         batchID,
+		"runId":       runID,
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    batchID,
+		"log":         "initial mixed log line 1\ninitial mixed log line 2",
+	}
+	refreshedRun := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    batchID,
+		"log":         "refreshed mixed log line 1\nrefreshed mixed log line 2",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{initialRun})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	refreshedRunsJSON, err := json.Marshal([]map[string]any{refreshedRun})
+	if err != nil {
+		t.Fatalf("marshal refreshed runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__portalFetchPayloads = [
+      { runs: `+string(runsJSON)+` },
+      { runs: `+string(refreshedRunsJSON)+` }
+    ];
+    window.__portalFetchCalls = 0;
+    window.fetch = async function () {
+      window.__portalFetchCalls += 1;
+      var next = window.__portalFetchPayloads.length ? window.__portalFetchPayloads.shift() : { runs: [] };
+      return {
+        ok: true,
+        status: 200,
+        json: async function () { return next; },
+        text: async function () { return ''; },
+      };
+    };
+    setTimeout(function () {
+      window.__portalInitialRow = document.querySelector('tr[data-run-key="`+runID+`"]');
+      window.__portalInitialDetail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var initialDetailPre = window.__portalInitialDetail && window.__portalInitialDetail.querySelector('.detail-content pre[data-scroll-key]');
+      window.__portalInitialDetailText = initialDetailPre && initialDetailPre.innerText;
+    }, 50);
+    setTimeout(function () {
+      var row = document.querySelector('tr[data-run-key="`+runID+`"]');
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var title = row && row.querySelector('[data-cell="title"] .name');
+      var meta = row && row.querySelector('[data-cell="title"] .meta-line');
+      var detailPre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
+      var pre = document.createElement('pre');
+      pre.id = 'portal-identity-refresh';
+      pre.textContent = JSON.stringify({
+        initialSameRow: window.__portalInitialRow === row,
+        initialSameDetail: window.__portalInitialDetail === detail,
+        initialDetailText: window.__portalInitialDetailText,
+        rowKey: row && row.getAttribute('data-run-key'),
+        detailFor: detail && detail.getAttribute('data-detail-for'),
+        titleText: title && title.textContent,
+        metaText: meta && meta.innerText,
+        detailText: detailPre && detailPre.innerText,
+        fetchCalls: window.__portalFetchCalls || 0,
+      });
+      document.body.appendChild(pre);
+    }, 2200);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-identity-refresh")
+	var result struct {
+		InitialSameRow    bool   `json:"initialSameRow"`
+		InitialSameDetail bool   `json:"initialSameDetail"`
+		InitialDetailText string `json:"initialDetailText"`
+		RowKey            string `json:"rowKey"`
+		DetailFor         string `json:"detailFor"`
+		TitleText         string `json:"titleText"`
+		MetaText          string `json:"metaText"`
+		DetailText        string `json:"detailText"`
+		FetchCalls        int    `json:"fetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse identity payload: %v\nraw=%s", err, payload)
+	}
+	if !result.InitialSameRow {
+		t.Fatalf("expected same rendered row node to survive refresh, got %#v", result)
+	}
+	if !result.InitialSameDetail {
+		t.Fatalf("expected same detail node to survive refresh, got %#v", result)
+	}
+	if !strings.Contains(result.InitialDetailText, "initial mixed log line 1") {
+		t.Fatalf("expected initial detail text to reflect first payload, got %#v", result)
+	}
+	if result.RowKey != runID {
+		t.Fatalf("expected row identity locked to run %s, got %#v", runID, result)
+	}
+	if result.DetailFor != runID {
+		t.Fatalf("expected detail linkage locked to run %s, got %#v", runID, result)
+	}
+	if result.TitleText != "#42" {
+		t.Fatalf("expected visible title to stay on issue label, got %#v", result)
+	}
+	if !strings.Contains(result.MetaText, "Batch: "+batchID) || !strings.Contains(result.MetaText, "Run: "+runID) {
+		t.Fatalf("expected batch/run metadata on refreshed row, got %#v", result)
+	}
+	if !strings.Contains(result.DetailText, "refreshed mixed log line 1") || strings.Contains(result.DetailText, "initial mixed log line 1") {
+		t.Fatalf("expected refreshed detail text only, got %#v", result)
+	}
+	if result.FetchCalls < 2 {
+		t.Fatalf("expected initial render plus refresh fetches, got %#v", result)
+	}
+}
+
 func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *testing.T) {
 	parent := map[string]any{
 		"key":         "issue-1",
