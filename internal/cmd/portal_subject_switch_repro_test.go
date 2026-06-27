@@ -485,6 +485,12 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
       };
     };
     setTimeout(function () {
+      window.__portalInitialRow = document.querySelector('tr[data-run-key="`+runID+`"]');
+      window.__portalInitialDetail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var initialDetailPre = window.__portalInitialDetail && window.__portalInitialDetail.querySelector('.detail-content pre[data-scroll-key]');
+      window.__portalInitialDetailText = initialDetailPre && initialDetailPre.innerText;
+    }, 50);
+    setTimeout(function () {
       var row = document.querySelector('tr[data-run-key="`+runID+`"]');
       var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
       var title = row && row.querySelector('[data-cell="title"] .name');
@@ -493,6 +499,9 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
       var pre = document.createElement('pre');
       pre.id = 'portal-identity-refresh';
       pre.textContent = JSON.stringify({
+        initialSameRow: window.__portalInitialRow === row,
+        initialSameDetail: window.__portalInitialDetail === detail,
+        initialDetailText: window.__portalInitialDetailText,
         rowKey: row && row.getAttribute('data-run-key'),
         detailFor: detail && detail.getAttribute('data-detail-for'),
         titleText: title && title.textContent,
@@ -507,15 +516,27 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
 	dom, _ := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-identity-refresh")
 	var result struct {
-		RowKey     string `json:"rowKey"`
-		DetailFor  string `json:"detailFor"`
-		TitleText  string `json:"titleText"`
-		MetaText   string `json:"metaText"`
-		DetailText string `json:"detailText"`
-		FetchCalls int    `json:"fetchCalls"`
+		InitialSameRow    bool   `json:"initialSameRow"`
+		InitialSameDetail bool   `json:"initialSameDetail"`
+		InitialDetailText string `json:"initialDetailText"`
+		RowKey            string `json:"rowKey"`
+		DetailFor         string `json:"detailFor"`
+		TitleText         string `json:"titleText"`
+		MetaText          string `json:"metaText"`
+		DetailText        string `json:"detailText"`
+		FetchCalls        int    `json:"fetchCalls"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse identity payload: %v\nraw=%s", err, payload)
+	}
+	if !result.InitialSameRow {
+		t.Fatalf("expected same rendered row node to survive refresh, got %#v", result)
+	}
+	if !result.InitialSameDetail {
+		t.Fatalf("expected same detail node to survive refresh, got %#v", result)
+	}
+	if !strings.Contains(result.InitialDetailText, "initial mixed log line 1") {
+		t.Fatalf("expected initial detail text to reflect first payload, got %#v", result)
 	}
 	if result.RowKey != runID {
 		t.Fatalf("expected row identity locked to run %s, got %#v", runID, result)
