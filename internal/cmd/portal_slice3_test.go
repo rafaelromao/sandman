@@ -1231,6 +1231,94 @@ func TestPortal_Compute_OrphanedActiveRunFromDeadBatch_Demoted(t *testing.T) {
 	}
 }
 
+func TestPortal_Compute_LiveParentAndDeadReviewChild_DoesNotAggregateReviewing(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	liveParentAt := startedAt.Add(5 * time.Minute)
+	deadReviewAt := startedAt
+
+	liveBatchID := "batch-live"
+	liveRunID := "run-live-issue-1"
+	liveBatchDir := filepath.Join(repoRoot, ".sandman", "batches", liveBatchID)
+	liveRunDir := filepath.Join(liveBatchDir, "runs", liveRunID)
+	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
+		t.Fatalf("mkdir live run dir: %v", err)
+	}
+	createUnixRunSocket(t, filepath.Join(liveBatchDir, "batch.sock"))
+	if err := daemon.WriteManifest(liveBatchDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: liveParentAt, BatchId: liveBatchID}); err != nil {
+		t.Fatalf("write live manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(liveRunDir, "run.json"), []byte(`{"run_id":"`+liveRunID+`","issue":1,"branch":"sandman/1-fix"}`), 0644); err != nil {
+		t.Fatalf("write live run.json: %v", err)
+	}
+	addBatchToIndex(t, repoRoot, liveBatchID, liveBatchDir, []int{1})
+
+	deadBatchID := "batch-dead"
+	deadReviewID := "review-1"
+	deadBatchDir := filepath.Join(repoRoot, ".sandman", "batches", deadBatchID)
+	deadRunDir := filepath.Join(deadBatchDir, "runs", deadReviewID)
+	if err := os.MkdirAll(deadRunDir, 0755); err != nil {
+		t.Fatalf("mkdir dead run dir: %v", err)
+	}
+	if err := daemon.WriteManifest(deadBatchDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: deadReviewAt, BatchId: deadBatchID}); err != nil {
+		t.Fatalf("write dead manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(deadRunDir, "run.json"), []byte(`{"run_id":"`+deadReviewID+`","issue":1,"branch":"sandman/review-42"}`), 0644); err != nil {
+		t.Fatalf("write dead run.json: %v", err)
+	}
+	addBatchToIndex(t, repoRoot, deadBatchID, deadBatchDir, []int{1})
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: liveParentAt, RunID: liveRunID, Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: deadReviewAt, RunID: deadReviewID, Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-42"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	var parent *portalRun
+	var review *portalRun
+	for i := range runs {
+		r := &runs[i]
+		if r.IssueNumber != 1 {
+			continue
+		}
+		if r.Review {
+			review = r
+			continue
+		}
+		if r.RunID == liveRunID {
+			parent = r
+		}
+	}
+	if parent == nil {
+		t.Fatalf("expected live parent row, got %#v", runs)
+	}
+	if parent.Status != "running" {
+		t.Fatalf("parent Status = %q, want %q", parent.Status, "running")
+	}
+	if review == nil {
+		t.Fatalf("expected review child row, got %#v", runs)
+	}
+	if review.Kind != "completed" || review.Status != "aborted" {
+		t.Fatalf("review child = %#v, want completed/aborted after demotion", review)
+	}
+	for _, run := range runs {
+		if run.IssueNumber == 1 && run.Status == "reviewing" {
+			t.Fatalf("unexpected reviewing row after demotion: %#v", run)
+		}
+	}
+}
+
 func TestPortal_Compute_MultipleDeadBatches_IndependentIssueSets(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

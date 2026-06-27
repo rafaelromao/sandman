@@ -289,8 +289,8 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	}
 
 	runs = v.dedupRuns(runs)
-	runs = v.aggregateReviewChildren(runs)
 	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
+	runs = v.aggregateReviewChildren(runs)
 	for i := range runs {
 		// Active runs are never marked archived, even if a directory
 		// matching the run ID happens to exist under .sandman/archive.
