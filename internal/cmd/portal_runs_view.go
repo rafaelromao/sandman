@@ -288,7 +288,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		}
 		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun, deadBatches))
 	}
-	runs = append(runs, v.synthesizedDeadBatchRows(deadBatches, eventList)...)
+	runs = append(runs, v.synthesizedDeadBatchRows(repoRoot, deadBatches, runStates)...)
 
 	runs = v.dedupRuns(runs)
 	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
@@ -355,19 +355,21 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	return runs, nil
 }
 
-func seenIssuesForBatch(eventList []events.Event, batchStart, nextBatchStart time.Time) map[int]struct{} {
+func seenIssuesForBatch(repoRoot string, runStates []events.RunState, batch daemon.DeadBatch, deadBatches []daemon.DeadBatch) map[int]struct{} {
 	seen := make(map[int]struct{})
-	for _, event := range eventList {
-		if event.Issue <= 0 {
+	for _, runState := range runStates {
+		issue := runState.IssueNumber()
+		if issue <= 0 || runState.RunID == "" {
 			continue
 		}
-		if !batchStart.IsZero() && !(&portalRunsView{}).eventBelongsToBatch(event.Timestamp, batchStart) {
+		batchDir, err := (&portalRunsView{}).findBatchDirForRun(repoRoot, runState.RunID, deadBatches)
+		if err != nil {
+			logPortalViewDegrade("dead-batch-seen:"+runState.RunID, "find batch dir for run %q: %v", runState.RunID, err)
 			continue
 		}
-		if !nextBatchStart.IsZero() && !event.Timestamp.Before(nextBatchStart) {
-			continue
+		if batchDir == batch.RunDir {
+			seen[issue] = struct{}{}
 		}
-		seen[event.Issue] = struct{}{}
 	}
 	return seen
 }
@@ -428,7 +430,7 @@ func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{})
 	return missing
 }
 
-func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch, eventList []events.Event) []portalRun {
+func (v *portalRunsView) synthesizedDeadBatchRows(repoRoot string, deadBatches []daemon.DeadBatch, runStates []events.RunState) []portalRun {
 	if len(deadBatches) == 0 {
 		return nil
 	}
@@ -442,13 +444,8 @@ func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch
 		return sortedBatches[i].RunDir < sortedBatches[j].RunDir
 	})
 	rows := make([]portalRun, 0)
-	for i, batch := range sortedBatches {
-		batchStart := batch.RunTimestamp()
-		nextBatchStart := time.Time{}
-		if i+1 < len(sortedBatches) {
-			nextBatchStart = sortedBatches[i+1].RunTimestamp()
-		}
-		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(eventList, batchStart, nextBatchStart))
+	for _, batch := range sortedBatches {
+		missing := missingManifestIssues(batch.Manifest, seenIssuesForBatch(repoRoot, runStates, batch, deadBatches))
 		if len(missing) == 0 {
 			continue
 		}

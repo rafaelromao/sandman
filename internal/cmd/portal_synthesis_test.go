@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
@@ -48,6 +49,9 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembers(t *testing.T) {
 		t.Fatal(err)
 	}
 	addBatchToIndex(t, repoRoot, "dead-1", batchDir, []int{1, 2, 3})
+	if err := daemon.WriteRunManifest(batchDir, "run-1", batchindex.RunManifest{Issue: 1, BatchID: "dead-1", CreatedAt: startedAt.Add(1 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
 		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
@@ -91,6 +95,9 @@ func TestPortal_DeadBatchesReuseIssueNumberWithoutSuppressingLaterSynthesis(t *t
 		t.Fatal(err)
 	}
 	addBatchToIndex(t, repoRoot, "dead-1", firstDir, []int{42})
+	if err := daemon.WriteRunManifest(firstDir, "run-42-old", batchindex.RunManifest{Issue: 42, BatchID: "dead-1", CreatedAt: firstStart.Add(1 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
 
 	secondStart := time.Now().Add(-10 * time.Minute)
 	secondDir := filepath.Join(repoRoot, ".sandman", "batches", "dead-2")
@@ -149,6 +156,9 @@ func TestPortal_DeadBatchUsesBatchSkewWindowForSeenIssues(t *testing.T) {
 		t.Fatal(err)
 	}
 	addBatchToIndex(t, repoRoot, "dead-1", batchDir, []int{42})
+	if err := daemon.WriteRunManifest(batchDir, "run-42", batchindex.RunManifest{Issue: 42, BatchID: "dead-1", CreatedAt: startedAt.Add(1 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
@@ -223,6 +233,9 @@ func TestPortal_MixedLiveDeadAndOrphanRowsStayDistinct(t *testing.T) {
 		t.Fatal(err)
 	}
 	addBatchToIndex(t, repoRoot, "dead-1", deadDir, []int{1, 2})
+	if err := daemon.WriteRunManifest(deadDir, "run-1", batchindex.RunManifest{Issue: 1, BatchID: "dead-1", CreatedAt: startedAt.Add(1 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
