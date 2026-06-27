@@ -216,13 +216,18 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	var dirIDs map[string]string
 	var deadBatches []daemon.DeadBatch
 	var err error
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
 	idx := v.loadBatchesIndex(repoRoot)
 
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
-	deadBatches, dirIDs, err = v.deadBatchDirIDsByRunID(idx)
+	deadBatches, err = daemon.FindDeadRunBatches(layout.SandmanDir)
+	if err != nil {
+		return nil, err
+	}
+	_, dirIDs, err = v.deadBatchDirIDsByRunID(idx)
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +292,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		}
 		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun, deadBatches))
 	}
+	runs = append(runs, v.synthesizedDeadBatchRows(deadBatches, eventList)...)
 
 	runs = v.dedupRuns(runs)
 	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
@@ -351,6 +357,73 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	})
 
 	return runs, nil
+}
+
+func seenIssuesFromEvents(eventList []events.Event) map[int]struct{} {
+	seen := make(map[int]struct{})
+	for _, event := range eventList {
+		if event.Issue <= 0 {
+			continue
+		}
+		seen[event.Issue] = struct{}{}
+	}
+	return seen
+}
+
+func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{}) []int {
+	if manifest.RunKind == "auto-select" || manifest.RunKind == "review" {
+		return nil
+	}
+	missing := make([]int, 0, len(manifest.Issues))
+	seenManifest := make(map[int]struct{}, len(manifest.Issues))
+	for _, issue := range manifest.Issues {
+		if _, ok := seenManifest[issue]; ok {
+			continue
+		}
+		seenManifest[issue] = struct{}{}
+		if _, ok := seen[issue]; ok {
+			continue
+		}
+		missing = append(missing, issue)
+	}
+	return missing
+}
+
+func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch, eventList []events.Event) []portalRun {
+	seen := seenIssuesFromEvents(eventList)
+	rows := make([]portalRun, 0)
+	for _, batch := range deadBatches {
+		missing := missingManifestIssues(batch.Manifest, seen)
+		if len(missing) == 0 {
+			continue
+		}
+		batchKey := filepath.Base(batch.RunDir)
+		startedAt := batch.RunTimestamp()
+		if startedAt.IsZero() {
+			startedAt = batch.Manifest.CreatedAt
+		}
+		for _, issueNumber := range missing {
+			runID := fmt.Sprintf("%s-issue-%d", batchKey, issueNumber)
+			finishedAt := startedAt
+			run := portalRun{
+				Key:         runID,
+				RunID:       runID,
+				Kind:        "completed",
+				Status:      "aborted",
+				IssueLabel:  fmt.Sprintf("#%d", issueNumber),
+				IssueNumber: issueNumber,
+				StartedAt:   startedAt,
+				FinishedAt:  &finishedAt,
+				Duration:    "0s",
+				BatchKey:    batchKey,
+			}
+			if len(batch.Manifest.Issues) > 1 {
+				run.BatchIssues = append([]int(nil), batch.Manifest.Issues...)
+			}
+			rows = append(rows, run)
+		}
+	}
+	return rows
 }
 
 // dedupRuns collapses duplicate rows per issue per batch. Two rows for
