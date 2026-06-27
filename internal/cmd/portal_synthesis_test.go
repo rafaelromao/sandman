@@ -47,6 +47,7 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembers(t *testing.T) {
 	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{1, 2, 3}, CreatedAt: startedAt}); err != nil {
 		t.Fatal(err)
 	}
+	addBatchToIndex(t, repoRoot, "dead-1", batchDir, []int{1, 2, 3})
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
 		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
@@ -129,6 +130,7 @@ func TestPortal_MixedLiveDeadAndOrphanRowsStayDistinct(t *testing.T) {
 	if err := daemon.WriteManifest(deadDir, daemon.BatchManifest{Issues: []int{1, 2}, CreatedAt: startedAt}); err != nil {
 		t.Fatal(err)
 	}
+	addBatchToIndex(t, repoRoot, "dead-1", deadDir, []int{1, 2})
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{

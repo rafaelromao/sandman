@@ -216,14 +216,13 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	var dirIDs map[string]string
 	var deadBatches []daemon.DeadBatch
 	var err error
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
 	idx := v.loadBatchesIndex(repoRoot)
 
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
 	promptActive := make([]portalActiveRun, 0, len(activeInstances))
-	deadBatches, err = daemon.FindDeadRunBatches(layout.SandmanDir)
+	deadBatches, err = v.deadBatchesFromIndex(idx, activeInstances)
 	if err != nil {
 		return nil, err
 	}
@@ -368,6 +367,41 @@ func seenIssuesFromEvents(eventList []events.Event) map[int]struct{} {
 		seen[event.Issue] = struct{}{}
 	}
 	return seen
+}
+
+func (v *portalRunsView) deadBatchesFromIndex(idx *batchindex.Index, activeInstances []portalActiveRun) ([]daemon.DeadBatch, error) {
+	if idx == nil || len(idx.Entries) == 0 {
+		return nil, nil
+	}
+	activeBatchIDs := make(map[string]struct{}, len(activeInstances))
+	for _, active := range activeInstances {
+		if active.Key != "" {
+			activeBatchIDs[active.Key] = struct{}{}
+		}
+		if active.BatchID != "" {
+			activeBatchIDs[active.BatchID] = struct{}{}
+		}
+	}
+	deadBatches := make([]daemon.DeadBatch, 0, len(idx.Entries))
+	for i := range idx.Entries {
+		entry := idx.Entries[i]
+		if entry.Path == "" {
+			continue
+		}
+		if _, ok := activeBatchIDs[entry.ID]; ok {
+			continue
+		}
+		manifest, err := daemon.ReadManifest(entry.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				manifest = daemon.BatchManifest{}
+			} else {
+				return nil, fmt.Errorf("read manifest for dead batch %s: %w", entry.Path, err)
+			}
+		}
+		deadBatches = append(deadBatches, daemon.DeadBatch{RunDir: entry.Path, Manifest: manifest})
+	}
+	return deadBatches, nil
 }
 
 func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{}) []int {
