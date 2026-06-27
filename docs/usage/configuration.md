@@ -79,17 +79,64 @@ Sandman also installs [`codeindex`](https://github.com/scheidydude/codeindex) in
 
 ### Pre-commit hook
 
-The hook installed by `codeindex install-hook` fails inside git worktrees (`.sandman/worktrees/`) because it uses `git rev-parse --show-toplevel` to locate `codeindex.json`. Inside a worktree this returns the worktree root, not the main repo root, so the hook skips impact checks.
-
-Edit `.git/hooks/pre-commit` to use a path that resolves in both contexts:
+`codeindex install-hook` installs this pre-commit hook:
 
 ```bash
-INDEX="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)/codeindex.json"
+#!/usr/bin/env bash
+# codeindex-hook
+# Installed by codeindex. Remove this file or run `codeindex install-hook --remove` to disable.
+
+THRESHOLD=10
+STRICT=0
+
+# Find codeindex artifacts at the main repo root (works in worktrees too)
+REPO_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+INDEX="$REPO_ROOT/codeindex.json"
+DB="$REPO_ROOT/.codeindex/index.db"
+
+if [ ! -f "$INDEX" ] || [ ! -f "$DB" ]; then
+  codeindex analyze "$REPO_ROOT" >/dev/null 2>&1
+  codeindex symbols "$REPO_ROOT" >/dev/null 2>&1
+fi
+
+if [ ! -f "$INDEX" ]; then
+  echo "[codeindex] No codeindex.json found — skipping impact check. Run: codeindex analyze ."
+  exit 0
+fi
+
+# Get staged files (added or modified)
+STAGED=$(git diff --cached --name-only --diff-filter=AM)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+WARNED=0
+while IFS= read -r FILE; do
+  if [ -z "$FILE" ]; then continue; fi
+  OUTPUT=$(codeindex impact "$FILE" --index "$INDEX" 2>/dev/null)
+  if [ $? -ne 0 ]; then continue; fi
+  SCORE=$(echo "$OUTPUT" | grep -oP 'Blast Score: \K[0-9.]+')
+  if [ -z "$SCORE" ]; then continue; fi
+  SCORE_INT=$(echo "$SCORE" | cut -d. -f1)
+  if [ "$SCORE_INT" -ge "$THRESHOLD" ] 2>/dev/null; then
+    echo ""
+    echo "[codeindex] HIGH BLAST RADIUS: $FILE (score: $SCORE)"
+    echo "$OUTPUT"
+    echo ""
+    WARNED=1
+  fi
+done <<< "$STAGED"
+
+if [ "$WARNED" -eq 1 ] && [ "$STRICT" = "1" ]; then
+  echo "[codeindex] Commit blocked (--strict mode). Review impact above."
+  exit 1
+fi
+
+exit 0
 ```
 
-`git rev-parse --git-common-dir` always points to the main `.git/` directory, even inside a worktree. Walking up to its parent yields the main repo root, where `codeindex.json` lives.
-
-The hook can bootstrap missing `codeindex.json`, `symbolindex.json`, and `.codeindex/index.db` on demand, so a fresh checkout does not need a separate indexing step before the first commit.
+This hook bootstraps missing `codeindex.json` and `.codeindex/index.db` from the repo root on demand, and refreshes `symbolindex.json` on that same path before warning on staged files whose blast score exceeds the threshold.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
