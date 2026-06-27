@@ -922,11 +922,11 @@ func TestPortal_Compute_CompletedRunWithoutArchiveDir_NotArchived(t *testing.T) 
 	}
 }
 
-// TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists covers the
-// archive-button gate for rows whose source directory is the batch dir, not
-// the per-row RunID. The portal should still surface SourceExists=true so the
-// archive action remains available for live batch rows that already finished.
-func TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists(t *testing.T) {
+// TestPortal_Compute_CompletedRunWithBatchDir_DoesNotCountAsSourceExists covers
+// the cleanup after the legacy batch-dir fallback was removed: a completed row
+// whose batch directory still exists but whose per-run source directory does
+// not should not advertise SourceExists.
+func TestPortal_Compute_CompletedRunWithBatchDir_DoesNotCountAsSourceExists(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "r")
 	if err != nil {
 		t.Fatal(err)
@@ -966,15 +966,15 @@ func TestPortal_Compute_CompletedRunWithBatchDir_ReportsSourceExists(t *testing.
 		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
 	}
 	got := runs[0]
-	if !got.SourceExists {
-		t.Fatalf("SourceExists = false, want true (batch dir exists under .sandman/runs/%s)", filepath.Base(runDir))
+	if got.SourceExists {
+		t.Fatalf("SourceExists = true, want false (batch dir fallback removed for %s)", filepath.Base(runDir))
 	}
 }
 
 // TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists is the
 // regression for historical completed rows: when the batch directory is still
 // on disk but the daemon is gone, the portal should recover the batch dir name
-// from the manifest so Archive stays available.
+// from the manifest so SourceExists stays true for the per-run source folder.
 func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -1011,15 +1011,15 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 		t.Fatalf("BatchKey = %q, want %q", got.BatchKey, filepath.Base(runDir))
 	}
 	if !got.SourceExists {
-		t.Fatalf("SourceExists = false, want true (dead batch dir exists under .sandman/runs/%s)", filepath.Base(runDir))
+		t.Fatalf("SourceExists = false, want true (per-run source directory exists under %s)", filepath.Base(runDir))
 	}
 }
 
-// TestPortal_Compute_CompletedRunWithSourceDir_ReportsSourceExists is the
-// cycle-3 test for the archive-button gate: a completed run that still has a
-// source directory under .sandman/runs/<run-id> must surface SourceExists=true
-// so the portal can offer Archive only for rows that can actually be moved.
-func TestPortal_Compute_CompletedRunWithSourceDir_ReportsSourceExists(t *testing.T) {
+// TestPortal_Compute_CompletedRunWithSourceDirOnly_DoesNotCountAsSourceExists
+// covers the cleanup after removing the legacy batch-dir fallback. A completed
+// row whose batch directory exists but whose per-run source directory does not
+// should not advertise SourceExists.
+func TestPortal_Compute_CompletedRunWithSourceDirOnly_DoesNotCountAsSourceExists(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1052,16 +1052,16 @@ func TestPortal_Compute_CompletedRunWithSourceDir_ReportsSourceExists(t *testing
 	if got.Archived {
 		t.Fatalf("Archived = true, want false (run is still under .sandman/runs/%s)", runID)
 	}
-	if !got.SourceExists {
-		t.Fatalf("SourceExists = false, want true (run directory exists under .sandman/runs/%s)", runID)
+	if got.SourceExists {
+		t.Fatalf("SourceExists = true, want false (legacy batch-dir-only source fallback removed for %s)", runID)
 	}
 
 	payload, err := json.Marshal(got)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if !strings.Contains(string(payload), `"sourceExists":true`) {
-		t.Fatalf("JSON payload missing %q: %s", `"sourceExists":true`, payload)
+	if !strings.Contains(string(payload), `"sourceExists":false`) {
+		t.Fatalf("JSON payload missing %q: %s", `"sourceExists":false`, payload)
 	}
 }
 
