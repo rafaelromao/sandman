@@ -80,6 +80,49 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembers(t *testing.T) {
 	}
 }
 
+func TestPortal_DeadBatchSynthesizesNeverStartedMembersWithoutRunsTree(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "dead-1")
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{1, 2, 3}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "dead-1", batchDir, []int{1, 2, 3})
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 runs, got %d: %#v", len(runs), runs)
+	}
+	byIssue := map[int]portalRun{}
+	for _, run := range runs {
+		byIssue[run.IssueNumber] = run
+	}
+	if run := byIssue[1]; run.Kind != "completed" || run.Status != "success" {
+		t.Fatalf("expected issue 1 to stay completed success, got %#v", run)
+	}
+	for _, issue := range []int{2, 3} {
+		run := byIssue[issue]
+		if run.Kind != "completed" || run.Status != "aborted" {
+			t.Fatalf("expected synthesized issue %d to be completed aborted, got %#v", issue, run)
+		}
+	}
+}
+
 func TestPortal_DeadBatchesReuseIssueNumberWithoutSuppressingLaterSynthesis(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
