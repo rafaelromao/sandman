@@ -1119,7 +1119,7 @@ func renderPythonInstallCommand(version string) string {
 }
 
 func renderCodeindexInstallCommand() string {
-	return "RUN git clone https://github.com/scheidydude/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages\n"
+	return "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages\n"
 }
 
 func renderAgentInstallCommand(agent, version string) string {
