@@ -16,10 +16,10 @@ sandman init [flags]
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
 | `--agent` | `""` | Default built-in agent preset for `init` (`opencode`) |
 | `--model` | `""` | Default model for the agent |
-| `--parallel` | `-1` | Default parallel container count (`-1` = use config default 4) |
+| `--parallel` | `-1` | Default parallel container count (`-1` = use config default 1) |
 | `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/sandman review` (requires `sandman review` to be running) |
 | `--retries` | `-1` | Persist `retries` in scaffolded config. `-1` keeps the built-in default of `3`; `0` disables retries |
-| `--parallel-reviews` | `-1` | Persist `parallel_reviews` in scaffolded config (default `4`) |
+| `--parallel-reviews` | `-1` | Persist `parallel_reviews` in scaffolded config (default `1`) |
 | `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `1800`; `0` disables the heartbeat watchdog |
 
 When `--tool-version` is omitted, `init` infers `repo` as the version selector, reading version hints from the repo when available. If flags are completely omitted and no repo hints are found, interactive prompts guide you through the choices.
@@ -51,7 +51,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--parallel` | `parallel` from config (4) | Maximum concurrent agent runs; `0` falls back to `parallel` |
+| `--parallel` | `parallel` from config (1) | Maximum concurrent agent runs; `0` falls back to `parallel` |
 | `--start-delay` | config `start_delay` (0) | Wait this many seconds after any `AgentRun` finishes before starting the next one; `0` disables pacing |
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
 | `--base-branch` | config `git.base_branch` (`main`) | Base branch to fetch from origin before each `AgentRun` starts |
@@ -233,8 +233,8 @@ sandman config set <key> <value>
 | `review_agent` | string | `opencode` |
 | `review_model` | string | `opencode/big-pickle` |
 | `build_tools` | string | `node` |
-| `parallel` | int | `4` |
-| `parallel_reviews` | int | `4` |
+| `parallel` | int | `1` |
+| `parallel_reviews` | int | `1` |
 | `start_delay` | int | `0` |
 | `review_command` | string | `/sandman review` |
 | `container_capacity` | int | `4` |

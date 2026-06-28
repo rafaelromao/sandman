@@ -367,8 +367,8 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultParallel != 4 {
-		t.Errorf("parallel: got %d, want %d", cfg.DefaultParallel, 4)
+	if cfg.DefaultParallel != 1 {
+		t.Errorf("parallel: got %d, want %d", cfg.DefaultParallel, 1)
 	}
 	if cfg.BuildTools != DefaultBuildToolsPreset {
 		t.Errorf("build_tools: got %q, want %q", cfg.BuildTools, DefaultBuildToolsPreset)
@@ -594,7 +594,7 @@ container_capacity: 0
 	}
 }
 
-func TestLoad_NegativeDefaultParallel_DefaultsToFour(t *testing.T) {
+func TestLoad_NegativeDefaultParallel_DefaultsToOne(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: opencode
@@ -609,8 +609,8 @@ parallel: -2
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultParallel != 4 {
-		t.Errorf("parallel: got %d, want %d", cfg.DefaultParallel, 4)
+	if cfg.DefaultParallel != 1 {
+		t.Errorf("parallel: got %d, want %d", cfg.DefaultParallel, 1)
 	}
 }
 
@@ -947,9 +947,15 @@ parallel: 8
 	}
 }
 
+func TestDefaultParallelConstant(t *testing.T) {
+	if DefaultParallel != 1 {
+		t.Fatalf("DefaultParallel: got %d, want 1", DefaultParallel)
+	}
+}
+
 func TestDefaultReviewParallelConstant(t *testing.T) {
-	if DefaultReviewParallel != 4 {
-		t.Fatalf("DefaultReviewParallel: got %d, want 4", DefaultReviewParallel)
+	if DefaultReviewParallel != 1 {
+		t.Fatalf("DefaultReviewParallel: got %d, want 1", DefaultReviewParallel)
 	}
 }
 
@@ -976,7 +982,7 @@ func TestConfig_GetAndSetModel(t *testing.T) {
 func TestConfig_GetAndSetParallel(t *testing.T) {
 	cfg := &Config{DefaultParallel: DefaultParallel}
 
-	if got, err := cfg.GetValue("parallel"); err != nil || got != "4" {
+	if got, err := cfg.GetValue("parallel"); err != nil || got != "1" {
 		t.Fatalf("GetValue(parallel) = %q, %v", got, err)
 	}
 	if err := cfg.SetValue("parallel", "8"); err != nil {
@@ -1133,7 +1139,7 @@ func TestConfig_ReviewAgentAndModelResolution(t *testing.T) {
 func TestConfig_GetAndSetParallelReviews(t *testing.T) {
 	cfg := &Config{DefaultReviewParallel: 0}
 
-	if got, err := cfg.GetValue("parallel_reviews"); err != nil || got != "4" {
+	if got, err := cfg.GetValue("parallel_reviews"); err != nil || got != "1" {
 		t.Fatalf("GetValue(parallel_reviews) = %q, %v", got, err)
 	}
 	if err := cfg.SetValue("parallel_reviews", "8"); err != nil {
