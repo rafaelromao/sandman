@@ -1969,19 +1969,8 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffHighlightTerminalLog_MixedCodeLineHighlightsStringsAndComments(t *testing.T) {
-	js := `const result = SandmanPortalDiff.highlightTerminalLog('const msg = "hello world"; // note');
-if (result.indexOf('term-keyword') === -1) throw new Error('expected keyword span');
-if (result.indexOf('term-string') === -1) throw new Error('expected string span');
-if (result.indexOf('term-comment') === -1) throw new Error('expected comment span');
-if (result.indexOf('hello world') === -1) throw new Error('expected string text preserved');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
 func TestPortalDiffHighlightTerminalLog_FencedLanguageLabelHighlightsFence(t *testing.T) {
-	js := "const result = SandmanPortalDiff.highlightTerminalLog('```go\\nconst msg = \"hello\" // note\\n```');\nif (result.indexOf('term-heading') === -1) throw new Error('expected fenced language label span');\nif (result.indexOf('term-string') === -1) throw new Error('expected fenced code string span');\nif (result.indexOf('term-comment') === -1) throw new Error('expected fenced code comment span');\nconsole.log('PASS');\n"
+	js := "const result = SandmanPortalDiff.highlightTerminalLog('```go\\nconst msg = \"hello\" // note\\n```');\nif (result.indexOf('term-heading') === -1) throw new Error('expected fenced language label span');\nif (result.indexOf('const msg') === -1) throw new Error('expected fenced code text preserved');\nconsole.log('PASS');\n"
 	runNodeScript(t, js)
 }
 
@@ -1991,12 +1980,12 @@ func TestPortalDiffHighlightTerminalLog_LangLabelHighlightsHintLine(t *testing.T
 }
 
 func TestPortalDiffHighlightTerminalLog_FenceHintSharpening(t *testing.T) {
-	js := "const result = SandmanPortalDiff.highlightTerminalLog('```ruby\\n# note\\n```');\nif (result.indexOf('term-comment') === -1) throw new Error('expected fenced code comment span');\nif (result.indexOf('# note') === -1) throw new Error('expected fenced code text preserved');\nconsole.log('PASS');\n"
+	js := "const result = SandmanPortalDiff.highlightTerminalLog('```ruby\\n# note\\n```');\nif (result.indexOf('term-heading') === -1) throw new Error('expected fenced fence/label span');\nif (result.indexOf('# note') === -1) throw new Error('expected fenced code text preserved');\nconsole.log('PASS');\n"
 	runNodeScript(t, js)
 }
 
 func TestPortalDiffHighlightTerminalLog_LangHintSharpening(t *testing.T) {
-	js := "const result = SandmanPortalDiff.highlightTerminalLog('lang=ruby\\n# note');\nif (result.indexOf('term-comment') === -1) throw new Error('expected hint to sharpen following code line');\nif (result.indexOf('# note') === -1) throw new Error('expected hint-mode code text preserved');\nconsole.log('PASS');\n"
+	js := "const result = SandmanPortalDiff.highlightTerminalLog('lang=ruby\\n# note');\nif (result.indexOf('term-heading') === -1) throw new Error('expected lang label span');\nif (result.indexOf('# note') === -1) throw new Error('expected hint-mode code text preserved');\nconsole.log('PASS');\n"
 	runNodeScript(t, js)
 }
 
@@ -2028,44 +2017,6 @@ func TestPortalHTMLAppendStreamLine_RendersHighlightedHTML(t *testing.T) {
 	}
 }
 
-func TestPortalDiffHighlightTerminalLog_FuncCallHighlighted(t *testing.T) {
-	js := `const result = SandmanPortalDiff.highlightTerminalLog('foo.bar()');
-if (result.indexOf('term-func') === -1) throw new Error('expected term-func span');
-if (result.indexOf('>foo.bar<') === -1) throw new Error('expected function name wrapped');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffHighlightTerminalLog_KeywordHighlighted(t *testing.T) {
-	js := `const result = SandmanPortalDiff.highlightTerminalLog('if (x == 5) { return; }');
-if (result.indexOf('term-keyword') === -1) throw new Error('expected term-keyword span');
-if (result.indexOf('>if<') === -1) throw new Error('expected if keyword wrapped');
-if (result.indexOf('>return<') === -1) throw new Error('expected return keyword wrapped');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffHighlightTerminalLog_OperatorHighlighted(t *testing.T) {
-	js := `const result = SandmanPortalDiff.highlightTerminalLog('x == 5 && y != 0');
-if (result.indexOf('term-operator') === -1) throw new Error('expected term-operator span');
-if (result.indexOf('>==<') === -1) throw new Error('expected == operator wrapped');
-if (result.indexOf('>!=<') === -1) throw new Error('expected != operator wrapped');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffHighlightTerminalLog_NumberHighlighted(t *testing.T) {
-	js := `const result = SandmanPortalDiff.highlightTerminalLog('count = 42');
-if (result.indexOf('term-number') === -1) throw new Error('expected term-number span');
-if (result.indexOf('>42<') === -1) throw new Error('expected number wrapped');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
 func TestPortalDiffHighlightTerminalLog_StringPreserved(t *testing.T) {
 	js := `const result = SandmanPortalDiff.highlightTerminalLog('msg = "hello world"');
 // Strings are NOT highlighted to avoid over-coloring prose and HTML breakage
@@ -2088,6 +2039,42 @@ const result4 = SandmanPortalDiff.highlightTerminalLog('test result: ok 3.2.1');
 if (result4.indexOf('term-pass') === -1) throw new Error('expected Rust ok result still highlighted');
 const result5 = SandmanPortalDiff.highlightTerminalLog('test result: FAILED. 0.1.0');
 if (result5.indexOf('term-fail') === -1) throw new Error('expected Rust FAILED result still highlighted');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_CommandAfterPrompt(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('$ git status');
+if (result.indexOf('term-command') === -1) throw new Error('expected term-command span');
+if (result.indexOf('term-prompt') === -1) throw new Error('expected term-prompt span');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_OpencodeSessionTokens(t *testing.T) {
+	js := `const r1 = SandmanPortalDiff.highlightTerminalLog('--- run 2/5 ---');
+if (r1.indexOf('term-mark') === -1) throw new Error('expected term-mark span');
+const r2 = SandmanPortalDiff.highlightTerminalLog('→ Read file.go');
+if (r2.indexOf('term-action') === -1) throw new Error('expected term-action span');
+const r3 = SandmanPortalDiff.highlightTerminalLog('Fix #1443 and PR1419');
+if (r3.indexOf('term-issue') === -1) throw new Error('expected term-issue span');
+const r4 = SandmanPortalDiff.highlightTerminalLog('commit 14cb4c83a');
+if (r4.indexOf('term-hash') === -1) throw new Error('expected term-hash span');
+const r5 = SandmanPortalDiff.highlightTerminalLog('delegating to sub-agent');
+if (r5.indexOf('term-subagent') === -1) throw new Error('expected term-subagent span');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_NoProgrammingTokens(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('const msg = "hello"; // note\nfoo.bar()\nif (x == 5) { return 42; }');
+const removed = ['term-string','term-comment','term-keyword','term-number','term-operator','term-func'];
+for (const cls of removed) {
+  if (result.indexOf(cls) !== -1) throw new Error('unexpected ' + cls + ' span');
+}
 console.log('PASS');
 `
 	runNodeScript(t, js)
