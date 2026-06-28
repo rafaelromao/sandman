@@ -1798,3 +1798,104 @@ func TestDaemon_TickFailingReviewRetriesOnNextTick(t *testing.T) {
 		t.Errorf("expected 2 batch runs (retry on second tick), got %d", runner.calls)
 	}
 }
+
+// TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt verifies that when
+// the daemon processes multiple PRs in parallel, the shared
+// review-prompt.md file remains the static PR-agnostic template. PR
+// title, body, and review focus must reach the agent only through the
+// per-run batch request.
+func TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}, {Number: 2, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "c1", Body: "/sandman review focus alpha", CreatedAt: now},
+				{ID: "reply1", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)},
+			},
+			2: {
+				{ID: "c2", Body: "/sandman review focus beta", CreatedAt: now},
+				{ID: "reply2", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)},
+			},
+		},
+		prFetch: map[int]*github.PR{
+			1: {Number: 1, Title: "PR 1 Alpha", Body: "Body 1 Unique"},
+			2: {Number: 2, Title: "PR 2 Beta", Body: "Body 2 Unique"},
+		},
+	}
+
+	started := make(chan int, 2)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	seenReqs := make(map[int]batch.Request)
+
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		mu.Lock()
+		seenReqs[req.PRNumber] = req
+		mu.Unlock()
+		started <- req.PRNumber
+		<-release
+		return &batch.Result{}, nil
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 2,
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	done := make(chan error, 1)
+	go func() {
+		done <- d.tick(context.Background())
+	}()
+
+	seen := map[int]struct{}{}
+	for len(seen) < 2 {
+		select {
+		case prNumber := <-started:
+			seen[prNumber] = struct{}{}
+		case <-time.After(5 * time.Second):
+			t.Fatal("expected both PR reviews to start in parallel")
+		}
+	}
+
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("tick: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("tick did not finish after releasing parallel reviews")
+	}
+
+	mu.Lock()
+	r1, ok1 := seenReqs[1]
+	r2, ok2 := seenReqs[2]
+	mu.Unlock()
+	if !ok1 || !ok2 {
+		t.Fatalf("expected batch requests for both PRs, got PR1=%v PR2=%v", ok1, ok2)
+	}
+	if !strings.Contains(r1.PromptConfig.PromptFlag, "PR 1 Alpha") || !strings.Contains(r1.PromptConfig.PromptFlag, "focus alpha") {
+		t.Errorf("PR1 request should contain PR-specific prompt, got: %q", r1.PromptConfig.PromptFlag)
+	}
+	if !strings.Contains(r2.PromptConfig.PromptFlag, "PR 2 Beta") || !strings.Contains(r2.PromptConfig.PromptFlag, "focus beta") {
+		t.Errorf("PR2 request should contain PR-specific prompt, got: %q", r2.PromptConfig.PromptFlag)
+	}
+
+	promptPath := filepath.Join(d.BaseDir, "reviews", "review-prompt.md")
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read review-prompt.md: %v", err)
+	}
+	want := prompt.DefaultPRReviewPrompt()
+	if string(data) != want {
+		t.Errorf("shared review-prompt.md should be the static template\ngot:\n%s\nwant:\n%s", data, want)
+	}
+	for _, prSpecific := range []string{"PR 1 Alpha", "Body 1 Unique", "focus alpha", "PR 2 Beta", "Body 2 Unique", "focus beta"} {
+		if strings.Contains(string(data), prSpecific) {
+			t.Errorf("shared review-prompt.md should not contain PR-specific string %q", prSpecific)
+		}
+	}
+}
