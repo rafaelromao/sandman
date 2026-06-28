@@ -321,8 +321,8 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if !strings.Contains(runner.captured.RunDir, "PR17") {
 		t.Errorf("expected RunDir to contain PR17, got %q", runner.captured.RunDir)
 	}
-	if runner.captured.Parallel != 4 {
-		t.Errorf("expected default review parallel 4, got %d", runner.captured.Parallel)
+	if runner.captured.Parallel != 1 {
+		t.Errorf("expected default review parallel 1, got %d", runner.captured.Parallel)
 	}
 	if runner.captured.OutputWriter == nil {
 		t.Error("expected OutputWriter to be set (non-nil) for one-shot review batch request")

@@ -551,9 +551,9 @@ func TestInit_ParallelReviewsFlagOverridesPersistedDefault(t *testing.T) {
 		errContains string
 	}{
 		{
-			name:       "default persists 4",
+			name:       "default persists 1",
 			args:       []string{"--build-tools", "generic"},
-			wantInYAML: "parallel_reviews: 4",
+			wantInYAML: "parallel_reviews: 1",
 		},
 		{
 			name:       "explicit 8 persists 8",
@@ -561,14 +561,14 @@ func TestInit_ParallelReviewsFlagOverridesPersistedDefault(t *testing.T) {
 			wantInYAML: "parallel_reviews: 8",
 		},
 		{
-			name:       "explicit 0 persists 4",
+			name:       "explicit 0 persists 1",
 			args:       []string{"--build-tools", "generic", "--parallel-reviews", "0"},
-			wantInYAML: "parallel_reviews: 4",
+			wantInYAML: "parallel_reviews: 1",
 		},
 		{
-			name:       "sentinel -1 persists 4",
+			name:       "sentinel -1 persists 1",
 			args:       []string{"--build-tools", "generic", "--parallel-reviews", "-1"},
-			wantInYAML: "parallel_reviews: 4",
+			wantInYAML: "parallel_reviews: 1",
 		},
 	}
 
@@ -594,6 +594,62 @@ func TestInit_ParallelReviewsFlagOverridesPersistedDefault(t *testing.T) {
 				}
 				return
 			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+			if err != nil {
+				t.Fatalf("read config.yaml: %v", err)
+			}
+			if !strings.Contains(string(data), tt.wantInYAML) {
+				t.Fatalf("config.yaml missing %q, got:\n%s", tt.wantInYAML, data)
+			}
+		})
+	}
+}
+
+func TestInit_ParallelFlagOverridesPersistedDefault(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantInYAML string
+	}{
+		{
+			name:       "default persists 1",
+			args:       []string{"--build-tools", "generic"},
+			wantInYAML: "parallel: 1",
+		},
+		{
+			name:       "explicit 8 persists 8",
+			args:       []string{"--build-tools", "generic", "--parallel", "8"},
+			wantInYAML: "parallel: 8",
+		},
+		{
+			name:       "explicit 0 persists 1",
+			args:       []string{"--build-tools", "generic", "--parallel", "0"},
+			wantInYAML: "parallel: 1",
+		},
+		{
+			name:       "sentinel -1 persists 1",
+			args:       []string{"--build-tools", "generic", "--parallel", "-1"},
+			wantInYAML: "parallel: 1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+
+			var out bytes.Buffer
+			cmd := NewInitCmd()
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetIn(strings.NewReader(""))
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

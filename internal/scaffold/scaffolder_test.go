@@ -47,8 +47,11 @@ func TestScaffold_PersistsRuntimeDefaults(t *testing.T) {
 	if !strings.Contains(content, "run_idle_timeout: 1800") {
 		t.Errorf("scaffolded config missing %q, got:\n%s", "run_idle_timeout: 1800", content)
 	}
-	if !strings.Contains(content, "parallel_reviews: 4") {
-		t.Errorf("scaffolded config missing %q, got:\n%s", "parallel_reviews: 4", content)
+	if !strings.Contains(content, "parallel: 1") {
+		t.Errorf("scaffolded config missing %q, got:\n%s", "parallel: 1", content)
+	}
+	if !strings.Contains(content, "parallel_reviews: 1") {
+		t.Errorf("scaffolded config missing %q, got:\n%s", "parallel_reviews: 1", content)
 	}
 	if !strings.Contains(content, "model: opencode/big-pickle") {
 		t.Errorf("scaffolded config missing %q, got:\n%s", "model: opencode/big-pickle", content)
@@ -92,8 +95,8 @@ func TestScaffold_ParallelReviewsDefault(t *testing.T) {
 		t.Fatalf("read config.yaml: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "parallel_reviews: 4") {
-		t.Errorf("scaffolded config missing %q, got:\n%s", "parallel_reviews: 4", content)
+	if !strings.Contains(content, "parallel_reviews: 1") {
+		t.Errorf("scaffolded config missing %q, got:\n%s", "parallel_reviews: 1", content)
 	}
 }
 
