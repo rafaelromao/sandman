@@ -77,6 +77,12 @@ Sandman has one built-in preset: `opencode`. It is installed into scaffolded Doc
 
 Sandman also installs [`codeindex`](https://github.com/scheidydude/codeindex) in scaffolded container images. Sandman runs agents against real repositories, and `codeindex` gives the agent a fast way to find symbols, trace dependencies, and inspect impact without reading large source trees line by line.
 
+To install `codeindex` on the host machine for local use:
+
+```bash
+git clone https://github.com/scheidydude/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages
+```
+
 ### Pre-commit hook
 
 `codeindex install-hook` installs a pre-commit check that warns when staged files exceed the blast-score threshold.

@@ -14,6 +14,12 @@ Sandman uses OpenCode in a headless environment, so `opencode` must have the `op
 
 Sandman container images also include [`codeindex`](https://github.com/scheidydude/codeindex). Agents use it to answer repo-structure questions quickly, especially when a task needs symbol lookup or impact analysis across a large codebase. That keeps large source trees navigable without forcing the model to read or summarize every file first.
 
+To install `codeindex` on the host machine for local use:
+
+```bash
+git clone https://github.com/scheidydude/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages
+```
+
 ### Install
 
 ```bash
