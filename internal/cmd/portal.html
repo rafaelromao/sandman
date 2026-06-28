@@ -2073,7 +2073,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
             c.setAttribute('aria-pressed', String(c.getAttribute('data-status') === value));
           }
           if (statusFilter) statusFilter.value = value;
-          render();
+          scheduleRender();
         });
         statusChips.appendChild(chip);
       }
@@ -2091,7 +2091,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         state.sortDir = 'desc';
       }
       persistPortalViewState();
-      render();
+      scheduleRender();
     }
 
     function syncSortButtons() {
@@ -2380,6 +2380,27 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       reconcileRunStreams();
     }
 
+    let renderScheduled = false;
+    let renderCallback = null;
+
+    function scheduleRender(callback) {
+      if (renderScheduled) {
+        if (callback) renderCallback = callback;
+        return;
+      }
+      renderScheduled = true;
+      if (callback) renderCallback = callback;
+      window.requestAnimationFrame(() => {
+        renderScheduled = false;
+        render();
+        if (renderCallback) {
+          const cb = renderCallback;
+          renderCallback = null;
+          cb();
+        }
+      });
+    }
+
     // Poll-health tracking: one chip shows last successful refresh time.
     // Warn after consecutive failures so a wedged poll is visible.
     const pollHealthEl = document.getElementById('poll-health');
@@ -2508,14 +2529,16 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         state.expandedRunKey = subjectKey;
       }
       persistPortalViewState();
-      render();
-      if (state.expandedRunKey !== null && state.expandedRunKey !== prevExpandedRunKey) {
-        loadRunDetail(state.expandedRunKey);
-        const row = findRunRowByIdentity(state.expandedRunKey);
-        if (row) {
-          row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const opening = state.expandedRunKey && state.expandedRunKey !== prevExpandedRunKey;
+      scheduleRender(() => {
+        if (opening) {
+          loadRunDetail(state.expandedRunKey);
+          const row = findRunRowByIdentity(state.expandedRunKey);
+          if (row) {
+            row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
         }
-      }
+      });
     }
 
     runsBody.addEventListener('click', (event) => {
@@ -2550,7 +2573,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           state.tabs[subjectKey] = tab;
           state.expandedRunKey = subjectKey;
           persistPortalViewState();
-          render();
+          scheduleRender();
         }
         return;
       }
@@ -2580,7 +2603,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       }
       state.expandedRunKey = nextRunKey;
       persistPortalViewState();
-      window.requestAnimationFrame(() => render());
+      scheduleRender();
     });
 
     runsBody.addEventListener('keydown', (event) => {
@@ -2602,7 +2625,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (state.activeBatches) state.showArchived = false;
       syncFilterToggleButtons();
       persistPortalViewState();
-      render();
+      scheduleRender();
     });
 
     archivedToggle.addEventListener('click', () => {
@@ -2610,7 +2633,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (state.showArchived) state.activeBatches = false;
       syncFilterToggleButtons();
       persistPortalViewState();
-      render();
+      scheduleRender();
     });
 
     if (statusFilter) {
@@ -2621,7 +2644,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
             chip.setAttribute('aria-pressed', String(chip.getAttribute('data-status') === state.selectedStatus));
           }
         }
-        render();
+        scheduleRender();
       });
     }
 
