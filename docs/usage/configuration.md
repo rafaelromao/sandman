@@ -83,6 +83,14 @@ To install `codeindex` on the host machine for local use:
 git clone https://github.com/scheidydude/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages
 ```
 
+After installing, generate the index files from the project root:
+
+```bash
+codeindex analyze . && codeindex symbols .
+```
+
+Re-run this whenever the codebase changes significantly to keep the index fresh.
+
 ### Pre-commit hook
 
 `codeindex install-hook` installs a pre-commit check that warns when staged files exceed the blast-score threshold.
