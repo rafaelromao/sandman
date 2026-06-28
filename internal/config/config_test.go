@@ -1015,7 +1015,7 @@ review_model: openai/gpt-5
 	}
 }
 
-func TestLoad_ReviewAgentDefaultsToDefaultAgent(t *testing.T) {
+func TestLoad_ReviewAgentDefaultsToDefaultReviewAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: opencode
@@ -1029,8 +1029,8 @@ func TestLoad_ReviewAgentDefaultsToDefaultAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultReviewAgent != "opencode" {
-		t.Errorf("review_agent fallback: got %q, want %q", cfg.DefaultReviewAgent, "opencode")
+	if cfg.DefaultReviewAgent != DefaultReviewAgent {
+		t.Errorf("review_agent fallback: got %q, want %q", cfg.DefaultReviewAgent, DefaultReviewAgent)
 	}
 }
 
