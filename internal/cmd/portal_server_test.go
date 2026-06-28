@@ -3280,3 +3280,162 @@ func TestPortal_RunsTableHasColgroupAndFixedLayout(t *testing.T) {
 		t.Fatalf("page missing table-layout: fixed on runs <table>")
 	}
 }
+
+func TestPortal_RunsSummary(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	layout := paths.NewLayout(nil, repoRoot)
+	startedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(5 * time.Minute)
+	runID := "run-42-1234567890"
+	writePortalLog(t, layout.EventsLogPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	batchID := "run-42"
+	runDir := filepath.Join(layout.BatchesDir, batchID, "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte("hello world log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:        batchID,
+				Path:      filepath.Join(layout.BatchesDir, batchID),
+				Kind:      batchindex.KindIssue,
+				Status:    batchindex.StatusActive,
+				CreatedAt: startedAt,
+				Issues:    []int{42},
+			},
+		},
+	}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs?summary=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(payload.Runs))
+	}
+	run := payload.Runs[0]
+	if run.Log != "" {
+		t.Errorf("summary response must omit Log, got %q", run.Log)
+	}
+	if run.Events != nil {
+		t.Errorf("summary response must omit Events, got %d entries", len(run.Events))
+	}
+	if run.LogURL != "" {
+		t.Errorf("summary response must omit LogURL, got %q", run.LogURL)
+	}
+	if run.LastOutputAt != nil {
+		t.Errorf("summary response must omit LastOutputAt")
+	}
+
+	// Verify default (non-summary) still returns Log
+	resp2, err := http.Get(server.URL + "/api/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var payload2 struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&payload2); err != nil {
+		t.Fatal(err)
+	}
+	if payload2.Runs[0].Log == "" {
+		t.Errorf("default /api/runs should still return Log")
+	}
+}
+
+func TestPortal_RunsRunKey(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	layout := paths.NewLayout(nil, repoRoot)
+	startedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(5 * time.Minute)
+	runID := "run-42-1234567890"
+	writePortalLog(t, layout.EventsLogPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	batchID := "run-42"
+	runDir := filepath.Join(layout.BatchesDir, batchID, "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte("hello world log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:        batchID,
+				Path:      filepath.Join(layout.BatchesDir, batchID),
+				Kind:      batchindex.KindIssue,
+				Status:    batchindex.StatusActive,
+				CreatedAt: startedAt,
+				Issues:    []int{42},
+			},
+		},
+	}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs?runKey="+runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Run portalRun `json:"run"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Run.RunID != runID {
+		t.Errorf("RunID = %q, want %q", payload.Run.RunID, runID)
+	}
+	if payload.Run.Log == "" {
+		t.Errorf("runKey response should include full Log")
+	}
+}
+

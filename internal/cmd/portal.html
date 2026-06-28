@@ -2415,10 +2415,19 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     async function refresh() {
       try {
         const prevRuns = Array.isArray(state.runs) ? state.runs.slice() : [];
-        const res = await fetch(apiPath, { cache: 'no-store' });
+        const res = await fetch(apiPath + '?summary=1', { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const payload = await res.json();
         const nextRuns = Array.isArray(payload.runs) ? payload.runs.map(normalizeRunIdentity) : [];
+        // Merge existing detail (log/events) into the summary payload so expanded
+        // runs keep their content across polls without a full re-fetch.
+        for (const next of nextRuns) {
+          const existing = prevRuns.find((r) => r && (r.key === next.key || r.runId === next.runId));
+          if (existing && existing.log && !next.log) {
+            next.log = existing.log;
+            next.events = existing.events || next.events;
+          }
+        }
         if (state.expandedRunKey) {
           const cached = prevRuns.find((run) => run && (run.key === state.expandedRunKey || run.runId === state.expandedRunKey));
           const issueNumber = cached ? cached.issueNumber : 0;
@@ -2451,6 +2460,28 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       }
     }
 
+    async function loadRunDetail(runKey) {
+      const run = findRunByIdentity(runKey);
+      if (!run) return;
+      const hasLog = run.log && String(run.log).trim() && run.log !== 'No log file yet.' && run.log !== 'No live output captured yet.' && run.log !== 'Aborted by operator.';
+      const isActive = run.kind === 'active';
+      if (hasLog || isActive) return;
+      try {
+        const res = await fetch(apiPath + '?runKey=' + encodeURIComponent(run.backendKey || run.key));
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (!payload || !payload.run) return;
+        const detail = normalizeRunIdentity(payload.run);
+        const idx = state.runs.findIndex((r) => r && (r.key === detail.key || r.runId === detail.runId));
+        if (idx >= 0) {
+          state.runs[idx] = { ...state.runs[idx], log: detail.log, events: detail.events || state.runs[idx].events, logUrl: detail.logUrl };
+          render();
+        }
+      } catch (err) {
+        // detail fetch failures are non-fatal; user can retry by toggling again
+      }
+    }
+
     function toggleRun(runKey) {
       const prevExpandedRunKey = state.expandedRunKey;
       let run = findRunByIdentity(runKey);
@@ -2479,6 +2510,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       persistPortalViewState();
       render();
       if (state.expandedRunKey !== null && state.expandedRunKey !== prevExpandedRunKey) {
+        loadRunDetail(state.expandedRunKey);
         const row = findRunRowByIdentity(state.expandedRunKey);
         if (row) {
           row.scrollIntoView({ behavior: 'smooth', block: 'start' });

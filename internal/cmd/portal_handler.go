@@ -73,10 +73,31 @@ func (h *portalHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	runKey := strings.TrimSpace(r.URL.Query().Get("runKey"))
+	if runKey != "" {
+		run, err := h.runsIndex.FindByKey(r.Context(), runKey)
+		if err != nil {
+			writeJSONError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]any{"repoRoot": h.repoRoot, "run": run})
+		return
+	}
 	runs, err := h.runsIndex.Snapshot(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	summary := strings.TrimSpace(r.URL.Query().Get("summary")) == "1"
+	if summary {
+		for i := range runs {
+			runs[i].Log = ""
+			runs[i].Events = nil
+			runs[i].LastOutputAt = nil
+			runs[i].LogURL = ""
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
