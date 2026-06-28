@@ -13,6 +13,8 @@ import (
 const (
 	DefaultAgent             = "opencode"
 	DefaultModel             = "opencode/big-pickle"
+	DefaultReviewAgent       = "opencode"
+	DefaultReviewModel       = "opencode/big-pickle"
 	DefaultBuildToolsPreset  = "generic"
 	DefaultReviewCommand     = "/sandman review"
 	DefaultParallel          = 4
@@ -283,10 +285,10 @@ func Load(path string) (*Config, error) {
 		cfg.DefaultAgent = DefaultAgent
 	}
 	if strings.TrimSpace(cfg.DefaultReviewAgent) == "" {
-		cfg.DefaultReviewAgent = cfg.DefaultAgent
+		cfg.DefaultReviewAgent = DefaultReviewAgent
 	}
 	if strings.TrimSpace(cfg.DefaultReviewModel) == "" {
-		cfg.DefaultReviewModel = cfg.DefaultModel
+		cfg.DefaultReviewModel = DefaultReviewModel
 	}
 	cfg.Agent = cfg.DefaultAgent
 	cfg.AgentProviders = make(map[string]Agent, len(BuiltInAgentPresets))
