@@ -13,6 +13,8 @@
   // Keyed by subject run-id; bounded by clearing on overflow.
   const logPaneCache = new Map();
   const LOG_PANE_CACHE_LIMIT = 8;
+  const shellCommands = 'gh|git|go|npm|yarn|node|npx|ls|echo|cat|make|mkdir|rm|cp|mv|find|grep|sed|awk|curl|wget|pwd|cd|printf|tar|unzip|jq|chmod|ln|whoami|sort|head|tail|less|more|touch|ssh|scp';
+  const actionVerbs = 'Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search';
   function takeCachedLogPane(subjectValue) {
     const pane = logPaneCache.get(subjectValue);
     if (pane) logPaneCache.delete(subjectValue);
@@ -561,25 +563,39 @@
       return html.replace(/class="token /g, 'class="');
     };
 
-    Prism.languages['sandman-log'] = Prism.languages.extend('clike', {
+    Prism.languages['sandman-log'] = {
       'term-time': { pattern: /\b\d{2}:\d{2}:\d{2}\b/, greedy: true },
+      'term-command': {
+        pattern: new RegExp('^\\$\\s+(?:' + shellCommands + ')\\b'),
+        inside: {
+          'term-prompt': /^\$\s+/,
+          'term-command': new RegExp('\\b(?:' + shellCommands + ')\\b')
+        },
+        greedy: true
+      },
       'term-prompt': { pattern: /^\$ /, greedy: true },
+      'term-action': {
+        pattern: new RegExp('^\\s*[→←✱]\\s+(?:' + actionVerbs + ')\\b'),
+        inside: {
+          'term-tool': /^\s*[→←✱]\s+/,
+          'term-action': new RegExp('\\b(?:' + actionVerbs + ')\\b')
+        },
+        greedy: true
+      },
       'term-tool': { pattern: /^(\s*)([→←✱])\s/, lookbehind: true, greedy: true },
+      'term-mark': { pattern: /^--- (?:run|retry) \d+\/\d+ ---$/, greedy: true },
       'term-heading': { pattern: /^(?:```[A-Za-z0-9_+-]*|lang=[A-Za-z0-9_+-]+|> build.*|#{1,6} .*|@@.*@@)$/, greedy: true },
       'term-pass': { pattern: /^\*\*APPROVED(?:\s+with\s+comments)?\*\*|^--- PASS:|^--- FAIL:|^FAIL\s+\S|^ok\s+\S|^PASSED$|^FAILED$|^Passed!|^Failed!|^Tests run:.*Failures: 0|^\d+ tests?, 0 failures|^\d+ examples?, 0 failures|^test result: ok|^test result: FAILED|^✓|^✕/, greedy: true },
       'term-fail': { pattern: /^\*\*CHANGES_REQUESTED\*\*|^--- FAIL:|^FAIL\s+\S|^FAILED$|^Failed!|^Tests run:.*Failures: [1-9]|^\d+ tests?, \d+ failures|^\d+ examples?, [1-9]\d* failures?|^test result: FAILED/, greedy: true },
       'term-url': { pattern: /^https?:\/\/[^\s<&]+/, greedy: true },
       'term-path': { pattern: /^[\/\w.\-]+\.(?:go|js|ts|jsx|tsx|py|rs|rb|java|cs|ex|exs|c|cpp|h|hpp|zig|mod|sum):\d+|^\+\+\+ .*|^\-\-\- .*/, greedy: true },
+      'term-issue': { pattern: /\B#\d+\b|PR#?\d+\b/, greedy: true },
+      'term-hash': { pattern: /\b[0-9a-fA-F]{7,}\b/, greedy: true },
+      'term-subagent': { pattern: /\b(?:sub-agent|subagent)\b/, greedy: true },
       'term-todo-done': { pattern: /^\[✓\]|^\[✔\]/, greedy: true },
       'term-todo-active': { pattern: /^\[•\]/, greedy: true },
       'term-todo-pending': { pattern: /^(\s*)\[ \]/, lookbehind: true, greedy: true },
-      'term-string': { pattern: /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/, greedy: true },
-      'term-comment': { pattern: /\/\/.*$|#.*$/gm, greedy: true },
-      'term-keyword': { pattern: /\b(?:if|else|for|while|return|function|const|let|var|def|import|export|try|catch|switch|case|break|continue|new|this|self|class|async|await|yield|module|end|true|false|nil|null)\b/, greedy: true },
-      'term-number': { pattern: /\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/, greedy: true },
-      'term-operator': { pattern: /&&|\|\||==|!=|<=|>=|->|=>|<<|>>|[=+\-*/<>!&|^~%]/, greedy: true },
-      'term-func': { pattern: /([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\(/, lookbehind: true, greedy: true },
-    });
+    };
   } else {
     Prism.util.encode = escapeHTML;
     Prism.highlight = function(text, grammar) {
@@ -588,33 +604,13 @@
     Prism.languages['sandman-log'] = terminalGrammar;
   }
 
-  function terminalGrammar(mode) {
-    const codeMode = mode && mode !== 'terminal';
-    if (codeMode) {
-      const lang = String(mode || '').toLowerCase();
-      const codeGrammar = [];
-      if (/^(ruby|python|elixir|bash|yaml)$/.test(lang)) {
-        codeGrammar.push({ regex: /^#.*$/, render: (m) => wrapToken('term-comment', m[0]) });
-      }
-      codeGrammar.push(
-        { regex: /^(?:"(?:[^"\\]|\\.)*")/, render: (m) => wrapToken('term-string', m[0]) },
-        { regex: /^(?:'(?:[^'\\]|\\.)*')/, render: (m) => wrapToken('term-string', m[0]) },
-        { regex: /^(?:\/\/.*)$/, render: (m) => wrapToken('term-comment', m[0]) },
-        { regex: /^(?:#(?!\s*\w+\s*$).*)$/, render: (m) => wrapToken('term-comment', m[0]) },
-        { regex: /^(?:\b(?:if|else|for|while|return|function|const|let|var|def|import|export|try|catch|switch|case|break|continue|new|this|self|class|async|await|yield|module|end|true|false|nil|null)\b)/, render: (m) => wrapToken('term-keyword', m[0]) },
-        { regex: /^([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*(\()/, render: (m) => wrapToken('term-func', m[1]) + escapeHTML(m[0].slice(m[1].length, m[0].length - 1)) + '(' },
-        { regex: /^(?:\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/, render: (m) => wrapToken('term-number', m[0]) },
-        { regex: /^(?:&&|\|\||==|!=|<=|>=|->|=>|<<|>>|[=+\-*/<>!&|^~%])/, render: (m) => wrapToken('term-operator', m[0]) }
-      );
-      return codeGrammar;
-    }
+  function terminalGrammar() {
     return [
       { regex: /^(?:\*\*CHANGES_REQUESTED\*\*)/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: /^(?:\*\*APPROVED with comments\*\*)/, render: (m) => wrapToken('term-pass', m[0]) },
       { regex: /^(?:\*\*APPROVED\*\*)/, render: (m) => wrapToken('term-pass', m[0]) },
       { regex: /^```[A-Za-z0-9_+-]*$/, render: (m) => wrapToken('term-heading', m[0]) },
       { regex: /^lang=[A-Za-z0-9_+-]+$/, render: (m) => wrapToken('term-heading', m[0]) },
-      ...(codeMode ? [{ regex: /^#.*$/, render: (m) => wrapToken('term-comment', m[0]) }] : []),
       { regex: /^(?:--- PASS:.*)$/, render: (m) => wrapToken('term-pass', m[0]) },
       { regex: /^(?:--- FAIL:.*)$/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: /^(?:FAIL\s+\S+)/, render: (m) => wrapToken('term-fail', m[0]) },
@@ -632,10 +628,12 @@
       { regex: /^(?:\d+ examples?, [1-9]\d* failures?)/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: /^(?:test result: ok.*)/, render: (m) => wrapToken('term-pass', m[0]) },
       { regex: /^(?:test result: FAILED.*)/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: new RegExp('^(\\$\\s+)(' + shellCommands + ')\\b'), render: (m) => wrapToken('term-prompt', m[1]) + wrapToken('term-command', m[2]) },
       { regex: /^(?:\$ )/, render: (m) => wrapToken('term-prompt', m[0]) },
-      { regex: /^(\s*)([→←✱])\s/, render: (m) => escapeHTML(m[1]) + wrapToken('term-tool', m[2]) + ' ' },
-      { regex: codeMode ? /^(?!)$/ : /^(> build.*)$/, render: (m) => wrapToken('term-heading', m[1] || m[0]) },
-      { regex: codeMode ? /^(?!)$/ : /^(#{1,6} .*?)$/, render: (m) => wrapToken('term-heading', m[1] || m[0]) },
+      { regex: /^(\s*)([→←✱])(\s+)(Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search)\b/, render: (m) => escapeHTML(m[1]) + wrapToken('term-tool', m[2] + m[3]) + wrapToken('term-action', m[4]) },
+      { regex: /^--- (?:run|retry) \d+\/\d+ ---$/, render: (m) => wrapToken('term-mark', m[0]) },
+      { regex: /^(> build.*)$/, render: (m) => wrapToken('term-heading', m[1]) },
+      { regex: /^(#{1,6} .*?)$/, render: (m) => wrapToken('term-heading', m[1]) },
       { regex: /^(?:\[✓\]|\[✔\])/, render: (m) => wrapToken('term-todo-done', m[0]) },
       { regex: /^(?:\[•\])/, render: (m) => wrapToken('term-todo-active', m[0]) },
       { regex: /^(\s*)\[ \]/, render: (m) => escapeHTML(m[1]) + wrapToken('term-todo-pending', '[ ]') },
@@ -645,37 +643,21 @@
       { regex: /^(?:--- .*?)$/, render: (m) => wrapToken('term-path', m[0]) },
       { regex: /^(?:@@.*@@)$/, render: (m) => wrapToken('term-heading', m[0]) },
       { regex: /^(\d{2}:\d{2}:\d{2})\b/, render: (m) => wrapToken('term-time', m[1]) },
-      { regex: /^(?:"(?:[^"\\]|\\.)*")/, render: (m) => wrapToken('term-string', m[0]) },
-      { regex: /^(?:'(?:[^'\\]|\\.)*')/, render: (m) => wrapToken('term-string', m[0]) },
-      { regex: /^(?:\/\/.*)$/, render: (m) => wrapToken('term-comment', m[0]) },
-      { regex: /^(?:#(?!\s*\w+\s*$).*)$/, render: (m) => wrapToken('term-comment', m[0]) },
-      { regex: /^(?:\b(?:if|else|for|while|return|function|const|let|var|def|import|export|try|catch|switch|case|break|continue|new|this|self|class|async|await|yield|module|end|true|false|nil|null)\b)/, render: (m) => wrapToken('term-keyword', m[0]) },
-      { regex: /^([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*(\()/, render: (m) => wrapToken('term-func', m[1]) + escapeHTML(m[0].slice(m[1].length, m[0].length - 1)) + '(' },
-      { regex: /^(?:\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/, render: (m) => wrapToken('term-number', m[0]) },
-      { regex: /^(?:&&|\|\||==|!=|<=|>=|->|=>|<<|>>|[=+\-*/<>!&|^~%])/, render: (m) => wrapToken('term-operator', m[0]) },
+      { regex: /^(?:#\d+|PR#?\d+)\b/, render: (m) => wrapToken('term-issue', m[0]) },
+      { regex: /^(?:[0-9a-fA-F]{7,})\b/, render: (m) => wrapToken('term-hash', m[0]) },
+      { regex: /^\b(?:sub-agent|subagent)\b/, render: (m) => wrapToken('term-subagent', m[0]) },
+      { regex: /^(?:gh|git|go|npm|yarn|node|npx|ls|echo|cat|make|mkdir|rm|cp|mv|find|grep|sed|awk|curl|wget|pwd|cd|printf|tar|unzip|jq|chmod|ln|whoami|sort|head|tail|less|more|touch|ssh|scp)\b/, render: (m) => wrapToken('term-command', m[0]) },
     ];
   }
 
   function renderWithGrammar(text, grammar) {
+    const rules = (typeof grammar === 'function' ? grammar() : grammar);
     const value = String(text || '');
     if (!value) return '';
     const lines = value.split('\n');
-    let mode = 'terminal';
     return lines.map((line) => {
       const raw = stripAnsi(line);
-      const fence = raw.match(/^```([A-Za-z0-9_+-]*)$/);
-      if (fence) {
-        const renderedFence = renderGrammarLine(raw, grammar(mode));
-        mode = mode === 'terminal' ? (fence[1] || 'code') : 'terminal';
-        return renderedFence;
-      }
-      const label = raw.match(/^lang=([A-Za-z0-9_+-]+)$/);
-      if (label) {
-        const renderedLabel = renderGrammarLine(raw, grammar(mode));
-        mode = label[1] || 'code';
-        return renderedLabel;
-      }
-      return renderGrammarLine(raw, grammar(mode));
+      return renderGrammarLine(raw, rules);
     }).join('\n');
   }
 
@@ -746,16 +728,9 @@
     const value = String(text || '');
     if (!value) return '';
     const lines = value.split('\n');
-    let inCodeBlock = false;
     return lines.map((line) => {
       const raw = stripAnsi(line);
-      const fenceMatch = raw.match(/^```([A-Za-z0-9_+-]*)$/);
-      if (fenceMatch) {
-        inCodeBlock = !inCodeBlock;
-        return '<span class="term-heading">' + escapeHTML(raw) + '</span>';
-      }
-      const labelMatch = raw.match(/^lang=([A-Za-z0-9_+-]+)$/);
-      if (labelMatch) {
+      if (/^```[A-Za-z0-9_+-]*$/.test(raw) || /^lang=[A-Za-z0-9_+-]+$/.test(raw)) {
         return '<span class="term-heading">' + escapeHTML(raw) + '</span>';
       }
       const grammar = Prism.languages['sandman-log'];
