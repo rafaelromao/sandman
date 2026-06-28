@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,6 +205,13 @@ func TestDaemon_SharedReviewPromptFileExists(t *testing.T) {
 	}
 	if len(data) == 0 {
 		t.Error("review-prompt.md should be non-empty")
+	}
+	want := prompt.DefaultPRReviewPrompt()
+	if string(data) != want {
+		t.Errorf("review-prompt.md should be the static PR-agnostic template\ngot (%d bytes):\n%s\nwant (%d bytes):\n%s", len(data), data, len(want), want)
+	}
+	if strings.Contains(string(data), "PR 5") {
+		t.Errorf("review-prompt.md should not contain PR-specific title, got: %q", string(data))
 	}
 
 	// No per-PR prompt file under .sandman/reviews/<PR>/.
