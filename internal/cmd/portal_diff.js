@@ -896,7 +896,8 @@
   }
 
   function buildDetailContent(panel, rowRun, subjectRun, tabName, helpers, opts) {
-    const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
+    const subjectValue = subjectRunValue(subjectRun);
+    const subjectFp = subjectValue + '|' + subjectFingerprint(subjectRun, opts);
     const subjectPicker = buildSubjectSelector(panel, rowRun, subjectRun, opts);
     if (subjectPicker) panel.appendChild(subjectPicker);
     buildTabsRow(panel, rowRun, tabName);
@@ -904,8 +905,14 @@
     content.classList.add('detail-content');
     content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
     panel.appendChild(content);
-    if (tabName === 'log') buildLogContent(content, subjectRun, helpers);
-    else if (tabName === 'events') {
+    if (tabName === 'log') {
+      const cached = takeCachedLogPane(subjectValue);
+      if (cached) {
+        content.appendChild(cached);
+      } else {
+        buildLogContent(content, subjectRun, helpers);
+      }
+    } else if (tabName === 'events') {
       buildEventsContent(content, subjectRun, helpers);
       content.setAttribute('data-rendered-fingerprint', 'events|' + eventsFingerprint(subjectRun) + '|subjects:' + subjectFp);
     } else {
@@ -1245,6 +1252,18 @@
     return { mutated: mutationCount > before, cells: mutationCount - before };
   }
 
+  function cacheLogPaneBeforeRemove(detailRow) {
+    const pre = detailRow.querySelector('pre[data-scroll-key]');
+    if (!pre) return;
+    const content = pre.parentNode;
+    if (!content || !content.getAttribute) return;
+    const fp = content.getAttribute('data-rendered-subject-fingerprint') || '';
+    const subjectValue = fp.split('|')[0];
+    if (!subjectValue) return;
+    const pane = (content.parentNode && content.parentNode !== content) ? content : pre;
+    storeCachedLogPane(subjectValue, pane);
+  }
+
   function removeRunRow(body, key) {
     const dataRow = dataRowOf(body, key);
     const detail = detailRowOf(body, key);
@@ -1260,6 +1279,7 @@
       removed += 1;
     }
     if (detail) {
+      cacheLogPaneBeforeRemove(detail);
       body.removeChild(detail);
       clearDetailData(detail);
       removed += 1;
