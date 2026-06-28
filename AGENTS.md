@@ -2,29 +2,19 @@
 
 CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 
-## Purpose
+## HARD RULE: `codeindex` first, every time
 
-This file provides operating instructions for coding agents working in this repository. Follow the architecture notes and workflow rules below before making changes.
+**You MUST run `codeindex` before any broad exploration, grep, or file open for code discovery.** This is non-negotiable — not a suggestion, not a guideline. The rule applies to the primary agent AND every sub-agent spawned via the `task` tool.
 
-## Architecture
+**Violation consequence:** Wasted tokens, missed context, likely wrong file selection. If a session review catches a codeindex violation, the work is considered incomplete.
 
-- **Event-sourced state**: Run status is a projection over the append-only `.sandman/events.jsonl`, not mutable records. `events.RunState` folds events into current state. If a status looks wrong, start by tracing the relevant event types and the fold/projection logic rather than searching for mutable status fields.
-- **Factory seams**: `cmd.Dependencies` (`internal/cmd/root.go`) is the top-level dependency injection struct. `batch.Request` accepts `RunnableFactory` and `SandboxFactory` interfaces. In tests, inject fakes at these seams rather than mocking deep concrete types.
-- **Filesystem as data store**: There is no database. State lives in flat files under `.sandman/` (manifests, logs, review state), written atomically via temp-file + `os.Rename`. IPC uses Unix domain sockets.
+### Sub-agent rule
 
-## Mandatory workflow
+Every `task` tool invocation whose prompt involves code discovery MUST include this instruction verbatim:
 
-For all code discovery, symbol lookup, dependency tracing, and blast-radius analysis, use `codeindex` before broad grep or opening many files.
+> **Before any broad search or file read, run `codeindex lookup <symbol>` or `codeindex search "concept"` to narrow targets. This is a mandatory repo rule — violation wastes context.**
 
-Required sequence:
-
-1. If the task touches code, start with `codeindex`, not repo-wide grep.
-2. Use `codeindex` to narrow the candidate files or symbols first.
-3. Only open source files after `codeindex` identifies the most relevant targets.
-4. Before changing shared or high-risk code, assess dependencies or blast radius first.
-5. If `codeindex` is unavailable, incomplete, or stale, state that explicitly and fall back to targeted reads only.
-
-Do not start by scanning the repository broadly when a `codeindex` command can answer the question.
+Do not skip this even for seemingly simple lookups. The sub-agent does not read AGENTS.md; the prompt is the only enforcement mechanism.
 
 ## Symbol lookup and impact analysis
 
@@ -44,7 +34,7 @@ Use `codeindex` CLI before grepping for symbols or assessing blast radius.
 
 Use the smallest command that answers the question:
 
-- Need a definition location for a symbol, interface, type, method, or function: use `codeindex lookup <symbol>`.
+- Need a definition location for a symbol: use `codeindex lookup <symbol>`.
 - Need to understand what depends on a file before editing it: use `codeindex dependencies <file>` or `codeindex impact <file>`.
 - Need to understand risky change areas during refactors: use `codeindex high-blast --threshold N`.
 - Need to find a concept that may span multiple files or is easier to describe than to name precisely: use `codeindex search "..."`.
@@ -54,8 +44,30 @@ Use the smallest command that answers the question:
 After a `codeindex` query:
 
 - Read only the files that the query identifies as likely relevant.
-- Avoid opening many adjacent files “just in case”.
+- Avoid opening many adjacent files "just in case".
 - Avoid repo-wide grep unless `codeindex` cannot answer or the task concerns non-indexed content.
+
+## Direct-read exceptions
+
+You may skip `codeindex` only when the task is purely about:
+
+- `CONTEXT.md` and domain terminology.
+- ADRs under `docs/adr/`.
+- Agent guidance under `docs/agents/`.
+- Shell scripts, JSON, YAML, logs, fixtures, or generated artifacts.
+- Exact implementation details after `codeindex` has already narrowed the search.
+
+For architecture or domain questions, read the relevant docs early instead of inferring intent from code alone.
+
+## Purpose
+
+This file provides operating instructions for coding agents working in this repository. Follow the architecture notes and workflow rules below before making changes.
+
+## Architecture
+
+- **Event-sourced state**: Run status is a projection over the append-only `.sandman/events.jsonl`, not mutable records. `events.RunState` folds events into current state. If a status looks wrong, start by tracing the relevant event types and the fold/projection logic rather than searching for mutable status fields.
+- **Factory seams**: `cmd.Dependencies` (`internal/cmd/root.go`) is the top-level dependency injection struct. `batch.Request` accepts `RunnableFactory` and `SandboxFactory` interfaces. In tests, inject fakes at these seams rather than mocking deep concrete types.
+- **Filesystem as data store**: There is no database. State lives in flat files under `.sandman/` (manifests, logs, review state), written atomically via temp-file + `os.Rename`. IPC uses Unix domain sockets.
 
 ## Sandman task routing
 
@@ -99,18 +111,6 @@ If the task involves coordination between processes:
 
 - Inspect Unix domain socket code paths first.
 - Prefer changes that preserve clear ownership and cleanup of socket lifecycle.
-
-## Direct-read exceptions
-
-Use direct file reads without waiting on `codeindex` only when the task is mainly about:
-
-- `CONTEXT.md` and domain terminology.
-- ADRs under `docs/adr/`.
-- Agent guidance under `docs/agents/`.
-- Shell scripts, JSON, YAML, logs, fixtures, or generated artifacts.
-- Exact implementation details after `codeindex` has already narrowed the search.
-
-For architecture or domain questions, read the relevant docs early instead of inferring intent from code alone.
 
 ## Change-safety rules
 
@@ -172,3 +172,5 @@ For most non-trivial tasks, follow this order:
 5. Make the smallest coherent change.
 6. Run formatting, vetting, and relevant tests.
 7. Summarize what changed, what was verified, and any remaining risk.
+
+**Sub-agent rule applies here too:** when step 2 or 3 requires spawning a sub-agent task, include the codeindex instruction verbatim per the Sub-agent rule above.
