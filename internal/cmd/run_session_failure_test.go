@@ -25,7 +25,7 @@ import (
 //   - .sandman/events.jsonl does NOT contain a run.started line for
 //     the issue. (A bug that emits run.started before Prepare succeeds
 //     would create a ghost row that the portal cannot recover from.)
-//   - .sandman/runs/<id>/ does not exist (Close cleaned it up).
+//   - .sandman/batches/<id>/ does not exist (Close cleaned it up).
 func TestRun_PrepareFailure_DoesNotEmitRunStarted(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -51,26 +51,9 @@ func TestRun_PrepareFailure_DoesNotEmitRunStarted(t *testing.T) {
 		}
 	}()
 
-	// Pre-bind a unix socket at the path the daemon will try to
-	// create .sandman/runs/<id>/run.sock. We use a long-lived
-	// listener on a path chosen so the generated run dir lands on
-	// it. Since run id is timestamp-based, we listen on the
-	// .sandman/runs directory itself — that way every new run
-	// dir is blocked at MkdirAll time.
-	//
-	// The trick that works: bind an unrelated unix socket at
-	// .sandman/runs/pre-occupied. MkdirAll is happy (the path
-	// doesn't collide), but the daemon's subsequent MkdirAll on
-	// the run subdir fails because the parent is a socket file
-	// (not a directory). This is portable and root-friendly.
-	preOccupied := filepath.Join(sandmanDir, "pre-occupied")
-	if err := os.MkdirAll(filepath.Dir(preOccupied), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(preOccupied, []byte("not a directory"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(preOccupied) })
+	// Pre-create .sandman/batches as a regular file so the daemon's
+	// MkdirAll(batchDir) fails, simulating a write failure during
+	// RunSession.Prepare.
 
 	gh := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -91,13 +74,13 @@ func TestRun_PrepareFailure_DoesNotEmitRunStarted(t *testing.T) {
 
 	// We construct a request whose run-id collides with the
 	// pre-occupied path so the daemon's MkdirAll(runDir) fails.
-	// Since daemon.RunDir joins <baseDir>/runs/<id>, we pre-create
-	// <baseDir>/runs as a non-directory file.
-	runsPath := filepath.Join(sandmanDir, "runs")
-	if err := os.WriteFile(runsPath, []byte("not a directory"), 0o600); err != nil {
+	// Since BatchDir joins <baseDir>/batches/<batch-id>, we pre-create
+	// <baseDir>/batches as a non-directory file.
+	batchesPath := filepath.Join(sandmanDir, "batches")
+	if err := os.WriteFile(batchesPath, []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Remove(runsPath) })
+	t.Cleanup(func() { _ = os.Remove(batchesPath) })
 
 	eventsPath := filepath.Join(sandmanDir, "events.jsonl")
 	realEventLog := &events.JSONLLogger{Path: eventsPath}
@@ -134,17 +117,17 @@ func TestRun_PrepareFailure_DoesNotEmitRunStarted(t *testing.T) {
 
 	// The run dir cleanup: Prepare failure is followed by
 	// `defer rs.Close()` in the run cmd, which removes the run
-	// directory entirely. The .sandman/runs path is the
+	// directory entirely. The .sandman/batches path is the
 	// pre-occupied file (we never successfully created a real
 	// run dir under it).
-	if _, err := os.Stat(runsPath); err != nil {
+	if _, err := os.Stat(batchesPath); err != nil {
 		t.Fatalf("pre-occupied runs path was clobbered: %v", err)
 	}
 }
 
 // TestRun_ControlSocketBindFailure_LeavesNoArtifacts is a focused
 // sanity check: when the run dir is unwriteable (here: a regular file
-// at the .sandman/runs path), the run command fails and no run dir is
+// at the .sandman/batches path), the run command fails and no run dir is
 // left on disk for the portal to find as a "dead" run.
 func TestRun_ControlSocketBindFailure_LeavesNoArtifacts(t *testing.T) {
 	dir := t.TempDir()
@@ -170,14 +153,14 @@ func TestRun_ControlSocketBindFailure_LeavesNoArtifacts(t *testing.T) {
 		}
 	}()
 
-	// Pre-occupy .sandman/runs as a regular file so the daemon's
+	// Pre-occupy .sandman/batches as a regular file so the daemon's
 	// MkdirAll(runDir) fails. The RunSession.Prepare then returns
 	// ErrStepMkdir and the run cmd reports the error.
-	runsPath := filepath.Join(sandmanDir, "runs")
-	if err := os.WriteFile(runsPath, []byte("blocker"), 0o600); err != nil {
+	batchesPath := filepath.Join(sandmanDir, "batches")
+	if err := os.WriteFile(batchesPath, []byte("blocker"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Remove(runsPath) })
+	t.Cleanup(func() { _ = os.Remove(batchesPath) })
 
 	gh := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

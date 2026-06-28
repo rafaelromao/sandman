@@ -273,17 +273,6 @@ func (idx *Index) Add(entry Entry) {
 	idx.Entries = append(idx.Entries, entry)
 }
 
-func (idx *Index) ArchiveBatch(id string, archivedAt time.Time) error {
-	for i := range idx.Entries {
-		if idx.Entries[i].ID == id {
-			idx.Entries[i].Status = StatusArchived
-			idx.Entries[i].ArchivedAt = &archivedAt
-			return idx.Save(idx.indexPath)
-		}
-	}
-	return fmt.Errorf("batch not found: %s", id)
-}
-
 func (idx *Index) SetArchived(id, archivePath string, archivedAt time.Time) error {
 	for i := range idx.Entries {
 		if idx.Entries[i].ID == id {
