@@ -68,14 +68,28 @@ sandbox: podman
 git:
   base_branch: main
 
-# Sandman installs the built-in agent in scaffolded Dockerfiles, installs [`codeindex`](https://github.com/scheidydude/codeindex) for fast symbol lookup, and mounts the shared skills directory.
+# Sandman installs the built-in agent in scaffolded Dockerfiles, installs [`codeindex`](https://github.com/rafaelromao/codeindex) for fast symbol lookup, and mounts the shared skills directory.
 ```
 
 ## Built-in preset
 
 Sandman has one built-in preset: `opencode`. It is installed into scaffolded Dockerfiles and is the default `agent`.
 
-Sandman also installs [`codeindex`](https://github.com/scheidydude/codeindex) in scaffolded container images. Sandman runs agents against real repositories, and `codeindex` gives the agent a fast way to find symbols, trace dependencies, and inspect impact without reading large source trees line by line.
+Sandman also installs [`codeindex`](https://github.com/rafaelromao/codeindex) in scaffolded container images. Sandman runs agents against real repositories, and `codeindex` gives the agent a fast way to find symbols, trace dependencies, and inspect impact without reading large source trees line by line.
+
+To install `codeindex` on the host machine for local use:
+
+```bash
+git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages
+```
+
+After installing, generate the index files from the project root:
+
+```bash
+codeindex analyze . && codeindex symbols .
+```
+
+Re-run this whenever the codebase changes significantly to keep the index fresh.
 
 ### Pre-commit hook
 
