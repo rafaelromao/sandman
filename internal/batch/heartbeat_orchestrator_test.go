@@ -153,7 +153,9 @@ func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
 	}
 	client, proc, sb, factory, workDir := heartbeatTestSetup(t)
 	_ = sb
-	logPath := filepath.Join(workDir, ".sandman", "batches", "68cb-260622105532-42+1", "runs", "68cb-260622105532-42", "run.log")
+	batchID := BatchIDForIssue(heartbeatTestIssueNum, 1, "260622105532", "68cb")
+	runID := buildRunID(heartbeatTestIssueNum, "260622105532", "68cb")
+	logPath := filepath.Join(workDir, ".sandman", "batches", batchID, "runs", runID, "run.log")
 	runnable := &heartbeatStallRunnable{logPath: logPath, proc: proc}
 	runFactory := &heartbeatSingleRunnableFactory{runnable: runnable}
 	spyLog := &spyEventLog{}

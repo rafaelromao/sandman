@@ -30,10 +30,10 @@ build_tools: generic
 review_command: /sandman review
 
 # Maximum number of concurrent agent runs.
-parallel: 4
+parallel: 1
 
 # Maximum concurrent review-daemon runs.
-parallel_reviews: 4
+parallel_reviews: 1
 
 # Idle timeout in seconds for agent runs. When the agent produces no new log
 # output for this duration, the heartbeat watchdog aborts the run.
