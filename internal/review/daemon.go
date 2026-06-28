@@ -429,20 +429,26 @@ func (d *Daemon) loadGlobalSeenForPR(prNumber int) (map[string]bool, error) {
 			continue
 		}
 		for _, sc := range state.SeenComments {
-			// Only "success" and "superseded" are terminal for the
-			// skip rule. "failure" and "aborted" mean the trigger
-			// should be retried on the next tick (PRD 1218 only lists
-			// success/failure/aborted as terminal run statuses; the
-			// skip rule is a separate dedup concern). "superseded" is
-			// intentionally treated as terminal — an obsolete trigger
-			// should not be re-processed even though its run did not
-			// succeed.
-			if sc.Status == "success" || sc.Status == "superseded" {
+			if shouldSkipDedupStatus(sc.Status) {
 				seen[sc.CommentID] = true
 			}
 		}
 	}
 	return seen, nil
+}
+
+// shouldSkipDedupStatus reports whether a recorded comment status means
+// the comment should be skipped during global dedup.
+//
+// This intentionally deviates from PRD #1218's terminal run-status set
+// {success, failure, aborted}:
+//   - failure is retryable (per #1333)
+//   - aborted is retryable (the run was interrupted before publishing a
+//     review, so the trigger should be retried)
+//   - superseded is treated as terminal (obsolete trigger, not in PRD set)
+//   - success is terminal (the review comment was published)
+func shouldSkipDedupStatus(status string) bool {
+	return status == "success" || status == "superseded"
 }
 
 // launchReview renders the review prompt and runs the batch. The PR

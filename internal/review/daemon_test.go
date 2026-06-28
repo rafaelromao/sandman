@@ -1738,6 +1738,70 @@ func TestDaemon_TickFailingReviewRecordsFailure(t *testing.T) {
 	}
 }
 
+// TestDaemon_AbortedReviewRetriesOnNextTick verifies that a review
+// trigger recorded as "aborted" in a prior run's review-state.json is
+// not skipped during global dedup; it is re-processed on the next tick.
+// This confirms the global-dedup skip rule intentionally deviates from
+// PRD #1218's terminal run-status set for "aborted".
+func TestDaemon_AbortedReviewRetriesOnNextTick(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "x", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "Body"}},
+	}
+
+	runner := &capturedRequest{}
+	errRunner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		runner.mu.Lock()
+		runner.calls++
+		runner.last = req
+		runner.mu.Unlock()
+		return nil, errors.New("batch exploded")
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, errRunner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+
+	// Pre-seed a prior review batch with an aborted review-state.json.
+	priorBatchDir := filepath.Join(d.BaseDir, "batches", "old-aborted-review")
+	priorRunDir := filepath.Join(priorBatchDir, "runs", "review")
+	if err := os.MkdirAll(priorRunDir, 0755); err != nil {
+		t.Fatalf("create prior run dir: %v", err)
+	}
+	priorState := batchindex.ReviewState{
+		PR: 1,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: "x", Status: "aborted", Timestamp: time.Now()},
+		},
+	}
+	if err := batchindex.WriteReviewState(priorRunDir, priorState); err != nil {
+		t.Fatalf("write prior review state: %v", err)
+	}
+	indexPath := filepath.Join(d.BaseDir, "batches", "batches.json")
+	idx, _ := batchindex.Load(indexPath)
+	idx.Add(batchindex.Entry{
+		ID:   "old-aborted-review",
+		Path: priorBatchDir,
+		Kind: batchindex.KindReview,
+		PR:   1,
+	})
+	if err := idx.Save(indexPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
+	}
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run on first tick (aborted not skipped), got %d", runner.calls)
+	}
+}
+
 // TestDaemon_TickFailingReviewRetriesOnNextTick verifies that a failed
 // review trigger (recorded as "failure" in review-state.json) is
 // re-processed on the next daemon tick. This confirms the global dedup
