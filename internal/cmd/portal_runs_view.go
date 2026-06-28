@@ -372,6 +372,25 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 		if _, ok := unavailableRunIDs[locator.batchID]; ok {
 			runs[i].Unavailable = true
 		}
+
+		// For completed archived rows, the saved log moved with the batch
+		// directory. Recompute the log path and URL from the index entry's
+		// recorded path, refresh the preview, and correct SourceExists.
+		if runs[i].Kind == "completed" && runs[i].Archived && idx != nil {
+			if entry := idx.Resolve(locator.batchID); entry != nil && entry.Path != "" {
+				archivedLogPath := filepath.Join(entry.Path, "runs", runs[i].RunID, "run.log")
+				runs[i].LogPath = archivedLogPath
+				runs[i].LogURL = v.portalLogDownloadURLForPath(repoRoot, archivedLogPath)
+				if info, err := os.Stat(filepath.Dir(archivedLogPath)); err == nil && info.IsDir() {
+					runs[i].SourceExists = true
+				} else {
+					runs[i].SourceExists = false
+				}
+				if strings.TrimSpace(runs[i].Log) == "" {
+					runs[i].Log = v.readPortalTextFile(archivedLogPath)
+				}
+			}
+		}
 	}
 	// Staleness signal for active rows: the saved-run-log mtime (with a
 	// StartedAt fallback). Computed here so every runFrom* constructor and
@@ -1161,7 +1180,10 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		}
 	}
 
-	batchID := batchIDFromRunID(runID)
+	batchID := runState.BatchID()
+	if batchID == "" {
+		batchID = batchIDFromRunID(runID)
+	}
 	if active != nil && active.BatchID != "" {
 		batchID = active.BatchID
 	}
@@ -1616,6 +1638,17 @@ func (v *portalRunsView) portalLogPathForRun(repoRoot string, locator runLocator
 
 func (v *portalRunsView) portalLogDownloadURLForRun(repoRoot string, locator runLocator) string {
 	logPath := v.portalLogPathForRun(repoRoot, locator)
+	if logPath == "" {
+		return ""
+	}
+	return v.portalLogDownloadURLForPath(repoRoot, logPath)
+}
+
+// portalLogDownloadURLForPath turns any sandman-relative log file path into
+// the portal's raw download URL. It is the archive-aware complement to
+// portalLogDownloadURLForRun: archived batches resolve through the index
+// entry's Path rather than the canonical batches directory.
+func (v *portalRunsView) portalLogDownloadURLForPath(repoRoot, logPath string) string {
 	if logPath == "" {
 		return ""
 	}

@@ -83,6 +83,7 @@ type Daemon struct {
 	MaxContainersSet     bool
 	controlSocket        *daemon.ControlSocket
 	busy                 chan struct{}
+	promptOnce           sync.Once
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -111,13 +112,33 @@ func (d *Daemon) SocketPath() string {
 }
 
 // PromptTemplatePath returns the absolute path of the shared review
-// prompt template. The daemon writes the rendered prompt here once per
-// scan; the file contains no PR-specific data.
+// prompt template. The file is a static, PR-agnostic copy of the
+// built-in template; PR context flows only through the per-run
+// batch request.
 //
 // Acceptance criterion #2 from issue #1224: ".sandman/reviews/
 // contains only review.sock and review-prompt.md".
 func (d *Daemon) PromptTemplatePath() string {
 	return filepath.Join(d.BaseDir, "reviews", "review-prompt.md")
+}
+
+// initPromptTemplate writes the static, PR-agnostic review prompt
+// template to PromptTemplatePath() exactly once. It is safe to call
+// from multiple goroutines and from both StartSocket and launchReview.
+func (d *Daemon) initPromptTemplate() error {
+	var err error
+	d.promptOnce.Do(func() {
+		dir := filepath.Dir(d.PromptTemplatePath())
+		if err = os.MkdirAll(dir, 0755); err != nil {
+			return
+		}
+		tmp := d.PromptTemplatePath() + ".tmp"
+		if err = os.WriteFile(tmp, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
+			return
+		}
+		err = os.Rename(tmp, d.PromptTemplatePath())
+	})
+	return err
 }
 
 // ReviewStatePath returns the on-disk path of the per-run review-state
@@ -146,11 +167,15 @@ func (d *Daemon) SetSocket(s *daemon.ControlSocket) {
 	d.controlSocket = s
 }
 
-// StartSocket ensures the .sandman/reviews dir exists and starts the
-// control socket. Safe to call multiple times.
+// StartSocket ensures the .sandman/reviews dir exists, writes the
+// static shared prompt template, and starts the control socket. Safe
+// to call multiple times.
 func (d *Daemon) StartSocket() error {
 	if err := os.MkdirAll(filepath.Dir(d.SocketPath()), 0755); err != nil {
 		return fmt.Errorf("create reviews dir: %w", err)
+	}
+	if err := d.initPromptTemplate(); err != nil {
+		return fmt.Errorf("init review prompt template: %w", err)
 	}
 	if d.controlSocket == nil {
 		d.controlSocket = daemon.NewControlSocketWithName(filepath.Dir(d.SocketPath()), "review.sock", daemon.NewBroadcaster())
@@ -447,12 +472,13 @@ func (d *Daemon) loadGlobalSeenForPR(prNumber int) (map[string]bool, error) {
 
 // launchReview renders the review prompt and runs the batch. The PR
 // metadata is re-fetched via the GitHub client so the prompt reflects
-// the current title and body. The rendered prompt is written to the
-// shared .sandman/reviews/review-prompt.md (no PR data). The run
-// folder is created here via RunSession.Prepare. The returned runDir
-// is the new run folder; an error means the review was not launched
-// but the run folder may have been created and must be cleaned up by
-// the portal's stale recovery (issue #1024).
+// the current title and body. The rendered prompt is passed to the
+// agent through the per-run batch request; the shared
+// .sandman/reviews/review-prompt.md file stays a static, PR-agnostic
+// template. The run folder is created here via RunSession.Prepare. The
+// returned runDir is the new run folder; an error means the review was
+// not launched but the run folder may have been created and must be
+// cleaned up by the portal's stale recovery (issue #1024).
 func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID string) (string, error) {
 	defer func() {
 		if commentReactionID != "" {
@@ -482,12 +508,11 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		return "", fmt.Errorf("render prompt: %w", err)
 	}
 
-	// Write the shared prompt template. Idempotent rewrite per scan.
-	if err := os.MkdirAll(filepath.Dir(d.PromptTemplatePath()), 0755); err != nil {
-		return "", fmt.Errorf("create reviews dir: %w", err)
-	}
-	if err := os.WriteFile(d.PromptTemplatePath(), []byte(rendered), 0644); err != nil {
-		return "", fmt.Errorf("write prompt template: %w", err)
+	// Ensure the shared prompt template exists as a static,
+	// PR-agnostic file. PR-specific content reaches the agent only
+	// through Request.PromptConfig.PromptFlag below.
+	if err := d.initPromptTemplate(); err != nil {
+		return "", fmt.Errorf("init review prompt template: %w", err)
 	}
 
 	agentName := ""
