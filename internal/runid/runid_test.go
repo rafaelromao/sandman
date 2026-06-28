@@ -270,13 +270,13 @@ func TestNewBatch_FirstAttemptSuccess(t *testing.T) {
 }
 
 func TestNewBatch_CollisionGuard_RetriesOnCollision(t *testing.T) {
-	runsDir := t.TempDir()
-	originalRunsDir := runsDirRoot
+	batchesDir := t.TempDir()
+	originalBatchesDir := batchesDirRoot
 	originalShortIDFunc := shortIDFunc
 	originalTimeFunc := timeFunc
-	runsDirRoot = runsDir
+	batchesDirRoot = batchesDir
 	defer func() {
-		runsDirRoot = originalRunsDir
+		batchesDirRoot = originalBatchesDir
 		shortIDFunc = originalShortIDFunc
 		timeFunc = originalTimeFunc
 	}()
@@ -284,7 +284,7 @@ func TestNewBatch_CollisionGuard_RetriesOnCollision(t *testing.T) {
 	fixedTime := time.Date(2026, 6, 18, 11, 38, 25, 0, time.Local)
 	timeFunc = func() time.Time { return fixedTime }
 
-	if err := os.MkdirAll(filepath.Join(runsDir, "0000-260618113825-PR1"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(batchesDir, "0000-260618113825-PR1"), 0755); err != nil {
 		t.Fatalf("failed to create collision dir: %v", err)
 	}
 
@@ -301,13 +301,13 @@ func TestNewBatch_CollisionGuard_RetriesOnCollision(t *testing.T) {
 }
 
 func TestNewBatch_CollisionGuard_AllCollisionsExhausted(t *testing.T) {
-	runsDir := t.TempDir()
-	originalRunsDir := runsDirRoot
+	batchesDir := t.TempDir()
+	originalBatchesDir := batchesDirRoot
 	originalShortIDFunc := shortIDFunc
 	originalTimeFunc := timeFunc
-	runsDirRoot = runsDir
+	batchesDirRoot = batchesDir
 	defer func() {
-		runsDirRoot = originalRunsDir
+		batchesDirRoot = originalBatchesDir
 		shortIDFunc = originalShortIDFunc
 		timeFunc = originalTimeFunc
 	}()
@@ -318,7 +318,7 @@ func TestNewBatch_CollisionGuard_AllCollisionsExhausted(t *testing.T) {
 	ts := "260618113825"
 	for i := 0; i < 16; i++ {
 		sid := fmt.Sprintf("%04x", i)
-		collisionDir := filepath.Join(runsDir, sid+"-"+ts+"-PR1")
+		collisionDir := filepath.Join(batchesDir, sid+"-"+ts+"-PR1")
 		os.MkdirAll(collisionDir, 0755)
 	}
 

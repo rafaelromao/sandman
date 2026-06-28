@@ -49,7 +49,7 @@ No per-PR subdirectories are created under `.sandman/reviews/`. Per-run state li
 
 ### Per-run `review-state.json`
 
-For review runs, the run folder (`.sandman/batches/<batch-id>/runs/review/`) contains `review-state.json`:
+For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) contains `review-state.json`:
 
 ```jsonc
 {

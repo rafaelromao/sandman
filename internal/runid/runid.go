@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-var runsDirRoot = ".sandman/runs"
+var batchesDirRoot = ".sandman/batches"
 
 var shortIDFunc = func() string {
 	return fmt.Sprintf("%04x", time.Now().UnixNano()%0xFFFF)
@@ -41,19 +41,19 @@ func (k Kind) String() string {
 }
 
 func NewBatch() (ts, shortid string, err error) {
-	return NewBatchIn(runsDirRoot)
+	return NewBatchIn(batchesDirRoot)
 }
 
-func NewBatchIn(baseRunsDir string) (ts, shortid string, err error) {
+func NewBatchIn(baseBatchesDir string) (ts, shortid string, err error) {
 	ts = timeFunc().Format("060102150405")
 	for attempt := 0; attempt < 16; attempt++ {
 		shortid = shortIDFunc()
-		entries, err := os.ReadDir(baseRunsDir)
+		entries, err := os.ReadDir(baseBatchesDir)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return ts, shortid, nil
 			}
-			return "", "", fmt.Errorf("read runs dir: %w", err)
+			return "", "", fmt.Errorf("read batches dir: %w", err)
 		}
 		collision := false
 		for _, entry := range entries {

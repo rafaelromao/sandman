@@ -72,7 +72,7 @@ type Request struct {
 	StrandedReconcile *bool
 	PromptConfig      prompt.RenderConfig
 	OutputWriter      io.Writer
-	// RunDir is the per-batch run directory (typically `.sandman/runs/<run-id>`)
+	// RunDir is the per-batch directory (typically `.sandman/batches/<batch-id>/`)
 	// under which container config snapshots are stored for the lifetime of
 	// the batch. When empty, snapshots fall back to a temp directory.
 	RunDir string

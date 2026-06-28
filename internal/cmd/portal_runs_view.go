@@ -96,8 +96,8 @@ type portalRun struct {
 	// RetriesDone is the number of retry attempts the run actually consumed.
 	// Omitted when the run has not finished.
 	RetriesDone int `json:"retriesDone,omitempty"`
-	// Archived is true when a completed run's directory has been
-	// relocated from .sandman/runs/<run-id> to .sandman/archive/<run-id>
+	// Archived is true when a completed batch's directory has been
+	// relocated from .sandman/batches/<batch-id> to .sandman/archive/<batch-id>
 	// by `sandman archive`. The field is always present in JSON so the
 	// /api/runs contract carries an "archived" key for every row.
 	// Active runs are never marked archived, even when an archive
@@ -1511,7 +1511,7 @@ func (v *portalRunsView) loadBatchesIndex(repoRoot string) *batchindex.Index {
 }
 
 // isRunArchived reports whether the batch's directory currently lives under
-// .sandman/archive instead of .sandman/runs. A non-empty batchID that does
+// .sandman/archive instead of .sandman/batches/<batch-id>/. A non-empty batchID that does
 // not resolve to an index entry returns false; otherwise, archived-ness
 // is reported from the entry's Status field, so transient or half-moved
 // state never lights up the flag.

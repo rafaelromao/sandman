@@ -27,7 +27,7 @@ Each batch has two socket types:
 
 The daemon creates one command server (`run.sock`) **per AgentRun** inside each run folder. The command server dispatches to the orchestrator's per-issue cancel API, which maps an external abort request to a specific `AgentRun`.
 
-`RunSocketPath()` (`internal/daemon/runfs.go:229`) returns the per-run socket path and is used by the portal to probe run liveness.
+`RunSocketPath()` (`internal/daemon/runfs.go:247`) returns the per-run socket path and is used by the portal to probe run liveness.
 
 ### Why per-run sockets
 

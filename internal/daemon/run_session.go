@@ -19,7 +19,7 @@ var batchesIndexMu sync.Mutex
 // that must exist *before* the daemon emits a run.started event and before
 // any AgentRun writes log output. Issue #1024 fixed a class of ghost rows
 // in the event log: a daemon could be killed after emitting run.started
-// but before creating .sandman/runs/<id>/, leaving the portal unable to
+// but before creating .sandman/batches/<batch-id>/, leaving the portal unable to
 // reconcile the run. RunSession collapses the three-step boot
 // (MkdirAll → WriteManifest → ControlSocket.Start) into a single Prepare
 // call so the ordering is structural, not procedural. A future refactor
@@ -75,7 +75,7 @@ func NewRunSession(baseDir, batchID string) *RunSession {
 // Deprecated: RunDir is an alias for BatchDir. New code should use
 // BatchDir. This alias is kept for backward compatibility during the
 // transition to per-batch-per-run layout where run artifacts live
-// in <batchDir>/runs/<runID>/ rather than .sandman/runs/.
+// in <batchDir>/runs/<runID>/ within .sandman/batches/<batch-id>/.
 func (s *RunSession) RunDir() string {
 	return s.runDir
 }
