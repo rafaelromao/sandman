@@ -88,6 +88,8 @@ The legacy `BatchManifest.RunID` field is renamed to `BatchId`. The field semant
 }
 ```
 
+`status` is written as `"active"` at run start and rewritten to the terminal value (`"success"`, `"failure"`, `"aborted"`, or `"blocked"`) when the run finishes. The event log remains authoritative for projections; `run.json` is a read-only snapshot after completion.
+
 `worktreePath` is captured at write time. Renaming `.sandman/worktrees/` later does not break historical references; only new runs use the new path.
 
 ### Lifecycle transitions
@@ -96,7 +98,7 @@ The legacy `BatchManifest.RunID` field is renamed to `BatchId`. The field semant
 |------------|--------|
 | Batch creation | Write `batch.json` at batch root, write index entry, create `runs/` directory, start daemon |
 | Run start | Create `<batch>/runs/<run>/`, open `run.sock` inside run folder, open `run.log` with `O_APPEND`, write `run.json` via `WriteRunManifest` |
-| Run end | Close sockets, close log file. **No deletion.** Folder persists |
+| Run end | Update `run.json.status` to the terminal status, close sockets, close log file. **No deletion.** Folder persists |
 | Archive | `os.Rename(<batch>/, archive/<id>/)` first, then update index entry to `status:"archived"` |
 | Clean (no flag) | Remove `active` and `unavailable` entries + their folders |
 | Clean `--archived` | Remove `archived` and `unavailable` entries + their folders |

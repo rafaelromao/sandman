@@ -264,6 +264,21 @@ func ReadRunManifest(batchDir, runID string) (batchindex.RunManifest, error) {
 	return batchindex.ReadManifest(runDir)
 }
 
+// UpdateRunManifestStatus reads an existing run.json under the batch, updates
+// its Status field, and rewrites the file atomically. It returns an error if
+// the manifest is missing or cannot be written.
+func UpdateRunManifestStatus(batchDir, runID string, status batchindex.RunManifestStatus) error {
+	manifest, err := ReadRunManifest(batchDir, runID)
+	if err != nil {
+		return fmt.Errorf("read run manifest for status update: %w", err)
+	}
+	manifest.Status = status
+	if err := WriteRunManifest(batchDir, runID, manifest); err != nil {
+		return fmt.Errorf("write run manifest for status update: %w", err)
+	}
+	return nil
+}
+
 // RecoverStaleRuns scans dead run batches under baseDir and emits a
 // run.aborted event (with payload {"recovered": true}) via the supplied
 // event log for each manifest issue whose RunState in the event log has
@@ -345,6 +360,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 			}
 			recovered++
 			recoveredRunIDs[run.RunID] = struct{}{}
+			_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
 			continue
 		}
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
@@ -372,6 +388,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				if err := emitOrphan(run, issueNumber); err != nil {
 					return recovered, len(dead), err
 				}
+				_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
 			}
 		}
 	}

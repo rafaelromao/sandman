@@ -1648,12 +1648,16 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 	return result
 }
 
-// emitTerminal writes the terminal run event (run.finished or run.aborted) and
-// returns the normalised status so the caller can use it without recomputing.
-// No-op when the orchestrator has no event log.
+// emitTerminal writes the terminal run event (run.finished or run.aborted),
+// rewrites the on-disk run.json snapshot so its status matches the terminal
+// event, and returns the normalised status so the caller can use it without
+// recomputing. Errors updating the snapshot are logged but do not change the
+// run outcome. The event-log write is skipped when the orchestrator has no
+// event log.
 func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult) string {
 	o := s.o
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	s.updateRunManifestStatus(runID, batchindex.RunManifestStatus(terminalStatus))
 	if o.eventLog == nil {
 		return terminalStatus
 	}
@@ -1688,6 +1692,20 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 	}
 	_ = o.eventLog.Log(event)
 	return terminalStatus
+}
+
+// updateRunManifestStatus rewrites the run.json snapshot with the terminal
+// status. Failures are logged to errorLog and ignored; the event log remains
+// authoritative.
+func (s *runSession) updateRunManifestStatus(runID string, status batchindex.RunManifestStatus) {
+	o := s.o
+	batchDir := o.layout.BatchDir(s.batchID)
+	if s.batchID == "" {
+		batchDir = o.layout.BatchesDir
+	}
+	if err := daemon.UpdateRunManifestStatus(batchDir, runID, status); err != nil {
+		fmt.Fprintf(o.errorLog, "error: update run manifest status for run %s: %v\n", runID, err)
+	}
 }
 
 // runOnce runs the retry loop for a session. mergeRequired gates the
@@ -1940,7 +1958,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		WorktreePath: wt.WorkDir(),
 		Kind:         batchindex.KindIssue,
 		CreatedAt:    time.Now(),
-		Status:       batchindex.StatusActive,
+		Status:       batchindex.RunManifestStatusActive,
 	}
 	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
 		fmt.Fprintf(o.errorLog, "error: write run manifest for issue %d: %v\n", s.issueNumber, err)
@@ -2330,7 +2348,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		Kind:         runKind,
 		CreatedAt:    time.Now(),
 		PR:           s.prNumber,
-		Status:       batchindex.StatusActive,
+		Status:       batchindex.RunManifestStatusActive,
 	}
 	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
 		fmt.Fprintf(o.errorLog, "error: write run manifest for prompt-only run: %v\n", err)

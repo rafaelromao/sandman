@@ -132,7 +132,7 @@ func TestClean_DryRun_ProducesNoIO(t *testing.T) {
 		Branch:       "sandman/42-fix",
 		WorktreePath: worktreeDir,
 		Kind:         batchindex.KindIssue,
-		Status:       batchindex.StatusActive,
+		Status:       batchindex.RunManifestStatusActive,
 	})
 	now := time.Now()
 	writeBatchIndex(t, dir, []batchindex.Entry{
@@ -191,7 +191,7 @@ func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
 		Branch:       "sandman/42-fix",
 		WorktreePath: worktreeActive,
 		Kind:         batchindex.KindIssue,
-		Status:       batchindex.StatusActive,
+		Status:       batchindex.RunManifestStatusActive,
 	})
 	writeRunManifest(t, batchArchived, batchindex.RunManifest{
 		RunID:        "batch-archived",
@@ -200,7 +200,7 @@ func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
 		Branch:       "sandman/43-fix",
 		WorktreePath: worktreeArchived,
 		Kind:         batchindex.KindIssue,
-		Status:       batchindex.StatusArchived,
+		Status:       batchindex.RunManifestStatusActive,
 	})
 	now := time.Now()
 	writeBatchIndex(t, dir, []batchindex.Entry{
@@ -275,7 +275,7 @@ func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 		Branch:       "sandman/42-fix",
 		WorktreePath: worktreeActive,
 		Kind:         batchindex.KindIssue,
-		Status:       batchindex.StatusActive,
+		Status:       batchindex.RunManifestStatusActive,
 	})
 	writeRunManifest(t, batchArchived, batchindex.RunManifest{
 		RunID:        "batch-archived",
@@ -284,7 +284,7 @@ func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 		Branch:       "sandman/43-fix",
 		WorktreePath: worktreeArchived,
 		Kind:         batchindex.KindIssue,
-		Status:       batchindex.StatusArchived,
+		Status:       batchindex.RunManifestStatusActive,
 	})
 	now := time.Now()
 	writeBatchIndex(t, dir, []batchindex.Entry{
@@ -374,7 +374,7 @@ func TestClean_Stale_NoIndexChange(t *testing.T) {
 		RunID:   "batch-1",
 		BatchID: "batch-1",
 		Kind:    batchindex.KindIssue,
-		Status:  batchindex.StatusActive,
+		Status:  batchindex.RunManifestStatusActive,
 	})
 	now := time.Now()
 	writeBatchIndex(t, dir, []batchindex.Entry{
@@ -714,7 +714,7 @@ func TestClean_DryRunArchived_PrintsIntendedDeletions(t *testing.T) {
 		RunID:   "batch-archived",
 		BatchID: "batch-archived",
 		Kind:    batchindex.KindIssue,
-		Status:  batchindex.StatusArchived,
+		Status:  batchindex.RunManifestStatusActive,
 	})
 	now := time.Now()
 	writeBatchIndex(t, dir, []batchindex.Entry{
