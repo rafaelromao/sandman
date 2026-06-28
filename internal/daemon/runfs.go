@@ -172,8 +172,8 @@ func BatchDir(baseDir, dirID string) string {
 
 // RunDir is a deprecated alias for BatchDir. It is kept for backward
 // compatibility during the transition period (Slice 1-4). New code should
-// use BatchDir. This alias will be removed when .sandman/runs/ is wiped
-// in Slice 5.
+// use BatchDir. This alias is kept for backward compatibility during
+// the transition to the per-batch layout under .sandman/batches/.
 func RunDir(baseDir, dirID string) string {
 	return BatchDir(baseDir, dirID)
 }

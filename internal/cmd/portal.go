@@ -48,8 +48,8 @@ var portalSignalProcess = signalPortalProcess
 // portalRunLivenessProbe is a package-level var so tests can substitute it.
 var portalRunLivenessProbe = daemon.IsRunActive
 
-// portalRunArchiver moves a run directory from .sandman/runs/<id> to
-// .sandman/archive/<id>. It is a package-level var so tests can substitute
+// portalRunArchiver moves a batch directory from .sandman/batches/<batch-id> to
+// .sandman/archive/<batch-id>. It is a package-level var so tests can substitute
 // a deterministic move without touching the real filesystem. The default
 // delegates to archivePortalRun, which keeps the portal and the CLI on a
 // single move implementation. The handler performs the liveness check and

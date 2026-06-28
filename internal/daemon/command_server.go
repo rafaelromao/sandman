@@ -22,8 +22,8 @@ const (
 )
 
 // CommandRequest is the JSON wire format the Command Server accepts from
-// external clients on the cmd.sock Unix socket at
-// .sandman/runs/<run-id>/cmd.sock. It is the daemon's public wire
+// external clients on the run.sock Unix socket at
+// .sandman/batches/<batch-id>/runs/<run-id>/run.sock. It is the daemon's public wire
 // contract, not an internal helper the Portal (or any other client) can
 // depend on casually — every field and tag below is observable on the
 // wire. The Daemon Process is the only reader; the Portal is one of
