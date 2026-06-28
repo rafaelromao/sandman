@@ -12,6 +12,13 @@ agent: opencode
 # Falls back to the agent provider's configured model if empty.
 model: opencode/big-pickle
 
+# Default agent preset used for review runs when `--agent` is omitted in `sandman review`.
+review_agent: opencode
+
+# Default model passed to the review agent when `--model` is omitted in `sandman review`.
+# Falls back to model if empty.
+review_model: opencode/big-pickle
+
 # Build tools preset for the container image (generic, go, node, python).
 build_tools: generic
 

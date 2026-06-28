@@ -1034,7 +1034,7 @@ func TestLoad_ReviewAgentDefaultsToDefaultAgent(t *testing.T) {
 	}
 }
 
-func TestLoad_ReviewModelDefaultsToDefaultModel(t *testing.T) {
+func TestLoad_ReviewModelDefaultsToDefaultReviewModel(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	content := `agent: opencode
@@ -1049,8 +1049,8 @@ model: openai/gpt-4.1
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DefaultReviewModel != "openai/gpt-4.1" {
-		t.Errorf("review_model fallback: got %q, want %q", cfg.DefaultReviewModel, "openai/gpt-4.1")
+	if cfg.DefaultReviewModel != DefaultReviewModel {
+		t.Errorf("review_model fallback: got %q, want %q", cfg.DefaultReviewModel, DefaultReviewModel)
 	}
 }
 

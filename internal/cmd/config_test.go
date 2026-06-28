@@ -257,7 +257,7 @@ git:
 		"agent: opencode",
 		"model: openai/gpt-4.1",
 		"review_agent: opencode",
-		"review_model: openai/gpt-4.1",
+		"review_model: opencode/big-pickle",
 		"build_tools: go",
 		"review_command: /review please",
 		"parallel: 3",

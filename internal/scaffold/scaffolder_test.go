@@ -50,6 +50,15 @@ func TestScaffold_PersistsRuntimeDefaults(t *testing.T) {
 	if !strings.Contains(content, "parallel_reviews: 4") {
 		t.Errorf("scaffolded config missing %q, got:\n%s", "parallel_reviews: 4", content)
 	}
+	if !strings.Contains(content, "model: opencode/big-pickle") {
+		t.Errorf("scaffolded config missing %q, got:\n%s", "model: opencode/big-pickle", content)
+	}
+	if !strings.Contains(content, "review_agent: opencode") {
+		t.Errorf("scaffolded config missing %q, got:\n%s", "review_agent: opencode", content)
+	}
+	if !strings.Contains(content, "review_model: opencode/big-pickle") {
+		t.Errorf("scaffolded config missing %q, got:\n%s", "review_model: opencode/big-pickle", content)
+	}
 }
 
 func TestScaffold_ParallelReviewsSeeded(t *testing.T) {

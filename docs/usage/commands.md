@@ -230,6 +230,8 @@ sandman config set <key> <value>
 |-----|------|---------|
 | `agent` | string | `opencode` |
 | `model` | string | `opencode/big-pickle` |
+| `review_agent` | string | `opencode` |
+| `review_model` | string | `opencode/big-pickle` |
 | `build_tools` | string | `node` |
 | `parallel` | int | `4` |
 | `parallel_reviews` | int | `4` |

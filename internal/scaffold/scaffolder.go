@@ -259,6 +259,9 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		reviewParallel = opts.ParallelReviews
 	}
 	model := opts.Model
+	if model == "" {
+		model = config.DefaultModel
+	}
 
 	retries, err := resolveRetries(opts.Retries)
 	if err != nil {
@@ -271,6 +274,8 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	cfg := &config.Config{
 		DefaultAgent:          defaultAgent,
 		DefaultModel:          model,
+		DefaultReviewAgent:    config.DefaultReviewAgent,
+		DefaultReviewModel:    config.DefaultReviewModel,
 		BuildTools:            preset.Name,
 		ReviewCommand:         effectiveReviewCommand(opts.ReviewCommand),
 		DefaultParallel:       parallel,
