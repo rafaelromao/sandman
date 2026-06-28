@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -67,6 +68,46 @@ func TestRecoverStaleRuns_EmitsAbortedForUnterminatedRun(t *testing.T) {
 	}
 	if v, _ := e.Payload["recovered"].(bool); !v {
 		t.Errorf("expected payload.recovered=true, got %v", e.Payload)
+	}
+}
+
+func TestRecoverStaleRuns_UpdatesRunManifestStatusToAborted(t *testing.T) {
+	baseDir := t.TempDir()
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(5 * time.Minute)
+
+	batchDir := filepath.Join(baseDir, "batches", "dead-1")
+	writeManifestFile(t, batchDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
+
+	runDir := filepath.Join(batchDir, "runs", "run-42")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	if err := batchindex.WriteManifest(runDir, batchindex.RunManifest{
+		RunID:     "run-42",
+		BatchID:   "dead-1",
+		Issue:     42,
+		Status:    batchindex.RunManifestStatusActive,
+		CreatedAt: started,
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started},
+	}
+
+	if _, _, err := RecoverStaleRuns(baseDir, existing, eventLog); err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+
+	manifest, err := batchindex.ReadManifest(runDir)
+	if err != nil {
+		t.Fatalf("read run manifest after recovery: %v", err)
+	}
+	if manifest.Status != batchindex.RunManifestStatusAborted {
+		t.Errorf("run.json status = %q, want %q", manifest.Status, batchindex.RunManifestStatusAborted)
 	}
 }
 

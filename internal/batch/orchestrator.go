@@ -1648,11 +1648,12 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 	return result
 }
 
-// emitTerminal writes the terminal run event (run.finished or run.aborted) and
-// returns the normalised status so the caller can use it without recomputing.
-// It also rewrites the on-disk run.json snapshot so its status matches the
-// terminal event. Errors updating the snapshot are logged but do not change
-// the run outcome. No-op when the orchestrator has no event log.
+// emitTerminal writes the terminal run event (run.finished or run.aborted),
+// rewrites the on-disk run.json snapshot so its status matches the terminal
+// event, and returns the normalised status so the caller can use it without
+// recomputing. Errors updating the snapshot are logged but do not change the
+// run outcome. The event-log write is skipped when the orchestrator has no
+// event log.
 func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult) string {
 	o := s.o
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)

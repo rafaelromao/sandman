@@ -360,6 +360,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 			}
 			recovered++
 			recoveredRunIDs[run.RunID] = struct{}{}
+			_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
 			continue
 		}
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
@@ -387,6 +388,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				if err := emitOrphan(run, issueNumber); err != nil {
 					return recovered, len(dead), err
 				}
+				_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
 			}
 		}
 	}
