@@ -27,6 +27,19 @@ const (
 	StatusUnavailable Status = "unavailable"
 )
 
+// RunManifestStatus is the lifecycle status of a single run as recorded in
+// run.json. It is deliberately separate from the index Entry Status enum
+// (active/archived/unavailable).
+type RunManifestStatus string
+
+const (
+	RunManifestStatusActive  RunManifestStatus = "active"
+	RunManifestStatusSuccess RunManifestStatus = "success"
+	RunManifestStatusFailure RunManifestStatus = "failure"
+	RunManifestStatusAborted RunManifestStatus = "aborted"
+	RunManifestStatusBlocked RunManifestStatus = "blocked"
+)
+
 type Index struct {
 	Version   int                                    `json:"version"`
 	Entries   []Entry                                `json:"entries"`
@@ -87,16 +100,16 @@ func (i Index) MarshalJSON() ([]byte, error) {
 }
 
 type RunManifest struct {
-	RunID        string    `json:"runID"`
-	BatchID      string    `json:"batchId"`
-	Issue        int       `json:"issue,omitempty"`
-	Branch       string    `json:"branch"`
-	BaseBranch   string    `json:"baseBranch"`
-	WorktreePath string    `json:"worktreePath"`
-	Kind         Kind      `json:"kind"`
-	CreatedAt    time.Time `json:"createdAt"`
-	PR           int       `json:"pr,omitempty"`
-	Status       Status    `json:"status"`
+	RunID        string            `json:"runID"`
+	BatchID      string            `json:"batchId"`
+	Issue        int               `json:"issue,omitempty"`
+	Branch       string            `json:"branch"`
+	BaseBranch   string            `json:"baseBranch"`
+	WorktreePath string            `json:"worktreePath"`
+	Kind         Kind              `json:"kind"`
+	CreatedAt    time.Time         `json:"createdAt"`
+	PR           int               `json:"pr,omitempty"`
+	Status       RunManifestStatus `json:"status"`
 }
 
 type SeenComment struct {
@@ -312,8 +325,28 @@ func WriteManifest(runDir string, manifest RunManifest) error {
 		return fmt.Errorf("marshal run manifest: %w", err)
 	}
 	runManifestPath := filepath.Join(runDir, "run.json")
-	if err := os.WriteFile(runManifestPath, data, 0644); err != nil {
-		return fmt.Errorf("write run manifest: %w", err)
+	dir := filepath.Dir(runManifestPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create run manifest dir: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(runManifestPath)+".tmp.")
+	if err != nil {
+		return fmt.Errorf("create run manifest tmp: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("write run manifest tmp: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close run manifest tmp: %w", err)
+	}
+	if err := os.Rename(tmpPath, runManifestPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename run manifest tmp: %w", err)
 	}
 	return nil
 }

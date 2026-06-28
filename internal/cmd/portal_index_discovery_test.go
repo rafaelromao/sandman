@@ -65,7 +65,7 @@ func TestDiscoverPortalInstances_IndexFirstDiscovery(t *testing.T) {
 			WorktreePath: filepath.Join(repoRoot, ".sandman", "worktrees", "sandman-42-fix"),
 			Kind:         batchindex.KindIssue,
 			CreatedAt:    time.Now(),
-			Status:       batchindex.StatusActive,
+			Status:       batchindex.RunManifestStatusActive,
 		}
 		if err := batchindex.WriteManifest(p, runManifest); err != nil {
 			t.Fatal(err)

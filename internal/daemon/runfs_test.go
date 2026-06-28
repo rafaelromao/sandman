@@ -122,6 +122,34 @@ func TestReadRunManifest_NotFound(t *testing.T) {
 	}
 }
 
+func TestUpdateRunManifestStatus_WritesTerminalStatus(t *testing.T) {
+	tmp := t.TempDir()
+	batchDir := filepath.Join(tmp, "batch123")
+	runID := "run456"
+
+	manifest := batchindex.RunManifest{
+		RunID:     runID,
+		BatchID:   "batch123",
+		Status:    batchindex.RunManifestStatusActive,
+		CreatedAt: time.Now(),
+	}
+	if err := WriteRunManifest(batchDir, runID, manifest); err != nil {
+		t.Fatalf("WriteRunManifest failed: %v", err)
+	}
+
+	if err := UpdateRunManifestStatus(batchDir, runID, batchindex.RunManifestStatusSuccess); err != nil {
+		t.Fatalf("UpdateRunManifestStatus failed: %v", err)
+	}
+
+	got, err := ReadRunManifest(batchDir, runID)
+	if err != nil {
+		t.Fatalf("ReadRunManifest failed: %v", err)
+	}
+	if got.Status != batchindex.RunManifestStatusSuccess {
+		t.Errorf("Status = %q, want %q", got.Status, batchindex.RunManifestStatusSuccess)
+	}
+}
+
 func TestIsRunActive_ProbesBatchSock(t *testing.T) {
 	tmp := t.TempDir()
 	batchPath := filepath.Join(tmp, "batch1")

@@ -595,8 +595,9 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		PR:        prNumber,
 		Kind:      batchindex.KindReview,
 		CreatedAt: time.Now(),
-		Status:    batchindex.StatusActive,
+		Status:    batchindex.RunManifestStatusActive,
 	}
+
 	if err := daemon.WriteRunManifest(runDir, "review", runManifest); err != nil {
 		return runDir, fmt.Errorf("write run manifest: %w", err)
 	}

@@ -86,7 +86,7 @@ func TestPortal_ArchiveEndpointMovesCompletedRunToArchiveDirectory(t *testing.T)
 		BatchID:   runID,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: time.Now(),
-		Status:    batchindex.StatusActive,
+		Status:    batchindex.RunManifestStatusActive,
 	}
 	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestPortal_ArchiveEndpoint_RejectsActiveRun(t *testing.T) {
 		BatchID:   runID,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: time.Now(),
-		Status:    batchindex.StatusActive,
+		Status:    batchindex.RunManifestStatusActive,
 	}
 	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
 		t.Fatal(err)
@@ -234,7 +234,7 @@ func TestPortal_ArchiveEndpoint_RejectsAlreadyArchivedRun(t *testing.T) {
 		BatchID:   runID,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: time.Now(),
-		Status:    batchindex.StatusActive,
+		Status:    batchindex.RunManifestStatusActive,
 	}
 	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
 		t.Fatal(err)
@@ -386,7 +386,7 @@ func TestPortal_ArchiveEndpoint_SurfaceArchivedFlagInRunsAPI(t *testing.T) {
 		Issue:     42,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: started,
-		Status:    batchindex.StatusActive,
+		Status:    batchindex.RunManifestStatusActive,
 	}
 	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
 		t.Fatal(err)
@@ -487,7 +487,7 @@ func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 		Issue:     42,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: started,
-		Status:    batchindex.StatusActive,
+		Status:    batchindex.RunManifestStatusActive,
 	}
 	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
 		t.Fatal(err)

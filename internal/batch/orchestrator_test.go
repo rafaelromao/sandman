@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -4380,6 +4381,51 @@ func TestRunBatch_LogsStartedAndFinishedEvents(t *testing.T) {
 	}
 	if spyLog.events[1].Payload["base_branch"] != "main" {
 		t.Errorf("expected finished base branch main, got %#v", spyLog.events[1].Payload["base_branch"])
+	}
+}
+
+func TestRunBatch_UpdatesRunManifestStatusToTerminal(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(result.Runs))
+	}
+
+	var manifestPath string
+	_ = filepath.WalkDir(".sandman", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type().IsRegular() && filepath.Base(path) == "run.json" {
+			manifestPath = path
+		}
+		return nil
+	})
+	if manifestPath == "" {
+		t.Fatal("run.json not found under .sandman")
+	}
+
+	manifest, err := batchindex.ReadManifest(filepath.Dir(manifestPath))
+	if err != nil {
+		t.Fatalf("read run manifest: %v", err)
+	}
+	if manifest.Status != batchindex.RunManifestStatusSuccess {
+		t.Errorf("run.json status = %q, want %q", manifest.Status, batchindex.RunManifestStatusSuccess)
 	}
 }
 

@@ -255,6 +255,36 @@ func TestProbeStatus_NonENOENT_LeavesStatus(t *testing.T) {
 	}
 }
 
+func TestRunManifestStatus_JSONRoundTrip(t *testing.T) {
+	manifest := RunManifest{
+		RunID:     "run-1",
+		BatchID:   "batch-1",
+		Status:    RunManifestStatusSuccess,
+		CreatedAt: time.Now().Truncate(time.Second),
+	}
+
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal to raw map failed: %v", err)
+	}
+	if raw["status"] != "success" {
+		t.Errorf(`JSON status = %q, want "success"`, raw["status"])
+	}
+
+	var decoded RunManifest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if decoded.Status != RunManifestStatusSuccess {
+		t.Errorf("decoded Status = %q, want %q", decoded.Status, RunManifestStatusSuccess)
+	}
+}
+
 func TestRunManifest_JSONSchema(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	manifest := RunManifest{
@@ -266,7 +296,7 @@ func TestRunManifest_JSONSchema(t *testing.T) {
 		WorktreePath: ".sandman/worktrees/sandman/1213-fix",
 		Kind:         KindIssue,
 		CreatedAt:    now,
-		Status:       "active",
+		Status:       RunManifestStatusActive,
 	}
 
 	data, err := json.Marshal(manifest)
