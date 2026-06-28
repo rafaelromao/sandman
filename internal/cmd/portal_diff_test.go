@@ -2080,6 +2080,53 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffHighlightTerminalLog_MixedCodeLineNoProgrammingTokens(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('const msg = "hello world"; // note');
+const removed = ['term-keyword','term-string','term-comment'];
+for (const cls of removed) {
+  if (result.indexOf(cls) !== -1) throw new Error('unexpected ' + cls + ' span');
+}
+if (result.replace(/<[^>]+>/g, '').indexOf('hello world') === -1) throw new Error('expected text preserved');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_FuncCallNotHighlighted(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('foo.bar()');
+if (result.indexOf('term-func') !== -1) throw new Error('unexpected term-func span');
+if (result.replace(/<[^>]+>/g, '').indexOf('foo.bar()') === -1) throw new Error('expected text preserved');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_KeywordNotHighlighted(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('if (x == 5) { return; }');
+if (result.indexOf('term-keyword') !== -1) throw new Error('unexpected term-keyword span');
+if (result.replace(/<[^>]+>/g, '').indexOf('if (x == 5) { return; }') === -1) throw new Error('expected text preserved');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_OperatorNotHighlighted(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('x == 5 && y != 0');
+if (result.indexOf('term-operator') !== -1) throw new Error('unexpected term-operator span');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_NumberNotHighlighted(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('count = 42');
+if (result.indexOf('term-number') !== -1) throw new Error('unexpected term-number span');
+if (result.replace(/<[^>]+>/g, '').indexOf('count = 42') === -1) throw new Error('expected text preserved');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffHelperExists(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required for portal diff helper test")

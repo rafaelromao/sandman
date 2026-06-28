@@ -13,6 +13,8 @@
   // Keyed by subject run-id; bounded by clearing on overflow.
   const logPaneCache = new Map();
   const LOG_PANE_CACHE_LIMIT = 8;
+  const shellCommands = 'gh|git|go|npm|yarn|node|npx|ls|echo|cat|make|mkdir|rm|cp|mv|find|grep|sed|awk|curl|wget|pwd|cd|printf|tar|unzip|jq|chmod|ln|whoami|sort|head|tail|less|more|touch|ssh|scp';
+  const actionVerbs = 'Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search';
   function takeCachedLogPane(subjectValue) {
     const pane = logPaneCache.get(subjectValue);
     if (pane) logPaneCache.delete(subjectValue);
@@ -563,9 +565,23 @@
 
     Prism.languages['sandman-log'] = {
       'term-time': { pattern: /\b\d{2}:\d{2}:\d{2}\b/, greedy: true },
-      'term-command': { pattern: /^\$\s+(?:gh|git|go|npm|yarn|node|npx|ls|echo|cat|make|mkdir|rm|cp|mv|find|grep|sed|awk|curl|wget|pwd|cd|printf|tar|unzip|jq|chmod|ln|whoami|sort|head|tail|less|more|touch|ssh|scp)\b/, greedy: true },
+      'term-command': {
+        pattern: new RegExp('^\\$\\s+(?:' + shellCommands + ')\\b'),
+        inside: {
+          'term-prompt': /^\$\s+/,
+          'term-command': new RegExp('\\b(?:' + shellCommands + ')\\b')
+        },
+        greedy: true
+      },
       'term-prompt': { pattern: /^\$ /, greedy: true },
-      'term-action': { pattern: /^\s*[→←✱]\s+(?:Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search)\b/, greedy: true },
+      'term-action': {
+        pattern: new RegExp('^\\s*[→←✱]\\s+(?:' + actionVerbs + ')\\b'),
+        inside: {
+          'term-tool': /^\s*[→←✱]\s+/,
+          'term-action': new RegExp('\\b(?:' + actionVerbs + ')\\b')
+        },
+        greedy: true
+      },
       'term-tool': { pattern: /^(\s*)([→←✱])\s/, lookbehind: true, greedy: true },
       'term-mark': { pattern: /^--- (?:run|retry) \d+\/\d+ ---$/, greedy: true },
       'term-heading': { pattern: /^(?:```[A-Za-z0-9_+-]*|lang=[A-Za-z0-9_+-]+|> build.*|#{1,6} .*|@@.*@@)$/, greedy: true },
@@ -612,9 +628,9 @@
       { regex: /^(?:\d+ examples?, [1-9]\d* failures?)/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: /^(?:test result: ok.*)/, render: (m) => wrapToken('term-pass', m[0]) },
       { regex: /^(?:test result: FAILED.*)/, render: (m) => wrapToken('term-fail', m[0]) },
+      { regex: new RegExp('^(\\$\\s+)(' + shellCommands + ')\\b'), render: (m) => wrapToken('term-prompt', m[1]) + wrapToken('term-command', m[2]) },
       { regex: /^(?:\$ )/, render: (m) => wrapToken('term-prompt', m[0]) },
-      { regex: /^\s*[→←✱]\s+(Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search)\b/, render: (m) => wrapToken('term-action', m[0]) },
-      { regex: /^(\s*)([→←✱])\s/, render: (m) => escapeHTML(m[1]) + wrapToken('term-tool', m[2]) + ' ' },
+      { regex: /^(\s*)([→←✱])(\s+)(Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search)\b/, render: (m) => escapeHTML(m[1]) + wrapToken('term-tool', m[2] + m[3]) + wrapToken('term-action', m[4]) },
       { regex: /^--- (?:run|retry) \d+\/\d+ ---$/, render: (m) => wrapToken('term-mark', m[0]) },
       { regex: /^(> build.*)$/, render: (m) => wrapToken('term-heading', m[1]) },
       { regex: /^(#{1,6} .*?)$/, render: (m) => wrapToken('term-heading', m[1]) },
