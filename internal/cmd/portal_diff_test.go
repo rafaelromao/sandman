@@ -2290,6 +2290,18 @@ func sharedMockBody() string {
     getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
     removeAttribute(name) { delete this[name]; log.push(['removeAttribute', name]); },
     appendChild(child) {
+      // DocumentFragment (nodeType === 11) is inserted as its children, not itself.
+      if (child && child.nodeType === 11) {
+        const fragChildren = child.children.slice();
+        child.children.length = 0;
+        for (const c of fragChildren) {
+          c.parentNode = null;
+          this.appendChild(c);
+        }
+        child.firstChild = null;
+        child.lastChild = null;
+        return child;
+      }
       const parent = child.parentNode;
       if (parent) {
         const idx = parent.children.indexOf(child);
@@ -2301,6 +2313,12 @@ func sharedMockBody() string {
       return child;
     },
     insertBefore(child, ref) {
+      if (child && child.nodeType === 11) {
+        const fragChildren = child.children.slice();
+        child.children.length = 0;
+        for (const c of fragChildren) this.appendChild(c);
+        return child;
+      }
       const parent = child.parentNode;
       if (parent) {
         const idx = parent.children.indexOf(child);
@@ -2384,6 +2402,12 @@ function makeMockRow() {
     getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
     removeAttribute(name) { delete this[name]; log.push(['removeAttribute', name]); },
     appendChild(child) {
+      if (child && child.nodeType === 11) {
+        const fragChildren = child.children.slice();
+        child.children.length = 0;
+        for (const c of fragChildren) this.appendChild(c);
+        return child;
+      }
       const parent = child.parentNode;
       if (parent) { const i = parent.children.indexOf(child); if (i >= 0) parent.children.splice(i, 1); }
       child.parentNode = this;
@@ -2392,6 +2416,12 @@ function makeMockRow() {
       return child;
     },
     insertBefore(child, ref) {
+      if (child && child.nodeType === 11) {
+        const fragChildren = child.children.slice();
+        child.children.length = 0;
+        for (const c of fragChildren) this.appendChild(c);
+        return child;
+      }
       const parent = child.parentNode;
       if (parent) { const i = parent.children.indexOf(child); if (i >= 0) parent.children.splice(i, 1); }
       child.parentNode = this;
@@ -2573,6 +2603,28 @@ function makeMockDocument() {
       const el = makeMockRow();
       el.tagName = String(tag).toUpperCase();
       return el;
+    },
+    createDocumentFragment() {
+      return {
+        nodeType: 11,
+        firstChild: null,
+        lastChild: null,
+        children: [],
+        childNodes: [],
+        appendChild(child) {
+          const parent = child.parentNode;
+          if (parent) {
+            const idx = parent.children ? parent.children.indexOf(child) : -1;
+            if (idx >= 0) parent.children.splice(idx, 1);
+          }
+          child.parentNode = this;
+          this.children.push(child);
+          this.childNodes.push(child);
+          if (this.firstChild === null) this.firstChild = child;
+          this.lastChild = child;
+          return child;
+        },
+      };
     },
     createTextNode(text) {
       return { nodeType: 3, textContent: String(text), parentNode: null, _log: [] };

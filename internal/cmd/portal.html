@@ -2393,12 +2393,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       renderScheduled = true;
       if (callback) renderCallback = callback;
       window.requestAnimationFrame(() => {
-        renderScheduled = false;
-        render();
-        if (renderCallback) {
-          const cb = renderCallback;
-          renderCallback = null;
-          cb();
+        try {
+          render();
+          if (renderCallback) {
+            const cb = renderCallback;
+            renderCallback = null;
+            cb();
+          }
+        } finally {
+          renderScheduled = false;
         }
       });
     }
@@ -2498,7 +2501,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         const idx = state.runs.findIndex((r) => r && (r.key === detail.key || r.runId === detail.runId));
         if (idx >= 0) {
           state.runs[idx] = { ...state.runs[idx], log: detail.log, events: detail.events || state.runs[idx].events, logUrl: detail.logUrl };
-          render();
+          scheduleRender();
         }
       } catch (err) {
         // detail fetch failures are non-fatal; user can retry by toggling again

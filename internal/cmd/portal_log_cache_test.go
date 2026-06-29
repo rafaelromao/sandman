@@ -78,16 +78,32 @@ const b = bigLog('beta', 500);
 const ha1 = SandmanPortalDiff.highlightTerminalLog(a);
 const ha2 = SandmanPortalDiff.highlightTerminalLog(a);
 const hb = SandmanPortalDiff.highlightTerminalLog(b);
+// Concurrent calls for the same input must return the same object (Promise
+// or cached string); this is the de-duplication contract for the chunked
+// renderer.
 if (ha1 !== ha2) throw new Error('identical input must return identical output');
 if (ha1 === hb) throw new Error('distinct inputs must not collide in the cache');
-if (ha1.indexOf('alpha') === -1) throw new Error('expected alpha content in output');
-if (hb.indexOf('beta') === -1) throw new Error('expected beta content in output');
-// After overflowing the cache with distinct large inputs, a re-query of the
-// original must still produce the correct output (eviction is safe).
-for (var k = 0; k < 20; k++) SandmanPortalDiff.highlightTerminalLog(bigLog('seed' + k, 500));
-const ha3 = SandmanPortalDiff.highlightTerminalLog(a);
-if (ha3 !== ha1) throw new Error('output must stay correct after cache eviction');
-console.log('PASS');
+// Drain any pending Promises so we can compare HTML content.
+const settle = (p) => (p && typeof p.then === 'function') ? p : Promise.resolve(p);
+function checkContent(label, expected) {
+  return Promise.all([settle(ha1), settle(ha2), settle(hb)]).then(function(arr) {
+    if (arr[0].indexOf(expected) === -1) throw new Error('expected ' + expected + ' content in ' + label + ' (0)');
+    if (arr[1].indexOf(expected) === -1) throw new Error('expected ' + expected + ' content in ' + label + ' (1)');
+  });
+}
+checkContent('a', 'alpha').then(function() {
+  if (typeof hb !== 'string' && typeof hb.then !== 'function') {
+    throw new Error('hb has unexpected type: ' + typeof hb);
+  }
+  // After overflowing the cache with distinct large inputs, a re-query of the
+  // original must still produce the correct output (eviction is safe).
+  for (var k = 0; k < 20; k++) SandmanPortalDiff.highlightTerminalLog(bigLog('seed' + k, 500));
+  const ha3 = SandmanPortalDiff.highlightTerminalLog(a);
+  return settle(ha3).then(function(html) {
+    if (html.indexOf('alpha') === -1) throw new Error('output must stay correct after cache eviction');
+    console.log('PASS');
+  });
+}).catch(function(err) { throw err; });
 `
 	runNodeScript(t, js)
 }

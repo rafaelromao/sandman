@@ -95,7 +95,6 @@ func (h *portalHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 		for i := range runs {
 			runs[i].Log = ""
 			runs[i].Events = nil
-			runs[i].LastOutputAt = nil
 			runs[i].LogURL = ""
 		}
 	}

@@ -3350,10 +3350,7 @@ func TestPortal_RunsSummary(t *testing.T) {
 		t.Errorf("summary response must omit Events, got %d entries", len(run.Events))
 	}
 	if run.LogURL != "" {
-		t.Errorf("summary response must omit LogURL, got %q", run.LogURL)
-	}
-	if run.LastOutputAt != nil {
-		t.Errorf("summary response must omit LastOutputAt")
+		t.Errorf("summary response must omit LogURL")
 	}
 
 	// Verify default (non-summary) still returns Log
