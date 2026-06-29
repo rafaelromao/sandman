@@ -355,10 +355,11 @@ func TestDaemon_FailedLaunchRetriesNextTick(t *testing.T) {
 	}
 }
 
-// TestDaemon_ClaimPersistsAfterTickExit verifies that when launchReview
-// fails before review-state.json is written (Save not called), the claim
-// is not persisted and the next tick retries the same comment.
-func TestDaemon_ClaimPersistsAfterTickExit(t *testing.T) {
+// TestDaemon_ClaimReleasedAfterFailedLaunch verifies that when launchReview
+// fails, the claim is released and the next tick retries the same comment.
+// This is the same scenario as TestDaemon_FailedLaunchRetriesNextTick but
+// uses a different PR number to avoid any shared state.
+func TestDaemon_ClaimReleasedAfterFailedLaunch(t *testing.T) {
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
