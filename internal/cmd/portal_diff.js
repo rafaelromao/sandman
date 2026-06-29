@@ -498,7 +498,6 @@
 
   const ASYNC_CHUNK_THRESHOLD = 32 * 1024;
   const CHUNK_SIZE_LINES = 100;
-  let renderGeneration = 0;
 
   function fillTerminalPre(pre, text, helpers) {
     const value = String(text == null ? '' : text);
@@ -519,12 +518,13 @@
       pre.removeAttribute('data-rendering-log');
       return;
     }
-    const generation = ++renderGeneration;
+    const gen = (parseInt(pre.getAttribute('data-render-gen') || '0', 10) + 1) | 0;
+    pre.setAttribute('data-render-gen', String(gen));
     const lines = value.split('\n');
     let lineIndex = 0;
     const htmlParts = [];
     function processChunk() {
-      if (generation !== renderGeneration) return;
+      if (String(gen) !== pre.getAttribute('data-render-gen')) return;
       const end = Math.min(lineIndex + CHUNK_SIZE_LINES, lines.length);
       while (lineIndex < end) {
         htmlParts.push(helpers.renderTerminalContent(lines[lineIndex]));
@@ -543,6 +543,7 @@
           node = scratch.firstChild;
         }
         pre.appendChild(frag);
+        if (String(gen) !== pre.getAttribute('data-render-gen')) return;
         pre.setAttribute('data-rendered-log', value);
         pre.removeAttribute('data-rendering-log');
       }
