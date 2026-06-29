@@ -357,18 +357,17 @@ func TestDaemon_FailedLaunchRetriesNextTick(t *testing.T) {
 
 // TestDaemon_ClaimReleasedAfterFailedLaunch verifies that when launchReview
 // fails, the claim is released and the next tick retries the same comment.
-// This is the same scenario as TestDaemon_FailedLaunchRetriesNextTick but
-// uses a different PR number to avoid any shared state.
+// Uses PR 2 to differentiate from TestDaemon_FailedLaunchRetriesNextTick.
 func TestDaemon_ClaimReleasedAfterFailedLaunch(t *testing.T) {
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
-		prs: []github.PR{{Number: 1, State: "open"}},
+		prs: []github.PR{{Number: 2, State: "open"}},
 		comments: map[int][]github.PRComment{
-			1: {
-				{ID: "trigger1", Body: "/sandman review", CreatedAt: now},
+			2: {
+				{ID: "trigger2", Body: "/sandman review", CreatedAt: now},
 			},
 		},
-		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body"}},
+		prFetch: map[int]*github.PR{2: {Number: 2, Title: "PR 2", Body: "Body"}},
 	}
 
 	var runMu sync.Mutex

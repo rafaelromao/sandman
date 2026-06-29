@@ -502,17 +502,7 @@ func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, strin
 	}
 	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("%d", prNumber), ts, shortid)
 
-	var reviewIssueNumber int
-	if pr, err := d.GitHub.FetchPR(prNumber); err == nil {
-		reviewIssueNumber = pr.LinkedIssueNumber()
-	}
-
-	var subject string
-	if reviewIssueNumber > 0 {
-		subject = fmt.Sprintf("%d-PR%d", reviewIssueNumber, prNumber)
-	} else {
-		subject = fmt.Sprintf("PR%d", prNumber)
-	}
+	subject := fmt.Sprintf("PR%d", prNumber)
 	perRowRunID := runid.NewRunID(runid.KindReview, subject, ts, shortid)
 
 	rs := daemon.NewRunSession(d.BaseDir, batchDirName)
