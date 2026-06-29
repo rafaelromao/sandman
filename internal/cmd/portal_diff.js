@@ -488,7 +488,7 @@
   }
 
   function buildLogPre(run, helpers) {
-    const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
+    const log = run.log && String(run.log).trim() ? run.log : '';
     const pre = global.document.createElement('pre');
     pre.classList.add('terminal-log');
     pre.setAttribute('data-scroll-key', run.key);
@@ -881,7 +881,7 @@
   function buildLogContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
-    const log = run.log && String(run.log).trim() ? run.log : 'No log file yet.';
+    const log = run.log && String(run.log).trim() ? run.log : '';
     const pre = buildLogPre(run, helpers);
     section.appendChild(pre);
     content.appendChild(section);
@@ -1013,7 +1013,7 @@
       if (opts.streamingKeys && opts.streamingKeys.has(run.key) && content.querySelector('pre[data-scroll-key]')) {
         return;
       }
-      const newLog = subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : 'No log file yet.';
+      const newLog = subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : '';
       let pre = content.querySelector('pre[data-scroll-key]');
       const renderedSubjectFp = content.getAttribute('data-rendered-subject-fingerprint') || '';
       const renderedSubjectValue = renderedSubjectFp ? renderedSubjectFp.split('|')[0] : '';
@@ -1059,10 +1059,10 @@
           content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
           return;
         }
-        if (renderedSubjectFp === subjectFp && oldLog && oldLog !== 'No log file yet.' && newLog === 'No log file yet.') {
+        if (renderedSubjectFp === subjectFp && oldLog && !newLog) {
           return;
         }
-        if (oldRun && oldRun.kind === 'active' && run.kind !== 'active' && oldLog && oldLog !== 'No log file yet.' && newLog && newLog !== oldLog && !String(newLog).startsWith(oldLog)) {
+        if (oldRun && oldRun.kind === 'active' && run.kind !== 'active' && oldLog && newLog && newLog !== oldLog && !String(newLog).startsWith(oldLog)) {
           return;
         }
         if (oldLog && newLog.length >= oldLog.length && newLog.startsWith(oldLog)) {
@@ -1440,7 +1440,7 @@
     if (!detailRow) return;
     const pre = detailRow.querySelector('pre[data-scroll-key]');
     if (!pre) return;
-    const renderedLog = newLog && String(newLog).trim() ? newLog : 'No log file yet.';
+    const renderedLog = newLog && String(newLog).trim() ? newLog : '';
     const oldLog = pre.getAttribute('data-rendered-log') || '';
     if (oldLog === renderedLog) return;
     if (oldLog && renderedLog.length >= oldLog.length && renderedLog.startsWith(oldLog)) {

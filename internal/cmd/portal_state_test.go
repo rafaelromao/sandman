@@ -134,7 +134,7 @@ storage.set(api.storageKey, JSON.stringify({
   tabs: { gone: 'events', keep: 'bogus' },
 }));
 const loaded = api.load();
-const normalized = api.normalize(loaded, [{ key: 'keep' }]);
+const normalized = api.normalize(loaded, [{ key: 'keep' }], [{ key: 'keep' }]);
 api.save(normalized);
 const persisted = JSON.parse(storage.get(api.storageKey));
 if (persisted.expandedRunKey !== null) throw new Error('expected missing expanded run to become null, got ' + JSON.stringify(persisted));
@@ -403,30 +403,84 @@ const rawRuns = [
 
 storage.set(api.storageKey, JSON.stringify({ expandedRunKey: 'issue-42', tabs: {} }));
 const loaded1 = api.load();
-const norm1 = api.normalize(loaded1, rawRuns);
+const norm1 = api.normalize(loaded1, rawRuns, rawRuns);
 if (norm1.state.expandedRunKey !== null) {
   throw new Error('expected synthetic key issue-42 to be nulled, got ' + JSON.stringify(norm1.state.expandedRunKey));
 }
 
 storage.set(api.storageKey, JSON.stringify({ expandedRunKey: 'review-stub-42', tabs: {} }));
 const loaded2 = api.load();
-const norm2 = api.normalize(loaded2, rawRuns);
+const norm2 = api.normalize(loaded2, rawRuns, rawRuns);
 if (norm2.state.expandedRunKey !== null) {
   throw new Error('expected synthetic key review-stub-42 to be nulled, got ' + JSON.stringify(norm2.state.expandedRunKey));
 }
 
 storage.set(api.storageKey, JSON.stringify({ expandedRunKey: 'abc1-issue-42', tabs: {} }));
 const loaded3 = api.load();
-const norm3 = api.normalize(loaded3, rawRuns);
+const norm3 = api.normalize(loaded3, rawRuns, rawRuns);
 if (norm3.state.expandedRunKey !== 'abc1-issue-42') {
   throw new Error('expected real RunID abc1-issue-42 to survive normalization, got ' + JSON.stringify(norm3.state.expandedRunKey));
 }
 
 storage.set(api.storageKey, JSON.stringify({ expandedRunKey: 'abc2-PR42', tabs: {} }));
 const loaded4 = api.load();
-const norm4 = api.normalize(loaded4, rawRuns);
+const norm4 = api.normalize(loaded4, rawRuns, rawRuns);
 if (norm4.state.expandedRunKey !== 'abc2-PR42') {
   throw new Error('expected real review RunID abc2-PR42 to survive normalization, got ' + JSON.stringify(norm4.state.expandedRunKey));
+}
+
+console.log('PASS');
+`
+	cmd := exec.Command("node", "-e", script, portalStatePath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("portal state helper failed: %v\n%s", err, out)
+	}
+}
+
+func TestPortalStateKeepsExpandedHiddenSiblingSubject(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for portal state helper test")
+	}
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	portalStatePath := filepath.Join(filepath.Dir(currentFile), "portal_state.js")
+
+	script := `const fs = require('fs');
+const vm = require('vm');
+const helperPath = process.argv[1];
+const source = fs.readFileSync(helperPath, 'utf8');
+const storage = new Map();
+const sandbox = {
+  window: {},
+  globalThis: {},
+  sessionStorage: {
+    getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+    setItem(key, value) { storage.set(String(key), String(value)); },
+    removeItem(key) { storage.delete(key); },
+  },
+  Set, Map, JSON, console,
+};
+sandbox.window = sandbox;
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox, { filename: helperPath });
+const api = sandbox.SandmanPortalState;
+
+const visibleRuns = [
+  { key: 'abc1-issue-42', runId: 'abc1-issue-42', issueNumber: 42 },
+];
+const allRuns = [
+  { key: 'abc1-issue-42', runId: 'abc1-issue-42', issueNumber: 42 },
+  { key: 'abc2-PR42', runId: 'abc2-PR42', issueNumber: 42, review: true },
+];
+
+storage.set(api.storageKey, JSON.stringify({ expandedRunKey: 'abc2-PR42', tabs: {} }));
+const loaded = api.load();
+const normalized = api.normalize(loaded, visibleRuns, allRuns);
+if (normalized.state.expandedRunKey !== 'abc2-PR42') {
+  throw new Error('expected hidden sibling subject to stay expanded, got ' + JSON.stringify(normalized.state.expandedRunKey));
 }
 
 console.log('PASS');
