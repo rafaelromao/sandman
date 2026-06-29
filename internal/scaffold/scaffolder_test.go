@@ -101,7 +101,7 @@ func TestScaffold_ParallelReviewsDefault(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "rust"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -124,7 +124,7 @@ func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "rust"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -150,7 +150,7 @@ func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
 }
 
 func TestScaffold_AllPresetsIncludeRTK(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "rust"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -1799,5 +1799,339 @@ func TestValidateDockerfileMetadata_AllowsGoPreset(t *testing.T) {
 
 	if err := ValidateDockerfileMetadata(dir, "go", "opencode"); err != nil {
 		t.Fatalf("validate metadata: %v", err)
+	}
+}
+
+func referenceRustVersion(dir, selector string, prompter Prompter) (string, error) {
+	hint, found, err := readRustVersionHint(dir)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if prompter != nil {
+				selected, err := prompter.Select(fmt.Sprintf("Choose a Rust version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = referenceNormalizeRustVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if prompter != nil {
+				selected, err := prompter.Select("Choose a Rust version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = referenceNormalizeRustVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	return referenceRustVersionChoice(choice, hint, found)
+}
+
+func referenceRustVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = referenceNormalizeRustVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Rust version hint found")
+		}
+		return referenceRustMiseVersion(referenceNormalizeRustVersionSelector(hint))
+	case "latest", "lts":
+		if strings.ToLower(choice) == "latest" {
+			return referenceRustMiseVersion("latest")
+		}
+		latest, err := referenceRustMiseVersion("latest")
+		if err != nil {
+			return "", err
+		}
+		prefix, err := referenceRustPreviousMinorPrefix(latest)
+		if err != nil {
+			return "", err
+		}
+		return referenceRustMiseVersion(prefix)
+	}
+
+	return referenceRustMiseVersion(choice)
+}
+
+func referenceRustMiseVersion(selector string) (string, error) {
+	selector = referenceNormalizeRustVersionSelector(selector)
+	args := []string{"latest"}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		args = append(args, "rust")
+	} else {
+		args = append(args, "rust@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledRustVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledRustVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve rust version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve rust version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func referenceNormalizeRustVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	return selector
+}
+
+func referenceRustPreviousMinorPrefix(version string) (string, error) {
+	version = referenceNormalizeRustVersionSelector(version)
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unexpected Rust version %q", version)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("parse Rust major version %q: %w", version, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("parse Rust minor version %q: %w", version, err)
+	}
+	if minor == 0 {
+		return "", fmt.Errorf("unexpected Rust version %q", version)
+	}
+	minor--
+
+	return fmt.Sprintf("%d.%d", major, minor), nil
+}
+
+func TestResolveVersion_RustResolver_Selectors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".rust-version"), []byte("1.85\n"), 0644); err != nil {
+		t.Fatalf("write .rust-version: %v", err)
+	}
+	prompter := &fakePrompter{confirm: true}
+
+	tests := []struct {
+		name     string
+		selector string
+	}{
+		{name: "repo", selector: "repo"},
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "specific_version", selector: "1.85"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveVersion(rustResolver, dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("resolveVersion %s: %v", tt.selector, err)
+			}
+			want, err := referenceRustVersion(dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("referenceRustVersion %s: %v", tt.selector, err)
+			}
+			if got != want {
+				t.Fatalf("resolveVersion %s: got %q, want %q", tt.selector, got, want)
+			}
+		})
+	}
+}
+
+func TestResolveVersion_RustResolver_RepoFallsBackToLatestWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(rustResolver, dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion repo without hint: %v", err)
+	}
+	want, err := referenceRustVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceRustVersion repo: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected repo fallback to match reference (%q), got %q", want, got)
+	}
+}
+
+func TestResolveVersion_RustResolver_EmptySelectorDefaultsToLatest(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(rustResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector: %v", err)
+	}
+	want, err := referenceRustVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceRustVersion empty selector: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_RustResolver_EmptySelectorDefaultsToRepoWithHint(t *testing.T) {
+	dir := t.TempDir()
+	hintSelector := "1.85"
+	if err := os.WriteFile(filepath.Join(dir, ".rust-version"), []byte(hintSelector+"\n"), 0644); err != nil {
+		t.Fatalf("write .rust-version: %v", err)
+	}
+
+	got, err := resolveVersion(rustResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector with hint: %v", err)
+	}
+	want, err := referenceRustVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceRustVersion empty selector with hint: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector with hint: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_RustResolver_RepoFailsWhenPrompterSelectsRepoWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+	prompter := &fakePrompter{selected: "repo"}
+
+	_, err := resolveVersion(rustResolver, dir, "repo", prompter)
+	if err == nil {
+		t.Fatal("expected error when prompter selects repo without a hint")
+	}
+}
+
+func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoRustHints(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	version, err := s.resolveRustVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveRustVersion with repo selector: %v", err)
+	}
+	latest, err := s.resolveRustVersion(dir, "latest", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveRustVersion with latest selector: %v", err)
+	}
+	if version != latest {
+		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
+	}
+}
+
+func TestScaffold_RustPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	err := s.Scaffold(dir, Options{BuildTools: "rust"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: rust") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman default-agent: opencode") {
+		t.Fatalf("Dockerfile missing default-agent metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman rust-version:") {
+		t.Fatalf("Dockerfile missing rust-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman installed-agents: opencode") {
+		t.Fatalf("Dockerfile missing installed-agents metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "FROM debian:bookworm-slim") {
+		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin rust@") {
+		t.Fatalf("Dockerfile missing pinned rust install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages") {
+		t.Fatalf("Dockerfile missing codeindex install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
+	}
+
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	promptData, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	if got, want := string(promptData), prompt.DefaultPrompt(); got != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestScaffold_AllAgentPresets_GenerateRustPresetFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+			wantRustVersion, err := s.resolveRustVersion(dir, "", &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve rust version: %v", err)
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "rust", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.BuildTools != "rust" {
+				t.Errorf("expected build tools %q, got %q", "rust", cfg.BuildTools)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman build-tools: rust") {
+				t.Fatalf("Dockerfile missing rust build-tools metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin rust@"+wantRustVersion) {
+				t.Fatalf("Dockerfile missing pinned rust install %q, got:\n%s", wantRustVersion, content)
+			}
+		})
 	}
 }

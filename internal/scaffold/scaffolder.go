@@ -29,6 +29,8 @@ const nodeBuildToolsPreset = "node"
 
 const pythonBuildToolsPreset = "python"
 
+const rustBuildToolsPreset = "rust"
+
 const DefaultMISEVersion = "v2026.5.8"
 
 const DefaultRTKVersion = "v0.42.0"
@@ -124,6 +126,12 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		SharedPackages: sharedPackages,
 		MiseVersion:    DefaultMISEVersion,
 	},
+	rustBuildToolsPreset: {
+		Name:           rustBuildToolsPreset,
+		BaseImage:      "debian:bookworm-slim",
+		SharedPackages: sharedPackages,
+		MiseVersion:    DefaultMISEVersion,
+	},
 }
 
 // DefaultBuiltInAgentVersion returns the latest bundled version pin for a built-in agent.
@@ -172,6 +180,25 @@ var bundledPythonVersionCatalog = map[string]string{
 	"3.11":   "3.11.11",
 	"3.10":   "3.10.16",
 	"3.9":    "3.9.21",
+}
+
+var bundledRustVersionCatalog = map[string]string{
+	"latest": "1.87.0",
+	"1.87":   "1.87.0",
+	"1.86":   "1.86.0",
+	"1.85":   "1.85.0",
+	"1.84":   "1.84.1",
+	"1.83":   "1.83.0",
+	"1.82":   "1.82.0",
+	"1.81":   "1.81.0",
+	"1.80":   "1.80.1",
+	"1.79":   "1.79.0",
+	"1.78":   "1.78.0",
+	"1.77":   "1.77.2",
+	"1.76":   "1.76.0",
+	"1.75":   "1.75.0",
+	"1.74":   "1.74.1",
+	"1.73":   "1.73.0",
 }
 
 var bundledDotnetVersionCatalog = map[string]string{
@@ -228,6 +255,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	dotnetVersion := ""
 	nodeVersion := ""
 	pythonVersion := ""
+	rustVersion := ""
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
@@ -245,6 +273,11 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	} else if preset.Name == pythonBuildToolsPreset {
 		pythonVersion, err = s.resolvePythonVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == rustBuildToolsPreset {
+		rustVersion, err = s.resolveRustVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
 			return err
 		}
@@ -297,7 +330,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, rustVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -387,6 +420,8 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 			}
 		} else if hasPythonRepoHint(repoRoot) {
 			name = pythonBuildToolsPreset
+		} else if hasRustRepoHint(repoRoot) {
+			name = rustBuildToolsPreset
 		} else if p != nil {
 			selected, err := p.Select("Choose a build tools preset:", KnownBuildToolsPresets)
 			if err == nil {
@@ -457,6 +492,11 @@ func hasPythonRepoHint(repoRoot string) bool {
 		}
 	}
 	return false
+}
+
+func hasRustRepoHint(repoRoot string) bool {
+	_, found, err := readRustVersionHint(repoRoot)
+	return err == nil && found
 }
 
 func (s *Scaffolder) resolveGoVersion(repoRoot, selector string, p Prompter) (string, error) {
@@ -595,6 +635,45 @@ var nodeResolver = versionResolver{
 	catalog: bundledNodeVersionCatalog,
 	passThroughValid: func(selector string) bool {
 		return selector != "" && nodeVersionSelectorPattern.MatchString(selector)
+	},
+}
+
+// rustResolver is the versionResolver configuration for Rust. The
+// ltsFromLatest hook computes the lts selector by going one minor back
+// from the latest resolved version.
+var rustResolver = versionResolver{
+	label:      "Rust",
+	miseTool:   "rust",
+	hintReader: readRustVersionHint,
+	normalize: func(selector string) string {
+		selector = strings.TrimSpace(selector)
+		if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+			return selector[1:]
+		}
+		return selector
+	},
+	catalog: bundledRustVersionCatalog,
+	ltsFromLatest: func(version string) (string, error) {
+		version = strings.TrimSpace(version)
+		parts := strings.Split(version, ".")
+		if len(parts) < 2 {
+			return "", fmt.Errorf("unexpected Rust version %q", version)
+		}
+
+		major, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return "", fmt.Errorf("parse Rust major version %q: %w", version, err)
+		}
+		minor, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return "", fmt.Errorf("parse Rust minor version %q: %w", version, err)
+		}
+		if minor == 0 {
+			return "", fmt.Errorf("unexpected Rust version %q", version)
+		}
+		minor--
+
+		return fmt.Sprintf("%d.%d", major, minor), nil
 	},
 }
 
@@ -885,7 +964,7 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, rustVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
@@ -901,6 +980,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman python-version: %s\n", pythonVersion)
+	}
+	if preset.Name == rustBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman rust-version: %s\n", rustVersion)
 	}
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
@@ -928,10 +1010,17 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
 	}
+	if preset.Name == rustBuildToolsPreset {
+		out.WriteString(renderRustInstallCommand(rustVersion))
+	}
 	out.WriteString(renderCodeindexInstallCommand())
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
 	out.WriteString(renderRTKInstallCommand())
 	return out.String()
+}
+
+func (s *Scaffolder) resolveRustVersion(repoRoot, selector string, p Prompter) (string, error) {
+	return resolveVersion(rustResolver, repoRoot, selector, p)
 }
 
 func (s *Scaffolder) resolvePythonVersion(repoRoot, selector string, p Prompter) (string, error) {
@@ -1050,6 +1139,81 @@ func readPythonVersionHint(repoRoot string) (string, bool, error) {
 	return "", false, nil
 }
 
+func readRustVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{"rust-toolchain", "rust-toolchain.toml", ".rust-version", "Cargo.toml"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Rust version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseRustVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseRustVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case "rust-toolchain", ".rust-version":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			return line, true
+		}
+	case "rust-toolchain.toml":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(line, "channel") {
+				fields := strings.SplitN(line, "=", 2)
+				if len(fields) >= 2 {
+					version := strings.TrimSpace(fields[1])
+					version = strings.Trim(version, "\"' ")
+					if version != "" {
+						return version, true
+					}
+				}
+			}
+		}
+	case "Cargo.toml":
+		inPackage := false
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			lower := strings.ToLower(line)
+			if strings.HasPrefix(lower, "[package]") {
+				inPackage = true
+				continue
+			}
+			if inPackage && strings.HasPrefix(lower, "[") {
+				break
+			}
+			if inPackage && strings.HasPrefix(lower, "rust-version") {
+				fields := strings.SplitN(line, "=", 2)
+				if len(fields) >= 2 {
+					version := strings.TrimSpace(fields[1])
+					version = strings.Trim(version, "\"' ")
+					if version != "" {
+						return version, true
+					}
+				}
+			}
+		}
+	}
+	return "", false
+}
+
 func parsePythonVersionHint(name string, data []byte) (string, bool) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	switch name {
@@ -1123,6 +1287,10 @@ func renderPythonInstallCommand(version string) string {
 	return out.String()
 }
 
+func renderRustInstallCommand(version string) string {
+	return fmt.Sprintf("RUN mise use -g --pin rust@%s\n", version)
+}
+
 func renderCodeindexInstallCommand() string {
 	return "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages\n"
 }
@@ -1179,6 +1347,7 @@ type dockerfileMetadata struct {
 	GoVersion        string
 	NodeVersion      string
 	PythonVersion    string
+	RustVersion      string
 	ToolVersion      string
 	MiseVersion      string
 	RtkVersion       string
@@ -1244,6 +1413,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.NodeVersion = strings.TrimSpace(value)
 		case "python-version":
 			meta.PythonVersion = strings.TrimSpace(value)
+		case "rust-version":
+			meta.RustVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
 		case "rtk-version":
