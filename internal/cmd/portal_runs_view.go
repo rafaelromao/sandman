@@ -993,6 +993,9 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		if len(active.IssueNumbers) > 1 {
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
+		if strings.TrimSpace(active.SocketPath) != "" {
+			return run
+		}
 		if state.Finished == nil {
 			run.Log = v.filterPortalLogByRunID(liveOutput, state.RunID)
 			if strings.TrimSpace(run.Log) == "" {
@@ -1005,9 +1008,13 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			case "aborted":
 				run.Log = "Aborted by operator."
 			default:
-				run.Log = v.readPortalTextFile(run.LogPath)
-				if strings.TrimSpace(run.Log) == "" {
-					run.Log = "No log file yet."
+				if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
+					run.Log = live
+				} else {
+					run.Log = v.readPortalTextFile(run.LogPath)
+					if strings.TrimSpace(run.Log) == "" {
+						run.Log = "No log file yet."
+					}
 				}
 			}
 		}
@@ -1203,6 +1210,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	if batchID == "" {
 		batchID = batchIDFromRunID(runID)
 	}
+	activeSocket := active != nil && strings.TrimSpace(active.SocketPath) != ""
 	if active != nil && active.BatchID != "" {
 		batchID = active.BatchID
 	}
@@ -1251,7 +1259,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Key:          runID,
 		RunID:        runID,
 		Kind:         v.kindForRun(runState),
-		Status:       v.statusOrDefault(status, runState.IsActive(), runState.IsReview(), runState.IsAutoSelect()),
+		Status:       v.statusOrDefault(status, runState.IsActive() || activeSocket, runState.IsReview(), runState.IsAutoSelect()),
 		IssueLabel:   issueLabel,
 		IssueNumber:  issueNumber,
 		IssueTitle:   v.issueTitleFromPayload(runState.Started.Payload),
@@ -1286,6 +1294,9 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		portalRun.Kind = "completed"
 	}
 	if active != nil {
+		if activeSocket {
+			portalRun.Kind = "active"
+		}
 		portalRun.SocketPath = active.SocketPath
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 	} else if portalRun.Kind == "active" {
