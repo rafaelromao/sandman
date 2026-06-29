@@ -2342,7 +2342,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       syncStatusOptions(state.runs);
       normalizePortalViewState();
       syncFilterToggleButtons();
-      const filtered = sortedVisibleRuns(visibleRunsForTable(state.runs.filter(shouldShowRun)));
+      const grouped = visibleRunsForTable(state.runs);
+      const filtered = sortedVisibleRuns(grouped.filter(shouldShowRun));
       syncSortButtons();
       const activeCount = state.runs.filter((run) => run && run.kind === 'active').length;
       const completedCount = state.runs.filter((run) => run && run.kind === 'completed').length;
