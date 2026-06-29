@@ -16,6 +16,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/runid"
 )
 
 func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
@@ -907,6 +908,83 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 	}
 	if run.IssueTitle != "[slice 3] Add dependencies path" {
 		t.Fatalf("expected IssueTitle %q, got %q", "[slice 3] Add dependencies path", run.IssueTitle)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_ActiveReviewPrefersLiveOutput(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := "260618113825"
+	shortid := "abcd"
+	batchID := runid.NewBatchID(runid.KindReview, 1, "42", ts, shortid)
+	runID := runid.NewRunID(runid.KindReview, "42-PR99", ts, shortid)
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", batchID, "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte("["+runID+"] 12:00:00 saved review log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-1 * time.Minute)
+	finishedAt := startedAt.Add(10 * time.Second)
+	state := &events.RunState{
+		RunID: runID,
+		Started: events.Event{
+			Type:      "run.started",
+			Timestamp: startedAt,
+			RunID:     runID,
+			Payload: map[string]any{
+				"batch_id":  batchID,
+				"review":    true,
+				"pr_number": 99,
+			},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			RunID:     runID,
+			Payload: map[string]any{
+				"status":    "success",
+				"batch_id":  batchID,
+				"review":    true,
+				"pr_number": 99,
+			},
+		},
+	}
+	active := portalActiveRun{
+		Key:          batchID,
+		BatchID:      batchID,
+		RunID:        runID,
+		IssueNumber:  42,
+		IssueNumbers: []int{42},
+		StartedAt:    startedAt,
+		ModTime:      finishedAt,
+		SocketPath:   filepath.Join(t.TempDir(), "batch.sock"),
+		LiveOutput:   "[" + runID + "] live review line\n",
+	}
+	if err := os.MkdirAll(filepath.Dir(active.SocketPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", active.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, active.LiveOutput, nil, nil)
+
+	if run.Kind != "active" {
+		t.Fatalf("expected active kind while socket exists, got %q", run.Kind)
+	}
+	if run.Status != "reviewing" {
+		t.Fatalf("expected reviewing status while socket exists, got %q", run.Status)
+	}
+	if !strings.Contains(run.Log, "live review line") {
+		t.Fatalf("expected live review output to win, got %q", run.Log)
 	}
 }
 
