@@ -596,11 +596,13 @@ func TestPortal_LoadPortalRuns_ShowsQueuedIssuesFromEvents(t *testing.T) {
 	if run := byIssue[1]; run.Kind != "completed" || run.Status != "success" {
 		t.Fatalf("expected completed success run for issue 1, got kind=%q status=%q", run.Kind, run.Status)
 	}
-	if run := byIssue[2]; run.Kind != "completed" || run.Status != "queued" {
-		t.Fatalf("expected completed queued run for issue 2, got kind=%q status=%q", run.Kind, run.Status)
+	// Queued runs render as active/queued (see kindForRun): they
+	// are still waiting to start, not done.
+	if run := byIssue[2]; run.Kind != "active" || run.Status != "queued" {
+		t.Fatalf("expected active queued run for issue 2, got kind=%q status=%q", run.Kind, run.Status)
 	}
-	if run := byIssue[3]; run.Kind != "completed" || run.Status != "queued" {
-		t.Fatalf("expected completed queued run for issue 3, got kind=%q status=%q", run.Kind, run.Status)
+	if run := byIssue[3]; run.Kind != "active" || run.Status != "queued" {
+		t.Fatalf("expected active queued run for issue 3, got kind=%q status=%q", run.Kind, run.Status)
 	}
 }
 
@@ -2342,7 +2344,12 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 		switch {
 		case run.Kind == "active" && run.Status == "queued":
 			sawActiveQueued = true
-		case run.Kind == "completed" && run.Status == "blocked":
+		// Historical blocked rows render as kind="active"
+		// (queued/blocked states are still waiting, not done —
+		// see kindForRun). The historical signal here is the
+		// orphan BatchKey="" distinguishing it from the active
+		// batch's row.
+		case run.Kind == "active" && run.Status == "blocked" && run.BatchKey == "":
 			sawHistoricalBlocked = true
 		default:
 			t.Fatalf("unexpected row for issue 42: %#v", run)
@@ -3354,7 +3361,6 @@ func TestPortal_RunsSummary(t *testing.T) {
 		t.Errorf("summary response must omit LogURL")
 	}
 
-	// Verify default (non-summary) still returns Log
 	resp2, err := http.Get(server.URL + "/api/runs")
 	if err != nil {
 		t.Fatal(err)
@@ -3511,5 +3517,218 @@ func TestPortal_RunsAPI_OrphanActiveRunWithLiveBatchSocket(t *testing.T) {
 	}
 	if run.IssueNumber != 101 {
 		t.Errorf("IssueNumber = %d, want %d", run.IssueNumber, 101)
+	}
+}
+
+// TestPortal_OrphanActiveBatch_AllRowsRender is the regression test for
+// issue #1464. A multi-issue batch whose entry was silently evicted
+// from the batches index must still show one row per issue in the
+// portal: the active issue with `kind=active status=running`, and every
+// queued issue with `kind=active status=queued`. The on-disk batch
+// dir, batch.sock, and manifest are all intact; only the index is
+// missing the entry. The liveness probe returns true so the active
+// path would normally run, but `discoverActiveRuns` will not find the
+// batch in the index.
+func TestPortal_OrphanActiveBatch_AllRowsRender(t *testing.T) {
+	repoRoot := shortTempDir(t)
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const batchID = "orphn-260101000000-1014+6"
+	issues := []int{1014, 1016, 135, 136, 137, 139}
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(batchDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		Issues:    issues,
+		BatchId:   batchID,
+		RunKind:   "issue",
+		CreatedAt: startedAt,
+	}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	ev := []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: batchID + "-1014", Issue: 1014,
+			Payload: map[string]any{"branch": "sandman/1014-fix", "batch_id": batchID}},
+		{Type: "run.queued", Timestamp: startedAt.Add(1 * time.Second), RunID: batchID + "-1016", Issue: 1016,
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "slice 4 docs"}},
+		{Type: "run.queued", Timestamp: startedAt.Add(2 * time.Second), RunID: batchID + "-135", Issue: 135,
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned rust BuildToolsPreset"}},
+		{Type: "run.queued", Timestamp: startedAt.Add(3 * time.Second), RunID: batchID + "-136", Issue: 136,
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned java BuildToolsPreset"}},
+		{Type: "run.queued", Timestamp: startedAt.Add(4 * time.Second), RunID: batchID + "-137", Issue: 137,
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned ruby BuildToolsPreset"}},
+		{Type: "run.queued", Timestamp: startedAt.Add(5 * time.Second), RunID: batchID + "-139", Issue: 139,
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned elixir BuildToolsPreset"}},
+	}
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, ev)
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	byIssue := map[int]portalRun{}
+	for _, r := range runs {
+		if r.IssueNumber > 0 {
+			byIssue[r.IssueNumber] = r
+		}
+	}
+
+	for _, issue := range issues {
+		row, ok := byIssue[issue]
+		if !ok {
+			t.Fatalf("issue %d: no portal row returned", issue)
+		}
+		wantKind := "active"
+		wantStatus := "queued"
+		if issue == 1014 {
+			wantStatus = "running"
+		}
+		if row.Kind != wantKind {
+			t.Errorf("issue %d: Kind=%q want %q (row=%#v)", issue, row.Kind, wantKind, row)
+		}
+		if row.Status != wantStatus {
+			t.Errorf("issue %d: Status=%q want %q (row=%#v)", issue, row.Status, wantStatus, row)
+		}
+		if row.BatchKey != batchID {
+			t.Errorf("issue %d: BatchKey=%q want %q (row=%#v)", issue, row.BatchKey, batchID, row)
+		}
+	}
+}
+
+// TestPortal_QueuedAndTerminalSameIssue_NotCollapsed is the second
+// regression for issue #1464. A fresh run.queued for issue N in batch
+// B must not be silently dropped by dedupRuns just because a previous
+// terminal run for the same issue exists from a different batch A.
+func TestPortal_QueuedAndTerminalSameIssue_NotCollapsed(t *testing.T) {
+	repoRoot := shortTempDir(t)
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "old-1")
+	if err := os.MkdirAll(oldBatchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(oldBatchDir, daemon.BatchManifest{
+		Issues:    []int{1016},
+		BatchId:   "old-1",
+		RunKind:   "issue",
+		CreatedAt: time.Now().Add(-2 * time.Hour),
+	}); err != nil {
+		t.Fatalf("write old manifest: %v", err)
+	}
+	addBatchToIndex(t, repoRoot, "old-1", oldBatchDir, []int{1016})
+
+	const batchID = "new-1"
+	newBatchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(newBatchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(newBatchDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	if err := daemon.WriteManifest(newBatchDir, daemon.BatchManifest{
+		Issues:    []int{1016, 135},
+		BatchId:   batchID,
+		RunKind:   "issue",
+		CreatedAt: time.Now().Add(-1 * time.Minute),
+	}); err != nil {
+		t.Fatalf("write new manifest: %v", err)
+	}
+	addBatchToIndex(t, repoRoot, batchID, newBatchDir, []int{1016, 135})
+
+	startedAt := time.Now().Add(-1 * time.Minute)
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt.Add(-1 * time.Hour), RunID: "old-1-1016", Issue: 1016,
+			Payload: map[string]any{"branch": "sandman/1016-fix", "batch_id": "old-1"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(-1 * time.Hour).Add(1 * time.Minute), RunID: "old-1-1016", Issue: 1016,
+			Payload: map[string]any{"status": "aborted", "batch_id": "old-1"}},
+		{Type: "run.queued", Timestamp: startedAt, RunID: batchID + "-1016", Issue: 1016,
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "slice 4 docs"}},
+		{Type: "run.queued", Timestamp: startedAt, RunID: batchID + "-135", Issue: 135,
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "rust"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	byIssue := map[int][]portalRun{}
+	for _, r := range runs {
+		if r.IssueNumber > 0 {
+			byIssue[r.IssueNumber] = append(byIssue[r.IssueNumber], r)
+		}
+	}
+
+	if got := len(byIssue[1016]); got < 2 {
+		t.Fatalf("issue 1016: expected at least 2 rows (old aborted + new queued), got %d: %#v", got, byIssue[1016])
+	}
+
+	var foundOldAborted, foundNewQueued bool
+	for _, r := range byIssue[1016] {
+		if r.BatchKey == "old-1" && r.Kind == "completed" && r.Status == "aborted" {
+			foundOldAborted = true
+		}
+		if r.BatchKey == batchID && r.Kind == "active" && r.Status == "queued" {
+			foundNewQueued = true
+		}
+	}
+	if !foundOldAborted {
+		t.Errorf("missing old aborted row for issue 1016 / batchKey=old-1; got %#v", byIssue[1016])
+	}
+	if !foundNewQueued {
+		t.Errorf("missing fresh queued row for issue 1016 / batchKey=%q; got %#v", batchID, byIssue[1016])
+	}
+}
+
+// TestPortal_MatchRunState_FallbackDoesNotBindOrphanIssueToPromptOnly
+// is the regression for the third layered bug in issue #1464.
+func TestPortal_MatchRunState_FallbackDoesNotBindOrphanIssueToPromptOnly(t *testing.T) {
+	v := &portalRunsView{}
+
+	promptOnly := portalActiveRun{
+		Key:          "abc1-260101000000-auto-1",
+		IssueNumber:  0,
+		IssueNumbers: []int{},
+		BatchID:      "abc1-260101000000-auto-1",
+		RunID:        "abc1-260101000000-auto-1",
+		StartedAt:    time.Now(),
+	}
+
+	issueState := events.RunState{
+		RunID: "abc2-260101000500-1014",
+		Started: events.Event{
+			Type:      "run.started",
+			Timestamp: time.Now().Add(-1 * time.Minute),
+			RunID:     "abc2-260101000500-1014",
+			Issue:     1014,
+			Payload:   map[string]any{"branch": "sandman/1014-fix"},
+		},
+	}
+	states := []events.RunState{issueState}
+	used := []bool{false}
+
+	idx := v.matchRunState(promptOnly, states, used)
+	if idx != -1 {
+		t.Fatalf("matchRunState bound a prompt-only instance to an issue-bound state; returned idx=%d (state=%#v)", idx, states[idx])
 	}
 }
