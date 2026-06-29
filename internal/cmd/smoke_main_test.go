@@ -28,12 +28,13 @@ var prewarmOnce sync.Once
 // smokePrewarmVariants enumerates the (provider, buildTools) pairs whose
 // images the pre-warm builds. These are the cross-product of the
 // smoke provider (opencode) and the buildTools variants
-// (generic, go, python) that TestSmoke_RealAgentCLIs_* exercises via
+// (generic, go, python, rust) that TestSmoke_RealAgentCLIs_* exercises via
 // buildTools overrides on smokeProviderCases.
 var smokePrewarmVariants = []smokePrewarmVariant{
 	{provider: "opencode", buildTools: "generic"},
 	{provider: "opencode", buildTools: "go"},
 	{provider: "opencode", buildTools: "python"},
+	{provider: "opencode", buildTools: "rust"},
 }
 
 type smokePrewarmVariant struct {

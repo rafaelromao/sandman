@@ -19,7 +19,7 @@ review_agent: opencode
 # Falls back to model if empty.
 review_model: opencode/big-pickle
 
-# Build tools preset for the container image (generic, go, node, python).
+# Build tools preset for the container image (generic, go, node, python, rust).
 build_tools: generic
 
 # Review command injected into the prompt template and shared skill install.

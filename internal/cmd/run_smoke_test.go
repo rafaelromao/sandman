@@ -261,6 +261,15 @@ func TestSmoke_RealAgentCLIs_PythonPreset(t *testing.T) {
 	runSmokeProviderCases(t, cases)
 }
 
+func TestSmoke_RealAgentCLIs_RustPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "rust"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
 func TestSmoke_RealAgentCLIs_Override(t *testing.T) {
 	allowed, err := parseSmokeProviders(smokeProviderCases)
 	if err != nil {
@@ -632,6 +641,9 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 	}
 	if buildTools == "python" {
 		assertCmd += "; command -v python >/dev/null || command -v python3 >/dev/null"
+	}
+	if buildTools == "rust" {
+		assertCmd += "; command -v cargo >/dev/null; command -v rustc >/dev/null"
 	}
 	check := exec.Command(runtime, "exec", container.ID(), "sh", "-c", assertCmd)
 	if out, err := check.CombinedOutput(); err != nil {
