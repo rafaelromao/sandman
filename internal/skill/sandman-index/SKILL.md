@@ -1,6 +1,7 @@
 ---
 name: sandman-index
-description: Use when you need to find symbols, trace dependencies, assess blast radius, or explore codebase structure. Also use when the user mentions codeindex, symbol lookup, blast radius, dependency analysis, or asks how code is connected. Covers all codeindex commands and query refinement when results are empty.
+disable-model-invocation: true
+description: Non-discoverable. Load manually with /skill sandman-index when you need codeindex guidance.
 ---
 
 # sandman-index
