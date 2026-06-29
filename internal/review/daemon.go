@@ -491,8 +491,8 @@ func shouldSkipDedupStatus(status string) bool {
 }
 
 // prepareReviewRun creates the run folder and state store for a new review
-// run. It is called by processPR before TryClaim so that the claim can be
-// persisted to the state file before launchReview is called. The returned
+// run. It is called by processPR before TryClaim so that the run folder,
+// run session, and state store exist before TryClaim is called. The returned
 // *daemon.RunSession must be passed to launchReview; processPR does not
 // close it.
 func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, string, *daemon.RunSession, *ReviewStateStore, error) {

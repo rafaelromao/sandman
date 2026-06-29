@@ -101,7 +101,7 @@ The `busy=1` outer serialization makes the structural race (two ticks in `proces
 ### Negative
 
 - The daemon must scan all open PRs on every cycle — no per-PR caching of "nothing new here." Acceptable given GitHub API pagination and the single-repo, single-operator workload.
-- If `review-state.json` is deleted mid-run, the daemon re-processes the same comment — no external idempotency guard. Recoverable but potentially wasteful. The `busy=1` serialization and `TryClaim` on-disk lock reduce the claim window significantly but do not eliminate the rename-loser race entirely: a crash after `launchReview` starts but before `review-state.json` is written still results in re-processing on restart. The re-process is safe (the review comment will be re-posted) but potentially wasteful.
+- If `review-state.json` is deleted mid-run, the daemon re-processes the same comment — no external idempotency guard. Recoverable but potentially wasteful. The `busy=1` serialization and `TryClaim` in-memory lock reduce the claim window significantly but do not eliminate the rename-loser race entirely: a crash after `launchReview` starts but before `review-state.json` is written still results in re-processing on restart. The re-process is safe (the review comment will be re-posted) but potentially wasteful.
 
 ### Neutral
 
