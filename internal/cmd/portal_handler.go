@@ -77,7 +77,12 @@ func (h *portalHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 	if runKey != "" {
 		run, err := h.runsIndex.FindByKey(r.Context(), runKey)
 		if err != nil {
-			writeJSONError(w, err.Error(), http.StatusNotFound)
+			status := http.StatusInternalServerError
+			var abortErr *portalAbortError
+			if errors.As(err, &abortErr) {
+				status = abortErr.status
+			}
+			writeJSONError(w, err.Error(), status)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

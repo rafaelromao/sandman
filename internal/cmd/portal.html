@@ -2469,15 +2469,18 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
             }
           }
         }
-        state.runs = nextRuns;
-        state.loading = false;
-        errorBanner.style.display = 'none';
-        errorBanner.textContent = '';
-        lastPollAt = Date.now();
-        pollFailCount = 0;
-        updatePollHealth();
-        render();
-      } catch (err) {
+	      state.runs = nextRuns;
+	      state.loading = false;
+	      errorBanner.style.display = 'none';
+	      errorBanner.textContent = '';
+	      lastPollAt = Date.now();
+	      pollFailCount = 0;
+	      updatePollHealth();
+	      if (state.expandedRunKey) {
+	        loadRunDetail(state.expandedRunKey);
+	      }
+	      scheduleRender();
+	    } catch (err) {
         state.loading = false;
         errorBanner.textContent = 'Refresh failed: ' + err.message;
         errorBanner.style.display = 'block';

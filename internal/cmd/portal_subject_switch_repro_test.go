@@ -660,6 +660,89 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
 	}
 }
 
+func TestPortalRefreshHydratesRestoredExpandedRunDetail(t *testing.T) {
+	runID := "run-42-issue"
+	summaryRun := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    "run-42",
+	}
+	detailRun := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    "run-42",
+		"log":         "hydrated log line 1\nhydrated log line 2",
+		"events":      []map[string]any{{"type": "run.finished"}},
+	}
+	summaryRunsJSON, err := json.Marshal([]map[string]any{summaryRun})
+	if err != nil {
+		t.Fatalf("marshal summary runs: %v", err)
+	}
+	detailRunJSON, err := json.Marshal(detailRun)
+	if err != nil {
+		t.Fatalf("marshal detail run: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, summaryRunsJSON, `
+    window.__portalFetchCalls = 0;
+    window.fetch = async function (input) {
+      window.__portalFetchCalls += 1;
+      var url = String(input || '');
+      var payload = url.indexOf('?runKey=') >= 0 ? { run: `+string(detailRunJSON)+` } : { runs: `+string(summaryRunsJSON)+` };
+      return {
+        ok: true,
+        status: 200,
+        json: async function () { return payload; },
+        text: async function () { return ''; },
+      };
+    };
+    setTimeout(function () {
+      var row = document.querySelector('tr[data-run-key="`+runID+`"]');
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var detailPre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-refresh-hydrates';
+      marker.textContent = JSON.stringify({
+        rowKey: row && row.getAttribute('data-run-key'),
+        detailFor: detail && detail.getAttribute('data-detail-for'),
+        detailText: detailPre && detailPre.innerText,
+        fetchCalls: window.__portalFetchCalls || 0,
+      });
+      document.body.appendChild(marker);
+    }, 2200);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-refresh-hydrates")
+	var result struct {
+		RowKey     string `json:"rowKey"`
+		DetailFor  string `json:"detailFor"`
+		DetailText string `json:"detailText"`
+		FetchCalls int    `json:"fetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse refresh hydrate payload: %v\nraw=%s", err, payload)
+	}
+	if result.RowKey != runID || result.DetailFor != runID {
+		t.Fatalf("expected restored expanded row and detail to stay linked, got %#v", result)
+	}
+	if !strings.Contains(result.DetailText, "hydrated log line 1") {
+		t.Fatalf("expected refreshed detail text to hydrate from runKey fetch, got %#v", result)
+	}
+	if result.FetchCalls < 2 {
+		t.Fatalf("expected summary refresh plus detail fetch, got %#v", result)
+	}
+}
+
 func loadPortalScreenshot(path string) (image.Image, error) {
 	f, err := os.Open(path)
 	if err != nil {

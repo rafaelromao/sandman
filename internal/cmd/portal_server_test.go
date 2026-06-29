@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -3433,5 +3434,82 @@ func TestPortal_RunsRunKey(t *testing.T) {
 	}
 	if payload.Run.Log == "" {
 		t.Errorf("runKey response should include full Log")
+	}
+}
+
+func TestPortal_RunsRunKey_ReportsSnapshotFailuresAsInternalServerError(t *testing.T) {
+	repoRoot := t.TempDir()
+	handler := &portalHandler{
+		repoRoot: repoRoot,
+		runsIndex: &portalRunsIndex{
+			repoRoot:      repoRoot,
+			eventLogPath:  repoRoot,
+			view:          &portalRunsView{},
+			manifestCache: map[string]portalManifestCacheEntry{},
+		},
+		staleCleaner: portalStaleCleaner,
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "/api/runs?runKey=run-missing", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.handleRuns(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for snapshot failure, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "read event log") && !strings.Contains(rec.Body.String(), "stat event log") {
+		t.Fatalf("expected internal error body, got %s", rec.Body.String())
+	}
+}
+
+func TestPortal_RunsAPI_OrphanActiveRunWithLiveBatchSocket(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	batchID := "orphan-batch-live"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(batchDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{101}, CreatedAt: time.Now().Add(-1 * time.Minute)}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	startedAt := time.Now().Add(-30 * time.Second)
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-orphan-1", Issue: 101, Payload: map[string]any{"branch": "sandman/101-fix", "batch_id": batchID}},
+	})
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 orphan active run, got %d: %#v", len(runs), runs)
+	}
+	run := runs[0]
+	if run.Kind != "active" {
+		t.Errorf("Kind = %q, want %q (orphan run with live batch socket should stay active)", run.Kind, "active")
+	}
+	if run.IssueNumber != 101 {
+		t.Errorf("IssueNumber = %d, want %d", run.IssueNumber, 101)
 	}
 }
