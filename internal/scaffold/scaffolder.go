@@ -991,9 +991,6 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == javaBuildToolsPreset {
 		out.WriteString(renderJavaInstallCommand(javaVersion))
 	}
-	if preset.Name == pythonBuildToolsPreset {
-		out.WriteString(renderPythonInstallCommand(pythonVersion))
-	}
 	out.WriteString(renderCodeindexInstallCommand())
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
 	out.WriteString(renderRTKInstallCommand())
