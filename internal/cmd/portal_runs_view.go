@@ -1074,6 +1074,19 @@ func (v *portalRunsView) matchRunState(instance portalActiveRun, states []events
 		return bestIdx
 	}
 
+	// Time-proximity fallback: refuse to bind a prompt-only /
+	// auto-select instance (IssueNumber == 0) to a state tied to a
+	// concrete issue, even on timestamp proximity. The strict loops
+	// above already filter strictly on IssueNumber; the fallback
+	// below was the path that swallowed orphan issue-run states
+	// into the closest unrelated auto-select / prompt-only instance
+	// when the issue-run's own batch dir was missing from the
+	// batches index (issue #1464). Return -1 so the state falls
+	// through to the event-backed branch in compute() instead.
+	if instance.IssueNumber == 0 {
+		return -1
+	}
+
 	for i := range states {
 		if used[i] {
 			continue
@@ -1219,6 +1232,14 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	batchKey := ""
 	if active != nil {
 		batchKey = active.Key
+	} else if bid := runState.BatchID(); bid != "" {
+		// Fall back to the batch id projected from the event payload
+		// when no active instance is matched. Without this, ghost
+		// batches (entries evicted from the batches index while the
+		// on-disk daemon is still live) get an empty BatchKey and
+		// collide with prior terminal rows in dedupRuns, silently
+		// dropping queued members (issue #1464).
+		batchKey = bid
 	}
 	portalRun := portalRun{
 		Key:          runID,
@@ -1279,7 +1300,19 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 }
 
 func (v *portalRunsView) kindForRun(runState events.RunState) string {
+	// An active state (run.started / run.continued, no terminal
+	// event yet) is naturally "active". A queued state has no
+	// terminal event of its own — the run.queued placeholder is
+	// carried as Finished for projection purposes, but the actual
+	// run is still waiting to start, so the row must render as
+	// "active" with status "queued" rather than "completed". This
+	// keeps the orphan-batch code path consistent with the
+	// active-batch code path in runFromActiveBatchIssue, which
+	// also renders queued rows as kind="active".
 	if runState.IsActive() {
+		return "active"
+	}
+	if runState.Status() == "queued" || runState.Status() == "blocked" {
 		return "active"
 	}
 	return "completed"

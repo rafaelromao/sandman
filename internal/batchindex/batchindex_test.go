@@ -517,6 +517,109 @@ func TestAddEntry_Existing(t *testing.T) {
 	}
 }
 
+func TestAddEntry_EmptyID_BackfilledFromPathBasename(t *testing.T) {
+	idx := &Index{Version: IndexVersion}
+	entry := Entry{
+		ID:     "",
+		Path:   "/tmp/sandman/.sandman/batches/abc123",
+		Kind:   KindIssue,
+		Status: StatusActive,
+	}
+	idx.Add(entry)
+
+	if len(idx.Entries) != 1 {
+		t.Fatalf("Entries len = %d, want 1", len(idx.Entries))
+	}
+	if idx.Entries[0].ID != "abc123" {
+		t.Errorf("Entries[0].ID = %q, want %q (backfilled from path basename)", idx.Entries[0].ID, "abc123")
+	}
+}
+
+func TestAddEntry_EmptyID_NoPathBasename_FallsBackToPath(t *testing.T) {
+	// When the path has no usable basename (rare — only happens for
+	// an empty path), Add must still produce an addressable entry to
+	// avoid dropping it on the floor. The resulting ID is the literal
+	// path or a stable placeholder.
+	idx := &Index{Version: IndexVersion}
+	idx.Add(Entry{ID: "", Path: ".", Kind: KindIssue})
+
+	if len(idx.Entries) != 1 {
+		t.Fatalf("Entries len = %d, want 1", len(idx.Entries))
+	}
+	if idx.Entries[0].ID == "" {
+		t.Error("Entries[0].ID is still empty; Add must not produce an unidentified entry")
+	}
+}
+
+func TestAddEntry_TwoEmptyIDs_DoNotEvict(t *testing.T) {
+	// Regression for issue #1464: a second empty-id Add used to
+	// overwrite the previous one in place (same "" key in the lookup),
+	// silently evicting the prior batch from the index. After the fix
+	// both entries must be addressable and persisted.
+	idx := &Index{Version: IndexVersion}
+	idx.Add(Entry{
+		ID:   "",
+		Path: "/tmp/sandman/.sandman/batches/first-001",
+		Kind: KindIssue,
+	})
+	idx.Add(Entry{
+		ID:   "",
+		Path: "/tmp/sandman/.sandman/batches/second-002",
+		Kind: KindIssue,
+	})
+
+	if len(idx.Entries) != 2 {
+		t.Fatalf("Entries len = %d, want 2 (empty-id must not collide)", len(idx.Entries))
+	}
+
+	paths := make(map[string]bool, len(idx.Entries))
+	for i, e := range idx.Entries {
+		if e.ID == "" {
+			t.Errorf("Entries[%d].ID is empty; expected backfill from path basename", i)
+		}
+		if paths[e.Path] {
+			t.Errorf("Entries[%d].Path %q duplicated in index", i, e.Path)
+		}
+		paths[e.Path] = true
+	}
+}
+
+func TestSave_RoundTrip_EmptyIDIsBackfilled(t *testing.T) {
+	repoRoot := t.TempDir()
+	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
+		t.Fatalf("create dir: %v", err)
+	}
+
+	idx := &Index{
+		Version: IndexVersion,
+		Entries: []Entry{
+			{
+				ID:        "",
+				Path:      filepath.Join(repoRoot, ".sandman", "batches", "abc123"),
+				Kind:      KindIssue,
+				Status:    StatusActive,
+				CreatedAt: time.Now(),
+				Issues:    []int{42},
+			},
+		},
+	}
+	if err := idx.Save(indexPath); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := Load(indexPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded.Entries) != 1 {
+		t.Fatalf("Entries len = %d, want 1", len(loaded.Entries))
+	}
+	if loaded.Entries[0].ID == "" {
+		t.Fatalf("Entries[0].ID is empty after round-trip; expected backfill from path basename")
+	}
+}
+
 func TestWriteReadManifest(t *testing.T) {
 	runDir := t.TempDir()
 	now := time.Now().Truncate(time.Second)
