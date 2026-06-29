@@ -223,7 +223,7 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
         changeCalls: window.__portalChangeCalls || 0
       });
       document.body.appendChild(pre);
-    }, 2000);
+    }, 2500);
   `)
 	dom, _ := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-repro")
