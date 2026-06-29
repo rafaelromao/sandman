@@ -503,10 +503,10 @@
 
   function fillTerminalPre(pre, text, helpers) {
     const value = String(text == null ? '' : text);
+    while (pre.firstChild) pre.removeChild(pre.firstChild);
     if (value.length < ASYNC_CHUNK_THRESHOLD) {
       const html = helpers.renderTerminalContent(value);
       const scratch = global.document.createElement('div');
-      while (pre.firstChild) pre.removeChild(pre.firstChild);
       scratch.innerHTML = String(html || '');
       const frag = global.document.createDocumentFragment();
       let node = scratch.firstChild;
