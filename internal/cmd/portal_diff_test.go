@@ -3334,6 +3334,21 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+func TestPortalRunsView_VisibleRunsForTable_SortsByStartedDesc(t *testing.T) {
+	js := `const runs = [
+  { key: 'issue-1014', kind: 'completed', status: 'failure', issueLabel: '#1014', runId: 'issue-1014', issueNumber: 1014, startedAt: '2026-06-29T04:34:39Z' },
+  { key: 'issue-1401', kind: 'completed', status: 'failure', issueLabel: '#1401', runId: 'issue-1401', issueNumber: 1401, startedAt: '2026-06-26T19:47:13Z' },
+  { key: 'issue-1402', kind: 'completed', status: 'failure', issueLabel: '#1402', runId: 'issue-1402', issueNumber: 1402, startedAt: '2026-06-27T00:12:51Z' },
+  { key: 'issue-1467', kind: 'active', status: 'running', issueLabel: '#1467', runId: 'issue-1467', issueNumber: 1467, startedAt: '2026-06-29T14:29:12Z' },
+];
+const visible = visibleRunsForTable(runs);
+const order = visible.map((run) => run.key).join(',');
+if (order !== 'issue-1467,issue-1014,issue-1402,issue-1401') throw new Error('expected newest started rows first, got ' + JSON.stringify(order));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 func TestRenderRunMeta_BatchAboveRunID(t *testing.T) {
 	js := `const runWithBatch = { key: 'a', runId: 'r1', batchKey: 'batch-42', kind: 'active', status: 'running' };
 const metaWithBatch = helpers.renderRunMeta(runWithBatch);
