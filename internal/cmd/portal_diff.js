@@ -1275,13 +1275,21 @@
   function cacheLogPaneBeforeRemove(detailRow) {
     const pre = detailRow.querySelector('pre[data-scroll-key]');
     if (!pre) return;
-    const content = pre.parentNode;
-    if (!content || !content.getAttribute) return;
-    const fp = content.getAttribute('data-rendered-subject-fingerprint') || '';
+    // The fingerprint attr lives on the grandparent .detail-content (the
+    // pre is wrapped in a .detail-box section). Walk up at most two levels
+    // to find a node that carries the fingerprint, then use that node as
+    // the cached pane so a re-expand reuses the whole log panel.
+    let node = pre.parentNode;
+    while (node && node !== detailRow) {
+      const fp = node.getAttribute && node.getAttribute('data-rendered-subject-fingerprint');
+      if (fp) break;
+      node = node.parentNode;
+    }
+    if (!node || node === detailRow) return;
+    const fp = node.getAttribute('data-rendered-subject-fingerprint') || '';
     const subjectValue = fp.split('|')[0];
     if (!subjectValue) return;
-    const pane = (content.parentNode && content.parentNode !== content) ? content : pre;
-    storeCachedLogPane(subjectValue, pane);
+    storeCachedLogPane(subjectValue, node);
   }
 
   function removeRunRow(body, key) {
@@ -1374,6 +1382,10 @@
         setDetailData(newDetail, newRun);
         inserted += 1;
       } else if (!wantDetail && detail) {
+        // Capture the rendered log pane before removing the detail row so a
+        // subsequent re-expand can reuse it. Caching on collapse is what
+        // makes open → close → open ~O(1) instead of re-tokenizing the log.
+        cacheLogPaneBeforeRemove(detail);
         body.removeChild(detail);
         clearDetailData(detail);
         removed += 1;

@@ -40,7 +40,8 @@ if (typeof ha === 'string') {
 }
 
 // TestPortalPerf_ReExpandNoMutation verifies that re-expanding a collapsed run
-// does not append new DOM nodes (pane is preserved from cache, not rebuilt).
+// reuses the cached log pane (no re-tokenization, same DOM nodes) instead of
+// rebuilding and re-parsing the pre.
 func TestPortalPerf_ReExpandNoMutation(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: 'log text for re-expand test', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
@@ -48,11 +49,25 @@ const stopGroups = new Set();
 const optsLog = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
 const optsCollapsed = { helpers, stopGroups, expandedKey: null, tabs: { a: 'log' } };
 sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+const detailRow = body.children[1];
+const originalContent = detailRow && detailRow.querySelector('.detail-content');
+const originalPre = originalContent && originalContent.querySelector('pre[data-scroll-key]');
+if (!originalPre) throw new Error('expected initial log pre');
+const originalFirstChild = originalPre.firstChild;
 sandbox.SandmanPortalDiff.diffRuns(body, [run], optsCollapsed);
 sandbox.SandmanPortalDiff.resetCounters();
 sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+const detailAfter = body.children[1];
+const restoredContent = detailAfter && detailAfter.querySelector('.detail-content');
+const restoredPre = restoredContent && restoredContent.querySelector('pre[data-scroll-key]');
 const counters = sandbox.SandmanPortalDiff.getCounters();
-if (counters.appendChild > 0) throw new Error('re-expand should not append new nodes, got ' + counters.appendChild);
+// Cache hit means: no innerHTML rewrites (no re-tokenization), and the
+// cached pane is reused by node identity.
+const paneIdentity = restoredPre === originalPre;
+const childIdentity = restoredPre && restoredPre.firstChild === originalFirstChild;
+if (counters.innerHTMLAssignments !== 0 || !paneIdentity || !childIdentity) {
+  throw new Error('re-expand should reuse cached pane; innerHTML=' + counters.innerHTMLAssignments + ' paneIdentity=' + paneIdentity + ' childIdentity=' + childIdentity);
+}
 console.log('PASS');
 `
 	runNodeScript(t, js)
