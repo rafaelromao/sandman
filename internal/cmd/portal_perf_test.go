@@ -109,3 +109,88 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalPerf_AsyncLargeLogRoundTrip verifies that large logs use the
+// async path, expose a pending marker while chunking, and preserve the cached
+// pane across a tab round-trip. Uses render-state polling instead of a fixed
+// delay to avoid CI flakiness on slow runners.
+func TestPortalPerf_AsyncLargeLogRoundTrip(t *testing.T) {
+	js := `function bigLog(seed, n) { var L = []; for (var i = 0; i < n; i++) L.push(seed + ' step ' + i + ' import return function foo() bar baz qux'); return L.join('\n'); }
+	function waitForRender(pre, log, callback) {
+	  if (pre.getAttribute('data-rendered-log') === log) { callback(); return; }
+	  if (pre.getAttribute('data-rendering-log') !== log) { callback(new Error('rendering marker cleared without completion')); return; }
+	  setTimeout(function() { waitForRender(pre, log, callback); }, 10);
+	}
+	const body = makeMockBody();
+	const log = bigLog('async', 2000); // ~220KB
+	const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: log, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
+	const stopGroups = new Set();
+	const optsLog = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+	const optsDetails = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+	sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+	const detailRow = body.children[1];
+	const pre = detailRow && detailRow.querySelector('pre[data-scroll-key]');
+	if (!pre) throw new Error('expected log pre');
+	if (pre.getAttribute('data-rendering-log') !== log) throw new Error('expected async pending marker for large log');
+	if (pre.getAttribute('data-rendered-log')) throw new Error('expected rendered-log to stay empty while async render is pending');
+	waitForRender(pre, log, function(err) {
+	  if (err) { console.error('FAIL: ' + err.message); return; }
+	  if (pre.getAttribute('data-rendering-log')) throw new Error('expected async pending marker cleared after completion');
+	  if (pre.getAttribute('data-rendered-log') !== log) throw new Error('expected rendered-log after async completion');
+	  if (pre.textContent.indexOf('async step 0') === -1) throw new Error('expected async log content after completion');
+	  const originalPre = pre;
+	  const originalFirstChild = pre.firstChild;
+	  sandbox.SandmanPortalDiff.diffRuns(body, [run], optsDetails);
+	  if (detailRow.querySelector('pre[data-scroll-key]')) throw new Error('expected log pane detached on details tab');
+	  sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+	  const restoredPre = detailRow.querySelector('pre[data-scroll-key]');
+	  if (restoredPre !== originalPre) throw new Error('expected cached large-log pane to be reused');
+	  if (restoredPre.firstChild !== originalFirstChild) throw new Error('expected cached large-log children to be reused');
+	  if (restoredPre.getAttribute('data-rendered-log') !== log) throw new Error('expected rendered-log to survive round trip');
+	  console.log('PASS');
+	});
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalPerf_AsyncLargeLogInflightTabSwitch verifies that switching to
+// the details tab while a large log is still chunking cancels the in-flight
+// render and reuses the cached pane on return. The per-element generation
+// ensures the cancellation is scoped to the correct <pre>.
+func TestPortalPerf_AsyncLargeLogInflightTabSwitch(t *testing.T) {
+	js := `function bigLog(seed, n) { var L = []; for (var i = 0; i < n; i++) L.push(seed + ' step ' + i + ' import return function foo() bar baz qux'); return L.join('\n'); }
+	function waitForRender(pre, log, callback) {
+	  if (pre.getAttribute('data-rendered-log') === log) { callback(); return; }
+	  if (pre.getAttribute('data-rendering-log') !== log) { callback(new Error('rendering marker cleared without completion')); return; }
+	  setTimeout(function() { waitForRender(pre, log, callback); }, 10);
+	}
+	const body = makeMockBody();
+	const log = bigLog('inflight', 2000); // ~220KB
+	const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: log, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
+	const stopGroups = new Set();
+	const optsLog = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+	const optsDetails = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+	sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+	const detailRow = body.children[1];
+	const pre = detailRow && detailRow.querySelector('pre[data-scroll-key]');
+	if (!pre) throw new Error('expected log pre');
+	if (pre.getAttribute('data-rendering-log') !== log) throw new Error('expected async pending marker for large log');
+	// Switch to details while chunking is in-flight — per-element generation
+	// cancels the in-flight render without affecting other panels.
+	sandbox.SandmanPortalDiff.diffRuns(body, [run], optsDetails);
+	if (detailRow.querySelector('pre[data-scroll-key]')) throw new Error('expected log pane detached on details tab');
+	sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+	const restoredPre = detailRow.querySelector('pre[data-scroll-key]');
+	if (restoredPre !== pre) throw new Error('expected cached large-log pane reused after inflight tab switch');
+	// The pending marker may still be set from the original render, or already
+	// cleared if it completed during the details tab. In either case the pane is
+	// reused. Wait for the (new or continued) render to finish.
+	waitForRender(restoredPre, log, function(err) {
+	  if (err) { console.error('FAIL: ' + err.message); return; }
+	  if (restoredPre.getAttribute('data-rendered-log') !== log) throw new Error('expected rendered-log after inflight tab switch render completes');
+	  if (restoredPre.textContent.indexOf('inflight step 0') === -1) throw new Error('expected async log content after inflight tab switch completes');
+	  console.log('PASS');
+	});
+`
+	runNodeScript(t, js)
+}

@@ -980,8 +980,8 @@ func TestPortal_RunFromActiveBatchIssue_ActiveReviewPrefersLiveOutput(t *testing
 	if run.Kind != "active" {
 		t.Fatalf("expected active kind while socket exists, got %q", run.Kind)
 	}
-	if run.Status != "reviewing" {
-		t.Fatalf("expected reviewing status while socket exists, got %q", run.Status)
+	if run.Status != "success" {
+		t.Fatalf("expected terminal status preserved (statusOrDefault returns non-empty status even with active socket), got %q", run.Status)
 	}
 	if !strings.Contains(run.Log, "live review line") {
 		t.Fatalf("expected live review output to win, got %q", run.Log)

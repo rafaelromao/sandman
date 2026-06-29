@@ -493,24 +493,62 @@
     pre.classList.add('terminal-log');
     pre.setAttribute('data-scroll-key', run.key);
     fillTerminalPre(pre, log, helpers);
-    pre.setAttribute('data-rendered-log', log);
     return pre;
   }
 
+  const ASYNC_CHUNK_THRESHOLD = 32 * 1024;
+  const CHUNK_SIZE_LINES = 100;
+
   function fillTerminalPre(pre, text, helpers) {
-    const html = helpers.renderTerminalContent(text);
-    const scratch = global.document.createElement('div');
+    const value = String(text == null ? '' : text);
     while (pre.firstChild) pre.removeChild(pre.firstChild);
-    scratch.innerHTML = String(html || '');
-    // Batch the append of all rendered tokens into one DocumentFragment so
-    // the user sees one reflow instead of N (each per-node appendChild).
-    const frag = global.document.createDocumentFragment();
-    let node = scratch.firstChild;
-    while (node) {
-      frag.appendChild(node);
-      node = scratch.firstChild;
+    pre.setAttribute('data-rendering-log', value);
+    if (value.length < ASYNC_CHUNK_THRESHOLD) {
+      const html = helpers.renderTerminalContent(value);
+      const scratch = global.document.createElement('div');
+      scratch.innerHTML = String(html || '');
+      const frag = global.document.createDocumentFragment();
+      let node = scratch.firstChild;
+      while (node) {
+        frag.appendChild(node);
+        node = scratch.firstChild;
+      }
+      pre.appendChild(frag);
+      pre.setAttribute('data-rendered-log', value);
+      pre.removeAttribute('data-rendering-log');
+      return;
     }
-    pre.appendChild(frag);
+    const gen = (parseInt(pre.getAttribute('data-render-gen') || '0', 10) + 1) | 0;
+    pre.setAttribute('data-render-gen', String(gen));
+    const lines = value.split('\n');
+    let lineIndex = 0;
+    const htmlParts = [];
+    function processChunk() {
+      if (String(gen) !== pre.getAttribute('data-render-gen')) return;
+      const end = Math.min(lineIndex + CHUNK_SIZE_LINES, lines.length);
+      while (lineIndex < end) {
+        htmlParts.push(helpers.renderTerminalContent(lines[lineIndex]));
+        lineIndex++;
+      }
+      if (lineIndex < lines.length) {
+        global.setTimeout(processChunk, 0);
+      } else {
+        const html = htmlParts.join('\n');
+        const scratch = global.document.createElement('div');
+        scratch.innerHTML = String(html || '');
+        const frag = global.document.createDocumentFragment();
+        let node = scratch.firstChild;
+        while (node) {
+          frag.appendChild(node);
+          node = scratch.firstChild;
+        }
+        pre.appendChild(frag);
+        if (String(gen) !== pre.getAttribute('data-render-gen')) return;
+        pre.setAttribute('data-rendered-log', value);
+        pre.removeAttribute('data-rendering-log');
+      }
+    }
+    global.setTimeout(processChunk, 0);
   }
 
   function highlightJSON(text) {
@@ -778,6 +816,8 @@
       scratch.innerHTML = html;
       const nodes = Array.from(scratch.childNodes);
       for (const node of nodes) pre.appendChild(node);
+      pre.setAttribute('data-rendered-log', oldLog + newSuffix);
+      pre.removeAttribute('data-rendering-log');
       return;
     }
     const lastNewline = oldLog.lastIndexOf('\n');
@@ -801,6 +841,8 @@
       pre.removeChild(pre.lastChild);
     }
     for (const node of newNodes) pre.appendChild(node);
+    pre.setAttribute('data-rendered-log', oldLog + newSuffix);
+    pre.removeAttribute('data-rendering-log');
   }
 
   function findPartialLineStart(pre, partialLastLine) {
@@ -1055,6 +1097,11 @@
       }
       if (pre) {
         const oldLog = pre.getAttribute('data-rendered-log') || '';
+        const renderingLog = pre.getAttribute('data-rendering-log') || '';
+        if (renderingLog === newLog) {
+          content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
+          return;
+        }
         if (oldLog === newLog) {
           content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
           return;
@@ -1070,7 +1117,6 @@
         } else {
           fillTerminalPre(pre, newLog, opts.helpers);
         }
-        pre.setAttribute('data-rendered-log', newLog);
         content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
         mutationCount += 1;
         return;
@@ -1442,13 +1488,14 @@
     if (!pre) return;
     const renderedLog = newLog && String(newLog).trim() ? newLog : '';
     const oldLog = pre.getAttribute('data-rendered-log') || '';
+    const renderingLog = pre.getAttribute('data-rendering-log') || '';
+    if (renderingLog === renderedLog) return;
     if (oldLog === renderedLog) return;
     if (oldLog && renderedLog.length >= oldLog.length && renderedLog.startsWith(oldLog)) {
       appendTerminalPre(pre, oldLog, renderedLog.slice(oldLog.length), helpers);
     } else {
       fillTerminalPre(pre, renderedLog, helpers);
     }
-    pre.setAttribute('data-rendered-log', renderedLog);
     mutationCount += 1;
   }
 
