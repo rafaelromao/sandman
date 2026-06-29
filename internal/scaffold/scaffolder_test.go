@@ -101,7 +101,7 @@ func TestScaffold_ParallelReviewsDefault(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "elixir"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -124,7 +124,7 @@ func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "elixir"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -150,7 +150,7 @@ func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
 }
 
 func TestScaffold_AllPresetsIncludeRTK(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "elixir"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -253,6 +253,56 @@ func TestScaffold_NodePresetWritesPinnedDockerfile(t *testing.T) {
 	}
 	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
+	}
+}
+
+func TestScaffold_ElixirPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule Demo.MixProject do
+  use Mix.Project
+  def project do
+    [app: :demo, version: "0.1.0"]
+  end
+end
+`), 0644); err != nil {
+		t.Fatalf("write mix.exs: %v", err)
+	}
+
+	s := &Scaffolder{}
+	wantElixirVersion, err := s.resolveElixirVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve elixir version: %v", err)
+	}
+	wantOTP := deriveErlangOTP(wantElixirVersion)
+
+	err = s.Scaffold(dir, Options{Agent: "opencode"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: elixir") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman elixir-version: "+wantElixirVersion) {
+		t.Fatalf("Dockerfile missing elixir-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin erlang@"+wantOTP) {
+		t.Fatalf("Dockerfile missing pinned erlang install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin elixir@"+wantElixirVersion) {
+		t.Fatalf("Dockerfile missing pinned elixir install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mix local.hex --force && mix local.rebar --force") {
+		t.Fatalf("Dockerfile missing mix hex/rebar setup, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
 }
 
@@ -1769,6 +1819,118 @@ func TestScaffold_GenericBuildToolsOverridesDotnetRepoHints(t *testing.T) {
 	}
 	if preset.Name != "generic" {
 		t.Fatalf("expected explicit generic preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_ElixirRepoAutoDetect(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    string
+	}{
+		{
+			name: "mix.exs",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule Demo.MixProject do
+  use Mix.Project
+  def project do
+    [app: :demo, version: "0.1.0"]
+  end
+end
+`), 0644)
+			},
+			want: "elixir",
+		},
+		{
+			name: ".elixir-version",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".elixir-version"), []byte("1.16.0\n"), 0644)
+			},
+			want: "elixir",
+		},
+		{
+			name: ".tool-versions with elixir",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("elixir 1.15.5\nerlang 26.2.5\n"), 0644)
+			},
+			want: "elixir",
+		},
+		{
+			name: "erlang.cookie",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".erlang.cookie"), []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456\n"), 0644)
+			},
+			want: "elixir",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			s := &Scaffolder{}
+			preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve build tools preset: %v", err)
+			}
+			if preset.Name != tt.want {
+				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
+			}
+		})
+	}
+}
+
+func TestScaffold_ElixirPresetTakesPriorityOverPython(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule Demo.MixProject do
+  use Mix.Project
+end
+`), 0644)
+	os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\nname = \"demo\"\n"), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "elixir" {
+		t.Errorf("expected Elixir preset to take priority over Python, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_GenericBuildToolsOverridesElixirRepoHints(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule Demo.MixProject do
+  use Mix.Project
+end
+`), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "generic" {
+		t.Fatalf("expected explicit generic preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_GoPresetTakesPriorityOverElixir(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule Demo.MixProject do
+  use Mix.Project
+end
+`), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "go" {
+		t.Errorf("expected Go preset to take priority over Elixir, got %q", preset.Name)
 	}
 }
 

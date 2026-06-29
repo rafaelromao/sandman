@@ -29,6 +29,8 @@ const nodeBuildToolsPreset = "node"
 
 const pythonBuildToolsPreset = "python"
 
+const elixirBuildToolsPreset = "elixir"
+
 const DefaultMISEVersion = "v2026.5.8"
 
 const DefaultRTKVersion = "v0.42.0"
@@ -124,6 +126,12 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		SharedPackages: sharedPackages,
 		MiseVersion:    DefaultMISEVersion,
 	},
+	elixirBuildToolsPreset: {
+		Name:           elixirBuildToolsPreset,
+		BaseImage:      "debian:bookworm-slim",
+		SharedPackages: sharedPackages,
+		MiseVersion:    DefaultMISEVersion,
+	},
 }
 
 // DefaultBuiltInAgentVersion returns the latest bundled version pin for a built-in agent.
@@ -172,6 +180,23 @@ var bundledPythonVersionCatalog = map[string]string{
 	"3.11":   "3.11.11",
 	"3.10":   "3.10.16",
 	"3.9":    "3.9.21",
+}
+
+var bundledElixirVersionCatalog = map[string]string{
+	"latest": "1.18.3",
+	"lts":    "1.17.3",
+	"1.18":   "1.18.3",
+	"1.17":   "1.17.3",
+	"1.16":   "1.16.4",
+	"1.15":   "1.15.8",
+}
+
+var bundledErlangVersionCatalog = map[string]string{
+	"latest": "27.3.1",
+	"lts":    "26.2.5",
+	"27":     "27.3.1",
+	"26":     "26.2.5",
+	"25":     "25.3.2.13",
 }
 
 var bundledDotnetVersionCatalog = map[string]string{
@@ -228,6 +253,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	dotnetVersion := ""
 	nodeVersion := ""
 	pythonVersion := ""
+	elixirVersion := ""
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
@@ -245,6 +271,11 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	} else if preset.Name == pythonBuildToolsPreset {
 		pythonVersion, err = s.resolvePythonVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == elixirBuildToolsPreset {
+		elixirVersion, err = s.resolveElixirVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
 			return err
 		}
@@ -297,7 +328,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -385,6 +416,8 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 			if name == "" {
 				name = nodeBuildToolsPreset
 			}
+		} else if hasElixirRepoHint(repoRoot) {
+			name = elixirBuildToolsPreset
 		} else if hasPythonRepoHint(repoRoot) {
 			name = pythonBuildToolsPreset
 		} else if p != nil {
@@ -455,6 +488,18 @@ func hasPythonRepoHint(repoRoot string) bool {
 		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
 			return true
 		}
+	}
+	return false
+}
+
+func hasElixirRepoHint(repoRoot string) bool {
+	for _, rel := range []string{"mix.exs", ".elixir-version", ".erlang.cookie"} {
+		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
+			return true
+		}
+	}
+	if _, found, err := readElixirVersionHint(repoRoot); err == nil && found {
+		return true
 	}
 	return false
 }
@@ -637,6 +682,26 @@ var pythonResolver = versionResolver{
 		minor--
 
 		return fmt.Sprintf("%d.%d", major, minor), nil
+	},
+}
+
+var elixirResolver = versionResolver{
+	label:      "Elixir",
+	miseTool:   "elixir",
+	hintReader: readElixirVersionHint,
+	normalize: func(selector string) string {
+		selector = strings.TrimSpace(selector)
+		if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "elixir") && selector[6] >= '0' && selector[6] <= '9' {
+			return selector[6:]
+		}
+		if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+			return selector[1:]
+		}
+		return selector
+	},
+	catalog: bundledElixirVersionCatalog,
+	ltsFromLatest: func(version string) (string, error) {
+		return "lts", nil
 	},
 }
 
@@ -885,7 +950,7 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
@@ -901,6 +966,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman python-version: %s\n", pythonVersion)
+	}
+	if preset.Name == elixirBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman elixir-version: %s\n", elixirVersion)
 	}
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
@@ -928,6 +996,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
 	}
+	if preset.Name == elixirBuildToolsPreset {
+		out.WriteString(renderElixirInstallCommand(elixirVersion))
+	}
 	out.WriteString(renderCodeindexInstallCommand())
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
 	out.WriteString(renderRTKInstallCommand())
@@ -936,6 +1007,10 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 
 func (s *Scaffolder) resolvePythonVersion(repoRoot, selector string, p Prompter) (string, error) {
 	return resolveVersion(pythonResolver, repoRoot, selector, p)
+}
+
+func (s *Scaffolder) resolveElixirVersion(repoRoot, selector string, p Prompter) (string, error) {
+	return resolveVersion(elixirResolver, repoRoot, selector, p)
 }
 
 func readNodeVersionHint(repoRoot string) (string, bool, error) {
@@ -1033,6 +1108,62 @@ func parseNodeVersionHint(name string, data []byte) (string, bool) {
 	return "", false
 }
 
+func readElixirVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{".elixir-version", ".tool-versions", "mix.exs"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Elixir version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseElixirVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseElixirVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case ".elixir-version":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			return line, true
+		}
+	case ".tool-versions":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "elixir" {
+				return fields[1], true
+			}
+		}
+	case "mix.exs":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(line, "elixir ") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					return fields[1], true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
 func readPythonVersionHint(repoRoot string) (string, bool, error) {
 	for _, rel := range []string{".python-version", "pyproject.toml", ".tool-versions", "setup.cfg", "setup.py"} {
 		path := filepath.Join(repoRoot, rel)
@@ -1123,6 +1254,31 @@ func renderPythonInstallCommand(version string) string {
 	return out.String()
 }
 
+func renderElixirInstallCommand(version string) string {
+	var out strings.Builder
+	otp := deriveErlangOTP(version)
+	out.WriteString(fmt.Sprintf("RUN mise use -g --pin erlang@%s\n", otp))
+	out.WriteString(fmt.Sprintf("RUN mise use -g --pin elixir@%s\n", version))
+	out.WriteString("RUN mix local.hex --force && mix local.rebar --force\n")
+	return out.String()
+}
+
+func deriveErlangOTP(elixirVersion string) string {
+	parts := strings.Split(elixirVersion, ".")
+	if len(parts) < 2 {
+		return "27"
+	}
+	major, _ := strconv.Atoi(parts[0])
+	minor, _ := strconv.Atoi(parts[1])
+	if major > 1 || (major == 1 && minor >= 16) {
+		return "27"
+	}
+	if major > 1 || (major == 1 && minor >= 15) {
+		return "26"
+	}
+	return "25"
+}
+
 func renderCodeindexInstallCommand() string {
 	return "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages\n"
 }
@@ -1179,6 +1335,7 @@ type dockerfileMetadata struct {
 	GoVersion        string
 	NodeVersion      string
 	PythonVersion    string
+	ElixirVersion    string
 	ToolVersion      string
 	MiseVersion      string
 	RtkVersion       string
@@ -1244,6 +1401,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.NodeVersion = strings.TrimSpace(value)
 		case "python-version":
 			meta.PythonVersion = strings.TrimSpace(value)
+		case "elixir-version":
+			meta.ElixirVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
 		case "rtk-version":
