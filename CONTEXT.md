@@ -73,7 +73,7 @@ Flat files under `.sandman/reviews/` for daemon-level state: `review.sock` (daem
 _Avoid_: review state, PR state.
 
 **Review daemon tick**:
-One scan cycle of the review daemon's polling loop. A tick acquires the `busy` semaphore (buffer size 1) before scanning open PRs; if already held, the tick returns immediately ("previous tick still running, skipping"). This `busy=1` invariant means at most one tick runs at a time regardless of `parallel_reviews`. The inner `sem` channel (sized to `EffectiveReviewParallel()`) still allows a single tick to launch reviews for multiple PRs concurrently. Within a tick, `processPR` uses `ReviewStateStore.TryClaim` to acquire an on-disk claim lock before adding reactions or calling `launchReview`; the claim persists in `review-state.json` so a daemon restart honors in-flight locks. References ADR-0034 §Cross-tick claim lock.
+One scan cycle of the review daemon's polling loop. A tick acquires the `busy` semaphore (buffer size 1, unconditional) before scanning open PRs; if already held, the tick returns immediately ("previous tick still running, skipping"). This `busy=1` invariant means at most one tick runs at a time regardless of `parallel_reviews`. The inner `sem` channel (sized to `EffectiveReviewParallel()`) still allows a single tick to launch reviews for multiple PRs concurrently. Within a tick, `processPR` uses `ReviewStateStore.TryClaim` to acquire an in-memory claim lock before adding reactions or calling `launchReview`; the claim is in-memory only and is released if `launchReview` fails before the state is written, allowing retry on the next tick. References ADR-0034 §Cross-tick claim lock.
 _Avoid_: scan cycle, polling loop.
 
 **Branch**:
