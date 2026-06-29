@@ -1917,6 +1917,19 @@ end
 			want: "elixir",
 		},
 		{
+			name: "mix.exs keyword syntax",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule Demo.MixProject do
+  use Mix.Project
+  def project do
+    [app: :demo, version: "0.1.0", elixir: "1.16.0"]
+  end
+end
+`), 0644)
+			},
+			want: "elixir",
+		},
+		{
 			name: ".elixir-version",
 			setupFn: func(dir string) {
 				os.WriteFile(filepath.Join(dir, ".elixir-version"), []byte("1.16.0\n"), 0644)

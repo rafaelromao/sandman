@@ -1159,6 +1159,13 @@ func parseElixirVersionHint(name string, data []byte) (string, bool) {
 					return fields[1], true
 				}
 			}
+			if strings.HasPrefix(line, "elixir:") {
+				rest := strings.TrimPrefix(line, "elixir:")
+				rest = strings.Trim(rest, "\"' \t")
+				if rest != "" {
+					return rest, true
+				}
+			}
 		}
 	}
 	return "", false
@@ -1270,10 +1277,10 @@ func deriveErlangOTP(elixirVersion string) string {
 	}
 	major, _ := strconv.Atoi(parts[0])
 	minor, _ := strconv.Atoi(parts[1])
-	if major > 1 || (major == 1 && minor >= 16) {
+	if major == 1 && minor >= 16 {
 		return "27"
 	}
-	if major > 1 || (major == 1 && minor >= 15) {
+	if major == 1 && minor >= 15 {
 		return "26"
 	}
 	return "25"
