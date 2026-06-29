@@ -3417,7 +3417,7 @@ func TestPortal_RunsRunKey(t *testing.T) {
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
 
-	resp, err := http.Get(server.URL + "/api/runs?runKey="+runID)
+	resp, err := http.Get(server.URL + "/api/runs?runKey=" + runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3438,4 +3438,3 @@ func TestPortal_RunsRunKey(t *testing.T) {
 		t.Errorf("runKey response should include full Log")
 	}
 }
-
