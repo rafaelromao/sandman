@@ -456,6 +456,64 @@ func TestScaffold_ResolvesNodeVersionSelectors(t *testing.T) {
 	}
 }
 
+func TestScaffold_ResolvesElixirVersionSelectors(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector string
+		wantPin  string
+	}{
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "repo", selector: "repo"},
+		{name: "shorthand", selector: "1.16"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule Demo.MixProject do
+  use Mix.Project
+  def project do
+    [app: :demo, version: "0.1.0"]
+  end
+end
+`), 0644); err != nil {
+				t.Fatalf("write mix.exs: %v", err)
+			}
+
+			s := &Scaffolder{}
+			resolvedPin, err := s.resolveElixirVersion(dir, tt.selector, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve elixir version: %v", err)
+			}
+
+			wantPin := tt.wantPin
+			if wantPin == "" {
+				wantPin = resolvedPin
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "elixir", Agent: "opencode", ToolVersion: tt.selector}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman elixir-version: "+wantPin) {
+				t.Fatalf("Dockerfile missing elixir pin %q, got:\n%s", wantPin, content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin elixir@"+wantPin) {
+				t.Fatalf("Dockerfile missing elixir install pin %q, got:\n%s", wantPin, content)
+			}
+			if !strings.Contains(content, "RUN mix local.hex --force && mix local.rebar --force") {
+				t.Fatalf("Dockerfile missing mix hex/rebar setup, got:\n%s", content)
+			}
+		})
+	}
+}
+
 func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoGoHints(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
@@ -467,6 +525,23 @@ func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoGoHints(t *testing.T) {
 	latest, err := s.resolveGoVersion(dir, "latest", &fakePrompter{confirm: true})
 	if err != nil {
 		t.Fatalf("resolveGoVersion with latest selector: %v", err)
+	}
+	if version != latest {
+		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
+	}
+}
+
+func TestScaffold_ElixirRepoSelectorFallsBackToLatest_WhenNoElixirHints(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	version, err := s.resolveElixirVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveElixirVersion with repo selector: %v", err)
+	}
+	latest, err := s.resolveElixirVersion(dir, "latest", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveElixirVersion with latest selector: %v", err)
 	}
 	if version != latest {
 		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
@@ -1960,6 +2035,21 @@ func TestValidateDockerfileMetadata_AllowsGoPreset(t *testing.T) {
 	}
 
 	if err := ValidateDockerfileMetadata(dir, "go", "opencode"); err != nil {
+		t.Fatalf("validate metadata: %v", err)
+	}
+}
+
+func TestValidateDockerfileMetadata_AllowsElixirPreset(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
+		t.Fatalf("create .sandman: %v", err)
+	}
+	content := "# sandman build-tools: elixir\n# sandman default-agent: opencode\n# sandman installed-agents: opencode\n# sandman elixir-version: 1.16.4\n# sandman mise-version: " + DefaultMISEVersion + "\nFROM debian:bookworm-slim\n"
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte(content), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+
+	if err := ValidateDockerfileMetadata(dir, "elixir", "opencode"); err != nil {
 		t.Fatalf("validate metadata: %v", err)
 	}
 }
