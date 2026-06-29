@@ -497,20 +497,53 @@
     return pre;
   }
 
+  const ASYNC_CHUNK_THRESHOLD = 32 * 1024;
+  const CHUNK_SIZE_LINES = 100;
+  let renderGeneration = 0;
+
   function fillTerminalPre(pre, text, helpers) {
-    const html = helpers.renderTerminalContent(text);
-    const scratch = global.document.createElement('div');
-    while (pre.firstChild) pre.removeChild(pre.firstChild);
-    scratch.innerHTML = String(html || '');
-    // Batch the append of all rendered tokens into one DocumentFragment so
-    // the user sees one reflow instead of N (each per-node appendChild).
-    const frag = global.document.createDocumentFragment();
-    let node = scratch.firstChild;
-    while (node) {
-      frag.appendChild(node);
-      node = scratch.firstChild;
+    const value = String(text == null ? '' : text);
+    if (value.length < ASYNC_CHUNK_THRESHOLD) {
+      const html = helpers.renderTerminalContent(value);
+      const scratch = global.document.createElement('div');
+      while (pre.firstChild) pre.removeChild(pre.firstChild);
+      scratch.innerHTML = String(html || '');
+      const frag = global.document.createDocumentFragment();
+      let node = scratch.firstChild;
+      while (node) {
+        frag.appendChild(node);
+        node = scratch.firstChild;
+      }
+      pre.appendChild(frag);
+      return;
     }
-    pre.appendChild(frag);
+    const generation = ++renderGeneration;
+    const lines = value.split('\n');
+    let lineIndex = 0;
+    const htmlParts = [];
+    function processChunk() {
+      if (generation !== renderGeneration) return;
+      const end = Math.min(lineIndex + CHUNK_SIZE_LINES, lines.length);
+      while (lineIndex < end) {
+        htmlParts.push(helpers.renderTerminalContent(lines[lineIndex]));
+        lineIndex++;
+      }
+      if (lineIndex < lines.length) {
+        global.setTimeout(processChunk, 0);
+      } else {
+        const html = htmlParts.join('\n');
+        const scratch = global.document.createElement('div');
+        scratch.innerHTML = String(html || '');
+        const frag = global.document.createDocumentFragment();
+        let node = scratch.firstChild;
+        while (node) {
+          frag.appendChild(node);
+          node = scratch.firstChild;
+        }
+        pre.appendChild(frag);
+      }
+    }
+    global.setTimeout(processChunk, 0);
   }
 
   function highlightJSON(text) {
