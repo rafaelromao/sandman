@@ -50,6 +50,7 @@ Sandman manages the lifecycle of automated coding workflows:
 | [Skills](docs/usage/skills.md) | Shared Sandman skill installation and workflow |
 | [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
 | [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, continue and cleanup |
+| [Badge](docs/usage/badge.md) | Built with Sandman badge — trigger, idempotency, and opt-out |
 | [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and troubleshooting |
 | [Agent Compatibility](docs/usage/agent-compatibility.md) | Built-in agent presets and container auth model |
 

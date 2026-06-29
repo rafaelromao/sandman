@@ -214,6 +214,9 @@ func (idx *Index) EnsureStatus() error {
 }
 
 func (idx *Index) Save(indexPath string) error {
+	for i := range idx.Entries {
+		idx.Entries[i].ID = canonicalizeEntryID(idx.Entries[i].ID, idx.Entries[i].Path)
+	}
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal index: %w", err)
@@ -269,6 +272,7 @@ func (idx *Index) Resolve(id string) *Entry {
 }
 
 func (idx *Index) Add(entry Entry) {
+	entry.ID = canonicalizeEntryID(entry.ID, entry.Path)
 	for i, e := range idx.Entries {
 		if e.ID == entry.ID {
 			entry.CreatedAt = e.CreatedAt
@@ -284,6 +288,27 @@ func (idx *Index) Add(entry Entry) {
 	}
 	entry.Status = StatusActive
 	idx.Entries = append(idx.Entries, entry)
+}
+
+// canonicalizeEntryID returns a non-empty entry ID derived from the
+// supplied ID, falling back to the on-disk path basename when ID is
+// empty. The path-basename fallback exists to stop two distinct batches
+// from silently colliding on "" in the index's id-keyed lookup, which
+// would overwrite the first entry's row in place (issue #1464). When
+// both the ID and the path basename are unusable (rare — only an
+// empty path fits this), the literal path is returned so the entry is
+// still addressable; the operator can repair the malformed id
+// separately.
+func canonicalizeEntryID(id, path string) string {
+	if id != "" {
+		return id
+	}
+	if path != "" {
+		if base := filepath.Base(path); base != "" && base != "." && base != "/" {
+			return base
+		}
+	}
+	return path
 }
 
 func (idx *Index) SetArchived(id, archivePath string, archivedAt time.Time) error {
