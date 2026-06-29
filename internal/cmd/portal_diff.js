@@ -493,7 +493,6 @@
     pre.classList.add('terminal-log');
     pre.setAttribute('data-scroll-key', run.key);
     fillTerminalPre(pre, log, helpers);
-    pre.setAttribute('data-rendered-log', log);
     return pre;
   }
 
@@ -515,6 +514,7 @@
         node = scratch.firstChild;
       }
       pre.appendChild(frag);
+      pre.setAttribute('data-rendered-log', value);
       return;
     }
     const generation = ++renderGeneration;
@@ -541,6 +541,7 @@
           node = scratch.firstChild;
         }
         pre.appendChild(frag);
+        pre.setAttribute('data-rendered-log', value);
       }
     }
     global.setTimeout(processChunk, 0);
@@ -811,6 +812,7 @@
       scratch.innerHTML = html;
       const nodes = Array.from(scratch.childNodes);
       for (const node of nodes) pre.appendChild(node);
+      pre.setAttribute('data-rendered-log', oldLog + newSuffix);
       return;
     }
     const lastNewline = oldLog.lastIndexOf('\n');
@@ -1103,7 +1105,6 @@
         } else {
           fillTerminalPre(pre, newLog, opts.helpers);
         }
-        pre.setAttribute('data-rendered-log', newLog);
         content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
         mutationCount += 1;
         return;
@@ -1481,7 +1482,6 @@
     } else {
       fillTerminalPre(pre, renderedLog, helpers);
     }
-    pre.setAttribute('data-rendered-log', renderedLog);
     mutationCount += 1;
   }
 
