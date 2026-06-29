@@ -1877,7 +1877,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const normalized = portalState.normalize({
         expandedRunKey: state.expandedRunKey,
         tabs: state.tabs,
-      }, visibleRuns);
+      }, visibleRuns, state.runs);
       if (!normalized.changed) return;
       state.expandedRunKey = normalized.state.expandedRunKey;
       state.tabs = normalized.state.tabs;
@@ -2274,10 +2274,17 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         byIssue.set(run.issueNumber, group);
       }
       const visible = [...passthrough];
-      const issueNumbers = Array.from(byIssue.keys()).sort((a, b) => a - b);
-      for (const issueNumber of issueNumbers) {
-        const visibleRun = visibleRunForIssueGroup(issueNumber, byIssue.get(issueNumber));
-        if (visibleRun) visible.push(visibleRun);
+      const grouped = Array.from(byIssue.entries()).map(([issueNumber, group]) => ({
+        issueNumber,
+        visibleRun: visibleRunForIssueGroup(issueNumber, group),
+      })).filter((entry) => entry.visibleRun);
+      grouped.sort((a, b) => {
+        const startedCmp = runStartedValue(b.visibleRun) - runStartedValue(a.visibleRun);
+        if (startedCmp !== 0) return startedCmp;
+        return a.issueNumber - b.issueNumber;
+      });
+      for (const entry of grouped) {
+        visible.push(entry.visibleRun);
       }
       return visible;
     }
@@ -2335,7 +2342,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       syncStatusOptions(state.runs);
       normalizePortalViewState();
       syncFilterToggleButtons();
-      const filtered = sortedVisibleRuns(visibleRunsForTable(state.runs.filter(shouldShowRun)));
+      const grouped = visibleRunsForTable(state.runs);
+      const filtered = sortedVisibleRuns(grouped.filter(shouldShowRun));
       syncSortButtons();
       const activeCount = state.runs.filter((run) => run && run.kind === 'active').length;
       const completedCount = state.runs.filter((run) => run && run.kind === 'completed').length;
@@ -2492,7 +2500,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     async function loadRunDetail(runKey) {
       const run = findRunByIdentity(runKey);
       if (!run) return;
-      const hasLog = run.log && String(run.log).trim() && run.log !== 'No log file yet.' && run.log !== 'No live output captured yet.' && run.log !== 'Aborted by operator.';
+      const hasLog = run.log && String(run.log).trim();
       const isActive = run.kind === 'active';
       if (hasLog || isActive) return;
       try {

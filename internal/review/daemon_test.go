@@ -43,6 +43,7 @@ type fakeGH struct {
 	commentErr    map[int]error
 	fetchErr      map[int]error
 	listCalls     int
+	commentCalls  map[int]int // tracks ListPRComments calls per PR number
 	reactionCalls []reactionCall
 	addReactionID int // auto-increment for fake reaction IDs
 }
@@ -57,6 +58,10 @@ func (f *fakeGH) ListOpenPRs() ([]github.PR, error) {
 func (f *fakeGH) ListPRComments(number int) ([]github.PRComment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.commentCalls == nil {
+		f.commentCalls = make(map[int]int)
+	}
+	f.commentCalls[number]++
 	if f.commentErr != nil {
 		if err, ok := f.commentErr[number]; ok {
 			return nil, err
@@ -1961,5 +1966,84 @@ func TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt(t *testing.T) {
 		if strings.Contains(string(data), prSpecific) {
 			t.Errorf("shared review-prompt.md should not contain PR-specific string %q", prSpecific)
 		}
+	}
+}
+
+func TestDaemon_TickSaturationDoesNotDropTriggers(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	afterReview := now.Add(1 * time.Minute)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}, {Number: 2, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "100", Body: "/sandman review", CreatedAt: now},
+			},
+			2: {
+				{ID: "200", Body: "/sandman review", CreatedAt: now},
+				{ID: "201", Body: "## Review\nLooks good!", CreatedAt: afterReview},
+			},
+		},
+		prFetch: map[int]*github.PR{
+			1: {Number: 1, Title: "PR 1", Body: "Body 1"},
+			2: {Number: 2, Title: "PR 2", Body: "Body 2"},
+		},
+	}
+	started := make(chan int, 1)
+	release := make(chan struct{})
+	var runMu sync.Mutex
+	runCalls := 0
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		runMu.Lock()
+		runCalls++
+		runMu.Unlock()
+		select {
+		case started <- req.PRNumber:
+		default:
+		}
+		<-release
+		return &batch.Result{}, nil
+	})
+	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 1,
+	})
+	d.Clock = func() time.Time { return now }
+
+	done := make(chan error, 1)
+	go func() {
+		done <- d.tick(context.Background())
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	gh.mu.Lock()
+	commentCalls1 := gh.commentCalls[1]
+	commentCalls2 := gh.commentCalls[2]
+	gh.mu.Unlock()
+
+	if commentCalls1 == 0 {
+		t.Errorf("ListPRComments should have been called for PR #1; got %d calls", commentCalls1)
+	}
+	if commentCalls2 == 0 {
+		t.Errorf("ListPRComments should have been called for PR #2 (skipped but still read); got %d calls", commentCalls2)
+	}
+
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("tick: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		bufStr := buf.String()
+		t.Fatalf("tick did not finish after releasing parallel reviews. logs: %s", bufStr)
+	}
+
+	runMu.Lock()
+	calls := runCalls
+	runMu.Unlock()
+	if calls != 1 {
+		t.Errorf("expected 1 batch run, got %d", calls)
 	}
 }

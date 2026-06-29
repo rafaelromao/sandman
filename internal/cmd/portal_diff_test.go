@@ -352,6 +352,26 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffDiffRuns_SubjectSelectorIncludesDistinctParentAndReview(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
+const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'issue-1', runs: [parentRun, review], visibleRuns: [parentRun] };
+const result = SandmanPortalDiff.diffRuns(body, [parentRun, review], opts);
+if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="issue-1"]');
+if (!detailRow) throw new Error('expected detail row for parent run');
+const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect) throw new Error('expected subject selector for parent run');
+if (subjectSelect.children.length !== 2) throw new Error('expected parent and review options, got ' + subjectSelect.children.length);
+if (subjectSelect.children[0].getAttribute('value') !== 'issue-1') throw new Error('expected parent option to use the parent run id, got ' + subjectSelect.children[0].getAttribute('value'));
+if (subjectSelect.children[1].getAttribute('value') !== 'PR42') throw new Error('expected review option to use the review run id, got ' + subjectSelect.children[1].getAttribute('value'));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateCells_RefreshesSubjectSelectorWhenChildReviewAppears(t *testing.T) {
 	js := `const body = makeMockBody();
 const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
@@ -1321,8 +1341,8 @@ SandmanPortalDiff.diffRuns(body, [run1], opts);
 const detailRow = body.children[1];
 const pre = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre) throw new Error('expected log pre');
-if (pre.getAttribute('data-rendered-log') !== 'No log file yet.') throw new Error('expected placeholder');
-if (pre.textContent !== 'No log file yet.') throw new Error('expected only placeholder text, got ' + JSON.stringify(pre.textContent));
+	if (pre.getAttribute('data-rendered-log') !== '') throw new Error('expected empty');
+if (pre.textContent !== '') throw new Error('expected empty text, got ' + JSON.stringify(pre.textContent));
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'real log line', helpers);
 if (pre.getAttribute('data-rendered-log') !== 'real log line') throw new Error('expected real log attr');
@@ -1342,7 +1362,7 @@ SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const pre1 = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre1) throw new Error('expected parent log pre initially');
-if (pre1.textContent !== 'No log file yet.') throw new Error('expected placeholder initially, got ' + JSON.stringify(pre1.textContent));
+if (pre1.textContent !== '') throw new Error('expected empty initially, got ' + JSON.stringify(pre1.textContent));
 const opts2 = { helpers, stopGroups, expandedKey: 'PR42', tabs: { 'PR42': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
@@ -1353,7 +1373,7 @@ SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const pre3 = detailRow.querySelector('pre[data-scroll-key]');
 if (pre3 !== pre1) throw new Error('expected placeholder pane to be reused after switching back');
-if (pre3.textContent !== 'No log file yet.') throw new Error('expected placeholder restored after switching back, got ' + JSON.stringify(pre3.textContent));
+if (pre3.textContent !== '') throw new Error('expected empty restored after switching back, got ' + JSON.stringify(pre3.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1368,7 +1388,7 @@ SandmanPortalDiff.diffRuns(body, [run1], opts);
 const detailRow = body.children[1];
 const pre = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre) throw new Error('expected log pre');
-if (pre.textContent !== 'No log file yet.') throw new Error('expected placeholder text, got ' + JSON.stringify(pre.textContent));
+if (pre.textContent !== '') throw new Error('expected empty text, got ' + JSON.stringify(pre.textContent));
 const run2 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'real log line' };
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [run2], opts);
@@ -3309,6 +3329,21 @@ if (result.key !== 'issue-1') throw new Error('expected parent as visible row, g
 if (result.status !== 'success') throw new Error('expected terminal status preserved, got ' + JSON.stringify(result.status));
 if (result.kind !== 'completed') throw new Error('expected completed kind, got ' + JSON.stringify(result.kind));
 if (result.review) throw new Error('expected review flag false for parent row, got ' + JSON.stringify(result.review));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestPortalRunsView_VisibleRunsForTable_SortsByStartedDesc(t *testing.T) {
+	js := `const runs = [
+  { key: 'issue-1014', kind: 'completed', status: 'failure', issueLabel: '#1014', runId: 'issue-1014', issueNumber: 1014, startedAt: '2026-06-29T04:34:39Z' },
+  { key: 'issue-1401', kind: 'completed', status: 'failure', issueLabel: '#1401', runId: 'issue-1401', issueNumber: 1401, startedAt: '2026-06-26T19:47:13Z' },
+  { key: 'issue-1402', kind: 'completed', status: 'failure', issueLabel: '#1402', runId: 'issue-1402', issueNumber: 1402, startedAt: '2026-06-27T00:12:51Z' },
+  { key: 'issue-1467', kind: 'active', status: 'running', issueLabel: '#1467', runId: 'issue-1467', issueNumber: 1467, startedAt: '2026-06-29T14:29:12Z' },
+];
+const visible = visibleRunsForTable(runs);
+const order = visible.map((run) => run.key).join(',');
+if (order !== 'issue-1467,issue-1014,issue-1402,issue-1401') throw new Error('expected newest started rows first, got ' + JSON.stringify(order));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)

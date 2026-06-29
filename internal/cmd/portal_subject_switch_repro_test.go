@@ -264,6 +264,75 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 	}
 }
 
+func TestPortalReviewSubjectSwitch_GroupBeforeFilterKeepsParentIssueVisible(t *testing.T) {
+	parent := map[string]any{
+		"key":         "issue-1",
+		"runId":       "issue-1",
+		"kind":        "active",
+		"status":      "success",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+		"reviewCount": 1,
+		"log":         "parent log line 1",
+	}
+	child := map[string]any{
+		"key":         "PR42",
+		"runId":       "PR42",
+		"kind":        "active",
+		"status":      "reviewing",
+		"issueLabel":  "PR42",
+		"issueNumber": 1,
+		"prNumber":    42,
+		"review":      true,
+		"log":         "child log line 1",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{parent, child})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"PR42","tabs":{"PR42":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"selectedStatus":"reviewing","sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    setTimeout(function () {
+      var select = document.querySelector('select[data-action="set-subject"]');
+      var row = document.querySelector('tr[data-run-key]');
+      var title = row && row.querySelector('[data-cell="title"] .name');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-parent-visible';
+      marker.textContent = JSON.stringify({
+        rowKey: row && row.getAttribute('data-run-key'),
+        rowName: title && title.textContent,
+        selected: select && select.value,
+        optionValues: select ? Array.from(select.options).map(function (opt) { return opt.value; }) : [],
+      });
+      document.body.appendChild(marker);
+    }, 200);
+  `)
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-parent-visible")
+	var result struct {
+		RowKey       string   `json:"rowKey"`
+		RowName      string   `json:"rowName"`
+		Selected     string   `json:"selected"`
+		OptionValues []string `json:"optionValues"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse parent-visible payload: %v\nraw=%s", err, payload)
+	}
+	if result.RowKey != "issue-1" {
+		t.Fatalf("expected grouped row to stay on the parent issue, got %#v", result)
+	}
+	if result.RowName != "#1" {
+		t.Fatalf("expected parent issue label to stay visible, got %#v", result)
+	}
+	if result.Selected != "PR42" {
+		t.Fatalf("expected subject selector to stay on the review child, got %#v", result)
+	}
+	if len(result.OptionValues) != 2 || result.OptionValues[0] != "issue-1" || result.OptionValues[1] != "PR42" {
+		t.Fatalf("expected distinct parent and review options, got %#v", result.OptionValues)
+	}
+}
+
 func TestPortalLogPane_SubjectSwitchReusesCachedPane(t *testing.T) {
 	const parentLog = "parent log line 1\nparent log line 2\nparent log line 3"
 	const childLog = "child log line 1\nchild log line 2\nchild log line 3"
