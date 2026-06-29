@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io/fs"
 	"os"
@@ -28,6 +29,8 @@ const dotnetBuildToolsPreset = "dotnet"
 const nodeBuildToolsPreset = "node"
 
 const pythonBuildToolsPreset = "python"
+
+const javaBuildToolsPreset = "java"
 
 const DefaultMISEVersion = "v2026.5.8"
 
@@ -124,6 +127,12 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		SharedPackages: sharedPackages,
 		MiseVersion:    DefaultMISEVersion,
 	},
+	javaBuildToolsPreset: {
+		Name:           javaBuildToolsPreset,
+		BaseImage:      "debian:bookworm-slim",
+		SharedPackages: sharedPackages,
+		MiseVersion:    DefaultMISEVersion,
+	},
 }
 
 // DefaultBuiltInAgentVersion returns the latest bundled version pin for a built-in agent.
@@ -189,6 +198,15 @@ var bundledDotnetVersionCatalog = map[string]string{
 	"6.0":    "6.0.428",
 }
 
+var bundledJavaVersionCatalog = map[string]string{
+	"latest": "25.0.2",
+	"lts":    "21.0.5",
+	"25":     "25.0.2",
+	"21":     "21.0.5",
+	"17":     "17.0.15",
+	"11":     "11.0.25",
+}
+
 var nodeVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
 
 // Scaffolder creates the .sandman/ directory and its files.
@@ -228,6 +246,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	dotnetVersion := ""
 	nodeVersion := ""
 	pythonVersion := ""
+	javaVersion := ""
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
@@ -245,6 +264,11 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	} else if preset.Name == pythonBuildToolsPreset {
 		pythonVersion, err = s.resolvePythonVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == javaBuildToolsPreset {
+		javaVersion, err = s.resolveJavaVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
 			return err
 		}
@@ -297,7 +321,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, javaVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -387,6 +411,8 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 			}
 		} else if hasPythonRepoHint(repoRoot) {
 			name = pythonBuildToolsPreset
+		} else if hasJavaRepoHint(repoRoot) {
+			name = javaBuildToolsPreset
 		} else if p != nil {
 			selected, err := p.Select("Choose a build tools preset:", KnownBuildToolsPresets)
 			if err == nil {
@@ -452,6 +478,15 @@ func hasNodeRepoHint(repoRoot string) bool {
 
 func hasPythonRepoHint(repoRoot string) bool {
 	for _, rel := range []string{"pyproject.toml", "setup.py", "setup.cfg", "Pipfile", ".python-version"} {
+		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func hasJavaRepoHint(repoRoot string) bool {
+	for _, rel := range []string{"pom.xml", "build.gradle", "build.gradle.kts"} {
 		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
 			return true
 		}
@@ -637,6 +672,28 @@ var pythonResolver = versionResolver{
 		minor--
 
 		return fmt.Sprintf("%d.%d", major, minor), nil
+	},
+}
+
+var javaVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
+
+var javaResolver = versionResolver{
+	label:      "Java",
+	miseTool:   "java",
+	hintReader: readJavaVersionHint,
+	normalize: func(selector string) string {
+		selector = strings.TrimSpace(selector)
+		if len(selector) > 4 && strings.HasPrefix(strings.ToLower(selector), "java") && selector[4] >= '0' && selector[4] <= '9' {
+			return selector[4:]
+		}
+		if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+			return selector[1:]
+		}
+		return selector
+	},
+	catalog: bundledJavaVersionCatalog,
+	passThroughValid: func(selector string) bool {
+		return selector != "" && javaVersionSelectorPattern.MatchString(selector)
 	},
 }
 
@@ -885,7 +942,7 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, javaVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
@@ -901,6 +958,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman python-version: %s\n", pythonVersion)
+	}
+	if preset.Name == javaBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman java-version: %s\n", javaVersion)
 	}
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
@@ -928,6 +988,12 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
 	}
+	if preset.Name == javaBuildToolsPreset {
+		out.WriteString(renderJavaInstallCommand(javaVersion))
+	}
+	if preset.Name == pythonBuildToolsPreset {
+		out.WriteString(renderPythonInstallCommand(pythonVersion))
+	}
 	out.WriteString(renderCodeindexInstallCommand())
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
 	out.WriteString(renderRTKInstallCommand())
@@ -936,6 +1002,10 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 
 func (s *Scaffolder) resolvePythonVersion(repoRoot, selector string, p Prompter) (string, error) {
 	return resolveVersion(pythonResolver, repoRoot, selector, p)
+}
+
+func (s *Scaffolder) resolveJavaVersion(repoRoot, selector string, p Prompter) (string, error) {
+	return resolveVersion(javaResolver, repoRoot, selector, p)
 }
 
 func readNodeVersionHint(repoRoot string) (string, bool, error) {
@@ -1101,6 +1171,84 @@ func parsePythonVersionHint(name string, data []byte) (string, bool) {
 	return "", false
 }
 
+func readJavaVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{"pom.xml", "build.gradle", "build.gradle.kts"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Java version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseJavaVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseJavaVersionHint(name string, data []byte) (string, bool) {
+	if name == "pom.xml" {
+		type pomProject struct {
+			Properties struct {
+				JavaVersion string `xml:"java.version"`
+			} `xml:"properties"`
+		}
+		var pom pomProject
+		if err := xml.Unmarshal(data, &pom); err == nil {
+			if version := strings.TrimSpace(pom.Properties.JavaVersion); version != "" {
+				return version, true
+			}
+		}
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	var inBlock bool
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "/*") {
+			inBlock = true
+			continue
+		}
+		if inBlock {
+			if strings.HasSuffix(line, "*/") {
+				inBlock = false
+			}
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "sourceCompatibility") || strings.Contains(lower, "targetCompatibility") || strings.Contains(lower, "jvmVersion") || strings.Contains(lower, "jvm_version") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) >= 2 {
+				value := strings.TrimSpace(parts[1])
+				value = strings.Trim(value, "\"' ")
+				fields := strings.Fields(value)
+				for _, f := range fields {
+					f = strings.TrimSpace(f)
+					if f != "" && f[0] >= '0' && f[0] <= '9' {
+						return f, true
+					}
+				}
+			}
+		}
+		if strings.HasPrefix(lower, "java ") && !strings.HasPrefix(lower, "java.") {
+			fields := strings.Fields(line)
+			for i, field := range fields {
+				if field == "java" && i+1 < len(fields) {
+					next := strings.Trim(fields[i+1], "\"' ")
+					if next != "" && next[0] >= '0' && next[0] <= '9' {
+						return next, true
+					}
+				}
+			}
+		}
+	}
+	return "", false
+}
+
 func renderGoInstallCommand(version string) string {
 	return fmt.Sprintf("RUN mise use -g --pin go@%s\n", version)
 }
@@ -1121,6 +1269,10 @@ func renderPythonInstallCommand(version string) string {
 	out.WriteString(fmt.Sprintf("RUN mise use -g --pin python@%s\n", version))
 	out.WriteString("RUN pip3 install uv\n")
 	return out.String()
+}
+
+func renderJavaInstallCommand(version string) string {
+	return fmt.Sprintf("RUN mise use -g --pin java@%s\n", version)
 }
 
 func renderCodeindexInstallCommand() string {
@@ -1179,6 +1331,7 @@ type dockerfileMetadata struct {
 	GoVersion        string
 	NodeVersion      string
 	PythonVersion    string
+	JavaVersion      string
 	ToolVersion      string
 	MiseVersion      string
 	RtkVersion       string
@@ -1244,6 +1397,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.NodeVersion = strings.TrimSpace(value)
 		case "python-version":
 			meta.PythonVersion = strings.TrimSpace(value)
+		case "java-version":
+			meta.JavaVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
 		case "rtk-version":

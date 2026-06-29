@@ -101,7 +101,7 @@ func TestScaffold_ParallelReviewsDefault(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "java"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -124,7 +124,7 @@ func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "java"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -150,7 +150,7 @@ func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
 }
 
 func TestScaffold_AllPresetsIncludeRTK(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "java"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -244,6 +244,49 @@ func TestScaffold_NodePresetWritesPinnedDockerfile(t *testing.T) {
 	}
 	if !strings.Contains(content, "RUN corepack enable") {
 		t.Fatalf("Dockerfile missing corepack enable, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages") {
+		t.Fatalf("Dockerfile missing codeindex install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
+	}
+}
+
+func TestScaffold_JavaPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte(`<project><properties><java.version>17</java.version></properties></project>`), 0644); err != nil {
+		t.Fatalf("write pom.xml: %v", err)
+	}
+
+	s := &Scaffolder{}
+	wantJavaVersion, err := s.resolveJavaVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve java version: %v", err)
+	}
+
+	err = s.Scaffold(dir, Options{Agent: "opencode"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: java") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman java-version: "+wantJavaVersion) {
+		t.Fatalf("Dockerfile missing java-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin java@"+wantJavaVersion) {
+		t.Fatalf("Dockerfile missing pinned java install, got:\n%s", content)
 	}
 	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
@@ -1404,6 +1447,246 @@ func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoPythonHints(t *testing.T) 
 	latest, err := s.resolvePythonVersion(dir, "latest", &fakePrompter{confirm: true})
 	if err != nil {
 		t.Fatalf("resolvePythonVersion with latest selector: %v", err)
+	}
+	if version != latest {
+		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
+	}
+}
+
+func referenceJavaVersion(dir, selector string, prompter Prompter) (string, error) {
+	hint, found, err := readJavaVersionHint(dir)
+	if err != nil {
+		return "", err
+	}
+
+	choice := strings.TrimSpace(selector)
+	if choice == "repo" && !found {
+		choice = ""
+	}
+	if choice == "" {
+		if found {
+			if prompter != nil {
+				selected, err := prompter.Select(fmt.Sprintf("Choose a Java version (repo: %s):", hint), []string{"repo", "latest", "lts"})
+				if err == nil {
+					choice = referenceNormalizeJavaVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "repo"
+			}
+		} else {
+			if prompter != nil {
+				selected, err := prompter.Select("Choose a Java version:", []string{"latest", "lts"})
+				if err == nil {
+					choice = referenceNormalizeJavaVersionSelector(selected)
+				}
+			}
+			if choice == "" {
+				choice = "latest"
+			}
+		}
+	}
+
+	return referenceJavaVersionChoice(choice, hint, found)
+}
+
+func referenceJavaVersionChoice(choice, hint string, hintFound bool) (string, error) {
+	choice = referenceNormalizeJavaVersionSelector(choice)
+	if choice == "" {
+		return "", fmt.Errorf("empty version selector")
+	}
+
+	switch strings.ToLower(choice) {
+	case "repo":
+		if !hintFound {
+			return "", fmt.Errorf("no repo Java version hint found")
+		}
+		return referenceJavaMiseVersion(referenceNormalizeJavaVersionSelector(hint))
+	case "latest", "lts":
+		return referenceJavaMiseVersion(choice)
+	}
+
+	return referenceJavaMiseVersion(choice)
+}
+
+func referenceJavaMiseVersion(selector string) (string, error) {
+	selector = referenceNormalizeJavaVersionSelector(selector)
+	args := []string{"latest"}
+	switch strings.ToLower(selector) {
+	case "", "latest":
+		args = append(args, "java")
+	case "lts":
+		args = append(args, "java@lts")
+	default:
+		args = append(args, "java@"+selector)
+	}
+
+	cmd := exec.Command("mise", args...)
+	out, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(out))
+		if version != "" {
+			return version, nil
+		}
+	}
+
+	if version, ok := bundledJavaVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledJavaVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := bundledJavaVersionCatalog["lts"]; ok {
+			return version, nil
+		}
+	}
+	if selector != "" && selector != "latest" && selector != "lts" && javaVersionSelectorPattern.MatchString(selector) {
+		return selector, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve java version %q: %w", selector, err)
+	}
+	return "", fmt.Errorf("resolve java version %q: mise returned empty output and no bundled fallback", selector)
+}
+
+func referenceNormalizeJavaVersionSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if len(selector) > 4 && strings.HasPrefix(strings.ToLower(selector), "java") && selector[4] >= '0' && selector[4] <= '9' {
+		return selector[4:]
+	}
+	if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+		return selector[1:]
+	}
+	return selector
+}
+
+func TestResolveVersion_JavaResolver_Selectors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte(`<project><properties><java.version>17</java.version></properties></project>`), 0644); err != nil {
+		t.Fatalf("write pom.xml: %v", err)
+	}
+	prompter := &fakePrompter{confirm: true}
+
+	tests := []struct {
+		name     string
+		selector string
+	}{
+		{name: "repo", selector: "repo"},
+		{name: "latest", selector: "latest"},
+		{name: "lts", selector: "lts"},
+		{name: "specific_version", selector: "17"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveVersion(javaResolver, dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("resolveVersion %s: %v", tt.selector, err)
+			}
+			want, err := referenceJavaVersion(dir, tt.selector, prompter)
+			if err != nil {
+				t.Fatalf("referenceJavaVersion %s: %v", tt.selector, err)
+			}
+			if got != want {
+				t.Fatalf("resolveVersion %s: got %q, want %q", tt.selector, got, want)
+			}
+		})
+	}
+}
+
+func TestResolveVersion_JavaResolver_RepoFallsBackToLatestWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(javaResolver, dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion repo without hint: %v", err)
+	}
+	want, err := referenceJavaVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceJavaVersion repo: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected repo fallback to match reference (%q), got %q", want, got)
+	}
+}
+
+func TestResolveVersion_JavaResolver_EmptySelectorDefaultsToLatest(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := resolveVersion(javaResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector: %v", err)
+	}
+	want, err := referenceJavaVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceJavaVersion empty selector: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_JavaResolver_EmptySelectorDefaultsToRepoWithHint(t *testing.T) {
+	dir := t.TempDir()
+	hintSelector := "17"
+	if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte(`<project><properties><java.version>`+hintSelector+`</java.version></properties></project>`), 0644); err != nil {
+		t.Fatalf("write pom.xml: %v", err)
+	}
+
+	got, err := resolveVersion(javaResolver, dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion empty selector with hint: %v", err)
+	}
+	want, err := referenceJavaVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceJavaVersion empty selector with hint: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion empty selector with hint: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersion_JavaResolver_RepoFailsWhenPrompterSelectsRepoWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+	prompter := &fakePrompter{selected: "repo"}
+
+	_, err := resolveVersion(javaResolver, dir, "repo", prompter)
+	if err == nil {
+		t.Fatal("expected error when prompter selects repo without a hint")
+	}
+}
+
+func TestResolveVersion_JavaResolver_PassThroughUnknownSelector(t *testing.T) {
+	dir := t.TempDir()
+	selector := "v21.99.99"
+
+	got, err := resolveVersion(javaResolver, dir, selector, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion pass-through: %v", err)
+	}
+	want, err := referenceJavaVersion(dir, selector, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("referenceJavaVersion pass-through: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveVersion pass-through: got %q, want %q", got, want)
+	}
+}
+
+func TestScaffold_RepoSelectorFallsBackToLatest_WhenNoJavaHints(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+
+	version, err := s.resolveJavaVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveJavaVersion with repo selector: %v", err)
+	}
+	latest, err := s.resolveJavaVersion(dir, "latest", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveJavaVersion with latest selector: %v", err)
 	}
 	if version != latest {
 		t.Fatalf("expected repo fallback to latest (%q), got %q", latest, version)
