@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -3288,6 +3289,237 @@ func TestPortal_RunsTableHasColgroupAndFixedLayout(t *testing.T) {
 	}
 }
 
+func TestPortal_RunsSummary(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	layout := paths.NewLayout(nil, repoRoot)
+	startedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(5 * time.Minute)
+	runID := "run-42-1234567890"
+	writePortalLog(t, layout.EventsLogPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	batchID := "run-42"
+	runDir := filepath.Join(layout.BatchesDir, batchID, "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte("hello world log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:        batchID,
+				Path:      filepath.Join(layout.BatchesDir, batchID),
+				Kind:      batchindex.KindIssue,
+				Status:    batchindex.StatusActive,
+				CreatedAt: startedAt,
+				Issues:    []int{42},
+			},
+		},
+	}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs?summary=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(payload.Runs))
+	}
+	run := payload.Runs[0]
+	if run.Log != "" {
+		t.Errorf("summary response must omit Log, got %q", run.Log)
+	}
+	if run.Events != nil {
+		t.Errorf("summary response must omit Events, got %d entries", len(run.Events))
+	}
+	if run.LogURL != "" {
+		t.Errorf("summary response must omit LogURL")
+	}
+
+	resp2, err := http.Get(server.URL + "/api/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var payload2 struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&payload2); err != nil {
+		t.Fatal(err)
+	}
+	if payload2.Runs[0].Log == "" {
+		t.Errorf("default /api/runs should still return Log")
+	}
+}
+
+func TestPortal_RunsRunKey(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	layout := paths.NewLayout(nil, repoRoot)
+	startedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(5 * time.Minute)
+	runID := "run-42-1234567890"
+	writePortalLog(t, layout.EventsLogPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	batchID := "run-42"
+	runDir := filepath.Join(layout.BatchesDir, batchID, "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte("hello world log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:        batchID,
+				Path:      filepath.Join(layout.BatchesDir, batchID),
+				Kind:      batchindex.KindIssue,
+				Status:    batchindex.StatusActive,
+				CreatedAt: startedAt,
+				Issues:    []int{42},
+			},
+		},
+	}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs?runKey=" + runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Run portalRun `json:"run"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Run.RunID != runID {
+		t.Errorf("RunID = %q, want %q", payload.Run.RunID, runID)
+	}
+	if payload.Run.Log == "" {
+		t.Errorf("runKey response should include full Log")
+	}
+}
+
+func TestPortal_RunsRunKey_ReportsSnapshotFailuresAsInternalServerError(t *testing.T) {
+	repoRoot := t.TempDir()
+	handler := &portalHandler{
+		repoRoot: repoRoot,
+		runsIndex: &portalRunsIndex{
+			repoRoot:      repoRoot,
+			eventLogPath:  repoRoot,
+			view:          &portalRunsView{},
+			manifestCache: map[string]portalManifestCacheEntry{},
+		},
+		staleCleaner: portalStaleCleaner,
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "/api/runs?runKey=run-missing", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.handleRuns(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for snapshot failure, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "read event log") && !strings.Contains(rec.Body.String(), "stat event log") {
+		t.Fatalf("expected internal error body, got %s", rec.Body.String())
+	}
+}
+
+func TestPortal_RunsAPI_OrphanActiveRunWithLiveBatchSocket(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	batchID := "orphan-batch-live"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(batchDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{101}, CreatedAt: time.Now().Add(-1 * time.Minute)}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	startedAt := time.Now().Add(-30 * time.Second)
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-orphan-1", Issue: 101, Payload: map[string]any{"branch": "sandman/101-fix", "batch_id": batchID}},
+	})
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 orphan active run, got %d: %#v", len(runs), runs)
+	}
+	run := runs[0]
+	if run.Kind != "active" {
+		t.Errorf("Kind = %q, want %q (orphan run with live batch socket should stay active)", run.Kind, "active")
+	}
+	if run.IssueNumber != 101 {
+		t.Errorf("IssueNumber = %d, want %d", run.IssueNumber, 101)
+	}
+}
+
 // TestPortal_OrphanActiveBatch_AllRowsRender is the regression test for
 // issue #1464. A multi-issue batch whose entry was silently evicted
 // from the batches index must still show one row per issue in the
@@ -3326,17 +3558,9 @@ func TestPortal_OrphanActiveBatch_AllRowsRender(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	// Note: deliberately NOT calling addBatchToIndex. The batch is
-	// "orphaned" from the index's perspective while the on-disk
-	// daemon is still live.
-
 	ev := []events.Event{
-		// active issue (a run.continued in production, but a
-		// run.started is enough for this regression — we only care
-		// that the state is active).
 		{Type: "run.started", Timestamp: startedAt, RunID: batchID + "-1014", Issue: 1014,
 			Payload: map[string]any{"branch": "sandman/1014-fix", "batch_id": batchID}},
-		// five queued issues.
 		{Type: "run.queued", Timestamp: startedAt.Add(1 * time.Second), RunID: batchID + "-1016", Issue: 1016,
 			Payload: map[string]any{"batch_id": batchID, "issue_title": "slice 4 docs"}},
 		{Type: "run.queued", Timestamp: startedAt.Add(2 * time.Second), RunID: batchID + "-135", Issue: 135,
@@ -3379,8 +3603,6 @@ func TestPortal_OrphanActiveBatch_AllRowsRender(t *testing.T) {
 		if row.Status != wantStatus {
 			t.Errorf("issue %d: Status=%q want %q (row=%#v)", issue, row.Status, wantStatus, row)
 		}
-		// BatchKey should be the on-disk batch basename so the
-		// dedup key does not collide with rows from prior batches.
 		if row.BatchKey != batchID {
 			t.Errorf("issue %d: BatchKey=%q want %q (row=%#v)", issue, row.BatchKey, batchID, row)
 		}
@@ -3391,17 +3613,12 @@ func TestPortal_OrphanActiveBatch_AllRowsRender(t *testing.T) {
 // regression for issue #1464. A fresh run.queued for issue N in batch
 // B must not be silently dropped by dedupRuns just because a previous
 // terminal run for the same issue exists from a different batch A.
-// The BatchKey fallback (runState.BatchID) breaks the collision so the
-// queued row keeps a distinct (IssueNumber, BatchKey) from the older
-// terminal row.
 func TestPortal_QueuedAndTerminalSameIssue_NotCollapsed(t *testing.T) {
 	repoRoot := shortTempDir(t)
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Old terminal aborted row for issue 1016 from a previous batch
-	// ("old-1"). No batch.sock for the old batch.
 	oldBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "old-1")
 	if err := os.MkdirAll(oldBatchDir, 0755); err != nil {
 		t.Fatal(err)
@@ -3416,7 +3633,6 @@ func TestPortal_QueuedAndTerminalSameIssue_NotCollapsed(t *testing.T) {
 	}
 	addBatchToIndex(t, repoRoot, "old-1", oldBatchDir, []int{1016})
 
-	// Fresh active batch with a live socket; one queued issue 1016.
 	const batchID = "new-1"
 	newBatchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	if err := os.MkdirAll(newBatchDir, 0755); err != nil {
@@ -3441,15 +3657,12 @@ func TestPortal_QueuedAndTerminalSameIssue_NotCollapsed(t *testing.T) {
 	startedAt := time.Now().Add(-1 * time.Minute)
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		// old aborted terminal row
 		{Type: "run.started", Timestamp: startedAt.Add(-1 * time.Hour), RunID: "old-1-1016", Issue: 1016,
 			Payload: map[string]any{"branch": "sandman/1016-fix", "batch_id": "old-1"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(-1 * time.Hour).Add(1 * time.Minute), RunID: "old-1-1016", Issue: 1016,
 			Payload: map[string]any{"status": "aborted", "batch_id": "old-1"}},
-		// fresh queued row in the new batch
 		{Type: "run.queued", Timestamp: startedAt, RunID: batchID + "-1016", Issue: 1016,
 			Payload: map[string]any{"batch_id": batchID, "issue_title": "slice 4 docs"}},
-		// second issue, also queued, to anchor the active batch
 		{Type: "run.queued", Timestamp: startedAt, RunID: batchID + "-135", Issue: 135,
 			Payload: map[string]any{"batch_id": batchID, "issue_title": "rust"}},
 	})
@@ -3488,11 +3701,7 @@ func TestPortal_QueuedAndTerminalSameIssue_NotCollapsed(t *testing.T) {
 }
 
 // TestPortal_MatchRunState_FallbackDoesNotBindOrphanIssueToPromptOnly
-// is the regression for the third layered bug in issue #1464. When
-// `discoverActiveRuns` returns only a prompt-only / auto-select
-// instance (no active issue, empty IssueNumber, empty Issues), the
-// matchRunState fallback must not bind it to an active state for a
-// concrete issue just because the timestamps happen to be close.
+// is the regression for the third layered bug in issue #1464.
 func TestPortal_MatchRunState_FallbackDoesNotBindOrphanIssueToPromptOnly(t *testing.T) {
 	v := &portalRunsView{}
 

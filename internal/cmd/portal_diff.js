@@ -500,10 +500,17 @@
   function fillTerminalPre(pre, text, helpers) {
     const html = helpers.renderTerminalContent(text);
     const scratch = global.document.createElement('div');
-    scratch.innerHTML = html;
-    const nodes = Array.from(scratch.childNodes);
     while (pre.firstChild) pre.removeChild(pre.firstChild);
-    for (const node of nodes) pre.appendChild(node);
+    scratch.innerHTML = String(html || '');
+    // Batch the append of all rendered tokens into one DocumentFragment so
+    // the user sees one reflow instead of N (each per-node appendChild).
+    const frag = global.document.createDocumentFragment();
+    let node = scratch.firstChild;
+    while (node) {
+      frag.appendChild(node);
+      node = scratch.firstChild;
+    }
+    pre.appendChild(frag);
   }
 
   function highlightJSON(text) {
@@ -693,6 +700,10 @@
   // same HTML, so cache the result keyed by length + djb2 hash with a full
   // value guard against collisions. Only large inputs are cached so the
   // per-line SSE path (small strings) cannot evict the costly entries.
+  //
+  // LRU eviction: Map preserves insertion order, so we delete+reinsert on
+  // access to move the entry to the tail, and evict the head (oldest) when
+  // the limit is reached.
   const highlightCache = new Map();
   const HIGHLIGHT_CACHE_LIMIT = 8;
   const HIGHLIGHT_CACHE_MIN_LEN = 4096;
@@ -715,9 +726,18 @@
     if (value.length >= HIGHLIGHT_CACHE_MIN_LEN) {
       const key = value.length + ':' + djb2(value);
       const hit = highlightCache.get(key);
-      if (hit !== undefined && hit.value === value) return hit.html;
+      if (hit !== undefined && hit.value === value) {
+        // Move to tail (LRU touch) so the LRU evicts the truly oldest
+        // entry instead of the most-recently-accessed one.
+        highlightCache.delete(key);
+        highlightCache.set(key, hit);
+        return hit.html;
+      }
       const html = computeTerminalHighlight(value);
-      if (highlightCache.size >= HIGHLIGHT_CACHE_LIMIT) highlightCache.clear();
+      if (highlightCache.size >= HIGHLIGHT_CACHE_LIMIT) {
+        const firstKey = highlightCache.keys().next().value;
+        if (firstKey !== undefined) highlightCache.delete(firstKey);
+      }
       highlightCache.set(key, { value: value, html: html });
       return html;
     }
@@ -896,7 +916,8 @@
   }
 
   function buildDetailContent(panel, rowRun, subjectRun, tabName, helpers, opts) {
-    const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
+    const subjectValue = subjectRunValue(subjectRun);
+    const subjectFp = subjectValue + '|' + subjectFingerprint(subjectRun, opts);
     const subjectPicker = buildSubjectSelector(panel, rowRun, subjectRun, opts);
     if (subjectPicker) panel.appendChild(subjectPicker);
     buildTabsRow(panel, rowRun, tabName);
@@ -904,8 +925,14 @@
     content.classList.add('detail-content');
     content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
     panel.appendChild(content);
-    if (tabName === 'log') buildLogContent(content, subjectRun, helpers);
-    else if (tabName === 'events') {
+    if (tabName === 'log') {
+      const cached = takeCachedLogPane(subjectValue);
+      if (cached) {
+        content.appendChild(cached);
+      } else {
+        buildLogContent(content, subjectRun, helpers);
+      }
+    } else if (tabName === 'events') {
       buildEventsContent(content, subjectRun, helpers);
       content.setAttribute('data-rendered-fingerprint', 'events|' + eventsFingerprint(subjectRun) + '|subjects:' + subjectFp);
     } else {
@@ -1245,6 +1272,26 @@
     return { mutated: mutationCount > before, cells: mutationCount - before };
   }
 
+  function cacheLogPaneBeforeRemove(detailRow) {
+    const pre = detailRow.querySelector('pre[data-scroll-key]');
+    if (!pre) return;
+    // The fingerprint attr lives on the grandparent .detail-content (the
+    // pre is wrapped in a .detail-box section). Walk up at most two levels
+    // to find a node that carries the fingerprint, then use that node as
+    // the cached pane so a re-expand reuses the whole log panel.
+    let node = pre.parentNode;
+    while (node && node !== detailRow) {
+      const fp = node.getAttribute && node.getAttribute('data-rendered-subject-fingerprint');
+      if (fp) break;
+      node = node.parentNode;
+    }
+    if (!node || node === detailRow) return;
+    const fp = node.getAttribute('data-rendered-subject-fingerprint') || '';
+    const subjectValue = fp.split('|')[0];
+    if (!subjectValue) return;
+    storeCachedLogPane(subjectValue, node);
+  }
+
   function removeRunRow(body, key) {
     const dataRow = dataRowOf(body, key);
     const detail = detailRowOf(body, key);
@@ -1260,6 +1307,7 @@
       removed += 1;
     }
     if (detail) {
+      cacheLogPaneBeforeRemove(detail);
       body.removeChild(detail);
       clearDetailData(detail);
       removed += 1;
@@ -1334,6 +1382,10 @@
         setDetailData(newDetail, newRun);
         inserted += 1;
       } else if (!wantDetail && detail) {
+        // Capture the rendered log pane before removing the detail row so a
+        // subsequent re-expand can reuse it. Caching on collapse is what
+        // makes open → close → open ~O(1) instead of re-tokenizing the log.
+        cacheLogPaneBeforeRemove(detail);
         body.removeChild(detail);
         clearDetailData(detail);
         removed += 1;

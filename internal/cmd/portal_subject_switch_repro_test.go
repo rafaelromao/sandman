@@ -223,7 +223,7 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
         changeCalls: window.__portalChangeCalls || 0
       });
       document.body.appendChild(pre);
-    }, 2000);
+    }, 2500);
   `)
 	dom, _ := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-repro")
@@ -657,6 +657,205 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
 	}
 	if result.ReturnHighlight != 0 {
 		t.Fatalf("expected return-to-parent to avoid re-highlighting, got %#v", result)
+	}
+}
+
+func TestPortalRefreshHydratesRestoredExpandedRunDetail(t *testing.T) {
+	runID := "run-42-issue"
+	summaryRun := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    "run-42",
+	}
+	detailRun := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    "run-42",
+		"log":         "hydrated log line 1\nhydrated log line 2",
+		"events":      []map[string]any{{"type": "run.finished"}},
+	}
+	summaryRunsJSON, err := json.Marshal([]map[string]any{summaryRun})
+	if err != nil {
+		t.Fatalf("marshal summary runs: %v", err)
+	}
+	detailRunJSON, err := json.Marshal(detailRun)
+	if err != nil {
+		t.Fatalf("marshal detail run: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, summaryRunsJSON, `
+    window.__portalFetchCalls = 0;
+    window.fetch = async function (input) {
+      window.__portalFetchCalls += 1;
+      var url = String(input || '');
+      var payload = url.indexOf('?runKey=') >= 0 ? { run: `+string(detailRunJSON)+` } : { runs: `+string(summaryRunsJSON)+` };
+      return {
+        ok: true,
+        status: 200,
+        json: async function () { return payload; },
+        text: async function () { return ''; },
+      };
+    };
+    setTimeout(function () {
+      var row = document.querySelector('tr[data-run-key="`+runID+`"]');
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var detailPre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-refresh-hydrates';
+      marker.textContent = JSON.stringify({
+        rowKey: row && row.getAttribute('data-run-key'),
+        detailFor: detail && detail.getAttribute('data-detail-for'),
+        detailText: detailPre && detailPre.innerText,
+        fetchCalls: window.__portalFetchCalls || 0,
+      });
+      document.body.appendChild(marker);
+    }, 2200);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-refresh-hydrates")
+	var result struct {
+		RowKey     string `json:"rowKey"`
+		DetailFor  string `json:"detailFor"`
+		DetailText string `json:"detailText"`
+		FetchCalls int    `json:"fetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse refresh hydrate payload: %v\nraw=%s", err, payload)
+	}
+	if result.RowKey != runID || result.DetailFor != runID {
+		t.Fatalf("expected restored expanded row and detail to stay linked, got %#v", result)
+	}
+	if !strings.Contains(result.DetailText, "hydrated log line 1") {
+		t.Fatalf("expected refreshed detail text to hydrate from runKey fetch, got %#v", result)
+	}
+	if result.FetchCalls < 2 {
+		t.Fatalf("expected summary refresh plus detail fetch, got %#v", result)
+	}
+}
+
+func TestPortalReviewSubjectSwitch_HydratesSelectedSubjectDetail(t *testing.T) {
+	parent := map[string]any{
+		"key":         "issue-1",
+		"runId":       "issue-1",
+		"kind":        "active",
+		"status":      "reviewing",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+		"reviewCount": 1,
+	}
+	childSummary := map[string]any{
+		"key":         "PR42",
+		"runId":       "PR42",
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "PR42",
+		"issueNumber": 1,
+		"prNumber":    42,
+		"review":      true,
+	}
+	childDetail := map[string]any{
+		"key":         "PR42",
+		"runId":       "PR42",
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "PR42",
+		"issueNumber": 1,
+		"prNumber":    42,
+		"review":      true,
+		"log":         "child hydrated log line 1\nchild hydrated log line 2",
+		"events":      []map[string]any{{"type": "run.finished"}},
+	}
+	parentDetail := map[string]any{
+		"key":         "issue-1",
+		"runId":       "issue-1",
+		"kind":        "active",
+		"status":      "reviewing",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+		"reviewCount": 1,
+		"log":         "parent hydrated log line 1\nparent hydrated log line 2",
+		"events":      []map[string]any{{"type": "run.started"}},
+	}
+	runsJSON, err := json.Marshal([]map[string]any{parent, childSummary})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	parentDetailJSON, err := json.Marshal(parentDetail)
+	if err != nil {
+		t.Fatalf("marshal parent detail: %v", err)
+	}
+	childDetailJSON, err := json.Marshal(childDetail)
+	if err != nil {
+		t.Fatalf("marshal child detail: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"issue-1","tabs":{"issue-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__portalFetchCalls = 0;
+    window.fetch = async function (input) {
+      window.__portalFetchCalls += 1;
+      var url = String(input || '');
+      var next = { runs: `+string(runsJSON)+` };
+      if (url.indexOf('?runKey=PR42') >= 0) {
+        next = { run: `+string(childDetailJSON)+` };
+      } else if (url.indexOf('?runKey=issue-1') >= 0) {
+        next = { run: `+string(parentDetailJSON)+` };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async function () { return next; },
+        text: async function () { return ''; },
+      };
+    };
+	    setTimeout(function () {
+	      var select = document.querySelector('select[data-action="set-subject"]');
+	      if (!select) throw new Error('missing subject selector');
+	      select.value = 'PR42';
+	      select.dispatchEvent(new Event('change', { bubbles: true }));
+	    }, 120);
+	    setTimeout(function () {
+	      var select = document.querySelector('select[data-action="set-subject"]');
+	      var detail = document.querySelector('pre[data-scroll-key]');
+	      var marker = document.createElement('pre');
+	      marker.id = 'portal-subject-switch-hydrates';
+	      marker.textContent = JSON.stringify({
+	        subjectValue: select && select.value,
+	        detailText: detail && detail.textContent,
+	        fetchCalls: window.__portalFetchCalls || 0,
+	      });
+	      document.body.appendChild(marker);
+	    }, 2200);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-subject-switch-hydrates")
+	var result struct {
+		SubjectValue string `json:"subjectValue"`
+		DetailText   string `json:"detailText"`
+		FetchCalls   int    `json:"fetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse subject switch hydrate payload: %v\nraw=%s", err, payload)
+	}
+	if result.SubjectValue != "PR42" {
+		t.Fatalf("expected switched subject to remain selected, got %#v", result)
+	}
+	if !strings.Contains(result.DetailText, "child hydrated log line 1") {
+		t.Fatalf("expected switched subject detail to hydrate, got %#v", result)
+	}
+	if result.FetchCalls < 2 {
+		t.Fatalf("expected initial refresh plus subject detail fetch, got %#v", result)
 	}
 }
 

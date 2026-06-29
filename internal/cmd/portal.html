@@ -984,6 +984,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
       white-space: pre;
       overflow-x: auto;
+      content-visibility: auto;
+      contain-intrinsic-size: 0 500px;
     }
     .json-key { color: var(--accent); }
     .json-string { color: color-mix(in oklch, var(--warning) 65%, var(--text)); }
@@ -2073,7 +2075,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
             c.setAttribute('aria-pressed', String(c.getAttribute('data-status') === value));
           }
           if (statusFilter) statusFilter.value = value;
-          render();
+          scheduleRender();
         });
         statusChips.appendChild(chip);
       }
@@ -2091,7 +2093,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         state.sortDir = 'desc';
       }
       persistPortalViewState();
-      render();
+      scheduleRender();
     }
 
     function syncSortButtons() {
@@ -2380,6 +2382,30 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       reconcileRunStreams();
     }
 
+    let renderScheduled = false;
+    let renderCallback = null;
+
+    function scheduleRender(callback) {
+      if (renderScheduled) {
+        if (callback) renderCallback = callback;
+        return;
+      }
+      renderScheduled = true;
+      if (callback) renderCallback = callback;
+      window.requestAnimationFrame(() => {
+        try {
+          render();
+          if (renderCallback) {
+            const cb = renderCallback;
+            renderCallback = null;
+            cb();
+          }
+        } finally {
+          renderScheduled = false;
+        }
+      });
+    }
+
     // Poll-health tracking: one chip shows last successful refresh time.
     // Warn after consecutive failures so a wedged poll is visible.
     const pollHealthEl = document.getElementById('poll-health');
@@ -2415,10 +2441,19 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     async function refresh() {
       try {
         const prevRuns = Array.isArray(state.runs) ? state.runs.slice() : [];
-        const res = await fetch(apiPath, { cache: 'no-store' });
+        const res = await fetch(apiPath + '?summary=1', { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const payload = await res.json();
         const nextRuns = Array.isArray(payload.runs) ? payload.runs.map(normalizeRunIdentity) : [];
+        // Merge existing detail (log/events) into the summary payload so expanded
+        // runs keep their content across polls without a full re-fetch.
+        for (const next of nextRuns) {
+          const existing = prevRuns.find((r) => r && (r.key === next.key || r.runId === next.runId));
+          if (existing && existing.log && !next.log) {
+            next.log = existing.log;
+            next.events = existing.events || next.events;
+          }
+        }
         if (state.expandedRunKey) {
           const cached = prevRuns.find((run) => run && (run.key === state.expandedRunKey || run.runId === state.expandedRunKey));
           const issueNumber = cached ? cached.issueNumber : 0;
@@ -2434,20 +2469,45 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
             }
           }
         }
-        state.runs = nextRuns;
-        state.loading = false;
-        errorBanner.style.display = 'none';
-        errorBanner.textContent = '';
-        lastPollAt = Date.now();
-        pollFailCount = 0;
-        updatePollHealth();
-        render();
-      } catch (err) {
+	      state.runs = nextRuns;
+	      state.loading = false;
+	      errorBanner.style.display = 'none';
+	      errorBanner.textContent = '';
+	      lastPollAt = Date.now();
+	      pollFailCount = 0;
+	      updatePollHealth();
+	      if (state.expandedRunKey) {
+	        loadRunDetail(state.expandedRunKey);
+	      }
+	      scheduleRender();
+	    } catch (err) {
         state.loading = false;
         errorBanner.textContent = 'Refresh failed: ' + err.message;
         errorBanner.style.display = 'block';
         pollFailCount += 1;
         updatePollHealth();
+      }
+    }
+
+    async function loadRunDetail(runKey) {
+      const run = findRunByIdentity(runKey);
+      if (!run) return;
+      const hasLog = run.log && String(run.log).trim() && run.log !== 'No log file yet.' && run.log !== 'No live output captured yet.' && run.log !== 'Aborted by operator.';
+      const isActive = run.kind === 'active';
+      if (hasLog || isActive) return;
+      try {
+        const res = await fetch(apiPath + '?runKey=' + encodeURIComponent(run.backendKey || run.key));
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (!payload || !payload.run) return;
+        const detail = normalizeRunIdentity(payload.run);
+        const idx = state.runs.findIndex((r) => r && (r.key === detail.key || r.runId === detail.runId));
+        if (idx >= 0) {
+          state.runs[idx] = { ...state.runs[idx], log: detail.log, events: detail.events || state.runs[idx].events, logUrl: detail.logUrl };
+          scheduleRender();
+        }
+      } catch (err) {
+        // detail fetch failures are non-fatal; user can retry by toggling again
       }
     }
 
@@ -2477,13 +2537,16 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         state.expandedRunKey = subjectKey;
       }
       persistPortalViewState();
-      render();
-      if (state.expandedRunKey !== null && state.expandedRunKey !== prevExpandedRunKey) {
-        const row = findRunRowByIdentity(state.expandedRunKey);
-        if (row) {
-          row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const opening = state.expandedRunKey && state.expandedRunKey !== prevExpandedRunKey;
+      scheduleRender(() => {
+        if (opening) {
+          loadRunDetail(state.expandedRunKey);
+          const row = findRunRowByIdentity(state.expandedRunKey);
+          if (row) {
+            row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
         }
-      }
+      });
     }
 
     runsBody.addEventListener('click', (event) => {
@@ -2518,7 +2581,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           state.tabs[subjectKey] = tab;
           state.expandedRunKey = subjectKey;
           persistPortalViewState();
-          render();
+          scheduleRender();
         }
         return;
       }
@@ -2540,16 +2603,16 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const currentRunKey = state.expandedRunKey;
       const currentTabKey = currentRunKey ? subjectTabKey(currentRunKey) : '';
       const currentTab = currentTabKey && state.tabs[currentTabKey] ? state.tabs[currentTabKey] : 'log';
-      if (!state.tabs[nextRunKey]) {
-        state.tabs[nextRunKey] = currentTab;
-      }
-      if (currentRunKey) {
-        stopRunStream(currentRunKey);
-      }
-      state.expandedRunKey = nextRunKey;
-      persistPortalViewState();
-      window.requestAnimationFrame(() => render());
-    });
+	      if (!state.tabs[nextRunKey]) {
+	        state.tabs[nextRunKey] = currentTab;
+	      }
+	      if (currentRunKey) {
+	        stopRunStream(currentRunKey);
+	      }
+	      state.expandedRunKey = nextRunKey;
+	      persistPortalViewState();
+	      scheduleRender(() => loadRunDetail(nextRunKey));
+	    });
 
     runsBody.addEventListener('keydown', (event) => {
       if (event.target.closest('button, a, input, select, textarea')) return;
@@ -2570,7 +2633,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (state.activeBatches) state.showArchived = false;
       syncFilterToggleButtons();
       persistPortalViewState();
-      render();
+      scheduleRender();
     });
 
     archivedToggle.addEventListener('click', () => {
@@ -2578,7 +2641,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (state.showArchived) state.activeBatches = false;
       syncFilterToggleButtons();
       persistPortalViewState();
-      render();
+      scheduleRender();
     });
 
     if (statusFilter) {
@@ -2589,7 +2652,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
             chip.setAttribute('aria-pressed', String(chip.getAttribute('data-status') === state.selectedStatus));
           }
         }
-        render();
+        scheduleRender();
       });
     }
 

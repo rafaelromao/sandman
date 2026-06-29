@@ -881,9 +881,12 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 		if state != nil && !state.IsActive() && (state.Status() == "queued" || (state.Status() == "blocked" && blocked == nil)) {
 			state = nil
 		}
-		runs = append(runs, v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun, deadBatches))
+		run := v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun, deadBatches)
+		runs = append(runs, run)
 		if state != nil && state.RunID != "" {
-			usedRunIDs[state.RunID] = struct{}{}
+			if !(state.IsActive() && run.Kind == "completed") {
+				usedRunIDs[state.RunID] = struct{}{}
+			}
 		}
 	}
 	return runs, usedRunIDs
@@ -1295,7 +1298,13 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			sockPath := daemon.RunSocketPath(batchDir, runState.RunID)
 			if _, err := os.Lstat(sockPath); err == nil {
 				portalRun.SocketPath = sockPath
-				v.markCompletedIfSocketDead(&portalRun, sockPath)
+				// In the orphan path (active==nil), the batch was not
+				// confirmed alive via discoverPortalInstances. A stale
+				// FindDeadRunBatches scan may have included it. Re-confirm
+				// the batch is dead before demoting.
+				if !daemon.IsRunActive(batchDir) {
+					v.markCompletedIfSocketDead(&portalRun, sockPath)
+				}
 			}
 		}
 	}
