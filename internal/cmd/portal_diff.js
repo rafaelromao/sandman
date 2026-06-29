@@ -498,24 +498,12 @@
   }
 
   function fillTerminalPre(pre, text, helpers) {
-    const htmlOrPromise = helpers.renderTerminalContent(text);
+    const html = helpers.renderTerminalContent(text);
     const scratch = global.document.createElement('div');
     while (pre.firstChild) pre.removeChild(pre.firstChild);
-    if (htmlOrPromise && typeof htmlOrPromise.then === 'function') {
-      htmlOrPromise.then((html) => {
-        if (!html || !pre.parentNode) return;
-        scratch.innerHTML = html;
-        const frag = global.document.createDocumentFragment();
-        let node = scratch.firstChild;
-        while (node) {
-          frag.appendChild(node);
-          node = scratch.firstChild;
-        }
-        pre.appendChild(frag);
-      });
-      return;
-    }
-    scratch.innerHTML = String(htmlOrPromise || '');
+    scratch.innerHTML = String(html || '');
+    // Batch the append of all rendered tokens into one DocumentFragment so
+    // the user sees one reflow instead of N (each per-node appendChild).
     const frag = global.document.createDocumentFragment();
     let node = scratch.firstChild;
     while (node) {
@@ -715,13 +703,10 @@
   //
   // LRU eviction: Map preserves insertion order, so we delete+reinsert on
   // access to move the entry to the tail, and evict the head (oldest) when
-  // the limit is reached. Real browsers with `requestIdleCallback` use the
-  // async chunked renderer; the test sandbox falls back to `setTimeout`.
+  // the limit is reached.
   const highlightCache = new Map();
-  const pendingCache = new Map();
   const HIGHLIGHT_CACHE_LIMIT = 8;
   const HIGHLIGHT_CACHE_MIN_LEN = 4096;
-  const LINES_PER_CHUNK = 100;
   function djb2(s) {
     let h = 5381;
     for (let i = 0; i < s.length; i += 1) {
@@ -735,57 +720,6 @@
     }
     return Prism.highlight(value, terminalGrammar);
   }
-  function yieldToBrowser() {
-    const idle = (typeof requestIdleCallback !== 'undefined') ? requestIdleCallback
-      : (typeof global !== 'undefined' && global.requestIdleCallback) ? global.requestIdleCallback
-      : null;
-    if (idle) {
-      return new Promise((resolve) => idle(() => resolve()));
-    }
-    return new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  function renderWithGrammarPrismChunked(text) {
-    return new Promise((resolve) => {
-      const value = String(text || '');
-      if (!value) { resolve(''); return; }
-      const lines = value.split('\n');
-      const total = lines.length;
-      const results = new Array(total);
-      // Fall back to terminalGrammar / Prism.highlight if Prism.tokenize is
-      // not available (test sandbox without a real Prism).
-      const usePrismTokenize = !!(Prism && Prism.tokenize && Prism.languages && Prism.languages['sandman-log']);
-      const tokenizeLine = (raw) => {
-        if (/^```[A-Za-z0-9_+-]*$/.test(raw) || /^lang=[A-Za-z0-9_+-]+$/.test(raw)) {
-          return '<span class="term-heading">' + escapeHTML(raw) + '</span>';
-        }
-        if (usePrismTokenize) {
-          const grammar = Prism.languages['sandman-log'];
-          const tokens = Prism.tokenize(raw, grammar);
-          return tokens.map((token) => {
-            if (typeof token === 'string') return escapeHTML(token);
-            const type = token.type.replace(/^term-/, 'term-');
-            return '<span class="' + type + '">' + escapeHTMLPrism(token.content) + '</span>';
-          }).join('');
-        }
-        // No real tokenization: return escaped text in a wrapper span.
-        return '<span>' + escapeHTML(raw) + '</span>';
-      };
-      let idx = 0;
-      function processChunk() {
-        const batchEnd = Math.min(idx + LINES_PER_CHUNK, total);
-        for (let i = idx; i < batchEnd; i += 1) {
-          results[i] = tokenizeLine(stripAnsi(lines[i]));
-        }
-        idx = batchEnd;
-        if (idx < total) {
-          yieldToBrowser().then(processChunk);
-        } else {
-          resolve(results.join('\n'));
-        }
-      }
-      processChunk();
-    });
-  }
   function highlightTerminalLog(text) {
     const value = String(text == null ? '' : text);
     if (!value) return '';
@@ -793,26 +727,19 @@
       const key = value.length + ':' + djb2(value);
       const hit = highlightCache.get(key);
       if (hit !== undefined && hit.value === value) {
-        // Move to tail (LRU touch).
+        // Move to tail (LRU touch) so the LRU evicts the truly oldest
+        // entry instead of the most-recently-accessed one.
         highlightCache.delete(key);
         highlightCache.set(key, hit);
         return hit.html;
       }
-      // De-duplicate concurrent calls for the same key while async work
-      // is in flight, so repeated toggles share one chunked render.
-      const pending = pendingCache.get(key);
-      if (pending !== undefined) return pending;
-      const promise = renderWithGrammarPrismChunked(value).then((html) => {
-        pendingCache.delete(key);
-        if (highlightCache.size >= HIGHLIGHT_CACHE_LIMIT) {
-          const firstKey = highlightCache.keys().next().value;
-          if (firstKey !== undefined) highlightCache.delete(firstKey);
-        }
-        highlightCache.set(key, { value: value, html: html });
-        return html;
-      });
-      pendingCache.set(key, promise);
-      return promise;
+      const html = computeTerminalHighlight(value);
+      if (highlightCache.size >= HIGHLIGHT_CACHE_LIMIT) {
+        const firstKey = highlightCache.keys().next().value;
+        if (firstKey !== undefined) highlightCache.delete(firstKey);
+      }
+      highlightCache.set(key, { value: value, html: html });
+      return html;
     }
     return computeTerminalHighlight(value);
   }

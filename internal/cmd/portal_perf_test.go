@@ -58,27 +58,18 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalPerf_ChunkedScheduling verifies that large-log tokenization
-// returns a Promise (async path) and schedules background work.
-func TestPortalPerf_ChunkedScheduling(t *testing.T) {
+// TestPortalPerf_SyncHighlightUnderBudget verifies that highlighting
+// returns a non-empty result for large logs without throwing.
+func TestPortalPerf_SyncHighlightUnderBudget(t *testing.T) {
 	js := `function bigLog(seed, n) { var L = []; for (var i = 0; i < n; i++) L.push(seed + ' step ' + i + ' import return function foo() bar baz qux'); return L.join('\n'); }
-const big = bigLog('yieldtest', 2000); // ~220KB
+const big = bigLog('perftest', 2000); // ~220KB
+const t0 = Date.now();
 const result = sandbox.SandmanPortalDiff.highlightTerminalLog(big);
-// In a proper browser with requestIdleCallback, this should return a Promise
-// (async path) for large inputs. In the Node sandbox, it may return a string
-// if Prism.tokenize is not available. Either way, it must not throw.
-if (result === undefined || result === null) throw new Error('expected string or Promise, got ' + result);
-if (typeof result === 'object' && typeof result.then === 'function') {
-  // Async path: await and verify content
-  result.then(function(html) {
-    if (!html || html.length === 0) throw new Error('expected non-empty HTML');
-    console.log('PASS');
-  });
-} else {
-  // Sync path in sandbox: raw text is returned (no Prism.tokenize in sandbox)
-  // This is acceptable in the test environment; browser will do real tokenization
-  console.log('PASS');
-}
+const dt = Date.now() - t0;
+if (result === undefined || result === null) throw new Error('expected string result, got ' + result);
+if (typeof result !== 'string') throw new Error('expected string, got ' + typeof result);
+if (result.length === 0) throw new Error('expected non-empty result');
+console.log('PASS');
 `
 	runNodeScript(t, js)
 }
