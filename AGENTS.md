@@ -4,7 +4,7 @@ CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 
 ## Code discovery: `sandman-index` skill
 
-**Load the `sandman-index` skill before any broad exploration, grep, or file open for code discovery.** This skill encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and portal-specific shortcuts.
+**Load the `sandman-index` skill before any broad exploration, grep, or file open for code discovery.** This skill encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and read discipline.
 
 The skill applies to the primary agent AND every sub-agent spawned via the `task` tool.
 
