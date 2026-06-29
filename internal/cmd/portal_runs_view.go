@@ -995,20 +995,13 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		}
 		if state.Finished == nil {
 			run.Log = v.filterPortalLogByRunID(liveOutput, state.RunID)
-			if strings.TrimSpace(run.Log) == "" {
-				run.Log = "No live output captured yet."
-			}
 		} else {
 			switch state.Status() {
 			case "blocked":
 				run.Log = v.portalBlockedMessage(state.Finished.Payload)
 			case "aborted":
-				run.Log = "Aborted by operator."
 			default:
 				run.Log = v.readPortalTextFile(run.LogPath)
-				if strings.TrimSpace(run.Log) == "" {
-					run.Log = "No log file yet."
-				}
 			}
 		}
 		return run
@@ -1118,11 +1111,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		run.BatchKey = match.instance.Key
 		if match.state.Finished != nil {
 			if strings.TrimSpace(run.Log) == "" {
-				if saved := v.readPortalTextFile(run.LogPath); strings.TrimSpace(saved) != "" {
-					run.Log = saved
-				} else {
-					run.Log = "No log file yet."
-				}
+				run.Log = v.readPortalTextFile(run.LogPath)
 			}
 		}
 		return run
