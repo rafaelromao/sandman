@@ -286,6 +286,8 @@ type Orchestrator struct {
 	activeMu               sync.Mutex
 	activeRuns             map[int]sandbox.Sandbox
 	shutdownSupervisorDone []<-chan struct{}
+
+	badgeHooker BadgeHooker
 }
 
 // defaultLookupGHToken shells out to `gh auth token` and returns the
@@ -641,12 +643,14 @@ func (p *containerPool) Close() error {
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
-func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, configStore config.Store, eventLog events.EventLog) *Orchestrator {
+// By default, BadgeHooker is a nop implementation. Pass WithBadgeHooker to
+// use the real badge suggestion hook.
+func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, configStore config.Store, eventLog events.EventLog, opts ...OrchestratorOpt) *Orchestrator {
 	root, err := filepath.Abs(".")
 	if err != nil {
 		root = "."
 	}
-	return &Orchestrator{
+	o := &Orchestrator{
 		githubClient:  githubClient,
 		renderer:      renderer,
 		configStore:   configStore,
@@ -660,7 +664,33 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		issueCancels:           make(map[int]context.CancelFunc),
 		activeRuns:             make(map[int]sandbox.Sandbox),
 		shutdownSupervisorDone: nil,
+		badgeHooker:            nopBadgeHooker{},
 	}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
+}
+
+type OrchestratorOpt func(*Orchestrator)
+
+// WithBadgeHooker sets the BadgeHooker for the Orchestrator. Use this in
+// production wiring; tests should leave BadgeHooker as nopBadgeHooker{}.
+func WithBadgeHooker(h BadgeHooker) OrchestratorOpt {
+	return func(o *Orchestrator) {
+		o.badgeHooker = h
+	}
+}
+
+// NewBadgeHooker returns a BadgeHooker that suggests a Built with Sandman
+// badge PR after a batch with merged sandman/* PRs. It returns a nopBadgeHooker
+// if the sandman binary cannot be resolved.
+func NewBadgeHooker(w io.Writer) BadgeHooker {
+	sandmanRunner, err := newDefaultSandmanRunner()
+	if err != nil {
+		return nopBadgeHooker{}
+	}
+	return newDefaultBadgeHooker(&defaultPRLister{gh: realGhCommander{}}, sandmanRunner, w)
 }
 
 // trackShutdownSupervisor records a done channel returned by
@@ -1161,12 +1191,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
+	o.badgeHooker.MaybeSuggestBadge(ctx, results)
+
 	if abortedCount > 0 {
 		return &Result{Runs: results}, fmt.Errorf("%d of %d runs aborted: %w", abortedCount, len(req.Issues), ErrAborted)
 	}
 	if failureCount > 0 {
 		return &Result{Runs: results}, fmt.Errorf("%d of %d runs failed", failureCount, len(req.Issues))
 	}
+
 	return &Result{Runs: results}, nil
 }
 
