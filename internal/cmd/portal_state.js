@@ -79,15 +79,19 @@
     writeStorage(JSON.stringify(sanitizeState(value)));
   }
 
-  function normalize(state, runs) {
+  function normalize(state, runs, allRuns) {
     const current = sanitizeState(state);
-    const runList = Array.isArray(runs) ? runs.map(runIdentity).filter(Boolean) : [];
+    const visibleRuns = Array.isArray(runs) ? runs : [];
+    const allRunList = Array.isArray(allRuns) ? allRuns : visibleRuns;
+    const runList = visibleRuns.map(runIdentity).filter(Boolean);
     const runKeys = new Set(runList);
     const keyToSubject = new Map();
-    if (Array.isArray(runs)) {
-      for (const run of runs) {
+    const allRunByIdentity = new Map();
+    if (Array.isArray(allRunList)) {
+      for (const run of allRunList) {
         const subjectKey = runIdentity(run);
         const legacyKey = runKey(run);
+        if (subjectKey && !allRunByIdentity.has(subjectKey)) allRunByIdentity.set(subjectKey, run);
         if (subjectKey && legacyKey) keyToSubject.set(legacyKey, subjectKey);
       }
     }
@@ -99,8 +103,13 @@
     }
 
     if (current.expandedRunKey && !runKeys.has(current.expandedRunKey)) {
-      current.expandedRunKey = null;
-      changed = true;
+      const expandedRun = allRunByIdentity.get(current.expandedRunKey);
+      const expandedIssueNumber = expandedRun && Number.isInteger(expandedRun.issueNumber) && expandedRun.issueNumber > 0 ? expandedRun.issueNumber : null;
+      const hasVisibleSibling = expandedIssueNumber !== null && visibleRuns.some((run) => run && Number.isInteger(run.issueNumber) && run.issueNumber === expandedIssueNumber);
+      if (!hasVisibleSibling) {
+        current.expandedRunKey = null;
+        changed = true;
+      }
     }
 
     for (const [legacyKey, subjectKey] of keyToSubject.entries()) {
