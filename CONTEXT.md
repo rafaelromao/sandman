@@ -72,6 +72,10 @@ _Avoid_: run folder, run directory.
 Flat files under `.sandman/reviews/` for daemon-level state: `review.sock` (daemon command socket) and `review-prompt.md` (shared prompt template). No per-PR subdirectories. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<run-id>/review-state.json`. Dedup key is `(prNumber, commentID)`. References ADR-0034.
 _Avoid_: review state, PR state.
 
+**Review daemon tick**:
+One scan cycle of the review daemon's polling loop. A tick acquires the `busy` semaphore (buffer size 1) before scanning open PRs; if already held, the tick returns immediately ("previous tick still running, skipping"). This `busy=1` invariant means at most one tick runs at a time regardless of `parallel_reviews`. The inner `sem` channel (sized to `EffectiveReviewParallel()`) still allows a single tick to launch reviews for multiple PRs concurrently. Within a tick, `processPR` uses `ReviewStateStore.TryClaim` to acquire an on-disk claim lock before adding reactions or calling `launchReview`; the claim persists in `review-state.json` so a daemon restart honors in-flight locks. References ADR-0034 §Cross-tick claim lock.
+_Avoid_: scan cycle, polling loop.
+
 **Branch**:
 A git branch named `sandman/<issue-number>-<slugified-title>` for issue-driven AgentRuns, or `sandman/<slug>-<timestamp>` for prompt-only runs.
 _Avoid_: Feature branch, PR branch.

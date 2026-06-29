@@ -3,13 +3,16 @@ package review
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -227,3 +230,186 @@ func TestDaemon_SharedReviewPromptFileExists(t *testing.T) {
 // ensure prompt.Engine is referenced (for build pruning) — used by other
 // tests in the package via newDaemonForTest.
 var _ = prompt.Engine{}
+
+// TestDaemon_ConcurrentTickOnlyLaunchesOnce verifies that when two goroutines
+// call tick concurrently on the same open PR with one /sandman review trigger,
+// exactly one RunBatch is invoked. This is the core regression test for the
+// busy=1 serialization change.
+//
+// The key insight: tick() uses a non-blocking select to acquire busy.
+// If busy is already held, tick returns immediately ("previous tick still
+// running, skipping") without calling processPR. So concurrent ticks
+// result in only one RunBatch call.
+func TestDaemon_ConcurrentTickOnlyLaunchesOnce(t *testing.T) {
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "trigger1", Body: "/sandman review", CreatedAt: now},
+			},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body"}},
+	}
+
+	var runMu sync.Mutex
+	runCalls := 0
+	runnerFinished := make(chan struct{})
+
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		runMu.Lock()
+		runCalls++
+		runMu.Unlock()
+		<-runnerFinished
+		return &batch.Result{}, nil
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now }
+
+	var tick2Wg sync.WaitGroup
+	tick2Wg.Add(1)
+	go func() {
+		defer tick2Wg.Done()
+		_ = d.tick(context.Background())
+	}()
+
+	<-time.After(50 * time.Millisecond)
+
+	err := d.tick(context.Background())
+	if err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+
+	close(runnerFinished)
+	tick2Wg.Wait()
+
+	runMu.Lock()
+	calls := runCalls
+	runMu.Unlock()
+
+	if calls != 1 {
+		t.Errorf("expected exactly 1 RunBatch call with busy=1, got %d", calls)
+	}
+}
+
+// TestDaemon_FailedLaunchRetriesNextTick verifies that when launchReview
+// fails before review-state.json is written, the claim is released and the
+// next tick retries the same comment.
+func TestDaemon_FailedLaunchRetriesNextTick(t *testing.T) {
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "trigger1", Body: "/sandman review", CreatedAt: now},
+			},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body"}},
+	}
+
+	var runMu sync.Mutex
+	runCalls := 0
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		runMu.Lock()
+		runCalls++
+		runMu.Unlock()
+		return nil, errors.New("batch exploded")
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now }
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+
+	runMu.Lock()
+	firstCalls := runCalls
+	runMu.Unlock()
+
+	if firstCalls != 1 {
+		t.Errorf("expected 1 RunBatch call on first tick, got %d", firstCalls)
+	}
+
+	runMu.Lock()
+	runCalls = 0
+	runMu.Unlock()
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+
+	runMu.Lock()
+	secondCalls := runCalls
+	runMu.Unlock()
+
+	if secondCalls != 1 {
+		t.Errorf("expected 1 RunBatch call on second tick (retry), got %d", secondCalls)
+	}
+}
+
+// TestDaemon_ClaimPersistsAfterTickExit verifies that when launchReview
+// fails before review-state.json is written (Save not called), the claim
+// is not persisted and the next tick retries the same comment.
+func TestDaemon_ClaimPersistsAfterTickExit(t *testing.T) {
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "trigger1", Body: "/sandman review", CreatedAt: now},
+			},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body"}},
+	}
+
+	var runMu sync.Mutex
+	runCalls := 0
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		runMu.Lock()
+		runCalls++
+		runMu.Unlock()
+		return nil, errors.New("batch exploded")
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now }
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+
+	runMu.Lock()
+	firstCalls := runCalls
+	runMu.Unlock()
+
+	if firstCalls != 1 {
+		t.Errorf("expected 1 RunBatch call on first tick, got %d", firstCalls)
+	}
+
+	runMu.Lock()
+	runCalls = 0
+	runMu.Unlock()
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+
+	runMu.Lock()
+	secondCalls := runCalls
+	runMu.Unlock()
+
+	if secondCalls != 1 {
+		t.Errorf("expected 1 RunBatch call on second tick (retry), got %d", secondCalls)
+	}
+}

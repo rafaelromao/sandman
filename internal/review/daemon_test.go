@@ -1343,7 +1343,7 @@ func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
 	}
 	d.Config = cfg
 
-	_, err := d.launchReview(context.Background(), 1, "", "c1", "", "")
+	err := d.launchReview(context.Background(), 1, "", "c1", "", "", "", "", nil)
 	if err == nil {
 		t.Fatal("expected error from launchReview when model is empty")
 	}
@@ -1406,7 +1406,11 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	if _, err := d.launchReview(context.Background(), 1, "", "c1", "", ""); err != nil {
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(1, "c1")
+	if prepErr != nil {
+		t.Fatalf("prepareReviewRun: %v", prepErr)
+	}
+	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -1436,7 +1440,11 @@ func TestDaemon_LaunchReviewCleansUpRunDirOnError(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
 	d.Config = cfg
 
-	_, err := d.launchReview(context.Background(), 1, "", "c1", "", "")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(1, "c1")
+	if prepErr != nil {
+		t.Fatalf("prepareReviewRun: %v", prepErr)
+	}
+	err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs)
 	if err == nil {
 		t.Fatal("expected error from launchReview")
 	}
@@ -1495,7 +1503,11 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	if _, err := d.launchReview(context.Background(), 1, "", "c1", "", ""); err != nil {
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(1, "c1")
+	if prepErr != nil {
+		t.Fatalf("prepareReviewRun: %v", prepErr)
+	}
+	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -1546,7 +1558,11 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	if _, err := d.launchReview(context.Background(), 1, "", "c1", "", ""); err != nil {
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(1, "c1")
+	if prepErr != nil {
+		t.Fatalf("prepareReviewRun: %v", prepErr)
+	}
+	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -1631,7 +1647,11 @@ func TestDaemon_LaunchReviewFailsWhenVerificationFails(t *testing.T) {
 	// Clock returns a time after all fake comments so verification finds none.
 	d.Clock = func() time.Time { return now.Add(1 * time.Hour) }
 
-	runDir, err := d.launchReview(context.Background(), 5, "", "c1", "", "")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(5, "c1")
+	if prepErr != nil {
+		t.Fatalf("prepareReviewRun: %v", prepErr)
+	}
+	err := d.launchReview(context.Background(), 5, "", "c1", "", "", reviewRunFolder, perRowRunID, rs)
 	if err == nil {
 		t.Fatal("expected error from launchReview when verification fails (no new comment)")
 	}
@@ -1641,7 +1661,7 @@ func TestDaemon_LaunchReviewFailsWhenVerificationFails(t *testing.T) {
 
 	// Trigger should NOT be marked as seen (per-run review-state.json
 	// should not contain c1 as success/failure/aborted).
-	statePath := filepath.Join(runDir, "review-state.json")
+	statePath := filepath.Join(reviewRunFolder, "review-state.json")
 	if data, err := os.ReadFile(statePath); err == nil {
 		var state batchindex.ReviewState
 		if json.Unmarshal(data, &state) == nil {
@@ -1675,7 +1695,11 @@ func TestDaemon_LaunchReviewSucceedsWhenVerificationPasses(t *testing.T) {
 	// Clock returns a time before the fake comments so verification finds them.
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
-	_, err := d.launchReview(context.Background(), 6, "", "c2", "", "")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(6, "c2")
+	if prepErr != nil {
+		t.Fatalf("prepareReviewRun: %v", prepErr)
+	}
+	err := d.launchReview(context.Background(), 6, "", "c2", "", "", reviewRunFolder, perRowRunID, rs)
 	if err != nil {
 		t.Fatalf("expected no error from launchReview when verification passes, got: %v", err)
 	}
