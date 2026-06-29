@@ -275,14 +275,19 @@ func (d *Daemon) tick(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			canLaunch := true
 			select {
 			case sem <- struct{}{}:
 			default:
-				d.logf("PR #%d: parallel limit reached, skipping", pr.Number)
-				return
+				d.logf("PR #%d: parallel limit reached, will read comments without launching", pr.Number)
+				canLaunch = false
 			}
-			defer func() { <-sem }()
-			if err := d.processPR(ctx, pr.Number); err != nil {
+			defer func() {
+				if canLaunch {
+					<-sem
+				}
+			}()
+			if err := d.processPR(ctx, pr.Number, canLaunch); err != nil {
 				d.logf("process PR #%d: %v", pr.Number, err)
 			}
 		}()
@@ -292,14 +297,18 @@ func (d *Daemon) tick(ctx context.Context) error {
 }
 
 // processPR scans one PR's comments and launches a review agent for the
-// newest unseen /sandman review trigger. The dedup state lives in the
-// run folder's `review-state.json`, managed by ReviewStateStore. No
-// per-PR directory is created under `.sandman/reviews/`.
+// newest unseen /sandman review trigger. When canLaunch is false, the
+// function reads comments and identifies triggers but does not launch a
+// review, add reactions, or mark the trigger as seen. This ensures that
+// triggers are not dropped when the parallel limit is saturated.
+//
+// The dedup state lives in the run folder's `review-state.json`, managed
+// by ReviewStateStore. No per-PR directory is created under `.sandman/reviews/`.
 //
 // Acceptance criteria #1 and #3 from issue #1224:
 //   - No code path creates `.sandman/reviews/<PR>/`
 //   - `review-state.json` lives at `<batch>/runs/<run>/review-state.json`
-func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
+func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) error {
 	comments, err := d.GitHub.ListPRComments(prNumber)
 	if err != nil {
 		return fmt.Errorf("list comments: %w", err)
@@ -359,6 +368,11 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 
 	comment := newest.comment
 	focus := newest.focus
+
+	if !canLaunch {
+		d.logf("PR #%d: cannot launch (semaphore saturated), will retry on next tick", prNumber)
+		return nil
+	}
 
 	commentReactionID, commentErr := d.GitHub.AddCommentReaction(comment.ID, "eyes")
 	if commentErr != nil {
