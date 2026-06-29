@@ -286,6 +286,8 @@ type Orchestrator struct {
 	activeMu               sync.Mutex
 	activeRuns             map[int]sandbox.Sandbox
 	shutdownSupervisorDone []<-chan struct{}
+
+	badgeHooker BadgeHooker
 }
 
 // defaultLookupGHToken shells out to `gh auth token` and returns the
@@ -660,7 +662,19 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		issueCancels:           make(map[int]context.CancelFunc),
 		activeRuns:             make(map[int]sandbox.Sandbox),
 		shutdownSupervisorDone: nil,
+		badgeHooker:            newBadgeHooker(os.Stderr),
 	}
+}
+
+// newBadgeHooker returns a BadgeHooker that suggests a Built with Sandman
+// badge PR after a batch with merged sandman/* PRs. It returns a nopBadgeHooker
+// if the sandman binary cannot be resolved.
+func newBadgeHooker(w io.Writer) BadgeHooker {
+	sandmanRunner, err := newDefaultSandmanRunner()
+	if err != nil {
+		return nopBadgeHooker{}
+	}
+	return newDefaultBadgeHooker(&defaultPRLister{gh: realGhCommander{}}, sandmanRunner, w)
 }
 
 // trackShutdownSupervisor records a done channel returned by
@@ -1167,6 +1181,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if failureCount > 0 {
 		return &Result{Runs: results}, fmt.Errorf("%d of %d runs failed", failureCount, len(req.Issues))
 	}
+
+	o.badgeHooker.MaybeSuggestBadge(ctx, results)
+
 	return &Result{Runs: results}, nil
 }
 
