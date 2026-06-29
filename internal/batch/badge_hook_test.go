@@ -238,11 +238,11 @@ func TestMaybeSuggestBadge_PromptContainsMergedPRs(t *testing.T) {
 
 	h.MaybeSuggestBadge(context.Background(), results)
 
-	if !strings.Contains(fakeRunner.capturedPrompt, "- #10: Add login") {
-		t.Errorf("expected prompt to contain '- #10: Add login', got: %s", fakeRunner.capturedPrompt)
+	if !strings.Contains(fakeRunner.capturedPrompt, "Add login (#10)") {
+		t.Errorf("expected prompt to contain 'Add login (#10)', got: %s", fakeRunner.capturedPrompt)
 	}
-	if !strings.Contains(fakeRunner.capturedPrompt, "- #20: Fix logout") {
-		t.Errorf("expected prompt to contain '- #20: Fix logout', got: %s", fakeRunner.capturedPrompt)
+	if !strings.Contains(fakeRunner.capturedPrompt, "Fix logout (#20)") {
+		t.Errorf("expected prompt to contain 'Fix logout (#20)', got: %s", fakeRunner.capturedPrompt)
 	}
 	if strings.Contains(fakeRunner.capturedPrompt, "{{MERGED_PRS}}") {
 		t.Errorf("expected prompt to NOT contain unsubstituted {{MERGED_PRS}}, got: %s", fakeRunner.capturedPrompt)

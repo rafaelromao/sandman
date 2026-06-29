@@ -188,7 +188,7 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 
 	prTitles := make([]string, len(sandmanPRs))
 	for i, pr := range sandmanPRs {
-		prTitles[i] = fmt.Sprintf("- #%d: %s", pr.Number, pr.Title)
+		prTitles[i] = fmt.Sprintf("%s (#%d)", pr.Title, pr.Number)
 	}
 	mergedPRsText := strings.Join(prTitles, "\n")
 	badgePromptTemplate := prompt.DefaultBadgePrompt()
