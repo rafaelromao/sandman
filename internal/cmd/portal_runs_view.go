@@ -993,7 +993,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		if len(active.IssueNumbers) > 1 {
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
-		if strings.TrimSpace(active.SocketPath) != "" {
+		if state.Finished == nil && strings.TrimSpace(active.SocketPath) != "" {
 			return run
 		}
 		if state.Finished == nil {
@@ -1247,11 +1247,11 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		// dropping queued members (issue #1464).
 		batchKey = bid
 	}
-	portalRun := portalRun{
+		portalRun := portalRun{
 		Key:          runID,
 		RunID:        runID,
 		Kind:         v.kindForRun(runState),
-		Status:       v.statusOrDefault(status, runState.IsActive() || activeSocket, runState.IsReview(), runState.IsAutoSelect()),
+		Status:       v.statusOrDefault(status, runState.IsActive() || (status == "" && activeSocket), runState.IsReview(), runState.IsAutoSelect()),
 		IssueLabel:   issueLabel,
 		IssueNumber:  issueNumber,
 		IssueTitle:   v.issueTitleFromPayload(runState.Started.Payload),
@@ -1286,11 +1286,11 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		portalRun.Kind = "completed"
 	}
 	if active != nil {
-		if activeSocket {
-			portalRun.Kind = "active"
-		}
 		portalRun.SocketPath = active.SocketPath
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
+		if portalRun.Kind == "completed" && runState.Finished != nil && activeSocket && (runState.IsReview() || runState.IsAutoSelect()) {
+			portalRun.Kind = "active"
+		}
 	} else if portalRun.Kind == "active" {
 		batchDir, err := v.findBatchDirForRun(repoRoot, runState.RunID, deadBatches)
 		if err != nil {
