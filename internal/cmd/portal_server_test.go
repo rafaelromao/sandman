@@ -2615,8 +2615,8 @@ func TestPortalRunFromActiveBatchIssue_AbortedRunHasAbortedByOperatorLog(t *test
 	if run.Status != "aborted" {
 		t.Fatalf("expected status 'aborted', got %q", run.Status)
 	}
-	if run.Log != "Aborted by operator." {
-		t.Fatalf("expected log 'Aborted by operator.', got %q", run.Log)
+	if run.Log != "" {
+		t.Fatalf("expected log '', got %q", run.Log)
 	}
 }
 

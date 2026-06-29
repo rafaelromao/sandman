@@ -2499,7 +2499,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     async function loadRunDetail(runKey) {
       const run = findRunByIdentity(runKey);
       if (!run) return;
-      const hasLog = run.log && String(run.log).trim() && run.log !== 'No log file yet.' && run.log !== 'No live output captured yet.' && run.log !== 'Aborted by operator.';
+      const hasLog = run.log && String(run.log).trim();
       const isActive = run.kind === 'active';
       if (hasLog || isActive) return;
       try {
