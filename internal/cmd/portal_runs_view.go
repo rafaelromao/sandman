@@ -695,6 +695,9 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 		if runs[i].Kind != "active" || runs[i].SocketPath != "" || runs[i].BatchKey == "" {
 			continue
 		}
+		if runs[i].Status != "running" && runs[i].Status != "reviewing" && runs[i].Status != "auto-selecting" {
+			continue
+		}
 		var db *daemon.DeadBatch
 		for j := range allDead {
 			if filepath.Base(allDead[j].RunDir) == runs[i].BatchKey {

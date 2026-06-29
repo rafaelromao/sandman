@@ -1305,6 +1305,35 @@ func TestPortal_Compute_DeadBatchWithStaleRunSock_StillDemoted(t *testing.T) {
 	}
 }
 
+func TestPortal_Compute_DeadBatchQueuedRow_StaysQueued(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	deadBatchID := "batch-dead"
+	deadBatchDir := filepath.Join(repoRoot, ".sandman", "batches", deadBatchID)
+	if err := os.MkdirAll(deadBatchDir, 0755); err != nil {
+		t.Fatalf("mkdir batch dir: %v", err)
+	}
+	if err := daemon.WriteManifest(deadBatchDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt, BatchId: deadBatchID}); err != nil {
+		t.Fatalf("write dead manifest: %v", err)
+	}
+
+	runs := []portalRun{
+		{Key: "queued", RunID: "queued-run-42", Status: "queued", Kind: "active", BatchKey: deadBatchID, StartedAt: startedAt},
+		{Key: "running", RunID: "running-run-42", Status: "running", Kind: "active", BatchKey: deadBatchID, StartedAt: startedAt},
+	}
+	got := (&portalRunsView{}).demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
+	if got[0].Kind != "active" || got[0].Status != "queued" {
+		t.Fatalf("queued row = %#v, want active/queued", got[0])
+	}
+	if got[1].Kind != "completed" || got[1].Status != "aborted" {
+		t.Fatalf("running row = %#v, want completed/aborted", got[1])
+	}
+}
+
 func TestPortal_Compute_LiveParentAndDeadReviewChild_DoesNotAggregateReviewing(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "p")
 	if err != nil {
