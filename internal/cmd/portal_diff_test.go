@@ -2608,14 +2608,14 @@ const fs = require('fs');
 const vm = require('vm');
 const helperPath = ` + "`" + helperPath + "`" + `;
 const source = fs.readFileSync(helperPath, 'utf8');
-const sandbox = { window: {}, globalThis: {}, Set, Map, WeakMap, JSON, console };
-sandbox.window = sandbox;
-sandbox.globalThis = sandbox;
-sandbox.document = documentRef;
-sandbox.HTMLElement = function() {};
-vm.runInNewContext(source, sandbox, { filename: helperPath });
-const SandmanPortalDiff = sandbox.SandmanPortalDiff;
-if (!SandmanPortalDiff) throw new Error('SandmanPortalDiff missing');
+	const sandbox = { window: {}, globalThis: {}, Set, Map, WeakMap, JSON, console, setTimeout: setTimeout, requestIdleCallback: function(cb) { var start = Date.now(); setTimeout(function() { cb({ didTimeout: false, timeRemaining: function() { return Math.max(0, 50 - (Date.now() - start)); } }); }, 0); } };
+	sandbox.window = sandbox;
+	sandbox.globalThis = sandbox;
+	sandbox.document = documentRef;
+	sandbox.HTMLElement = function() {};
+	vm.runInNewContext(source, sandbox, { filename: helperPath });
+	const SandmanPortalDiff = sandbox.SandmanPortalDiff;
+	if (!SandmanPortalDiff) throw new Error('SandmanPortalDiff missing');
 `
 	cmd := exec.Command("node", "-e", prefix+js)
 	out, err := cmd.CombinedOutput()
