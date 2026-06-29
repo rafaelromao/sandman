@@ -1877,7 +1877,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const normalized = portalState.normalize({
         expandedRunKey: state.expandedRunKey,
         tabs: state.tabs,
-      }, visibleRuns);
+      }, visibleRuns, state.runs);
       if (!normalized.changed) return;
       state.expandedRunKey = normalized.state.expandedRunKey;
       state.tabs = normalized.state.tabs;

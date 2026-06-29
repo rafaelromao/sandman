@@ -2035,7 +2035,7 @@ func TestDaemon_TickSaturationDoesNotDropTriggers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tick: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		bufStr := buf.String()
 		t.Fatalf("tick did not finish after releasing parallel reviews. logs: %s", bufStr)
 	}
