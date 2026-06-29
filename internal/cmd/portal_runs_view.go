@@ -884,8 +884,7 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 		run := v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun, deadBatches)
 		runs = append(runs, run)
 		if state != nil && state.RunID != "" {
-			if state.IsActive() && run.Kind == "completed" {
-			} else {
+			if !(state.IsActive() && run.Kind == "completed") {
 				usedRunIDs[state.RunID] = struct{}{}
 			}
 		}
