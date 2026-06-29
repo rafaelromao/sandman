@@ -28,7 +28,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
    
    It is NEVER acceptable to assert "this is out of scope" unilaterally and exit the loop with a `CHANGES_REQUESTED` still pending. If max passes are reached with the deadlock unresolved, exit the loop with a clearly-documented `CHANGES_REQUESTED_UNRESOLVED` reason in the run log so the failure is visible in the run history — do not silently terminate as if the work were complete.
 
-9. **You must use `codeindex` before `grep` or `glob` when looking for symbols, blast radius, dependencies, or other broad code locations.** If `codeindex.json` exists, run the appropriate `codeindex` command first. Do not start discovery with `grep`, `rg`, or `glob` for that purpose unless `codeindex` cannot answer the question.
+9. **You must use `codeindex` before `grep` or `glob` when looking for symbols, blast radius, dependencies, or other broad code locations.** Load the `sandman-index` skill first — it encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and portal-specific shortcuts.
 
 ## Workflow
 

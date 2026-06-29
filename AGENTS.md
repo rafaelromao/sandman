@@ -2,62 +2,13 @@
 
 CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 
-## HARD RULE: `codeindex` first, every time
+## Code discovery: `sandman-index` skill
 
-**You MUST run `codeindex` before any broad exploration, grep, or file open for code discovery.** This is non-negotiable — not a suggestion, not a guideline. The rule applies to the primary agent AND every sub-agent spawned via the `task` tool.
+**Load the `sandman-index` skill before any broad exploration, grep, or file open for code discovery.** This skill encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and portal-specific shortcuts.
 
-**Violation consequence:** Wasted tokens, missed context, likely wrong file selection. If a session review catches a codeindex violation, the work is considered incomplete.
+The skill applies to the primary agent AND every sub-agent spawned via the `task` tool.
 
-### Sub-agent rule
-
-Every `task` tool invocation whose prompt involves code discovery MUST include this instruction verbatim:
-
-> **Before any broad search or file read, run `codeindex lookup <symbol>` or `codeindex search "concept"` to narrow targets. This is a mandatory repo rule — violation wastes context.**
-
-Do not skip this even for seemingly simple lookups. The sub-agent does not read AGENTS.md; the prompt is the only enforcement mechanism.
-
-## Symbol lookup and impact analysis
-
-Use `codeindex` CLI before grepping for symbols or assessing blast radius.
-
-### Core commands
-
-| Command | Purpose |
-|---------|---------|
-| `codeindex lookup <symbol>` | Find where a function, type, method, or symbol is defined (file + line). |
-| `codeindex impact <file>` | Blast-radius report showing how many files are affected if this file changes. |
-| `codeindex dependencies <file>` | Show imports and imported-by relationships for a file. |
-| `codeindex high-blast --threshold N` | List the riskiest files with blast score greater than or equal to `N`. |
-| `codeindex search "natural language"` | Hybrid semantic + keyword + graph search for cross-cutting concepts. |
-
-### Command selection rules
-
-Use the smallest command that answers the question:
-
-- Need a definition location for a symbol: use `codeindex lookup <symbol>`.
-- Need to understand what depends on a file before editing it: use `codeindex dependencies <file>` or `codeindex impact <file>`.
-- Need to understand risky change areas during refactors: use `codeindex high-blast --threshold N`.
-- Need to find a concept that may span multiple files or is easier to describe than to name precisely: use `codeindex search "..."`.
-
-### Read discipline
-
-After a `codeindex` query:
-
-- Read only the files that the query identifies as likely relevant.
-- Avoid opening many adjacent files "just in case".
-- Avoid repo-wide grep unless `codeindex` cannot answer or the task concerns non-indexed content.
-
-## Direct-read exceptions
-
-You may skip `codeindex` only when the task is purely about:
-
-- `CONTEXT.md` and domain terminology.
-- ADRs under `docs/adr/`.
-- Agent guidance under `docs/agents/`.
-- Shell scripts, JSON, YAML, logs, fixtures, or generated artifacts.
-- Exact implementation details after `codeindex` has already narrowed the search.
-
-For architecture or domain questions, read the relevant docs early instead of inferring intent from code alone.
+**Violation consequence:** Wasted tokens, missed context, likely wrong file selection. If a session review catches a `sandman-index` violation, the work is considered incomplete.
 
 ## Purpose
 
@@ -166,11 +117,11 @@ Use these repository-specific references when appropriate:
 For most non-trivial tasks, follow this order:
 
 1. Read this file.
-2. Use `codeindex` to locate the relevant symbol, file, dependency set, or blast radius.
+2. Load the `sandman-index` skill and use codeindex to locate the relevant symbol, file, dependency set, or blast radius.
 3. Read only the narrowed code paths.
 4. Read `CONTEXT.md` or ADRs if domain or architectural intent matters.
 5. Make the smallest coherent change.
 6. Run formatting, vetting, and relevant tests.
 7. Summarize what changed, what was verified, and any remaining risk.
 
-**Sub-agent rule applies here too:** when step 2 or 3 requires spawning a sub-agent task, include the codeindex instruction verbatim per the Sub-agent rule above.
+**Sub-agent rule applies here too:** when step 2 or 3 requires spawning a sub-agent task, include the sandman-index skill instruction verbatim per the skill's sub-agent rule.
