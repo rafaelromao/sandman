@@ -1247,7 +1247,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		// dropping queued members (issue #1464).
 		batchKey = bid
 	}
-		portalRun := portalRun{
+	portalRun := portalRun{
 		Key:          runID,
 		RunID:        runID,
 		Kind:         v.kindForRun(runState),
