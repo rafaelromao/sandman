@@ -76,6 +76,10 @@ _Avoid_: review state, PR state.
 A git branch named `sandman/<issue-number>-<slugified-title>` for issue-driven AgentRuns, or `sandman/<slug>-<timestamp>` for prompt-only runs.
 _Avoid_: Feature branch, PR branch.
 
+**SidecarBranch**:
+A git branch initiated by Sandman's own post-batch side effects rather than by a user-supplied issue or prompt. The badge branch `sandman/built-with-sandman` is the first such SidecarBranch. Unlike issue-driven branches (which carry a GitHub issue) or prompt-only branches (which carry a timestamp suffix for uniqueness), a SidecarBranch carries no issue and no timestamp — its shape is determined by the sidecar that created it.
+_Avoid_: Bot branch, auto branch.
+
 **BuildToolsPreset**:
 A scaffold-time recipe chosen during `sandman init` that seeds a pinned container image definition with shared baseline tools and built-in agent installation defaults.
 _Avoid_: language, stack, base image.
