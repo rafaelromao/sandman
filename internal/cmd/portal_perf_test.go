@@ -109,3 +109,39 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalPerf_AsyncLargeLogRoundTrip verifies that large logs use the
+// async path, expose a pending marker while chunking, and preserve the cached
+// pane across a tab round-trip.
+func TestPortalPerf_AsyncLargeLogRoundTrip(t *testing.T) {
+	js := `function bigLog(seed, n) { var L = []; for (var i = 0; i < n; i++) L.push(seed + ' step ' + i + ' import return function foo() bar baz qux'); return L.join('\n'); }
+const body = makeMockBody();
+const log = bigLog('async', 2000); // ~220KB
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: log, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
+const stopGroups = new Set();
+const optsLog = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
+const optsDetails = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+const detailRow = body.children[1];
+const pre = detailRow && detailRow.querySelector('pre[data-scroll-key]');
+if (!pre) throw new Error('expected log pre');
+if (pre.getAttribute('data-rendering-log') !== log) throw new Error('expected async pending marker for large log');
+if (pre.getAttribute('data-rendered-log')) throw new Error('expected rendered-log to stay empty while async render is pending');
+setTimeout(function() {
+  if (pre.getAttribute('data-rendering-log')) throw new Error('expected async pending marker cleared after completion');
+  if (pre.getAttribute('data-rendered-log') !== log) throw new Error('expected rendered-log after async completion');
+  if (pre.textContent.indexOf('async step 0') === -1) throw new Error('expected async log content after completion');
+  const originalPre = pre;
+  const originalFirstChild = pre.firstChild;
+  sandbox.SandmanPortalDiff.diffRuns(body, [run], optsDetails);
+  if (detailRow.querySelector('pre[data-scroll-key]')) throw new Error('expected log pane detached on details tab');
+  sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+  const restoredPre = detailRow.querySelector('pre[data-scroll-key]');
+  if (restoredPre !== originalPre) throw new Error('expected cached large-log pane to be reused');
+  if (restoredPre.firstChild !== originalFirstChild) throw new Error('expected cached large-log children to be reused');
+  if (restoredPre.getAttribute('data-rendered-log') !== log) throw new Error('expected rendered-log to survive round trip');
+  console.log('PASS');
+}, 400);
+`
+	runNodeScript(t, js)
+}

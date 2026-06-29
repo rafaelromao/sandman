@@ -503,6 +503,7 @@
   function fillTerminalPre(pre, text, helpers) {
     const value = String(text == null ? '' : text);
     while (pre.firstChild) pre.removeChild(pre.firstChild);
+    pre.setAttribute('data-rendering-log', value);
     if (value.length < ASYNC_CHUNK_THRESHOLD) {
       const html = helpers.renderTerminalContent(value);
       const scratch = global.document.createElement('div');
@@ -515,6 +516,7 @@
       }
       pre.appendChild(frag);
       pre.setAttribute('data-rendered-log', value);
+      pre.removeAttribute('data-rendering-log');
       return;
     }
     const generation = ++renderGeneration;
@@ -542,6 +544,7 @@
         }
         pre.appendChild(frag);
         pre.setAttribute('data-rendered-log', value);
+        pre.removeAttribute('data-rendering-log');
       }
     }
     global.setTimeout(processChunk, 0);
@@ -813,6 +816,7 @@
       const nodes = Array.from(scratch.childNodes);
       for (const node of nodes) pre.appendChild(node);
       pre.setAttribute('data-rendered-log', oldLog + newSuffix);
+      pre.removeAttribute('data-rendering-log');
       return;
     }
     const lastNewline = oldLog.lastIndexOf('\n');
@@ -836,6 +840,8 @@
       pre.removeChild(pre.lastChild);
     }
     for (const node of newNodes) pre.appendChild(node);
+    pre.setAttribute('data-rendered-log', oldLog + newSuffix);
+    pre.removeAttribute('data-rendering-log');
   }
 
   function findPartialLineStart(pre, partialLastLine) {
@@ -1090,6 +1096,11 @@
       }
       if (pre) {
         const oldLog = pre.getAttribute('data-rendered-log') || '';
+        const renderingLog = pre.getAttribute('data-rendering-log') || '';
+        if (renderingLog === newLog) {
+          content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
+          return;
+        }
         if (oldLog === newLog) {
           content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
           return;
@@ -1476,6 +1487,8 @@
     if (!pre) return;
     const renderedLog = newLog && String(newLog).trim() ? newLog : 'No log file yet.';
     const oldLog = pre.getAttribute('data-rendered-log') || '';
+    const renderingLog = pre.getAttribute('data-rendering-log') || '';
+    if (renderingLog === renderedLog) return;
     if (oldLog === renderedLog) return;
     if (oldLog && renderedLog.length >= oldLog.length && renderedLog.startsWith(oldLog)) {
       appendTerminalPre(pre, oldLog, renderedLog.slice(oldLog.length), helpers);
