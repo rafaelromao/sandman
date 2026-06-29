@@ -1004,14 +1004,14 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 				run.Log = v.portalBlockedMessage(state.Finished.Payload)
 			case "aborted":
 			default:
-			if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
-				run.Log = live
-			} else {
-				run.Log = v.readPortalTextFile(run.LogPath)
-				if strings.TrimSpace(run.Log) == "" {
-					run.Log = "No log file yet."
+				if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
+					run.Log = live
+				} else {
+					run.Log = v.readPortalTextFile(run.LogPath)
+					if strings.TrimSpace(run.Log) == "" {
+						run.Log = "No log file yet."
+					}
 				}
-			}
 			}
 		}
 		return run
