@@ -736,6 +736,186 @@ func TestReviewCmd_DaemonModePropagatesAgentModelFlags(t *testing.T) {
 	}
 }
 
+func TestReviewCmd_DaemonModePropagatesAgentFlag(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantAgent   string
+		wantAgentRx bool
+	}{
+		{
+			name:        "flag set",
+			args:        []string{"--agent", "claude"},
+			wantAgent:   "claude",
+			wantAgentRx: true,
+		},
+		{
+			name:        "flag empty (not passed)",
+			args:        []string{},
+			wantAgent:   "",
+			wantAgentRx: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				DefaultAgent:       "opencode",
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/big-pickle",
+			}
+			gh := &fakePRGitHubClient{
+				fakeGitHubClient: &fakeGitHubClient{},
+			}
+			runner := &spyBatchRunner{result: &batch.Result{}}
+			deps := newReviewDeps(t, gh, cfg, runner)
+
+			var capturedAgent string
+			prev := reviewDaemonRunner
+			reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, parallel int, parallelSet bool) error {
+				capturedAgent = agent
+				return nil
+			}
+			defer func() { reviewDaemonRunner = prev }()
+
+			cmd := NewReviewCmd(deps)
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs(tt.args)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if capturedAgent != tt.wantAgent {
+				t.Errorf("expected daemon to receive agent %q, got %q", tt.wantAgent, capturedAgent)
+			}
+		})
+	}
+}
+
+func TestReviewCmd_DaemonModePropagatesModelFlag(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantModel   string
+		wantModelRx bool
+	}{
+		{
+			name:        "flag set",
+			args:        []string{"--model", "anthropic/claude-sonnet-4"},
+			wantModel:   "anthropic/claude-sonnet-4",
+			wantModelRx: true,
+		},
+		{
+			name:        "flag empty (not passed)",
+			args:        []string{},
+			wantModel:   "",
+			wantModelRx: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				DefaultAgent:       "opencode",
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/big-pickle",
+			}
+			gh := &fakePRGitHubClient{
+				fakeGitHubClient: &fakeGitHubClient{},
+			}
+			runner := &spyBatchRunner{result: &batch.Result{}}
+			deps := newReviewDeps(t, gh, cfg, runner)
+
+			var capturedModel string
+			prev := reviewDaemonRunner
+			reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, parallel int, parallelSet bool) error {
+				capturedModel = model
+				return nil
+			}
+			defer func() { reviewDaemonRunner = prev }()
+
+			cmd := NewReviewCmd(deps)
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs(tt.args)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if capturedModel != tt.wantModel {
+				t.Errorf("expected daemon to receive model %q, got %q", tt.wantModel, capturedModel)
+			}
+		})
+	}
+}
+
+func TestReviewCmd_DaemonModePropagatesParallelFlag(t *testing.T) {
+	tests := []struct {
+		name            string
+		args            []string
+		wantParallel    int
+		wantParallelSet bool
+	}{
+		{
+			name:            "flag set",
+			args:            []string{"--parallel", "4"},
+			wantParallel:    4,
+			wantParallelSet: true,
+		},
+		{
+			name:            "flag empty (not passed)",
+			args:            []string{},
+			wantParallel:    0,
+			wantParallelSet: false,
+		},
+		{
+			name:            "flag zero",
+			args:            []string{"--parallel", "0"},
+			wantParallel:    0,
+			wantParallelSet: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				DefaultAgent:          "opencode",
+				DefaultReviewAgent:    "opencode",
+				DefaultReviewModel:    "opencode/big-pickle",
+				DefaultReviewParallel: 1,
+			}
+			gh := &fakePRGitHubClient{
+				fakeGitHubClient: &fakeGitHubClient{},
+			}
+			runner := &spyBatchRunner{result: &batch.Result{}}
+			deps := newReviewDeps(t, gh, cfg, runner)
+
+			var capturedParallel int
+			var capturedParallelSet bool
+			prev := reviewDaemonRunner
+			reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, parallel int, parallelSet bool) error {
+				capturedParallel = parallel
+				capturedParallelSet = parallelSet
+				return nil
+			}
+			defer func() { reviewDaemonRunner = prev }()
+
+			cmd := NewReviewCmd(deps)
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs(tt.args)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if capturedParallel != tt.wantParallel {
+				t.Errorf("expected daemon to receive parallel %d, got %d", tt.wantParallel, capturedParallel)
+			}
+			if capturedParallelSet != tt.wantParallelSet {
+				t.Errorf("expected daemon to receive parallelSet=%v, got %v", tt.wantParallelSet, capturedParallelSet)
+			}
+		})
+	}
+}
+
 func TestReviewCmd_DaemonParallelFlagOverridesConfig(t *testing.T) {
 	var buf bytes.Buffer
 	cfg := &config.Config{

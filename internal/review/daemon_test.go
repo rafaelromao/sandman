@@ -550,6 +550,49 @@ func TestDaemon_EffectiveParallelFallsBackToConfig(t *testing.T) {
 	}
 }
 
+func TestDaemon_LaunchReviewPropagatesAgentModelParallelOverrides(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 30, State: "open"}},
+		comments: map[int][]github.PRComment{
+			30: {{ID: "c30", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{30: {Number: 30, Title: "PR 30", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent:    "config-agent",
+		DefaultReviewModel:    "config/model",
+		DefaultReviewParallel: 9,
+		AgentProviders: map[string]config.Agent{
+			"claude": {Preset: "claude", Command: "claude"},
+		},
+	}
+	dir := t.TempDir()
+	t.Chdir(dir)
+	d := New(dir, gh, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 5, true)
+	d.Agent = "claude"
+	d.Model = "anthropic/claude-sonnet-4"
+	d.Parallel = 5
+	d.ParallelSet = true
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	if runner.last.Agent != "claude" {
+		t.Errorf("expected agent %q from override, got %q", "claude", runner.last.Agent)
+	}
+	if runner.last.Model != "anthropic/claude-sonnet-4" {
+		t.Errorf("expected model %q from override, got %q", "anthropic/claude-sonnet-4", runner.last.Model)
+	}
+	if runner.last.Parallel != 5 {
+		t.Errorf("expected parallel %d from override, got %d", 5, runner.last.Parallel)
+	}
+}
+
 func TestDaemon_TickAddsReactionAndRemovesAfterReview(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
