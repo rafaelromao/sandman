@@ -393,6 +393,13 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 	if !parentRow.StartedAt.Equal(startedAt) {
 		t.Fatalf("expected canonical parent StartedAt %v, got %v", startedAt, parentRow.StartedAt)
 	}
+	// Issue #1525 AC2: the canonical parent's BatchKey must stay pinned to
+	// the implementation run's own identity, never overwritten by review
+	// aggregation. For an event-log-reconstructed parent the BatchKey
+	// falls back to the empty string because no active batch is matched.
+	if parentRow.BatchKey != "" {
+		t.Fatalf("expected canonical parent BatchKey empty (event-log-only), got %q", parentRow.BatchKey)
+	}
 	if parentRow.ReviewCount != 2 {
 		t.Fatalf("expected canonical parent ReviewCount 2, got %d", parentRow.ReviewCount)
 	}

@@ -3911,17 +3911,21 @@ console.log('PASS');
 // picker contract from issue #1525 AC3: when a row group has a canonical
 // parent and review children, the related subject list must lead with the
 // canonical parent so users can return to the implementation row by
-// selecting the parent option.
+// selecting the parent option, AND every review child must remain
+// reachable as its own subject option.
 func TestPortalDiff_SubjectRunsFor_KeepsCanonicalParentFirst(t *testing.T) {
 	js := `const opts = { helpers, runs: [
   { key: 'issue-1', runId: 'issue-1', kind: 'completed', status: 'success', review: false, issueNumber: 1, issueLabel: '#1' },
   { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', review: true, issueNumber: 1, issueLabel: 'PR42', prNumber: 42 },
+  { key: 'PR43', runId: 'PR43', kind: 'completed', status: 'success', review: true, issueNumber: 1, issueLabel: 'PR43', prNumber: 43 },
 ] };
 const rowRun = opts.runs[0];
 const related = SandmanPortalDiff.subjectRunsFor(rowRun, opts);
-if (!Array.isArray(related) || related.length < 2) throw new Error('expected at least 2 related subjects, got ' + JSON.stringify(related.length));
+if (!Array.isArray(related) || related.length !== 3) throw new Error('expected 3 related subjects (parent + 2 reviews), got ' + JSON.stringify(related.length));
 if (related[0].review) throw new Error('expected first related subject to be the canonical parent, got review row first');
 if (related[0].runId !== 'issue-1') throw new Error('expected first related subject runId issue-1, got ' + JSON.stringify(related[0].runId));
+const reviewIds = related.slice(1).map((r) => r.runId).sort();
+if (reviewIds[0] !== 'PR42' || reviewIds[1] !== 'PR43') throw new Error('expected review children PR42 and PR43 in related subjects, got ' + JSON.stringify(reviewIds));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -4015,6 +4019,44 @@ if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKe
 if (result.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle, got ' + JSON.stringify(result.issueTitle));
 if (result.runId !== 'issue-1') throw new Error('expected parent runId, got ' + JSON.stringify(result.runId));
 if (result.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected parent startedAt, got ' + JSON.stringify(result.startedAt));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_ReviewSubjectDoesNotChangeVisible
+// is the AC4 regression test for issue #1525: switching the expanded
+// subject selector to a review child must not change which row is
+// visible. The visible row is decided by visibleRunForIssueGroup on the
+// underlying group, not by the expanded subject; the two are
+// independent selections.
+func TestPortalRunsView_VisibleRunForIssueGroup_ReviewSubjectDoesNotChangeVisible(t *testing.T) {
+	js := `const parent = {
+  key: 'issue-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: 'issue-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const review1 = {
+  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
+  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
+  batchKey: 'review-batch', issueTitle: 'Review PR42',
+  startedAt: '2025-02-01T00:00:00Z',
+};
+const review2 = {
+  key: 'PR43', kind: 'completed', status: 'success', review: true,
+  issueLabel: 'PR43', runId: 'PR43', issueNumber: 1, prNumber: 43,
+  batchKey: 'review-batch-2', issueTitle: 'Review PR43',
+  startedAt: '2025-01-15T00:00:00Z',
+};
+// Visible row before any subject selection: parent.
+const before = visibleRunForIssueGroup(1, [parent, review1, review2]);
+if (!before || before.key !== 'issue-1') throw new Error('expected visible row to be parent before subject switch, got ' + JSON.stringify(before && before.key));
+// Switching the subject selector to a review child must not influence
+// which row is visible — visibleRunForIssueGroup still picks the parent.
+const after = visibleRunForIssueGroup(1, [parent, review1, review2]);
+if (!after || after.key !== 'issue-1') throw new Error('expected visible row to stay parent after subject switch, got ' + JSON.stringify(after && after.key));
+if (after.runId !== 'issue-1' || after.batchKey !== 'parent-batch') throw new Error('expected parent identity to stay intact, got ' + JSON.stringify({ runId: after.runId, batchKey: after.batchKey }));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
