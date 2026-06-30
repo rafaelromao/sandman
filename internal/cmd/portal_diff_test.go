@@ -108,6 +108,115 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestRenderRunMeta_BatchOnlyNoCounters_OmitsTrailingBlankLine is the
+// regression guard for issue #1483: when a row has a batch key but neither
+// retriesDone nor reviewCount > 0, the meta must be exactly two lines
+// (Batch: and Run:) with no trailing blank line and no extra text.
+func TestRenderRunMeta_BatchOnlyNoCounters_OmitsTrailingBlankLine(t *testing.T) {
+	js := `const run = { key: 'run-no-counters', kind: 'active', status: 'running', issueLabel: '#99', runId: 'no-ctr', issueNumber: 99, batchKey: 'batch-empty', retriesDone: 0, reviewCount: 0 };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split('\\n');
+if (lines.length !== 2) throw new Error('expected exactly 2 lines when no counters present, got ' + lines.length + ' lines: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: batch-empty') throw new Error('expected Batch line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: no-ctr') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
+if (/^\s*$/.test(meta)) throw new Error('meta must not be blank, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_RetryOnlyMovesToTrailingLine asserts that a row with
+// only retriesDone > 0 (no batch key, no review) renders two lines:
+// Run: ... and the retry counter on the trailing line.
+func TestRenderRunMeta_RetryOnlyMovesToTrailingLine(t *testing.T) {
+	js := `const run = { key: 'no-batch', kind: 'active', status: 'running', issueLabel: '#1', runId: 'r-only', issueNumber: 1, retriesDone: 3 };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split('\\n');
+if (lines.length !== 2) throw new Error('expected exactly 2 lines for no-batch + retry, got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Run: r-only') throw new Error('expected Run line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== '3 retries') throw new Error('expected "3 retries" on trailing line, got: ' + JSON.stringify(lines));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_BatchPlusRetry_RendersThreeLines asserts the new
+// three-line layout: Batch:, Run:, and the retry counter on a trailing line.
+func TestRenderRunMeta_BatchPlusRetry_RendersThreeLines(t *testing.T) {
+	js := `const run = { key: 'b-retry', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'br1', issueNumber: 1, batchKey: 'batch-br', retriesDone: 2 };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split('\\n');
+if (lines.length !== 3) throw new Error('expected exactly 3 lines (Batch, Run, retry counter), got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: batch-br') throw new Error('expected Batch line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: br1') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
+if (lines[2] !== '2 retries') throw new Error('expected "2 retries" on trailing line, got: ' + JSON.stringify(lines));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_BatchPlusReviewWithVerdict_RendersThreeLines asserts the
+// review counter plus verdict live on the trailing counter line (joined by
+// " - "), not on the Batch: line.
+func TestRenderRunMeta_BatchPlusReviewWithVerdict_RendersThreeLines(t *testing.T) {
+	js := `const run = { key: 'b-review', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'brev', issueNumber: 1, batchKey: 'batch-bv', reviewCount: 1, reviewVerdict: 'Approved' };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split('\\n');
+if (lines.length !== 3) throw new Error('expected exactly 3 lines (Batch, Run, review+verdict), got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: batch-bv') throw new Error('expected Batch line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: brev') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
+if (lines[2] !== '1 review - Approved') throw new Error('expected "1 review - Approved" on trailing line, got: ' + JSON.stringify(lines));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_FullyLoaded_TrailingLineJoinsAllCounters asserts the
+// canonical issue example: Batch:, Run:, then "2 retries - 1 review - Approved"
+// joined with " - ".
+func TestRenderRunMeta_FullyLoaded_TrailingLineJoinsAllCounters(t *testing.T) {
+	js := `const run = { key: 'full', kind: 'active', status: 'reviewing', issueLabel: '#43', runId: 'b1c2d', issueNumber: 43, batchKey: 'batch-xyz', retriesDone: 2, retriesTotal: 2, reviewCount: 1, reviewVerdict: 'Approved' };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split('\\n');
+if (lines.length !== 3) throw new Error('expected exactly 3 lines for fully-loaded, got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: batch-xyz') throw new Error('expected Batch line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: b1c2d') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
+if (lines[2] !== '2 retries - 1 review - Approved') throw new Error('expected joined counters on trailing line, got: ' + JSON.stringify(lines));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_SingularPluralLabelsPreserved locks in the
+// singular/plural wording for retry (1 retry vs 2 retries) and review
+// (1 review vs 2 reviews).
+func TestRenderRunMeta_SingularPluralLabelsPreserved(t *testing.T) {
+	js := `const oneRetry = { key: 'r1', kind: 'active', status: 'running', issueLabel: '#1', runId: 'r1id', issueNumber: 1, retriesDone: 1 };
+const m1 = helpers.renderRunMeta(oneRetry);
+if (!m1.includes('1 retry')) throw new Error('expected "1 retry" for count=1, got: ' + JSON.stringify(m1));
+if (m1.includes('1 retries')) throw new Error('must not show "1 retries", got: ' + JSON.stringify(m1));
+
+const twoRetries = { key: 'r2', kind: 'active', status: 'running', issueLabel: '#2', runId: 'r2id', issueNumber: 2, retriesDone: 2 };
+const m2 = helpers.renderRunMeta(twoRetries);
+if (!m2.includes('2 retries')) throw new Error('expected "2 retries" for count=2, got: ' + JSON.stringify(m2));
+
+const oneReview = { key: 'v1', kind: 'active', status: 'reviewing', issueLabel: '#3', runId: 'v1id', issueNumber: 3, reviewCount: 1 };
+const m3 = helpers.renderRunMeta(oneReview);
+if (!m3.includes('1 review')) throw new Error('expected "1 review" for count=1, got: ' + JSON.stringify(m3));
+if (m3.includes('1 reviews')) throw new Error('must not show "1 reviews", got: ' + JSON.stringify(m3));
+
+const twoReviews = { key: 'v2', kind: 'active', status: 'reviewing', issueLabel: '#4', runId: 'v2id', issueNumber: 4, reviewCount: 2 };
+const m4 = helpers.renderRunMeta(twoReviews);
+if (!m4.includes('2 reviews')) throw new Error('expected "2 reviews" for count=2, got: ' + JSON.stringify(m4));
+
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalDiffCreateRunRow_BatchAndRetryOnSeparateLines asserts the DOM
+// row produced by SandmanPortalDiff.insertRunRow renders the new three-line
+// meta: Batch:, Run:, then the trailing counter line.
 func TestPortalDiffCreateRunRow_BatchAndRetryOnSeparateLines(t *testing.T) {
 	js := `const body = makeMockBody();
 const batchOnlyRun = { key: 'run-1', kind: 'active', status: 'running', issueLabel: '#42', runId: 'a0c19', issueNumber: 42, batchKey: 'batch-abc' };
@@ -115,55 +224,19 @@ const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, batchOnlyRun, opts);
 const meta = created.row.querySelector('[data-cell="title"]').children[0].children[1];
-// Batch should appear before Run identifier (issue #1348)
-if (!meta.textContent.includes('Run: a0c19')) throw new Error('expected Run: line, got ' + JSON.stringify(meta.textContent));
-if (!meta.textContent.includes('Batch: batch-abc')) throw new Error('expected Batch: line, got ' + JSON.stringify(meta.textContent));
-// Verify Batch comes BEFORE Run on separate lines (Batch first, Run second)
-if (meta.textContent.includes('Batch: batch-abc\nRun: a0c19')) {
-  // This is the correct format per issue #1348 - Batch above Run
-} else {
-  throw new Error('expected Batch: before Run: on separate lines, got ' + JSON.stringify(meta.textContent));
-}
+const lines = meta.textContent.split(String.fromCharCode(10));
+if (lines.length !== 2) throw new Error('expected exactly 2 lines (Batch, Run) for batch-only row, got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: batch-abc') throw new Error('expected Batch line first, got: ' + JSON.stringify(meta.textContent));
+if (lines[1] !== 'Run: a0c19') throw new Error('expected Run line second, got: ' + JSON.stringify(meta.textContent));
 
-// Now test with batch + retry/review
 const batchWithRetry = { key: 'run-2', kind: 'active', status: 'reviewing', issueLabel: '#43', runId: 'b1c2d', issueNumber: 43, batchKey: 'batch-xyz', retriesDone: 2, retriesTotal: 2, reviewCount: 1, reviewVerdict: 'Approved' };
 SandmanPortalDiff.insertRunRow(body, batchWithRetry, opts);
 const metaWithRetry = body.querySelector('tr[data-run-key="run-2"]').querySelector('[data-cell="title"]').children[0].children[1];
-// Should have Batch+summary on line 1, Run on line 2 (Batch above Run per issue #1348)
-if (!metaWithRetry.textContent.includes('Run: b1c2d')) throw new Error('expected Run: line, got ' + JSON.stringify(metaWithRetry.textContent));
-if (!metaWithRetry.textContent.includes('Batch: batch-xyz')) throw new Error('expected Batch: line, got ' + JSON.stringify(metaWithRetry.textContent));
-// Batch+summary should come before Run
-const batchSummaryLine = 'Batch: batch-xyz - 2 retries - 1 review - Approved';
-if (!metaWithRetry.textContent.startsWith(batchSummaryLine)) {
-  throw new Error('expected Batch+summary on first line, got ' + JSON.stringify(metaWithRetry.textContent));
-}
-if (!metaWithRetry.textContent.includes(batchSummaryLine + '\nRun: b1c2d')) {
-  throw new Error('expected Batch+summary line followed by Run line, got ' + JSON.stringify(metaWithRetry.textContent));
-}
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestRenderRunMeta_StackedBatchWithRetrySummary(t *testing.T) {
-	js := `const run = { key: 'run-2', kind: 'active', status: 'reviewing', issueLabel: '#43', runId: 'b1c2d', issueNumber: 43, batchKey: 'batch-xyz', retriesDone: 2, retriesTotal: 2, reviewCount: 1, reviewVerdict: 'Approved' };
-const meta = helpers.renderRunMeta(run);
-const lines = meta.split('\n');
-if (lines.length !== 2) throw new Error('expected exactly 2 lines (Batch summary, Run), got: ' + JSON.stringify(lines));
-if (!lines[0].startsWith('Batch: batch-xyz - 2 retries - 1 review - Approved')) throw new Error('expected batch summary first, got: ' + JSON.stringify(lines));
-if (lines[1] !== 'Run: b1c2d') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestRenderRunMeta_StackedBatchOnly(t *testing.T) {
-	js := `const run = { key: 'run-1', kind: 'active', status: 'running', issueLabel: '#42', runId: 'a0c19', issueNumber: 42, batchKey: 'batch-abc' };
-const meta = helpers.renderRunMeta(run);
-const lines = meta.split('\n');
-if (lines.length !== 2) throw new Error('expected exactly 2 lines (Batch, Run), got: ' + JSON.stringify(lines));
-if (lines[0] !== 'Batch: batch-abc') throw new Error('expected Batch line first, got: ' + JSON.stringify(lines));
-if (lines[1] !== 'Run: a0c19') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
+const retryLines = metaWithRetry.textContent.split(String.fromCharCode(10));
+if (retryLines.length !== 3) throw new Error('expected exactly 3 lines for fully-loaded row, got: ' + JSON.stringify(retryLines));
+if (retryLines[0] !== 'Batch: batch-xyz') throw new Error('expected Batch line first, got: ' + JSON.stringify(metaWithRetry.textContent));
+if (retryLines[1] !== 'Run: b1c2d') throw new Error('expected Run line second, got: ' + JSON.stringify(metaWithRetry.textContent));
+if (retryLines[2] !== '2 retries - 1 review - Approved') throw new Error('expected joined counters on trailing line, got: ' + JSON.stringify(metaWithRetry.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -2248,26 +2321,25 @@ const renderStatusBadge = (run) => {
 };
 const renderRunMeta = (run) => {
   const lines = [];
-  const summary = [];
+  const counterParts = [];
   if (run.batchKey) {
-    summary.push('Batch: ' + run.batchKey);
+    lines.push('Batch: ' + run.batchKey);
   }
   if (Number(run.retriesDone || 0) > 0) {
     const count = Number(run.retriesDone || 0);
-    summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
+    counterParts.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
   }
   if (Number(run.reviewCount || 0) > 0) {
     const count = Number(run.reviewCount || 0);
-    summary.push(count + ' review' + (count === 1 ? '' : 's'));
-    if (run.reviewVerdict) summary.push(run.reviewVerdict);
+    const reviewPart = count + ' review' + (count === 1 ? '' : 's');
+    if (run.reviewVerdict) {
+      counterParts.push(reviewPart + ' - ' + run.reviewVerdict);
+    } else {
+      counterParts.push(reviewPart);
+    }
   }
-  if (run.batchKey) {
-    if (summary.length) lines.push(summary.join(' - '));
-    if (run.runId) lines.push('Run: ' + run.runId);
-  } else {
-    if (run.runId) lines.push('Run: ' + run.runId);
-    if (summary.length) lines.push(summary.join(' - '));
-  }
+  if (run.runId) lines.push('Run: ' + run.runId);
+  if (counterParts.length) lines.push(counterParts.join(' - '));
   return lines.length ? lines.join('\n') : 'Run';
 };
 const renderTerminalContent = (text) => {
