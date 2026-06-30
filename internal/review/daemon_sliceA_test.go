@@ -255,8 +255,8 @@ var _ = struct{}{}
 
 // fakeInvalidator is a no-op test double for SeenCacheInvalidator.
 type fakeInvalidator struct {
-	onMark    func(prNumber int, commentID string)
-	onForget  func(prNumber int, commentID string)
+	onMark   func(prNumber int, commentID string)
+	onForget func(prNumber int, commentID string)
 }
 
 func (f fakeInvalidator) MarkTerminalSeen(prNumber int, commentID string) {

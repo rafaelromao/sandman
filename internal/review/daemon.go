@@ -90,8 +90,8 @@ type Daemon struct {
 	// this cache instead of re-scanning the index on every tick
 	// (issue #1480 slice A). The cache is advisory: the on-disk
 	// review-state.json files remain source of truth.
-	seenCache    map[int]map[string]bool
-	seenCacheMu  sync.RWMutex
+	seenCache   map[int]map[string]bool
+	seenCacheMu sync.RWMutex
 }
 
 // New returns a Daemon configured with the project defaults for the
