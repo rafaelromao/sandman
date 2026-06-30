@@ -73,7 +73,6 @@ type Renderer interface {
 // them without keeping `launchReview` on the critical path.
 type pendingReviewEntry struct {
 	commentID   string
-	focus       string
 	since       time.Time
 	reviewState string // path to <runDir>/review-state.json for the launched run
 	storeRef    *ReviewStateStore
@@ -576,7 +575,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 		if err := state.MarkSeen(comment.ID, "pending"); err != nil {
 			d.logf("mark comment %s pending: %v", comment.ID, err)
 		}
-		d.registerPendingReview(prNumber, comment.ID, focus, d.now(), statePath, state)
+		d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, state)
 	} else {
 		if persisted == nil {
 			state.Release(comment.ID)
@@ -904,12 +903,11 @@ func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 // registerPendingReview records a new pending review entry after
 // launchReview returned successfully. processPR calls this once the
 // per-run ReviewStateStore has been written with status=pending.
-func (d *Daemon) registerPendingReview(prNumber int, commentID, focus string, since time.Time, statePath string, store *ReviewStateStore) {
+func (d *Daemon) registerPendingReview(prNumber int, commentID string, since time.Time, statePath string, store *ReviewStateStore) {
 	d.pendingMu.Lock()
 	defer d.pendingMu.Unlock()
 	d.pendingReviews[prNumber] = append(d.pendingReviews[prNumber], pendingReviewEntry{
 		commentID:   commentID,
-		focus:       focus,
 		since:       since,
 		reviewState: statePath,
 		storeRef:    store,
