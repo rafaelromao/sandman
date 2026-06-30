@@ -345,9 +345,11 @@ func (d *Daemon) effectiveModel() string {
 }
 
 // effectiveParallel returns the parallel value to use for this run.
-// Precedence: the CLI override (Daemon.Parallel when ParallelSet is
-// true and Parallel > 0) wins; otherwise d.Config.EffectiveReviewParallel().
-// Mirrors the field-passing pattern used by effectiveAgent / effectiveModel.
+// Precedence matches effectiveAgent/effectiveModel: the CLI override
+// wins when positive (Daemon.ParallelSet && Daemon.Parallel > 0);
+// otherwise d.Config.EffectiveReviewParallel(). Parallel <= 0 falls
+// through because parallel=0 means "unlimited" in the orchestrator and
+// must not be treated as an explicit override.
 func (d *Daemon) effectiveParallel() int {
 	if d.ParallelSet && d.Parallel > 0 {
 		return d.Parallel

@@ -755,6 +755,12 @@ func TestReviewCmd_DaemonModePropagatesAgentFlag(t *testing.T) {
 			wantAgent:   "",
 			wantAgentRx: true,
 		},
+		{
+			name:        "flag zero (passed with empty value)",
+			args:        []string{"--agent", ""},
+			wantAgent:   "",
+			wantAgentRx: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -808,6 +814,12 @@ func TestReviewCmd_DaemonModePropagatesModelFlag(t *testing.T) {
 		{
 			name:        "flag empty (not passed)",
 			args:        []string{},
+			wantModel:   "",
+			wantModelRx: true,
+		},
+		{
+			name:        "flag zero (passed with empty value)",
+			args:        []string{"--model", ""},
 			wantModel:   "",
 			wantModelRx: true,
 		},
@@ -871,7 +883,7 @@ func TestReviewCmd_DaemonModePropagatesParallelFlag(t *testing.T) {
 			name:            "flag zero",
 			args:            []string{"--parallel", "0"},
 			wantParallel:    0,
-			wantParallelSet: false,
+			wantParallelSet: true,
 		},
 	}
 	for _, tt := range tests {

@@ -22,9 +22,7 @@ import (
 
 // reviewDaemonRunner is the function used to build and run the review
 // daemon. Tests override it to avoid actually polling GitHub.
-var reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, parallel int, parallelSet bool) error {
-	return runReviewDaemon(ctx, deps, cfg, sandbox, cc, ccSet, mc, mcSet, agent, model, parallel, parallelSet)
-}
+var reviewDaemonRunner = runReviewDaemon
 
 // NewReviewCmd creates the `sandman review` command. When PR numbers
 // are provided as positional args the command runs in one-shot mode
@@ -75,7 +73,8 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			if len(args) > 0 {
 				return runReviewOneShotMulti(cmd, deps, cfg, args, parallelFlag)
 			}
-			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag, parallelFlag, parallelFlag > 0)
+			parallelSet := cmd.Flags().Changed("parallel")
+			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag, parallelFlag, parallelSet)
 		},
 	}
 

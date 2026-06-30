@@ -177,6 +177,16 @@ func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *co
 	return d, buf, dir
 }
 
+func newDaemonForTestWithParallel(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *config.Config, parallel int, parallelSet bool) (*Daemon, *lockedBuffer, string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Chdir(dir)
+	buf := &lockedBuffer{}
+	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, parallel, parallelSet)
+	d.PollInterval = 0
+	return d, buf, dir
+}
+
 // TestDaemon_ProcessPRCommentsSortedByCreatedAt verifies that only the
 // newest unseen trigger is processed when multiple trigger comments exist
 // with different creation times.
@@ -458,13 +468,11 @@ func TestDaemon_ParallelOverrideCapsSlotPool(t *testing.T) {
 		<-release
 		return &batch.Result{}, nil
 	})
-	dir := t.TempDir()
-	t.Chdir(dir)
-	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
+	d, _, _ := newDaemonForTestWithParallel(t, gh, runner, &config.Config{
 		DefaultReviewAgent:    "opencode",
 		DefaultReviewModel:    "opencode/foo",
 		DefaultReviewParallel: 1,
-	}, &lockedBuffer{}, 2, true)
+	}, 2, true)
 	d.Clock = func() time.Time { return now }
 
 	done := make(chan error, 1)
@@ -567,13 +575,9 @@ func TestDaemon_LaunchReviewPropagatesAgentModelParallelOverrides(t *testing.T) 
 			"claude": {Preset: "claude", Command: "claude"},
 		},
 	}
-	dir := t.TempDir()
-	t.Chdir(dir)
-	d := New(dir, gh, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 5, true)
+	d, _, _ := newDaemonForTestWithParallel(t, gh, runner, cfg, 5, true)
 	d.Agent = "claude"
 	d.Model = "anthropic/claude-sonnet-4"
-	d.Parallel = 5
-	d.ParallelSet = true
 
 	if err := d.tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
