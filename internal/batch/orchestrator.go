@@ -693,6 +693,18 @@ func NewBadgeHooker(w io.Writer) BadgeHooker {
 	return newDefaultBadgeHooker(&defaultPRLister{gh: realGhCommander{}}, sandmanRunner, w)
 }
 
+// NewBadgeHookerWith returns a BadgeHooker that uses the provided
+// SandmanRunner and PRLister implementations. It exists so e2e tests can
+// drive the production defaultBadgeHooker end-to-end without shelling out
+// to the sandman binary resolved from os.Executable() (which inside a test
+// binary resolves to the test binary itself and is unusable as sandman).
+//
+// Production wiring continues to use NewBadgeHooker(io.Writer) — its nop
+// fallback when the sandman binary is unresolved is preserved.
+func NewBadgeHookerWith(w io.Writer, runner SandmanRunner, lister PRLister) BadgeHooker {
+	return newDefaultBadgeHooker(lister, runner, w)
+}
+
 // trackShutdownSupervisor records a done channel returned by
 // superviseShutdown so RunBatch can fan in on the actual process exit.
 func (o *Orchestrator) trackShutdownSupervisor(done <-chan struct{}) {
