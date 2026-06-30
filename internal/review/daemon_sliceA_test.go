@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,11 +50,18 @@ func (s *sliceASeenLoader) readReviewState(runDir string) (batchindex.ReviewStat
 // seedPriorReviewEntry writes a prior-batch review-state.json plus an
 // index entry so cache hydration has a (prNumber, commentID) pair to
 // discover. Used by the slice-A regression tests.
+//
+// The on-disk layout matches the canonical per-row shape from
+// ADR-0030 / issue #1551: `<batch>/runs/<rowID>/run.json` and
+// `<batch>/runs/<rowID>/review-state.json`. The legacy
+// `runs/review/` alias folder is no longer used by the hydration
+// path.
 func seedPriorReviewEntry(t *testing.T, baseDir, batchID string, prNumber int, commentID string) {
 	t.Helper()
 	batchesDir := filepath.Join(baseDir, "batches")
 	batchPath := filepath.Join(batchesDir, batchID)
-	runDir := filepath.Join(batchPath, "runs", "review")
+	rowID := deriveReviewRowID(batchID, prNumber)
+	runDir := filepath.Join(batchPath, "runs", rowID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatalf("create prior run dir: %v", err)
 	}
@@ -65,6 +73,17 @@ func seedPriorReviewEntry(t *testing.T, baseDir, batchID string, prNumber int, c
 	}
 	if err := batchindex.WriteReviewState(runDir, state); err != nil {
 		t.Fatalf("write prior review state: %v", err)
+	}
+	manifest := batchindex.RunManifest{
+		RunID:     rowID,
+		BatchID:   batchID,
+		PR:        prNumber,
+		Kind:      batchindex.KindReview,
+		CreatedAt: time.Now(),
+		Status:    batchindex.RunManifestStatusActive,
+	}
+	if err := batchindex.WriteManifest(runDir, manifest); err != nil {
+		t.Fatalf("write prior run manifest: %v", err)
 	}
 	idxPath := daemon.BatchesIndexPath(baseDir)
 	idx, err := batchindex.Load(idxPath)
@@ -80,6 +99,20 @@ func seedPriorReviewEntry(t *testing.T, baseDir, batchID string, prNumber int, c
 	if err := idx.Save(idxPath); err != nil {
 		t.Fatalf("save batches index: %v", err)
 	}
+}
+
+// deriveReviewRowID computes the per-row RunID a review launch would
+// have minted for a prior batch whose batch directory is `batchID`,
+// given that the PR does not link an issue (the conservative shape
+// used by tests that pre-seed prior review state).
+func deriveReviewRowID(batchID string, prNumber int) string {
+	parts := strings.SplitN(batchID, "-", 3)
+	if len(parts) < 3 {
+		return batchID
+	}
+	sid := parts[0]
+	ts := parts[1]
+	return fmt.Sprintf("%s-%s-PR%d", sid, ts, prNumber)
 }
 
 // TestDaemon_SeenCacheHydratedAtConstruction pins the slice-A behavior

@@ -14,7 +14,95 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/runid"
 )
+
+// seedPriorCanonicalReview seeds the canonical per-row review folder
+// shape on disk for a prior review batch so hydration tests can
+// exercise the loadSeenCache path against the layout introduced by
+// issue #1551 / ADR-0030. The folder shape is
+// `<batch>/runs/<rowID>/{run.json,review-state.json}` where
+// `<rowID>` matches what `reviewRunIDFor` would mint for the same
+// (prNumber, linkedIssue) pair.
+//
+// When `rowIDOverride` is non-empty the helper uses that directory
+// name verbatim; otherwise it derives the rowID from the batch ID by
+// parsing out the `<sid>-<ts>-` prefix and using
+// `reviewRunIDFor(prNumber, 0, ts, sid)` so the test's folder shape
+// matches what a launched review would actually produce.
+func seedPriorCanonicalReview(t *testing.T, baseDir, batchID string, prNumber int, commentID string) {
+	t.Helper()
+	rowID := runid.NewRunID(runid.KindReview, "PR"+itoa(0, prNumber), parseTSFromBatchID(batchID), parseSIDFromBatchID(batchID))
+	if rowID == "" {
+		t.Fatalf("could not derive rowID from batchID %q", batchID)
+	}
+	seedPriorCanonicalReviewWith(t, baseDir, batchID, rowID, prNumber, commentID)
+}
+
+func seedPriorCanonicalReviewWith(t *testing.T, baseDir, batchID, rowID string, prNumber int, commentID string) {
+	t.Helper()
+	batchesDir := filepath.Join(baseDir, "batches")
+	batchPath := filepath.Join(batchesDir, batchID)
+	runDir := filepath.Join(batchPath, "runs", rowID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("create canonical run dir: %v", err)
+	}
+	state := batchindex.ReviewState{
+		PR: prNumber,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: commentID, Status: "success", Timestamp: time.Now()},
+		},
+	}
+	if err := batchindex.WriteReviewState(runDir, state); err != nil {
+		t.Fatalf("write review state: %v", err)
+	}
+	manifest := batchindex.RunManifest{
+		RunID:     rowID,
+		BatchID:   batchID,
+		PR:        prNumber,
+		Kind:      batchindex.KindReview,
+		CreatedAt: time.Now(),
+		Status:    batchindex.RunManifestStatusActive,
+	}
+	if err := batchindex.WriteManifest(runDir, manifest); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+	idxPath := daemon.BatchesIndexPath(baseDir)
+	idx, err := batchindex.Load(idxPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("load batches index: %v", err)
+	}
+	if idx == nil {
+		idx = &batchindex.Index{Version: batchindex.IndexVersion}
+	}
+	idx.Add(batchindex.Entry{
+		ID:        batchID,
+		Path:      batchPath,
+		Kind:      batchindex.KindReview,
+		Status:    batchindex.StatusActive,
+		CreatedAt: time.Now(),
+		PR:        prNumber,
+	})
+	if err := idx.Save(idxPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
+	}
+}
+
+func parseSIDFromBatchID(batchID string) string {
+	parts := strings.SplitN(batchID, "-", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[0]
+}
+
+func parseTSFromBatchID(batchID string) string {
+	parts := strings.SplitN(batchID, "-", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
+}
 
 // TestDaemon_ReviewRunIDAndFolder_AreCanonical pins the headline
 // behavior of issue #1551 and ADR-0030: the review daemon's launch
