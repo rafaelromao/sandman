@@ -3783,3 +3783,18 @@ console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
 }
+
+func TestPortalDiffSubjectRunValue_QueuedAndBlockedRowsReturnEmptyForSyntheticRunID(t *testing.T) {
+	js := `const cases = [
+  { status: 'queued', runId: 'abcd-260618113825-issue-42' },
+  { status: 'blocked', runId: 'abcd-260618113825-issue-43' },
+];
+for (const tc of cases) {
+  const run = { key: tc.runId, runId: tc.runId, batchKey: 'abcd-260618113825', kind: 'active', status: tc.status };
+  const value = SandmanPortalDiff.subjectRunValue(run);
+  if (value !== '') throw new Error('expected empty subjectRunValue for ' + tc.status + ' row with synthetic RunID, got ' + JSON.stringify(value));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
