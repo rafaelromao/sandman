@@ -12,13 +12,16 @@ type RunState struct {
 	RunID    string
 	Started  Event
 	Finished *Event
-	// events is the raw, ordered list of events for the run as they
-	// appeared in events.jsonl (RunID == this run, in input order). It is
-	// populated by ProjectRunStates so state-level helpers like
-	// LiveAttempt and LastRetryReason can walk the timeline without
-	// re-reading the file. Unexported because the public surface is the
-	// helper methods — callers should never mutate the slice.
-	events []Event
+	// Retries holds every run.retry event emitted against this run, in
+	// input (events.jsonl) order. It is the projection's view of the
+	// retry timeline; state-level helpers (LiveAttempt,
+	// LastRetryReason) and any future consumer (e.g. the active-row
+	// chip) read it directly so both code paths agree. The slice is
+	// append-only — run.started and run.continued reset Finished but
+	// never reset Retries — because the orchestrator's emit ordering
+	// guarantees a run.retry only appears after the matching
+	// run.started (see ADR-0035).
+	Retries []Event
 }
 
 // ProjectRunStates folds events into run states keyed by run ID.
@@ -41,7 +44,6 @@ func ProjectRunStates(events []Event) []RunState {
 			continue
 		}
 		state := getOrCreate(event.RunID)
-		state.events = append(state.events, event)
 		switch event.Type {
 		case "run.started", "run.continued":
 			state.Started = event
@@ -57,6 +59,8 @@ func ProjectRunStates(events []Event) []RunState {
 		case "run.finished", "run.aborted", "run.cancelled":
 			finished := event
 			state.Finished = &finished
+		case "run.retry":
+			state.Retries = append(state.Retries, event)
 		}
 	}
 
@@ -240,15 +244,13 @@ func (r RunState) RetriesDone() int {
 }
 
 // LiveAttempt returns the highest `attempt` value across the run's
-// `run.retry` events, walking the raw event list so the answer is
-// meaningful before `run.finished` is written. The "most recent" ordering
-// rule used by LastRetryReason (largest Timestamp, ties broken by
-// last-encountered in events.jsonl) is the same iteration order; we keep
-// the highest attempt seen, not the last-seen one, so a non-monotonic
+// `run.retry` events, reading from the projected Retries slice so the
+// answer is meaningful before `run.finished` is written. We keep the
+// highest attempt seen, not the last-seen one, so a non-monotonic
 // attempt value still surfaces the peak. Returns 0 when no retries exist.
 func (r RunState) LiveAttempt() int {
 	best := 0
-	for _, event := range r.retryEvents() {
+	for _, event := range r.Retries {
 		v, ok := payloadInt(event.Payload, "attempt")
 		if !ok {
 			continue
@@ -262,19 +264,16 @@ func (r RunState) LiveAttempt() int {
 
 // LastRetryReason returns the `reason` of the most recent `run.retry`
 // event. "Most recent" means the event with the largest Timestamp; ties
-// are broken by last-encountered in the events.jsonl file order (which is
-// the order in ProjectRunStates saw the events). Returns "" when no
-// retries exist, or when the most recent retry payload omits the
-// `reason` key (the current orchestrator shape; this is intentional —
-// the helper is reader-side, and the writer-side fix is a separate
-// concern).
+// are broken by last-encountered in the events.jsonl file order (which
+// is the order in ProjectRunStates saw the events, and the order the
+// Retries slice is built in). Returns "" when no retries exist, or when
+// the most recent retry payload omits the `reason` key (the current
+// orchestrator shape; this is intentional — the helper is reader-side,
+// and the writer-side fix is a separate concern).
 func (r RunState) LastRetryReason() string {
 	var latest *Event
-	for i := range r.events {
-		event := r.events[i]
-		if event.Type != "run.retry" {
-			continue
-		}
+	for i := range r.Retries {
+		event := r.Retries[i]
 		if latest == nil || !event.Timestamp.Before(latest.Timestamp) {
 			copy := event
 			latest = &copy
@@ -288,19 +287,6 @@ func (r RunState) LastRetryReason() string {
 	}
 	v, _ := latest.Payload["reason"].(string)
 	return v
-}
-
-// retryEvents returns the run.retry events for this run in input order.
-// ProjectRunStates preserves events.jsonl file order, which matches
-// append-only monotonic timestamps in the normal case.
-func (r RunState) retryEvents() []Event {
-	retries := make([]Event, 0)
-	for _, event := range r.events {
-		if event.Type == "run.retry" {
-			retries = append(retries, event)
-		}
-	}
-	return retries
 }
 
 func payloadString(payload map[string]any, key string) (string, bool) {

@@ -796,3 +796,110 @@ func TestProjectRunStates_LastRetryReason_FinishedRunStillReturnsRetryReason(t *
 		t.Fatalf("LastRetryReason = %q, want %q (helper walks raw event list, independent of Finished)", got, "agent-stalled")
 	}
 }
+
+func TestProjectRunStates_RetainsRetryEvents(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	firstRetryAt := startedAt.Add(2 * time.Minute)
+	secondRetryAt := startedAt.Add(5 * time.Minute)
+	finishedAt := startedAt.Add(10 * time.Minute)
+
+	firstRetryPayload := map[string]any{
+		"attempt":         2,
+		"max_attempts":    3,
+		"previous_status": "failure",
+		"reason":          "agent-stalled",
+		"branch":          "sandman/42-fix",
+	}
+	secondRetryPayload := map[string]any{
+		"attempt":         3,
+		"max_attempts":    3,
+		"previous_status": "failure",
+		"reason":          "build-failed",
+		"branch":          "sandman/42-fix",
+	}
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-retry-events", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: firstRetryAt, RunID: "run-retry-events", Issue: 42, Payload: firstRetryPayload},
+		{Type: "run.retry", Timestamp: secondRetryAt, RunID: "run-retry-events", Issue: 42, Payload: secondRetryPayload},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-retry-events", Issue: 42, Payload: map[string]any{
+			"status":        "success",
+			"branch":        "sandman/42-fix",
+			"retries_total": 3,
+			"retries_done":  2,
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if len(run.Retries) != 2 {
+		t.Fatalf("Retries len = %d, want 2 (every run.retry must be retained)", len(run.Retries))
+	}
+	if !run.Retries[0].Timestamp.Equal(firstRetryAt) {
+		t.Fatalf("Retries[0].Timestamp = %s, want %s", run.Retries[0].Timestamp, firstRetryAt)
+	}
+	if !run.Retries[1].Timestamp.Equal(secondRetryAt) {
+		t.Fatalf("Retries[1].Timestamp = %s, want %s", run.Retries[1].Timestamp, secondRetryAt)
+	}
+	if got, _ := payloadInt(run.Retries[0].Payload, "attempt"); got != 2 {
+		t.Fatalf("Retries[0].Payload attempt = %d, want 2", got)
+	}
+	if got, _ := payloadString(run.Retries[0].Payload, "reason"); got != "agent-stalled" {
+		t.Fatalf("Retries[0].Payload reason = %q, want %q", got, "agent-stalled")
+	}
+	if got, _ := payloadInt(run.Retries[1].Payload, "attempt"); got != 3 {
+		t.Fatalf("Retries[1].Payload attempt = %d, want 3", got)
+	}
+	if got, _ := payloadString(run.Retries[1].Payload, "reason"); got != "build-failed" {
+		t.Fatalf("Retries[1].Payload reason = %q, want %q", got, "build-failed")
+	}
+}
+
+func TestProjectRunStates_Retries_AreAppendOnlyAcrossRunContinued(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	continuedAt := startedAt.Add(7 * time.Minute)
+	firstRetryAt := startedAt.Add(2 * time.Minute)
+	secondRetryAt := startedAt.Add(9 * time.Minute)
+	finishedAt := startedAt.Add(15 * time.Minute)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: firstRetryAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{
+			"attempt":         2,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"branch":          "sandman/42-fix",
+		}},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: secondRetryAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{
+			"attempt":         3,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"branch":          "sandman/42-fix",
+		}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{
+			"status":        "success",
+			"branch":        "sandman/42-fix",
+			"retries_total": 3,
+			"retries_done":  2,
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if len(run.Retries) != 2 {
+		t.Fatalf("Retries len = %d, want 2 (run.continued must not reset Retries)", len(run.Retries))
+	}
+	if !run.Retries[0].Timestamp.Equal(firstRetryAt) {
+		t.Fatalf("Retries[0].Timestamp = %s, want %s", run.Retries[0].Timestamp, firstRetryAt)
+	}
+	if !run.Retries[1].Timestamp.Equal(secondRetryAt) {
+		t.Fatalf("Retries[1].Timestamp = %s, want %s", run.Retries[1].Timestamp, secondRetryAt)
+	}
+}
