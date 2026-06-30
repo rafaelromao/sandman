@@ -10,8 +10,8 @@ The orchestrator writes one `run.retry` event at the top of every retry iteratio
 
 The schema is fixed in `internal/batch/orchestrator.go::logRetry` and consumed by:
 
-- **`internal/events/run_state.go::RetriesTotal` / `RetriesDone`** — the projection that fold the raw `run.retry` events into the terminal `run.finished` payload's `retries_done` count, used by `docs/usage/monitoring.md` and the portal's finished-row meta line.
-- **`events.RunState.LiveAttempt()` / `LastRetryReason()`** (slice 1, #1499) — the new state-level helpers that surface the live attempt count and the most recent retry reason for *active* runs.
+- **`internal/events/run_state.go::RetriesTotal` / `RetriesDone`** — read `Finished.Payload["retries_total"]` / `["retries_done"]` verbatim. The orchestrator pre-computes both at finish time as `result.RetriesTotal - 1` for `retries_done` and `req.Retries` for `retries_total`. There is no fold of raw `run.retry` events into the finished payload; the count is written once at `run.finished` time.
+- **`events.RunState.LiveAttempt()` / `LastRetryReason()`** (slice 1, #1499) — the new state-level helpers that surface the live attempt count and the most recent retry reason for *active* runs. Slice 2's `Retries []Event` projection (slice 2, #1500) feeds the active-row walk.
 - **`internal/cmd/portal.html::renderRunMeta`** and the client-side `SandmanPortalDiff` (slice 4, #1503) — the new "attempts N retries" chip on active rows, plus the reason tooltip / subtext.
 - **Operator forensics** — anyone reading `.sandman/events.jsonl` to debug a run.
 
@@ -32,6 +32,8 @@ The `reason` field on `run.retry` payload is a closed string drawn from this ini
 | `manual` | A retry that was triggered by an explicit operator action outside the orchestrator's normal supervisor path — e.g. a `sandman run --continue` against a run whose previous iteration ended in a terminal non-success state. |
 
 This is the slice-3 starting set. New values are added only by amending this ADR with a one-line entry in the table above; silent additions are forbidden.
+
+**Vocabulary → emit-site mapping** is the slice-3 implementation's job (per slice 3 issue #1501): there is currently exactly one `logRetry` emit site (`internal/batch/orchestrator.go:1783`) and slice 3 will lock which `result.Status` and trigger condition maps to each value above. This ADR records the contract; slice 3 is responsible for verifying that the chosen value at each emit site matches one of the rows.
 
 ### Schema (the six fields)
 
