@@ -2626,6 +2626,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           state.tabs[subjectKey] = tab;
           state.expandedRunKey = subjectKey;
           persistPortalViewState();
+          if (tab === 'events') {
+            loadRunDetail(subjectKey);
+          }
           scheduleRender();
         }
         return;
