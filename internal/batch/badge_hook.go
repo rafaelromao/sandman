@@ -98,7 +98,7 @@ type prPayloadBody struct {
 }
 
 type SandmanRunner interface {
-	RunPrompt(ctx context.Context, promptText string) (prURL string, err error)
+	RunPrompt(ctx context.Context, promptText, branch string) (prURL string, err error)
 }
 
 type defaultSandmanRunner struct {
@@ -124,8 +124,14 @@ func lookSandman() (string, error) {
 	return path, nil
 }
 
-func (r *defaultSandmanRunner) RunPrompt(ctx context.Context, promptText string) (string, error) {
-	cmd := exec.CommandContext(ctx, r.bin, "run", "--prompt", promptText)
+// badgeBranchName is the stable sidecar branch used for the Built with
+// Sandman badge PR. It is the contract honored by the post-batch badge
+// hook so that re-runs do not produce timestamped prompt-only branches.
+const badgeBranchName = "sandman/built-with-sandman"
+
+func (r *defaultSandmanRunner) RunPrompt(ctx context.Context, promptText, branch string) (string, error) {
+	args := []string{"run", "--prompt", promptText, "--branch", branch}
+	cmd := exec.CommandContext(ctx, r.bin, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("sandman run --prompt: %w\n%s", err, out)
@@ -194,7 +200,7 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 	badgePromptTemplate := prompt.DefaultBadgePrompt()
 	badgePromptText := strings.ReplaceAll(badgePromptTemplate, "{{MERGED_PRS}}", mergedPRsText)
 
-	prURL, err := h.sandmanRunner.RunPrompt(ctx, badgePromptText)
+	prURL, err := h.sandmanRunner.RunPrompt(ctx, badgePromptText, badgeBranchName)
 	if err != nil {
 		fmt.Fprintf(h.writer, "Badge PR suggestion skipped: %v\n", err)
 		return

@@ -119,6 +119,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			promptFlag, _ := cmd.Flags().GetString("prompt")
 			templateFlag, _ := cmd.Flags().GetString("template")
+			branchFlag, _ := cmd.Flags().GetString("branch")
 			modelFlag, _ := cmd.Flags().GetString("model")
 			agentFlag, _ := cmd.Flags().GetString("agent")
 			promptArgsRaw, _ := cmd.Flags().GetStringArray("prompt-arg")
@@ -558,6 +559,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				StrandedReconcile:          reconcileStranded,
 				PromptConfig: prompt.RenderConfig{
+					Branch:           strings.TrimSpace(branchFlag),
 					PromptFlag:       promptFlag,
 					TemplateFlag:     templateFlag,
 					ReviewCommand:    reviewCommand,
@@ -719,6 +721,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")
 	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
+	cmd.Flags().String("branch", "", "Branch name for prompt-only runs; overrides the default sandman/<slug>-<timestamp> shape (prompt-only mode only)")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only runs; may contain alphanumeric characters, hyphens, and underscores (max 64 chars); cannot be combined with issue selection")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode)")

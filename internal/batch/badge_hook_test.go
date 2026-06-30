@@ -41,10 +41,12 @@ type fakeSandmanRunner struct {
 	prURL          string
 	err            error
 	capturedPrompt string
+	capturedBranch string
 }
 
-func (f *fakeSandmanRunner) RunPrompt(ctx context.Context, promptText string) (string, error) {
+func (f *fakeSandmanRunner) RunPrompt(ctx context.Context, promptText, branch string) (string, error) {
 	f.capturedPrompt = promptText
+	f.capturedBranch = branch
 	return f.prURL, f.err
 }
 
@@ -125,6 +127,9 @@ func TestMaybeSuggestBadge_TriggersChildSandman(t *testing.T) {
 
 	if fakeRunner.capturedPrompt == "" {
 		t.Errorf("expected prompt run, got no prompt")
+	}
+	if fakeRunner.capturedBranch != "sandman/built-with-sandman" {
+		t.Errorf("expected branch=sandman/built-with-sandman, got %q", fakeRunner.capturedBranch)
 	}
 }
 
@@ -246,5 +251,36 @@ func TestMaybeSuggestBadge_PromptContainsMergedPRs(t *testing.T) {
 	}
 	if strings.Contains(fakeRunner.capturedPrompt, "{{MERGED_PRS}}") {
 		t.Errorf("expected prompt to NOT contain unsubstituted {{MERGED_PRS}}, got: %s", fakeRunner.capturedPrompt)
+	}
+}
+
+func TestMaybeSuggestBadge_PromptBodyRationaleReferencesMergedPRs(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{
+			{Number: 10, HeadRefName: "sandman/feat", Title: "Add login"},
+		},
+		hasBadge: false,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/5"}
+	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+
+	results := []AgentRunResult{{Status: "success"}}
+
+	h.MaybeSuggestBadge(context.Background(), results)
+
+	prompt := fakeRunner.capturedPrompt
+	if !strings.Contains(prompt, "<!-- sandman-badge-pr -->") {
+		t.Fatalf("expected prompt to contain marker comment, got:\n%s", prompt)
+	}
+	prCreationIdx := strings.Index(prompt, "## PR creation")
+	if prCreationIdx < 0 {
+		t.Fatalf("expected prompt to contain '## PR creation' section, got:\n%s", prompt)
+	}
+	bodySection := prompt[prCreationIdx:]
+	if !strings.Contains(bodySection, "<!-- sandman-badge-pr -->") {
+		t.Fatalf("expected marker comment in ## PR creation section, got section:\n%s", bodySection)
+	}
+	if !strings.Contains(bodySection, "Add login (#10)") {
+		t.Fatalf("expected merged PR rationale to appear in PR body section, got section:\n%s", bodySection)
 	}
 }

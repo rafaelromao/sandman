@@ -1591,130 +1591,45 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 	}
 }
 
+// TestDaemon_VerifyReviewPosted_FailsWhenNoNewComments has been
+// refactored into TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing
+// in daemon_sliceD_test.go (issue #1482 slice D): the synchronous
+// verifyReviewPosted primitive was removed in favor of lazy verify.
+// The negative-case assertion (no review comment found) is preserved
+// at the same line count in the new test.
 func TestDaemon_VerifyReviewPosted_FailsWhenNoNewComments(t *testing.T) {
-	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
-	gh := &fakeGH{
-		prs: []github.PR{{Number: 42, State: "open"}},
-		comments: map[int][]github.PRComment{
-			42: {
-				{ID: "100", Body: "/sandman review", CreatedAt: now},
-			},
-		},
-	}
-	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "opencode/foo",
-	})
-
-	err := d.verifyReviewPosted(context.Background(), 42, now, "999")
-	if err == nil {
-		t.Fatal("expected error when no new comments found after timestamp")
-	}
-	if !strings.Contains(err.Error(), "no review comment found") {
-		t.Errorf("expected error about missing review comment, got: %v", err)
-	}
+	t.Skip("refactored into TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing (slice D)")
 }
 
+// TestDaemon_VerifyReviewPosted_PassesWhenNewCommentFound has been
+// refactored into TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound
+// in daemon_sliceD_test.go (issue #1482 slice D): the synchronous
+// verifyReviewPosted primitive was removed in favor of lazy verify.
+// The positive-case assertion (review comment found) is preserved at
+// the same line count in the new test.
 func TestDaemon_VerifyReviewPosted_PassesWhenNewCommentFound(t *testing.T) {
-	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
-	after := now.Add(1 * time.Minute)
-	gh := &fakeGH{
-		prs: []github.PR{{Number: 42, State: "open"}},
-		comments: map[int][]github.PRComment{
-			42: {
-				{ID: "100", Body: "/sandman review", CreatedAt: now},
-				{ID: "101", Body: "## Summary\nApproved", CreatedAt: after},
-			},
-		},
-	}
-	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "opencode/foo",
-	})
-
-	err := d.verifyReviewPosted(context.Background(), 42, now, "100")
-	if err != nil {
-		t.Fatalf("expected no error when new comment found, got: %v", err)
-	}
+	t.Skip("refactored into TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound (slice D)")
 }
 
+// TestDaemon_LaunchReviewFailsWhenVerificationFails has been
+// refactored into TestDaemon_LaunchReviewReturnsFastAndRecordsPending
+// and TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound in
+// daemon_sliceD_test.go (issue #1482 slice D): the synchronous
+// verify-on-error path was removed in favor of the bounded lazy
+// promote/fail path. The trigger-comment-not-marked-seen assertion is
+// preserved at the corresponding test site.
 func TestDaemon_LaunchReviewFailsWhenVerificationFails(t *testing.T) {
-	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
-	gh := &fakeGH{
-		prs: []github.PR{{Number: 5, State: "open"}},
-		comments: map[int][]github.PRComment{
-			5: {
-				{ID: "c1", Body: "/sandman review", CreatedAt: now},
-			},
-		},
-		prFetch: map[int]*github.PR{5: {Number: 5, Title: "PR 5", Body: "Body"}},
-	}
-	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "opencode/foo",
-	})
-	// Clock returns a time after all fake comments so verification finds none.
-	d.Clock = func() time.Time { return now.Add(1 * time.Hour) }
-
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(5, "c1")
-	if prepErr != nil {
-		t.Fatalf("prepareReviewRun: %v", prepErr)
-	}
-	err := d.launchReview(context.Background(), 5, "", "c1", "", "", reviewRunFolder, perRowRunID, rs)
-	if err == nil {
-		t.Fatal("expected error from launchReview when verification fails (no new comment)")
-	}
-	if !strings.Contains(err.Error(), "review verification") {
-		t.Errorf("expected error about review verification, got: %v", err)
-	}
-
-	// Trigger should NOT be marked as seen (per-run review-state.json
-	// should not contain c1 as success/failure/aborted).
-	statePath := filepath.Join(reviewRunFolder, "review-state.json")
-	if data, err := os.ReadFile(statePath); err == nil {
-		var state batchindex.ReviewState
-		if json.Unmarshal(data, &state) == nil {
-			for _, sc := range state.SeenComments {
-				if sc.CommentID == "c1" {
-					t.Error("trigger comment should NOT be marked seen when verification fails")
-				}
-			}
-		}
-	}
+	t.Skip("refactored into TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound (slice D)")
 }
 
+// TestDaemon_LaunchReviewSucceedsWhenVerificationPasses has been
+// refactored into TestDaemon_LaunchReviewReturnsFastAndRecordsPending
+// and TestDaemon_NextTickPromotesPendingCommentToSuccess in
+// daemon_sliceD_test.go (issue #1482 slice D): under the new contract
+// launchReview always succeeds as long as RunBatch returns; the
+// lazy-verify promotion is the consumer of the review comment.
 func TestDaemon_LaunchReviewSucceedsWhenVerificationPasses(t *testing.T) {
-	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
-	after := now.Add(1 * time.Minute)
-	gh := &fakeGH{
-		prs: []github.PR{{Number: 6, State: "open"}},
-		comments: map[int][]github.PRComment{
-			6: {
-				{ID: "c2", Body: "/sandman review", CreatedAt: now},
-				{ID: "c3", Body: "## Summary\nLGTM", CreatedAt: after},
-			},
-		},
-		prFetch: map[int]*github.PR{6: {Number: 6, Title: "PR 6", Body: "Body"}},
-	}
-	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "opencode/foo",
-	})
-	// Clock returns a time before the fake comments so verification finds them.
-	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
-
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(6, "c2")
-	if prepErr != nil {
-		t.Fatalf("prepareReviewRun: %v", prepErr)
-	}
-	err := d.launchReview(context.Background(), 6, "", "c2", "", "", reviewRunFolder, perRowRunID, rs)
-	if err != nil {
-		t.Fatalf("expected no error from launchReview when verification passes, got: %v", err)
-	}
+	t.Skip("refactored into TestDaemon_LaunchReviewReturnsFastAndRecordsPending + TestDaemon_NextTickPromotesPendingCommentToSuccess (slice D)")
 }
 
 // TestDaemon_TickFailingReviewRecordsFailure verifies that when a review

@@ -410,12 +410,15 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 		t.Errorf("slot for PR 7 should be released after first review completed, got IsSlotHeld(7)=true")
 	}
 
-	// "first" is terminal-seen, "second" is still in seen-cache as non-terminal-seen.
-	if !d.IsTerminalSeen(7, "first") {
-		t.Errorf("comment 'first' should be terminal-seen after success, got IsTerminalSeen(7,first)=false")
-	}
+	// Slice D lazy-verify: a successful launchReview records the trigger
+	// as `pending`; the seen cache only marks it terminal after
+	// promotePendingReviews observes the agent's review comment. So at
+	// this point both "first" and "second" (which has not even been
+	// launched yet) are non-terminal. We only assert that "second" is
+	// not (yet) terminal-seen; "first" becomes terminal-seen after the
+	// promotion tick that runs after both reviews complete.
 	if d.IsTerminalSeen(7, "second") {
-		t.Errorf("comment 'second' must not be terminal-seen yet, got IsTerminalSeen(7,second)=true")
+		t.Errorf("comment 'second' must not be terminal-seen before being launched, got IsTerminalSeen(7,second)=true")
 	}
 
 	// Third tick — fire it and wait for the second review to START
@@ -448,9 +451,20 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 		t.Fatal("third tick did not finish after releasing second review")
 	}
 
+	// Slice D lazy-verify contract: a successful launchReview records
+	// the trigger as `pending`; the next tick's promotePendingReviews
+	// advances pending → success after observing the agent's review
+	// comment. Fire a promotion tick before asserting terminal-seen.
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("promotion tick: %v", err)
+	}
+
 	// Both comments are now terminal-seen.
+	if !d.IsTerminalSeen(7, "first") {
+		t.Errorf("comment 'first' should be terminal-seen after promotion tick, got IsTerminalSeen(7,first)=false")
+	}
 	if !d.IsTerminalSeen(7, "second") {
-		t.Errorf("comment 'second' should be terminal-seen after its review completes")
+		t.Errorf("comment 'second' should be terminal-seen after promotion tick")
 	}
 
 	// Slot should be released.
@@ -557,6 +571,13 @@ func TestDaemon_PerPRSlotTable_HeldSlotReturnsSilently(t *testing.T) {
 
 	if d.IsSlotHeld(9) {
 		t.Errorf("slot should be released after first review completed")
+	}
+	// Slice D lazy-verify contract: a successful launchReview records
+	// the trigger as `pending`; the next tick's promotePendingReviews
+	// advances it to `success` after observing the agent's review
+	// comment. Fire a promotion tick before asserting terminal-seen.
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("promotion tick: %v", err)
 	}
 	if !d.IsTerminalSeen(9, "early") {
 		t.Errorf("comment 'early' should be terminal-seen after success")
