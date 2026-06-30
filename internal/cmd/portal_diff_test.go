@@ -479,6 +479,29 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffDiffRuns_SubjectSelectorSkipsQueuedAndBlockedPlaceholders(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
+const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const queued = { key: 'queued-1', kind: 'active', status: 'queued', review: false, issueLabel: '#1 queued', runId: 'queued-1', issueNumber: 1 };
+const blocked = { key: 'blocked-1', kind: 'active', status: 'blocked', review: false, issueLabel: '#1 blocked', runId: 'blocked-1', issueNumber: 1 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'issue-1', runs: [parentRun, review, queued, blocked], visibleRuns: [parentRun] };
+const result = SandmanPortalDiff.diffRuns(body, [parentRun], opts);
+if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="issue-1"]');
+if (!detailRow) throw new Error('expected detail row for parent run');
+const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect) throw new Error('expected subject selector for parent run');
+if (subjectSelect.children.length !== 2) throw new Error('expected parent and review options only, got ' + subjectSelect.children.length);
+const values = Array.from(subjectSelect.children).map((opt) => opt.getAttribute('value'));
+if (values.indexOf('issue-1') < 0 || values.indexOf('PR42') < 0) throw new Error('expected parent and review subjects, got ' + JSON.stringify(values));
+if (values.indexOf('queued-1') >= 0 || values.indexOf('blocked-1') >= 0) throw new Error('expected queued/blocked placeholders to be filtered, got ' + JSON.stringify(values));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateCells_RefreshesSubjectSelectorWhenChildReviewAppears(t *testing.T) {
 	js := `const body = makeMockBody();
 const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };

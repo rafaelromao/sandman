@@ -1952,6 +1952,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       return run ? (run.runId || run.key || '') : '';
     }
 
+    function isWaitStateRun(run) {
+      const status = String(run && run.status || '').trim().toLowerCase();
+      return status === 'queued' || status === 'blocked';
+    }
+
     function findRunRowByIdentity(runIdentity) {
       const run = findRunByIdentity(runIdentity);
       const runKey = run ? (visibleRunForIssueGroup(run.issueNumber, state.runs)?.key || run.key) : runIdentity;
@@ -2495,6 +2500,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 	      lastPollAt = Date.now();
 	      pollFailCount = 0;
 	      updatePollHealth();
+	      normalizePortalViewState();
 	      if (state.expandedRunKey) {
 	        loadRunDetail(state.expandedRunKey);
 	      }
@@ -2511,6 +2517,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     async function loadRunDetail(runKey) {
       const run = findRunByIdentity(runKey);
       if (!run) return;
+      if (isWaitStateRun(run)) return;
       const hasLog = run.log && String(run.log).trim();
       const isActive = run.kind === 'active';
       if (hasLog || isActive) return;
@@ -2549,6 +2556,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           }
         }
       }
+      if (isWaitStateRun(run)) return;
       const subjectKey = subjectRunIdentity(run) || runKey;
       if (state.expandedRunKey === subjectKey) {
         state.expandedRunKey = null;
@@ -2609,6 +2617,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (!row) return;
       const runKey = row.getAttribute('data-run-key');
       if (!runKey) return;
+      const run = findRunByKey(runKey);
+      if (isWaitStateRun(run)) return;
       toggleRun(runKey);
     });
 
