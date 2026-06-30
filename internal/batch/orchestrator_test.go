@@ -4536,6 +4536,9 @@ func TestRunBatch_LogsPromptOnlyTemplateSource(t *testing.T) {
 	if started.Payload["prompt_source_type"] != "template" {
 		t.Fatalf("expected prompt source type template, got %#v", started.Payload["prompt_source_type"])
 	}
+	if _, ok := started.Payload["prompt_source_value"]; ok {
+		t.Fatalf("expected no prompt_source_value in prompt-only run, got %#v", started.Payload["prompt_source_value"])
+	}
 	if started.Payload["base_branch"] != "trunk" {
 		t.Fatalf("expected base branch trunk, got %#v", started.Payload["base_branch"])
 	}
