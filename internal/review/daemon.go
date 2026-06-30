@@ -68,25 +68,14 @@ type Renderer interface {
 
 // pendingReviewEntry is the in-memory record the daemon keeps for a
 // review that has been launched but whose agent-posted review comment
-// has not yet been observed. The lazy-verify path (issue #1482 slice
-// D) holds these in memory so the next tick can promote them to
-// success/failure without keeping launchReview on the critical path.
-//
-// `cycles` counts how many consecutive ticks the entry has stayed in
-// pending without promotion; once it reaches pendingMaxCycles the
-// daemon promotes the entry to failure.
-//
-// `runDir` points at the launched run folder so the daemon can
-// reopen the per-run ReviewStateStore and call MarkSeen.
-//
-// `store` is the per-run store handle cached from launchReview; if it
-// is non-nil the daemon reuses it, otherwise it re-opens by runDir.
+// has not yet been observed. The lazy-verify contract (issue #1482
+// slice D) holds these in memory so a subsequent tick can resolve
+// them without keeping `launchReview` on the critical path.
 type pendingReviewEntry struct {
 	commentID   string
 	focus       string
 	since       time.Time
-	runDir      string
-	reviewState string // per-PR ReviewStateStore path under runDir
+	reviewState string // path to <runDir>/review-state.json for the launched run
 	storeRef    *ReviewStateStore
 	cycles      int
 }
@@ -587,7 +576,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 		if err := state.MarkSeen(comment.ID, "pending"); err != nil {
 			d.logf("mark comment %s pending: %v", comment.ID, err)
 		}
-		d.registerPendingReview(prNumber, comment.ID, focus, d.now(), reviewRunFolder, statePath, state)
+		d.registerPendingReview(prNumber, comment.ID, focus, d.now(), statePath, state)
 	} else {
 		if persisted == nil {
 			state.Release(comment.ID)
@@ -881,18 +870,13 @@ func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 				}
 				continue
 			}
-			// err != nil means no review comment yet, OR a
-			// ListPRComments failure. Distinguish via status:
-			if err != nil && status != "pending" {
-				// unexpected status from promotePendingComment;
-				// keep the entry as-is.
-				d.logf("PR #%d: pending %s: unexpected status %q", prNumber, e.commentID, status)
-				e.storeRef = store
-				kept = append(kept, e)
-				continue
-			}
-			// Either pending (no comment yet) or transient list error;
-			// handle the same way: increment cycle, promote on bound.
+			// err != nil covers both "no review comment yet" (the
+			// usual path) and a transient ListPRComments failure
+			// (kept by the next tick). The status field is always
+			// "pending" in this branch — promotePendingComment only
+			// returns (success, nil) or (pending, err) — so we can
+			// safely increment the cycle counter and bail on the
+			// bounded-retry escape.
 			e.cycles++
 			if e.cycles >= pendingMaxCycles {
 				if markErr := store.MarkSeen(e.commentID, "failure"); markErr != nil {
@@ -920,14 +904,13 @@ func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 // registerPendingReview records a new pending review entry after
 // launchReview returned successfully. processPR calls this once the
 // per-run ReviewStateStore has been written with status=pending.
-func (d *Daemon) registerPendingReview(prNumber int, commentID, focus string, since time.Time, reviewRunFolder, statePath string, store *ReviewStateStore) {
+func (d *Daemon) registerPendingReview(prNumber int, commentID, focus string, since time.Time, statePath string, store *ReviewStateStore) {
 	d.pendingMu.Lock()
 	defer d.pendingMu.Unlock()
 	d.pendingReviews[prNumber] = append(d.pendingReviews[prNumber], pendingReviewEntry{
 		commentID:   commentID,
 		focus:       focus,
 		since:       since,
-		runDir:      reviewRunFolder,
 		reviewState: statePath,
 		storeRef:    store,
 	})

@@ -17,19 +17,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// sliceDPendingEntry is the per-(prNumber, commentID) tuple the daemon
-// tracks in memory across ticks while the lazy verify is pending. The
-// fields are sufficient to drive promotePendingComment against
-// ListPRComments and to enforce the bounded retry escape (cycles).
-type sliceDPendingEntry struct {
-	commentID  string
-	focus      string
-	since      time.Time
-	runDir     string
-	reviewStat *ReviewStateStore
-	cycles     int
-}
-
 // TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound pins
 // the new lazy-verify primitive's success path: when a non-trigger
 // comment has been posted at or after `since`, promotePendingComment
@@ -128,6 +115,13 @@ func TestDaemon_PromotePendingComment_IgnoresTriggerComment(t *testing.T) {
 // mark, review-state.json records the trigger as pending so a
 // follow-up tick can promote it. The test drives the full tick flow
 // so the production pending-mark path runs.
+//
+// The "no 15s retry chain" half of the regression is asserted by
+// (a) the elapsed-wall-clock budget (<5s) and (b) a single ListPRComments
+// call observable in fakeGH — under the old verifyReviewPosted
+// primitive, a missing-comment run would call ListPRComments up to 3
+// times; lazy verify records pending after one RunBatch, no further
+// ListPRComments happens in this tick.
 func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
@@ -158,6 +152,16 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 	}
 	if runner.calls != 1 {
 		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.calls)
+	}
+
+	// The 3 × ListPRComments retry chain is gone. After this tick the
+	// per-PR fake's ListPRComments must have been called exactly once:
+	// one call from processPR's scan + zero from the (removed)
+	// inline verify. We also assert the comment count is at 1 here
+	// (a tighter bound would couple us to refactors of processPR's
+	// scan ordering).
+	if got := gh.commentCalls[7]; got != 1 {
+		t.Errorf("ListPRComments should be called exactly once during the first tick (no missing-comment retry chain), got %d calls", got)
 	}
 
 	// review-state.json should record trigger as pending so the next
@@ -300,6 +304,56 @@ func TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound(t *testing.T) {
 	}
 	if !foundFailure {
 		t.Errorf("expected trigger promoted to failure after bounded cycles, got %+v", state.SeenComments)
+	}
+}
+
+// TestDaemon_PendingCommentIsNotRelaunchedMidCycle pins the
+// "next tick processes pending comments without re-launching the
+// review" invariant on a fresh pending entry whose cycle counter is
+// strictly below the bound (issue #1482 acceptance criterion #4,
+// negative half). Driving two ticks with the agent's review comment
+// never arriving must keep RunBatch calls at exactly 1 — neither tick
+// may launch a new batch.
+func TestDaemon_PendingCommentIsNotRelaunchedMidCycle(t *testing.T) {
+	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 19, State: "open"}},
+		comments: map[int][]github.PRComment{
+			19: {
+				{ID: "trigger", Body: "/sandman review", CreatedAt: now},
+			},
+		},
+		prFetch: map[int]*github.PR{19: {Number: 19, Title: "PR 19", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now }
+
+	// First tick: launch + record pending.
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.calls)
+	}
+
+	// Second tick with no review comment yet — must NOT relaunch.
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Errorf("second tick must not re-launch the pending review (cycle 1 < pendingMaxCycles), got %d RunBatch calls", runner.calls)
+	}
+
+	// Third tick: still pending, cycle 2 — also must not relaunch.
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("third tick: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Errorf("third tick must not re-launch the pending review (cycle 2 < pendingMaxCycles), got %d RunBatch calls", runner.calls)
 	}
 }
 
