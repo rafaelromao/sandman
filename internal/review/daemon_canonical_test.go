@@ -11,7 +11,9 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 // TestDaemon_ReviewRunIDAndFolder_AreCanonical pins the headline
@@ -184,5 +186,130 @@ func TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue(t *testing.T) {
 	statePath := filepath.Join(runner.last.RunDir, "review-state.json")
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("read review-state.json at %s: %v", statePath, err)
+	}
+}
+
+// TestDaemon_LoadSeenCache_ReadsCanonicalRunFolder pins Slice 2 of
+// the canonical hydration path. After launch, the daemon's
+// loadSeenCache must consult `<batch>/runs/<rowID>/review-state.json`
+// (where `<rowID>` is the canonical per-row RunID), not the legacy
+// `runs/review/` folder. The test seeds a prior batch with the
+// canonical layout, asks the daemon to hydrate its seen cache, and
+// confirms the (prNumber, commentID) terminal-seen pair flows into
+// the cache.
+func TestDaemon_LoadSeenCache_ReadsCanonicalRunFolder(t *testing.T) {
+	const (
+		prNumber  = 42
+		commentID = "hydrated"
+	)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	batchesDir := filepath.Join(dir, "batches")
+	batchID := "abcd-260625120000-PR42"
+	batchPath := filepath.Join(batchesDir, batchID)
+	// Canonical rowID for this prior batch's review (no linked issue).
+	rowID := "abcd-260625120000-PR42"
+	runDir := filepath.Join(batchPath, "runs", rowID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("create canonical run dir: %v", err)
+	}
+	state := batchindex.ReviewState{
+		PR: prNumber,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: commentID, Status: "success", Timestamp: time.Now()},
+		},
+	}
+	if err := batchindex.WriteReviewState(runDir, state); err != nil {
+		t.Fatalf("write review state: %v", err)
+	}
+	runManifest := batchindex.RunManifest{
+		RunID:     rowID,
+		BatchID:   batchID,
+		PR:        prNumber,
+		Kind:      batchindex.KindReview,
+		CreatedAt: time.Now(),
+		Status:    batchindex.RunManifestStatusActive,
+	}
+	if err := batchindex.WriteManifest(runDir, runManifest); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+	idxPath := daemon.BatchesIndexPath(dir)
+	idx := &batchindex.Index{Version: batchindex.IndexVersion}
+	idx.Add(batchindex.Entry{
+		ID:        batchID,
+		Path:      batchPath,
+		Kind:      batchindex.KindReview,
+		Status:    batchindex.StatusActive,
+		CreatedAt: time.Now(),
+		PR:        prNumber,
+	})
+	if err := idx.Save(idxPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
+	}
+
+	gh := &fakeGH{}
+	d := New(dir, gh, &prompt.Engine{}, &capturedRequest{}, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}, &lockedBuffer{}, 0, false)
+
+	if !d.IsTerminalSeen(prNumber, commentID) {
+		t.Fatalf("seenCache should have hydrated (PR %d, %s) from canonical run folder %s, got %v",
+			prNumber, commentID, runDir, d.seenCache)
+	}
+}
+
+// TestDaemon_LoadSeenCache_IgnoresLegacyRunsReviewFolder pins the
+// acceptance criterion "No code path writes or reads `runs/review`
+// as the canonical review location" against the hydration path. A
+// legacy `runs/review/review-state.json` (no per-row RunID folder)
+// must NOT be picked up by loadSeenCache — only the canonical run
+// folder shape counts.
+func TestDaemon_LoadSeenCache_IgnoresLegacyRunsReviewFolder(t *testing.T) {
+	const (
+		prNumber  = 42
+		commentID = "should-not-be-hydrated"
+	)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	batchesDir := filepath.Join(dir, "batches")
+	batchID := "abcd-260625120000-PR42"
+	batchPath := filepath.Join(batchesDir, batchID)
+	legacyRunDir := filepath.Join(batchPath, "runs", "review")
+	if err := os.MkdirAll(legacyRunDir, 0o755); err != nil {
+		t.Fatalf("create legacy run dir: %v", err)
+	}
+	state := batchindex.ReviewState{
+		PR: prNumber,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: commentID, Status: "success", Timestamp: time.Now()},
+		},
+	}
+	if err := batchindex.WriteReviewState(legacyRunDir, state); err != nil {
+		t.Fatalf("write legacy review state: %v", err)
+	}
+	idxPath := daemon.BatchesIndexPath(dir)
+	idx := &batchindex.Index{Version: batchindex.IndexVersion}
+	idx.Add(batchindex.Entry{
+		ID:        batchID,
+		Path:      batchPath,
+		Kind:      batchindex.KindReview,
+		Status:    batchindex.StatusActive,
+		CreatedAt: time.Now(),
+		PR:        prNumber,
+	})
+	if err := idx.Save(idxPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
+	}
+
+	gh := &fakeGH{}
+	d := New(dir, gh, &prompt.Engine{}, &capturedRequest{}, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}, &lockedBuffer{}, 0, false)
+
+	if d.IsTerminalSeen(prNumber, commentID) {
+		t.Fatalf("loadSeenCache must not hydrate from the legacy runs/review/ folder, got cache %v",
+			d.seenCache)
 	}
 }

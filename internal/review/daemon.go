@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -260,8 +261,11 @@ func (d *Daemon) Forget(prNumber int, commentID string) {
 }
 
 // loadSeenCache rebuilds the seen cache from scratch by scanning the
-// on-disk batches index and every review-state.json. Existing entries
-// are replaced.
+// on-disk batches index and the canonical run folders for every
+// review batch. Per ADR-0030 (issue #1551) review runs are first-class
+// rows, so each batch's run.json lives under
+// `<batch>/runs/<runID>/run.json` and its review-state.json lives one
+// folder up next to it. Existing entries are replaced.
 func (d *Daemon) loadSeenCache() error {
 	d.seenCacheMu.Lock()
 	defer d.seenCacheMu.Unlock()
@@ -278,7 +282,20 @@ func (d *Daemon) loadSeenCache() error {
 		if entry.Kind != batchindex.KindReview {
 			continue
 		}
-		runDir := filepath.Join(entry.Path, "runs", "review")
+		// Resolve the canonical row RunID for this batch. The
+		// canonical rowID is the value persisted on the
+		// batch's run.json by prepareReviewRun — by reading it
+		// here we are version-independent of the exact
+		// `<sid>-<ts>-<linkedIssue?>-PR<pr>` shape.
+		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review row id for %s: %v", entry.Path, err)
+			continue
+		}
+		runDir := filepath.Join(entry.Path, "runs", rowID)
 		state, err := seenStateReader(runDir)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -298,6 +315,40 @@ func (d *Daemon) loadSeenCache() error {
 		}
 	}
 	return nil
+}
+
+// readReviewRowID returns the row RunID for a review batch's runs
+// directory. It consults the first run.json under runs/ — review
+// batches always launch a single row, so there is exactly one
+// run.json — and returns its `RunID` field. The legacy
+// `runs/review/run.json` is intentionally NOT consulted: the daemon
+// must not read the literal "review" alias as a run folder name.
+func readReviewRowID(runsDir string) (string, error) {
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		return "", err
+	}
+	var pick string
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "review" {
+			continue
+		}
+		pick = e.Name()
+		break
+	}
+	if pick == "" {
+		return "", os.ErrNotExist
+	}
+	manifestPath := filepath.Join(runsDir, pick, "run.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", err
+	}
+	var manifest batchindex.RunManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", fmt.Errorf("decode run manifest: %w", err)
+	}
+	return manifest.RunID, nil
 }
 
 // InvalidateSeenCache forces a rebuild of the seen cache by re-running
