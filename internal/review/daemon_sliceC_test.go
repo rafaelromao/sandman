@@ -179,10 +179,6 @@ func TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency(t *testing.T) {
 	t.Errorf("queued PR %d slot did not release after review completed: IsSlotHeld=%v slotHeldCount=%d", queuedPR, d.IsSlotHeld(queuedPR), d.slotHeldCount())
 }
 
-// _ ensures batch is referenced for go-import pruning (other tests use
-// it directly; this file keeps the import for clarity).
-var _ = batch.Request{}
-
 // TestDaemon_PerPRSlotTable_ReleasesOnCompletion asserts the slot
 // table does not leak: after all in-flight reviews complete, an
 // idle daemon reports no slots held. Runners signal completion via

@@ -69,11 +69,11 @@ One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.js
 _Avoid_: run folder, run directory.
 
 **Review daemon state**:
-Flat files under `.sandman/reviews/` for daemon-level state: `review.sock` (daemon command socket), `review-prompt.md` (shared prompt template), and the in-memory `slotTable` (per-PR review slot occupancy map plus a `parallel_reviews`-sized pool). No per-PR subdirectories. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<run-id>/review-state.json`. Dedup key is `(prNumber, commentID)`. References ADR-0034.
+Flat files under `.sandman/reviews/` for daemon-level state: `review.sock` (daemon command socket) and `review-prompt.md` (shared prompt template). No per-PR subdirectories; per-PR slot occupancy is held in memory only, not as an on-disk daemon file. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<run-id>/review-state.json`. Dedup key is `(prNumber, commentID)`. References ADR-0034.
 _Avoid_: review state, PR state.
 
 **Review daemon slot**:
-A per-PR in-memory slot of size 1 in the review daemon: one slot per PR, all PRs share a global pool of capacity `parallel_reviews`. Acquired at the start of `processPR`'s launch path; released after `MarkSeen` persists the trigger's terminal status. A held slot on a busy PR causes `processPR` to return silently without dropping the trigger (the trigger stays in `ListPRComments` and is processed on the next tick). Survives across ticks but is not persisted to disk — a daemon restart abandons the slot, and the trigger is re-discovered via `ListPRComments` on the next tick. References ADR-0034.
+A per-PR in-memory slot of size 1: one slot per PR, all PRs sharing a global pool of capacity `parallel_reviews`. Acquired at the start of the review daemon's `processPR` launch path; released after `MarkSeen` persists the trigger's terminal status. A held slot on a busy PR causes `processPR` to return silently without dropping the trigger (the trigger stays in `ListPRComments` and is processed on the next tick). Survives across ticks but is not persisted to disk — a daemon restart abandons the slot, and the trigger is re-discovered via `ListPRComments` on the next tick. References ADR-0034.
 
 **Branch**:
 A git branch named `sandman/<issue-number>-<slugified-title>` for issue-driven AgentRuns, or `sandman/<slug>-<timestamp>` for prompt-only runs.

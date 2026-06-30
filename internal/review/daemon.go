@@ -86,21 +86,9 @@ type Daemon struct {
 	promptOnce           sync.Once
 	seenCache            map[int]map[string]bool
 	seenCacheMu          sync.RWMutex
-	// slotTable (issue #1481 slice C) holds the per-PR "in-flight
-	// review" reservation map. slotPool is the shared buffered
-	// channel capped at parallel_reviews that bounds cross-PR
-	// concurrency. The two are layered: a PR can only acquire a
-	// slot when (a) no slot for that PR is already held AND (b)
-	// the shared pool has a free position. The slot map survives
-	// across ticks so a per-PR in-flight review blocks a new
-	// trigger on the same PR until the slot is released, but does
-	// not block sibling PRs from acquiring their own slots. The
-	// slot table is in-memory only — a daemon restart abandons the
-	// slot and the trigger is re-discovered via ListPRComments on
-	// the next tick.
-	slotTable map[int]struct{}
-	slotPool  chan struct{}
-	slotMu    sync.Mutex
+	slotTable            map[int]struct{}
+	slotPool             chan struct{}
+	slotMu               sync.Mutex
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -462,20 +450,13 @@ func (d *Daemon) tick(ctx context.Context) error {
 }
 
 // processPR scans one PR's comments and launches a review agent for the
-// newest unseen /sandman review trigger.
+// newest unseen /sandman review trigger. The per-PR slot (issue #1481
+// slice C — see acquirePRSlot / releasePRSlot) preserves the trigger
+// when the slot pool is full or a stale review is in flight; the deferred
+// release runs after MarkSeen persists.
 //
 // The dedup state lives in the run folder's `review-state.json`, managed
 // by ReviewStateStore. No per-PR directory is created under `.sandman/reviews/`.
-//
-// Per-PR slot (issue #1481 slice C): the daemon maintains a slot table
-// keyed by prNumber (slotTable) and a shared buffered channel slotPool
-// sized to EffectiveReviewParallel. processPR reserves a slot for
-// prNumber before launching; if the slot pool is full OR prNumber
-// already has a held slot, processPR returns without launching, without
-// adding reactions, and without MarkSeen — the trigger survives in
-// ListPRComments and is processed on the next tick. The releasePRSlot
-// runs at the end of processPR after MarkSeen persists, so the slot
-// is freed only after terminal-seen state is on disk.
 //
 // Acceptance criteria #1 and #3 from issue #1224:
 //   - No code path creates `.sandman/reviews/<PR>/`
@@ -541,17 +522,9 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	comment := newest.comment
 	focus := newest.focus
 
-	// Per-PR slot acquisition (issue #1481 slice C). If the slot is
-	// held by an in-flight review for the same PR, or if the shared
-	// parallel_reviews pool is saturated, return without launching,
-	// without adding reactions, and without MarkSeen — the trigger is
-	// still in ListPRComments and the next tick re-processes it
-	// naturally. We do NOT log "parallel limit reached" because that
-	// wording conflated cross-PR concurrency with per-PR contention;
-	// the slot table is layered (per-PR + shared pool) so both
-	// contention modes exit silently. The defer at the bottom of
-	// processPR releases the slot after MarkSeen (or after a graceful
-	// early return in the MarkSeen-blocked path).
+	// Acquire a per-PR slot before reactions / launch so a stale
+	// in-flight review (or the parallel_reviews cross-PR cap) makes
+	// the trigger wait for the next tick instead of dropping it.
 	if !d.acquirePRSlot(prNumber) {
 		return nil
 	}
