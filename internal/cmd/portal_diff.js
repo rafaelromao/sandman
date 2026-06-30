@@ -920,9 +920,10 @@
   }
 
   function detailsData(run, helpers) {
+    const issueNumber = Number.isInteger(run.issueNumber) && run.issueNumber > 0 ? run.issueNumber : null;
     return {
       runId: run.runId || '',
-      issueNumber: Number(run.issueNumber) || 0,
+      issueNumber: issueNumber,
       issueTitle: run.issueTitle || '',
       branch: run.branch || '',
       batch: run.batchKey || '',

@@ -1807,6 +1807,29 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffUpdateDetailDetails_MissingIssueRendersNull (issue #1506)
+// pins the sentinel behavior: a run with no linked issue must render
+// `issueNumber: null`, not `0` (which would mislabel a missing issue
+// as issue #0). This matches portalRun's `omitempty` contract — absent
+// issue is distinct from a valid integer — and locks down the coercion
+// so a future change can't silently re-introduce `Number(...) || 0`.
+func TestPortalDiffUpdateDetailDetails_MissingIssueRendersNull(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected details pre');
+const raw = pre.getAttribute('data-rendered-json') || '';
+if (!raw.includes('"issueNumber": null')) throw new Error('expected issueNumber: null when run has no linked issue, got ' + raw);
+if (raw.includes('"issueNumber": 0')) throw new Error('issueNumber: 0 would mislabel a missing issue as issue #0, got ' + raw);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailEvents_RebuildsWhenEventsChange(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [{ type: 'start', timestamp: 1, payload: { ok: true } }] };
