@@ -586,6 +586,10 @@ func TestDaemon_TickSkipsSeenComment(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := d.InvalidateSeenCache(); err != nil {
+		t.Fatalf("InvalidateSeenCache: %v", err)
+	}
+
 	if err := d.tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
@@ -1204,6 +1208,10 @@ func TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := d.InvalidateSeenCache(); err != nil {
+		t.Fatalf("InvalidateSeenCache: %v", err)
+	}
+
 	if err := d.tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
@@ -1307,6 +1315,10 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 	})
 	if err := idx.Save(idxPath); err != nil {
 		t.Fatal(err)
+	}
+
+	if err := d.InvalidateSeenCache(); err != nil {
+		t.Fatalf("InvalidateSeenCache: %v", err)
 	}
 
 	if err := d.tick(context.Background()); err != nil {
