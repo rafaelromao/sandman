@@ -738,28 +738,24 @@ func TestReviewCmd_DaemonModePropagatesAgentModelFlags(t *testing.T) {
 
 func TestReviewCmd_DaemonModePropagatesAgentFlag(t *testing.T) {
 	tests := []struct {
-		name        string
-		args        []string
-		wantAgent   string
-		wantAgentRx bool
+		name      string
+		args      []string
+		wantAgent string
 	}{
 		{
-			name:        "flag set",
-			args:        []string{"--agent", "claude"},
-			wantAgent:   "claude",
-			wantAgentRx: true,
+			name:      "flag set",
+			args:      []string{"--agent", "claude"},
+			wantAgent: "claude",
 		},
 		{
-			name:        "flag empty (not passed)",
-			args:        []string{},
-			wantAgent:   "",
-			wantAgentRx: true,
+			name:      "flag empty (not passed)",
+			args:      []string{},
+			wantAgent: "",
 		},
 		{
-			name:        "flag zero (passed with empty value)",
-			args:        []string{"--agent", ""},
-			wantAgent:   "",
-			wantAgentRx: true,
+			name:      "flag zero (passed with empty value)",
+			args:      []string{"--agent", ""},
+			wantAgent: "",
 		},
 	}
 	for _, tt := range tests {
@@ -800,28 +796,24 @@ func TestReviewCmd_DaemonModePropagatesAgentFlag(t *testing.T) {
 
 func TestReviewCmd_DaemonModePropagatesModelFlag(t *testing.T) {
 	tests := []struct {
-		name        string
-		args        []string
-		wantModel   string
-		wantModelRx bool
+		name      string
+		args      []string
+		wantModel string
 	}{
 		{
-			name:        "flag set",
-			args:        []string{"--model", "anthropic/claude-sonnet-4"},
-			wantModel:   "anthropic/claude-sonnet-4",
-			wantModelRx: true,
+			name:      "flag set",
+			args:      []string{"--model", "anthropic/claude-sonnet-4"},
+			wantModel: "anthropic/claude-sonnet-4",
 		},
 		{
-			name:        "flag empty (not passed)",
-			args:        []string{},
-			wantModel:   "",
-			wantModelRx: true,
+			name:      "flag empty (not passed)",
+			args:      []string{},
+			wantModel: "",
 		},
 		{
-			name:        "flag zero (passed with empty value)",
-			args:        []string{"--model", ""},
-			wantModel:   "",
-			wantModelRx: true,
+			name:      "flag zero (passed with empty value)",
+			args:      []string{"--model", ""},
+			wantModel: "",
 		},
 	}
 	for _, tt := range tests {
