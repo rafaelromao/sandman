@@ -51,8 +51,7 @@ Merged Sandman PRs in this repo:
   ```
   Suggested by Sandman — feel free to close this PR if you don't want the badge.
 
-  This repo has shipped at least one Sandman-built change:
-  {{MERGED_PRS}}
+  This repo has shipped at least one Sandman-built change (e.g. {{MERGED_PRS}}).
 
   The badge links to https://github.com/rafaelromao/sandman.
   ```
