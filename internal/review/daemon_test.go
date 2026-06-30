@@ -725,7 +725,8 @@ func TestDaemon_TickSkipsSeenComment(t *testing.T) {
 	batchesDir := filepath.Join(d.BaseDir, "batches")
 	priorBatchID := "abcd-260625120000-PR42"
 	priorBatchPath := filepath.Join(batchesDir, priorBatchID)
-	priorRunDir := filepath.Join(priorBatchPath, "runs", "review")
+	priorRowID := deriveReviewRowID(priorBatchID, 42)
+	priorRunDir := filepath.Join(priorBatchPath, "runs", priorRowID)
 	if err := os.MkdirAll(priorRunDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -736,6 +737,17 @@ func TestDaemon_TickSkipsSeenComment(t *testing.T) {
 		},
 		Claims: map[string]batchindex.Claim{},
 	}); err != nil {
+		t.Fatal(err)
+	}
+	priorManifest := batchindex.RunManifest{
+		RunID:     priorRowID,
+		BatchID:   priorBatchID,
+		PR:        42,
+		Kind:      batchindex.KindReview,
+		CreatedAt: now,
+		Status:    batchindex.RunManifestStatusActive,
+	}
+	if err := batchindex.WriteManifest(priorRunDir, priorManifest); err != nil {
 		t.Fatal(err)
 	}
 	idxPath := daemon.BatchesIndexPath(d.BaseDir)
@@ -823,11 +835,14 @@ func TestDaemon_MixedSeenAndUnseenTriggers(t *testing.T) {
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
 	// Create a fake prior batch that already processed "already-seen"
-	// for PR 1. This simulates cross-run dedup: loadGlobalSeenForPR
-	// reads the batches index and finds this prior review-state.json.
-	priorBatchDir := filepath.Join(d.BaseDir, "batches", "old-batch-PR1")
-	priorRunDir := filepath.Join(priorBatchDir, "runs", "review")
-	if err := os.MkdirAll(priorRunDir, 0755); err != nil {
+	// for PR 1. This simulates cross-run dedup: the seen-cache
+	// hydration reads the canonical run folder from the batches
+	// index and finds this prior review-state.json.
+	const priorBatchID = "old1-260610000000-PR1"
+	priorBatchDir := filepath.Join(d.BaseDir, "batches", priorBatchID)
+	priorRowID := deriveReviewRowID(priorBatchID, 1)
+	priorRunDir := filepath.Join(priorBatchDir, "runs", priorRowID)
+	if err := os.MkdirAll(priorRunDir, 0o755); err != nil {
 		t.Fatalf("create prior run dir: %v", err)
 	}
 	priorState := batchindex.ReviewState{
@@ -839,12 +854,23 @@ func TestDaemon_MixedSeenAndUnseenTriggers(t *testing.T) {
 	if err := batchindex.WriteReviewState(priorRunDir, priorState); err != nil {
 		t.Fatalf("write prior review state: %v", err)
 	}
+	priorManifest := batchindex.RunManifest{
+		RunID:     priorRowID,
+		BatchID:   priorBatchID,
+		PR:        1,
+		Kind:      batchindex.KindReview,
+		CreatedAt: now,
+		Status:    batchindex.RunManifestStatusActive,
+	}
+	if err := batchindex.WriteManifest(priorRunDir, priorManifest); err != nil {
+		t.Fatalf("write prior run manifest: %v", err)
+	}
 	// Register the prior batch in the batches index so
-	// loadGlobalSeenForPR discovers it.
+	// loadSeenCache discovers it.
 	indexPath := filepath.Join(d.BaseDir, "batches", "batches.json")
 	idx, _ := batchindex.Load(indexPath)
 	idx.Add(batchindex.Entry{
-		ID:   "old-batch-PR1",
+		ID:   priorBatchID,
 		Path: priorBatchDir,
 		Kind: batchindex.KindReview,
 		PR:   1,
@@ -1448,14 +1474,15 @@ func TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale(t *testing.T) {
 	}
 	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
 
-	// Pre-mark the only comment as seen by writing a per-run
-	// review-state.json AND registering the batch in batches.json so
-	// the daemon's loadGlobalSeenForPR scan picks it up.
+	// Pre-mark the only comment as seen by writing the canonical
+	// per-row review-state.json AND registering the batch in
+	// batches.json so the daemon's loadSeenCache picks it up.
 	batchesDir := filepath.Join(d.BaseDir, "batches")
 	priorBatchID := "abcd-260610100000-PR1"
 	priorBatchPath := filepath.Join(batchesDir, priorBatchID)
-	priorRunDir := filepath.Join(priorBatchPath, "runs", "review")
-	if err := os.MkdirAll(priorRunDir, 0755); err != nil {
+	priorRowID := deriveReviewRowID(priorBatchID, 1)
+	priorRunDir := filepath.Join(priorBatchPath, "runs", priorRowID)
+	if err := os.MkdirAll(priorRunDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := batchindex.WriteReviewState(priorRunDir, batchindex.ReviewState{
@@ -1465,6 +1492,17 @@ func TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale(t *testing.T) {
 		},
 		Claims: map[string]batchindex.Claim{},
 	}); err != nil {
+		t.Fatal(err)
+	}
+	priorManifest := batchindex.RunManifest{
+		RunID:     priorRowID,
+		BatchID:   priorBatchID,
+		PR:        1,
+		Kind:      batchindex.KindReview,
+		CreatedAt: time.Date(2026, 6, 10, 10, 0, 0, 0, time.UTC),
+		Status:    batchindex.RunManifestStatusActive,
+	}
+	if err := batchindex.WriteManifest(priorRunDir, priorManifest); err != nil {
 		t.Fatal(err)
 	}
 	idxPath := daemon.BatchesIndexPath(d.BaseDir)
@@ -1557,14 +1595,16 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 	})
 
 	// Pre-mark the comment as already claimed by writing a per-run
-	// review-state.json (under a registered batch folder). The new
-	// design stores claim locks inline in review-state.json instead
-	// of as separate lock files under .sandman/reviews/<PR>/claims/.
+	// review-state.json (under a registered batch folder, in the
+	// canonical runs/<rowID>/ layout). The new design stores claim
+	// locks inline in review-state.json instead of as separate lock
+	// files under .sandman/reviews/<PR>/claims/.
 	batchesDir := filepath.Join(d.BaseDir, "batches")
 	priorBatchID := "abcd-260624100000-PR1"
 	priorBatchPath := filepath.Join(batchesDir, priorBatchID)
-	priorRunDir := filepath.Join(priorBatchPath, "runs", "review")
-	if err := os.MkdirAll(priorRunDir, 0755); err != nil {
+	priorRowID := deriveReviewRowID(priorBatchID, 1)
+	priorRunDir := filepath.Join(priorBatchPath, "runs", priorRowID)
+	if err := os.MkdirAll(priorRunDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := batchindex.WriteReviewState(priorRunDir, batchindex.ReviewState{
@@ -1574,6 +1614,17 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 		},
 		Claims: map[string]batchindex.Claim{},
 	}); err != nil {
+		t.Fatal(err)
+	}
+	priorManifest := batchindex.RunManifest{
+		RunID:     priorRowID,
+		BatchID:   priorBatchID,
+		PR:        1,
+		Kind:      batchindex.KindReview,
+		CreatedAt: time.Now(),
+		Status:    batchindex.RunManifestStatusActive,
+	}
+	if err := batchindex.WriteManifest(priorRunDir, priorManifest); err != nil {
 		t.Fatal(err)
 	}
 	idxPath := daemon.BatchesIndexPath(d.BaseDir)
@@ -1658,8 +1709,8 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		capturedRunDir = req.RunDir
 
-		// Review runs live at <batchDir>/runs/review, so the RunDir's
-		// parent batch dir ends with "-PR1".
+		// Per ADR-0030 the run folder is <batchDir>/runs/<runID>/, so
+		// the RunDir's parent batch dir ends with "-PR1".
 		batchDir := filepath.Dir(filepath.Dir(req.RunDir))
 		if !strings.HasSuffix(batchDir, "-PR1") {
 			t.Errorf("expected RunDir's batch dir to end with '-PR1', got %q (RunDir=%q)", batchDir, req.RunDir)
@@ -1995,10 +2046,13 @@ func TestDaemon_AbortedReviewRetriesOnNextTick(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 
-	// Pre-seed a prior review batch with an aborted review-state.json.
-	priorBatchDir := filepath.Join(d.BaseDir, "batches", "old-aborted-review")
-	priorRunDir := filepath.Join(priorBatchDir, "runs", "review")
-	if err := os.MkdirAll(priorRunDir, 0755); err != nil {
+	// Pre-seed a prior review batch with an aborted review-state.json
+	// under the canonical per-row folder shape.
+	const priorBatchID = "old1-260610000000-PR1"
+	priorBatchDir := filepath.Join(d.BaseDir, "batches", priorBatchID)
+	priorRowID := deriveReviewRowID(priorBatchID, 1)
+	priorRunDir := filepath.Join(priorBatchDir, "runs", priorRowID)
+	if err := os.MkdirAll(priorRunDir, 0o755); err != nil {
 		t.Fatalf("create prior run dir: %v", err)
 	}
 	priorState := batchindex.ReviewState{
@@ -2010,10 +2064,21 @@ func TestDaemon_AbortedReviewRetriesOnNextTick(t *testing.T) {
 	if err := batchindex.WriteReviewState(priorRunDir, priorState); err != nil {
 		t.Fatalf("write prior review state: %v", err)
 	}
+	priorManifest := batchindex.RunManifest{
+		RunID:     priorRowID,
+		BatchID:   priorBatchID,
+		PR:        1,
+		Kind:      batchindex.KindReview,
+		CreatedAt: time.Now(),
+		Status:    batchindex.RunManifestStatusActive,
+	}
+	if err := batchindex.WriteManifest(priorRunDir, priorManifest); err != nil {
+		t.Fatalf("write prior run manifest: %v", err)
+	}
 	indexPath := filepath.Join(d.BaseDir, "batches", "batches.json")
 	idx, _ := batchindex.Load(indexPath)
 	idx.Add(batchindex.Entry{
-		ID:   "old-aborted-review",
+		ID:   priorBatchID,
 		Path: priorBatchDir,
 		Kind: batchindex.KindReview,
 		PR:   1,

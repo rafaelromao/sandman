@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -260,8 +261,11 @@ func (d *Daemon) Forget(prNumber int, commentID string) {
 }
 
 // loadSeenCache rebuilds the seen cache from scratch by scanning the
-// on-disk batches index and every review-state.json. Existing entries
-// are replaced.
+// on-disk batches index and the canonical run folders for every
+// review batch. Per ADR-0030 (issue #1551) review runs are first-class
+// rows, so each batch's run.json lives under
+// `<batch>/runs/<runID>/run.json` and its review-state.json lives one
+// folder up next to it. Existing entries are replaced.
 func (d *Daemon) loadSeenCache() error {
 	d.seenCacheMu.Lock()
 	defer d.seenCacheMu.Unlock()
@@ -278,7 +282,20 @@ func (d *Daemon) loadSeenCache() error {
 		if entry.Kind != batchindex.KindReview {
 			continue
 		}
-		runDir := filepath.Join(entry.Path, "runs", "review")
+		// Resolve the canonical row RunID for this batch. The
+		// canonical rowID is the value persisted on the
+		// batch's run.json by prepareReviewRun — by reading it
+		// here we are version-independent of the exact
+		// `<sid>-<ts>-<linkedIssue?>-PR<pr>` shape.
+		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review row id for %s: %v", entry.Path, err)
+			continue
+		}
+		runDir := filepath.Join(entry.Path, "runs", rowID)
 		state, err := seenStateReader(runDir)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -298,6 +315,40 @@ func (d *Daemon) loadSeenCache() error {
 		}
 	}
 	return nil
+}
+
+// readReviewRowID returns the row RunID for a review batch's runs
+// directory. It consults the first run.json under runs/ — review
+// batches always launch a single row, so there is exactly one
+// run.json — and returns its `RunID` field. The legacy
+// `runs/review/run.json` is intentionally NOT consulted: the daemon
+// must not read the literal "review" alias as a run folder name.
+func readReviewRowID(runsDir string) (string, error) {
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		return "", err
+	}
+	var pick string
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "review" {
+			continue
+		}
+		pick = e.Name()
+		break
+	}
+	if pick == "" {
+		return "", os.ErrNotExist
+	}
+	manifestPath := filepath.Join(runsDir, pick, "run.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", err
+	}
+	var manifest batchindex.RunManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", fmt.Errorf("decode run manifest: %w", err)
+	}
+	return manifest.RunID, nil
 }
 
 // InvalidateSeenCache forces a rebuild of the seen cache by re-running
@@ -393,20 +444,13 @@ func (d *Daemon) initPromptTemplate() error {
 // ReviewStatePath returns the on-disk path of the per-run review-state
 // file for a given run folder.
 //
-// Acceptance criterion #3 from issue #1224: "review-state.json lives
-// at <batch>/runs/<run>/review-state.json". For review runs the
-// batch dir contains a single run folder <batch>/runs/<run>/, so
-// callers pass that path; this helper joins the state filename.
+// Per ADR-0030 (issue #1551) review runs are first-class rows like
+// every other run kind, so the review-state file lives next to its
+// row's run.json under the canonical per-row folder:
+// `<batch>/runs/<runID>/review-state.json`. Callers pass that path
+// in; this helper joins the state filename.
 func (d *Daemon) ReviewStatePath(runDir string) string {
 	return filepath.Join(runDir, "review-state.json")
-}
-
-// reviewRunDir returns the per-run folder under a review batch
-// (<batchDir>/runs/<runID>). The review daemon writes
-// review-state.json here; the existing per-batch batch.sock stays at
-// the batch root for the orchestrator's attach/streaming surface.
-func reviewRunDir(batchDir string) string {
-	return filepath.Join(batchDir, "runs", "review")
 }
 
 // SetSocket stores a pre-built ControlSocket on the daemon. The cmd layer
@@ -732,6 +776,13 @@ func shouldSkipDedupStatus(status string) bool {
 // run session, and state store exist before TryClaim is called. The returned
 // *daemon.RunSession must be passed to launchReview; processPR does not
 // close it.
+//
+// The PR is fetched once (via the GitHub client) so the linked issue number
+// can fold into the per-row RunID. The per-row RunID follows the ADR-0030
+// review-with-linked-issue / review-without-linked-issue templates:
+// `<sid>-<ts>-<linkedIssue>-PR<pr>` or `<sid>-<ts>-PR<pr>`. This replaces
+// the legacy literal `RunID: "review"` alias; issue #1551 makes the review
+// run a first-class row like every other run kind.
 func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, string, *daemon.RunSession, *ReviewStateStore, error) {
 	ts, shortid, err := runid.NewBatch()
 	if err != nil {
@@ -739,8 +790,18 @@ func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, strin
 	}
 	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("%d", prNumber), ts, shortid)
 
-	subject := fmt.Sprintf("PR%d", prNumber)
-	perRowRunID := runid.NewRunID(runid.KindReview, subject, ts, shortid)
+	var linkedIssue int
+	if pr, fetchErr := d.GitHub.FetchPR(prNumber); fetchErr == nil && pr != nil {
+		linkedIssue = pr.LinkedIssueNumber()
+	} else if fetchErr != nil {
+		// Non-fatal: a transient GitHub API failure must not block
+		// the launch path. The one-shot `cmd/review.go` calls
+		// FetchPR anyway; if it failed once, it would fail again.
+		// We surface the failure in the daemon log instead.
+		d.logf("fetch PR #%d for linked issue resolution: %v", prNumber, fetchErr)
+	}
+
+	perRowRunID := reviewRunIDFor(prNumber, linkedIssue, ts, shortid)
 
 	rs := daemon.NewRunSession(d.BaseDir, batchDirName)
 	manifest := daemon.BatchManifest{BatchId: batchDirName, CreatedAt: time.Now(), RunKind: "review", Issues: []int{}, PR: &prNumber}
@@ -750,21 +811,21 @@ func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, strin
 	}
 
 	runDir := rs.RunDir()
-	reviewRunFolder := reviewRunDir(runDir)
+	reviewRunFolder := daemon.RunFolder(runDir, perRowRunID)
 	if err := os.MkdirAll(reviewRunFolder, 0755); err != nil {
 		_ = rs.Close()
 		return "", "", nil, nil, fmt.Errorf("create review run folder: %w", err)
 	}
 
 	runManifest := batchindex.RunManifest{
-		RunID:     "review",
+		RunID:     perRowRunID,
 		BatchID:   batchDirName,
 		PR:        prNumber,
 		Kind:      batchindex.KindReview,
 		CreatedAt: time.Now(),
 		Status:    batchindex.RunManifestStatusActive,
 	}
-	if err := daemon.WriteRunManifest(runDir, "review", runManifest); err != nil {
+	if err := daemon.WriteRunManifest(runDir, perRowRunID, runManifest); err != nil {
 		_ = rs.Close()
 		return "", "", nil, nil, fmt.Errorf("write run manifest: %w", err)
 	}
