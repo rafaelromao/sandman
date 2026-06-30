@@ -108,6 +108,37 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestRenderRunMeta_StackedBatchWithRetrySummary is the legacy #1348 layout
+// test, updated for issue #1483 to assert the counter line lands below Run:
+// rather than on the Batch: line.
+func TestRenderRunMeta_StackedBatchWithRetrySummary(t *testing.T) {
+	js := `const run = { key: 'run-2', kind: 'active', status: 'reviewing', issueLabel: '#43', runId: 'b1c2d', issueNumber: 43, batchKey: 'batch-xyz', retriesDone: 2, retriesTotal: 2, reviewCount: 1, reviewVerdict: 'Approved' };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split(String.fromCharCode(10));
+if (lines.length !== 3) throw new Error('expected exactly 3 lines (Batch, Run, counter line) for fully-loaded, got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: batch-xyz') throw new Error('expected batch line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: b1c2d') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
+if (lines[2] !== '2 retries - 1 review - Approved') throw new Error('expected joined counters on trailing line, got: ' + JSON.stringify(lines));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_StackedBatchOnly is the legacy #1348 batch-only test,
+// updated for issue #1483 to confirm the two-line layout when there are no
+// counters (Batch above Run, no trailing blank line).
+func TestRenderRunMeta_StackedBatchOnly(t *testing.T) {
+	js := `const run = { key: 'run-1', kind: 'active', status: 'running', issueLabel: '#42', runId: 'a0c19', issueNumber: 42, batchKey: 'batch-abc' };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split(String.fromCharCode(10));
+if (lines.length !== 2) throw new Error('expected exactly 2 lines (Batch, Run) for batch-only row, got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: batch-abc') throw new Error('expected Batch line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: a0c19') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 // TestRenderRunMeta_BatchOnlyNoCounters_OmitsTrailingBlankLine is the
 // regression guard for issue #1483: when a row has a batch key but neither
 // retriesDone nor reviewCount > 0, the meta must be exactly two lines
