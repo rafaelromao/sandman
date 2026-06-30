@@ -441,19 +441,20 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 	// per-process in-memory cache populated at construction
 	// (issue #1480 slice A). ADR-0034 §3 accepts the rename-loser
 	// trade-off; the cache only short-circuits what is already
-	// persisted on disk.
+	// persisted on disk. The read lock must be held across the
+	// per-trigger lookup because the inner map is shared with
+	// MarkTerminalSeen / Forget on sibling PRs in the same tick
+	// (slice-A PR review, race-detector finding).
 	d.seenCacheMu.RLock()
-	prSeen := d.seenCache[prNumber]
-	d.seenCacheMu.RUnlock()
-
 	var unprocessed []unseenTrigger
 	for _, t := range triggers {
-		if prSeen[t.comment.ID] {
+		if d.seenCache[prNumber][t.comment.ID] {
 			d.logf("comment %s already terminal-seen, skipping", t.comment.ID)
 			continue
 		}
 		unprocessed = append(unprocessed, t)
 	}
+	d.seenCacheMu.RUnlock()
 	if len(unprocessed) == 0 {
 		return nil
 	}

@@ -264,6 +264,59 @@ func (f fakeInvalidator) Forget(prNumber int, commentID string) {
 	}
 }
 
+// TestDaemon_SeenCacheConcurrentReadWriteSafe pins the race fix
+// (slice-A PR review): processPR must hold seenCacheMu.RLock across
+// the per-trigger lookup so that sibling PR goroutines in the same
+// tick can call MarkTerminalSeen / Forget concurrently without
+// panicking. Without this guard, Go's runtime reports a fatal
+// "concurrent map read and map write" on the inner
+// map[commentID]bool.
+func TestDaemon_SeenCacheConcurrentReadWriteSafe(t *testing.T) {
+	const numPRs = 25
+	prs := make([]github.PR, numPRs)
+	comments := make(map[int][]github.PRComment, numPRs)
+	prFetch := make(map[int]*github.PR, numPRs)
+	for i := 0; i < numPRs; i++ {
+		prs[i] = github.PR{Number: 100 + i, State: "open"}
+		comments[100+i] = []github.PRComment{
+			{ID: "c-" + itoa(0, i), Body: "/sandman review", CreatedAt: time.Now()},
+		}
+		prFetch[100+i] = &github.PR{Number: 100 + i, Title: "T", Body: "B"}
+	}
+	gh := &fakeGH{prs: prs, comments: comments, prFetch: prFetch}
+	runner := &capturedRequest{}
+
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: numPRs,
+	})
+	d.Clock = func() time.Time { return time.Now().Add(2 * time.Minute) }
+	// Pre-populate the cache with all N PRs so each processPR call
+	// holds the read lock for a non-trivial window.
+	for i := 0; i < numPRs; i++ {
+		d.MarkTerminalSeen(100+i, "seed")
+	}
+
+	// Tick fans out to one goroutine per PR; each reads from
+	// seenCache under d.seenCacheMu.RLock. Meanwhile the test
+	// goroutine concurrently mutates the cache. Without the lock
+	// fix, the race detector fires here.
+	done := make(chan struct{})
+	go func() {
+		d.MarkTerminalSeen(100, "foo")
+		d.Forget(100, "foo")
+		d.MarkTerminalSeen(101, "bar")
+		d.Forget(101, "bar")
+		close(done)
+	}()
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	<-done
+}
+
 // TestDaemon_ReleaseForgetsCacheEntry pins that the daemon's Forget
 // drops the (prNumber, commentID) entry from the seen cache so a
 // later processPR call considers the comment as fresh again. This is
