@@ -97,7 +97,13 @@ type Daemon struct {
 // New returns a Daemon configured with the project defaults for the
 // polling interval and clock. The seen cache is hydrated eagerly from
 // the on-disk batches index; a missing or unreadable index yields an
-// empty cache (matches the previous loadGlobalSeenForPR behaviour).
+// empty cache (per ADR-0034 §3 rename-loser semantics, this degrades
+// gracefully rather than failing construction).
+//
+// The `busy` channel is buffered to 1 — slice B (issue #1495)
+// serializes every daemon tick through a single semaphore so that the
+// per-process seen cache observes a stable view across concurrent
+// trigger signals.
 func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer) *Daemon {
 	d := &Daemon{
 		BaseDir:      baseDir,
@@ -109,7 +115,7 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		Clock:        time.Now,
 		Trigger:      nil,
 		PollInterval: PollingInterval,
-		busy:         make(chan struct{}, cfg.EffectiveReviewParallel()),
+		busy:         make(chan struct{}, 1),
 		seenCache:    map[int]map[string]bool{},
 	}
 	if err := d.loadSeenCache(); err != nil {
@@ -542,51 +548,10 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 	return nil
 }
 
-// loadGlobalSeenForPR scans every review-state.json on disk and returns
-// the set of (prNumber, commentID) pairs that are terminal-seen for the
-// given PR. It is the slice-4 wiring: cross-run dedup via the batches
-// index. On a missing index (ENOENT), batchindex.Load returns an empty
-// index and dedup gracefully degrades to "nothing seen." On a corrupt or
-// unreadable index, the error is logged and the caller continues with an
-// empty set — this is acceptable per ADR-0034 §3 (rename-loser
-// re-processes).
-//
-// Terminal-status deviation from PRD 1218: PRD 1218 lists only
-// success/failure/aborted as terminal statuses. The global-dedup skip
-// rule only treats "success" as terminal (failed triggers are retried on
-// the next tick). "superseded" is also treated as terminal since an
-// obsolete trigger should not be re-processed even though its run did not
-// succeed. This deviation is intentional.
-func (d *Daemon) loadGlobalSeenForPR(prNumber int) (map[string]bool, error) {
-	seen := map[string]bool{}
-	indexPath := daemon.BatchesIndexPath(d.BaseDir)
-	idx, err := batchindex.Load(indexPath)
-	if err != nil {
-		return nil, fmt.Errorf("load batches index: %w", err)
-	}
-
-	for _, entry := range idx.Entries {
-		if entry.Kind != batchindex.KindReview || entry.PR != prNumber {
-			continue
-		}
-		// Look for a review-state.json at <entry.Path>/runs/review/review-state.json.
-		statePath := filepath.Join(entry.Path, "runs", "review", "review-state.json")
-		state, err := batchindex.ReadReviewState(filepath.Join(entry.Path, "runs", "review"))
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			d.logf("read review state %s: %v", statePath, err)
-			continue
-		}
-		for _, sc := range state.SeenComments {
-			if shouldSkipDedupStatus(sc.Status) {
-				seen[sc.CommentID] = true
-			}
-		}
-	}
-	return seen, nil
-}
+// loadGlobalSeenForPR was removed in issue #1480 slice A: cross-run
+// dedup now reads from the daemon's seenCache (hydrated at
+// construction), so the per-tick on-disk scan no longer exists. The
+// on-disk source-of-truth construction lives in loadSeenCache.
 
 // shouldSkipDedupStatus reports whether a recorded comment status means
 // the comment should be skipped during global dedup.

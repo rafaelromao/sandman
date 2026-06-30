@@ -13,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 // sliceASeenLoader records how often the on-disk scan helpers were called
@@ -104,27 +105,22 @@ func TestDaemon_SeenCacheHydratedAtConstruction(t *testing.T) {
 	// Seed the prior review-state.json BEFORE constructing the daemon
 	// so the cache hydration at New actually sees it (mirrors the
 	// production lifecycle: daemon restarts and reads existing state).
-	d, _, dir := newDaemonForTest(t, gh, runner, &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "opencode/foo",
-	})
-	// The test fixture already created the temp dir and chdir-ed
-	// into it; we seed by recreating a sub-run. We do this AFTER
-	// newDaemonForTest so the daemon's hydration reads the seeded
-	// state on its next OnInvalidate call.
+	dir := t.TempDir()
+	t.Chdir(dir)
 	seedPriorReviewEntry(t, dir, "prior-batch-PR42", prNumber, commentID)
 
-	if err := d.InvalidateSeenCache(); err != nil {
-		t.Fatalf("InvalidateSeenCache: %v", err)
-	}
+	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}, &lockedBuffer{})
+
 	counter := &sliceASeenLoader{}
 	counter.Install(t)
 
-	// Construction happens here — New is called by newDaemonForTest, so
-	// the cache must have been hydrated at this point with the prior
-	// (prNumber, commentID) pair from the seeded review-state.json.
+	// Cache hydration happened at New: the (prNumber, commentID) pair
+	// from the seeded review-state.json must already be present.
 	if !d.IsTerminalSeen(prNumber, commentID) {
-		t.Fatalf("seenCache should have (PR %d, %s) after cache hydration, got %v", prNumber, commentID, d.seenCache)
+		t.Fatalf("seenCache should have (PR %d, %s) after construction, got %v", prNumber, commentID, d.seenCache)
 	}
 
 	if err := d.tick(context.Background()); err != nil {
@@ -249,9 +245,6 @@ func itoa(_ int, i int) string {
 	}
 	return string(out)
 }
-
-// ensure batch package is referenced for go-import pruning.
-var _ = struct{}{}
 
 // fakeInvalidator is a no-op test double for SeenCacheInvalidator.
 type fakeInvalidator struct {
