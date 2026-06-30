@@ -1048,6 +1048,44 @@ func TestDaemon_RunFailsFastOnMissingReviewModel(t *testing.T) {
 	cancel()
 }
 
+func TestDaemon_RunHonorsAgentModelOverridesAtStartup(t *testing.T) {
+	gh := &fakeGH{}
+	runner := &capturedRequest{}
+	// Deliberately leave config review_agent/review_model empty.
+	cfg := &config.Config{
+		DefaultReviewAgent: "",
+		DefaultReviewModel: "",
+		AgentProviders: map[string]config.Agent{
+			"claude": {Preset: "claude", Command: "claude"},
+		},
+	}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	d.Agent = "claude"
+	d.Model = "anthropic/claude-sonnet-4"
+
+	trigger := make(chan struct{}, 1)
+	d.Trigger = trigger
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- d.Run(ctx)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned unexpectedly with overrides set: %v", err)
+	case <-time.After(150 * time.Millisecond):
+		// Run did not fail-fast on empty config because overrides were honored.
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+}
+
 func TestDaemon_LaunchReviewPropagatesSandboxParams(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 10, State: "open"}},
@@ -1089,6 +1127,75 @@ func TestDaemon_LaunchReviewPropagatesSandboxParams(t *testing.T) {
 	}
 	if !runner.last.MaxContainersSet {
 		t.Errorf("expected MaxContainersSet=true")
+	}
+}
+
+func TestDaemon_LaunchReviewPropagatesAgentModelOverrides(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 20, State: "open"}},
+		comments: map[int][]github.PRComment{
+			20: {{ID: "c-agent", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{20: {Number: 20, Title: "PR 20", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent: "config-agent",
+		DefaultReviewModel: "config/model",
+		AgentProviders: map[string]config.Agent{
+			"claude": {Preset: "claude", Command: "claude"},
+		},
+	}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	d.Agent = "claude"
+	d.Model = "anthropic/claude-sonnet-4"
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	if runner.last.Agent != "claude" {
+		t.Errorf("expected agent 'claude' from override, got %q", runner.last.Agent)
+	}
+	if runner.last.Model != "anthropic/claude-sonnet-4" {
+		t.Errorf("expected model 'anthropic/claude-sonnet-4' from override, got %q", runner.last.Model)
+	}
+}
+
+func TestDaemon_LaunchReviewFallsBackToConfigForAgentModel(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 21, State: "open"}},
+		comments: map[int][]github.PRComment{
+			21: {{ID: "c-fallback", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{21: {Number: 21, Title: "PR 21", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent: "config-agent",
+		DefaultReviewModel: "config/model",
+		AgentProviders: map[string]config.Agent{
+			"config-agent": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	// Leave d.Agent and d.Model empty to exercise config fallback.
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	if runner.last.Agent != "config-agent" {
+		t.Errorf("expected agent 'config-agent' from cfg fallback, got %q", runner.last.Agent)
+	}
+	if runner.last.Model != "config/model" {
+		t.Errorf("expected model 'config/model' from cfg fallback, got %q", runner.last.Model)
 	}
 }
 
