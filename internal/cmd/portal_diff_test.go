@@ -245,6 +245,132 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// TestRenderRunMeta_ActiveWithAttempts_RendersChipOnCounterLine is the
+// tracer bullet for slice 4 of #1499: an active row backed by
+// run.started + run.retry (no run.finished) must surface the live
+// attempt count on the trailing counter line in the same "N retries"
+// shape the finished #1483 path uses, and stay within the 3-line
+// Batch/Run/counter cap.
+func TestRenderRunMeta_ActiveWithAttempts_RendersChipOnCounterLine(t *testing.T) {
+	js := `const run = { key: 'active-2', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r-2', issueNumber: 42, batchKey: 'b-2', attempts: 2, lastRetryReason: 'agent-stalled' };
+const meta = helpers.renderRunMeta(run);
+const NL = String.fromCharCode(10);
+const lines = meta.split(NL);
+if (lines.length !== 3) throw new Error('expected exactly 3 lines (Batch, Run, counter) for active-with-attempts row, got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: b-2') throw new Error('expected Batch line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: r-2') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
+if (lines[2] !== '2 retries') throw new Error('expected "2 retries" on trailing line, got: ' + JSON.stringify(lines));
+if (meta !== 'Batch: b-2' + NL + 'Run: r-2' + NL + '2 retries') throw new Error('expected exact meta text, got: ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_ActiveWithSingleAttempt_UsesSingularLabel locks in
+// the singular/plural wording for the new active-path chip (1 retry,
+// not 1 retries).
+func TestRenderRunMeta_ActiveWithSingleAttempt_UsesSingularLabel(t *testing.T) {
+	js := `const run = { key: 'active-1', kind: 'active', status: 'running', issueLabel: '#1', runId: 'r-1', issueNumber: 1, attempts: 1, lastRetryReason: 'agent-stalled' };
+const meta = helpers.renderRunMeta(run);
+if (!meta.includes('1 retry')) throw new Error('expected "1 retry" for attempts=1, got: ' + JSON.stringify(meta));
+if (meta.includes('1 retries')) throw new Error('must not show "1 retries", got: ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_ActiveZeroAttempts_OmitsCounterLine is the
+// regression guard for the no-attempts active case: when attempts is
+// zero (or omitted) the trailing counter line must not appear, even
+// though the run is active. The active row stays at exactly the
+// 2-line Batch/Run layout from #1483.
+func TestRenderRunMeta_ActiveZeroAttempts_OmitsCounterLine(t *testing.T) {
+	js := `const run = { key: 'clean-active', kind: 'active', status: 'running', issueLabel: '#7', runId: 'r-7', issueNumber: 7, batchKey: 'b-7', attempts: 0 };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split(String.fromCharCode(10));
+if (lines.length !== 2) throw new Error('expected exactly 2 lines (Batch, Run) for active-with-zero-attempts row, got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: b-7') throw new Error('expected Batch line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: r-7') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_ActiveAttemptsJoinsReviewCounter asserts the chip
+// joins the existing review counter on the trailing counter line, with
+// the same " - " separator #1483 uses. The 3-line Batch/Run/counter
+// cap is preserved.
+func TestRenderRunMeta_ActiveAttemptsJoinsReviewCounter(t *testing.T) {
+	js := `const run = { key: 'active-r', kind: 'active', status: 'reviewing', issueLabel: '#9', runId: 'r-9', issueNumber: 9, batchKey: 'b-9', attempts: 2, lastRetryReason: 'agent-stalled', reviewCount: 1, reviewVerdict: 'Approved' };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split(String.fromCharCode(10));
+if (lines.length !== 3) throw new Error('expected exactly 3 lines (Batch, Run, joined counter), got: ' + JSON.stringify(lines));
+if (lines[0] !== 'Batch: b-9') throw new Error('expected Batch line first, got: ' + JSON.stringify(lines));
+if (lines[1] !== 'Run: r-9') throw new Error('expected Run line second, got: ' + JSON.stringify(lines));
+if (lines[2] !== '2 retries - 1 review - Approved') throw new Error('expected joined counter line, got: ' + JSON.stringify(lines));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_FinishedRunWithAttemptsAndRetriesDone_DoesNotDuplicate
+// is the duplication-guard regression: a finished row carries both
+// attempts (sourced from retries_done by slice 1's attemptsForRun) and
+// retriesDone in the JSON, but the chip must emit only once. The
+// attempts branch is gated on retriesDone === 0 so the chip is the
+// active-only path; finished rows use the existing retriesDone branch.
+func TestRenderRunMeta_FinishedRunWithAttemptsAndRetriesDone_DoesNotDuplicate(t *testing.T) {
+	js := `const run = { key: 'fin-2', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'fr-2', issueNumber: 42, batchKey: 'fb-2', retriesDone: 2, attempts: 2, reviewCount: 1, reviewVerdict: 'Approved' };
+const meta = helpers.renderRunMeta(run);
+const lines = meta.split(String.fromCharCode(10));
+if (lines.length !== 3) throw new Error('expected exactly 3 lines (Batch, Run, counter) for finished run, got: ' + JSON.stringify(lines));
+if (lines[2] !== '2 retries - 1 review - Approved') throw new Error('expected single retry counter, no duplication, got: ' + JSON.stringify(lines[2]));
+if (lines[2].includes('2 retries - 2 retries')) throw new Error('finished row duplicated the retry counter, got: ' + JSON.stringify(lines[2]));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalDiffCreateRunRow_ActiveAttemptsChipPersistsTitle is the
+// client-path coverage for slice 4: when SandmanPortalDiff.insertRunRow
+// renders an active row backed by run.started + run.retry, the
+// meta-line element must carry the "2 retries" text on its textContent
+// AND a title attribute naming the most recent retry reason. The
+// tooltip is set on first render in buildTitleCell and persists across
+// reconciliation because setText only touches textContent.
+func TestPortalDiffCreateRunRow_ActiveAttemptsChipPersistsTitle(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'r-active', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r-42', issueNumber: 42, batchKey: 'b-42', attempts: 2, lastRetryReason: 'agent-stalled' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+const meta = created.row.querySelector('[data-cell="title"]').children[0].children[1];
+if (!meta.textContent.includes('2 retries')) throw new Error('expected meta text to include "2 retries", got ' + JSON.stringify(meta.textContent));
+const title = meta.getAttribute('title');
+if (!title || !title.includes('agent-stalled')) throw new Error('expected title attribute to include reason, got ' + JSON.stringify(title));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffCreateRunRow_ActiveAttemptsEmptyReason_OmitsTitle pins
+// the empty-reason branch: the chip is still shown but the meta-line
+// has no title attribute (no dangling tooltip).
+func TestPortalDiffCreateRunRow_ActiveAttemptsEmptyReason_OmitsTitle(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'r-active-nr', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r-42nr', issueNumber: 42, batchKey: 'b-42', attempts: 2, lastRetryReason: '' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+const meta = created.row.querySelector('[data-cell="title"]').children[0].children[1];
+if (!meta.textContent.includes('2 retries')) throw new Error('expected meta text to include "2 retries", got ' + JSON.stringify(meta.textContent));
+const title = meta.getAttribute('title');
+if (title) throw new Error('expected no title attribute when reason is empty, got ' + JSON.stringify(title));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalDiffCreateRunRow_BatchAndRetryOnSeparateLines asserts the DOM
 // row produced by SandmanPortalDiff.insertRunRow renders the new three-line
 // meta: Batch:, Run:, then the trailing counter line.

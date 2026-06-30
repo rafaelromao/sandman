@@ -513,6 +513,11 @@ func TestParseBlockedBy(t *testing.T) {
 			want: []int{382, 60},
 		},
 		{
+			name: "heading plus markdown link bullets extracts numbers",
+			body: "## Blocked by\n- [#382](https://github.com/rafaelromao/sandman/issues/382)\n- [#60](https://github.com/rafaelromao/sandman/issues/60)",
+			want: []int{382, 60},
+		},
+		{
 			name: "heading with multiple bullets",
 			body: "## Blocked by\n- #1\n- #2\n- #3",
 			want: []int{1, 2, 3},
@@ -536,6 +541,11 @@ func TestParseBlockedBy(t *testing.T) {
 			name: "mixed inline and heading blocks",
 			body: "Blocked by #1\n## Blocked by\n- #2\n- #3",
 			want: []int{1, 2, 3},
+		},
+		{
+			name: "inline markdown link matches",
+			body: "Blocked by [#1](https://github.com/rafaelromao/sandman/issues/1)",
+			want: []int{1},
 		},
 		{
 			name: "heading blocks with real issue body format",

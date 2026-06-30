@@ -253,24 +253,30 @@ Agent commits use your host Git identity, not Sandman config keys. Sandman resol
 
 A *stranded worktree* is a sandman-managed worktree whose HEAD points to a different branch than its directory name expects. This can happen when a previous run was interrupted after creating the worktree but before checking out the correct branch.
 
-To detect stranded worktrees and print remediation commands, run the standalone script:
+To detect stranded worktrees and print remediation commands, run:
 
 ```bash
-scripts/reconcile-stranded-worktrees.sh
+sandman stranded
 ```
 
-The script works from the main repo root or from inside any sandman worktree. It reads the configured `worktree_dir` from `.sandman/config.yaml` and resolves the path to match `git worktree list` output correctly, including absolute, tilde-prefixed, and relative `worktree_dir` values.
+`sandman stranded` works from the main repo root or from inside any sandman worktree. It reads the configured `worktree_dir` from `.sandman/config.yaml` and resolves the path to match `git worktree list` output correctly, including absolute, tilde-prefixed, and relative `worktree_dir` values.
 
-The script parses `git worktree list --porcelain`, reads the configured `worktree_dir` from `.sandman/config.yaml` (defaults to `.sandman/worktrees`), matches worktrees under that directory whose directory name follows the `sandman/<number>-<slug>` pattern, and compares the actual branch against the expected branch derived from the directory name. For each mismatch it prints a one-line remediation command:
+The command parses `git worktree list --porcelain`, reads the configured `worktree_dir` from `.sandman/config.yaml` (defaults to `.sandman/worktrees`), matches worktrees under that directory whose directory name follows the `sandman/<number>-<slug>` pattern, and compares the actual branch against the expected branch derived from the directory name. For each mismatch it prints a one-line remediation command:
 
 ```
 Worktree /path/.sandman/worktrees/sandman/724-foo is on refs/heads/main, expected refs/heads/sandman/724-foo. Run: git -C /path/.sandman/worktrees/sandman/724-foo checkout -f sandman/724-foo
 ```
 
-The script is non-destructive: it never checks out branches or removes worktrees automatically. It exits 0 on success, including when no stranded worktrees are found.
+`sandman stranded` is non-destructive: it never checks out branches or removes worktrees automatically. It exits 0 on success, including when no stranded worktrees are found.
+
+For machine-readable output, pass `--json` to print the structured result list instead of the human-readable remediation lines:
+
+```bash
+sandman stranded --json
+```
 
 > **Warning:** The printed `git checkout -f` command will discard uncommitted changes in the worktree. Commit or stash any worktree-local changes before running the remediation command.
 
-> **Note:** The script only detects stranded worktrees for issue-driven branches (`sandman/<number>-<slug>`). Prompt-only worktrees (timestamp-based branch names) are not checked, as their directory name does not map to a predictable expected branch. When a prompt-only branch's slug starts with a digit (e.g. `sandman/4-eyes-1700000000`), the script may flag it as stranded and report the branch as missing — this is a false positive. `sandman run --override` reconciles stranded worktrees before a run starts, regardless of naming pattern.
+> **Note:** `sandman stranded` only detects stranded worktrees for issue-driven branches (`sandman/<number>-<slug>`). Prompt-only worktrees (timestamp-based branch names) are not checked, as their directory name does not map to a predictable expected branch. When a prompt-only branch's slug starts with a digit (e.g. `sandman/4-eyes-1700000000`), the command may flag it as stranded and report the branch as missing — this is a false positive. `sandman run --override` reconciles stranded worktrees before a run starts, regardless of naming pattern.
 
-> **Note:** The `--override` flag on `sandman run` performs the same reconciliation automatically at the start of a new run. The standalone script is useful for inspecting or fixing worktrees outside of a run.
+> **Note:** The `--override` flag on `sandman run` performs the same reconciliation automatically at the start of a new run. `sandman stranded` is useful for inspecting or fixing worktrees outside of a run.
