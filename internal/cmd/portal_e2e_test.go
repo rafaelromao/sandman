@@ -20,6 +20,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
@@ -673,6 +674,7 @@ func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 	// Register the batch in the batches index so discoverPortalInstances
 	// surfaces the active run to /api/runs. Without this entry, the
 	// portal has no record of the live batch and the rows are missing.
+	layout := paths.NewLayout(nil, repoDir)
 	batchIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
 		Entries: []batchindex.Entry{
@@ -686,7 +688,7 @@ func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 			},
 		},
 	}
-	if err := batchIdx.Save(filepath.Join(sandmanDir, "batches.json")); err != nil {
+	if err := batchIdx.Save(layout.BatchesIndexPath); err != nil {
 		t.Fatalf("write batches index: %v", err)
 	}
 
