@@ -101,6 +101,9 @@ type Daemon struct {
 	promptOnce           sync.Once
 	seenCache            map[int]map[string]bool
 	seenCacheMu          sync.RWMutex
+	slotTable            map[int]struct{}
+	slotPool             chan struct{}
+	slotMu               sync.Mutex
 	pendingMu            sync.Mutex
 	pendingReviews       map[int][]pendingReviewEntry
 }
@@ -111,6 +114,13 @@ type Daemon struct {
 // unreadable index yields an empty cache; the rename-loser trade-off
 // from ADR-0034 §3 means a stale skip is acceptable.
 func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer) *Daemon {
+	parallelReviews := 1
+	if cfg != nil {
+		parallelReviews = cfg.EffectiveReviewParallel()
+		if parallelReviews < 1 {
+			parallelReviews = 1
+		}
+	}
 	d := &Daemon{
 		BaseDir:        baseDir,
 		GitHub:         gh,
@@ -123,12 +133,75 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		PollInterval:   PollingInterval,
 		busy:           make(chan struct{}, 1),
 		seenCache:      map[int]map[string]bool{},
+		slotTable:      map[int]struct{}{},
+		slotPool:       make(chan struct{}, parallelReviews),
 		pendingReviews: map[int][]pendingReviewEntry{},
 	}
 	if err := d.loadSeenCache(); err != nil {
 		d.logf("load seen cache: %v", err)
 	}
 	return d
+}
+
+// acquirePRSlot reserves one of the parallel_reviews slots for
+// prNumber. Returns true if reserved; false if either (a) the slot
+// pool is saturated (cap = parallel_reviews: M and N are in-flight
+// and O returns early) or (b) prNumber already has an in-flight slot
+// held (a new trigger on the same PR is held for the next tick, not
+// dropped). The pool is shared across PRs; the per-PR ownership is
+// tracked by slotTable so a new trigger on PR N does not bump
+// another free PR's reservation. Slice B's TryClaim guarantees that
+// two processPR calls for the same PR never enter launchReview
+// simultaneously, so the slot's 1-of-1 reservation is correct.
+func (d *Daemon) acquirePRSlot(prNumber int) bool {
+	d.slotMu.Lock()
+	defer d.slotMu.Unlock()
+	if _, held := d.slotTable[prNumber]; held {
+		return false
+	}
+	select {
+	case d.slotPool <- struct{}{}:
+		d.slotTable[prNumber] = struct{}{}
+		return true
+	default:
+		return false
+	}
+}
+
+// releasePRSlot frees the slot held by prNumber, returning it to the
+// pool. Idempotent: a no-op when prNumber has no held slot. Called
+// from a defer in processPR after MarkSeen persists so the slot is
+// freed only after terminal-seen state is on disk.
+func (d *Daemon) releasePRSlot(prNumber int) {
+	d.slotMu.Lock()
+	defer d.slotMu.Unlock()
+	if _, held := d.slotTable[prNumber]; !held {
+		return
+	}
+	delete(d.slotTable, prNumber)
+	select {
+	case <-d.slotPool:
+	default:
+	}
+}
+
+// IsSlotHeld reports whether prNumber currently holds a slot.
+// Exposed for slice-C regression tests (cross-PR concurrency and
+// no-leak invariants). Production code does not branch on it; the
+// slot is acquired by processPR itself.
+func (d *Daemon) IsSlotHeld(prNumber int) bool {
+	d.slotMu.Lock()
+	defer d.slotMu.Unlock()
+	_, held := d.slotTable[prNumber]
+	return held
+}
+
+// slotHeldCount returns the number of currently-held slots. Used by
+// the slice-C no-leak regression test. Returns 0 on an idle daemon.
+func (d *Daemon) slotHeldCount() int {
+	d.slotMu.Lock()
+	defer d.slotMu.Unlock()
+	return len(d.slotTable)
 }
 
 // IsTerminalSeen reports whether the daemon's seen cache currently
@@ -387,34 +460,14 @@ func (d *Daemon) tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list open PRs: %w", err)
 	}
-	limit := 1
-	if d.Config != nil {
-		limit = d.Config.EffectiveReviewParallel()
-	}
-	if limit < 1 {
-		limit = 1
-	}
 
-	sem := make(chan struct{}, limit)
 	var wg sync.WaitGroup
 	for _, pr := range prs {
 		pr := pr
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			canLaunch := true
-			select {
-			case sem <- struct{}{}:
-			default:
-				d.logf("PR #%d: parallel limit reached, will read comments without launching", pr.Number)
-				canLaunch = false
-			}
-			defer func() {
-				if canLaunch {
-					<-sem
-				}
-			}()
-			if err := d.processPR(ctx, pr.Number, canLaunch); err != nil {
+			if err := d.processPR(ctx, pr.Number); err != nil {
 				d.logf("process PR #%d: %v", pr.Number, err)
 			}
 		}()
@@ -424,10 +477,10 @@ func (d *Daemon) tick(ctx context.Context) error {
 }
 
 // processPR scans one PR's comments and launches a review agent for the
-// newest unseen /sandman review trigger. When canLaunch is false, the
-// function reads comments and identifies triggers but does not launch a
-// review, add reactions, or mark the trigger as seen. This ensures that
-// triggers are not dropped when the parallel limit is saturated.
+// newest unseen /sandman review trigger. The per-PR slot (issue #1481
+// slice C — see acquirePRSlot / releasePRSlot) preserves the trigger
+// when the slot pool is full or a stale review is in flight; the deferred
+// release runs after MarkSeen persists.
 //
 // The dedup state lives in the run folder's `review-state.json`, managed
 // by ReviewStateStore. No per-PR directory is created under `.sandman/reviews/`.
@@ -435,7 +488,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 // Acceptance criteria #1 and #3 from issue #1224:
 //   - No code path creates `.sandman/reviews/<PR>/`
 //   - `review-state.json` lives at `<batch>/runs/<run>/review-state.json`
-func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) error {
+func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	comments, err := d.GitHub.ListPRComments(prNumber)
 	if err != nil {
 		return fmt.Errorf("list comments: %w", err)
@@ -521,10 +574,13 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 	comment := newest.comment
 	focus := newest.focus
 
-	if !canLaunch {
-		d.logf("PR #%d: cannot launch (semaphore saturated), will retry on next tick", prNumber)
+	// Acquire a per-PR slot before reactions / launch so a stale
+	// in-flight review (or the parallel_reviews cross-PR cap) makes
+	// the trigger wait for the next tick instead of dropping it.
+	if !d.acquirePRSlot(prNumber) {
 		return nil
 	}
+	defer d.releasePRSlot(prNumber)
 
 	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(prNumber, comment.ID)
 	if prepErr != nil {
