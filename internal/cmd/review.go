@@ -305,8 +305,8 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	d.ContainerCapacitySet = ccSet
 	d.MaxContainers = mc
 	d.MaxContainersSet = mcSet
-	d.Agent = strings.TrimSpace(agentFlag)
-	d.Model = strings.TrimSpace(modelFlag)
+	d.Agent = agentFlag
+	d.Model = modelFlag
 	d.SetSocket(ctlSocket)
 	return d.Run(ctx)
 }
