@@ -2482,7 +2482,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           const existing = prevRuns.find((r) => r && (r.key === next.key || r.runId === next.runId));
           if (existing && existing.log && !next.log) {
             next.log = existing.log;
-            next.events = existing.events || next.events;
+          }
+          if (existing && existing.events && !next.events) {
+            next.events = existing.events;
           }
         }
         if (state.expandedRunKey) {
@@ -2525,9 +2527,12 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const run = findRunByIdentity(runKey);
       if (!run) return;
       if (isWaitStateRun(run)) return;
+      const tabKey = run.runId || run.key;
+      const currentTab = String((state.tabs && (state.tabs[tabKey] || state.tabs[run.key])) || 'log').trim();
       const hasLog = run.log && String(run.log).trim();
-      const isActive = run.kind === 'active';
-      if (hasLog || isActive) return;
+      const hasEvents = Object.prototype.hasOwnProperty.call(run, 'events');
+      if (currentTab === 'events' && hasEvents) return;
+      if (currentTab !== 'events' && hasLog) return;
       try {
         const res = await fetch(apiPath + '?runKey=' + encodeURIComponent(run.backendKey || run.key));
         if (!res.ok) return;
@@ -2536,7 +2541,13 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         const detail = normalizeRunIdentity(payload.run);
         const idx = state.runs.findIndex((r) => r && (r.key === detail.key || r.runId === detail.runId));
         if (idx >= 0) {
-          state.runs[idx] = { ...state.runs[idx], log: detail.log, events: detail.events || state.runs[idx].events, logUrl: detail.logUrl };
+          const existing = state.runs[idx];
+          state.runs[idx] = {
+            ...existing,
+            log: hasLog ? existing.log : detail.log,
+            events: detail.events || existing.events,
+            logUrl: detail.logUrl,
+          };
           scheduleRender();
         }
       } catch (err) {
