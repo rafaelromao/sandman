@@ -627,6 +627,124 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
 	}
 }
 
+func TestPortalRefresh_DiscardsQueuedExpandedStateBeforeDetailFetch(t *testing.T) {
+	queued := map[string]any{
+		"key":         "queued-1",
+		"runId":       "queued-1",
+		"kind":        "active",
+		"status":      "queued",
+		"issueLabel":  "#7",
+		"issueNumber": 7,
+		"batchKey":    "batch-7",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{queued})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"queued-1","tabs":{"queued-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="queued-1"]');
+      var stored = null;
+      try {
+        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+      } catch (err) {}
+      var pre = document.createElement('pre');
+      pre.id = 'portal-queued-normalize';
+      pre.textContent = JSON.stringify({
+        detailExists: !!detail,
+        expandedRunKey: stored && stored.expandedRunKey,
+        fetchCalls: window.__portalFetchCalls || 0,
+      });
+      document.body.appendChild(pre);
+    }, 2200);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-queued-normalize")
+	var result struct {
+		DetailExists   bool   `json:"detailExists"`
+		ExpandedRunKey string `json:"expandedRunKey"`
+		FetchCalls     int    `json:"fetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse queued-normalize payload: %v\nraw=%s", err, payload)
+	}
+	if result.DetailExists {
+		t.Fatalf("expected queued state not to open detail, got %#v", result)
+	}
+	if result.ExpandedRunKey != "" {
+		t.Fatalf("expected queued expanded state to be cleared, got %#v", result)
+	}
+	if result.FetchCalls > 2 {
+		t.Fatalf("expected queued state not to trigger a detail fetch, got %#v", result)
+	}
+}
+
+func TestPortalRowClick_IgnoresForcedToggleAttrsOnQueuedRun(t *testing.T) {
+	queued := map[string]any{
+		"key":         "queued-2",
+		"runId":       "queued-2",
+		"kind":        "active",
+		"status":      "queued",
+		"issueLabel":  "#8",
+		"issueNumber": 8,
+		"batchKey":    "batch-8",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{queued})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":null,"tabs":{},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    setTimeout(function () {
+      var row = document.querySelector('tr[data-run-key="queued-2"]');
+      if (!row) throw new Error('missing queued row');
+      row.setAttribute('data-action', 'toggle-run');
+      row.setAttribute('role', 'button');
+      row.setAttribute('tabindex', '0');
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }, 50);
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="queued-2"]');
+      var stored = null;
+      try {
+        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+      } catch (err) {}
+      var pre = document.createElement('pre');
+      pre.id = 'portal-queued-click';
+      pre.textContent = JSON.stringify({
+        detailExists: !!detail,
+        expandedRunKey: stored && stored.expandedRunKey,
+        fetchCalls: window.__portalFetchCalls || 0,
+      });
+      document.body.appendChild(pre);
+    }, 2200);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-queued-click")
+	var result struct {
+		DetailExists   bool   `json:"detailExists"`
+		ExpandedRunKey string `json:"expandedRunKey"`
+		FetchCalls     int    `json:"fetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse queued-click payload: %v\nraw=%s", err, payload)
+	}
+	if result.DetailExists {
+		t.Fatalf("expected forced toggle attrs to be ignored on queued row, got %#v", result)
+	}
+	if result.ExpandedRunKey != "" {
+		t.Fatalf("expected queued row click to leave expanded state unchanged, got %#v", result)
+	}
+	if result.FetchCalls > 2 {
+		t.Fatalf("expected queued click not to trigger detail fetch, got %#v", result)
+	}
+}
+
 func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *testing.T) {
 	parent := map[string]any{
 		"key":         "issue-1",

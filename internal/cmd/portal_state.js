@@ -40,6 +40,11 @@
     return cleanKey(run.key);
   }
 
+  function isWaitStateRun(run) {
+    const status = String(run && run.status || '').trim().toLowerCase();
+    return status === 'queued' || status === 'blocked';
+  }
+
   function cleanTabs(value) {
     const tabs = {};
     if (!value || typeof value !== 'object') return tabs;
@@ -99,6 +104,12 @@
 
     if (current.expandedRunKey && keyToSubject.has(current.expandedRunKey)) {
       current.expandedRunKey = keyToSubject.get(current.expandedRunKey);
+      changed = true;
+    }
+
+    const expandedRun = current.expandedRunKey ? allRunByIdentity.get(current.expandedRunKey) : null;
+    if (expandedRun && isWaitStateRun(expandedRun)) {
+      current.expandedRunKey = null;
       changed = true;
     }
 

@@ -455,6 +455,7 @@
     const reviews = [];
     for (const candidate of visible) {
       if (!candidate || candidate.issueNumber !== run.issueNumber) continue;
+      if (!isRowExpandable(candidate)) continue;
       const value = subjectRunValue(candidate);
       if (!value || seen.has(value)) continue;
       seen.add(value);
