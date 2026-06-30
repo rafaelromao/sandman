@@ -719,6 +719,26 @@ func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, strin
 	return reviewRunFolder, perRowRunID, rs, state, nil
 }
 
+// reviewBranchName returns the git branch name the review daemon uses for
+// a given (PR, commentID) pair. Centralized so launchReview, its batch
+// request, and the cleanup defer all derive the same string and tests can
+// reference it without re-encoding the format.
+func reviewBranchName(prNumber int, commentID string) string {
+	return fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID)
+}
+
+// logWriterFor returns the io.Writer ClearReviewArtifacts should write
+// cleanup logs to. Falls back to the daemon's Broadcaster when set,
+// otherwise to stderr (matching d.logf's fallback). Using Broadcaster
+// directly rather than d.logf lets ClearReviewArtifacts stay a free
+// function that does not depend on *Daemon.
+func logWriterFor(d *Daemon) io.Writer {
+	if d != nil && d.Broadcaster != nil {
+		return d.Broadcaster
+	}
+	return os.Stderr
+}
+
 // launchReview renders the review prompt and runs the batch. The PR
 // metadata is re-fetched via the GitHub client so the prompt reflects
 // the current title and body. The rendered prompt is passed to the
@@ -738,16 +758,15 @@ func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, strin
 // when the agent's review comment arrives, or to failure after
 // pendingMaxCycles ticks.
 func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession) error {
-	// The review branch is fixed by the launch contract (issue #1494).
-	// We compute it here so the cleanup defer has it available on every
-	// exit path, including early errors before RunBatch runs.
-	reviewBranch := fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID)
+	// We compute the review branch name up-front so the cleanup defer
+	// has it available on every exit path, including early errors
+	// before RunBatch runs. The same value is reused in the
+	// batch.Request.PromptConfig.Branch below so cleanup and creation
+	// always target the same branch.
+	reviewBranch := reviewBranchName(prNumber, commentID)
 	defer func() {
 		if rs != nil {
 			_ = rs.Close()
-		}
-		if d.Config != nil {
-			ClearReviewArtifacts(reviewBranch, d.Config.WorktreeDir, d.Broadcaster)
 		}
 		if commentReactionID != "" {
 			if err := d.GitHub.RemoveCommentReaction(commentID, commentReactionID); err != nil {
@@ -758,6 +777,12 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 			if err := d.GitHub.RemoveIssueReaction(prNumber, prReactionID); err != nil {
 				d.logf("remove reaction from PR #%d: %v", prNumber, err)
 			}
+		}
+		// Best-effort cleanup of the review worktree + branch runs last
+		// so any in-flight reaction removal or socket close above is not
+		// racing a half-removed worktree directory.
+		if d.Config != nil {
+			ClearReviewArtifacts(reviewBranch, d.Config.WorktreeDir, logWriterFor(d))
 		}
 	}()
 

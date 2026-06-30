@@ -237,7 +237,8 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 
 	d, _, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
 	d.Clock = func() time.Time { return now }
-	stageReviewWorktree(t, worktreeDir, "sandman/review-42-c1")
+	branch := reviewBranchName(42, "c1")
+	stageReviewWorktree(t, worktreeDir, branch)
 
 	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(42, "c1")
 	if prepErr != nil {
@@ -248,10 +249,10 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 		t.Fatalf("launchReview: %v", err)
 	}
 
-	if gitWorktreeHasBranch(t, worktreeDir, "sandman/review-42-c1") {
+	if gitWorktreeHasBranch(t, worktreeDir, branch) {
 		t.Errorf("expected review worktree to be removed after launchReview success")
 	}
-	if gitBranchExists(t, "sandman/review-42-c1") {
+	if gitBranchExists(t, branch) {
 		t.Errorf("expected review branch to be removed after launchReview success")
 	}
 	if _, err := os.Stat(capturedRunDir); err != nil {
@@ -276,7 +277,8 @@ func TestLaunchReview_CleansUpOnRunBatchFailure(t *testing.T) {
 
 	d, _, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
 	d.Clock = func() time.Time { return now }
-	stageReviewWorktree(t, worktreeDir, "sandman/review-42-c1")
+	branch := reviewBranchName(42, "c1")
+	stageReviewWorktree(t, worktreeDir, branch)
 
 	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(42, "c1")
 	if prepErr != nil {
@@ -288,10 +290,10 @@ func TestLaunchReview_CleansUpOnRunBatchFailure(t *testing.T) {
 		t.Fatal("expected launchReview to return the RunBatch error")
 	}
 
-	if gitWorktreeHasBranch(t, worktreeDir, "sandman/review-42-c1") {
+	if gitWorktreeHasBranch(t, worktreeDir, branch) {
 		t.Errorf("expected review worktree to be removed after launchReview error")
 	}
-	if gitBranchExists(t, "sandman/review-42-c1") {
+	if gitBranchExists(t, branch) {
 		t.Errorf("expected review branch to be removed after launchReview error")
 	}
 }
@@ -320,7 +322,8 @@ func TestLaunchReview_CleansUpOnContextCancellation(t *testing.T) {
 
 	d, _, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
 	d.Clock = func() time.Time { return now }
-	stageReviewWorktree(t, worktreeDir, "sandman/review-42-c1")
+	branch := reviewBranchName(42, "c1")
+	stageReviewWorktree(t, worktreeDir, branch)
 
 	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(42, "c1")
 	if prepErr != nil {
@@ -332,10 +335,10 @@ func TestLaunchReview_CleansUpOnContextCancellation(t *testing.T) {
 		t.Fatal("expected launchReview to return a context.Canceled error")
 	}
 
-	if gitWorktreeHasBranch(t, worktreeDir, "sandman/review-42-c1") {
+	if gitWorktreeHasBranch(t, worktreeDir, branch) {
 		t.Errorf("expected review worktree to be removed after ctx cancel")
 	}
-	if gitBranchExists(t, "sandman/review-42-c1") {
+	if gitBranchExists(t, branch) {
 		t.Errorf("expected review branch to be removed after ctx cancel")
 	}
 }

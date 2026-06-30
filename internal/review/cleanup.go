@@ -17,9 +17,8 @@ import (
 // narrower scope — review runs do not touch the event log, the batches
 // index, or the per-run batch directory under .sandman/batches/.
 //
-// The branch is read from req.PromptConfig.Branch (the format
-// `sandman/review-<PR>-<commentID>` is set by launchReview itself).
-// The worktree path is <worktreeDir>/<branch>, matching the layout
+// The branch is computed by reviewBranchName(pr, commentID) and the
+// worktree path is <worktreeDir>/<branch>, matching the layout
 // created by WorktreeSandbox.Start. Empty inputs are treated as a
 // no-op so callers can always invoke this unconditionally from a
 // defer without an empty-config check.
