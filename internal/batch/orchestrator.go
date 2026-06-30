@@ -1336,7 +1336,7 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 // event both tail. issueNumber == 0 denotes a prompt-only run, matching the
 // existing prompt-only convention (issue: 0 in the JSON payload). No-op when
 // the orchestrator has no event log.
-func (o *Orchestrator) logRetry(runID, branch string, attempt, maxAttempts int, previousStatus, logPath string, issueNumber int) {
+func (o *Orchestrator) logRetry(runID, branch string, attempt, maxAttempts int, previousStatus, reason, logPath string, issueNumber int) {
 	if o.eventLog == nil {
 		return
 	}
@@ -1349,6 +1349,7 @@ func (o *Orchestrator) logRetry(runID, branch string, attempt, maxAttempts int, 
 			"attempt":         attempt,
 			"max_attempts":    maxAttempts,
 			"previous_status": previousStatus,
+			"reason":          reason,
 			"branch":          branch,
 			"last_log_lines":  readTailLines(logPath, 3),
 		},
@@ -1627,10 +1628,10 @@ func (s *runSession) applyOverrideAndIdentity(wt sandbox.Sandbox, branch string)
 
 // withHeartbeat runs fn under the run-idle-timeout watchdog when
 // s.runIdleTimeout > 0; any non-success result is rewritten to "aborted".
-func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt int, logPath string, wt sandbox.Sandbox, fn func() AgentRunResult) AgentRunResult {
+func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt int, logPath string, wt sandbox.Sandbox, fn func() AgentRunResult) (AgentRunResult, bool) {
 	o := s.o
 	if s.runIdleTimeout <= 0 {
-		return fn()
+		return fn(), false
 	}
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 	defer cancelHeartbeat()
@@ -1678,7 +1679,7 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 	if abortedByHeartbeat && !events.RunStatusFromPayload(result.Status).IsSuccess() {
 		result.Status = "aborted"
 	}
-	return result
+	return result, abortedByHeartbeat
 }
 
 // emitTerminal writes the terminal run event (run.finished or run.aborted),
@@ -1767,6 +1768,7 @@ func (s *runSession) runOnce(
 
 	attempts := s.retries + 1
 	var result AgentRunResult
+	var abortedByHeartbeat bool
 
 	factory := o.runnableFactory
 	if factory == nil {
@@ -1780,7 +1782,18 @@ func (s *runSession) runOnce(
 		}
 
 		if attempt > 0 {
-			o.logRetry(runID, branch, attempt+1, attempts, result.Status, logPath, s.issueNumber)
+			reason := ""
+			switch result.Status {
+			case "failure":
+				reason = "agent-failed"
+			case "aborted":
+				if abortedByHeartbeat {
+					reason = "agent-stalled"
+				} else if s.parentCtx != nil && s.parentCtx.Err() != nil {
+					reason = "kill-timeout"
+				}
+			}
+			o.logRetry(runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
 		}
 
 		runnable := factory.NewRunnable(issue, branch, wt)
@@ -1800,7 +1813,7 @@ func (s *runSession) runOnce(
 			agentRun.runFolder = s.runFolderFor(runID)
 		}
 
-		result = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
+		result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
 			return runnable.Run(ctx, o.renderer, s.agentCfg.Command, attemptRenderCfg)
 		})
 		if result.Issue == nil && s.issueNumber > 0 {
