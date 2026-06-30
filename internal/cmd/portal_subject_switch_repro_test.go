@@ -682,6 +682,61 @@ func TestPortalRefresh_DiscardsQueuedExpandedStateBeforeDetailFetch(t *testing.T
 	}
 }
 
+func TestPortalRefresh_IgnoresEmptyExpandedStateBeforeDetailFetch(t *testing.T) {
+	run := map[string]any{
+		"key":         "run-1",
+		"runId":       "run-1",
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+		"batchKey":    "batch-1",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{run})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"","tabs":{},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="run-1"]');
+      var stored = null;
+      try {
+        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+      } catch (err) {}
+      var pre = document.createElement('pre');
+      pre.id = 'portal-empty-identity';
+      pre.textContent = JSON.stringify({
+        detailExists: !!detail,
+        expandedRunKey: stored && stored.expandedRunKey,
+        fetchCalls: window.__portalFetchCalls || 0,
+      });
+      document.body.appendChild(pre);
+    }, 2200);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-empty-identity")
+	var result struct {
+		DetailExists   bool   `json:"detailExists"`
+		ExpandedRunKey string `json:"expandedRunKey"`
+		FetchCalls     int    `json:"fetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse empty-identity payload: %v\nraw=%s", err, payload)
+	}
+	if result.DetailExists {
+		t.Fatalf("expected empty expanded state not to open detail, got %#v", result)
+	}
+	if result.ExpandedRunKey != "" {
+		t.Fatalf("expected empty expanded state to stay empty, got %#v", result)
+	}
+	if result.FetchCalls > 1 {
+		t.Fatalf("expected empty expanded state not to trigger detail fetch, got %#v", result)
+	}
+}
+
 func TestPortalRowClick_IgnoresForcedToggleAttrsOnQueuedRun(t *testing.T) {
 	queued := map[string]any{
 		"key":         "queued-2",

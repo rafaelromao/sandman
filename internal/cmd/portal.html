@@ -1958,6 +1958,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function findRunRowByIdentity(runIdentity) {
+      if (!runIdentity) return null;
       const run = findRunByIdentity(runIdentity);
       const runKey = run ? (visibleRunForIssueGroup(run.issueNumber, state.runs)?.key || run.key) : runIdentity;
       return Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey) || null;
@@ -2325,7 +2326,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           counterParts.push(reviewPart);
         }
       }
-      if (run.runId) lines.push('Run: ' + run.runId);
+      const status = String(run.status || '').toLowerCase();
+      if (run.runId && status !== 'queued' && status !== 'blocked') lines.push('Run: ' + run.runId);
       if (counterParts.length) lines.push(counterParts.join(' - '));
       return lines.length ? lines.join('\n') : 'Run';
     }
