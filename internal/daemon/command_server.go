@@ -112,6 +112,19 @@ func (s *CommandServer) Start() error {
 	return nil
 }
 
+func (s *CommandServer) startWithShortSockName() error {
+	serverName := filepath.Base(s.dir)
+	abstractName := "@sandman-" + fmt.Sprintf("%x", hashString(serverName))
+	listener, err := net.Listen("unix", abstractName)
+	if err != nil {
+		return fmt.Errorf("create abstract command socket: %w", err)
+	}
+	s.listener = listener
+	s.isAbstract = true
+	go s.acceptLoop()
+	return nil
+}
+
 // Stop closes the listener and removes the socket file. It is safe to
 // call Stop multiple times.
 func (s *CommandServer) Stop() error {
