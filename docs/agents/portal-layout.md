@@ -56,3 +56,7 @@ Issue #996 defines the done-condition for subsequent slices:
 - `table-layout: fixed` on `<table>` for predictable column sizing
 
 The regression test `TestPortal_RunsTableHasColgroupAndFixedLayout` captures this expected structure and currently fails on `main`.
+
+## Active-row attempts chip (slice 4)
+
+Slice 4 of PRD #1498 adds an `attempts N retries` chip on a portal row whose `events.RunState.LiveAttempt()` is greater than zero. The chip sources its value from `run.retry.payload.attempt` for active runs and from `Finished.Payload["retries_done"]` for finished runs, per the projection rule documented in [ADR-0035](docs/adr/0035-run-retry-payload-schema-and-reason-vocabulary.md) and the `Run retry` glossary entry in `CONTEXT.md`. When `LastRetryReason()` is non-empty, the chip surfaces the reason from the closed `run.retry.reason` vocabulary.
