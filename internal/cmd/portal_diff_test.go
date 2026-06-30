@@ -436,15 +436,9 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffDiffRuns_OrphanReviewUsesRealRunIDForVisibleRow is the
-// post-#1489 regression for the legacy "synthetic review stub" behavior:
-// when a review-only issue group (no implementation parent) is rendered, the
-// visible row must use the review's real RunID/Key — not a synthesized
-// "issue-N" or "review-stub-N" placeholder. The detail row and the subject
-// picker follow the same identity, and the picker has exactly one option
-// (the review itself). This test replaces the old
-// TestPortalDiffDiffRuns_HidesReviewRowsAndShowsStubForOrphanReviews contract
-// after the legacy stub was removed.
+// TestPortalDiffDiffRuns_OrphanReviewUsesRealRunIDForVisibleRow replaces
+// TestPortalDiffDiffRuns_HidesReviewRowsAndShowsStubForOrphanReviews after
+// issue #1489 removed the synthetic review stub.
 func TestPortalDiffDiffRuns_OrphanReviewUsesRealRunIDForVisibleRow(t *testing.T) {
 	js := `const body = makeMockBody();
 const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
@@ -508,11 +502,7 @@ console.log('PASS');
 }
 
 // TestPortalDiffDiffRuns_OrphanReviewRendersSingleSubjectOption is the
-// regression test for issue #1489 (single-review case): when a review-only
-// issue group has one review, the visible row must be the review itself
-// (data-run-key matches the review runId), the detail row must use that
-// same key, and the subject picker must render exactly one option (the
-// review) with select.value defaulting to the review RunID.
+// single-review regression for issue #1489.
 func TestPortalDiffDiffRuns_OrphanReviewRendersSingleSubjectOption(t *testing.T) {
 	js := `const body = makeMockBody();
 const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
@@ -536,10 +526,7 @@ console.log('PASS');
 }
 
 // TestPortalDiffDiffRuns_MultipleOrphanReviewsRenderOneOptionPerRun is the
-// regression test for issue #1489 (multi-review case): when a review-only
-// issue group has multiple reviews (e.g. one terminal Approved and one live
-// reviewing), the visible row is the most recent review and the subject
-// picker must list one option per real review run.
+// multi-review regression for issue #1489.
 func TestPortalDiffDiffRuns_MultipleOrphanReviewsRenderOneOptionPerRun(t *testing.T) {
 	js := `const body = makeMockBody();
 const terminal = { key: 'PR41', kind: 'completed', status: 'success', review: true, issueLabel: 'PR41', runId: 'PR41', issueNumber: 1, prNumber: 41, startedAt: '2026-06-29T10:00:00Z' };
@@ -3306,13 +3293,9 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffDiffRuns_OrphanReviewExpandedUsesRealRunID is the post-#1489
-// counterpart to the legacy TestPortalDiffDiffRuns_ExpandedRealRunIDRendersDetailRow
-// test: when a review-only issue group is expanded on the review's
-// RunID/Key, the visible row, detail row, and subject picker all key off
-// the review's real identity. The legacy test simulated a synthetic stub
-// row; after the fix, that stub is gone and the review's identity is
-// authoritative.
+// TestPortalDiffDiffRuns_OrphanReviewExpandedUsesRealRunID replaces
+// TestPortalDiffDiffRuns_ExpandedRealRunIDRendersDetailRow after issue
+// #1489 removed the synthetic review stub.
 func TestPortalDiffDiffRuns_OrphanReviewExpandedUsesRealRunID(t *testing.T) {
 	js := `const body = makeMockBody();
 const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
@@ -3482,12 +3465,7 @@ console.log('PASS');
 }
 
 // TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyReturnsSourceRowWithReviewTrue
-// is the tracer bullet for issue #1489: a review-only issue group (no
-// implementation parent) must present the most recent review run as its own
-// visible row, marked review=true. The legacy synthesized "issue-N" stub is
-// removed because it leaks review: false into both the visible row and the
-// expanded subject picker. groupedReview stays false because there is no
-// parent to group under.
+// is the tracer bullet for issue #1489.
 func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyReturnsSourceRowWithReviewTrue(t *testing.T) {
 	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);
@@ -3542,13 +3520,7 @@ console.log('PASS');
 }
 
 // TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewReprojectsKindOntoSourceRow
-// asserts that when the source review row's stored kind disagrees with the
-// group summary (e.g. the source review was created during a "reviewing"
-// batch but a sibling review is already terminal, or vice versa), the
-// visible row reflects the summary, not the source's stale field. This is
-// the re-projection rule required by issue #1489: we return the source row
-// directly but overwrite kind/status from summarizeReviewGroup so the row
-// shows the live group state.
+// covers the kind/status re-projection rule from issue #1489.
 func TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewReprojectsKindOntoSourceRow(t *testing.T) {
 	js := `const terminal = { key: 'review-1', kind: 'completed', status: 'success', review: true, issueLabel: '#7', runId: 'review-1', issueNumber: 7, prNumber: 11, startedAt: '2026-06-29T10:00:00Z' };
 const live = { key: 'review-2', kind: 'active', status: 'reviewing', review: true, issueLabel: '#7', runId: 'review-2', issueNumber: 7, prNumber: 12, startedAt: '2026-06-30T10:00:00Z' };
