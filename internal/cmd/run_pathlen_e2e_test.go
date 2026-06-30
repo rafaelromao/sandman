@@ -41,7 +41,7 @@ func TestRun_PathlenWorktreeAndReviewSockets(t *testing.T) {
 			},
 		}
 
-		deps := newRunIntegrationDepsWithSandboxAndGit(config.Agent{Command: "sleep 1; exit 0"}, "worktree", config.GitConfig{BaseBranch: "main"}, gh)
+		deps := newRunIntegrationDepsWithSandboxAndGit(config.Agent{Command: "true"}, "worktree", config.GitConfig{BaseBranch: "main"}, gh)
 		out, err := runRootCommand(t, deps, "run", "--sandbox", "worktree", "42")
 		if err != nil {
 			t.Fatalf("run failed: %v\noutput:\n%s", err, out)
