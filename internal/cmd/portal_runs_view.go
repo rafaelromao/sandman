@@ -96,6 +96,22 @@ type portalRun struct {
 	// RetriesDone is the number of retry attempts the run actually consumed.
 	// Omitted when the run has not finished.
 	RetriesDone int `json:"retriesDone,omitempty"`
+	// Attempts is the live attempt count for active runs (highest
+	// `attempt` value across the run's `run.retry` events, sourced from
+	// events.RunState.LiveAttempt) and the finished-payload retry count
+	// (Finished.Payload["retries_done"]) for finished runs. The finished
+	// payload wins when both signals are present, matching the
+	// acceptance contract for slice 1 of #1499. Omitted when the run has
+	// not retried (zero value).
+	Attempts int `json:"attempts,omitempty"`
+	// LastRetryReason is the `reason` of the most recent `run.retry`
+	// event for the run, regardless of whether the run has finished. The
+	// finished payload does not carry a `reason`, so this is the
+	// only place the field can be sourced. Omitted when no retries
+	// exist or when the most recent retry payload omits the key
+	// (the current orchestrator shape; slice 3 of #1499 will populate
+	// it).
+	LastRetryReason string `json:"lastRetryReason,omitempty"`
 	// Archived is true when a completed batch's directory has been
 	// relocated from .sandman/batches/<batch-id> to .sandman/archive/<batch-id>
 	// by `sandman archive`. The field is always present in JSON so the
@@ -1178,6 +1194,11 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Events:      eventsByRun[eventKey],
 		BatchKey:    match.instance.Key,
 	}
+	// Populate the live attempt signals from the raw event list when
+	// there is no matched RunState to query (the state-absent branch of
+	// runFromActiveMatch). The state-present branch above delegates to
+	// runFromState, which already populates both fields.
+	run.Attempts, run.LastRetryReason = attemptsAndLastRetryReasonFromEvents(eventsByRun[eventKey])
 	if startedPayload != nil {
 		run.IssueTitle = v.issueTitleFromPayload(startedPayload)
 		if candidates := v.candidatesFromPayload(startedPayload); len(candidates) > 0 {
@@ -1248,26 +1269,28 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		batchKey = bid
 	}
 	portalRun := portalRun{
-		Key:          runID,
-		RunID:        runID,
-		Kind:         v.kindForRun(runState),
-		Status:       v.statusOrDefault(status, runState.IsActive() || (status == "" && activeSocket), runState.IsReview(), runState.IsAutoSelect()),
-		IssueLabel:   issueLabel,
-		IssueNumber:  issueNumber,
-		IssueTitle:   v.issueTitleFromPayload(runState.Started.Payload),
-		Branch:       branch,
-		StartedAt:    startedAt,
-		FinishedAt:   finishedAt,
-		Duration:     v.durationForRun(runState),
-		LogPath:      logPath,
-		LogURL:       v.portalLogDownloadURLForRun(repoRoot, locator),
-		Log:          logContent,
-		Events:       eventsByRun[runID],
-		Review:       runState.IsReview(),
-		Reason:       reasonForRun(runState),
-		RetriesTotal: runState.RetriesTotal(),
-		RetriesDone:  runState.RetriesDone(),
-		BatchKey:     batchKey,
+		Key:             runID,
+		RunID:           runID,
+		Kind:            v.kindForRun(runState),
+		Status:          v.statusOrDefault(status, runState.IsActive() || (status == "" && activeSocket), runState.IsReview(), runState.IsAutoSelect()),
+		IssueLabel:      issueLabel,
+		IssueNumber:     issueNumber,
+		IssueTitle:      v.issueTitleFromPayload(runState.Started.Payload),
+		Branch:          branch,
+		StartedAt:       startedAt,
+		FinishedAt:      finishedAt,
+		Duration:        v.durationForRun(runState),
+		LogPath:         logPath,
+		LogURL:          v.portalLogDownloadURLForRun(repoRoot, locator),
+		Log:             logContent,
+		Events:          eventsByRun[runID],
+		Review:          runState.IsReview(),
+		Reason:          reasonForRun(runState),
+		RetriesTotal:    runState.RetriesTotal(),
+		RetriesDone:     runState.RetriesDone(),
+		Attempts:        v.attemptsForRun(runState),
+		LastRetryReason: runState.LastRetryReason(),
+		BatchKey:        batchKey,
 	}
 	if review {
 		portalRun.PRNumber = prNumber
@@ -1312,6 +1335,57 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		}
 	}
 	return portalRun
+}
+
+// attemptsForRun returns the attempt count to expose on the portalRun
+// row. Finished runs prefer Finished.Payload["retries_done"] (matching
+// the existing RetriesDone semantics and the slice-1 acceptance
+// contract); active runs fall back to events.RunState.LiveAttempt, which
+// walks the raw `run.retry` events. The finished payload wins when both
+// signals are present, so a future divergence where the event-level
+// highest `attempt` exceeds the orchestrator's `retries_done` is
+// resolved in favor of the orchestrator's count.
+func (v *portalRunsView) attemptsForRun(runState events.RunState) int {
+	if runState.Finished != nil {
+		if done, ok := payloadInt(runState.Finished.Payload, "retries_done"); ok {
+			return done
+		}
+	}
+	return runState.LiveAttempt()
+}
+
+// attemptsAndLastRetryReasonFromEvents computes the live attempt signals
+// from a raw event list. The state-absent branch of runFromActiveMatch
+// has no RunState to query, so it walks the same retry events directly.
+// "Most recent" follows the same rule as RunState.LastRetryReason:
+// largest Timestamp, ties broken by last-encountered order. Returns
+// (0, "") when no retries are present or when the most recent retry
+// payload omits the `reason` key.
+func attemptsAndLastRetryReasonFromEvents(events []portalEvent) (int, string) {
+	bestAttempt := 0
+	latestRetryIdx := -1
+	latestTs := time.Time{}
+	for i, event := range events {
+		if event.Type != "run.retry" {
+			continue
+		}
+		if attempt, ok := payloadInt(event.Payload, "attempt"); ok && attempt > bestAttempt {
+			bestAttempt = attempt
+		}
+		if latestRetryIdx == -1 || !event.Timestamp.Before(latestTs) {
+			latestRetryIdx = i
+			latestTs = event.Timestamp
+		}
+	}
+	if latestRetryIdx == -1 {
+		return 0, ""
+	}
+	latest := events[latestRetryIdx]
+	if latest.Payload == nil {
+		return bestAttempt, ""
+	}
+	reason, _ := latest.Payload["reason"].(string)
+	return bestAttempt, reason
 }
 
 func (v *portalRunsView) kindForRun(runState events.RunState) string {

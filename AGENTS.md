@@ -2,7 +2,16 @@
 
 CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 
-## Code discovery: `sandman-index` skill
+## Code discovery: two-layer system
+
+Codeindex discovery uses two complementary layers:
+
+| Layer | File | Scope | When |
+|-------|------|-------|------|
+| **Policy** | `docs/agents/codeindex-strategy.md` | Session init + grep/glob precondition | Every session, once (via opencode.json) |
+| **Reference** | `sandman-index` skill | Command ref, refinement, discipline | On demand, loaded by agent |
+
+The policy says **when** and **whether**. The skill says **how**.
 
 **Load the `sandman-index` skill before any broad exploration, grep, or file open for code discovery.** This skill encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and read discipline.
 
@@ -111,6 +120,7 @@ Use these repository-specific references when appropriate:
 - Triage labels: `docs/agents/triage-labels.md`
 - Domain vocabulary: `CONTEXT.md`
 - ADRs: `docs/adr/`
+- Codeindex strategy (policy): `docs/agents/codeindex-strategy.md`
 
 ## Preferred operating pattern
 

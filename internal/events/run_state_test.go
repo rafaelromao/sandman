@@ -619,3 +619,180 @@ func TestProjectRunStates_RetriesTotalAndDone_AbortedFinishedPayload(t *testing.
 		t.Fatalf("RetriesDone = %d, want 1 for aborted run", got)
 	}
 }
+
+func TestProjectRunStates_LiveAttempt_ReturnsHighestRetryAttempt(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-active-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-active-retry", Issue: 42, Payload: map[string]any{
+			"attempt":         2,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"branch":          "sandman/42-fix",
+		}},
+		{Type: "run.retry", Timestamp: startedAt.Add(5 * time.Minute), RunID: "run-active-retry", Issue: 42, Payload: map[string]any{
+			"attempt":         3,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"branch":          "sandman/42-fix",
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	if got := runs[0].LiveAttempt(); got != 3 {
+		t.Fatalf("LiveAttempt = %d, want 3 (highest attempt across retries)", got)
+	}
+}
+
+func TestProjectRunStates_LiveAttempt_NoRetriesReturnsZero(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-clean", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	if got := runs[0].LiveAttempt(); got != 0 {
+		t.Fatalf("LiveAttempt = %d, want 0 for run without retries", got)
+	}
+}
+
+func TestProjectRunStates_LiveAttempt_FinishedRunStillReturnsRetryAttempt(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(10 * time.Minute)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-finished-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-finished-retry", Issue: 42, Payload: map[string]any{
+			"attempt":         2,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"branch":          "sandman/42-fix",
+		}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-finished-retry", Issue: 42, Payload: map[string]any{
+			"status":        "success",
+			"branch":        "sandman/42-fix",
+			"retries_total": 3,
+			"retries_done":  2,
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	if runs[0].IsActive() {
+		t.Fatal("expected run to be terminal after run.finished")
+	}
+	if got := runs[0].LiveAttempt(); got != 2 {
+		t.Fatalf("LiveAttempt = %d, want 2 (helper walks raw event list, independent of Finished)", got)
+	}
+}
+
+func TestProjectRunStates_LastRetryReason_ReturnsMostRecentReason(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-reason", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-reason", Issue: 42, Payload: map[string]any{
+			"attempt":         2,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"reason":          "agent-stalled",
+			"branch":          "sandman/42-fix",
+		}},
+		{Type: "run.retry", Timestamp: startedAt.Add(5 * time.Minute), RunID: "run-reason", Issue: 42, Payload: map[string]any{
+			"attempt":         3,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"reason":          "build-failed",
+			"branch":          "sandman/42-fix",
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	if got := runs[0].LastRetryReason(); got != "build-failed" {
+		t.Fatalf("LastRetryReason = %q, want %q (most recent retry's reason)", got, "build-failed")
+	}
+}
+
+func TestProjectRunStates_LastRetryReason_NoRetriesReturnsEmpty(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-clean", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	if got := runs[0].LastRetryReason(); got != "" {
+		t.Fatalf("LastRetryReason = %q, want empty for run without retries", got)
+	}
+}
+
+func TestProjectRunStates_LastRetryReason_MostRecentRetryWithoutReasonReturnsEmpty(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-current-orchestrator", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-current-orchestrator", Issue: 42, Payload: map[string]any{
+			"attempt":         2,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"branch":          "sandman/42-fix",
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	if got := runs[0].LastRetryReason(); got != "" {
+		t.Fatalf("LastRetryReason = %q, want empty when most recent retry payload omits reason (current orchestrator shape)", got)
+	}
+}
+
+func TestProjectRunStates_LastRetryReason_FinishedRunStillReturnsRetryReason(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(10 * time.Minute)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-finished-reason", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-finished-reason", Issue: 42, Payload: map[string]any{
+			"attempt":         2,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"reason":          "agent-stalled",
+			"branch":          "sandman/42-fix",
+		}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-finished-reason", Issue: 42, Payload: map[string]any{
+			"status":        "success",
+			"branch":        "sandman/42-fix",
+			"retries_total": 3,
+			"retries_done":  2,
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	if runs[0].IsActive() {
+		t.Fatal("expected run to be terminal after run.finished")
+	}
+	if got := runs[0].LastRetryReason(); got != "agent-stalled" {
+		t.Fatalf("LastRetryReason = %q, want %q (helper walks raw event list, independent of Finished)", got, "agent-stalled")
+	}
+}

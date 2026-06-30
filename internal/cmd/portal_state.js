@@ -32,12 +32,18 @@
 
   function runIdentity(run) {
     if (!run || typeof run !== 'object') return null;
+    if (isWaitStateRun(run)) return null;
     return cleanKey(run.runId || run.key);
   }
 
   function runKey(run) {
     if (!run || typeof run !== 'object') return null;
     return cleanKey(run.key);
+  }
+
+  function isWaitStateRun(run) {
+    const status = String(run && run.status || '').trim().toLowerCase();
+    return status === 'queued' || status === 'blocked';
   }
 
   function cleanTabs(value) {
@@ -97,8 +103,25 @@
     }
     let changed = false;
 
+    if (Array.isArray(allRunList)) {
+      for (const run of allRunList) {
+        if (!isWaitStateRun(run)) continue;
+        const legacyKey = runKey(run);
+        if (legacyKey && Object.prototype.hasOwnProperty.call(current.tabs, legacyKey)) {
+          delete current.tabs[legacyKey];
+          changed = true;
+        }
+      }
+    }
+
     if (current.expandedRunKey && keyToSubject.has(current.expandedRunKey)) {
       current.expandedRunKey = keyToSubject.get(current.expandedRunKey);
+      changed = true;
+    }
+
+    const expandedRun = current.expandedRunKey ? allRunByIdentity.get(current.expandedRunKey) : null;
+    if (expandedRun && isWaitStateRun(expandedRun)) {
+      current.expandedRunKey = null;
       changed = true;
     }
 

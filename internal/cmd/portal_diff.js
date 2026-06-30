@@ -424,6 +424,7 @@
 
   function subjectRunValue(run) {
     if (!run) return '';
+    if (!isRowExpandable(run)) return '';
     return String(run.runId || run.key || '').trim();
   }
 
@@ -455,6 +456,7 @@
     const reviews = [];
     for (const candidate of visible) {
       if (!candidate || candidate.issueNumber !== run.issueNumber) continue;
+      if (!isRowExpandable(candidate)) continue;
       const value = subjectRunValue(candidate);
       if (!value || seen.has(value)) continue;
       seen.add(value);
@@ -1566,6 +1568,7 @@
     resetCounters,
     getCounters,
     updateDetailPanelLog,
+    subjectRunValue,
     highlightJSON,
     highlightTerminalLog,
   };

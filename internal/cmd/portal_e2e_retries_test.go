@@ -272,6 +272,142 @@ func readPortalRunsRawBody(t *testing.T, baseURL string) []byte {
 	return body
 }
 
+// TestPortal_E2E_RowCarriesLiveAttemptAndRetryReason is the end-to-end
+// regression test for slice 1 of #1499. It writes events.jsonl with
+// run.started + run.retry (no run.finished yet), starts a real portal
+// HTTP server pointed at the temp repository, hits /api/runs?runKey=<id>
+// and /api/runs, and asserts the per-run JSON response carries
+// attempts: 1 and lastRetryReason: "agent-stalled" (the literal value
+// the test writer chose; slice 3 of #1499 will populate the orchestrator
+// reason vocabulary). The test is decoupled from the orchestrator's
+// future writer changes by writing the event itself. It also locks the
+// behavior on the second endpoint (/api/runs) so the row's
+// attempts/lastRetryReason survive the summary JSON encoding.
+func TestPortal_E2E_RowCarriesLiveAttemptAndRetryReason(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const runID = "abcd-260618113825-active-retry"
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	retryAt := startedAt.Add(2 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: retryAt, RunID: runID, Issue: 42, Payload: map[string]any{
+			"attempt":         2,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"reason":          "agent-stalled",
+			"branch":          "sandman/42-fix",
+		}},
+	})
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+
+	t.Run("runKey endpoint exposes attempts and lastRetryReason", func(t *testing.T) {
+		resp, err := http.Get(server.URL + "/api/runs?runKey=" + runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		var payload struct {
+			Run portalRun `json:"run"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode runKey response: %v", err)
+		}
+		if payload.Run.RunID != runID {
+			t.Fatalf("RunID = %q, want %q", payload.Run.RunID, runID)
+		}
+		if payload.Run.Attempts != 2 {
+			t.Fatalf("Attempts = %d, want 2 (highest attempt across retries)", payload.Run.Attempts)
+		}
+		if payload.Run.LastRetryReason != "agent-stalled" {
+			t.Fatalf("LastRetryReason = %q, want %q", payload.Run.LastRetryReason, "agent-stalled")
+		}
+	})
+
+	t.Run("summary endpoint exposes attempts and lastRetryReason", func(t *testing.T) {
+		resp, err := http.Get(server.URL + "/api/runs?summary=1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read response: %v", err)
+		}
+		var payload struct {
+			Runs []map[string]any `json:"runs"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("decode runs: %v", err)
+		}
+		var row map[string]any
+		for _, run := range payload.Runs {
+			if id, _ := run["runId"].(string); id == runID {
+				row = run
+				break
+			}
+		}
+		if row == nil {
+			t.Fatalf("expected a row for runId %q, got %#v", runID, payload.Runs)
+		}
+		if got, _ := row["attempts"].(float64); got != 2 {
+			t.Fatalf("attempts = %v, want 2 (raw: %s)", row["attempts"], body)
+		}
+		if got, _ := row["lastRetryReason"].(string); got != "agent-stalled" {
+			t.Fatalf("lastRetryReason = %q, want %q (raw: %s)", got, "agent-stalled", body)
+		}
+	})
+}
+
+// TestPortal_E2E_CleanRunOmitsAttemptsAndLastRetryReason locks the
+// omitempty contract for the slice-1 portalRun fields. A clean run
+// (no retries) must produce a /api/runs response whose body does not
+// contain the strings attempts or lastRetryReason anywhere, so the
+// existing payload for clean runs is byte-equivalent to the pre-change
+// baseline on the wire for the new keys.
+func TestPortal_E2E_CleanRunOmitsAttemptsAndLastRetryReason(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const runID = "abcd-260618113825-clean-1499"
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{
+			"status": "success",
+			"branch": "sandman/42-fix",
+		}},
+	})
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+
+	body := readPortalRunsRawBody(t, server.URL)
+
+	if strings.Contains(string(body), `"attempts"`) {
+		t.Fatalf("expected attempts to be omitted from clean run response, got: %s", body)
+	}
+	if strings.Contains(string(body), `"lastRetryReason"`) {
+		t.Fatalf("expected lastRetryReason to be omitted from clean run response, got: %s", body)
+	}
+}
+
 // TestPortal_E2E_ParentSuccWithLiveChild is the end-to-end regression test
 // for the bug where a parent impl run with terminal run.finished status was
 // overwritten to "reviewing" because a live review child existed. The portal's
