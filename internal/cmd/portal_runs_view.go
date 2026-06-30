@@ -1009,24 +1009,21 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		if len(active.IssueNumbers) > 1 {
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
-		if state.Finished == nil && strings.TrimSpace(active.SocketPath) != "" {
-			return run
-		}
 		if state.Finished == nil {
 			run.Log = v.filterPortalLogByRunID(liveOutput, state.RunID)
-		} else {
-			switch state.Status() {
-			case "blocked":
-				run.Log = v.portalBlockedMessage(state.Finished.Payload)
-			case "aborted":
-			default:
-				if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
-					run.Log = live
-				} else {
-					run.Log = v.readPortalTextFile(run.LogPath)
-					if strings.TrimSpace(run.Log) == "" {
-						run.Log = "No log file yet."
-					}
+			return run
+		}
+		switch state.Status() {
+		case "blocked":
+			run.Log = v.portalBlockedMessage(state.Finished.Payload)
+		case "aborted":
+		default:
+			if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
+				run.Log = live
+			} else {
+				run.Log = v.readPortalTextFile(run.LogPath)
+				if strings.TrimSpace(run.Log) == "" {
+					run.Log = "No log file yet."
 				}
 			}
 		}

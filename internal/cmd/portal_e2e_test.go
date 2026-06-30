@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
@@ -244,7 +245,7 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) 
 	}
 }
 
-func TestPortal_E2E_MixedBatchShowsBatchMembershipAndKeepsIssuePrefixes(t *testing.T) {
+func TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -605,33 +606,33 @@ func createPromptOnlyRunSocket(t *testing.T, repoDir, runName string, issueNumbe
 
 // createMixedBatchRunSocket reproduces the exact mixed-batch shape from
 // issues 854/860: a single run directory whose batch.json lists both
-// issues and whose run.sock streams prefixed lines for each. It writes
+// issues and whose batch.sock streams prefixed lines for each. It writes
 // to the socket only — no saved run.log file is created — so the
 // assertion exercises the live-socket filter path, not the saved-file
 // reader.
 func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 	t.Helper()
 
-	runDir := filepath.Join(repoDir, ".sandman", "runs", runName)
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("create run dir: %v", err)
+	batchDir := filepath.Join(repoDir, ".sandman", "batches", runName)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("create batch dir: %v", err)
 	}
 
 	manifest := daemon.BatchManifest{
 		Issues:    []int{860, 854},
 		CreatedAt: time.Now(),
 	}
-	if err := daemon.WriteManifest(runDir, manifest); err != nil {
+	if err := daemon.WriteManifest(batchDir, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	ln, err := net.Listen("unix", filepath.Join(runDir, "run.sock"))
+	ln, err := net.Listen("unix", filepath.Join(batchDir, "batch.sock"))
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 
-	payload := "[issue-860] 18:51:05 working on PR\n[issue-854] 18:51:05 sibling work\n"
+	payload := "[" + runName + "-860] 18:51:00 working on PR\n[" + runName + "-854] 18:51:04 sibling work\n"
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -669,7 +670,27 @@ func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 		t.Fatalf("write events.jsonl: %v", err)
 	}
 
-	return runDir
+	// Register the batch in the batches index so discoverPortalInstances
+	// surfaces the active run to /api/runs. Without this entry, the
+	// portal has no record of the live batch and the rows are missing.
+	batchIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:        runName,
+				Path:      batchDir,
+				Kind:      batchindex.KindIssue,
+				Status:    batchindex.StatusActive,
+				CreatedAt: time.Now(),
+				Issues:    []int{860, 854},
+			},
+		},
+	}
+	if err := batchIdx.Save(filepath.Join(sandmanDir, "batches.json")); err != nil {
+		t.Fatalf("write batches index: %v", err)
+	}
+
+	return batchDir
 }
 
 func startPortalBinary(t *testing.T, binPath, repoDir, ghBinDir string) string {
