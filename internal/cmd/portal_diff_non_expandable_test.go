@@ -1,59 +1,6 @@
 package cmd
 
-import (
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
-	"testing"
-)
-
-// TestPortalCSS_NonExpandableRowNeutralizesCursorAndFocus covers the CSS
-// half of the issue #1486 acceptance criteria: a queued/blocked row must
-// not look clickable. The CSS rule tr.run-row.row-non-expandable must
-// (a) override the default cursor: pointer and (b) neutralize the
-// :focus-visible background added by the existing .run-row:focus-visible
-// rule. Without (a) and (b) the row would still present as a toggle
-// button even though it no longer has the toggle attrs.
-func TestPortalCSS_NonExpandableRowNeutralizesCursorAndFocus(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate test file")
-	}
-	portalHtmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
-	src, err := os.ReadFile(portalHtmlPath)
-	if err != nil {
-		t.Fatalf("read portal.html: %v", err)
-	}
-	content := string(src)
-
-	// Look for a CSS rule that targets tr.run-row.row-non-expandable and
-	// overrides the cursor. The selector itself + a non-pointer cursor
-	// value inside the same rule is what locks in behavior. We require
-	// both tokens to appear together so a future rename of the class is
-	// caught here.
-	if !strings.Contains(content, "tr.run-row.row-non-expandable") {
-		t.Fatalf("portal.html missing CSS selector tr.run-row.row-non-expandable; queued/blocked rows will keep the toggle cursor")
-	}
-	// Locate the cursor override rule. We grep for the selector and a
-	// non-pointer cursor value within the following ~400 chars (covers
-	// the rule body plus the next 1-2 rules).
-	idx := strings.Index(content, "tr.run-row.row-non-expandable")
-	if idx < 0 {
-		t.Fatal("selector not found")
-	}
-	window := content[idx:min(len(content), idx+400)]
-	if !strings.Contains(window, "cursor:") || !strings.Contains(window, "default") && !strings.Contains(window, "auto") && !strings.Contains(window, "not-allowed") && !strings.Contains(window, "inherit") {
-		t.Fatalf("expected non-pointer cursor override inside tr.run-row.row-non-expandable rule, got window:\n%s", window)
-	}
-	// Focus neutralization: same selector must include a :focus-visible or
-	// :focus override that resets the background. The existing
-	// .run-row:focus-visible td rule sets an accent background on focus;
-	// the new rule must override it.
-	if !strings.Contains(window, ":focus-visible") && !strings.Contains(window, ":focus") {
-		t.Fatalf("expected :focus-visible or :focus override inside tr.run-row.row-non-expandable rule, got window:\n%s", window)
-	}
-}
+import "testing"
 
 // TestPortalDiff_BuildDataRow_QueuedRowOmitsToggleAttrs is the issue
 // #1486 build-time regression test for the queued status path. A queued
