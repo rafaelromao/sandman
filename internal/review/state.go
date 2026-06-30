@@ -27,7 +27,7 @@ type SeenCacheInvalidator interface {
 type noopInvalidator struct{}
 
 func (noopInvalidator) MarkTerminalSeen(int, string) {}
-func (noopInvalidator) Forget(int, string)             {}
+func (noopInvalidator) Forget(int, string)           {}
 
 // ReviewStateStore manages the (prNumber, commentID) dedup state for a
 // single review run. The store is bound to one on-disk file — the
@@ -51,10 +51,10 @@ func (noopInvalidator) Forget(int, string)             {}
 // shape with the atomic-rename writer and the in-memory dedup set so
 // callers don't need to know the file format.
 type ReviewStateStore struct {
-	prNumber   int
-	path       string
-	mu         sync.Mutex
-	state      batchindex.ReviewState
+	prNumber    int
+	path        string
+	mu          sync.Mutex
+	state       batchindex.ReviewState
 	invalidator SeenCacheInvalidator
 }
 
@@ -72,8 +72,8 @@ func NewReviewStateStore(path string, prNumber int, invalidator SeenCacheInvalid
 		invalidator = noopInvalidator{}
 	}
 	s := &ReviewStateStore{
-		prNumber: prNumber,
-		path:     path,
+		prNumber:    prNumber,
+		path:        path,
 		invalidator: invalidator,
 		state: batchindex.ReviewState{
 			PR:           prNumber,
