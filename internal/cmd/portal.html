@@ -1852,8 +1852,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const key = state.expandedRunKey;
       if (!key) { stopAllRunStreams(); return; }
       const run = findRunByIdentity(key);
+      if (isWaitStateRun(run)) { stopAllRunStreams(); return; }
       const runKey = run ? run.key : key;
-      const subjectKey = subjectRunIdentity(run) || key;
+      const subjectKey = isWaitStateRun(run) ? '' : (subjectRunIdentity(run) || key);
       const tab = state.tabs[subjectKey] || state.tabs[key] || 'log';
       const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath;
       for (const openKey of Object.keys(streamSources)) {
@@ -1949,6 +1950,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function subjectRunIdentity(run) {
+      if (isWaitStateRun(run)) return '';
       return run ? (run.runId || run.key || '') : '';
     }
 
@@ -1958,6 +1960,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function findRunRowByIdentity(runIdentity) {
+      if (!runIdentity) return null;
       const run = findRunByIdentity(runIdentity);
       const runKey = run ? (visibleRunForIssueGroup(run.issueNumber, state.runs)?.key || run.key) : runIdentity;
       return Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey) || null;
@@ -1965,6 +1968,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 
     function subjectTabKey(runIdentity) {
       const run = findRunByIdentity(runIdentity);
+      if (isWaitStateRun(run)) return '';
       return subjectRunIdentity(run) || runIdentity || '';
     }
 
@@ -2325,7 +2329,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           counterParts.push(reviewPart);
         }
       }
-      if (run.runId) lines.push('Run: ' + run.runId);
+      const status = String(run.status || '').toLowerCase();
+      if (run.runId && status !== 'queued' && status !== 'blocked') lines.push('Run: ' + run.runId);
       if (counterParts.length) lines.push(counterParts.join(' - '));
       return lines.length ? lines.join('\n') : 'Run';
     }

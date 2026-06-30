@@ -682,6 +682,61 @@ func TestPortalRefresh_DiscardsQueuedExpandedStateBeforeDetailFetch(t *testing.T
 	}
 }
 
+func TestPortalRefresh_IgnoresEmptyExpandedStateBeforeDetailFetch(t *testing.T) {
+	run := map[string]any{
+		"key":         "run-1",
+		"runId":       "run-1",
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+		"batchKey":    "batch-1",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{run})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"","tabs":{},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="run-1"]');
+      var stored = null;
+      try {
+        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+      } catch (err) {}
+      var pre = document.createElement('pre');
+      pre.id = 'portal-empty-identity';
+      pre.textContent = JSON.stringify({
+        detailExists: !!detail,
+        expandedRunKey: stored && stored.expandedRunKey,
+        fetchCalls: window.__portalFetchCalls || 0,
+      });
+      document.body.appendChild(pre);
+    }, 2200);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-empty-identity")
+	var result struct {
+		DetailExists   bool   `json:"detailExists"`
+		ExpandedRunKey string `json:"expandedRunKey"`
+		FetchCalls     int    `json:"fetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse empty-identity payload: %v\nraw=%s", err, payload)
+	}
+	if result.DetailExists {
+		t.Fatalf("expected empty expanded state not to open detail, got %#v", result)
+	}
+	if result.ExpandedRunKey != "" {
+		t.Fatalf("expected empty expanded state to stay empty, got %#v", result)
+	}
+	if result.FetchCalls > 2 {
+		t.Fatalf("expected empty expanded state not to trigger detail fetch, got %#v", result)
+	}
+}
+
 func TestPortalRowClick_IgnoresForcedToggleAttrsOnQueuedRun(t *testing.T) {
 	queued := map[string]any{
 		"key":         "queued-2",
@@ -844,6 +899,85 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
 	}
 	if result.ReturnHighlight != 0 {
 		t.Fatalf("expected return-to-parent to avoid re-highlighting, got %#v", result)
+	}
+}
+
+func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
+	parent := map[string]any{
+		"key":         "issue-1",
+		"runId":       "issue-1",
+		"kind":        "active",
+		"status":      "reviewing",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+		"reviewCount": 1,
+		"log":         "parent log line 1\nparent log line 2",
+	}
+	child := map[string]any{
+		"key":         "PR42",
+		"runId":       "PR42",
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "PR42",
+		"issueNumber": 1,
+		"prNumber":    42,
+		"review":      true,
+		"log":         "review log line 1\nreview log line 2",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{parent, child})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"issue-1","tabs":{"issue-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    setTimeout(function () {
+      var select = document.querySelector('select[data-action="set-subject"]');
+      if (!select) throw new Error('missing subject selector');
+      select.value = '';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }, 50);
+    setTimeout(function () {
+      var select = document.querySelector('select[data-action="set-subject"]');
+      var detail = document.querySelector('pre[data-scroll-key]');
+      var stored = null;
+      try {
+        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+      } catch (err) {}
+      var marker = document.createElement('pre');
+      marker.id = 'portal-empty-subject';
+      marker.textContent = JSON.stringify({
+        subjectValue: select && select.value,
+        detailText: detail && detail.textContent,
+        expandedRunKey: stored && stored.expandedRunKey,
+        fetchCalls: window.__portalFetchCalls || 0,
+      });
+      document.body.appendChild(marker);
+    }, 360);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-empty-subject")
+	var result struct {
+		SubjectValue   string `json:"subjectValue"`
+		DetailText     string `json:"detailText"`
+		ExpandedRunKey string `json:"expandedRunKey"`
+		FetchCalls     int    `json:"fetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse empty-subject payload: %v\nraw=%s", err, payload)
+	}
+	if result.SubjectValue != "issue-1" {
+		t.Fatalf("expected blank subject change to be ignored and parent to remain selected, got %#v", result)
+	}
+	if !strings.Contains(result.DetailText, "parent log line 1") {
+		t.Fatalf("expected parent detail to remain visible after blank subject change, got %#v", result)
+	}
+	if result.ExpandedRunKey != "issue-1" {
+		t.Fatalf("expected blank subject change to leave expanded state unchanged, got %#v", result)
+	}
+	if result.FetchCalls > 2 {
+		t.Fatalf("expected blank subject change not to trigger extra fetch, got %#v", result)
 	}
 }
 

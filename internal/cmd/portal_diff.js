@@ -424,6 +424,7 @@
 
   function subjectRunValue(run) {
     if (!run) return '';
+    if (!isRowExpandable(run)) return '';
     return String(run.runId || run.key || '').trim();
   }
 
@@ -1567,6 +1568,7 @@
     resetCounters,
     getCounters,
     updateDetailPanelLog,
+    subjectRunValue,
     highlightJSON,
     highlightTerminalLog,
   };

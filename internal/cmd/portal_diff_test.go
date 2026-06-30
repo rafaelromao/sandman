@@ -2556,7 +2556,7 @@ const renderRunMeta = (run) => {
       counterParts.push(reviewPart);
     }
   }
-  if (run.runId) lines.push('Run: ' + run.runId);
+  if (run.runId && String(run.status || '').toLowerCase() !== 'queued' && String(run.status || '').toLowerCase() !== 'blocked') lines.push('Run: ' + run.runId);
   if (counterParts.length) lines.push(counterParts.join(' - '));
   return lines.length ? lines.join('\n') : 'Run';
 };
@@ -3765,4 +3765,36 @@ if (meta.indexOf('Run:') >= 0) throw new Error('expected no Run: in meta for que
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
+}
+
+func TestRenderRunMeta_QueuedAndBlockedRows_SuppressRunLabelForSyntheticRunID(t *testing.T) {
+	js := `const cases = [
+  { status: 'queued', runId: 'abcd-260618113825-issue-42' },
+  { status: 'blocked', runId: 'abcd-260618113825-issue-43' },
+];
+for (const tc of cases) {
+  const run = { key: tc.runId, runId: tc.runId, batchKey: 'abcd-260618113825', kind: 'active', status: tc.status };
+  const meta = helpers.renderRunMeta(run);
+  if (meta.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for ' + tc.status + ' row, got ' + JSON.stringify(meta));
+  if (meta.indexOf('abcd-260618113825') < 0) throw new Error('expected batchKey value in Batch: label for ' + tc.status + ' row, got ' + JSON.stringify(meta));
+  if (meta.indexOf('Run:') >= 0) throw new Error('expected no Run: in meta for ' + tc.status + ' row with synthetic RunID, got ' + JSON.stringify(meta));
+}
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestPortalDiffSubjectRunValue_QueuedAndBlockedRowsReturnEmptyForSyntheticRunID(t *testing.T) {
+	js := `const cases = [
+  { status: 'queued', runId: 'abcd-260618113825-issue-42' },
+  { status: 'blocked', runId: 'abcd-260618113825-issue-43' },
+];
+for (const tc of cases) {
+  const run = { key: tc.runId, runId: tc.runId, batchKey: 'abcd-260618113825', kind: 'active', status: tc.status };
+  const value = SandmanPortalDiff.subjectRunValue(run);
+  if (value !== '') throw new Error('expected empty subjectRunValue for ' + tc.status + ' row with synthetic RunID, got ' + JSON.stringify(value));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
 }
