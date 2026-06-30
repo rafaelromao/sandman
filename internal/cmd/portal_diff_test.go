@@ -436,21 +436,30 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffDiffRuns_HidesReviewRowsAndShowsStubForOrphanReviews(t *testing.T) {
+// TestPortalDiffDiffRuns_OrphanReviewUsesRealRunIDForVisibleRow is the
+// post-#1489 regression for the legacy "synthetic review stub" behavior:
+// when a review-only issue group (no implementation parent) is rendered, the
+// visible row must use the review's real RunID/Key — not a synthesized
+// "issue-N" or "review-stub-N" placeholder. The detail row and the subject
+// picker follow the same identity, and the picker has exactly one option
+// (the review itself). This test replaces the old
+// TestPortalDiffDiffRuns_HidesReviewRowsAndShowsStubForOrphanReviews contract
+// after the legacy stub was removed.
+func TestPortalDiffDiffRuns_OrphanReviewUsesRealRunIDForVisibleRow(t *testing.T) {
 	js := `const body = makeMockBody();
 const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
-const stub = { key: 'review-stub-1', kind: 'completed', status: 'success', review: false, groupedReview: false, issueLabel: 'PR42', runId: 'review-stub-1', issueNumber: 1, reviewCount: 1, reviewVerdict: 'Approved' };
 const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [review], visibleRuns: [stub] };
+const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [review], visibleRuns: [review] };
 const result = SandmanPortalDiff.diffRuns(body, [review], opts);
 if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
-if (body.querySelector('tr[data-run-key="PR42"]')) throw new Error('expected review row hidden from table');
-const visibleRow = body.querySelector('tr[data-run-key="review-stub-1"]');
-if (!visibleRow) throw new Error('expected orphan review stub row');
-const detailRow = body.querySelector('tr.detail-row[data-detail-for="review-stub-1"]');
-if (!detailRow) throw new Error('expected detail row for orphan review stub');
+if (body.querySelector('tr[data-run-key="review-stub-1"]')) throw new Error('expected no synthetic stub row with placeholder key');
+const visibleRow = body.querySelector('tr[data-run-key="PR42"]');
+if (!visibleRow) throw new Error('expected orphan review visible under its real RunID, got ' + body.innerHTML);
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR42"]');
+if (!detailRow) throw new Error('expected detail row keyed by the orphan review RunID');
 const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
-if (!subjectSelect || subjectSelect.children.length !== 2) throw new Error('expected orphan selector to include review subject');
+if (!subjectSelect || subjectSelect.children.length !== 1) throw new Error('expected exactly one option for single orphan review, got ' + (subjectSelect && subjectSelect.children.length));
+if (subjectSelect.children[0].getAttribute('value') !== 'PR42') throw new Error('expected picker option to match review RunID, got ' + subjectSelect.children[0].getAttribute('value'));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -493,6 +502,63 @@ const subjectSelectAfter = created.detailRow.querySelector('select[data-action="
 if (!subjectSelectAfter) throw new Error('expected subject selector after refresh');
 if (subjectSelectAfter.children.length !== 2) throw new Error('expected parent plus child review options after refresh, got ' + subjectSelectAfter.children.length);
 if (subjectSelectAfter.children[1].getAttribute('value') !== 'PR42') throw new Error('expected child review option to use RunID PR42 after refresh, got ' + subjectSelectAfter.children[1].getAttribute('value'));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffDiffRuns_OrphanReviewRendersSingleSubjectOption is the
+// regression test for issue #1489 (single-review case): when a review-only
+// issue group has one review, the visible row must be the review itself
+// (data-run-key matches the review runId), the detail row must use that
+// same key, and the subject picker must render exactly one option (the
+// review) with select.value defaulting to the review RunID.
+func TestPortalDiffDiffRuns_OrphanReviewRendersSingleSubjectOption(t *testing.T) {
+	js := `const body = makeMockBody();
+const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [review], visibleRuns: [review] };
+const result = SandmanPortalDiff.diffRuns(body, [review], opts);
+if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
+const visibleRow = body.querySelector('tr[data-run-key="PR42"]');
+if (!visibleRow) throw new Error('expected review row visible under its real RunID, got ' + body.innerHTML);
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR42"]');
+if (!detailRow) throw new Error('expected detail row for the orphan review');
+const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect) throw new Error('expected subject selector on orphan review detail row');
+if (subjectSelect.children.length !== 1) throw new Error('expected exactly one option on orphan review picker, got ' + subjectSelect.children.length);
+if (subjectSelect.children[0].getAttribute('value') !== 'PR42') throw new Error('expected orphan review option to use the review RunID, got ' + subjectSelect.children[0].getAttribute('value'));
+if (subjectSelect.value !== 'PR42') throw new Error('expected picker default value to match the review RunID, got ' + subjectSelect.value);
+if (subjectSelect.children[0].getAttribute('selected') !== 'selected') throw new Error('expected orphan review option to be selected by default');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffDiffRuns_MultipleOrphanReviewsRenderOneOptionPerRun is the
+// regression test for issue #1489 (multi-review case): when a review-only
+// issue group has multiple reviews (e.g. one terminal Approved and one live
+// reviewing), the visible row is the most recent review and the subject
+// picker must list one option per real review run.
+func TestPortalDiffDiffRuns_MultipleOrphanReviewsRenderOneOptionPerRun(t *testing.T) {
+	js := `const body = makeMockBody();
+const terminal = { key: 'PR41', kind: 'completed', status: 'success', review: true, issueLabel: 'PR41', runId: 'PR41', issueNumber: 1, prNumber: 41, startedAt: '2026-06-29T10:00:00Z' };
+const live = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, startedAt: '2026-06-30T10:00:00Z' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [terminal, live], visibleRuns: [live] };
+const result = SandmanPortalDiff.diffRuns(body, [terminal, live], opts);
+if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
+const visibleRow = body.querySelector('tr[data-run-key="PR42"]');
+if (!visibleRow) throw new Error('expected most-recent review row visible, got ' + body.innerHTML);
+if (body.querySelector('tr[data-run-key="PR41"]')) throw new Error('expected older review row hidden under grouped review');
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR42"]');
+if (!detailRow) throw new Error('expected detail row for most-recent review');
+const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect) throw new Error('expected subject selector on multi-review detail row');
+if (subjectSelect.children.length !== 2) throw new Error('expected exactly one option per review, got ' + subjectSelect.children.length);
+const values = Array.from(subjectSelect.children).map((opt) => opt.getAttribute('value'));
+if (values.indexOf('PR41') < 0 || values.indexOf('PR42') < 0) throw new Error('expected both review RunIDs as picker options, got ' + JSON.stringify(values));
+if (subjectSelect.value !== 'PR42') throw new Error('expected picker to default to the visible review RunID, got ' + subjectSelect.value);
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -3240,21 +3306,27 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffDiffRuns_ExpandedRealRunIDRendersDetailRow(t *testing.T) {
+// TestPortalDiffDiffRuns_OrphanReviewExpandedUsesRealRunID is the post-#1489
+// counterpart to the legacy TestPortalDiffDiffRuns_ExpandedRealRunIDRendersDetailRow
+// test: when a review-only issue group is expanded on the review's
+// RunID/Key, the visible row, detail row, and subject picker all key off
+// the review's real identity. The legacy test simulated a synthetic stub
+// row; after the fix, that stub is gone and the review's identity is
+// authoritative.
+func TestPortalDiffDiffRuns_OrphanReviewExpandedUsesRealRunID(t *testing.T) {
 	js := `const body = makeMockBody();
 const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
-const stub = { key: 'review-stub-1', kind: 'completed', status: 'success', review: false, groupedReview: false, issueLabel: 'PR42', runId: 'review-stub-1', issueNumber: 1, reviewCount: 1, reviewVerdict: 'Approved' };
 const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [review], visibleRuns: [stub] };
+const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [review], visibleRuns: [review] };
 const result = SandmanPortalDiff.diffRuns(body, [review], opts);
 if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
-if (body.querySelector('tr[data-run-key="PR42"]')) throw new Error('expected review row hidden from table');
-const expandedRow = body.querySelector('tr[data-run-key="review-stub-1"]');
-if (!expandedRow) throw new Error('expected stub row visible');
+if (body.querySelector('tr[data-run-key="review-stub-1"]')) throw new Error('expected no synthetic stub row with placeholder key');
+const expandedRow = body.querySelector('tr[data-run-key="PR42"]');
+if (!expandedRow) throw new Error('expected orphan review row visible under its real RunID');
 const expandedAria = expandedRow.getAttribute('aria-expanded');
-if (expandedAria !== 'true') throw new Error('expected aria-expanded=true on expanded stub row, got ' + expandedAria);
-const detailRow = body.querySelector('tr.detail-row[data-detail-for="review-stub-1"]');
-if (!detailRow) throw new Error('expected detail row for expanded stub');
+if (expandedAria !== 'true') throw new Error('expected aria-expanded=true on expanded orphan review row, got ' + expandedAria);
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR42"]');
+if (!detailRow) throw new Error('expected detail row keyed by the orphan review RunID');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -3409,6 +3481,26 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyReturnsSourceRowWithReviewTrue
+// is the tracer bullet for issue #1489: a review-only issue group (no
+// implementation parent) must present the most recent review run as its own
+// visible row, marked review=true. The legacy synthesized "issue-N" stub is
+// removed because it leaks review: false into both the visible row and the
+// expanded subject picker. groupedReview stays false because there is no
+// parent to group under.
+func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyReturnsSourceRowWithReviewTrue(t *testing.T) {
+	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
+const stub = visibleRunForIssueGroup(1223, [review]);
+if (!stub) throw new Error('expected visible row for review-only issue group');
+if (stub.review !== true) throw new Error('expected visible row to keep review=true for review-only issue group, got ' + JSON.stringify(stub.review));
+if (stub.groupedReview !== false) throw new Error('expected groupedReview=false on review-only visible row, got ' + JSON.stringify(stub.groupedReview));
+if (stub.runId !== 'a0c19-260622193226-1227') throw new Error('expected visible row runId to match source, got ' + JSON.stringify(stub.runId));
+if (stub.key !== 'a0c19-260622193226-1227') throw new Error('expected visible row key to match source, got ' + JSON.stringify(stub.key));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 func TestPortalRunsView_VisibleRunForIssueGroup_TerminalReviewWinsOverActiveKind(t *testing.T) {
 	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'success', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);
@@ -3416,6 +3508,8 @@ if (!stub) throw new Error('expected stub row for terminal review group');
 if (stub.kind !== 'completed') throw new Error('expected completed kind once terminal status is present, got ' + JSON.stringify(stub.kind));
 if (stub.status !== 'success') throw new Error('expected terminal status to win over live kind, got ' + JSON.stringify(stub.status));
 if (stub.reviewVerdict !== 'Approved') throw new Error('expected Approved verdict, got ' + JSON.stringify(stub.reviewVerdict));
+if (stub.review !== true) throw new Error('expected review=true on visible row for terminal review-only group, got ' + JSON.stringify(stub.review));
+if (stub.groupedReview !== false) throw new Error('expected groupedReview=false on visible row for review-only group, got ' + JSON.stringify(stub.groupedReview));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -3442,6 +3536,27 @@ if (result.key !== 'issue-2-parent') throw new Error('expected completed row to 
 if (result.kind !== 'completed') throw new Error('expected completed kind to stay visible, got ' + JSON.stringify(result.kind));
 if (result.status !== 'success') throw new Error('expected completed status to stay visible, got ' + JSON.stringify(result.status));
 if (result.reviewVerdict !== 'Approved') throw new Error('expected existing completed summary verdict to stay visible, got ' + JSON.stringify(result.reviewVerdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewReprojectsKindOntoSourceRow
+// asserts that when the source review row's stored kind disagrees with the
+// group summary (e.g. the source review was created during a "reviewing"
+// batch but a sibling review is already terminal, or vice versa), the
+// visible row reflects the summary, not the source's stale field. This is
+// the re-projection rule required by issue #1489: we return the source row
+// directly but overwrite kind/status from summarizeReviewGroup so the row
+// shows the live group state.
+func TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewReprojectsKindOntoSourceRow(t *testing.T) {
+	js := `const terminal = { key: 'review-1', kind: 'completed', status: 'success', review: true, issueLabel: '#7', runId: 'review-1', issueNumber: 7, prNumber: 11, startedAt: '2026-06-29T10:00:00Z' };
+const live = { key: 'review-2', kind: 'active', status: 'reviewing', review: true, issueLabel: '#7', runId: 'review-2', issueNumber: 7, prNumber: 12, startedAt: '2026-06-30T10:00:00Z' };
+const stub = visibleRunForIssueGroup(7, [terminal, live]);
+if (!stub) throw new Error('expected visible row for live review group');
+if (stub.kind !== 'active') throw new Error('expected kind=active for live group, got ' + JSON.stringify(stub.kind));
+if (stub.status !== 'reviewing') throw new Error('expected status=reviewing for live group, got ' + JSON.stringify(stub.status));
+if (stub.review !== true) throw new Error('expected review=true on visible row, got ' + JSON.stringify(stub.review));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
