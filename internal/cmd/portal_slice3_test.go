@@ -280,6 +280,131 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	}
 }
 
+// TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren
+// is the backend regression test for issue #1525 acceptance criterion #6:
+// when compute() projects an issue group that has both a canonical
+// implementation row and review child rows, the canonical parent's
+// BatchKey, RunID, IssueTitle, and StartedAt must remain pinned to the
+// implementation run's own identity. Review aggregation (ReviewCount,
+// ReviewVerdict) may enrich the parent row, but it must never overwrite
+// the parent's own identity fields.
+func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	parentBranch := "sandman/1-canonical"
+	reviewBranch := "sandman/review-PR42"
+	terminalReviewAt := startedAt.Add(2 * time.Minute)
+
+	// Active review batch for issue #1. Only one batch is registered so
+	// the review child is materialized once, matching the production
+	// shape where the active batch owns the live review runs.
+	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-review")
+	createUnixRunSocket(t, filepath.Join(reviewRunDir, "batch.sock"))
+	if err := daemon.WriteManifest(reviewRunDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: startedAt, BatchId: "batch-review"}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "batch-review", reviewRunDir, []int{1})
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{
+			Type:      "run.started",
+			Timestamp: startedAt,
+			RunID:     "issue-1",
+			Issue:     1,
+			Payload: map[string]any{
+				"branch":      parentBranch,
+				"issue_title": "Fix login bug",
+			},
+		},
+		{
+			Type:      "run.finished",
+			Timestamp: startedAt.Add(1 * time.Minute),
+			RunID:     "issue-1",
+			Issue:     1,
+			Payload: map[string]any{
+				"branch": parentBranch,
+				"status": "success",
+			},
+		},
+		{
+			Type:      "run.started",
+			Timestamp: startedAt.Add(30 * time.Second),
+			RunID:     "PR42-live",
+			Issue:     1,
+			Payload: map[string]any{
+				"review":      true,
+				"pr_number":   42,
+				"branch":      reviewBranch,
+				"issue_title": "Review PR42 — Fix login bug",
+			},
+		},
+		{
+			Type:      "run.finished",
+			Timestamp: terminalReviewAt,
+			RunID:     "PR43-done",
+			Issue:     1,
+			Payload: map[string]any{
+				"review":    true,
+				"pr_number": 43,
+				"branch":    "sandman/review-PR43",
+				"status":    "success",
+			},
+		},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var parentRow *portalRun
+	var reviewChildCount int
+	for i := range runs {
+		run := &runs[i]
+		if run.IssueNumber != 1 {
+			continue
+		}
+		if run.Review {
+			reviewChildCount++
+			continue
+		}
+		parentRow = run
+	}
+	if parentRow == nil {
+		t.Fatalf("expected canonical issue row for #1, got %#v", runs)
+	}
+	if reviewChildCount != 2 {
+		t.Fatalf("expected 2 review child rows, got %d from %#v", reviewChildCount, runs)
+	}
+	if parentRow.RunID != "issue-1" {
+		t.Fatalf("expected canonical parent RunID issue-1, got %q", parentRow.RunID)
+	}
+	if parentRow.IssueTitle != "Fix login bug" {
+		t.Fatalf("expected canonical parent IssueTitle Fix login bug, got %q", parentRow.IssueTitle)
+	}
+	if !parentRow.StartedAt.Equal(startedAt) {
+		t.Fatalf("expected canonical parent StartedAt %v, got %v", startedAt, parentRow.StartedAt)
+	}
+	// Issue #1525 AC2: the canonical parent's BatchKey must stay pinned to
+	// the implementation run's own identity, never overwritten by review
+	// aggregation. For an event-log-reconstructed parent the BatchKey
+	// falls back to the empty string because no active batch is matched.
+	if parentRow.BatchKey != "" {
+		t.Fatalf("expected canonical parent BatchKey empty (event-log-only), got %q", parentRow.BatchKey)
+	}
+	if parentRow.ReviewCount != 2 {
+		t.Fatalf("expected canonical parent ReviewCount 2, got %d", parentRow.ReviewCount)
+	}
+}
+
 // TestPortal_TerminalReviewChild_ParentNotStuck is the slice-1 regression
 // test for the bug where a review child with a terminal run.finished event
 // keeps Kind=="active" because the socket is still alive on disk. This caused

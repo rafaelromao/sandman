@@ -1582,6 +1582,7 @@
     getCounters,
     updateDetailPanelLog,
     subjectRunValue,
+    subjectRunsFor,
     highlightJSON,
     highlightTerminalLog,
   };
