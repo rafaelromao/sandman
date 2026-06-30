@@ -39,6 +39,68 @@ if (typeof ha === 'string') {
 	runNodeScript(t, js)
 }
 
+// TestPortalPerf_AsyncLargeReviewLogRoundTrip verifies that a large saved
+// review log (the "currently being reviewed" parent-issued run, run.log > 32KB
+// async threshold) loads via the async chunked path the same way a normal
+// completed issue run does. Regression guard against re-reverting the slice-B
+// async tokenization work (#1472) which previously made the Log tab appear
+// empty on first expand for the >32KB review case observed on screen.
+func TestPortalPerf_AsyncLargeReviewLogRoundTrip(t *testing.T) {
+	js := `function bigLog(seed, n) { var L = []; for (var i = 0; i < n; i++) L.push(seed + ' step ' + i + ' import return function foo() bar baz qux'); return L.join('\n'); }
+	function waitForRender(pre, log, callback) {
+	  if (pre.getAttribute('data-rendered-log') === log) { callback(); return; }
+	  if (pre.getAttribute('data-rendering-log') !== log) { callback(new Error('rendering marker cleared without completion')); return; }
+	  setTimeout(function() { waitForRender(pre, log, callback); }, 10);
+	}
+	const body = makeMockBody();
+	const log = bigLog('review-async', 2000); // ~220KB
+	const run = {
+	  key: 'd8b9-260629182613-1479',
+	  runId: 'd8b9-260629182613-1479',
+	  kind: 'active',
+	  status: 'reviewing',
+	  issueLabel: '#1479',
+	  issueNumber: 1479,
+	  prNumber: 0,
+	  review: false,
+	  reviewCount: 1,
+	  startedAt: 1000,
+	  finishedAt: null,
+	  duration: 1,
+	  branch: 'sandman/1479-slice-b',
+	  log: log,
+	  logPath: '/tmp/d8b9-260629182613-1479/run.log',
+	  logUrl: '/api/logs?path=.sandman%2Fbatches%2Fd8b9-260629182613-1479%2B5%2Fruns%2Fd8b9-260629182613-1479%2Frun.log',
+	};
+	const stopGroups = new Set();
+	const optsLog = { helpers, stopGroups, expandedKey: run.key, tabs: { [run.key]: 'log' } };
+	const optsDetails = { helpers, stopGroups, expandedKey: run.key, tabs: { [run.key]: 'details' } };
+	sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+	const detailRow = body.children[1];
+	const pre = detailRow && detailRow.querySelector('pre[data-scroll-key]');
+	if (!pre) throw new Error('expected log pre for review row');
+	if (pre.getAttribute('data-rendering-log') !== log) throw new Error('expected async pending marker for large review log');
+	if (pre.getAttribute('data-rendered-log')) throw new Error('expected rendered-log to stay empty while async render is pending');
+	waitForRender(pre, log, function(err) {
+	  if (err) { console.error('FAIL: ' + err.message); return; }
+	  if (pre.getAttribute('data-rendering-log')) throw new Error('expected async pending marker cleared after completion');
+	  if (pre.getAttribute('data-rendered-log') !== log) throw new Error('expected rendered-log after async completion');
+	  if (pre.textContent.indexOf('review-async step 0') === -1) throw new Error('expected review log content after async completion');
+	  const originalPre = pre;
+	  const originalFirstChild = pre.firstChild;
+	  sandbox.SandmanPortalDiff.diffRuns(body, [run], optsDetails);
+	  if (detailRow.querySelector('pre[data-scroll-key]')) throw new Error('expected log pane detached on details tab');
+	  sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+	  const restoredPre = detailRow.querySelector('pre[data-scroll-key]');
+	  if (restoredPre !== originalPre) throw new Error('expected cached large review log pane to be reused');
+	  if (restoredPre.firstChild !== originalFirstChild) throw new Error('expected cached large review log children to be reused');
+	  if (restoredPre.getAttribute('data-rendered-log') !== log) throw new Error('expected rendered-log to survive round trip');
+	  console.log('PASS');
+	});
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalPerf_ReExpandNoMutation verifies that re-expanding a collapsed run
 // reuses the cached log pane (no re-tokenization, same DOM nodes) instead of
 // rebuilding and re-parsing the pre.

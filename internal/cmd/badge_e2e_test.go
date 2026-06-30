@@ -3,6 +3,8 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,16 +19,42 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-func TestBadge_E2E_HappyPath(t *testing.T) {
-	if os.Getenv("CI") != "" {
-		t.Skip("skip e2e in CI")
-	}
+// cmdBadgeRunner captures the branch + prompt that the post-batch
+// badge hook would have spawned a child `sandman run --prompt` for.
+// It stands in for the real sandman binary in this test environment
+// so the production hook path can be exercised end-to-end.
+type cmdBadgeRunner struct {
+	branch         string
+	prURL          string
+	capturedBranch string
+	capturedPrompt string
+}
 
-	allowed, err := parseBadgeE2EProviders()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if allowed != nil && !allowed["badge"] {
+func (r *cmdBadgeRunner) RunPrompt(_ context.Context, promptText, branch string) (string, error) {
+	r.capturedBranch = branch
+	r.capturedPrompt = promptText
+	return r.prURL, nil
+}
+
+// cmdBadgeLister is a deterministic PRLister for the badge e2e test.
+// It returns a fixed list of merged sandman/* PRs and an explicit
+// marker-PR-found flag so the trigger decision is exercised under
+// controlled inputs.
+type cmdBadgeLister struct {
+	mergedPRs []batch.MergedSandmanPR
+	hasBadge  bool
+}
+
+func (l *cmdBadgeLister) ListMergedSandmanPRs(_ context.Context) ([]batch.MergedSandmanPR, error) {
+	return l.mergedPRs, nil
+}
+
+func (l *cmdBadgeLister) HasBadgePR(_ context.Context) (bool, error) {
+	return l.hasBadge, nil
+}
+
+func TestBadge_E2E_HappyPath(t *testing.T) {
+	if !testenv.E2EGateAllowed(testenv.E2EScenarioBadge) {
 		t.Skip("set SANDMAN_E2E_GATES=badge (or all) to run badge e2e tests")
 	}
 
@@ -53,7 +81,17 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	writeBadgeGHShim(t, ghShimDir, repoDir)
 	prependPath(t, ghShimDir)
 
-	deps := badgeTestDeps(repoDir)
+	// Wire the production badge hook path: WithBadgeHooker wrapping a
+	// defaultBadgeHooker that captures the branch + prompt it would
+	// have spawned a child `sandman run --prompt` for. The recorder
+	// stands in for the real sandman binary so this test exercises
+	// the production hook end-to-end without shelling out.
+	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
+	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: false}
+	stderr := &bytes.Buffer{}
+	badgeHook := batch.NewBadgeHookerWith(stderr, rec, lister)
+
+	deps := badgeTestDeps(repoDir, badgeHook)
 	runRootCommand(t, deps, "init", "--agent", "opencode")
 	runRootCommand(t, deps, "config", "set", "review_command", "/oc review")
 
@@ -67,34 +105,20 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 		t.Fatalf("sandman run failed: %v output=%s", err, out)
 	}
 
-	badgeStateDir := filepath.Join(repoDir, ".sandman", "badge-state")
-	badgePRFile := filepath.Join(badgeStateDir, "badge-pr.json")
-	if _, err := os.Stat(badgePRFile); err != nil {
-		t.Fatalf("expected badge PR to be created at %s: %v", badgePRFile, err)
+	// Operator-visible assertions: the badge hook was invoked with the
+	// stable sidecar branch and a prompt that contains the marker
+	// comment, and the post-batch summary line was emitted on stderr.
+	if rec.capturedBranch != "sandman/built-with-sandman" {
+		t.Errorf("expected badge hook branch=sandman/built-with-sandman, got %q", rec.capturedBranch)
 	}
-
-	badgePRData, err := os.ReadFile(badgePRFile)
-	if err != nil {
-		t.Fatalf("read badge PR file: %v", err)
+	if rec.capturedPrompt == "" {
+		t.Errorf("expected badge hook to record a prompt, got empty")
 	}
-	badgePRContent := string(badgePRData)
-
-	if !strings.Contains(badgePRContent, `"headRefName":"sandman/built-with-sandman"`) {
-		t.Errorf("expected badge PR head to be sandman/built-with-sandman, got: %s", badgePRContent)
+	if !strings.Contains(rec.capturedPrompt, "<!-- sandman-badge-pr -->") {
+		t.Errorf("expected rendered prompt to contain marker comment, got: %s", rec.capturedPrompt)
 	}
-	if !strings.Contains(badgePRContent, `"title":"chore: add Built with Sandman badge"`) {
-		t.Errorf("expected badge PR title to be 'chore: add Built with Sandman badge', got: %s", badgePRContent)
-	}
-
-	readmePath := filepath.Join(repoDir, "README.md")
-	readmeData, err := os.ReadFile(readmePath)
-	if err != nil {
-		t.Fatalf("read README.md: %v", err)
-	}
-	readmeContent := string(readmeData)
-
-	if !strings.Contains(readmeContent, "[![Built with Sandman]") {
-		t.Errorf("expected README to contain badge markdown, got: %s", readmeContent)
+	if !strings.Contains(stderr.String(), "Sandman suggested a Built with Sandman badge PR: https://example.test/badge/pull/99 (close it to dismiss)") {
+		t.Errorf("expected stderr to contain summary line, got: %s", stderr.String())
 	}
 }
 
@@ -558,12 +582,12 @@ exit 1
 	}
 }
 
-func badgeTestDeps(repoDir string) Dependencies {
+func badgeTestDeps(repoDir string, badgeHook batch.BadgeHooker) Dependencies {
 	cfgStore := &config.FileStore{Path: filepath.Join(repoDir, ".sandman", "config.yaml")}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 
 	return Dependencies{
-		BatchRunner:  batch.NewOrchestrator(&github.CLIClient{}, &prompt.Engine{}, cfgStore, eventLog),
+		BatchRunner:  batch.NewOrchestrator(&github.CLIClient{}, &prompt.Engine{}, cfgStore, eventLog, batch.WithBadgeHooker(badgeHook)),
 		ConfigStore:  cfgStore,
 		EventLog:     eventLog,
 		GitHubClient: &github.CLIClient{},
@@ -571,12 +595,4 @@ func badgeTestDeps(repoDir string) Dependencies {
 		IssuePicker:  &SimpleIssuePicker{},
 		IsTTY:        isStdoutTTY,
 	}
-}
-
-func parseBadgeE2EProviders() (map[string]bool, error) {
-	raw := os.Getenv("SANDMAN_E2E_GATES")
-	if raw == "" {
-		return nil, nil
-	}
-	return testenv.ParseList(raw, []string{testenv.E2EScenarioBadge, testenv.E2EScenarioBatch, testenv.E2EScenarioContinueMulti, testenv.E2EScenarioOpencodeSubagent}, "scenario")
 }

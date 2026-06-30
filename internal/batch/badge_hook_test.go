@@ -228,6 +228,43 @@ func TestMaybeSuggestBadge_NopBadgeHooker(t *testing.T) {
 	h.MaybeSuggestBadge(context.Background(), results)
 }
 
+func TestNewBadgeHookerWith_ExercisesInjectedRunner(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+		hasBadge:  false,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
+	h := NewBadgeHookerWith(io.Discard, fakeRunner, fakeGh)
+
+	if h == nil {
+		t.Fatal("expected non-nil badge hooker")
+	}
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+	if fakeRunner.capturedBranch != "sandman/built-with-sandman" {
+		t.Errorf("expected branch=sandman/built-with-sandman, got %q", fakeRunner.capturedBranch)
+	}
+	if !strings.Contains(fakeRunner.capturedPrompt, "Add feature (#7)") {
+		t.Errorf("expected prompt to contain merged PR rationale, got: %s", fakeRunner.capturedPrompt)
+	}
+}
+
+func TestNewBadgeHookerWith_DoesNotSpawnWhenNoMergedSandmanPRs(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{},
+		hasBadge:  false,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
+	h := NewBadgeHookerWith(io.Discard, fakeRunner, fakeGh)
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+	if fakeRunner.capturedPrompt != "" {
+		t.Errorf("expected no spawn when no merged sandman PRs exist, got prompt=%q", fakeRunner.capturedPrompt)
+	}
+}
+
 func TestMaybeSuggestBadge_PromptContainsMergedPRs(t *testing.T) {
 	fakeGh := &fakePRLister{
 		mergedPRs: []MergedSandmanPR{
