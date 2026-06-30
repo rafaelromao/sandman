@@ -738,9 +738,16 @@ func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, strin
 // when the agent's review comment arrives, or to failure after
 // pendingMaxCycles ticks.
 func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession) error {
+	// The review branch is fixed by the launch contract (issue #1494).
+	// We compute it here so the cleanup defer has it available on every
+	// exit path, including early errors before RunBatch runs.
+	reviewBranch := fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID)
 	defer func() {
 		if rs != nil {
 			_ = rs.Close()
+		}
+		if d.Config != nil {
+			ClearReviewArtifacts(reviewBranch, d.Config.WorktreeDir, d.Broadcaster)
 		}
 		if commentReactionID != "" {
 			if err := d.GitHub.RemoveCommentReaction(commentID, commentReactionID); err != nil {
@@ -810,7 +817,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		MaxContainersSet:     d.MaxContainersSet,
 		PromptConfig: prompt.RenderConfig{
 			PromptFlag: rendered,
-			Branch:     fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID),
+			Branch:     reviewBranch,
 		},
 		OutputWriter: rs.Broadcaster(),
 		Review:       true,
