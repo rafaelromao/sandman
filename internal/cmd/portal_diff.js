@@ -922,6 +922,8 @@
   function detailsData(run, helpers) {
     return {
       runId: run.runId || '',
+      issueNumber: Number(run.issueNumber) || 0,
+      issueTitle: run.issueTitle || '',
       branch: run.branch || '',
       batch: run.batchKey || '',
       logPath: run.logPath || '',
