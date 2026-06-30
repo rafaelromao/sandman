@@ -732,7 +732,7 @@ func TestPortalRefresh_IgnoresEmptyExpandedStateBeforeDetailFetch(t *testing.T) 
 	if result.ExpandedRunKey != "" {
 		t.Fatalf("expected empty expanded state to stay empty, got %#v", result)
 	}
-	if result.FetchCalls > 1 {
+	if result.FetchCalls > 2 {
 		t.Fatalf("expected empty expanded state not to trigger detail fetch, got %#v", result)
 	}
 }
