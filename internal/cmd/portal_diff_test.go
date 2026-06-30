@@ -479,6 +479,29 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffDiffRuns_SubjectSelectorSkipsQueuedAndBlockedPlaceholders(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
+const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const queued = { key: 'queued-1', kind: 'active', status: 'queued', review: false, issueLabel: '#1 queued', runId: 'queued-1', issueNumber: 1 };
+const blocked = { key: 'blocked-1', kind: 'active', status: 'blocked', review: false, issueLabel: '#1 blocked', runId: 'blocked-1', issueNumber: 1 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'issue-1', runs: [parentRun, review, queued, blocked], visibleRuns: [parentRun] };
+const result = SandmanPortalDiff.diffRuns(body, [parentRun], opts);
+if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="issue-1"]');
+if (!detailRow) throw new Error('expected detail row for parent run');
+const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect) throw new Error('expected subject selector for parent run');
+if (subjectSelect.children.length !== 2) throw new Error('expected parent and review options only, got ' + subjectSelect.children.length);
+const values = Array.from(subjectSelect.children).map((opt) => opt.getAttribute('value'));
+if (values.indexOf('issue-1') < 0 || values.indexOf('PR42') < 0) throw new Error('expected parent and review subjects, got ' + JSON.stringify(values));
+if (values.indexOf('queued-1') >= 0 || values.indexOf('blocked-1') >= 0) throw new Error('expected queued/blocked placeholders to be filtered, got ' + JSON.stringify(values));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateCells_RefreshesSubjectSelectorWhenChildReviewAppears(t *testing.T) {
 	js := `const body = makeMockBody();
 const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
@@ -2533,7 +2556,7 @@ const renderRunMeta = (run) => {
       counterParts.push(reviewPart);
     }
   }
-  if (run.runId) lines.push('Run: ' + run.runId);
+  if (run.runId && String(run.status || '').toLowerCase() !== 'queued' && String(run.status || '').toLowerCase() !== 'blocked') lines.push('Run: ' + run.runId);
   if (counterParts.length) lines.push(counterParts.join(' - '));
   return lines.length ? lines.join('\n') : 'Run';
 };
@@ -3742,4 +3765,36 @@ if (meta.indexOf('Run:') >= 0) throw new Error('expected no Run: in meta for que
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
+}
+
+func TestRenderRunMeta_QueuedAndBlockedRows_SuppressRunLabelForSyntheticRunID(t *testing.T) {
+	js := `const cases = [
+  { status: 'queued', runId: 'abcd-260618113825-issue-42' },
+  { status: 'blocked', runId: 'abcd-260618113825-issue-43' },
+];
+for (const tc of cases) {
+  const run = { key: tc.runId, runId: tc.runId, batchKey: 'abcd-260618113825', kind: 'active', status: tc.status };
+  const meta = helpers.renderRunMeta(run);
+  if (meta.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for ' + tc.status + ' row, got ' + JSON.stringify(meta));
+  if (meta.indexOf('abcd-260618113825') < 0) throw new Error('expected batchKey value in Batch: label for ' + tc.status + ' row, got ' + JSON.stringify(meta));
+  if (meta.indexOf('Run:') >= 0) throw new Error('expected no Run: in meta for ' + tc.status + ' row with synthetic RunID, got ' + JSON.stringify(meta));
+}
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestPortalDiffSubjectRunValue_QueuedAndBlockedRowsReturnEmptyForSyntheticRunID(t *testing.T) {
+	js := `const cases = [
+  { status: 'queued', runId: 'abcd-260618113825-issue-42' },
+  { status: 'blocked', runId: 'abcd-260618113825-issue-43' },
+];
+for (const tc of cases) {
+  const run = { key: tc.runId, runId: tc.runId, batchKey: 'abcd-260618113825', kind: 'active', status: tc.status };
+  const value = SandmanPortalDiff.subjectRunValue(run);
+  if (value !== '') throw new Error('expected empty subjectRunValue for ' + tc.status + ' row with synthetic RunID, got ' + JSON.stringify(value));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
 }
