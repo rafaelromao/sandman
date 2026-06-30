@@ -4280,6 +4280,26 @@ func TestRun_TemplateFlagPassedToBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRun_BranchFlagPassedToBatchRunnerForPromptOnly(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt", "Suggest the badge.", "--branch", "sandman/built-with-sandman"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if spy.req.PromptConfig.Branch != "sandman/built-with-sandman" {
+		t.Errorf("expected PromptConfig.Branch=sandman/built-with-sandman, got %q", spy.req.PromptConfig.Branch)
+	}
+}
+
 func TestRun_PromptArgFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(spy)
